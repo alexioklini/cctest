@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import PDFKit
 
 @MainActor
 class ChatViewModel: ObservableObject {
@@ -10,6 +11,8 @@ class ChatViewModel: ObservableObject {
     @Published var availableModels: [String] = []
     @Published var showSettings: Bool = false
     @Published var usedFallbackModel: String?
+    @Published var pendingAttachments: [PDFAttachment] = []
+    @Published var showFileImporter: Bool = false
 
     let settings: AppSettings
 
@@ -29,20 +32,77 @@ class ChatViewModel: ObservableObject {
 
     func sendMessage() {
         let content = currentInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !content.isEmpty else { return }
+        let hasAttachments = !pendingAttachments.isEmpty
+
+        // Allow sending if there's text OR attachments
+        guard !content.isEmpty || hasAttachments else { return }
         guard !isLoading else { return }
 
-        // Clear input immediately
+        // Capture and clear input immediately
+        let attachments = pendingAttachments
         currentInput = ""
+        pendingAttachments = []
         error = nil
         usedFallbackModel = nil
 
-        // Add user message
-        let userMessage = Message.userMessage(content)
+        // Add user message with attachments
+        let userMessage = Message.userMessage(content, attachments: attachments)
         messages.append(userMessage)
 
         // Start streaming response
-        sendWithFallback(content: content, model: settings.selectedModel)
+        sendWithFallback(userMessage: userMessage, model: settings.selectedModel)
+    }
+
+    // MARK: - PDF Attachment Methods
+
+    func addPDFAttachment(from url: URL) {
+        // Start security-scoped access
+        guard url.startAccessingSecurityScopedResource() else {
+            error = "Cannot access file"
+            return
+        }
+        defer { url.stopAccessingSecurityScopedResource() }
+
+        do {
+            let data = try Data(contentsOf: url)
+
+            // Validate PDF magic bytes (%PDF)
+            guard data.count >= 4,
+                  let header = String(data: data.prefix(4), encoding: .ascii),
+                  header == "%PDF" else {
+                error = "Invalid PDF file"
+                return
+            }
+
+            // Check file size
+            if data.count > APIServiceError.maxPDFSize {
+                let sizeMB = data.count / (1024 * 1024)
+                error = "PDF too large (\(sizeMB)MB). Maximum size is 32MB."
+                return
+            }
+
+            // Get page count using PDFKit
+            let pageCount: Int
+            if let pdfDocument = PDFDocument(data: data) {
+                pageCount = pdfDocument.pageCount
+            } else {
+                pageCount = 0
+            }
+
+            let filename = url.lastPathComponent
+            let attachment = PDFAttachment(
+                filename: filename,
+                data: data,
+                pageCount: pageCount
+            )
+            pendingAttachments.append(attachment)
+        } catch {
+            self.error = "Failed to read PDF: \(error.localizedDescription)"
+        }
+    }
+
+    func removePendingAttachment(_ attachment: PDFAttachment) {
+        pendingAttachments.removeAll { $0.id == attachment.id }
     }
 
     func clearChat() {
@@ -74,7 +134,7 @@ class ChatViewModel: ObservableObject {
 
     // MARK: - Private Methods
 
-    private func sendWithFallback(content: String, model: String, isRetry: Bool = false) {
+    private func sendWithFallback(userMessage: Message, model: String, isRetry: Bool = false) {
         isLoading = true
 
         // Create assistant message placeholder
@@ -84,8 +144,11 @@ class ChatViewModel: ObservableObject {
 
         streamTask = Task {
             do {
+                // Build conversation history (all messages except the streaming assistant message)
+                let conversationMessages = messages.filter { $0.id != assistantMessage.id }
+
                 let stream = await ClaudeAPIService.shared.sendMessageStream(
-                    content: content,
+                    messages: conversationMessages,
                     model: model,
                     settings: settings
                 )
@@ -104,7 +167,7 @@ class ChatViewModel: ObservableObject {
                 }
 
             } catch let apiError as APIServiceError {
-                await handleAPIError(apiError, content: content, attemptedModel: model, isRetry: isRetry)
+                await handleAPIError(apiError, userMessage: userMessage, attemptedModel: model, isRetry: isRetry)
             } catch {
                 await handleError(error)
             }
@@ -116,7 +179,7 @@ class ChatViewModel: ObservableObject {
 
     private func handleAPIError(
         _ error: APIServiceError,
-        content: String,
+        userMessage: Message,
         attemptedModel: String,
         isRetry: Bool
     ) async {
@@ -133,7 +196,7 @@ class ChatViewModel: ObservableObject {
                 settings: settings
             ) {
                 usedFallbackModel = fallbackModel
-                sendWithFallback(content: content, model: fallbackModel, isRetry: true)
+                sendWithFallback(userMessage: userMessage, model: fallbackModel, isRetry: true)
                 return
             }
         }

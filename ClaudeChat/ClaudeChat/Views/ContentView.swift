@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @StateObject private var viewModel = ChatViewModel()
@@ -29,14 +30,31 @@ struct ContentView: View {
             // Input area
             InputBar(
                 text: $viewModel.currentInput,
+                pendingAttachments: $viewModel.pendingAttachments,
                 isLoading: viewModel.isLoading,
                 onSend: viewModel.sendMessage,
-                onCancel: viewModel.cancelStream
+                onCancel: viewModel.cancelStream,
+                onAttachTapped: { viewModel.showFileImporter = true },
+                onRemoveAttachment: viewModel.removePendingAttachment
             )
         }
         .frame(minWidth: 500, minHeight: 400)
         .sheet(isPresented: $viewModel.showSettings) {
             SettingsView(settings: settings, viewModel: viewModel)
+        }
+        .fileImporter(
+            isPresented: $viewModel.showFileImporter,
+            allowedContentTypes: [UTType.pdf],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case .success(let urls):
+                for url in urls {
+                    viewModel.addPDFAttachment(from: url)
+                }
+            case .failure(let error):
+                viewModel.error = error.localizedDescription
+            }
         }
         .task {
             await viewModel.refreshModels()

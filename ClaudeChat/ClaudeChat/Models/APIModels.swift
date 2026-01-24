@@ -16,9 +16,69 @@ struct MessagesRequest: Encodable {
     }
 }
 
-struct APIMessage: Codable {
+struct APIMessage: Encodable {
     let role: String
-    let content: String
+    let content: MessageContent
+}
+
+// MARK: - Multimodal Content Types
+
+/// Represents message content that can be either a simple string or an array of content items
+enum MessageContent: Encodable {
+    case text(String)
+    case multimodal([ContentItem])
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .text(let string):
+            try container.encode(string)
+        case .multimodal(let items):
+            try container.encode(items)
+        }
+    }
+}
+
+/// A content item within a multimodal message
+enum ContentItem: Encodable {
+    case text(String)
+    case document(DocumentContent)
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .text(let text):
+            try container.encode("text", forKey: .type)
+            try container.encode(text, forKey: .text)
+        case .document(let doc):
+            try container.encode("document", forKey: .type)
+            try container.encode(doc.source, forKey: .source)
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case text
+        case source
+    }
+}
+
+/// Document content for PDF attachments
+struct DocumentContent {
+    let source: DocumentSource
+}
+
+/// Source of a document (base64-encoded)
+struct DocumentSource: Encodable {
+    let type: String = "base64"
+    let mediaType: String
+    let data: String
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case mediaType = "media_type"
+        case data
+    }
 }
 
 // MARK: - Response Models
