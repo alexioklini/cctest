@@ -1,0 +1,184 @@
+import Foundation
+
+enum APIServiceError: LocalizedError {
+    case invalidURL
+    case noAPIKey
+    case invalidResponse
+    case httpError(Int, String)
+    case modelNotAvailable
+    case decodingError(Error)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL:
+            return "Invalid API URL"
+        case .noAPIKey:
+            return "No API key configured"
+        case .invalidResponse:
+            return "Invalid response from server"
+        case .httpError(let code, let message):
+            return "HTTP \(code): \(message)"
+        case .modelNotAvailable:
+            return "Model not available"
+        case .decodingError(let error):
+            return "Decoding error: \(error.localizedDescription)"
+        }
+    }
+}
+
+actor ClaudeAPIService {
+    static let shared = ClaudeAPIService()
+
+    private let session: URLSession
+    private let decoder = JSONDecoder()
+    private let encoder = JSONEncoder()
+
+    private init() {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 120
+        config.timeoutIntervalForResource = 300
+        self.session = URLSession(configuration: config)
+    }
+
+    // MARK: - Streaming Messages
+
+    func sendMessageStream(
+        content: String,
+        model: String,
+        settings: AppSettings
+    ) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    guard let url = URL(string: "\(settings.baseURL)/messages") else {
+                        throw APIServiceError.invalidURL
+                    }
+
+                    guard !settings.apiKey.isEmpty else {
+                        throw APIServiceError.noAPIKey
+                    }
+
+                    var request = URLRequest(url: url)
+                    request.httpMethod = "POST"
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.setValue(settings.apiKey, forHTTPHeaderField: "x-api-key")
+                    request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+
+                    let messagesRequest = MessagesRequest(
+                        model: model,
+                        maxTokens: settings.maxTokens,
+                        messages: [APIMessage(role: "user", content: content)],
+                        stream: true
+                    )
+
+                    request.httpBody = try self.encoder.encode(messagesRequest)
+
+                    let (bytes, response) = try await self.session.bytes(for: request)
+
+                    guard let httpResponse = response as? HTTPURLResponse else {
+                        throw APIServiceError.invalidResponse
+                    }
+
+                    if httpResponse.statusCode == 400 {
+                        throw APIServiceError.modelNotAvailable
+                    }
+
+                    guard (200...299).contains(httpResponse.statusCode) else {
+                        throw APIServiceError.httpError(httpResponse.statusCode, "Request failed")
+                    }
+
+                    var currentEvent: String?
+
+                    for try await line in bytes.lines {
+                        if line.hasPrefix("event: ") {
+                            currentEvent = String(line.dropFirst(7))
+                        } else if line.hasPrefix("data: ") {
+                            if currentEvent == "message_stop" {
+                                break
+                            }
+
+                            let jsonString = String(line.dropFirst(6))
+                            guard let jsonData = jsonString.data(using: .utf8) else { continue }
+
+                            do {
+                                let event = try self.decoder.decode(StreamEvent.self, from: jsonData)
+
+                                if event.type == "content_block_delta",
+                                   let delta = event.delta,
+                                   delta.type == "text_delta",
+                                   let text = delta.text {
+                                    continuation.yield(text)
+                                }
+                            } catch {
+                                // Skip malformed events
+                                continue
+                            }
+                        }
+                    }
+
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+
+    // MARK: - Non-Streaming (for simple requests)
+
+    func sendMessage(
+        content: String,
+        model: String,
+        settings: AppSettings
+    ) async throws -> String {
+        guard let url = URL(string: "\(settings.baseURL)/messages") else {
+            throw APIServiceError.invalidURL
+        }
+
+        guard !settings.apiKey.isEmpty else {
+            throw APIServiceError.noAPIKey
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(settings.apiKey, forHTTPHeaderField: "x-api-key")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+
+        let messagesRequest = MessagesRequest(
+            model: model,
+            maxTokens: settings.maxTokens,
+            messages: [APIMessage(role: "user", content: content)],
+            stream: false
+        )
+
+        request.httpBody = try encoder.encode(messagesRequest)
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIServiceError.invalidResponse
+        }
+
+        if httpResponse.statusCode == 400 {
+            throw APIServiceError.modelNotAvailable
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw APIServiceError.httpError(httpResponse.statusCode, errorMessage)
+        }
+
+        // Parse non-streaming response
+        struct NonStreamResponse: Decodable {
+            let content: [ContentItem]
+            struct ContentItem: Decodable {
+                let type: String
+                let text: String?
+            }
+        }
+
+        let responseObj = try decoder.decode(NonStreamResponse.self, from: data)
+        return responseObj.content.compactMap { $0.text }.joined()
+    }
+}
