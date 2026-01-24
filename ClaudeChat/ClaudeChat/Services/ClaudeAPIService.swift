@@ -84,7 +84,7 @@ actor ClaudeAPIService {
                     request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
 
                     // Convert Message objects to API format
-                    let apiMessages = messages.map { $0.toAPIMessage() }
+                    let apiMessages = messages.map { $0.toAPIMessage(extractPDFText: settings.extractPDFText) }
 
                     let messagesRequest = MessagesRequest(
                         model: model,

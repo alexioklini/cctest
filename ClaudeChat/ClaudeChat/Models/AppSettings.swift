@@ -7,6 +7,7 @@ class AppSettings: ObservableObject {
     @AppStorage("baseURL") var baseURL: String = "http://localhost:8317/v1"
     @AppStorage("selectedModel") var selectedModel: String = "claude-opus-4-5-20251101"
     @AppStorage("maxTokens") var maxTokens: Int = 4096
+    @AppStorage("extractPDFText") var extractPDFText: Bool = false
 
     // API key is stored in Keychain, not AppStorage
     @Published var apiKey: String = ""

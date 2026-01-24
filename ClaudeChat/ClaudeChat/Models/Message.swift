@@ -1,4 +1,5 @@
 import Foundation
+import PDFKit
 
 enum MessageRole: String, Codable {
     case user
@@ -29,6 +30,32 @@ struct PDFAttachment: Identifiable, Equatable {
         } else {
             return String(format: "%.1f MB", bytes / (1024 * 1024))
         }
+    }
+
+    /// Extracts text content from the PDF using PDFKit
+    func extractText() -> String {
+        guard let pdfDocument = PDFDocument(data: data) else {
+            return "[PDF konnte nicht gelesen werden]"
+        }
+
+        var extractedText = ""
+        for pageIndex in 0..<pdfDocument.pageCount {
+            if let page = pdfDocument.page(at: pageIndex) {
+                if let pageText = page.string {
+                    if !extractedText.isEmpty {
+                        extractedText += "\n\n"
+                    }
+                    extractedText += "--- Seite \(pageIndex + 1) ---\n"
+                    extractedText += pageText
+                }
+            }
+        }
+
+        if extractedText.isEmpty {
+            return "[Kein Text im PDF gefunden - möglicherweise gescanntes Dokument]"
+        }
+
+        return extractedText
     }
 }
 
@@ -67,7 +94,8 @@ struct Message: Identifiable, Equatable {
     }
 
     /// Converts this message to an API message format for the Anthropic API
-    func toAPIMessage() -> APIMessage {
+    /// - Parameter extractPDFText: If true, extracts text from PDFs instead of sending as base64 documents
+    func toAPIMessage(extractPDFText: Bool = false) -> APIMessage {
         let apiRole = role == .user ? "user" : "assistant"
 
         // If there are no attachments, use simple text content
@@ -75,7 +103,31 @@ struct Message: Identifiable, Equatable {
             return APIMessage(role: apiRole, content: .text(content))
         }
 
-        // Build multimodal content with documents first, then text
+        // Text extraction mode: Convert PDFs to text and prepend to message
+        if extractPDFText {
+            var fullText = ""
+
+            for attachment in attachments {
+                let extractedText = attachment.extractText()
+                fullText += "=== Dokument: \(attachment.filename) (\(attachment.pageCount) Seiten) ===\n"
+                fullText += extractedText
+                fullText += "\n\n"
+            }
+
+            // Add user's message text
+            let trimmedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedContent.isEmpty {
+                fullText += "=== Anfrage ===\n"
+                fullText += trimmedContent
+            } else {
+                fullText += "=== Anfrage ===\n"
+                fullText += "Bitte analysiere dieses Dokument."
+            }
+
+            return APIMessage(role: apiRole, content: .text(fullText))
+        }
+
+        // Native PDF mode: Send as base64 documents (Anthropic format)
         var items: [ContentItem] = []
 
         for attachment in attachments {

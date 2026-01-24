@@ -73,6 +73,16 @@ struct SettingsView: View {
                 } header: {
                     Text("Generation Settings")
                 }
+
+                Section {
+                    Toggle("PDF-Text extrahieren", isOn: $settings.extractPDFText)
+
+                    Text("Wenn aktiviert, wird der Text aus PDFs extrahiert und als normaler Text gesendet. Nützlich für APIs die keine nativen PDF-Uploads unterstützen (z.B. MiniMax).")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } header: {
+                    Text("PDF-Verarbeitung")
+                }
             }
             .formStyle(.grouped)
             .padding()
@@ -96,7 +106,7 @@ struct SettingsView: View {
             }
             .padding()
         }
-        .frame(width: 450, height: 350)
+        .frame(width: 450, height: 420)
         .onAppear {
             apiKeyInput = settings.apiKey
             baseURLInput = settings.baseURL
