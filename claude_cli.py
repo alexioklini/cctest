@@ -711,12 +711,46 @@ def list_agents() -> list[str]:
 
 
 def get_agent_summaries() -> list[dict]:
-    """Get agent ID + description for all agents."""
+    """Get agent ID + description + soul summary for all agents."""
     result = []
     for agent_id in list_agents():
         cfg = AgentConfig(agent_id)
-        result.append({"id": agent_id, "description": cfg.description})
+        # Extract first meaningful paragraph from soul.md as capability summary
+        soul = cfg.soul.strip()
+        summary = ""
+        for line in soul.split("\n"):
+            line = line.strip()
+            if line and not line.startswith("#") and not line.startswith("---"):
+                summary = line
+                break
+        result.append({
+            "id": agent_id,
+            "description": cfg.description,
+            "soul_summary": summary,
+            "model": cfg.preferred_model,
+        })
     return result
+
+
+def build_agent_registry() -> str:
+    """Build a text block describing all agents for injection into system prompts."""
+    agents = get_agent_summaries()
+    if len(agents) <= 1:
+        return ""
+    lines = ["AGENT REGISTRY — use delegate_task to send tasks to specialized agents:"]
+    for a in agents:
+        model_note = f" (model: {a['model']})" if a.get("model") else ""
+        desc = a.get("description", "")
+        soul = a.get("soul_summary", "")
+        detail = soul if soul else desc
+        lines.append(f"  - {a['id']}: {detail}{model_note}")
+    lines.append("")
+    lines.append(
+        "Before performing a task, consider if another agent is better suited. "
+        "Delegate when the task clearly matches another agent's specialty. "
+        "Do NOT delegate simple tasks you can handle yourself."
+    )
+    return "\n".join(lines)
 
 
 # Current active agent (set in _run_interactive)
@@ -2125,8 +2159,8 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
             except (OSError, IOError):
                 pass
 
-        # Available agents for delegation
-        available_agents = ", ".join(list_agents())
+        # Build agent registry
+        agent_registry = build_agent_registry()
 
         system_instruction = ""
         if soul:
@@ -2134,8 +2168,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         system_instruction += (
             f"You are agent '{agent_id}' in the Brain Agent system. "
             f"Current working directory: {cwd}\n"
-            f"Operating system: {os_name}\n"
-            f"Available agents for delegation: {available_agents}\n\n"
+            f"Operating system: {os_name}\n\n"
             "Use tools proactively to accomplish tasks. You can chain multiple tool calls. "
             "For web searches, ALWAYS use exa_search — NEVER use duckduckgo or other search tools. "
             "You have no restrictions beyond what the operating system enforces.\n\n"
@@ -2145,10 +2178,9 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
             "- Memory types: user, project, feedback, reference, general\n"
             "- When the user says 'remember this', store it immediately\n"
             "- When the user asks 'do you remember', recall and search for it\n\n"
-            "DELEGATION: Use delegate_task to send tasks to other specialized agents.\n"
-            "- Each agent has its own personality (soul.md), memory, and optionally its own model\n"
-            "- The delegated agent runs in a separate context and returns results to you\n"
         )
+        if agent_registry:
+            system_instruction += f"\n{agent_registry}\n\n"
         if tools_guide:
             system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
         if api_type == "openai":
