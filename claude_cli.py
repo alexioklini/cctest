@@ -582,9 +582,18 @@ class EscapeWatcher:
         except termios.error:
             return
         try:
-            tty.setraw(fd)
+            # Set input to non-canonical mode WITHOUT disabling output processing.
+            # tty.setraw() clears OPOST which breaks \n -> \r\n conversion for
+            # all print() output. Instead, only change what we need for input.
+            new_settings = termios.tcgetattr(fd)
+            # Disable canonical mode (ICANON) and echo (ECHO) in local flags
+            new_settings[3] = new_settings[3] & ~(termios.ICANON | termios.ECHO)
+            # Set minimum chars to read = 0, timeout = 0 (non-blocking)
+            new_settings[6][termios.VMIN] = 0
+            new_settings[6][termios.VTIME] = 0
+            termios.tcsetattr(fd, termios.TCSANOW, new_settings)
+
             while not self._stop.is_set():
-                # Check if there's input available (non-blocking)
                 if select.select([fd], [], [], 0.1)[0]:
                     ch = os.read(fd, 1)
                     if ch == b'\x1b':  # Escape key
