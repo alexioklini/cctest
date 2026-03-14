@@ -274,9 +274,12 @@ def handle_message(bot: TelegramBot, manager: ChatManager,
     if error_msg:
         bot.send_message(chat_id, f"⚠️ {error_msg}")
     elif full_text:
-        # Add tool count if any were used
+        # Add footer with agent info and tool count
+        agent = manager.chat_state.get(chat_id, {}).get("agent", "main")
+        footer_parts = [f"[{agent}]"]
         if tool_count > 0:
-            full_text += f"\n\n({tool_count} tool{'s' if tool_count > 1 else ''} used)"
+            footer_parts.append(f"{tool_count} tool{'s' if tool_count > 1 else ''}")
+        full_text += f"\n\n— {' · '.join(footer_parts)}"
         print(f"  → Sending reply ({len(full_text)} chars)...", flush=True)
         bot.send_message(chat_id, full_text)
         print(f"  → Sent!", flush=True)
