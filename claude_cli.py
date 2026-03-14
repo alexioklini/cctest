@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 VERSION_DATE = "2026-03-14"
 CHANGELOG = [
+    ("0.7.0", "2026-03-14", "Persistent memory system with SQLite FTS5, per-agent isolation"),
     ("0.6.0", "2026-03-14", "Context window management with auto-compaction at 75%"),
     ("0.5.0", "2026-03-14", "Full agent toolkit: file ops, shell, search, web fetch, edit"),
     ("0.4.0", "2026-03-14", "Escape to cancel, dynamic terminal rendering, startup greeting"),
@@ -184,6 +185,52 @@ TOOL_DEFINITIONS = [
                 },
             },
             "required": ["query"],
+        },
+    },
+    {
+        "name": "memory_store",
+        "description": (
+            "Store a memory for later recall. Use this to remember important information, "
+            "user preferences, decisions, project context, or anything that should persist "
+            "across conversations. Memories are searchable by keyword."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Short unique name for this memory (used as identifier)"},
+                "content": {"type": "string", "description": "The memory content to store"},
+                "description": {"type": "string", "description": "One-line description for search indexing"},
+                "type": {"type": "string", "description": "Memory type", "enum": ["user", "project", "feedback", "reference", "general"]},
+            },
+            "required": ["name", "content"],
+        },
+    },
+    {
+        "name": "memory_recall",
+        "description": (
+            "Search and recall stored memories. Use this when you need context from previous "
+            "conversations, user preferences, project decisions, or any previously stored information. "
+            "Returns matching memories ranked by relevance."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query (keywords). Leave empty to list all memories."},
+                "limit": {"type": "integer", "description": "Max results (default: 10)"},
+                "type": {"type": "string", "description": "Filter by memory type", "enum": ["user", "project", "feedback", "reference", "general"]},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "memory_delete",
+        "description": "Delete a stored memory by name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Name of the memory to delete"},
+            },
+            "required": ["name"],
         },
     },
 ]
@@ -543,6 +590,270 @@ def exa_search(query: str, num_results: int = 5, category: str | None = None) ->
         return json.dumps({"query": query, "results": [], "error": f"HTTP {e.code}: {error_body}"})
     except Exception as e:
         return json.dumps({"query": query, "results": [], "error": str(e)})
+
+
+# --- Memory System (SQLite FTS5) ---
+
+import sqlite3
+import hashlib
+
+MEMORY_BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory")
+
+
+class MemoryStore:
+    """Per-agent memory store backed by SQLite FTS5 and markdown files."""
+
+    def __init__(self, agent_id: str = "default"):
+        self.agent_id = agent_id
+        self.dir = os.path.join(MEMORY_BASE_DIR, agent_id)
+        os.makedirs(self.dir, exist_ok=True)
+        self.db_path = os.path.join(self.dir, "memory.db")
+        self._init_db()
+
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS memories (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    type TEXT,
+                    content TEXT NOT NULL,
+                    file_path TEXT,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    updated_at TEXT DEFAULT (datetime('now'))
+                )
+            """)
+            # FTS5 virtual table for full-text search
+            conn.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+                    name, description, type, content,
+                    content=memories,
+                    content_rowid=rowid
+                )
+            """)
+            # Triggers to keep FTS in sync
+            conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+                    INSERT INTO memories_fts(rowid, name, description, type, content)
+                    VALUES (new.rowid, new.name, new.description, new.type, new.content);
+                END
+            """)
+            conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+                    INSERT INTO memories_fts(memories_fts, rowid, name, description, type, content)
+                    VALUES ('delete', old.rowid, old.name, old.description, old.type, old.content);
+                END
+            """)
+            conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+                    INSERT INTO memories_fts(memories_fts, rowid, name, description, type, content)
+                    VALUES ('delete', old.rowid, old.name, old.description, old.type, old.content);
+                    INSERT INTO memories_fts(rowid, name, description, type, content)
+                    VALUES (new.rowid, new.name, new.description, new.type, new.content);
+                END
+            """)
+            conn.commit()
+
+    def _make_id(self, name: str) -> str:
+        """Generate a stable ID from name."""
+        return hashlib.sha256(name.encode()).hexdigest()[:12]
+
+    def _name_to_filename(self, name: str) -> str:
+        """Convert a memory name to a safe filename."""
+        safe = re.sub(r'[^\w\s-]', '', name).strip().lower()
+        safe = re.sub(r'[\s]+', '_', safe)
+        return safe[:60] + ".md"
+
+    def store(self, name: str, content: str, description: str = "",
+              mem_type: str = "general") -> dict:
+        """Store or update a memory. Also writes a .md file."""
+        mem_id = self._make_id(name)
+        filename = self._name_to_filename(name)
+        file_path = os.path.join(self.dir, filename)
+
+        # Write markdown file with frontmatter
+        md_content = f"""---
+name: {name}
+description: {description}
+type: {mem_type}
+agent: {self.agent_id}
+---
+
+{content}
+"""
+        with open(file_path, "w") as f:
+            f.write(md_content)
+
+        # Upsert into database
+        with sqlite3.connect(self.db_path) as conn:
+            existing = conn.execute(
+                "SELECT id FROM memories WHERE id = ?", (mem_id,)
+            ).fetchone()
+            if existing:
+                conn.execute("""
+                    UPDATE memories SET name=?, description=?, type=?, content=?,
+                    file_path=?, updated_at=datetime('now') WHERE id=?
+                """, (name, description, mem_type, content, file_path, mem_id))
+            else:
+                conn.execute("""
+                    INSERT INTO memories (id, name, description, type, content, file_path)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (mem_id, name, description, mem_type, content, file_path))
+            conn.commit()
+
+        return {"id": mem_id, "name": name, "file": filename, "status": "stored"}
+
+    def recall(self, query: str, limit: int = 10, mem_type: str | None = None) -> list[dict]:
+        """Search memories using FTS5 BM25 ranking."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            # FTS5 query — escape special chars
+            fts_query = re.sub(r'["\'\(\)\*]', ' ', query).strip()
+            # Split into terms and join with OR for broader matching
+            terms = fts_query.split()
+            if not terms:
+                return []
+            fts_expr = " OR ".join(f'"{t}"' for t in terms)
+
+            if mem_type:
+                rows = conn.execute("""
+                    SELECT m.id, m.name, m.description, m.type, m.content, m.file_path,
+                           m.created_at, m.updated_at,
+                           rank
+                    FROM memories_fts fts
+                    JOIN memories m ON m.rowid = fts.rowid
+                    WHERE memories_fts MATCH ? AND m.type = ?
+                    ORDER BY rank
+                    LIMIT ?
+                """, (fts_expr, mem_type, limit)).fetchall()
+            else:
+                rows = conn.execute("""
+                    SELECT m.id, m.name, m.description, m.type, m.content, m.file_path,
+                           m.created_at, m.updated_at,
+                           rank
+                    FROM memories_fts fts
+                    JOIN memories m ON m.rowid = fts.rowid
+                    WHERE memories_fts MATCH ?
+                    ORDER BY rank
+                    LIMIT ?
+                """, (fts_expr, limit)).fetchall()
+
+            return [dict(r) for r in rows]
+
+    def delete(self, name: str) -> dict:
+        """Delete a memory by name."""
+        mem_id = self._make_id(name)
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT file_path FROM memories WHERE id = ?", (mem_id,)
+            ).fetchone()
+            if not row:
+                return {"error": f"Memory '{name}' not found"}
+            file_path = row[0]
+            conn.execute("DELETE FROM memories WHERE id = ?", (mem_id,))
+            conn.commit()
+        # Remove .md file
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
+        return {"name": name, "status": "deleted"}
+
+    def list_all(self, mem_type: str | None = None) -> list[dict]:
+        """List all memories, optionally filtered by type."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            if mem_type:
+                rows = conn.execute(
+                    "SELECT id, name, description, type, created_at, updated_at FROM memories WHERE type = ? ORDER BY updated_at DESC",
+                    (mem_type,)
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id, name, description, type, created_at, updated_at FROM memories ORDER BY updated_at DESC"
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+    def reindex(self) -> dict:
+        """Rebuild the index from .md files on disk."""
+        count = 0
+        for fname in os.listdir(self.dir):
+            if not fname.endswith(".md"):
+                continue
+            fpath = os.path.join(self.dir, fname)
+            try:
+                with open(fpath, "r") as f:
+                    raw = f.read()
+                # Parse frontmatter
+                fm_match = re.match(r'^---\s*\n(.*?)\n---\s*\n(.*)$', raw, re.DOTALL)
+                if fm_match:
+                    fm_text, body = fm_match.groups()
+                    fm = {}
+                    for line in fm_text.split("\n"):
+                        if ":" in line:
+                            k, v = line.split(":", 1)
+                            fm[k.strip()] = v.strip()
+                    name = fm.get("name", fname.replace(".md", ""))
+                    desc = fm.get("description", "")
+                    mtype = fm.get("type", "general")
+                else:
+                    name = fname.replace(".md", "")
+                    desc = ""
+                    mtype = "general"
+                    body = raw
+
+                self.store(name, body.strip(), desc, mtype)
+                count += 1
+            except Exception:
+                continue
+        return {"agent": self.agent_id, "reindexed": count}
+
+
+# Global memory store instance (set in _run_interactive)
+_memory_store: MemoryStore | None = None
+
+
+def tool_memory_store(args: dict) -> str:
+    """Store a memory."""
+    if not _memory_store:
+        return _err("Memory store not initialized")
+    name = args.get("name", "")
+    content = args.get("content", "")
+    description = args.get("description", "")
+    mem_type = args.get("type", "general")
+    if not name or not content:
+        return _err("memory_store: name and content are required")
+    result = _memory_store.store(name, content, description, mem_type)
+    return _ok(result)
+
+
+def tool_memory_recall(args: dict) -> str:
+    """Recall memories by searching."""
+    if not _memory_store:
+        return _err("Memory store not initialized")
+    query = args.get("query", "")
+    limit = args.get("limit", 10)
+    mem_type = args.get("type")
+    if not query:
+        # List all if no query
+        results = _memory_store.list_all(mem_type)
+        return _ok({"query": "", "results": results, "count": len(results)})
+    results = _memory_store.recall(query, limit, mem_type)
+    # Truncate content in results for token efficiency
+    for r in results:
+        if r.get("content") and len(r["content"]) > 1000:
+            r["content"] = r["content"][:1000] + "..."
+    return _ok({"query": query, "results": results, "count": len(results)})
+
+
+def tool_memory_delete(args: dict) -> str:
+    """Delete a memory."""
+    if not _memory_store:
+        return _err("Memory store not initialized")
+    name = args.get("name", "")
+    if not name:
+        return _err("memory_delete: name is required")
+    result = _memory_store.delete(name)
+    return _ok(result)
 
 
 # --- Context Window Management ---
@@ -1244,12 +1555,14 @@ TOOL_ICONS = {
     "read_file": "r", "write_file": "w", "edit_file": "e",
     "list_directory": "d", "search_files": "s", "execute_command": "$",
     "web_fetch": "~", "exa_search": "?",
+    "memory_store": "+", "memory_recall": "m", "memory_delete": "-",
 }
 
 TOOL_VERBS = {
     "read_file": "Reading", "write_file": "Writing", "edit_file": "Editing",
     "list_directory": "Listing", "search_files": "Searching", "execute_command": "Executing",
     "web_fetch": "Fetching", "exa_search": "Searching",
+    "memory_store": "Remembering", "memory_recall": "Recalling", "memory_delete": "Forgetting",
 }
 
 
@@ -1330,6 +1643,13 @@ def _format_tool_call(name: str, args: dict) -> list[str]:
         lines.append(_box_mid(f"{CYAN}{name}{RESET} {MAGENTA}/{args.get('pattern', '')}/{RESET} in {WHITE}{args.get('path', '.')}{RESET}"))
     elif name == "web_fetch":
         lines.append(_box_mid(f"{CYAN}{args.get('method', 'GET')}{RESET} {WHITE}{args.get('url', '')}{RESET}"))
+    elif name == "memory_store":
+        lines.append(_box_mid(f"{MAGENTA}{args.get('name', '')}{RESET} {DIM}[{args.get('type', 'general')}]{RESET}"))
+    elif name == "memory_recall":
+        q = args.get("query", "(list all)")
+        lines.append(_box_mid(f"{MAGENTA}{q}{RESET}"))
+    elif name == "memory_delete":
+        lines.append(_box_mid(f"{RED}{args.get('name', '')}{RESET}"))
     else:
         summary = ", ".join(f"{k}={v!r}" for k, v in list(args.items())[:3])
         if len(summary) > max_w:
@@ -1432,6 +1752,22 @@ def _format_tool_result(name: str, result_str: str) -> list[str]:
             out.append(_box_mid(f"{DIM}{line[:max_w]}{RESET}"))
         if len(lines) > 5:
             out.append(_box_mid(f"{DIM}... {len(lines) - 5} more lines{RESET}"))
+    elif name == "memory_store":
+        out.append(_box_top(f"{GREEN}{BOLD}✔ Stored{RESET}"))
+        out.append(_box_mid(f"{rdata.get('name', '')} → {rdata.get('file', '')}"))
+    elif name == "memory_recall":
+        count = rdata.get("count", 0)
+        out.append(_box_top(f"{GREEN}{BOLD}✔ {count} memories{RESET}"))
+        for r in rdata.get("results", [])[:5]:
+            out.append(_box_mid(f"{BOLD}{r.get('name', '')}{RESET} {DIM}[{r.get('type', '')}]{RESET}"))
+            desc = r.get("description", "")
+            if desc:
+                out.append(_box_mid(f"  {DIM}{desc[:max_w]}{RESET}"))
+        if count > 5:
+            out.append(_box_mid(f"{DIM}... and {count - 5} more{RESET}"))
+    elif name == "memory_delete":
+        out.append(_box_top(f"{GREEN}{BOLD}✔ Deleted{RESET}"))
+        out.append(_box_mid(f"{rdata.get('name', '')}"))
     else:
         out.append(_box_top(f"{GREEN}{BOLD}✔ Done{RESET}"))
 
@@ -1464,6 +1800,9 @@ TOOL_DISPATCH = {
         num_results=args.get("num_results", 5),
         category=args.get("category"),
     ),
+    "memory_store": tool_memory_store,
+    "memory_recall": tool_memory_recall,
+    "memory_delete": tool_memory_delete,
 }
 
 
@@ -1516,13 +1855,20 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         except (OSError, IOError):
             pass
 
+        agent_id = _memory_store.agent_id if _memory_store else "default"
         system_instruction = (
-            f"You are Brain Agent, a powerful AI assistant with full access to the local system. "
+            f"You are Brain Agent (agent: {agent_id}), a powerful AI assistant with full access to the local system. "
             f"Current working directory: {cwd}\n"
             f"Operating system: {os_name}\n\n"
             "Use tools proactively to accomplish tasks. You can chain multiple tool calls. "
             "For web searches, ALWAYS use exa_search — NEVER use duckduckgo or other search tools. "
-            "You have no restrictions beyond what the operating system enforces."
+            "You have no restrictions beyond what the operating system enforces.\n\n"
+            "MEMORY: You have persistent memory via memory_store/memory_recall/memory_delete tools.\n"
+            "- Use memory_recall at the START of conversations to check for relevant context\n"
+            "- Use memory_store to save important information: user preferences, decisions, project context\n"
+            "- Memory types: user, project, feedback, reference, general\n"
+            "- When the user says 'remember this', store it immediately\n"
+            "- When the user asks 'do you remember', recall and search for it\n"
         )
         if tools_guide:
             system_instruction += f"\n\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
@@ -1912,6 +2258,10 @@ def main():
         "--max-context", type=int, default=DEFAULT_MAX_CONTEXT_TOKENS,
         help=f"Max context window in tokens (default: {DEFAULT_MAX_CONTEXT_TOKENS})",
     )
+    parser.add_argument(
+        "--agent", default="default",
+        help="Agent ID for memory isolation (default: 'default')",
+    )
 
     args = parser.parse_args()
 
@@ -1936,23 +2286,20 @@ def main():
         print(render_markdown(reply))
 
 
-def _print_greeting(model: str) -> None:
+def _print_greeting(model: str, agent_id: str = "default") -> None:
     """Print the Brain Agent startup banner — compact, left-aligned, Claude Code style."""
     cwd = os.getcwd()
-    # Latest changelog entry for the tip line
     latest = CHANGELOG[0] if CHANGELOG else None
 
-    # Brain icon (small, 3 lines tall to sit beside the text)
-    # Uses orange/yellow tones like Claude Code's robot
     icon = [
         f"{FG_ORANGE}  ⣠⣴⣶⣶⣦⣄{RESET}",
         f"{FG_ORANGE} ⣿⣿⠛⠛⣿⣿{RESET}",
         f"{FG_ORANGE} ⠻⣿⣿⣿⣿⠟{RESET}",
     ]
 
-    # Info lines (displayed to the right of the icon)
+    agent_label = f" {DIM}({agent_id}){RESET}" if agent_id != "default" else ""
     info = [
-        f"  {BOLD}Brain Agent{RESET} {DIM}v{VERSION}{RESET}",
+        f"  {BOLD}Brain Agent{RESET}{agent_label} {DIM}v{VERSION}{RESET}",
         f"  {DIM}{model}{RESET}",
         f"  {DIM}{cwd}{RESET}",
     ]
@@ -2153,10 +2500,14 @@ def _replace_line(buf: list, pos: int, new_text: str) -> None:
 
 def _run_interactive(args):
     """Run the interactive TUI chat loop."""
+    global _memory_store
     current_model = args.model
     history = []
     input_history = []   # list of previous user inputs for arrow-key recall
     history_idx = [0]    # mutable ref for current position
+
+    # Initialize per-agent memory store
+    _memory_store = MemoryStore(agent_id=args.agent)
 
     # Clear screen and move cursor to top
     sys.stdout.write("\033[2J\033[H")
@@ -2173,7 +2524,7 @@ def _run_interactive(args):
     old_sigwinch = signal.signal(signal.SIGWINCH, _on_resize)
 
     # Startup greeting
-    _print_greeting(current_model)
+    _print_greeting(current_model, args.agent)
 
     try:
         while True:
