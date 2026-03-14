@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import sys
+import threading
 import time
 import urllib.request
 import urllib.error
@@ -308,20 +309,34 @@ def handle_message(bot: TelegramBot, manager: ChatManager,
     chat_client = BrainAgentClient(manager.client.server_url)
     chat_client.session_id = sid
 
-    # Send initial "thinking" message that we'll edit with streamed text
-    msg_id = bot.send_message(chat_id, "⏳ Thinking...")
+    start_time = time.time()
+
+    # Send initial thinking message
+    msg_id = bot.send_message(chat_id, "🧠 ...")
+
+    # Keep sending typing action in a background thread
+    typing_stop = threading.Event()
+
+    def keep_typing():
+        while not typing_stop.is_set():
+            bot.send_action(chat_id, "typing")
+            typing_stop.wait(4)  # Telegram typing expires after 5s
+
+    typing_thread = threading.Thread(target=keep_typing, daemon=True)
+    typing_thread.start()
 
     full_text = ""
     streaming_text = ""
     tool_count = 0
+    tool_names = []
     error_msg = ""
-    last_edit = 0  # rate limit edits to ~1 per second
+    last_edit = 0
+    tokens = 0
 
     try:
         for event_type, data in chat_client.chat(text):
             if event_type == "text_delta":
                 streaming_text += data.get("text", "")
-                # Edit message with accumulated text (rate limited)
                 now = time.time()
                 if msg_id and now - last_edit > 1.0 and len(streaming_text) > 0:
                     bot.edit_message(chat_id, msg_id,
@@ -329,9 +344,12 @@ def handle_message(bot: TelegramBot, manager: ChatManager,
                     last_edit = now
             elif event_type == "tool_call":
                 tool_count += 1
-                bot.send_action(chat_id)
+                name = data.get("name", "")
+                if name and name not in tool_names:
+                    tool_names.append(name)
             elif event_type == "done":
                 full_text = data.get("text", "")
+                tokens = data.get("tokens", 0)
                 break
             elif event_type == "error":
                 error_msg = data.get("message", "Unknown error")
@@ -339,19 +357,32 @@ def handle_message(bot: TelegramBot, manager: ChatManager,
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
         print(f"  Error: {error_msg}", flush=True)
+    finally:
+        typing_stop.set()
+        typing_thread.join(timeout=1)
 
-    # Final update
+    elapsed = time.time() - start_time
     agent = manager.chat_state.get(chat_id, {}).get("agent", "main")
+
     if error_msg:
         if msg_id:
             bot.edit_message(chat_id, msg_id, f"⚠️ {error_msg}")
         else:
             bot.send_message(chat_id, f"⚠️ {error_msg}")
     elif full_text:
-        footer_parts = [f"[{agent}]"]
+        # Build informative footer
+        footer = f"\n\n<i>━━━━━━━━━━━━━━━━━━━━\n"
+        footer += f"🤖 {agent}"
+        footer += f"  ⏱ {elapsed:.1f}s"
+        if tokens:
+            footer += f"  📊 {tokens:,} tok"
         if tool_count > 0:
-            footer_parts.append(f"{tool_count} tool{'s' if tool_count > 1 else ''}")
-        final_html = md_to_telegram_html(full_text) + f"\n\n<i>— {' · '.join(footer_parts)}</i>"
+            footer += f"\n🔧 {tool_count} tool{'s' if tool_count > 1 else ''}: {', '.join(tool_names[:5])}"
+            if len(tool_names) > 5:
+                footer += f" +{len(tool_names) - 5}"
+        footer += "</i>"
+
+        final_html = md_to_telegram_html(full_text) + footer
         if msg_id:
             bot.edit_message(chat_id, msg_id, final_html, as_html=True)
         else:
