@@ -60,20 +60,53 @@ class BrainAgentClient:
         """Send a message and yield SSE events as (event_type, data) tuples.
 
         Event types: text_delta, tool_call, tool_result, done, error
+        Uses raw socket for unbuffered SSE streaming.
         """
+        import socket
+        from urllib.parse import urlparse
+
         body = json.dumps({
             "session_id": self.session_id,
             "message": message,
-        }).encode("utf-8")
-        req = urllib.request.Request(
-            f"{self.server_url}/v1/chat", data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=600) as resp:
+        })
+
+        parsed = urlparse(self.server_url)
+        host = parsed.hostname
+        port = parsed.port or 80
+
+        sock = socket.create_connection((host, port), timeout=600)
+        try:
+            # Send HTTP request
+            request = (
+                f"POST /v1/chat HTTP/1.1\r\n"
+                f"Host: {host}:{port}\r\n"
+                f"Content-Type: application/json\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                f"Connection: close\r\n"
+                f"\r\n"
+                f"{body}"
+            )
+            sock.sendall(request.encode("utf-8"))
+
+            # Read response headers
+            f = sock.makefile("rb", buffering=0)
+            status_line = f.readline().decode("utf-8")
+            if "200" not in status_line:
+                yield ("error", {"message": f"Server returned: {status_line.strip()}"})
+                return
+            # Skip headers
+            while True:
+                header = f.readline().decode("utf-8").strip()
+                if not header:
+                    break
+
+            # Read SSE events line by line (unbuffered)
             current_event = None
-            for line in resp:
-                line = line.decode("utf-8").rstrip("\n")
+            while True:
+                line = f.readline()
+                if not line:
+                    break
+                line = line.decode("utf-8").rstrip("\r\n")
                 if line.startswith("event: "):
                     current_event = line[7:]
                 elif line.startswith("data: "):
@@ -82,8 +115,8 @@ class BrainAgentClient:
                         yield (current_event or "message", data)
                     except json.JSONDecodeError:
                         pass
-                elif line == "":
-                    current_event = None
+        finally:
+            sock.close()
 
     def cancel(self):
         if self.session_id:
