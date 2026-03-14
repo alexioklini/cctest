@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 VERSION_DATE = "2026-03-14"
 CHANGELOG = [
+    ("0.8.0", "2026-03-14", "Multi-agent system with soul.md, delegation, /agent switching"),
     ("0.7.0", "2026-03-14", "Persistent memory system with SQLite FTS5, per-agent isolation"),
     ("0.6.0", "2026-03-14", "Context window management with auto-compaction at 75%"),
     ("0.5.0", "2026-03-14", "Full agent toolkit: file ops, shell, search, web fetch, edit"),
@@ -231,6 +232,22 @@ TOOL_DEFINITIONS = [
                 "name": {"type": "string", "description": "Name of the memory to delete"},
             },
             "required": ["name"],
+        },
+    },
+    {
+        "name": "delegate_task",
+        "description": (
+            "Delegate a task to another agent. The target agent runs in its own context "
+            "with its own soul.md, tools, and memory. Returns the agent's final response. "
+            "Use this when a task is better suited to a specialized agent."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent": {"type": "string", "description": "Target agent ID (e.g. 'research', 'health')"},
+                "task": {"type": "string", "description": "Task description for the target agent"},
+            },
+            "required": ["agent", "task"],
         },
     },
 ]
@@ -592,20 +609,134 @@ def exa_search(query: str, num_results: int = 5, category: str | None = None) ->
         return json.dumps({"query": query, "results": [], "error": str(e)})
 
 
+# --- Agent System ---
+
+AGENTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agents")
+
+
+class AgentConfig:
+    """Configuration and file management for a single agent."""
+
+    def __init__(self, agent_id: str):
+        self.agent_id = agent_id
+        self.dir = os.path.join(AGENTS_DIR, agent_id)
+        os.makedirs(self.dir, exist_ok=True)
+        self._ensure_defaults()
+
+    def _ensure_defaults(self):
+        """Create default files if they don't exist."""
+        soul_path = os.path.join(self.dir, "soul.md")
+        if not os.path.exists(soul_path):
+            with open(soul_path, "w") as f:
+                f.write(f"""# {self.agent_id}
+
+You are the **{self.agent_id}** agent.
+Adapt your behavior to the tasks you are given.
+""")
+        config_path = os.path.join(self.dir, "agent.json")
+        if not os.path.exists(config_path):
+            with open(config_path, "w") as f:
+                json.dump({
+                    "description": f"{self.agent_id} agent",
+                    "model": None,
+                    "max_context": None,
+                }, f, indent=2)
+
+    @property
+    def soul(self) -> str:
+        """Load soul.md content."""
+        path = os.path.join(self.dir, "soul.md")
+        try:
+            with open(path, "r") as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    @property
+    def tools_guide(self) -> str:
+        """Load per-agent tools.md, falling back to global tools.md."""
+        agent_tools = os.path.join(self.dir, "tools.md")
+        if os.path.exists(agent_tools):
+            try:
+                with open(agent_tools, "r") as f:
+                    return f.read()
+            except OSError:
+                pass
+        # Fall back to global tools.md
+        global_tools = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools.md")
+        try:
+            with open(global_tools, "r") as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    @property
+    def config(self) -> dict:
+        """Load agent.json config."""
+        path = os.path.join(self.dir, "agent.json")
+        try:
+            with open(path, "r") as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    @property
+    def description(self) -> str:
+        return self.config.get("description", self.agent_id)
+
+    @property
+    def preferred_model(self) -> str | None:
+        return self.config.get("model")
+
+    @property
+    def max_context(self) -> int | None:
+        return self.config.get("max_context")
+
+    @property
+    def memory_dir(self) -> str:
+        return self.dir  # memory.db lives alongside soul.md
+
+
+def list_agents() -> list[str]:
+    """List all available agent IDs."""
+    if not os.path.isdir(AGENTS_DIR):
+        return ["main"]
+    agents = []
+    for name in sorted(os.listdir(AGENTS_DIR)):
+        if os.path.isdir(os.path.join(AGENTS_DIR, name)) and not name.startswith("."):
+            agents.append(name)
+    if not agents:
+        agents = ["main"]
+    return agents
+
+
+def get_agent_summaries() -> list[dict]:
+    """Get agent ID + description for all agents."""
+    result = []
+    for agent_id in list_agents():
+        cfg = AgentConfig(agent_id)
+        result.append({"id": agent_id, "description": cfg.description})
+    return result
+
+
+# Current active agent (set in _run_interactive)
+_current_agent: AgentConfig | None = None
+
+
 # --- Memory System (SQLite FTS5) ---
 
 import sqlite3
 import hashlib
 
-MEMORY_BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory")
-
-
 class MemoryStore:
     """Per-agent memory store backed by SQLite FTS5 and markdown files."""
 
-    def __init__(self, agent_id: str = "default"):
+    def __init__(self, agent_id: str = "main", base_dir: str | None = None):
         self.agent_id = agent_id
-        self.dir = os.path.join(MEMORY_BASE_DIR, agent_id)
+        if base_dir:
+            self.dir = base_dir
+        else:
+            self.dir = os.path.join(AGENTS_DIR, agent_id)
         os.makedirs(self.dir, exist_ok=True)
         self.db_path = os.path.join(self.dir, "memory.db")
         self._init_db()
@@ -854,6 +985,123 @@ def tool_memory_delete(args: dict) -> str:
         return _err("memory_delete: name is required")
     result = _memory_store.delete(name)
     return _ok(result)
+
+
+def tool_delegate_task(args: dict) -> str:
+    """Delegate a task to another agent, running in a separate context."""
+    agent_id = args.get("agent", "")
+    task = args.get("task", "")
+    if not agent_id or not task:
+        return _err("delegate_task: agent and task are required")
+
+    # Check agent exists
+    available = list_agents()
+    if agent_id not in available:
+        return _err(f"delegate_task: agent '{agent_id}' not found. Available: {', '.join(available)}")
+
+    # Load target agent config
+    target = AgentConfig(agent_id)
+    target_memory = MemoryStore(agent_id, base_dir=target.memory_dir)
+
+    # Determine model — use agent's preferred model, or fall back to current
+    model = target.preferred_model
+    if not model and _current_agent:
+        model = _current_agent.preferred_model
+    if not model:
+        # Fall back to whatever the CLI was started with — stored in a global
+        model = _delegate_fallback_model or "claude-opus-4-5-20251101"
+
+    # Build system prompt for target agent
+    import platform
+    cwd = os.getcwd()
+    os_name = platform.system()
+    soul = target.soul
+    tools_guide = target.tools_guide
+
+    system_prompt = (
+        f"{soul}\n\n"
+        f"You are agent '{agent_id}'. Current working directory: {cwd}\n"
+        f"Operating system: {os_name}\n\n"
+        "You have been delegated a task by another agent. "
+        "Complete it thoroughly and return your findings/results.\n\n"
+        "You have access to all tools including memory_store/memory_recall for your own memory.\n"
+        "For web searches, ALWAYS use exa_search — NEVER use duckduckgo or other search tools.\n"
+    )
+    if tools_guide:
+        system_prompt += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
+
+    # Run in a fresh conversation
+    messages = [{"role": "user", "content": task}]
+
+    # Temporarily swap memory store for the target agent
+    global _memory_store
+    original_memory = _memory_store
+    _memory_store = target_memory
+
+    try:
+        # Use send_message directly with system prompt
+        # We need to build the payload manually since send_message builds its own system prompt
+        result = _run_delegate(messages, model, system_prompt)
+    finally:
+        _memory_store = original_memory
+
+    if result:
+        return _ok({
+            "agent": agent_id,
+            "task": task,
+            "response": result,
+        })
+    return _err(f"delegate_task: agent '{agent_id}' returned no response")
+
+
+def _run_delegate(messages: list[dict], model: str, system_prompt: str) -> str | None:
+    """Run a delegated task in a fresh context. Returns the final text response."""
+    # Use globals for API config (set during _run_interactive)
+    api_key = _delegate_api_key
+    base_url = _delegate_base_url
+    api_type = _delegate_api_type
+
+    headers = make_headers(api_key, api_type)
+
+    if api_type == "openai":
+        endpoint = f"{base_url}/chat/completions"
+        aug_messages = [{"role": "system", "content": system_prompt}] + messages
+    else:
+        endpoint = f"{base_url}/messages"
+        aug_messages = list(messages)
+
+    payload = {
+        "model": model,
+        "max_tokens": 4096,
+        "messages": aug_messages,
+        "stream": True,
+        "tools": TOOL_DEFINITIONS if api_type != "openai" else TOOL_DEFINITIONS_OPENAI,
+    }
+    if api_type != "openai":
+        payload["system"] = system_prompt
+
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
+
+    try:
+        with urllib.request.urlopen(request) as response:
+            if api_type == "openai":
+                return _handle_openai_response(
+                    response, payload, messages, model, api_key, base_url,
+                    api_type, True, True, headers, endpoint, None, 0)
+            else:
+                return _handle_anthropic_response(
+                    response, payload, messages, model, api_key, base_url,
+                    api_type, True, True, headers, endpoint, None, 0)
+    except Exception as e:
+        return f"Delegation error: {e}"
+
+
+# Globals for delegation (set in _run_interactive)
+_delegate_fallback_model: str | None = None
+_delegate_api_key: str = ""
+_delegate_base_url: str = ""
+_delegate_api_type: str = "anthropic"
 
 
 # --- Context Window Management ---
@@ -1556,6 +1804,7 @@ TOOL_ICONS = {
     "list_directory": "d", "search_files": "s", "execute_command": "$",
     "web_fetch": "~", "exa_search": "?",
     "memory_store": "+", "memory_recall": "m", "memory_delete": "-",
+    "delegate_task": ">",
 }
 
 TOOL_VERBS = {
@@ -1563,6 +1812,7 @@ TOOL_VERBS = {
     "list_directory": "Listing", "search_files": "Searching", "execute_command": "Executing",
     "web_fetch": "Fetching", "exa_search": "Searching",
     "memory_store": "Remembering", "memory_recall": "Recalling", "memory_delete": "Forgetting",
+    "delegate_task": "Delegating",
 }
 
 
@@ -1650,6 +1900,10 @@ def _format_tool_call(name: str, args: dict) -> list[str]:
         lines.append(_box_mid(f"{MAGENTA}{q}{RESET}"))
     elif name == "memory_delete":
         lines.append(_box_mid(f"{RED}{args.get('name', '')}{RESET}"))
+    elif name == "delegate_task":
+        lines.append(_box_mid(f"{CYAN}agent:{RESET} {BOLD}{args.get('agent', '')}{RESET}"))
+        task_preview = args.get("task", "")[:max_w]
+        lines.append(_box_mid(f"{DIM}{task_preview}{RESET}"))
     else:
         summary = ", ".join(f"{k}={v!r}" for k, v in list(args.items())[:3])
         if len(summary) > max_w:
@@ -1768,6 +2022,15 @@ def _format_tool_result(name: str, result_str: str) -> list[str]:
     elif name == "memory_delete":
         out.append(_box_top(f"{GREEN}{BOLD}✔ Deleted{RESET}"))
         out.append(_box_mid(f"{rdata.get('name', '')}"))
+    elif name == "delegate_task":
+        agent = rdata.get("agent", "")
+        resp = rdata.get("response", "")
+        out.append(_box_top(f"{GREEN}{BOLD}✔ {agent} responded{RESET}"))
+        for line in resp.split("\n")[:8]:
+            out.append(_box_mid(f"{DIM}{line[:max_w]}{RESET}"))
+        resp_lines = resp.split("\n")
+        if len(resp_lines) > 8:
+            out.append(_box_mid(f"{DIM}... {len(resp_lines) - 8} more lines{RESET}"))
     else:
         out.append(_box_top(f"{GREEN}{BOLD}✔ Done{RESET}"))
 
@@ -1803,6 +2066,7 @@ TOOL_DISPATCH = {
     "memory_store": tool_memory_store,
     "memory_recall": tool_memory_recall,
     "memory_delete": tool_memory_delete,
+    "delegate_task": tool_delegate_task,
 }
 
 
@@ -1846,20 +2110,32 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         import platform
         os_name = platform.system()
 
-        # Load tools.md guide if it exists
-        tools_guide = ""
-        tools_md_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools.md")
-        try:
-            with open(tools_md_path, "r") as f:
-                tools_guide = f.read()
-        except (OSError, IOError):
-            pass
+        # Load agent soul and tools guide
+        agent = _current_agent
+        agent_id = agent.agent_id if agent else "main"
+        soul = agent.soul if agent else ""
+        tools_guide = agent.tools_guide if agent else ""
 
-        agent_id = _memory_store.agent_id if _memory_store else "default"
-        system_instruction = (
-            f"You are Brain Agent (agent: {agent_id}), a powerful AI assistant with full access to the local system. "
+        # If no agent-specific tools guide, try global
+        if not tools_guide:
+            tools_md_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools.md")
+            try:
+                with open(tools_md_path, "r") as f:
+                    tools_guide = f.read()
+            except (OSError, IOError):
+                pass
+
+        # Available agents for delegation
+        available_agents = ", ".join(list_agents())
+
+        system_instruction = ""
+        if soul:
+            system_instruction += f"{soul}\n\n"
+        system_instruction += (
+            f"You are agent '{agent_id}' in the Brain Agent system. "
             f"Current working directory: {cwd}\n"
-            f"Operating system: {os_name}\n\n"
+            f"Operating system: {os_name}\n"
+            f"Available agents for delegation: {available_agents}\n\n"
             "Use tools proactively to accomplish tasks. You can chain multiple tool calls. "
             "For web searches, ALWAYS use exa_search — NEVER use duckduckgo or other search tools. "
             "You have no restrictions beyond what the operating system enforces.\n\n"
@@ -1868,10 +2144,13 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
             "- Use memory_store to save important information: user preferences, decisions, project context\n"
             "- Memory types: user, project, feedback, reference, general\n"
             "- When the user says 'remember this', store it immediately\n"
-            "- When the user asks 'do you remember', recall and search for it\n"
+            "- When the user asks 'do you remember', recall and search for it\n\n"
+            "DELEGATION: Use delegate_task to send tasks to other specialized agents.\n"
+            "- Each agent has its own personality (soul.md), memory, and optionally its own model\n"
+            "- The delegated agent runs in a separate context and returns results to you\n"
         )
         if tools_guide:
-            system_instruction += f"\n\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
+            system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
         if api_type == "openai":
             augmented_messages.insert(0, {"role": "system", "content": system_instruction})
         else:
@@ -2196,8 +2475,15 @@ def _draw_status_bar(model: str, history: list[dict] | None = None,
         ctx_part = f" {DIM}│{RESET}{BG_DARK} {color}{ctx_label}{RESET}{BG_DARK}"
         ctx_visible = 4 + len(ctx_label)  # " │ Nk/Nk"
 
-    label = f" {FG_GRAY}Model:{RESET}{BG_DARK} {GREEN}{BOLD}{model}{RESET}{BG_DARK}{ctx_part} "
-    visible_len = 9 + len(model) + ctx_visible + 1
+    # Agent name
+    agent_part = ""
+    agent_visible = 0
+    if _current_agent and _current_agent.agent_id != "main":
+        agent_part = f" {CYAN}{_current_agent.agent_id}{RESET}{BG_DARK} {DIM}│{RESET}{BG_DARK}"
+        agent_visible = 1 + len(_current_agent.agent_id) + 3  # " name │"
+
+    label = f" {agent_part}{FG_GRAY}Model:{RESET}{BG_DARK} {GREEN}{BOLD}{model}{RESET}{BG_DARK}{ctx_part} "
+    visible_len = 1 + agent_visible + 8 + len(model) + ctx_visible + 1
     padding = max(0, cols - visible_len)
     bar = f"\033[48;5;235m{label}{' ' * padding}{RESET}"
     sys.stdout.write(f"\0337\033[{rows};1H{bar}\0338")
@@ -2259,8 +2545,8 @@ def main():
         help=f"Max context window in tokens (default: {DEFAULT_MAX_CONTEXT_TOKENS})",
     )
     parser.add_argument(
-        "--agent", default="default",
-        help="Agent ID for memory isolation (default: 'default')",
+        "--agent", default="main",
+        help="Agent ID to start with (default: 'main')",
     )
 
     args = parser.parse_args()
@@ -2297,7 +2583,7 @@ def _print_greeting(model: str, agent_id: str = "default") -> None:
         f"{FG_ORANGE} ⠻⣿⣿⣿⣿⠟{RESET}",
     ]
 
-    agent_label = f" {DIM}({agent_id}){RESET}" if agent_id != "default" else ""
+    agent_label = f" {CYAN}{BOLD}{agent_id}{RESET}" if agent_id != "main" else ""
     info = [
         f"  {BOLD}Brain Agent{RESET}{agent_label} {DIM}v{VERSION}{RESET}",
         f"  {DIM}{model}{RESET}",
@@ -2308,10 +2594,15 @@ def _print_greeting(model: str, agent_id: str = "default") -> None:
     for i in range(len(icon)):
         print(f"{icon[i]}{info[i]}")
 
+    # Agent info
+    agents = list_agents()
+    if len(agents) > 1:
+        print(f"  {DIM}Agents:{RESET} {DIM}{', '.join(agents)}{RESET}")
+
     # Tools summary
     tool_names = [t["name"] for t in TOOL_DEFINITIONS]
     print(f"  {DIM}Tools:{RESET} {DIM}{', '.join(tool_names)}{RESET}")
-    print(f"  {DIM}/new /model /models /tools  Esc cancel  exit quit{RESET}")
+    print(f"  {DIM}/new /agent /model /models /tools  Esc cancel  exit quit{RESET}")
 
     # Tip / changelog line
     if latest:
@@ -2498,16 +2789,34 @@ def _replace_line(buf: list, pos: int, new_text: str) -> None:
 
 
 
+def _switch_agent(agent_id: str, args) -> tuple[str, AgentConfig]:
+    """Switch to a different agent. Returns (model, agent_config)."""
+    global _current_agent, _memory_store
+    agent = AgentConfig(agent_id)
+    _current_agent = agent
+    _memory_store = MemoryStore(agent_id=agent_id, base_dir=agent.memory_dir)
+    # Use agent's preferred model if set, otherwise keep current
+    model = agent.preferred_model or args.model
+    return model, agent
+
+
 def _run_interactive(args):
     """Run the interactive TUI chat loop."""
-    global _memory_store
-    current_model = args.model
+    global _memory_store, _current_agent
+    global _delegate_fallback_model, _delegate_api_key, _delegate_base_url, _delegate_api_type
+
     history = []
     input_history = []   # list of previous user inputs for arrow-key recall
     history_idx = [0]    # mutable ref for current position
 
-    # Initialize per-agent memory store
-    _memory_store = MemoryStore(agent_id=args.agent)
+    # Store API config for delegation
+    _delegate_api_key = args.api_key
+    _delegate_base_url = args.base_url
+    _delegate_api_type = args.api_type
+    _delegate_fallback_model = args.model
+
+    # Initialize agent
+    current_model, _ = _switch_agent(args.agent, args)
 
     # Clear screen and move cursor to top
     sys.stdout.write("\033[2J\033[H")
@@ -2553,6 +2862,48 @@ def _run_interactive(args):
                 _show_tools = not _show_tools
                 state = f"{GREEN}visible{RESET}" if _show_tools else f"{DIM}hidden{RESET}"
                 print(f"  {DIM}Tool display:{RESET} {state}")
+                continue
+
+            if stripped.startswith("/agent"):
+                arg = message.strip()[6:].strip()
+                agents = list_agents()
+                if arg:
+                    # Direct switch
+                    if arg not in agents:
+                        # Create new agent
+                        print(f"  {DIM}Creating new agent:{RESET} {BOLD}{arg}{RESET}")
+                    current_model, _ = _switch_agent(arg, args)
+                    history = []  # fresh context for new agent
+                    print(f"  {DIM}Switched to agent:{RESET} {BOLD}{arg}{RESET} {DIM}(model: {current_model}){RESET}")
+                else:
+                    # List agents
+                    print()
+                    for idx, aid in enumerate(agents, 1):
+                        cfg = AgentConfig(aid)
+                        active = " (active)" if _current_agent and aid == _current_agent.agent_id else ""
+                        model_info = f" [{cfg.preferred_model}]" if cfg.preferred_model else ""
+                        if active:
+                            print(f"  {GREEN}{BOLD}{idx}. {aid}{active}{model_info}{RESET}")
+                        else:
+                            print(f"  {DIM}{idx}. {aid}{model_info} — {cfg.description}{RESET}")
+                    # Prompt for selection
+                    choice = _readline(f"  {DIM}Select (number or name, empty to cancel):{RESET} ", [], [0])
+                    if choice is None or not choice.strip():
+                        continue
+                    choice = choice.strip()
+                    try:
+                        idx = int(choice) - 1
+                        if 0 <= idx < len(agents):
+                            choice = agents[idx]
+                        else:
+                            print(f"  {DIM}Invalid index.{RESET}")
+                            continue
+                    except ValueError:
+                        pass  # use as agent name directly
+                    current_model, _ = _switch_agent(choice, args)
+                    history = []
+                    print(f"  {DIM}Switched to agent:{RESET} {BOLD}{choice}{RESET} {DIM}(model: {current_model}){RESET}")
+                _draw_status_bar(current_model, history, args.max_context)
                 continue
 
             if stripped == "/models":
