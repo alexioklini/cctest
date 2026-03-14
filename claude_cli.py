@@ -1841,8 +1841,14 @@ def _draw_status_bar(model: str, history: list[dict] | None = None,
             color = YELLOW
         else:
             color = FG_GRAY
-        ctx_part = f" {DIM}│{RESET}{BG_DARK} {color}{pct}%{RESET}{BG_DARK}"
-        ctx_visible = 5 + len(str(pct))  # " │ NN%"
+        # Show token count in k for readability
+        if est >= 1000:
+            tok_str = f"{est // 1000}k"
+        else:
+            tok_str = str(est)
+        ctx_label = f"{tok_str}/{max_tokens // 1000}k"
+        ctx_part = f" {DIM}│{RESET}{BG_DARK} {color}{ctx_label}{RESET}{BG_DARK}"
+        ctx_visible = 4 + len(ctx_label)  # " │ Nk/Nk"
 
     label = f" {FG_GRAY}Model:{RESET}{BG_DARK} {GREEN}{BOLD}{model}{RESET}{BG_DARK}{ctx_part} "
     visible_len = 9 + len(model) + ctx_visible + 1
