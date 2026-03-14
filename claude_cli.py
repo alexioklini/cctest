@@ -599,6 +599,9 @@ class EscapeWatcher:
                     if ch == b'\x1b':  # Escape key
                         self._cancelled.set()
                         break
+                    elif ch in (b'o', b'O'):
+                        # Toggle tool output visibility live
+                        _toggle_tool_output()
         except Exception:
             pass
         finally:
@@ -1097,22 +1100,50 @@ TOOL_VERBS = {
 _show_tools = True
 _tool_call_count = 0         # counter for current response
 _tool_output_buffer = []     # buffered output lines when hidden
+_tool_counter_active = False # whether we have a counter line on screen
+_tool_output_shown = False   # whether buffered output is currently displayed
 
 
 def _reset_tool_tracking() -> None:
     """Reset tool tracking for a new response."""
-    global _tool_call_count, _tool_output_buffer
+    global _tool_call_count, _tool_output_buffer, _tool_counter_active, _tool_output_shown
     _tool_call_count = 0
     _tool_output_buffer = []
+    _tool_counter_active = False
+    _tool_output_shown = False
 
 
 def _update_tool_counter() -> None:
     """In hidden mode, update the single-line tool counter in-place."""
-    cols = _term_cols()
+    global _tool_counter_active
     msg = f"  {DIM}Tools called: {RESET}{BOLD}{_tool_call_count}{RESET}{DIM}  (press o to show/hide){RESET}"
-    # Overwrite same line: \r moves to column 0, \033[K clears to end
-    sys.stdout.write(f"\r\033[K{msg}")
+    if _tool_counter_active:
+        # Move up to overwrite the previous counter line
+        sys.stdout.write(f"\033[A\r\033[K{msg}\n")
+    else:
+        sys.stdout.write(f"{msg}\n")
+        _tool_counter_active = True
     sys.stdout.flush()
+
+
+def _toggle_tool_output() -> None:
+    """Toggle display of buffered tool output (called from EscapeWatcher on 'o')."""
+    global _tool_output_shown
+    if not _tool_output_buffer:
+        return
+    if not _tool_output_shown:
+        # Show buffered output below the counter
+        for line in _tool_output_buffer:
+            sys.stdout.write(f"{line}\n")
+        sys.stdout.flush()
+        _tool_output_shown = True
+    else:
+        # Hide: move cursor up past the output and clear lines
+        line_count = len(_tool_output_buffer)
+        for _ in range(line_count):
+            sys.stdout.write(f"\033[A\r\033[K")
+        sys.stdout.flush()
+        _tool_output_shown = False
 
 
 def _format_tool_call(name: str, args: dict) -> list[str]:
@@ -1932,49 +1963,6 @@ def _replace_line(buf: list, pos: int, new_text: str) -> None:
     sys.stdout.flush()
 
 
-def _check_toggle_tools() -> None:
-    """Wait briefly for user to press 'o' to toggle tool output visibility."""
-    if not _tool_output_buffer:
-        return
-    fd = sys.stdin.fileno()
-    try:
-        old_settings = termios.tcgetattr(fd)
-    except termios.error:
-        return
-    shown = False
-    try:
-        new_settings = termios.tcgetattr(fd)
-        new_settings[3] = new_settings[3] & ~(termios.ICANON | termios.ECHO)
-        new_settings[6][termios.VMIN] = 0
-        new_settings[6][termios.VTIME] = 0
-        termios.tcsetattr(fd, termios.TCSANOW, new_settings)
-
-        # Wait up to 3 seconds for 'o' keypress
-        deadline = time.time() + 3.0
-        while time.time() < deadline:
-            if select.select([fd], [], [], 0.1)[0]:
-                ch = os.read(fd, 1)
-                if ch == b'o' or ch == b'O':
-                    if not shown:
-                        # Show buffered output
-                        print()
-                        for line in _tool_output_buffer:
-                            print(line)
-                        sys.stdout.flush()
-                        shown = True
-                    else:
-                        break
-                else:
-                    # Any other key — stop waiting
-                    break
-    except Exception:
-        pass
-    finally:
-        try:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        except termios.error:
-            pass
-
 
 def _run_interactive(args):
     """Run the interactive TUI chat loop."""
@@ -2153,15 +2141,6 @@ def _run_interactive(args):
                 print(f"\n{DIM}✻ {past} for {elapsed:.0f}s{RESET}")
             else:
                 print(f"\n{DIM}(no response){RESET}")
-
-            # If tools were hidden and tools were called, show toggle hint
-            if not _show_tools and _tool_call_count > 0:
-                # Clear the counter line and show final summary
-                sys.stdout.write(f"\r\033[K")
-                print(f"  {DIM}Tools called: {RESET}{BOLD}{_tool_call_count}{RESET}{DIM}  (press o to show/hide){RESET}")
-                sys.stdout.flush()
-                # Non-blocking check for 'o' key — wait briefly
-                _check_toggle_tools()
 
             # Restore status bar after response
             _draw_status_bar(current_model)
