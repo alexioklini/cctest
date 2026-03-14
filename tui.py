@@ -28,13 +28,13 @@ import claude_cli as backend
 
 THEME = Theme({
     "info": "dim",
-    "success": "green",
-    "warning": "yellow",
+    "success": "#5f87ff",
+    "warning": "#ff8700",
     "error": "red bold",
-    "tool.name": "cyan bold",
+    "tool.name": "#af87ff bold",
     "tool.verb": "#ff8700 bold",
-    "agent": "cyan bold",
-    "model": "green",
+    "agent": "#af87ff bold",
+    "model": "#5f87ff",
     "dim": "dim",
 })
 
@@ -75,7 +75,7 @@ def print_greeting(model: str, agent_id: str):
     console.print("  ", title)
     console.print()
 
-    console.print(f"  [dim]Model[/]  [green]{model}[/]")
+    console.print(f"  [dim]Model[/]  [#5f87ff]{model}[/]")
     console.print(f"  [dim]Path[/]   [dim]{os.getcwd()}[/]")
 
     agents = backend.list_agents()
@@ -158,21 +158,21 @@ def display_tool_result(name: str, result_str: str):
         sym, sty = ("✔", "success") if ec == 0 else ("✘", "error")
         console.print(f"  [{sty}]{sym} exit {ec}[/]")
     elif name == "exa_search":
-        console.print(f"  [success]✔ {rdata.get('result_count', 0)} results[/]")
+        console.print(f"  [#5f87ff]✔ {rdata.get('result_count', 0)} results[/]")
     elif name == "read_file":
-        console.print(f"  [success]✔ {rdata.get('total_lines', 0)} lines[/]")
+        console.print(f"  [#5f87ff]✔ {rdata.get('total_lines', 0)} lines[/]")
     elif name in ("write_file", "edit_file", "memory_store", "memory_delete"):
-        console.print(f"  [success]✔[/]")
+        console.print(f"  [#5f87ff]✔[/]")
     elif name in ("search_files", "list_directory"):
-        console.print(f"  [success]✔ {rdata.get('match_count', rdata.get('count', 0))}[/]")
+        console.print(f"  [#5f87ff]✔ {rdata.get('match_count', rdata.get('count', 0))}[/]")
     elif name in ("memory_recall", "memory_shared"):
-        console.print(f"  [success]✔ {rdata.get('count', 0)} memories[/]")
+        console.print(f"  [#5f87ff]✔ {rdata.get('count', 0)} memories[/]")
     elif name == "delegate_task":
-        console.print(f"  [success]✔ {rdata.get('agent', '')} responded[/]")
+        console.print(f"  [#5f87ff]✔ {rdata.get('agent', '')} responded[/]")
     elif name == "use_skill":
-        console.print(f"  [success]✔ loaded[/]")
+        console.print(f"  [#5f87ff]✔ loaded[/]")
     else:
-        console.print(f"  [success]✔[/]")
+        console.print(f"  [#5f87ff]✔[/]")
 
 
 # --- Help ---
@@ -180,7 +180,7 @@ def display_tool_result(name: str, result_str: str):
 def print_help():
     console.print()
     t = Table(show_header=False, box=None, padding=(0, 2), pad_edge=False)
-    t.add_column(style="green bold", min_width=12)
+    t.add_column(style="#ff8700 bold", min_width=12)
     t.add_column(style="dim")
     for cmd, desc in [
         ("/help", "Show this help"),
@@ -234,7 +234,7 @@ def select_inline(items: list[str], labels: list[str] | None = None,
         for i, label in enumerate(display):
             marker = "[cyan bold]❯[/]" if i == selected else " "
             style = "bold" if i == selected else "dim"
-            tag = " [green](active)[/]" if items[i] == active else ""
+            tag = " [#af87ff](active)[/]" if items[i] == active else ""
             console.print(f"  {marker} [{style}]{label}[/]{tag}")
 
     def erase():
@@ -380,14 +380,14 @@ def run_interactive(args):
         return parts
 
     pt_style = PTStyle.from_dict({
-        "prompt": "#00ff00 bold",
+        "prompt": "#ff8700 bold",
         "bottom-toolbar":              "bg:default #888888 noreverse",
         "bottom-toolbar.text":         "bg:default noreverse",
-        "tb.agent": "bg:default #00cccc bold noreverse",
+        "tb.agent": "bg:default #af87ff bold noreverse",
         "tb.label": "bg:default #666666 noreverse",
-        "tb.model": "bg:default #00cc66 noreverse",
+        "tb.model": "bg:default #5f87ff noreverse",
         "tb.sep":   "bg:default #444444 noreverse",
-        "tb.ctx":   "bg:default #00cc66 noreverse",
+        "tb.ctx":   "bg:default #ff8700 noreverse",
     })
 
     session = PromptSession(
@@ -443,7 +443,7 @@ def run_interactive(args):
             if low == "/tools":
                 global _show_tools
                 _show_tools = not _show_tools
-                s = "[green]visible[/]" if _show_tools else "[dim]hidden[/]"
+                s = "[#5f87ff]visible[/]" if _show_tools else "[dim]hidden[/]"
                 console.print(f"  [dim]Tool display:[/] {s}")
                 continue
 
@@ -586,7 +586,7 @@ def _handle_schedule(arg: str, session):
         t.add_column("Agent", style="cyan")
         t.add_column("Next", style="dim")
         for s in schedules:
-            st = "[green]active[/]" if s["enabled"] else "[dim]paused[/]"
+            st = "[#5f87ff]active[/]" if s["enabled"] else "[dim]paused[/]"
             nr = s.get("next_run", "")[:16] if s.get("next_run") else "—"
             t.add_row(s["name"], st, s["schedule"], s["agent"], nr)
         console.print(); console.print(t); console.print()
@@ -604,7 +604,7 @@ def _handle_schedule(arg: str, session):
         if r.get("error"):
             console.print(f"  [error]{r['error']}[/]")
         else:
-            console.print(f"  [success]✔ Created:[/] [bold]{name}[/]")
+            console.print(f"  [#5f87ff]✔ Created:[/] [bold]{name}[/]")
 
     elif arg.startswith("pause "):
         r = sched.pause(arg[6:].strip())
