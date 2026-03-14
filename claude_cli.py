@@ -1093,134 +1093,174 @@ TOOL_VERBS = {
 }
 
 
-# Global flag: whether to show tool call/result boxes
+# Tool display mode
 _show_tools = True
+_tool_call_count = 0         # counter for current response
+_tool_output_buffer = []     # buffered output lines when hidden
 
 
-def _display_tool_call(name: str, args: dict) -> None:
-    """Print a styled tool invocation box."""
-    if not _show_tools:
-        return
+def _reset_tool_tracking() -> None:
+    """Reset tool tracking for a new response."""
+    global _tool_call_count, _tool_output_buffer
+    _tool_call_count = 0
+    _tool_output_buffer = []
+
+
+def _update_tool_counter() -> None:
+    """In hidden mode, update the single-line tool counter in-place."""
+    cols = _term_cols()
+    msg = f"  {DIM}Tools called: {RESET}{BOLD}{_tool_call_count}{RESET}{DIM}  (press o to show/hide){RESET}"
+    # Overwrite same line: \r moves to column 0, \033[K clears to end
+    sys.stdout.write(f"\r\033[K{msg}")
+    sys.stdout.flush()
+
+
+def _format_tool_call(name: str, args: dict) -> list[str]:
+    """Format a tool call box as a list of lines."""
     icon = TOOL_ICONS.get(name, "⚡")
     verb = TOOL_VERBS.get(name, "Running")
     max_w = max(20, _term_cols() - 8)
 
-    print(f"\n{_box_top(f'{FG_ORANGE}{BOLD}{icon} {verb}{RESET}')}")
+    lines = []
+    lines.append(f"\n{_box_top(f'{FG_ORANGE}{BOLD}{icon} {verb}{RESET}')}")
 
-    # Show compact args summary
     if name == "exa_search":
-        print(_box_mid(f"{CYAN}{name}{RESET}({MAGENTA}query{RESET}={WHITE}\"{args.get('query', '')}\"{RESET})"))
+        lines.append(_box_mid(f"{CYAN}{name}{RESET}({MAGENTA}query{RESET}={WHITE}\"{args.get('query', '')}\"{RESET})"))
     elif name == "execute_command":
         cmd = args.get("command", "")
         if len(cmd) > max_w:
             cmd = cmd[:max_w - 3] + "..."
-        print(_box_mid(f"{YELLOW}$ {cmd}{RESET}"))
+        lines.append(_box_mid(f"{YELLOW}$ {cmd}{RESET}"))
     elif name in ("read_file", "write_file", "edit_file"):
-        print(_box_mid(f"{CYAN}{name}{RESET} {WHITE}{args.get('path', '')}{RESET}"))
+        lines.append(_box_mid(f"{CYAN}{name}{RESET} {WHITE}{args.get('path', '')}{RESET}"))
     elif name == "list_directory":
         p = args.get("path", ".")
         pat = args.get("pattern", "")
         label = f"{p}/{pat}" if pat else p
-        print(_box_mid(f"{CYAN}{name}{RESET} {WHITE}{label}{RESET}"))
+        lines.append(_box_mid(f"{CYAN}{name}{RESET} {WHITE}{label}{RESET}"))
     elif name == "search_files":
-        print(_box_mid(f"{CYAN}{name}{RESET} {MAGENTA}/{args.get('pattern', '')}/{RESET} in {WHITE}{args.get('path', '.')}{RESET}"))
+        lines.append(_box_mid(f"{CYAN}{name}{RESET} {MAGENTA}/{args.get('pattern', '')}/{RESET} in {WHITE}{args.get('path', '.')}{RESET}"))
     elif name == "web_fetch":
-        print(_box_mid(f"{CYAN}{args.get('method', 'GET')}{RESET} {WHITE}{args.get('url', '')}{RESET}"))
+        lines.append(_box_mid(f"{CYAN}{args.get('method', 'GET')}{RESET} {WHITE}{args.get('url', '')}{RESET}"))
     else:
         summary = ", ".join(f"{k}={v!r}" for k, v in list(args.items())[:3])
         if len(summary) > max_w:
             summary = summary[:max_w - 3] + "..."
-        print(_box_mid(f"{CYAN}{name}{RESET}({summary})"))
+        lines.append(_box_mid(f"{CYAN}{name}{RESET}({summary})"))
 
-    print(_box_bot())
-    sys.stdout.flush()
+    lines.append(_box_bot())
+    return lines
 
 
-def _display_tool_result(name: str, result_str: str) -> None:
-    """Print a styled tool result summary box."""
-    if not _show_tools:
-        return
+def _display_tool_call(name: str, args: dict) -> None:
+    """Print a styled tool invocation box, or buffer it in hidden mode."""
+    global _tool_call_count
+    _tool_call_count += 1
+    formatted = _format_tool_call(name, args)
+
+    if _show_tools:
+        for line in formatted:
+            print(line)
+        sys.stdout.flush()
+    else:
+        _tool_output_buffer.extend(formatted)
+        _update_tool_counter()
+
+
+def _format_tool_result(name: str, result_str: str) -> list[str]:
+    """Format a tool result summary box as a list of lines."""
     max_w = max(20, _term_cols() - 8)
     try:
         rdata = json.loads(result_str)
     except json.JSONDecodeError:
-        return
+        return []
+
+    out = []
 
     if rdata.get("error"):
-        print(_box_top(f"{RED}{BOLD}✘ Error{RESET}"))
-        err_msg = rdata["error"]
-        for line in err_msg.split("\n")[:5]:
-            print(_box_mid(line[:max_w]))
-        print(f"{_box_bot()}\n")
-        sys.stdout.flush()
-        return
+        out.append(_box_top(f"{RED}{BOLD}✘ Error{RESET}"))
+        for line in rdata["error"].split("\n")[:5]:
+            out.append(_box_mid(line[:max_w]))
+        out.append(f"{_box_bot()}\n")
+        return out
 
-    # Tool-specific result summaries
     if name == "exa_search":
         count = rdata.get("result_count", 0)
-        print(_box_top(f"{GREEN}{BOLD}✔ {count} results{RESET}"))
+        out.append(_box_top(f"{GREEN}{BOLD}✔ {count} results{RESET}"))
         for r in rdata.get("results", [])[:3]:
-            print(_box_mid(f"{BOLD}{r.get('title', '')[:max_w]}{RESET}"))
+            out.append(_box_mid(f"{BOLD}{r.get('title', '')[:max_w]}{RESET}"))
         if count > 3:
-            print(_box_mid(f"{DIM}... and {count - 3} more{RESET}"))
+            out.append(_box_mid(f"{DIM}... and {count - 3} more{RESET}"))
     elif name == "read_file":
         total = rdata.get("total_lines", 0)
         showing = rdata.get("showing", "")
-        print(_box_top(f"{GREEN}{BOLD}✔ {total} lines{RESET} {DIM}(showing {showing}){RESET}"))
+        out.append(_box_top(f"{GREEN}{BOLD}✔ {total} lines{RESET} {DIM}(showing {showing}){RESET}"))
         content = rdata.get("content", "")
         lines = content.split("\n")
         for line in lines[:5]:
-            print(_box_mid(f"{DIM}{line[:max_w]}{RESET}"))
+            out.append(_box_mid(f"{DIM}{line[:max_w]}{RESET}"))
         if len(lines) > 5:
-            print(_box_mid(f"{DIM}... {len(lines) - 5} more lines{RESET}"))
+            out.append(_box_mid(f"{DIM}... {len(lines) - 5} more lines{RESET}"))
     elif name == "write_file":
-        print(_box_top(f"{GREEN}{BOLD}✔ Written{RESET}"))
-        print(_box_mid(f"{rdata.get('path', '')} ({rdata.get('size', 0)} bytes)"))
+        out.append(_box_top(f"{GREEN}{BOLD}✔ Written{RESET}"))
+        out.append(_box_mid(f"{rdata.get('path', '')} ({rdata.get('size', 0)} bytes)"))
     elif name == "edit_file":
         n = rdata.get("replacements", 0)
-        print(_box_top(f"{GREEN}{BOLD}✔ {n} replacement{'s' if n != 1 else ''}{RESET}"))
-        print(_box_mid(f"{rdata.get('path', '')}"))
+        out.append(_box_top(f"{GREEN}{BOLD}✔ {n} replacement{'s' if n != 1 else ''}{RESET}"))
+        out.append(_box_mid(f"{rdata.get('path', '')}"))
     elif name == "list_directory":
         count = rdata.get("count", 0)
-        print(_box_top(f"{GREEN}{BOLD}✔ {count} entries{RESET}"))
+        out.append(_box_top(f"{GREEN}{BOLD}✔ {count} entries{RESET}"))
         for e in rdata.get("entries", [])[:8]:
             icon = "d" if e.get("type") == "directory" else " "
-            print(_box_mid(f"{icon} {e.get('name', '')}"))
+            out.append(_box_mid(f"{icon} {e.get('name', '')}"))
         if count > 8:
-            print(_box_mid(f"{DIM}... and {count - 8} more{RESET}"))
+            out.append(_box_mid(f"{DIM}... and {count - 8} more{RESET}"))
     elif name == "search_files":
         mc = rdata.get("match_count", 0)
         fs = rdata.get("files_searched", 0)
-        print(_box_top(f"{GREEN}{BOLD}✔ {mc} matches{RESET} {DIM}({fs} files searched){RESET}"))
+        out.append(_box_top(f"{GREEN}{BOLD}✔ {mc} matches{RESET} {DIM}({fs} files searched){RESET}"))
         for m in rdata.get("matches", [])[:5]:
-            print(_box_mid(f"{CYAN}{m.get('file', '')}:{m.get('line', '')}{RESET} {m.get('text', '')[:max_w]}"))
+            out.append(_box_mid(f"{CYAN}{m.get('file', '')}:{m.get('line', '')}{RESET} {m.get('text', '')[:max_w]}"))
         if mc > 5:
-            print(_box_mid(f"{DIM}... and {mc - 5} more{RESET}"))
+            out.append(_box_mid(f"{DIM}... and {mc - 5} more{RESET}"))
     elif name == "execute_command":
         ec = rdata.get("exit_code", -1)
         label = f"{GREEN}{BOLD}✔ exit {ec}{RESET}" if ec == 0 else f"{RED}{BOLD}✘ exit {ec}{RESET}"
-        print(_box_top(label))
+        out.append(_box_top(label))
         output = rdata.get("output", "")
         lines = output.split("\n")
         for line in lines[:10]:
-            print(_box_mid(f"{DIM}{line[:max_w]}{RESET}"))
+            out.append(_box_mid(f"{DIM}{line[:max_w]}{RESET}"))
         if len(lines) > 10:
-            print(_box_mid(f"{DIM}... {len(lines) - 10} more lines{RESET}"))
+            out.append(_box_mid(f"{DIM}... {len(lines) - 10} more lines{RESET}"))
     elif name == "web_fetch":
         status = rdata.get("status", "")
         length = rdata.get("length", 0)
-        print(_box_top(f"{GREEN}{BOLD}✔ HTTP {status}{RESET} {DIM}({length} chars){RESET}"))
+        out.append(_box_top(f"{GREEN}{BOLD}✔ HTTP {status}{RESET} {DIM}({length} chars){RESET}"))
         content = rdata.get("content", "")
         lines = content.split("\n")
         for line in lines[:5]:
-            print(_box_mid(f"{DIM}{line[:max_w]}{RESET}"))
+            out.append(_box_mid(f"{DIM}{line[:max_w]}{RESET}"))
         if len(lines) > 5:
-            print(_box_mid(f"{DIM}... {len(lines) - 5} more lines{RESET}"))
+            out.append(_box_mid(f"{DIM}... {len(lines) - 5} more lines{RESET}"))
     else:
-        print(_box_top(f"{GREEN}{BOLD}✔ Done{RESET}"))
+        out.append(_box_top(f"{GREEN}{BOLD}✔ Done{RESET}"))
 
-    print(f"{_box_bot()}\n")
-    sys.stdout.flush()
+    out.append(f"{_box_bot()}\n")
+    return out
+
+
+def _display_tool_result(name: str, result_str: str) -> None:
+    """Print a styled tool result summary box, or buffer it in hidden mode."""
+    formatted = _format_tool_result(name, result_str)
+    if _show_tools:
+        for line in formatted:
+            print(line)
+        sys.stdout.flush()
+    else:
+        _tool_output_buffer.extend(formatted)
+        _update_tool_counter()
 
 
 TOOL_DISPATCH = {
@@ -1892,6 +1932,50 @@ def _replace_line(buf: list, pos: int, new_text: str) -> None:
     sys.stdout.flush()
 
 
+def _check_toggle_tools() -> None:
+    """Wait briefly for user to press 'o' to toggle tool output visibility."""
+    if not _tool_output_buffer:
+        return
+    fd = sys.stdin.fileno()
+    try:
+        old_settings = termios.tcgetattr(fd)
+    except termios.error:
+        return
+    shown = False
+    try:
+        new_settings = termios.tcgetattr(fd)
+        new_settings[3] = new_settings[3] & ~(termios.ICANON | termios.ECHO)
+        new_settings[6][termios.VMIN] = 0
+        new_settings[6][termios.VTIME] = 0
+        termios.tcsetattr(fd, termios.TCSANOW, new_settings)
+
+        # Wait up to 3 seconds for 'o' keypress
+        deadline = time.time() + 3.0
+        while time.time() < deadline:
+            if select.select([fd], [], [], 0.1)[0]:
+                ch = os.read(fd, 1)
+                if ch == b'o' or ch == b'O':
+                    if not shown:
+                        # Show buffered output
+                        print()
+                        for line in _tool_output_buffer:
+                            print(line)
+                        sys.stdout.flush()
+                        shown = True
+                    else:
+                        break
+                else:
+                    # Any other key — stop waiting
+                    break
+    except Exception:
+        pass
+    finally:
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        except termios.error:
+            pass
+
+
 def _run_interactive(args):
     """Run the interactive TUI chat loop."""
     current_model = args.model
@@ -2006,6 +2090,7 @@ def _run_interactive(args):
 
             # Send message
             history.append({"role": "user", "content": message})
+            _reset_tool_tracking()
 
             # Start spinner and escape watcher
             spinner = Spinner(current_model)
@@ -2068,6 +2153,15 @@ def _run_interactive(args):
                 print(f"\n{DIM}✻ {past} for {elapsed:.0f}s{RESET}")
             else:
                 print(f"\n{DIM}(no response){RESET}")
+
+            # If tools were hidden and tools were called, show toggle hint
+            if not _show_tools and _tool_call_count > 0:
+                # Clear the counter line and show final summary
+                sys.stdout.write(f"\r\033[K")
+                print(f"  {DIM}Tools called: {RESET}{BOLD}{_tool_call_count}{RESET}{DIM}  (press o to show/hide){RESET}")
+                sys.stdout.flush()
+                # Non-blocking check for 'o' key — wait briefly
+                _check_toggle_tools()
 
             # Restore status bar after response
             _draw_status_bar(current_model)
