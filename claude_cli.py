@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 VERSION_DATE = "2026-03-14"
 CHANGELOG = [
+    ("0.9.0", "2026-03-14", "Skills system: on-demand SKILL.md loading, per-agent + global"),
     ("0.8.0", "2026-03-14", "Multi-agent system with soul.md, delegation, /agent switching"),
     ("0.7.0", "2026-03-14", "Persistent memory system with SQLite FTS5, per-agent isolation"),
     ("0.6.0", "2026-03-14", "Context window management with auto-compaction at 75%"),
@@ -269,6 +270,21 @@ TOOL_DEFINITIONS = [
                 "task": {"type": "string", "description": "Task description for the target agent"},
             },
             "required": ["agent", "task"],
+        },
+    },
+    {
+        "name": "use_skill",
+        "description": (
+            "Load a skill's instructions into context. Skills provide specialized knowledge "
+            "for specific tasks (e.g. github, docker, swift). Call this BEFORE performing a task "
+            "that matches a skill. The skill's instructions will be returned as text — follow them."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "skill": {"type": "string", "description": "Name of the skill to load"},
+            },
+            "required": ["skill"],
         },
     },
 ]
@@ -717,6 +733,83 @@ Adapt your behavior to the tasks you are given.
     def memory_dir(self) -> str:
         return self.dir  # memory.db lives alongside soul.md
 
+    @property
+    def skills_dir(self) -> str:
+        return os.path.join(self.dir, "skills")
+
+    def list_skills(self) -> list[dict]:
+        """List all skills for this agent (own + main's global skills)."""
+        skills = {}
+        # Load main's skills first (global)
+        if self.agent_id != "main":
+            main_skills_dir = os.path.join(AGENTS_DIR, "main", "skills")
+            skills.update(self._scan_skills(main_skills_dir, source="main"))
+        # Load own skills (override globals if same name)
+        skills.update(self._scan_skills(self.skills_dir, source=self.agent_id))
+        return list(skills.values())
+
+    def _scan_skills(self, skills_dir: str, source: str) -> dict[str, dict]:
+        """Scan a skills directory and return {name: skill_info}."""
+        result = {}
+        if not os.path.isdir(skills_dir):
+            return result
+        for name in sorted(os.listdir(skills_dir)):
+            skill_dir = os.path.join(skills_dir, name)
+            skill_file = os.path.join(skill_dir, "SKILL.md")
+            if not os.path.isfile(skill_file):
+                continue
+            try:
+                with open(skill_file, "r") as f:
+                    raw = f.read()
+                # Parse YAML frontmatter
+                fm_match = re.match(r'^---\s*\n(.*?)\n---\s*\n(.*)$', raw, re.DOTALL)
+                if fm_match:
+                    fm_text, body = fm_match.groups()
+                    fm = {}
+                    for line in fm_text.split("\n"):
+                        if ":" in line:
+                            k, v = line.split(":", 1)
+                            fm[k.strip()] = v.strip().strip('"').strip("'")
+                    result[name] = {
+                        "name": fm.get("name", name),
+                        "description": fm.get("description", ""),
+                        "source": source,
+                        "path": skill_file,
+                    }
+                else:
+                    result[name] = {
+                        "name": name,
+                        "description": "",
+                        "source": source,
+                        "path": skill_file,
+                    }
+            except OSError:
+                continue
+        return result
+
+    def load_skill(self, skill_name: str) -> str | None:
+        """Load the full SKILL.md body for a specific skill."""
+        # Check own skills first
+        own_path = os.path.join(self.skills_dir, skill_name, "SKILL.md")
+        if os.path.isfile(own_path):
+            return self._read_skill_body(own_path)
+        # Fall back to main's skills
+        if self.agent_id != "main":
+            main_path = os.path.join(AGENTS_DIR, "main", "skills", skill_name, "SKILL.md")
+            if os.path.isfile(main_path):
+                return self._read_skill_body(main_path)
+        return None
+
+    @staticmethod
+    def _read_skill_body(path: str) -> str:
+        """Read a SKILL.md and return just the body (after frontmatter)."""
+        with open(path, "r") as f:
+            raw = f.read()
+        fm_match = re.match(r'^---\s*\n.*?\n---\s*\n(.*)$', raw, re.DOTALL)
+        if fm_match:
+            return fm_match.group(1).strip()
+        return raw.strip()
+
 
 def list_agents() -> list[str]:
     """List all available agent IDs."""
@@ -1071,6 +1164,22 @@ def tool_memory_shared(args: dict) -> str:
                 if r.get("content") and len(r["content"]) > 1000:
                     r["content"] = r["content"][:1000] + "..."
         return _ok({"query": query, "source": "main (shared)", "results": results, "count": len(results)})
+
+
+def tool_use_skill(args: dict) -> str:
+    """Load a skill's instructions into context."""
+    skill_name = args.get("skill", "")
+    if not skill_name:
+        return _err("use_skill: skill name is required")
+    if not _current_agent:
+        return _err("use_skill: no active agent")
+
+    body = _current_agent.load_skill(skill_name)
+    if body is None:
+        available = [s["name"] for s in _current_agent.list_skills()]
+        return _err(f"use_skill: skill '{skill_name}' not found. Available: {', '.join(available) or 'none'}")
+
+    return _ok({"skill": skill_name, "instructions": body})
 
 
 def tool_delegate_task(args: dict) -> str:
@@ -1890,7 +1999,7 @@ TOOL_ICONS = {
     "list_directory": "d", "search_files": "s", "execute_command": "$",
     "web_fetch": "~", "exa_search": "?",
     "memory_store": "+", "memory_recall": "m", "memory_delete": "-", "memory_shared": "M",
-    "delegate_task": ">",
+    "delegate_task": ">", "use_skill": "*",
 }
 
 TOOL_VERBS = {
@@ -1898,7 +2007,7 @@ TOOL_VERBS = {
     "list_directory": "Listing", "search_files": "Searching", "execute_command": "Executing",
     "web_fetch": "Fetching", "exa_search": "Searching",
     "memory_store": "Remembering", "memory_recall": "Recalling", "memory_delete": "Forgetting", "memory_shared": "Shared Memory",
-    "delegate_task": "Delegating",
+    "delegate_task": "Delegating", "use_skill": "Loading Skill",
 }
 
 
@@ -1997,6 +2106,8 @@ def _format_tool_call(name: str, args: dict) -> list[str]:
         lines.append(_box_mid(f"{CYAN}agent:{RESET} {BOLD}{args.get('agent', '')}{RESET}"))
         task_preview = args.get("task", "")[:max_w]
         lines.append(_box_mid(f"{DIM}{task_preview}{RESET}"))
+    elif name == "use_skill":
+        lines.append(_box_mid(f"{MAGENTA}{args.get('skill', '')}{RESET}"))
     else:
         summary = ", ".join(f"{k}={v!r}" for k, v in list(args.items())[:3])
         if len(summary) > max_w:
@@ -2136,6 +2247,11 @@ def _format_tool_result(name: str, result_str: str) -> list[str]:
         resp_lines = resp.split("\n")
         if len(resp_lines) > 8:
             out.append(_box_mid(f"{DIM}... {len(resp_lines) - 8} more lines{RESET}"))
+    elif name == "use_skill":
+        skill = rdata.get("skill", "")
+        instructions = rdata.get("instructions", "")
+        line_count = len(instructions.split("\n"))
+        out.append(_box_top(f"{GREEN}{BOLD}✔ {skill}{RESET} {DIM}({line_count} lines loaded){RESET}"))
     else:
         out.append(_box_top(f"{GREEN}{BOLD}✔ Done{RESET}"))
 
@@ -2173,6 +2289,7 @@ TOOL_DISPATCH = {
     "memory_delete": tool_memory_delete,
     "memory_shared": tool_memory_shared,
     "delegate_task": tool_delegate_task,
+    "use_skill": tool_use_skill,
 }
 
 
@@ -2257,6 +2374,17 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         )
         if agent_registry:
             system_instruction += f"\n{agent_registry}\n\n"
+
+        # Build skills registry (names + descriptions only, load on demand)
+        if _current_agent:
+            skills = _current_agent.list_skills()
+            if skills:
+                system_instruction += "\nSKILLS AVAILABLE — call use_skill(skill=\"name\") to load instructions before performing the task:\n"
+                for s in skills:
+                    source_tag = f" (from {s['source']})" if s['source'] != agent_id else ""
+                    system_instruction += f"  - {s['name']}: {s['description']}{source_tag}\n"
+                system_instruction += "\n"
+
         if tools_guide:
             system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
         if api_type == "openai":
