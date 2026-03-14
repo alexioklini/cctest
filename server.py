@@ -108,8 +108,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
     """HTTP request handler for Brain Agent API."""
 
     def log_message(self, format, *args):
-        """Suppress default logging."""
-        pass
+        """Log requests to stdout."""
+        import datetime as _dt
+        ts = _dt.datetime.now().strftime("%H:%M:%S")
+        print(f"  {ts} {self.command} {self.path}", flush=True)
 
     def _send_json(self, data: dict, status: int = 200):
         body = json.dumps(data).encode("utf-8")
@@ -331,6 +333,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 session.messages.pop()  # remove user message
                 event_queue.put(("error", {"message": "Cancelled"}))
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 event_queue.put(("error", {"message": str(e)}))
             finally:
                 engine._current_agent = old_agent

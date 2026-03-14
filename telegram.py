@@ -104,7 +104,9 @@ class ChatManager:
             state = self.chat_state.get(chat_id, {})
             agent = state.get("agent", self.default_agent)
             model = state.get("model", self.default_model)
-            sid = self.client.create_session(agent=agent, model=model)
+            # Use a temporary client for session creation
+            tmp = BrainAgentClient(self.client.server_url)
+            sid = tmp.create_session(agent=agent, model=model)
             self.sessions[chat_id] = sid
             self.chat_state.setdefault(chat_id, {"agent": agent, "model": model})
         return self.sessions[chat_id]
@@ -112,8 +114,9 @@ class ChatManager:
     def reset_session(self, chat_id: int):
         if chat_id in self.sessions:
             old_sid = self.sessions.pop(chat_id)
-            self.client.session_id = old_sid
-            self.client.delete_session()
+            tmp = BrainAgentClient(self.client.server_url)
+            tmp.session_id = old_sid
+            tmp.delete_session()
 
     def switch_agent(self, chat_id: int, agent: str) -> dict:
         self.reset_session(chat_id)
@@ -235,9 +238,10 @@ def handle_command(bot: TelegramBot, manager: ChatManager,
 def handle_message(bot: TelegramBot, manager: ChatManager,
                    chat_id: int, text: str):
     """Handle a regular chat message."""
-    # Ensure session exists
-    manager.get_session(chat_id)
-    manager.client.session_id = manager.sessions[chat_id]
+    # Each chat gets its own client to avoid session_id conflicts
+    sid = manager.get_session(chat_id)
+    chat_client = BrainAgentClient(manager.client.server_url)
+    chat_client.session_id = sid
 
     # Send typing indicator
     bot.send_action(chat_id)
@@ -248,17 +252,17 @@ def handle_message(bot: TelegramBot, manager: ChatManager,
     error_msg = ""
 
     try:
-        for event_type, data in manager.client.chat(text):
+        for event_type, data in chat_client.chat(text):
             if event_type == "tool_call":
                 tool_count += 1
-                # Keep sending typing indicator
                 bot.send_action(chat_id)
             elif event_type == "done":
                 full_text = data.get("text", "")
             elif event_type == "error":
                 error_msg = data.get("message", "Unknown error")
     except Exception as e:
-        error_msg = str(e)
+        error_msg = f"{type(e).__name__}: {e}"
+        print(f"  Error for chat {chat_id}: {error_msg}")
 
     if error_msg:
         bot.send_message(chat_id, f"⚠️ {error_msg}")
