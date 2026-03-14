@@ -323,6 +323,16 @@ def run_bot(args):
         print(f"Invalid bot token: {e}")
         sys.exit(1)
 
+    # Skip old messages from before this startup
+    try:
+        old = bot._call("getUpdates", {"offset": 0, "timeout": 0})
+        old_updates = old.get("result", [])
+        if old_updates:
+            bot.offset = old_updates[-1]["update_id"] + 1
+            print(f"Skipped {len(old_updates)} old message(s)")
+    except Exception:
+        pass
+
     print("Listening for messages... (Ctrl+C to stop)\n")
 
     try:
