@@ -4,7 +4,7 @@
 VERSION = "1.0.0"
 VERSION_DATE = "2026-03-14"
 CHANGELOG = [
-    ("1.0.0", "2026-03-14", "Task scheduler: timed/recurring execution, /schedule TUI, history"),
+    ("1.0.0", "2026-03-14", "Background threads per agent, async delegation, task status/cancel"),
     ("0.9.0", "2026-03-14", "Skills system: on-demand SKILL.md loading, per-agent + global"),
     ("0.8.0", "2026-03-14", "Multi-agent system with soul.md, delegation, /agent switching"),
     ("0.7.0", "2026-03-14", "Persistent memory system with SQLite FTS5, per-agent isolation"),
@@ -260,17 +260,44 @@ TOOL_DEFINITIONS = [
     {
         "name": "delegate_task",
         "description": (
-            "Delegate a task to another agent. The target agent runs in its own context "
-            "with its own soul.md, tools, and memory. Returns the agent's final response. "
-            "Use this when a task is better suited to a specialized agent."
+            "Delegate a task to another agent. Runs in a background thread with its own context. "
+            "By default waits for result (wait=true). Set wait=false for async execution, "
+            "then use task_status to poll for completion."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "agent": {"type": "string", "description": "Target agent ID (e.g. 'research', 'health')"},
                 "task": {"type": "string", "description": "Task description for the target agent"},
+                "wait": {"type": "boolean", "description": "Wait for result (default: true). Set false for async."},
+                "model": {"type": "string", "description": "Override model for this task (optional)"},
             },
             "required": ["agent", "task"],
+        },
+    },
+    {
+        "name": "task_status",
+        "description": (
+            "Check status of background tasks. Call with task_id to check a specific task, "
+            "or without to list all tasks. Returns status (running/completed/cancelled/error) and result."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID to check (optional, lists all if empty)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "task_cancel",
+        "description": "Cancel a running background task.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID to cancel"},
+            },
+            "required": ["task_id"],
         },
     },
     {
@@ -1210,63 +1237,6 @@ def tool_use_skill(args: dict) -> str:
     return _ok({"skill": skill_name, "instructions": body})
 
 
-def tool_delegate_task(args: dict) -> str:
-    """Delegate a task to another agent, running in a separate context."""
-    agent_id = args.get("agent", "")
-    task = args.get("task", "")
-    if not agent_id or not task:
-        return _err("delegate_task: agent and task are required")
-
-    # Check agent exists
-    available = list_agents()
-    if agent_id not in available:
-        return _err(f"delegate_task: agent '{agent_id}' not found. Available: {', '.join(available)}")
-
-    # Load target agent config
-    target = AgentConfig(agent_id)
-    target_memory = MemoryStore(agent_id, base_dir=target.memory_dir)
-
-    # Determine model — use agent's preferred model, or fall back to current
-    model = target.preferred_model
-    if not model and _current_agent:
-        model = _current_agent.preferred_model
-    if not model:
-        # Fall back to whatever the CLI was started with — stored in a global
-        model = _delegate_fallback_model or "claude-opus-4-5-20251101"
-
-    # Build system prompt for target agent
-    import platform
-    cwd = os.getcwd()
-    os_name = platform.system()
-    soul = target.soul
-    tools_guide = target.tools_guide
-
-    system_prompt = (
-        f"{soul}\n\n"
-        f"You are agent '{agent_id}'. Current working directory: {cwd}\n"
-        f"Operating system: {os_name}\n\n"
-        "You have been delegated a task by another agent. "
-        "Complete it thoroughly and return your findings/results.\n\n"
-        "You have access to all tools including memory_store/memory_recall for your own memory.\n"
-        "For web searches, ALWAYS use exa_search — NEVER use duckduckgo or other search tools.\n"
-    )
-    if tools_guide:
-        system_prompt += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
-
-    # Run in a fresh conversation
-    messages = [{"role": "user", "content": task}]
-
-    # Run with isolated memory — no global swap (thread-safe)
-    result = _run_delegate(messages, model, system_prompt, memory_store=target_memory)
-
-    if result:
-        return _ok({
-            "agent": agent_id,
-            "task": task,
-            "response": result,
-        })
-    return _err(f"delegate_task: agent '{agent_id}' returned no response")
-
 
 _thread_local = threading.local()
 
@@ -1324,6 +1294,201 @@ _delegate_fallback_model: str | None = None
 _delegate_api_key: str = ""
 _delegate_base_url: str = ""
 _delegate_api_type: str = "anthropic"
+
+
+# --- Background Task Runner ---
+
+import uuid as _uuid
+
+
+class TaskRunner:
+    """Manages background agent tasks with status tracking and cancellation."""
+
+    def __init__(self):
+        self._tasks: dict[str, dict] = {}  # task_id -> task_info
+        self._threads: dict[str, threading.Thread] = {}
+        self._cancel_flags: dict[str, threading.Event] = {}
+        self._lock = threading.Lock()
+
+    def submit(self, agent_id: str, task: str, model: str | None = None) -> str:
+        """Submit a task to run in a background thread. Returns task_id."""
+        task_id = _uuid.uuid4().hex[:8]
+        cancel_flag = threading.Event()
+
+        with self._lock:
+            self._tasks[task_id] = {
+                "id": task_id,
+                "agent": agent_id,
+                "task": task,
+                "model": model,
+                "status": "running",
+                "result": None,
+                "error": None,
+                "submitted_at": datetime.datetime.now().isoformat(),
+                "finished_at": None,
+            }
+            self._cancel_flags[task_id] = cancel_flag
+
+        thread = threading.Thread(
+            target=self._run_task, args=(task_id, agent_id, task, model, cancel_flag),
+            daemon=True)
+        self._threads[task_id] = thread
+        thread.start()
+        return task_id
+
+    def get_status(self, task_id: str) -> dict | None:
+        with self._lock:
+            return self._tasks.get(task_id, {}).copy() if task_id in self._tasks else None
+
+    def list_tasks(self) -> list[dict]:
+        with self._lock:
+            return [t.copy() for t in self._tasks.values()]
+
+    def cancel(self, task_id: str) -> bool:
+        with self._lock:
+            if task_id not in self._tasks:
+                return False
+            if self._tasks[task_id]["status"] != "running":
+                return False
+            self._cancel_flags[task_id].set()
+            self._tasks[task_id]["status"] = "cancelled"
+            self._tasks[task_id]["finished_at"] = datetime.datetime.now().isoformat()
+            return True
+
+    def get_result(self, task_id: str) -> dict | None:
+        """Get result, blocking until complete if still running. Timeout 0.1s poll."""
+        if task_id not in self._threads:
+            return self.get_status(task_id)
+        # Wait for thread to finish (with timeout so we don't block forever)
+        self._threads[task_id].join(timeout=300)
+        return self.get_status(task_id)
+
+    def _run_task(self, task_id: str, agent_id: str, task: str,
+                  model: str | None, cancel_flag: threading.Event):
+        """Execute a task in a background thread."""
+        target = AgentConfig(agent_id)
+        target_memory = MemoryStore(agent_id, base_dir=target.memory_dir)
+
+        if not model:
+            model = target.preferred_model or _delegate_fallback_model or "claude-opus-4-5-20251101"
+
+        import platform
+        cwd = os.getcwd()
+        os_name = platform.system()
+        soul = target.soul
+        tools_guide = target.tools_guide
+
+        system_prompt = (
+            f"{soul}\n\n"
+            f"You are agent '{agent_id}' running a background task.\n"
+            f"Current working directory: {cwd}\n"
+            f"Operating system: {os_name}\n\n"
+            "Complete the task and provide a concise result summary.\n"
+        )
+        if tools_guide:
+            system_prompt += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
+
+        messages = [{"role": "user", "content": task}]
+
+        result_text = ""
+        status = "completed"
+        try:
+            if cancel_flag.is_set():
+                status = "cancelled"
+            else:
+                result_text = _run_delegate(messages, model, system_prompt,
+                                            memory_store=target_memory) or ""
+                if cancel_flag.is_set():
+                    status = "cancelled"
+        except Exception as e:
+            result_text = str(e)
+            status = "error"
+
+        with self._lock:
+            self._tasks[task_id]["status"] = status
+            self._tasks[task_id]["result"] = result_text
+            self._tasks[task_id]["finished_at"] = datetime.datetime.now().isoformat()
+            if status == "error":
+                self._tasks[task_id]["error"] = result_text
+
+
+# Global task runner
+_task_runner: TaskRunner | None = None
+
+
+def tool_delegate_task(args: dict) -> str:
+    """Delegate a task to another agent — runs in a background thread."""
+    agent_id = args.get("agent", "")
+    task = args.get("task", "")
+    wait = args.get("wait", True)
+    if not agent_id or not task:
+        return _err("delegate_task: agent and task are required")
+
+    available = list_agents()
+    if agent_id not in available:
+        return _err(f"delegate_task: agent '{agent_id}' not found. Available: {', '.join(available)}")
+
+    if not _task_runner:
+        return _err("Task runner not initialized")
+
+    task_id = _task_runner.submit(agent_id, task, args.get("model"))
+
+    if wait:
+        # Synchronous: wait for result
+        result = _task_runner.get_result(task_id)
+        if result and result.get("status") == "completed":
+            return _ok({
+                "task_id": task_id,
+                "agent": agent_id,
+                "task": task,
+                "response": result.get("result", ""),
+            })
+        elif result:
+            return _err(f"delegate_task: {result.get('status')} — {result.get('error', '')}")
+        return _err("delegate_task: no result")
+    else:
+        # Async: return task_id immediately
+        return _ok({
+            "task_id": task_id,
+            "agent": agent_id,
+            "task": task,
+            "status": "running",
+            "message": f"Task submitted. Use task_status(task_id='{task_id}') to check progress.",
+        })
+
+
+def tool_task_status(args: dict) -> str:
+    """Check status of a background task."""
+    if not _task_runner:
+        return _err("Task runner not initialized")
+    task_id = args.get("task_id", "")
+    if task_id:
+        status = _task_runner.get_status(task_id)
+        if not status:
+            return _err(f"Task '{task_id}' not found")
+        # Truncate long results
+        if status.get("result") and len(status["result"]) > 2000:
+            status["result"] = status["result"][:2000] + "..."
+        return _ok(status)
+    else:
+        # List all tasks
+        tasks = _task_runner.list_tasks()
+        for t in tasks:
+            if t.get("result") and len(t["result"]) > 200:
+                t["result"] = t["result"][:200] + "..."
+        return _ok({"tasks": tasks, "count": len(tasks)})
+
+
+def tool_task_cancel(args: dict) -> str:
+    """Cancel a running background task."""
+    if not _task_runner:
+        return _err("Task runner not initialized")
+    task_id = args.get("task_id", "")
+    if not task_id:
+        return _err("task_cancel: task_id is required")
+    if _task_runner.cancel(task_id):
+        return _ok({"task_id": task_id, "status": "cancelled"})
+    return _err(f"Cannot cancel task '{task_id}' — not found or not running")
 
 
 # --- Scheduler ---
@@ -2344,6 +2509,7 @@ TOOL_ICONS = {
     "web_fetch": "~", "exa_search": "?",
     "memory_store": "+", "memory_recall": "m", "memory_delete": "-", "memory_shared": "M",
     "delegate_task": ">", "use_skill": "*",
+    "task_status": "?", "task_cancel": "x",
     "schedule_list": "t", "schedule_history": "h",
 }
 
@@ -2353,6 +2519,7 @@ TOOL_VERBS = {
     "web_fetch": "Fetching", "exa_search": "Searching",
     "memory_store": "Remembering", "memory_recall": "Recalling", "memory_delete": "Forgetting", "memory_shared": "Shared Memory",
     "delegate_task": "Delegating", "use_skill": "Loading Skill",
+    "task_status": "Task Status", "task_cancel": "Cancelling",
     "schedule_list": "Schedules", "schedule_history": "History",
 }
 
@@ -2635,6 +2802,8 @@ TOOL_DISPATCH = {
     "memory_delete": tool_memory_delete,
     "memory_shared": tool_memory_shared,
     "delegate_task": tool_delegate_task,
+    "task_status": tool_task_status,
+    "task_cancel": tool_task_cancel,
     "use_skill": tool_use_skill,
     "schedule_list": tool_schedule_list,
     "schedule_history": tool_schedule_history,
@@ -3417,6 +3586,10 @@ def _run_interactive(args):
     global _scheduler
     _scheduler = Scheduler()
     _scheduler.start()
+
+    # Initialize background task runner
+    global _task_runner
+    _task_runner = TaskRunner()
 
     # Clear screen and move cursor to top
     sys.stdout.write("\033[2J\033[H")
