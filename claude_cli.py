@@ -2194,6 +2194,7 @@ def _run_interactive(args):
                 print(f"\n{DIM}{'─' * 40}{RESET}")
                 print(f"{DIM}  New chat started{RESET}")
                 print(f"{DIM}{'─' * 40}{RESET}")
+                _draw_status_bar(current_model, history, args.max_context)
                 continue
 
             if stripped == "/tools":
