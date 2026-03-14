@@ -49,25 +49,24 @@ class TelegramBot:
             time.sleep(2)
             return []
 
-    def send_message(self, chat_id: int, text: str, parse_mode: str = "Markdown"):
+    def send_message(self, chat_id: int, text: str, parse_mode: str | None = None):
         # Truncate if too long for Telegram (4096 chars)
         if len(text) > 4000:
-            text = text[:4000] + "\n\n_(truncated)_"
+            text = text[:4000] + "\n\n(truncated)"
+        # Try plain text first — most reliable
+        msg = {"chat_id": chat_id, "text": text}
+        if parse_mode:
+            msg["parse_mode"] = parse_mode
         try:
-            self._call("sendMessage", {
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": parse_mode,
-            })
-        except Exception:
-            # Fallback without markdown if parsing fails
-            try:
-                self._call("sendMessage", {
-                    "chat_id": chat_id,
-                    "text": text,
-                })
-            except Exception as e:
-                print(f"Error sending to {chat_id}: {e}")
+            self._call("sendMessage", msg)
+        except Exception as e:
+            print(f"  send_message error (parse_mode={parse_mode}): {e}", flush=True)
+            if parse_mode:
+                # Retry without parse_mode
+                try:
+                    self._call("sendMessage", {"chat_id": chat_id, "text": text})
+                except Exception as e2:
+                    print(f"  send_message fallback error: {e2}", flush=True)
 
     def send_action(self, chat_id: int, action: str = "typing"):
         try:
@@ -240,21 +239,22 @@ def handle_command(bot: TelegramBot, manager: ChatManager,
 def handle_message(bot: TelegramBot, manager: ChatManager,
                    chat_id: int, text: str):
     """Handle a regular chat message."""
-    # Each chat gets its own client to avoid session_id conflicts
+    print(f"  → Creating/getting session for {chat_id}", flush=True)
     sid = manager.get_session(chat_id)
+    print(f"  → Session: {sid}", flush=True)
     chat_client = BrainAgentClient(manager.client.server_url)
     chat_client.session_id = sid
 
-    # Send typing indicator
     bot.send_action(chat_id)
+    print(f"  → Calling chat API...", flush=True)
 
-    # Stream response
     full_text = ""
     tool_count = 0
     error_msg = ""
 
     try:
         for event_type, data in chat_client.chat(text):
+            print(f"  → Event: {event_type}: {str(data)[:80]}", flush=True)
             if event_type == "tool_call":
                 tool_count += 1
                 bot.send_action(chat_id)
@@ -262,19 +262,24 @@ def handle_message(bot: TelegramBot, manager: ChatManager,
                 full_text = data.get("text", "")
             elif event_type == "error":
                 error_msg = data.get("message", "Unknown error")
+        print(f"  → Stream ended. text={len(full_text)} chars, tools={tool_count}", flush=True)
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
-        print(f"  Error for chat {chat_id}: {error_msg}")
+        print(f"  → EXCEPTION: {error_msg}", flush=True)
+        import traceback
+        traceback.print_exc()
 
     if error_msg:
         bot.send_message(chat_id, f"⚠️ {error_msg}")
     elif full_text:
         # Add tool count if any were used
         if tool_count > 0:
-            full_text += f"\n\n_{tool_count} tool{'s' if tool_count > 1 else ''} used_"
+            full_text += f"\n\n({tool_count} tool{'s' if tool_count > 1 else ''} used)"
+        print(f"  → Sending reply ({len(full_text)} chars)...", flush=True)
         bot.send_message(chat_id, full_text)
+        print(f"  → Sent!", flush=True)
     else:
-        bot.send_message(chat_id, "_(no response)_")
+        bot.send_message(chat_id, "(no response)")
 
 
 # --- Main loop ---
