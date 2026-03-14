@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "0.9.0"
+VERSION = "1.0.0"
 VERSION_DATE = "2026-03-14"
 CHANGELOG = [
+    ("1.0.0", "2026-03-14", "Task scheduler: timed/recurring execution, /schedule TUI, history"),
     ("0.9.0", "2026-03-14", "Skills system: on-demand SKILL.md loading, per-agent + global"),
     ("0.8.0", "2026-03-14", "Multi-agent system with soul.md, delegation, /agent switching"),
     ("0.7.0", "2026-03-14", "Persistent memory system with SQLite FTS5, per-agent isolation"),
@@ -285,6 +286,27 @@ TOOL_DEFINITIONS = [
                 "skill": {"type": "string", "description": "Name of the skill to load"},
             },
             "required": ["skill"],
+        },
+    },
+    {
+        "name": "schedule_list",
+        "description": "List all scheduled tasks with their status, next run time, and configuration.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "schedule_history",
+        "description": "Get execution history for scheduled tasks. Shows status, results, and timestamps.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Filter by schedule name (optional)"},
+                "limit": {"type": "integer", "description": "Max results (default: 20)"},
+            },
+            "required": [],
         },
     },
 ]
@@ -1299,6 +1321,328 @@ _delegate_base_url: str = ""
 _delegate_api_type: str = "anthropic"
 
 
+# --- Scheduler ---
+
+import datetime
+
+SCHEDULER_DB = os.path.join(AGENTS_DIR, "main", "scheduler.db")
+
+
+class Scheduler:
+    """Background task scheduler with cron-like scheduling."""
+
+    def __init__(self):
+        os.makedirs(os.path.dirname(SCHEDULER_DB), exist_ok=True)
+        self._init_db()
+        self._stop = threading.Event()
+        self._thread = None
+
+    def _init_db(self):
+        with sqlite3.connect(SCHEDULER_DB) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS schedules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    task TEXT NOT NULL,
+                    schedule TEXT NOT NULL,
+                    agent TEXT DEFAULT 'main',
+                    model TEXT,
+                    enabled INTEGER DEFAULT 1,
+                    last_run TEXT,
+                    next_run TEXT,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS schedule_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    schedule_id INTEGER,
+                    schedule_name TEXT,
+                    agent TEXT,
+                    task TEXT,
+                    status TEXT,
+                    result TEXT,
+                    started_at TEXT,
+                    finished_at TEXT DEFAULT (datetime('now')),
+                    FOREIGN KEY (schedule_id) REFERENCES schedules(id)
+                )
+            """)
+            conn.commit()
+
+    def add(self, name: str, task: str, schedule: str,
+            agent: str = "main", model: str | None = None) -> dict:
+        """Add a scheduled task. Schedule format: 'every Xm/Xh/Xd', 'daily HH:MM', 'weekly DOW HH:MM'."""
+        next_run = self._calc_next_run(schedule)
+        if next_run is None:
+            return {"error": f"Invalid schedule format: {schedule}"}
+        try:
+            with sqlite3.connect(SCHEDULER_DB) as conn:
+                conn.execute("""
+                    INSERT INTO schedules (name, task, schedule, agent, model, next_run)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (name, task, schedule, agent, model, next_run.isoformat()))
+                conn.commit()
+            return {"name": name, "schedule": schedule, "agent": agent,
+                    "next_run": next_run.isoformat(), "status": "created"}
+        except sqlite3.IntegrityError:
+            return {"error": f"Schedule '{name}' already exists"}
+
+    def remove(self, name: str) -> dict:
+        with sqlite3.connect(SCHEDULER_DB) as conn:
+            r = conn.execute("DELETE FROM schedules WHERE name = ?", (name,))
+            conn.commit()
+            if r.rowcount == 0:
+                return {"error": f"Schedule '{name}' not found"}
+        return {"name": name, "status": "deleted"}
+
+    def pause(self, name: str) -> dict:
+        with sqlite3.connect(SCHEDULER_DB) as conn:
+            r = conn.execute("UPDATE schedules SET enabled = 0 WHERE name = ?", (name,))
+            conn.commit()
+            if r.rowcount == 0:
+                return {"error": f"Schedule '{name}' not found"}
+        return {"name": name, "status": "paused"}
+
+    def resume(self, name: str) -> dict:
+        next_run = None
+        with sqlite3.connect(SCHEDULER_DB) as conn:
+            row = conn.execute("SELECT schedule FROM schedules WHERE name = ?", (name,)).fetchone()
+            if not row:
+                return {"error": f"Schedule '{name}' not found"}
+            next_run = self._calc_next_run(row[0])
+            conn.execute("UPDATE schedules SET enabled = 1, next_run = ? WHERE name = ?",
+                         (next_run.isoformat() if next_run else None, name))
+            conn.commit()
+        return {"name": name, "status": "resumed", "next_run": next_run.isoformat() if next_run else None}
+
+    def list_all(self) -> list[dict]:
+        with sqlite3.connect(SCHEDULER_DB) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT * FROM schedules ORDER BY name").fetchall()
+            return [dict(r) for r in rows]
+
+    def get_history(self, name: str | None = None, limit: int = 20) -> list[dict]:
+        with sqlite3.connect(SCHEDULER_DB) as conn:
+            conn.row_factory = sqlite3.Row
+            if name:
+                rows = conn.execute(
+                    "SELECT * FROM schedule_history WHERE schedule_name = ? ORDER BY finished_at DESC LIMIT ?",
+                    (name, limit)).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM schedule_history ORDER BY finished_at DESC LIMIT ?",
+                    (limit,)).fetchall()
+            return [dict(r) for r in rows]
+
+    def _calc_next_run(self, schedule: str) -> datetime.datetime | None:
+        """Calculate next run time from schedule string."""
+        now = datetime.datetime.now()
+        s = schedule.strip().lower()
+
+        # every Xm, every Xh, every Xd
+        m = re.match(r'every\s+(\d+)\s*(m|min|h|hour|d|day)s?', s)
+        if m:
+            val, unit = int(m.group(1)), m.group(2)[0]
+            if unit == 'm':
+                return now + datetime.timedelta(minutes=val)
+            elif unit == 'h':
+                return now + datetime.timedelta(hours=val)
+            elif unit == 'd':
+                return now + datetime.timedelta(days=val)
+
+        # daily HH:MM
+        m = re.match(r'daily\s+(\d{1,2}):(\d{2})', s)
+        if m:
+            hour, minute = int(m.group(1)), int(m.group(2))
+            target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if target <= now:
+                target += datetime.timedelta(days=1)
+            return target
+
+        # weekly DOW HH:MM
+        days_map = {'mon': 0, 'tue': 1, 'wed': 2, 'thu': 3, 'fri': 4, 'sat': 5, 'sun': 6}
+        m = re.match(r'weekly\s+(\w{3})\s+(\d{1,2}):(\d{2})', s)
+        if m:
+            dow_str, hour, minute = m.group(1), int(m.group(2)), int(m.group(3))
+            target_dow = days_map.get(dow_str[:3])
+            if target_dow is None:
+                return None
+            target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            days_ahead = (target_dow - now.weekday()) % 7
+            if days_ahead == 0 and target <= now:
+                days_ahead = 7
+            target += datetime.timedelta(days=days_ahead)
+            return target
+
+        # once YYYY-MM-DD HH:MM
+        m = re.match(r'once\s+(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})', s)
+        if m:
+            date_str, hour, minute = m.group(1), int(m.group(2)), int(m.group(3))
+            try:
+                target = datetime.datetime.fromisoformat(f"{date_str}T{hour:02d}:{minute:02d}:00")
+                return target
+            except ValueError:
+                return None
+
+        return None
+
+    def _calc_next_from_last(self, schedule: str, last_run: str) -> datetime.datetime | None:
+        """Calculate next run based on last run time (for intervals)."""
+        s = schedule.strip().lower()
+        m = re.match(r'every\s+(\d+)\s*(m|min|h|hour|d|day)s?', s)
+        if m:
+            try:
+                last = datetime.datetime.fromisoformat(last_run)
+            except (ValueError, TypeError):
+                return self._calc_next_run(schedule)
+            val, unit = int(m.group(1)), m.group(2)[0]
+            if unit == 'm':
+                return last + datetime.timedelta(minutes=val)
+            elif unit == 'h':
+                return last + datetime.timedelta(hours=val)
+            elif unit == 'd':
+                return last + datetime.timedelta(days=val)
+        return self._calc_next_run(schedule)
+
+    def get_due_tasks(self) -> list[dict]:
+        """Get tasks that are due for execution."""
+        now = datetime.datetime.now().isoformat()
+        with sqlite3.connect(SCHEDULER_DB) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""
+                SELECT * FROM schedules WHERE enabled = 1 AND next_run <= ?
+            """, (now,)).fetchall()
+            return [dict(r) for r in rows]
+
+    def mark_executed(self, schedule_id: int, name: str, agent: str, task: str,
+                      status: str, result: str):
+        """Record execution and update next_run."""
+        now = datetime.datetime.now()
+        with sqlite3.connect(SCHEDULER_DB) as conn:
+            # Record history
+            conn.execute("""
+                INSERT INTO schedule_history (schedule_id, schedule_name, agent, task, status, result, started_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (schedule_id, name, agent, task, status, result[:10000], now.isoformat()))
+
+            # Get schedule to calc next run
+            row = conn.execute("SELECT schedule FROM schedules WHERE id = ?", (schedule_id,)).fetchone()
+            if row:
+                schedule_str = row[0]
+                if schedule_str.strip().lower().startswith("once"):
+                    # One-shot: disable after execution
+                    conn.execute("UPDATE schedules SET enabled = 0, last_run = ? WHERE id = ?",
+                                 (now.isoformat(), schedule_id))
+                else:
+                    next_run = self._calc_next_from_last(schedule_str, now.isoformat())
+                    conn.execute("UPDATE schedules SET last_run = ?, next_run = ? WHERE id = ?",
+                                 (now.isoformat(),
+                                  next_run.isoformat() if next_run else None,
+                                  schedule_id))
+            conn.commit()
+
+    def start(self):
+        """Start the background scheduler thread."""
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=2)
+
+    def _run_loop(self):
+        """Background loop that checks for due tasks every 30s."""
+        while not self._stop.is_set():
+            try:
+                due = self.get_due_tasks()
+                for task_row in due:
+                    if self._stop.is_set():
+                        break
+                    self._execute_scheduled(task_row)
+            except Exception:
+                pass
+            self._stop.wait(30)
+
+    def _execute_scheduled(self, task_row: dict):
+        """Execute a single scheduled task."""
+        agent_id = task_row.get("agent", "main")
+        task = task_row.get("task", "")
+        model = task_row.get("model")
+        schedule_id = task_row.get("id")
+        name = task_row.get("name", "")
+
+        # Use delegation infrastructure
+        target = AgentConfig(agent_id)
+        target_memory = MemoryStore(agent_id, base_dir=target.memory_dir)
+
+        if not model:
+            model = target.preferred_model or _delegate_fallback_model or "claude-opus-4-5-20251101"
+
+        # Build system prompt
+        import platform
+        cwd = os.getcwd()
+        os_name = platform.system()
+        soul = target.soul
+        tools_guide = target.tools_guide
+
+        system_prompt = (
+            f"{soul}\n\n"
+            f"You are agent '{agent_id}' executing a scheduled task: '{name}'.\n"
+            f"Current working directory: {cwd}\n"
+            f"Operating system: {os_name}\n\n"
+            "Complete the task and provide a concise result summary.\n"
+        )
+        if tools_guide:
+            system_prompt += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
+
+        messages = [{"role": "user", "content": task}]
+
+        # Swap memory store temporarily
+        global _memory_store
+        original_memory = _memory_store
+        _memory_store = target_memory
+
+        result_text = ""
+        status = "success"
+        try:
+            result_text = _run_delegate(messages, model, system_prompt) or ""
+        except Exception as e:
+            result_text = str(e)
+            status = "error"
+        finally:
+            _memory_store = original_memory
+
+        self.mark_executed(schedule_id, name, agent_id, task, status, result_text)
+
+
+# Global scheduler instance
+_scheduler: Scheduler | None = None
+
+
+def tool_schedule_list(args: dict) -> str:
+    """List all scheduled tasks."""
+    if not _scheduler:
+        return _err("Scheduler not initialized")
+    schedules = _scheduler.list_all()
+    return _ok({"schedules": schedules, "count": len(schedules)})
+
+
+def tool_schedule_history(args: dict) -> str:
+    """Get execution history for scheduled tasks."""
+    if not _scheduler:
+        return _err("Scheduler not initialized")
+    name = args.get("name")
+    limit = args.get("limit", 20)
+    history = _scheduler.get_history(name, limit)
+    # Truncate long results
+    for h in history:
+        if h.get("result") and len(h["result"]) > 500:
+            h["result"] = h["result"][:500] + "..."
+    return _ok({"history": history, "count": len(history)})
+
+
 # --- Context Window Management ---
 
 DEFAULT_MAX_CONTEXT_TOKENS = 131072
@@ -2000,6 +2344,7 @@ TOOL_ICONS = {
     "web_fetch": "~", "exa_search": "?",
     "memory_store": "+", "memory_recall": "m", "memory_delete": "-", "memory_shared": "M",
     "delegate_task": ">", "use_skill": "*",
+    "schedule_list": "t", "schedule_history": "h",
 }
 
 TOOL_VERBS = {
@@ -2008,6 +2353,7 @@ TOOL_VERBS = {
     "web_fetch": "Fetching", "exa_search": "Searching",
     "memory_store": "Remembering", "memory_recall": "Recalling", "memory_delete": "Forgetting", "memory_shared": "Shared Memory",
     "delegate_task": "Delegating", "use_skill": "Loading Skill",
+    "schedule_list": "Schedules", "schedule_history": "History",
 }
 
 
@@ -2290,6 +2636,8 @@ TOOL_DISPATCH = {
     "memory_shared": tool_memory_shared,
     "delegate_task": tool_delegate_task,
     "use_skill": tool_use_skill,
+    "schedule_list": tool_schedule_list,
+    "schedule_history": tool_schedule_history,
 }
 
 
@@ -2384,6 +2732,17 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                     source_tag = f" (from {s['source']})" if s['source'] != agent_id else ""
                     system_instruction += f"  - {s['name']}: {s['description']}{source_tag}\n"
                 system_instruction += "\n"
+
+        # Scheduler status
+        if _scheduler:
+            schedules = _scheduler.list_all()
+            if schedules:
+                system_instruction += "\nSCHEDULER — active scheduled tasks:\n"
+                for s in schedules:
+                    status = "active" if s["enabled"] else "paused"
+                    next_r = s.get("next_run", "")[:16] if s.get("next_run") else "—"
+                    system_instruction += f"  - {s['name']} [{status}]: {s['task'][:80]} (next: {next_r})\n"
+                system_instruction += "Use schedule_list and schedule_history tools to query scheduler state.\n\n"
 
         if tools_guide:
             system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
@@ -2838,7 +3197,7 @@ def _print_greeting(model: str, agent_id: str = "default") -> None:
     # Tools summary
     tool_names = [t["name"] for t in TOOL_DEFINITIONS]
     print(f"  {DIM}Tools:{RESET} {DIM}{', '.join(tool_names)}{RESET}")
-    print(f"  {DIM}/new /agent /model /models /tools  Esc cancel  exit quit{RESET}")
+    print(f"  {DIM}/new /agent /model /models /tools /schedule  Esc cancel  exit quit{RESET}")
 
     # Tip / changelog line
     if latest:
@@ -3054,6 +3413,11 @@ def _run_interactive(args):
     # Initialize agent
     current_model, _ = _switch_agent(args.agent, args)
 
+    # Start scheduler
+    global _scheduler
+    _scheduler = Scheduler()
+    _scheduler.start()
+
     # Clear screen and move cursor to top
     sys.stdout.write("\033[2J\033[H")
     sys.stdout.flush()
@@ -3141,6 +3505,99 @@ def _run_interactive(args):
                     print(f"  {DIM}Switched to agent:{RESET} {BOLD}{choice}{RESET} {DIM}(model: {current_model}){RESET}")
                 _draw_status_bar(current_model, history, args.max_context)
                 continue
+
+            if stripped.startswith("/schedule"):
+                arg = message.strip()[9:].strip()
+                if not _scheduler:
+                    print(f"  {DIM}Scheduler not running{RESET}")
+                    continue
+
+                if arg == "" or arg == "list":
+                    # List schedules
+                    schedules = _scheduler.list_all()
+                    if not schedules:
+                        print(f"\n  {DIM}No scheduled tasks{RESET}")
+                    else:
+                        print()
+                        for s in schedules:
+                            status = f"{GREEN}active{RESET}" if s["enabled"] else f"{DIM}paused{RESET}"
+                            next_r = s.get("next_run", "")[:16] if s.get("next_run") else "—"
+                            print(f"  {BOLD}{s['name']}{RESET} [{status}] {DIM}{s['schedule']}{RESET}")
+                            print(f"    {DIM}agent:{RESET} {s['agent']}  {DIM}next:{RESET} {next_r}")
+                            print(f"    {DIM}task:{RESET} {s['task'][:60]}")
+                    continue
+
+                elif arg == "add":
+                    # Interactive add
+                    print(f"\n  {DIM}Add scheduled task{RESET}")
+                    name = _readline(f"  {DIM}Name:{RESET} ", [], [0])
+                    if not name or not name.strip():
+                        continue
+                    name = name.strip()
+                    task = _readline(f"  {DIM}Task:{RESET} ", [], [0])
+                    if not task or not task.strip():
+                        continue
+                    task = task.strip()
+                    schedule = _readline(f"  {DIM}Schedule (every Xm/Xh/Xd, daily HH:MM, weekly DOW HH:MM):{RESET} ", [], [0])
+                    if not schedule or not schedule.strip():
+                        continue
+                    schedule = schedule.strip()
+                    agent = _readline(f"  {DIM}Agent (default: main):{RESET} ", [], [0])
+                    agent = agent.strip() if agent and agent.strip() else "main"
+                    model_in = _readline(f"  {DIM}Model (default: current):{RESET} ", [], [0])
+                    model_val = model_in.strip() if model_in and model_in.strip() else None
+
+                    result = _scheduler.add(name, task, schedule, agent, model_val)
+                    if result.get("error"):
+                        print(f"  {RED}{result['error']}{RESET}")
+                    else:
+                        print(f"  {GREEN}✔ Created:{RESET} {BOLD}{name}{RESET} — next run: {result.get('next_run', '')[:16]}")
+                    continue
+
+                elif arg.startswith("pause "):
+                    name = arg[6:].strip()
+                    result = _scheduler.pause(name)
+                    if result.get("error"):
+                        print(f"  {RED}{result['error']}{RESET}")
+                    else:
+                        print(f"  {DIM}Paused:{RESET} {name}")
+                    continue
+
+                elif arg.startswith("resume "):
+                    name = arg[7:].strip()
+                    result = _scheduler.resume(name)
+                    if result.get("error"):
+                        print(f"  {RED}{result['error']}{RESET}")
+                    else:
+                        print(f"  {GREEN}Resumed:{RESET} {name} — next: {result.get('next_run', '')[:16]}")
+                    continue
+
+                elif arg.startswith("delete ") or arg.startswith("rm "):
+                    name = arg.split(" ", 1)[1].strip()
+                    result = _scheduler.remove(name)
+                    if result.get("error"):
+                        print(f"  {RED}{result['error']}{RESET}")
+                    else:
+                        print(f"  {DIM}Deleted:{RESET} {name}")
+                    continue
+
+                elif arg == "history":
+                    history_items = _scheduler.get_history(limit=10)
+                    if not history_items:
+                        print(f"\n  {DIM}No execution history{RESET}")
+                    else:
+                        print()
+                        for h in history_items:
+                            status_color = GREEN if h["status"] == "success" else RED
+                            print(f"  {status_color}{h['status']}{RESET} {BOLD}{h['schedule_name']}{RESET} {DIM}({h['finished_at'][:16]}){RESET}")
+                            if h.get("result"):
+                                preview = h["result"][:80].replace("\n", " ")
+                                print(f"    {DIM}{preview}{RESET}")
+                    continue
+
+                else:
+                    print(f"  {DIM}Usage: /schedule [list|add|pause NAME|resume NAME|delete NAME|history]{RESET}")
+                    continue
 
             if stripped == "/models":
                 models = get_available_models(args.api_key, args.base_url, args.api_type)
@@ -3278,6 +3735,8 @@ def _run_interactive(args):
             _draw_status_bar(current_model, history, args.max_context)
 
     finally:
+        if _scheduler:
+            _scheduler.stop()
         signal.signal(signal.SIGWINCH, old_sigwinch)
         _restore_scroll_region()
 
