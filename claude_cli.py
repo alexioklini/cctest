@@ -1113,9 +1113,15 @@ agent: {self.agent_id}
 _memory_store: MemoryStore | None = None
 
 
+def _get_memory_store() -> MemoryStore | None:
+    """Get the active memory store: thread-local (delegation/scheduler) or global (main thread)."""
+    return getattr(_thread_local, 'memory_store', None) or _memory_store
+
+
 def tool_memory_store(args: dict) -> str:
     """Store a memory."""
-    if not _memory_store:
+    ms = _get_memory_store()
+    if not ms:
         return _err("Memory store not initialized")
     name = args.get("name", "")
     content = args.get("content", "")
@@ -1123,23 +1129,22 @@ def tool_memory_store(args: dict) -> str:
     mem_type = args.get("type", "general")
     if not name or not content:
         return _err("memory_store: name and content are required")
-    result = _memory_store.store(name, content, description, mem_type)
+    result = ms.store(name, content, description, mem_type)
     return _ok(result)
 
 
 def tool_memory_recall(args: dict) -> str:
     """Recall memories by searching."""
-    if not _memory_store:
+    ms = _get_memory_store()
+    if not ms:
         return _err("Memory store not initialized")
     query = args.get("query", "")
     limit = args.get("limit", 10)
     mem_type = args.get("type")
     if not query:
-        # List all if no query
-        results = _memory_store.list_all(mem_type)
+        results = ms.list_all(mem_type)
         return _ok({"query": "", "results": results, "count": len(results)})
-    results = _memory_store.recall(query, limit, mem_type)
-    # Truncate content in results for token efficiency
+    results = ms.recall(query, limit, mem_type)
     for r in results:
         if r.get("content") and len(r["content"]) > 1000:
             r["content"] = r["content"][:1000] + "..."
@@ -1148,12 +1153,13 @@ def tool_memory_recall(args: dict) -> str:
 
 def tool_memory_delete(args: dict) -> str:
     """Delete a memory."""
-    if not _memory_store:
+    ms = _get_memory_store()
+    if not ms:
         return _err("Memory store not initialized")
     name = args.get("name", "")
     if not name:
         return _err("memory_delete: name is required")
-    result = _memory_store.delete(name)
+    result = ms.delete(name)
     return _ok(result)
 
 
@@ -1250,17 +1256,8 @@ def tool_delegate_task(args: dict) -> str:
     # Run in a fresh conversation
     messages = [{"role": "user", "content": task}]
 
-    # Temporarily swap memory store for the target agent
-    global _memory_store
-    original_memory = _memory_store
-    _memory_store = target_memory
-
-    try:
-        # Use send_message directly with system prompt
-        # We need to build the payload manually since send_message builds its own system prompt
-        result = _run_delegate(messages, model, system_prompt)
-    finally:
-        _memory_store = original_memory
+    # Run with isolated memory — no global swap (thread-safe)
+    result = _run_delegate(messages, model, system_prompt, memory_store=target_memory)
 
     if result:
         return _ok({
@@ -1271,9 +1268,17 @@ def tool_delegate_task(args: dict) -> str:
     return _err(f"delegate_task: agent '{agent_id}' returned no response")
 
 
-def _run_delegate(messages: list[dict], model: str, system_prompt: str) -> str | None:
-    """Run a delegated task in a fresh context. Returns the final text response."""
-    # Use globals for API config (set during _run_interactive)
+_thread_local = threading.local()
+
+
+def _run_delegate(messages: list[dict], model: str, system_prompt: str,
+                  memory_store: MemoryStore | None = None) -> str | None:
+    """Run a delegated task in a fresh context. Returns the final text response.
+    Thread-safe: uses thread-local storage for memory instead of swapping globals."""
+    # Store memory in thread-local so tool_memory_* can find it
+    if memory_store:
+        _thread_local.memory_store = memory_store
+
     api_key = _delegate_api_key
     base_url = _delegate_base_url
     api_type = _delegate_api_type
@@ -1599,20 +1604,15 @@ class Scheduler:
 
         messages = [{"role": "user", "content": task}]
 
-        # Swap memory store temporarily
-        global _memory_store
-        original_memory = _memory_store
-        _memory_store = target_memory
-
+        # Run with isolated memory — no global swap (thread-safe)
         result_text = ""
         status = "success"
         try:
-            result_text = _run_delegate(messages, model, system_prompt) or ""
+            result_text = _run_delegate(messages, model, system_prompt,
+                                        memory_store=target_memory) or ""
         except Exception as e:
             result_text = str(e)
             status = "error"
-        finally:
-            _memory_store = original_memory
 
         self.mark_executed(schedule_id, name, agent_id, task, status, result_text)
 
