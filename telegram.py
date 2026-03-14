@@ -260,8 +260,10 @@ def handle_message(bot: TelegramBot, manager: ChatManager,
                 bot.send_action(chat_id)
             elif event_type == "done":
                 full_text = data.get("text", "")
+                break
             elif event_type == "error":
                 error_msg = data.get("message", "Unknown error")
+                break
         print(f"  → Stream ended. text={len(full_text)} chars, tools={tool_count}", flush=True)
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
