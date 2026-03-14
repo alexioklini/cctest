@@ -381,13 +381,12 @@ def run_interactive(args):
 
     pt_style = PTStyle.from_dict({
         "prompt": "#00ff00 bold",
-        "bottom-toolbar": "bg:#1a1a2e #8888aa",
-        "toolbar.agent": "bg:#1a1a2e #00cccc bold",
-        "toolbar.label": "bg:#1a1a2e #666688",
-        "toolbar.value": "bg:#1a1a2e #00cc66",
-        "toolbar.sep": "bg:#1a1a2e #444466",
-        "toolbar.warn": "bg:#1a1a2e #cc6600",
-        "separator": "#444466",
+        "bottom-toolbar": "bg:#000000 #888888",
+        "toolbar.agent": "bg:#000000 #00cccc bold",
+        "toolbar.label": "bg:#000000 #666666",
+        "toolbar.value": "bg:#000000 #00cc66",
+        "toolbar.sep": "bg:#000000 #444444",
+        "toolbar.warn": "bg:#000000 #cc6600",
     })
 
     session = PromptSession(
@@ -422,6 +421,7 @@ def run_interactive(args):
             stripped = message.strip()
             if not stripped:
                 continue
+            _sep()
             low = stripped.lower()
 
             if low in ("exit", "quit"):
