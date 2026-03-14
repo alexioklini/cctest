@@ -383,40 +383,61 @@ def tool_search_files(args: dict) -> str:
         return _err(f"search_files: {e}")
 
 
+def _strip_ansi(text: str) -> str:
+    """Remove all ANSI escape sequences from text."""
+    text = re.sub(r"\033\[[0-9;]*[a-zA-Z]", "", text)
+    text = re.sub(r"\033\[\?[0-9;]*[a-zA-Z]", "", text)
+    text = re.sub(r"\033\([A-Z]", "", text)
+    text = re.sub(r"\033][^\a]*\a", "", text)  # OSC sequences
+    text = re.sub(r"\r", "", text)  # Carriage returns
+    return text
+
+
 def tool_execute_command(args: dict) -> str:
     command = args.get("command", "")
     cwd = args.get("cwd")
-    timeout = args.get("timeout", 30)
+    timeout = args.get("timeout", 15)
     try:
         if cwd:
             cwd = os.path.expanduser(cwd)
 
-        # Force non-interactive environment: no TTY allocation, disable pagers,
-        # set COLUMNS so tools like ps/top produce reasonable width output
+        # Force non-interactive environment
         env = os.environ.copy()
         env["TERM"] = "dumb"
         env["NO_COLOR"] = "1"
         env["PAGER"] = "cat"
         env["COLUMNS"] = "200"
+        env["LINES"] = "50"
 
-        result = subprocess.run(
-            command, shell=True, capture_output=True, text=True,
-            cwd=cwd, timeout=timeout, env=env,
-            stdin=subprocess.DEVNULL,  # no stdin — kills interactive commands fast
+        proc = subprocess.Popen(
+            command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL, cwd=cwd, env=env,
+            start_new_session=True,  # own process group so we can kill the tree
         )
-        output = result.stdout
-        if result.stderr:
-            output += ("\n--- stderr ---\n" + result.stderr) if output else result.stderr
-        # Strip ANSI escape codes from output
-        output = re.sub(r"\033\[[^m]*m", "", output)
-        output = re.sub(r"\033\[\?[0-9;]*[a-zA-Z]", "", output)
-        output = re.sub(r"\033\([A-Z]", "", output)
-        # Truncate very long output
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # Kill the entire process group
+            import signal as sig
+            try:
+                os.killpg(proc.pid, sig.SIGKILL)
+            except OSError:
+                proc.kill()
+            stdout, stderr = proc.communicate(timeout=5)
+            output = _strip_ansi(stdout.decode("utf-8", errors="replace"))
+            if stderr:
+                output += "\n--- stderr ---\n" + _strip_ansi(stderr.decode("utf-8", errors="replace"))
+            if len(output) > 50000:
+                output = output[:50000] + "\n... (truncated)"
+            return _err(f"execute_command: timed out after {timeout}s (partial output below). Use non-interactive commands, e.g. 'top -l 1' not 'top'.\n{output}")
+
+        output = _strip_ansi(stdout.decode("utf-8", errors="replace"))
+        if stderr:
+            err_text = _strip_ansi(stderr.decode("utf-8", errors="replace"))
+            output += ("\n--- stderr ---\n" + err_text) if output else err_text
         if len(output) > 50000:
             output = output[:50000] + "\n... (truncated)"
-        return _ok({"command": command, "exit_code": result.returncode, "output": output})
-    except subprocess.TimeoutExpired:
-        return _err(f"execute_command: timed out after {timeout}s — use non-interactive commands (e.g. 'top -l 1' instead of 'top', 'ps aux' instead of 'htop')")
+        return _ok({"command": command, "exit_code": proc.returncode, "output": output})
     except Exception as e:
         return _err(f"execute_command: {e}")
 
@@ -676,9 +697,36 @@ def _box_top(label: str = "") -> str:
         return f"  {DIM}┌{'─' * w}┐{RESET}"
 
 
+def _visible_len(text: str) -> int:
+    """Get the visible length of a string, ignoring ANSI escape codes."""
+    return len(re.sub(r"\033\[[^m]*m", "", text))
+
+
+def _truncate_visible(text: str, max_visible: int) -> str:
+    """Truncate a string with ANSI codes to max visible characters."""
+    visible = 0
+    i = 0
+    while i < len(text) and visible < max_visible:
+        if text[i] == '\033':
+            # Skip ANSI escape sequence
+            j = i + 1
+            while j < len(text) and text[j] != 'm':
+                j += 1
+            i = j + 1
+        else:
+            visible += 1
+            i += 1
+    if visible >= max_visible and i < len(text):
+        return text[:i] + RESET + "…"
+    return text
+
+
 def _box_mid(content: str = "") -> str:
-    """Draw │ content  │ — content is NOT padded/truncated (let terminal wrap)."""
-    return f"  {DIM}│{RESET}  {content}"
+    """Draw │ content — truncated to fit terminal width."""
+    # "  │  " = 5 chars prefix, leave 1 char margin
+    max_content = max(10, _term_cols() - 6)
+    truncated = _truncate_visible(content, max_content)
+    return f"  {DIM}│{RESET}  {truncated}"
 
 
 def _box_bot() -> str:
@@ -1147,10 +1195,14 @@ def _execute_tool(name: str, args: dict) -> str:
     return _err(f"Unknown tool: {name}")
 
 
+MAX_TOOL_ROUNDS = 15  # Maximum number of tool-use round trips before forcing a text response
+
+
 def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                  api_type: str, silent: bool = False,
                  tools: bool = True,
-                 escape_watcher: EscapeWatcher | None = None) -> str | None:
+                 escape_watcher: EscapeWatcher | None = None,
+                 _tool_round: int = 0) -> str | None:
     """Send messages and stream the response.
 
     If silent=True, collects without printing (for TUI mode).
@@ -1158,6 +1210,9 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     Returns the assistant's full response text on success, None on model-related errors.
     Raises TaskCancelled if escape_watcher detects Escape key.
     """
+    # Stop tool loops after MAX_TOOL_ROUNDS
+    if _tool_round >= MAX_TOOL_ROUNDS:
+        tools = False
     headers = make_headers(api_key, api_type)
 
     if api_type == "openai":
@@ -1218,11 +1273,13 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
             if api_type == "openai":
                 return _handle_openai_response(
                     response, payload, messages, model, api_key, base_url,
-                    api_type, silent, tools, headers, endpoint, escape_watcher)
+                    api_type, silent, tools, headers, endpoint, escape_watcher,
+                    _tool_round)
             else:
                 return _handle_anthropic_response(
                     response, payload, messages, model, api_key, base_url,
-                    api_type, silent, tools, headers, endpoint, escape_watcher)
+                    api_type, silent, tools, headers, endpoint, escape_watcher,
+                    _tool_round)
 
     except urllib.error.HTTPError as e:
         if e.code == 400:
@@ -1242,7 +1299,8 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
 def _handle_anthropic_response(response, payload, messages, model, api_key,
                                 base_url, api_type, silent, tools,
                                 headers, endpoint,
-                                escape_watcher: EscapeWatcher | None = None) -> str | None:
+                                escape_watcher: EscapeWatcher | None = None,
+                                _tool_round: int = 0) -> str | None:
     """Handle Anthropic SSE response, including tool-use agentic loop."""
     # Parse the full SSE stream to get content blocks and stop reason
     collected_text = []
@@ -1347,13 +1405,15 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
 
     # Recurse to get the model's final response (or more tool calls)
     return send_message(messages, model, api_key, base_url, api_type,
-                        silent=silent, tools=tools, escape_watcher=escape_watcher)
+                        silent=silent, tools=tools, escape_watcher=escape_watcher,
+                        _tool_round=_tool_round + 1)
 
 
 def _handle_openai_response(response, payload, messages, model, api_key,
                              base_url, api_type, silent, tools,
                              headers, endpoint,
-                             escape_watcher: EscapeWatcher | None = None) -> str | None:
+                             escape_watcher: EscapeWatcher | None = None,
+                             _tool_round: int = 0) -> str | None:
     """Handle OpenAI SSE response, including tool-use agentic loop."""
     collected_text = []
     tool_calls_map = {}  # index -> {id, name, arguments_str}
@@ -1440,7 +1500,8 @@ def _handle_openai_response(response, payload, messages, model, api_key,
         })
 
     return send_message(messages, model, api_key, base_url, api_type,
-                        silent=silent, tools=tools, escape_watcher=escape_watcher)
+                        silent=silent, tools=tools, escape_watcher=escape_watcher,
+                        _tool_round=_tool_round + 1)
 
 
 def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
