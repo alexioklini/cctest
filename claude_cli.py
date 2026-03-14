@@ -3337,40 +3337,83 @@ def main():
 
 
 def _print_greeting(model: str, agent_id: str = "default") -> None:
-    """Print the Brain Agent startup banner — compact, left-aligned, Claude Code style."""
+    """Print the Brain Agent startup banner."""
     cwd = os.getcwd()
     latest = CHANGELOG[0] if CHANGELOG else None
 
-    icon = [
-        f"{FG_ORANGE}  ⣠⣴⣶⣶⣦⣄{RESET}",
-        f"{FG_ORANGE} ⣿⣿⠛⠛⣿⣿{RESET}",
-        f"{FG_ORANGE} ⠻⣿⣿⣿⣿⠟{RESET}",
+    # Color definitions for gradient brain
+    C1 = "\033[38;5;213m"  # pink
+    C2 = "\033[38;5;177m"  # purple
+    C3 = "\033[38;5;141m"  # lavender
+    C4 = "\033[38;5;105m"  # blue-purple
+    C5 = "\033[38;5;69m"   # blue
+    C6 = "\033[38;5;33m"   # deep blue
+    CO = "\033[38;5;208m"  # orange accent
+
+    brain = [
+        f"  {C1}    ⣀⣀⣤⣤⣤⣤⣤⣤⣀⣀    {RESET}",
+        f"  {C1}  ⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦  {RESET}",
+        f"  {C2} ⣾⣿⣿⡟⠛⠛⣿⣿⡟⠛⠛⣿⣿⣿⣷ {RESET}",
+        f"  {C2}⣸⣿⣿⡇  ⣸⣿⣿⡇  ⢸⣿⣿⣿⣇{RESET}",
+        f"  {C3}⣿⣿⣿⣇  ⣿⣿⣿⣇  ⣸⣿⣿⣿⣿{RESET}",
+        f"  {C3}⢿⣿⣿⣿⣦⣤⣿⣿⣿⣦⣤⣾⣿⣿⣿⡿{RESET}",
+        f"  {C4} ⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟ {RESET}",
+        f"  {C5}  ⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋  {RESET}",
+        f"  {C6}    ⠉⠛⠿⣿⣿⣿⠿⠛⠉    {RESET}",
     ]
 
-    agent_label = f" {CYAN}{BOLD}{agent_id}{RESET}" if agent_id != "main" else ""
-    info = [
-        f"  {BOLD}Brain Agent{RESET}{agent_label} {DIM}v{VERSION}{RESET}",
-        f"  {DIM}{model}{RESET}",
-        f"  {DIM}{cwd}{RESET}",
-    ]
+    # Title with gradient
+    title = (
+        f"  {C1}B{C2}r{C3}a{C4}i{C5}n{RESET} "
+        f"{CO}{BOLD}Agent{RESET}"
+    )
+    ver = f" {DIM}v{VERSION}{RESET}"
+    agent_label = f" {DIM}│{RESET} {CYAN}{BOLD}{agent_id}{RESET}" if agent_id != "main" else ""
 
     print()
-    for i in range(len(icon)):
-        print(f"{icon[i]}{info[i]}")
+    for line in brain:
+        print(line)
+    print()
+    print(f"  {title}{ver}{agent_label}")
+    print()
 
-    # Agent info
+    # Info section with dim separators
+    sep = f"{DIM}·{RESET}"
+    print(f"  {DIM}Model{RESET}  {GREEN}{model}{RESET}")
+    print(f"  {DIM}Path{RESET}   {DIM}{cwd}{RESET}")
+
+    # Agents
     agents = list_agents()
     if len(agents) > 1:
-        print(f"  {DIM}Agents:{RESET} {DIM}{', '.join(agents)}{RESET}")
+        agent_list = []
+        for a in agents:
+            if a == agent_id:
+                agent_list.append(f"{CYAN}{BOLD}{a}{RESET}")
+            else:
+                agent_list.append(f"{DIM}{a}{RESET}")
+        print(f"  {DIM}Agents{RESET} {' {0} '.format(sep).join(agent_list)}")
 
-    # Tools summary
-    tool_names = [t["name"] for t in TOOL_DEFINITIONS]
-    print(f"  {DIM}Tools:{RESET} {DIM}{', '.join(tool_names)}{RESET}")
-    print(f"  {DIM}/new /agent /model /models /tools /schedule  Esc cancel  exit quit{RESET}")
+    # Skills count
+    if _current_agent:
+        skills = _current_agent.list_skills()
+        if skills:
+            skill_names = [s["name"] for s in skills[:5]]
+            more = f" {DIM}+{len(skills)-5} more{RESET}" if len(skills) > 5 else ""
+            print(f"  {DIM}Skills{RESET} {DIM}{', '.join(skill_names)}{more}{RESET}")
 
-    # Tip / changelog line
+    # Scheduled tasks count
+    if _scheduler:
+        schedules = _scheduler.list_all()
+        active = sum(1 for s in schedules if s["enabled"])
+        if schedules:
+            print(f"  {DIM}Tasks{RESET}  {DIM}{active} scheduled ({len(schedules)} total){RESET}")
+
+    print()
+    print(f"  {DIM}Commands  /new /agent /model /models /tools /schedule{RESET}")
+    print(f"  {DIM}Controls  Esc cancel · o toggle tools · exit quit{RESET}")
+
     if latest:
-        print(f"\n {DIM}↑ {latest[2]}{RESET}")
+        print(f"\n  {DIM}↑ v{latest[0]}: {latest[2]}{RESET}")
 
     print()
 
