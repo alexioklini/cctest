@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.brain-agent.server</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/alexander/Documents/dev/cctest/server.py</string>
+        <string>--base-url</string>
+        <string>http://192.168.1.221:8081/v1</string>
+        <string>--api-key</string>
+        <string>kilo</string>
+        <string>-t</string>
+        <string>openai</string>
+        <string>-m</string>
+        <string>&lt;distributed&gt;/Qwen3-Coder-Next-REAP-48B-A3B-mlx-mxfp4</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/alexander/Documents/dev/cctest</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/alexander/.brain-agent/server.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/alexander/.brain-agent/server.error.log</string>
+</dict>
+</plist>

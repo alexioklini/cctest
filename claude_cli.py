@@ -2311,6 +2311,26 @@ class TaskCancelled(Exception):
     pass
 
 
+class CancelToken:
+    """Simple cancellation token — compatible with EscapeWatcher interface."""
+
+    def __init__(self):
+        self._cancelled = threading.Event()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancelled.is_set()
+
+    def cancel(self):
+        self._cancelled.set()
+
+    def start(self):
+        pass  # No-op — no background thread needed
+
+    def stop(self):
+        pass  # No-op
+
+
 class EscapeWatcher:
     """Background thread that monitors for Escape key press in raw terminal mode."""
 
@@ -3167,14 +3187,21 @@ MAX_TOOL_ROUNDS = 15  # Maximum number of tool-use round trips before forcing a 
 def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                  api_type: str, silent: bool = False,
                  tools: bool = True,
-                 escape_watcher: EscapeWatcher | None = None,
-                 _tool_round: int = 0) -> str | None:
+                 escape_watcher: EscapeWatcher | CancelToken | None = None,
+                 _tool_round: int = 0,
+                 event_callback=None) -> str | None:
     """Send messages and stream the response.
 
     If silent=True, collects without printing (for TUI mode).
     If tools=True, includes tool definitions and handles tool-use loops.
+    If event_callback is provided, called with (event_type, data) for streaming:
+        ("text_delta", {"text": "..."})
+        ("tool_call", {"name": "...", "args": {...}})
+        ("tool_result", {"name": "...", "result": "..."})
+        ("done", {"text": "full response"})
+        ("error", {"message": "..."})
     Returns the assistant's full response text on success, None on model-related errors.
-    Raises TaskCancelled if escape_watcher detects Escape key.
+    Raises TaskCancelled if escape_watcher detects cancellation.
     """
     # Stop tool loops after MAX_TOOL_ROUNDS
     if _tool_round >= MAX_TOOL_ROUNDS:
@@ -3307,12 +3334,12 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                 return _handle_openai_response(
                     response, payload, messages, model, api_key, base_url,
                     api_type, silent, tools, headers, endpoint, escape_watcher,
-                    _tool_round)
+                    _tool_round, event_callback)
             else:
                 return _handle_anthropic_response(
                     response, payload, messages, model, api_key, base_url,
                     api_type, silent, tools, headers, endpoint, escape_watcher,
-                    _tool_round)
+                    _tool_round, event_callback)
 
     except urllib.error.HTTPError as e:
         if e.code == 400:
@@ -3332,8 +3359,9 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
 def _handle_anthropic_response(response, payload, messages, model, api_key,
                                 base_url, api_type, silent, tools,
                                 headers, endpoint,
-                                escape_watcher: EscapeWatcher | None = None,
-                                _tool_round: int = 0) -> str | None:
+                                escape_watcher=None,
+                                _tool_round: int = 0,
+                                event_callback=None) -> str | None:
     """Handle Anthropic SSE response, including tool-use agentic loop."""
     # Parse the full SSE stream to get content blocks and stop reason
     collected_text = []
@@ -3377,6 +3405,8 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
                         text = _unescape(delta.get("text", ""))
                         if not silent:
                             print(text, end="", flush=True)
+                        if event_callback:
+                            event_callback("text_delta", {"text": text})
                         collected_text.append(text)
                     elif delta.get("type") == "input_json_delta":
                         current_block["input_json"] += delta.get("partial_json", "")
@@ -3425,8 +3455,12 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
     tool_results = []
     for tu in tool_uses:
         _display_tool_call(tu["name"], tu["input"])
+        if event_callback:
+            event_callback("tool_call", {"name": tu["name"], "args": tu["input"]})
         result = _execute_tool(tu["name"], tu["input"])
         _display_tool_result(tu["name"], result)
+        if event_callback:
+            event_callback("tool_result", {"name": tu["name"], "result": result})
 
         tool_results.append({
             "type": "tool_result",
@@ -3439,14 +3473,15 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
     # Recurse to get the model's final response (or more tool calls)
     return send_message(messages, model, api_key, base_url, api_type,
                         silent=silent, tools=tools, escape_watcher=escape_watcher,
-                        _tool_round=_tool_round + 1)
+                        _tool_round=_tool_round + 1, event_callback=event_callback)
 
 
 def _handle_openai_response(response, payload, messages, model, api_key,
                              base_url, api_type, silent, tools,
                              headers, endpoint,
-                             escape_watcher: EscapeWatcher | None = None,
-                             _tool_round: int = 0) -> str | None:
+                             escape_watcher=None,
+                             _tool_round: int = 0,
+                             event_callback=None) -> str | None:
     """Handle OpenAI SSE response, including tool-use agentic loop."""
     collected_text = []
     tool_calls_map = {}  # index -> {id, name, arguments_str}
@@ -3471,6 +3506,8 @@ def _handle_openai_response(response, payload, messages, model, api_key,
                 content = _unescape(content)
                 if not silent:
                     print(content, end="", flush=True)
+                if event_callback:
+                    event_callback("text_delta", {"text": content})
                 collected_text.append(content)
 
             # Accumulate tool calls
@@ -3523,8 +3560,12 @@ def _handle_openai_response(response, payload, messages, model, api_key,
 
         tool_name = tc["function"]["name"]
         _display_tool_call(tool_name, args)
+        if event_callback:
+            event_callback("tool_call", {"name": tool_name, "args": args})
         result = _execute_tool(tool_name, args)
         _display_tool_result(tool_name, result)
+        if event_callback:
+            event_callback("tool_result", {"name": tool_name, "result": result})
 
         messages.append({
             "role": "tool",
@@ -3534,17 +3575,19 @@ def _handle_openai_response(response, payload, messages, model, api_key,
 
     return send_message(messages, model, api_key, base_url, api_type,
                         silent=silent, tools=tools, escape_watcher=escape_watcher,
-                        _tool_round=_tool_round + 1)
+                        _tool_round=_tool_round + 1, event_callback=event_callback)
 
 
 def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
                                base_url: str, api_type: str,
                                silent: bool = False,
                                tools: bool = True,
-                               escape_watcher: EscapeWatcher | None = None) -> str | None:
+                               escape_watcher=None,
+                               event_callback=None) -> str | None:
     """Send messages, falling back to available models if the requested one fails."""
     result = send_message(messages, model, api_key, base_url, api_type,
-                          silent=silent, tools=tools, escape_watcher=escape_watcher)
+                          silent=silent, tools=tools, escape_watcher=escape_watcher,
+                          event_callback=event_callback)
     if result is not None:
         return result
 
@@ -3560,7 +3603,8 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
         tried_models.add(fallback_model)
         print(f"Note: Model '{model}' not available, using '{fallback_model}'.", flush=True)
         result = send_message(messages, fallback_model, api_key, base_url, api_type,
-                              silent=silent, tools=tools, escape_watcher=escape_watcher)
+                              silent=silent, tools=tools, escape_watcher=escape_watcher,
+                              event_callback=event_callback)
         if result is not None:
             return result
 
