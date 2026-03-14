@@ -1,965 +1,602 @@
 #!/usr/bin/env python3
-"""Brain Agent — Textual TUI for interactive chat with LLM APIs."""
+"""Brain Agent TUI — Rich + prompt_toolkit frontend (Claude Code style)."""
 
 import argparse
 import json
 import os
 import sys
+import threading
 import time
 
-# ---------------------------------------------------------------------------
-# Ensure the backend is importable from the same directory
-# ---------------------------------------------------------------------------
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.text import Text
+from rich.theme import Theme
+from rich.table import Table
 
-import claude_cli  # noqa: E402 — the backend
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.styles import Style as PTStyle
 
-from textual import on, work
-from textual.app import App, ComposeResult
-from textual.binding import Binding
-from textual.containers import Vertical, VerticalScroll
-from textual.reactive import reactive
-from textual.screen import ModalScreen
-from textual.widget import Widget
-from textual.widgets import (
-    Input,
-    OptionList,
-    Static,
-)
-from textual.widgets.option_list import Option
+# Import backend
+import claude_cli as backend
 
+# --- Console setup ---
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-VERSION = claude_cli.VERSION
-SLASH_COMMANDS = list(claude_cli.SLASH_COMMANDS.keys())
+THEME = Theme({
+    "info": "dim",
+    "success": "green",
+    "warning": "yellow",
+    "error": "red bold",
+    "tool.name": "cyan bold",
+    "tool.verb": "#ff8700 bold",
+    "agent": "cyan bold",
+    "model": "green",
+    "dim": "dim",
+})
 
-BRAIN_ART = r"""
-[#d787ff]    ⣀⣀⣤⣤⣤⣤⣤⣤⣀⣀    [/]
-[#d787ff]  ⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦  [/]
-[#af87ff] ⣾⣿⣿⡟⠛⠛⣿⣿⡟⠛⠛⣿⣿⣿⣷ [/]
-[#af87ff]⣸⣿⣿⡇  ⣸⣿⣿⡇  ⢸⣿⣿⣿⣇[/]
-[#8787ff]⣿⣿⣿⣇  ⣿⣿⣿⣇  ⣸⣿⣿⣿⣿[/]
-[#8787ff]⢿⣿⣿⣿⣦⣤⣿⣿⣿⣦⣤⣾⣿⣿⣿⡿[/]
-[#5f5fff] ⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟ [/]
-[#005fff]  ⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋  [/]
-[#0057af]    ⠉⠛⠿⣿⣿⣿⠿⠛⠉    [/]
-"""
+console = Console(theme=THEME, highlight=False)
 
-BRAIN_TITLE = (
-    "[#d787ff]B[/#d787ff][#af87ff]r[/#af87ff][#8787ff]a[/#8787ff]"
-    "[#5f5fff]i[/#5f5fff][#005fff]n[/#005fff] "
-    "[#ff8700 bold]Agent[/#ff8700 bold]"
-)
+# --- Greeting ---
 
+def print_greeting(model: str, agent_id: str):
+    """Print Claude Code-style greeting."""
+    C = [
+        "\033[38;5;213m", "\033[38;5;177m", "\033[38;5;141m",
+        "\033[38;5;105m", "\033[38;5;69m", "\033[38;5;33m",
+    ]
+    R = "\033[0m"
 
-# ---------------------------------------------------------------------------
-# Utility: strip ANSI from backend text
-# ---------------------------------------------------------------------------
-def _strip_ansi(text: str) -> str:
-    """Remove ANSI escape codes so we can render with Rich markup instead."""
-    import re
-    text = re.sub(r"\033\[[0-9;]*[a-zA-Z]", "", text)
-    text = re.sub(r"\033\[\?[0-9;]*[a-zA-Z]", "", text)
-    text = re.sub(r"\033\([A-Z]", "", text)
-    text = re.sub(r"\033][^\a]*\a", "", text)
-    text = re.sub(r"\r", "", text)
-    return text
-
-
-# ---------------------------------------------------------------------------
-# Chat message widgets
-# ---------------------------------------------------------------------------
-class UserMessage(Static):
-    """A user message bubble."""
-
-    DEFAULT_CSS = """
-    UserMessage {
-        margin: 1 2 0 4;
-        padding: 1 2;
-        background: $primary-background;
-        color: $text;
-        border: round $primary;
-    }
-    """
-
-    def __init__(self, text: str) -> None:
-        super().__init__(text)
-
-
-class AssistantMessage(Static):
-    """An assistant response bubble."""
-
-    DEFAULT_CSS = """
-    AssistantMessage {
-        margin: 1 4 0 2;
-        padding: 1 2;
-        background: $surface;
-        color: $text;
-        border: round $secondary;
-    }
-    """
-
-    def __init__(self, text: str) -> None:
-        super().__init__(text)
-
-
-class ToolCallMessage(Static):
-    """Display for a tool invocation."""
-
-    DEFAULT_CSS = """
-    ToolCallMessage {
-        margin: 0 4 0 2;
-        padding: 0 1;
-        color: $text-muted;
-    }
-    """
-
-    def __init__(self, name: str, args: dict) -> None:
-        summary_parts = [f"[bold cyan]{name}[/bold cyan]("]
-        for k, v in args.items():
-            val_str = str(v)
-            if len(val_str) > 80:
-                val_str = val_str[:77] + "..."
-            summary_parts.append(f"[magenta]{k}[/magenta]={val_str}, ")
-        text = "".join(summary_parts).rstrip(", ") + ")"
-        super().__init__(f"[dim]  > {text}[/dim]")
-
-
-class ToolResultMessage(Static):
-    """Display for a tool result."""
-
-    DEFAULT_CSS = """
-    ToolResultMessage {
-        margin: 0 4 0 2;
-        padding: 0 1;
-        color: $text-muted;
-    }
-    """
-
-    def __init__(self, name: str, result_str: str) -> None:
-        try:
-            rdata = json.loads(result_str)
-        except json.JSONDecodeError:
-            rdata = {}
-
-        if rdata.get("error"):
-            label = f"[bold red]Error:[/bold red] {str(rdata['error'])[:120]}"
-        elif name == "read_file":
-            label = f"[green]Read[/green] {rdata.get('total_lines', '?')} lines from {rdata.get('path', '?')}"
-        elif name == "write_file":
-            label = f"[green]Wrote[/green] {rdata.get('path', '?')} ({rdata.get('size', 0)} bytes)"
-        elif name == "edit_file":
-            label = f"[green]Edited[/green] {rdata.get('path', '?')} ({rdata.get('replacements', 0)} replacements)"
-        elif name == "execute_command":
-            ec = rdata.get("exit_code", -1)
-            color = "green" if ec == 0 else "red"
-            label = f"[{color}]exit {ec}[/{color}]"
-            output = rdata.get("output", "")
-            first_line = output.split("\n")[0][:100] if output else ""
-            if first_line:
-                label += f" — {first_line}"
-        elif name == "exa_search":
-            label = f"[green]{rdata.get('result_count', 0)} results[/green]"
-        elif name == "list_directory":
-            label = f"[green]{rdata.get('count', 0)} entries[/green]"
-        elif name == "search_files":
-            label = f"[green]{rdata.get('match_count', 0)} matches[/green]"
-        elif name == "memory_store":
-            label = f"[green]Stored[/green] {rdata.get('name', '')}"
-        elif name == "memory_recall":
-            label = f"[green]{rdata.get('count', 0)} memories[/green]"
-        elif name == "delegate_task":
-            label = f"[green]{rdata.get('agent', '')} responded[/green]"
-        elif name == "use_skill":
-            label = f"[green]Loaded skill:[/green] {rdata.get('skill', '')}"
-        else:
-            label = "[green]Done[/green]"
-
-        super().__init__(f"[dim]  < {label}[/dim]")
-
-
-class SystemMessage(Static):
-    """System/info message (e.g. new chat, model switch)."""
-
-    DEFAULT_CSS = """
-    SystemMessage {
-        margin: 1 6;
-        color: $text-muted;
-        text-style: italic;
-    }
-    """
-
-
-# ---------------------------------------------------------------------------
-# Welcome screen widget
-# ---------------------------------------------------------------------------
-class WelcomePanel(Static):
-    """The welcome/greeting panel shown at startup."""
-
-    DEFAULT_CSS = """
-    WelcomePanel {
-        margin: 2 4;
-        padding: 1 2;
-        text-align: center;
-    }
-    """
-
-    def __init__(self, model: str, agent_id: str) -> None:
-        lines = [BRAIN_ART, "", f"  {BRAIN_TITLE} [dim]v{VERSION}[/dim]", ""]
-
-        # Info
-        lines.append(f"  [dim]Model[/dim]  [green]{model}[/green]")
-        agents = claude_cli.list_agents()
-        if len(agents) > 1:
-            parts = []
-            for a in agents:
-                if a == agent_id:
-                    parts.append(f"[bold cyan]{a}[/bold cyan]")
-                else:
-                    parts.append(f"[dim]{a}[/dim]")
-            lines.append(f"  [dim]Agents[/dim] {' | '.join(parts)}")
-
-        if claude_cli._current_agent:
-            skills = claude_cli._current_agent.list_skills()
-            if skills:
-                names = [s["name"] for s in skills[:5]]
-                more = f" [dim]+{len(skills)-5} more[/dim]" if len(skills) > 5 else ""
-                lines.append(f"  [dim]Skills[/dim] [dim]{', '.join(names)}{more}[/dim]")
-
-        lines.append("")
-        lines.append("  [dim]Commands  /new  /agent  /model  /models  /tools  /schedule  /help[/dim]")
-        lines.append("  [dim]Ctrl+C to quit[/dim]")
-
-        latest = claude_cli.CHANGELOG[0] if claude_cli.CHANGELOG else None
-        if latest:
-            lines.append(f"\n  [dim]v{latest[0]}: {latest[2]}[/dim]")
-
-        super().__init__("\n".join(lines))
-
-
-# ---------------------------------------------------------------------------
-# Status bar widget
-# ---------------------------------------------------------------------------
-class StatusBar(Static):
-    """Bottom status bar showing agent, model, and token count."""
-
-    DEFAULT_CSS = """
-    StatusBar {
-        dock: bottom;
-        height: 1;
-        background: $surface;
-        color: $text;
-        padding: 0 2;
-    }
-    """
-
-    agent_id: reactive[str] = reactive("main")
-    model: reactive[str] = reactive("")
-    token_count: reactive[int] = reactive(0)
-    max_tokens: reactive[int] = reactive(claude_cli.DEFAULT_MAX_CONTEXT_TOKENS)
-
-    def render(self) -> str:
-        pct = int(self.token_count / self.max_tokens * 100) if self.max_tokens else 0
-        agent_part = f"[bold cyan]{self.agent_id}[/bold cyan]"
-        model_part = f"[green]{self.model}[/green]"
-        ctx_part = f"[dim]{self.token_count:,} / {self.max_tokens:,} tokens ({pct}%)[/dim]"
-        return f" {agent_part} | {model_part} | {ctx_part}"
-
-
-# ---------------------------------------------------------------------------
-# Chat input with history and tab completion
-# ---------------------------------------------------------------------------
-class ChatInput(Input):
-    """Input widget with command history and slash-command tab completion."""
-
-    DEFAULT_CSS = """
-    ChatInput {
-        dock: bottom;
-        margin: 0 0;
-    }
-    """
-
-    def __init__(self) -> None:
-        super().__init__(placeholder="Type a message... (/help for commands)")
-        self._history: list[str] = []
-        self._history_idx: int = 0
-        self._stash: str = ""  # stash current input when browsing history
-
-    def add_to_history(self, text: str) -> None:
-        if text.strip() and (not self._history or self._history[-1] != text.strip()):
-            self._history.append(text.strip())
-        self._history_idx = len(self._history)
-        self._stash = ""
-
-    def _on_key(self, event) -> None:
-        if event.key == "up":
-            event.prevent_default()
-            event.stop()
-            if self._history:
-                if self._history_idx == len(self._history):
-                    self._stash = self.value
-                if self._history_idx > 0:
-                    self._history_idx -= 1
-                    self.value = self._history[self._history_idx]
-                    self.cursor_position = len(self.value)
-        elif event.key == "down":
-            event.prevent_default()
-            event.stop()
-            if self._history_idx < len(self._history):
-                self._history_idx += 1
-                if self._history_idx == len(self._history):
-                    self.value = self._stash
-                else:
-                    self.value = self._history[self._history_idx]
-                self.cursor_position = len(self.value)
-        elif event.key == "tab":
-            event.prevent_default()
-            event.stop()
-            val = self.value.strip()
-            if val.startswith("/"):
-                matches = [c for c in SLASH_COMMANDS if c.startswith(val)]
-                if len(matches) == 1:
-                    self.value = matches[0] + " "
-                    self.cursor_position = len(self.value)
-                elif matches:
-                    # Complete the common prefix
-                    prefix = os.path.commonprefix(matches)
-                    if len(prefix) > len(val):
-                        self.value = prefix
-                        self.cursor_position = len(self.value)
-
-
-# ---------------------------------------------------------------------------
-# Help screen
-# ---------------------------------------------------------------------------
-class HelpScreen(ModalScreen[None]):
-    """Modal screen showing help."""
-
-    DEFAULT_CSS = """
-    HelpScreen {
-        align: center middle;
-    }
-    #help-panel {
-        width: 70;
-        max-height: 80%;
-        border: round $primary;
-        background: $surface;
-        padding: 1 2;
-    }
-    """
-
-    BINDINGS = [
-        Binding("escape", "dismiss_help", "Close"),
+    brain_lines = [
+        f"{C[0]}      ⣀⣀⣤⣤⣤⣤⣤⣤⣀⣀{R}",
+        f"{C[0]}    ⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦{R}",
+        f"{C[1]}   ⣾⣿⣿⡟⠛⠛⣿⣿⡟⠛⠛⣿⣿⣿⣷{R}",
+        f"{C[1]}  ⣸⣿⣿⡇  ⣸⣿⣿⡇  ⢸⣿⣿⣿⣇{R}",
+        f"{C[2]}  ⣿⣿⣿⣇  ⣿⣿⣿⣇  ⣸⣿⣿⣿⣿{R}",
+        f"{C[2]}  ⢿⣿⣿⣿⣦⣤⣿⣿⣿⣦⣤⣾⣿⣿⣿⡿{R}",
+        f"{C[3]}   ⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟{R}",
+        f"{C[4]}    ⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋{R}",
+        f"{C[5]}      ⠉⠛⠿⣿⣿⣿⠿⠛⠉{R}",
     ]
 
-    def compose(self) -> ComposeResult:
-        lines = ["[bold]Commands[/bold]\n"]
-        for cmd, desc in claude_cli.SLASH_COMMANDS.items():
-            lines.append(f"  [bold green]{cmd:12s}[/bold green] [dim]{desc}[/dim]")
-        lines.append("\n[bold]Schedule subcommands[/bold]\n")
-        for sub, desc in [
-            ("list", "List all scheduled tasks"),
-            ("add", "Create a new scheduled task"),
-            ("pause NAME", "Pause a task"),
-            ("resume NAME", "Resume a task"),
-            ("delete NAME", "Delete a task"),
-            ("history", "Show execution history"),
-        ]:
-            lines.append(f"  [bold green]  {sub:16s}[/bold green] [dim]{desc}[/dim]")
-        lines.append("\n[bold]Keyboard[/bold]\n")
-        for key, desc in [
-            ("Ctrl+C", "Quit"),
-            ("Escape", "Close dialogs"),
-            ("Tab", "Autocomplete slash commands"),
-            ("Up/Down", "Input history"),
-        ]:
-            lines.append(f"  [yellow]{key:12s}[/yellow] [dim]{desc}[/dim]")
+    console.print()
+    for line in brain_lines:
+        console.print(f"  {line}")
+    console.print()
 
-        with Vertical(id="help-panel"):
-            yield Static("\n".join(lines))
+    title = Text()
+    for i, ch in enumerate("Brain"):
+        title.append(ch, style=f"bold color({[213,177,141,105,69][i]})")
+    title.append(" ")
+    title.append("Agent", style="bold #ff8700")
+    title.append(f" v{backend.VERSION}", style="dim")
+    if agent_id != "main":
+        title.append(" │ ", style="dim")
+        title.append(agent_id, style="cyan bold")
+    console.print(f"  {title}")
+    console.print()
 
-    def action_dismiss_help(self) -> None:
-        self.dismiss(None)
+    console.print(f"  [dim]Model[/]  [green]{model}[/]")
+    console.print(f"  [dim]Path[/]   [dim]{os.getcwd()}[/]")
 
-
-# ---------------------------------------------------------------------------
-# Model selection screen
-# ---------------------------------------------------------------------------
-class ModelSelectScreen(ModalScreen[str | None]):
-    """Modal for selecting a model."""
-
-    DEFAULT_CSS = """
-    ModelSelectScreen {
-        align: center middle;
-    }
-    #model-panel {
-        width: 60;
-        max-height: 80%;
-        border: round $primary;
-        background: $surface;
-        padding: 1 2;
-    }
-    """
-
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
-
-    def __init__(self, models: list[str], current: str) -> None:
-        super().__init__()
-        self._models = models
-        self._current = current
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="model-panel"):
-            yield Static("[bold]Select Model[/bold]\n")
-            options = []
-            for m in self._models:
-                label = f"  {m}  [bold cyan]<--[/bold cyan]" if m == self._current else f"  {m}"
-                options.append(Option(label, id=m))
-            yield OptionList(*options, id="model-list")
-
-    @on(OptionList.OptionSelected)
-    def _on_select(self, event: OptionList.OptionSelected) -> None:
-        self.dismiss(event.option_id)
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-
-# ---------------------------------------------------------------------------
-# Agent selection screen
-# ---------------------------------------------------------------------------
-class AgentSelectScreen(ModalScreen[str | None]):
-    """Modal for selecting an agent."""
-
-    DEFAULT_CSS = """
-    AgentSelectScreen {
-        align: center middle;
-    }
-    #agent-panel {
-        width: 60;
-        max-height: 80%;
-        border: round $primary;
-        background: $surface;
-        padding: 1 2;
-    }
-    """
-
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
-
-    def __init__(self, agents: list[str], current: str) -> None:
-        super().__init__()
-        self._agents = agents
-        self._current = current
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="agent-panel"):
-            yield Static("[bold]Select Agent[/bold]\n")
-            options = []
-            for a in self._agents:
-                cfg = claude_cli.AgentConfig(a)
-                desc = cfg.description
-                model_info = f" [{cfg.preferred_model}]" if cfg.preferred_model else ""
-                marker = " [bold cyan]<--[/bold cyan]" if a == self._current else ""
-                options.append(Option(f"  {a}{model_info} -- {desc}{marker}", id=a))
-            yield OptionList(*options, id="agent-list")
-
-    @on(OptionList.OptionSelected)
-    def _on_select(self, event: OptionList.OptionSelected) -> None:
-        self.dismiss(event.option_id)
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-
-# ---------------------------------------------------------------------------
-# Schedule list screen
-# ---------------------------------------------------------------------------
-class ScheduleScreen(ModalScreen[None]):
-    """Modal showing scheduled tasks."""
-
-    DEFAULT_CSS = """
-    ScheduleScreen {
-        align: center middle;
-    }
-    #schedule-panel {
-        width: 80;
-        max-height: 80%;
-        border: round $primary;
-        background: $surface;
-        padding: 1 2;
-        overflow-y: auto;
-    }
-    """
-
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="schedule-panel"):
-            yield Static("[bold]Scheduled Tasks[/bold]\n")
-            if not claude_cli._scheduler:
-                yield Static("[dim]Scheduler not initialized[/dim]")
-                return
-            schedules = claude_cli._scheduler.list_all()
-            if not schedules:
-                yield Static("[dim]No scheduled tasks[/dim]")
+    agents = backend.list_agents()
+    if len(agents) > 1:
+        parts = []
+        for a in agents:
+            if a == agent_id:
+                parts.append(f"[cyan bold]{a}[/]")
             else:
-                for s in schedules:
-                    status = "[green]active[/green]" if s["enabled"] else "[dim]paused[/dim]"
-                    next_r = s.get("next_run", "")[:16] if s.get("next_run") else "--"
-                    yield Static(
-                        f"  [bold]{s['name']}[/bold] [{status}] [dim]{s['schedule']}[/dim]\n"
-                        f"    [dim]agent:[/dim] {s['agent']}  [dim]next:[/dim] {next_r}\n"
-                        f"    [dim]task:[/dim] {s['task'][:80]}\n"
-                    )
-            yield Static("\n[dim]Press Escape to close[/dim]")
+                parts.append(f"[dim]{a}[/]")
+        console.print(f"  [dim]Agents[/] {' · '.join(parts)}")
 
-    def action_cancel(self) -> None:
-        self.dismiss(None)
+    if backend._current_agent:
+        skills = backend._current_agent.list_skills()
+        if skills:
+            names = [s["name"] for s in skills[:5]]
+            more = f" [dim]+{len(skills)-5}[/]" if len(skills) > 5 else ""
+            console.print(f"  [dim]Skills[/] [dim]{', '.join(names)}{more}[/]")
 
+    console.print()
+    console.print("  [dim]/help for commands · Ctrl+C to cancel · Ctrl+D to quit[/]")
 
-# ---------------------------------------------------------------------------
-# Tools list screen
-# ---------------------------------------------------------------------------
-class ToolsScreen(ModalScreen[None]):
-    """Modal showing available tools."""
-
-    DEFAULT_CSS = """
-    ToolsScreen {
-        align: center middle;
-    }
-    #tools-panel {
-        width: 80;
-        max-height: 80%;
-        border: round $primary;
-        background: $surface;
-        padding: 1 2;
-        overflow-y: auto;
-    }
-    """
-
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
-
-    def compose(self) -> ComposeResult:
-        with VerticalScroll(id="tools-panel"):
-            yield Static("[bold]Available Tools[/bold]\n")
-            for td in claude_cli.TOOL_DEFINITIONS:
-                name = td["name"]
-                desc = td["description"].split(".")[0]
-                yield Static(f"  [bold cyan]{name}[/bold cyan]\n  [dim]{desc}[/dim]\n")
-            yield Static("\n[dim]Press Escape to close[/dim]")
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
+    latest = backend.CHANGELOG[0] if backend.CHANGELOG else None
+    if latest:
+        console.print(f"\n  [dim]↑ v{latest[0]}: {latest[2]}[/]")
+    console.print()
 
 
-# ---------------------------------------------------------------------------
-# Main application
-# ---------------------------------------------------------------------------
-class BrainApp(App):
-    """Brain Agent TUI application."""
+# --- Tool display ---
 
-    CSS = """
-    Screen {
-        background: $background;
-    }
+_show_tools = True
+_tool_count = 0
 
-    #chat-log {
-        height: 1fr;
-        padding: 0 0;
-        scrollbar-size: 1 1;
-    }
 
-    #input-area {
-        dock: bottom;
-        height: auto;
-        max-height: 3;
-    }
+def display_tool_call(name: str, args: dict):
+    """Display a tool call inline — one line, like Claude Code."""
+    verb = backend.TOOL_VERBS.get(name, "Running")
 
-    StatusBar {
-        dock: bottom;
-        height: 1;
-        background: #1e1e2e;
-        color: #cdd6f4;
-        padding: 0 2;
-    }
+    if name == "execute_command":
+        cmd = args.get("command", "")[:80]
+        detail = f"[yellow]$ {cmd}[/]"
+    elif name == "exa_search":
+        detail = f'[white]"{args.get("query", "")}"[/]'
+    elif name in ("read_file", "write_file", "edit_file"):
+        detail = f'[white]{args.get("path", "")}[/]'
+    elif name == "list_directory":
+        p = args.get("path", ".")
+        pat = args.get("pattern", "")
+        detail = f"[white]{p}/{pat}[/]" if pat else f"[white]{p}[/]"
+    elif name == "search_files":
+        detail = f'[magenta]/{args.get("pattern", "")}/[/] in [white]{args.get("path", ".")}[/]'
+    elif name == "web_fetch":
+        detail = f'[white]{args.get("url", "")}[/]'
+    elif name == "delegate_task":
+        detail = f'[cyan]{args.get("agent", "")}[/] [dim]{args.get("task", "")[:50]}[/]'
+    elif name == "use_skill":
+        detail = f'[magenta]{args.get("skill", "")}[/]'
+    elif name.startswith("memory"):
+        detail = f'[magenta]{args.get("query", args.get("name", ""))[:40]}[/]'
+    else:
+        detail = f"[dim]{str(args)[:50]}[/]"
 
-    ChatInput {
-        dock: bottom;
-        border: tall $primary;
-    }
-    """
+    console.print(f"  [tool.verb]{verb}[/] [tool.name]{name}[/] {detail}")
 
-    BINDINGS = [
-        Binding("ctrl+c", "quit", "Quit", show=True),
-    ]
 
-    def __init__(
-        self,
-        model: str,
-        api_key: str,
-        base_url: str,
-        api_type: str,
-        agent_id: str = "main",
-        max_context: int = claude_cli.DEFAULT_MAX_CONTEXT_TOKENS,
-    ) -> None:
-        super().__init__()
-        self._model = model
-        self._api_key = api_key
-        self._base_url = base_url
-        self._api_type = api_type
-        self._agent_id = agent_id
-        self._max_context = max_context
-        self._history: list[dict] = []  # conversation messages
-        self._show_tools = True
+def display_tool_result(name: str, result_str: str):
+    """Display tool result — compact one-line summary."""
+    try:
+        rdata = json.loads(result_str)
+    except json.JSONDecodeError:
+        return
 
-    def compose(self) -> ComposeResult:
-        yield StatusBar(id="status-bar")
-        yield VerticalScroll(id="chat-log")
-        yield ChatInput()
+    if rdata.get("error"):
+        err = rdata["error"].split("\n")[0][:80]
+        console.print(f"  [error]✘ {err}[/]")
+        return
 
-    def on_mount(self) -> None:
-        """Initialize the backend systems and show the welcome screen."""
-        # Initialize backend globals for delegation
-        claude_cli._delegate_api_key = self._api_key
-        claude_cli._delegate_base_url = self._base_url
-        claude_cli._delegate_api_type = self._api_type
-        claude_cli._delegate_fallback_model = self._model
+    if name == "execute_command":
+        ec = rdata.get("exit_code", -1)
+        sym, sty = ("✔", "success") if ec == 0 else ("✘", "error")
+        console.print(f"  [{sty}]{sym} exit {ec}[/]")
+    elif name == "exa_search":
+        console.print(f"  [success]✔ {rdata.get('result_count', 0)} results[/]")
+    elif name == "read_file":
+        console.print(f"  [success]✔ {rdata.get('total_lines', 0)} lines[/]")
+    elif name in ("write_file", "edit_file", "memory_store", "memory_delete"):
+        console.print(f"  [success]✔[/]")
+    elif name in ("search_files", "list_directory"):
+        console.print(f"  [success]✔ {rdata.get('match_count', rdata.get('count', 0))}[/]")
+    elif name in ("memory_recall", "memory_shared"):
+        console.print(f"  [success]✔ {rdata.get('count', 0)} memories[/]")
+    elif name == "delegate_task":
+        console.print(f"  [success]✔ {rdata.get('agent', '')} responded[/]")
+    elif name == "use_skill":
+        console.print(f"  [success]✔ loaded[/]")
+    else:
+        console.print(f"  [success]✔[/]")
 
-        # Initialize agent
-        self._switch_agent(self._agent_id)
 
-        # Initialize scheduler
-        claude_cli._scheduler = claude_cli.Scheduler()
-        claude_cli._scheduler.start()
+# --- Help ---
 
-        # Initialize task runner
-        claude_cli._task_runner = claude_cli.TaskRunner()
+def print_help():
+    console.print()
+    t = Table(show_header=False, box=None, padding=(0, 2), pad_edge=False)
+    t.add_column(style="green bold", min_width=12)
+    t.add_column(style="dim")
+    for cmd, desc in [
+        ("/help", "Show this help"),
+        ("/new", "Start a new conversation"),
+        ("/agent [name]", "Switch agent (arrow-key menu)"),
+        ("/model [name]", "Switch model"),
+        ("/models", "List & select models"),
+        ("/tools", "Toggle tool call display"),
+        ("/schedule", "Manage scheduled tasks"),
+    ]:
+        t.add_row(cmd, desc)
+    console.print(t)
+    console.print()
+    t2 = Table(show_header=False, box=None, padding=(0, 2), pad_edge=False)
+    t2.add_column(style="yellow", min_width=12)
+    t2.add_column(style="dim")
+    for key, desc in [
+        ("Ctrl+C", "Cancel / interrupt"),
+        ("Ctrl+D", "Quit"),
+        ("Tab", "Autocomplete commands"),
+        ("↑ / ↓", "Input history"),
+    ]:
+        t2.add_row(key, desc)
+    console.print(t2)
+    console.print()
 
-        # Show welcome panel
-        chat_log = self.query_one("#chat-log", VerticalScroll)
-        chat_log.mount(WelcomePanel(self._model, self._agent_id))
 
-        # Update status bar
-        self._update_status_bar()
+# --- Inline selection ---
 
-        # Focus the input
-        self.query_one(ChatInput).focus()
+def select_inline(items: list[str], labels: list[str] | None = None,
+                  active: str | None = None) -> str | None:
+    """Arrow-key inline selector. Returns item or None on Esc."""
+    if not items:
+        return None
+    display = labels if labels and len(labels) == len(items) else items
+    selected = 0
+    if active and active in items:
+        selected = items.index(active)
 
-    def _switch_agent(self, agent_id: str) -> None:
-        """Switch to a different agent, updating backend globals."""
-        claude_cli._current_agent = claude_cli.AgentConfig(agent_id)
-        claude_cli._memory_store = claude_cli.MemoryStore(
-            agent_id=agent_id,
-            base_dir=claude_cli._current_agent.memory_dir,
-        )
-        if claude_cli._current_agent.preferred_model:
-            self._model = claude_cli._current_agent.preferred_model
-        self._agent_id = agent_id
+    import termios, select as sel
 
-    def _update_status_bar(self) -> None:
-        """Refresh the status bar values."""
-        sb = self.query_one("#status-bar", StatusBar)
-        sb.agent_id = self._agent_id
-        sb.model = self._model
-        sb.token_count = claude_cli._estimate_conversation_tokens(
-            self._history, ""
-        )
-        sb.max_tokens = self._max_context
+    fd = sys.stdin.fileno()
+    try:
+        old = termios.tcgetattr(fd)
+    except termios.error:
+        return None
 
-    def _append_to_log(self, widget: Widget) -> None:
-        """Mount a widget into the chat log and scroll to it."""
-        chat_log = self.query_one("#chat-log", VerticalScroll)
-        chat_log.mount(widget)
-        chat_log.scroll_end(animate=False)
+    n = len(items)
 
-    # ----- Input handling -----
+    def draw():
+        for i, label in enumerate(display):
+            marker = "[cyan bold]❯[/]" if i == selected else " "
+            style = "bold" if i == selected else "dim"
+            tag = " [green](active)[/]" if items[i] == active else ""
+            console.print(f"  {marker} [{style}]{label}[/]{tag}")
 
-    @on(Input.Submitted)
-    def _on_input_submitted(self, event: Input.Submitted) -> None:
-        """Handle user pressing Enter in the input."""
-        text = event.value.strip()
-        if not text:
-            return
+    def erase():
+        sys.stdout.write(f"\033[{n}A")
+        for _ in range(n):
+            sys.stdout.write("\r\033[K\n")
+        sys.stdout.write(f"\033[{n}A")
+        sys.stdout.flush()
 
-        input_widget = self.query_one(ChatInput)
-        input_widget.add_to_history(text)
-        input_widget.value = ""
+    try:
+        new = termios.tcgetattr(fd)
+        new[3] = new[3] & ~(termios.ICANON | termios.ECHO)
+        new[6][termios.VMIN] = 0
+        new[6][termios.VTIME] = 0
+        termios.tcsetattr(fd, termios.TCSANOW, new)
 
-        stripped = text.lower()
-
-        # ----- Slash commands -----
-        if stripped in ("exit", "quit"):
-            self.exit()
-            return
-
-        if stripped == "/help":
-            self.push_screen(HelpScreen())
-            return
-
-        if stripped == "/new":
-            self._history = []
-            self._append_to_log(SystemMessage("[dim]--- New conversation ---[/dim]"))
-            self._update_status_bar()
-            return
-
-        if stripped == "/tools":
-            self.push_screen(ToolsScreen())
-            return
-
-        if stripped.startswith("/agent"):
-            arg = text[6:].strip()
-            agents = claude_cli.list_agents()
-            if arg:
-                self._switch_agent(arg)
-                self._history = []
-                self._append_to_log(
-                    SystemMessage(f"[dim]Switched to agent:[/dim] [bold]{arg}[/bold] [dim](model: {self._model})[/dim]")
-                )
-                self._update_status_bar()
-            else:
-                current = self._agent_id
-
-                def _on_agent_selected(result: str | None) -> None:
-                    if result:
-                        self._switch_agent(result)
-                        self._history = []
-                        self._append_to_log(
-                            SystemMessage(f"[dim]Switched to agent:[/dim] [bold]{result}[/bold] [dim](model: {self._model})[/dim]")
-                        )
-                        self._update_status_bar()
-
-                self.push_screen(AgentSelectScreen(agents, current), _on_agent_selected)
-            return
-
-        if stripped == "/models":
-            self._show_model_select()
-            return
-
-        if stripped.startswith("/model"):
-            arg = text[6:].strip()
-            if arg:
-                self._model = arg
-                self._append_to_log(
-                    SystemMessage(f"[dim]Switched to:[/dim] [bold]{arg}[/bold]")
-                )
-                self._update_status_bar()
-            else:
-                self._show_model_select()
-            return
-
-        if stripped.startswith("/schedule"):
-            self.push_screen(ScheduleScreen())
-            return
-
-        # ----- Normal message -----
-        self._append_to_log(UserMessage(text))
-        self._history.append({"role": "user", "content": text})
-        self._update_status_bar()
-
-        # Disable input while processing
-        input_widget.disabled = True
-
-        # Run the LLM call in a worker thread
-        self._send_message_worker(text)
-
-    def _show_model_select(self) -> None:
-        """Fetch models and show the selection screen."""
-        models = claude_cli.get_available_models(self._api_key, self._base_url, self._api_type)
-        if models:
-            def _on_model_selected(result: str | None) -> None:
-                if result:
-                    self._model = result
-                    self._append_to_log(
-                        SystemMessage(f"[dim]Switched to:[/dim] [bold]{result}[/bold]")
-                    )
-                    self._update_status_bar()
-
-            self.push_screen(ModelSelectScreen(models, self._model), _on_model_selected)
-        else:
-            self._append_to_log(SystemMessage("[dim]No models available[/dim]"))
-
-    # ----- Worker for sending messages -----
-
-    @work(thread=True, exclusive=True, group="chat")
-    def _send_message_worker(self, user_text: str) -> None:
-        """Send the message using the backend, in a worker thread.
-
-        We use silent=True so the backend collects tool-use results internally
-        without printing to stdout. After completion we display everything.
-        """
-        start_time = time.time()
-
-        # Track tool calls by temporarily monkey-patching display functions
-        tool_events: list[tuple[str, str, dict | str]] = []  # (type, name, data)
-        original_display_call = claude_cli._display_tool_call
-        original_display_result = claude_cli._display_tool_result
-
-        def _capture_tool_call(name: str, args: dict) -> None:
-            tool_events.append(("call", name, args))
-
-        def _capture_tool_result(name: str, result_str: str) -> None:
-            tool_events.append(("result", name, result_str))
-
-        claude_cli._display_tool_call = _capture_tool_call
-        claude_cli._display_tool_result = _capture_tool_result
-
-        reply = None
-        error = None
+        draw()
+        while True:
+            if sel.select([fd], [], [], 0.1)[0]:
+                ch = os.read(fd, 1)
+                if ch in (b'\r', b'\n'):
+                    erase()
+                    return items[selected]
+                elif ch == b'\x1b':
+                    s1 = os.read(fd, 1) if sel.select([fd], [], [], 0.05)[0] else b''
+                    if s1 == b'[':
+                        s2 = os.read(fd, 1) if sel.select([fd], [], [], 0.05)[0] else b''
+                        if s2 == b'A':
+                            selected = (selected - 1) % n
+                        elif s2 == b'B':
+                            selected = (selected + 1) % n
+                        else:
+                            erase(); return None
+                    else:
+                        erase(); return None
+                elif ch == b'\x03':
+                    erase(); return None
+                else:
+                    continue
+                erase()
+                draw()
+    except Exception:
+        return None
+    finally:
         try:
-            # Check context window and compact if needed
-            estimated = claude_cli._estimate_conversation_tokens(self._history)
-            threshold = int(self._max_context * claude_cli.COMPACT_THRESHOLD)
-            if estimated >= threshold and len(self._history) > claude_cli.KEEP_RECENT_MESSAGES:
-                self._history = claude_cli._compact_conversation(
-                    self._history, self._model, self._api_key, self._base_url,
-                    self._api_type, self._max_context,
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        except termios.error:
+            pass
+
+
+# --- Streaming ---
+
+def run_with_spinner(messages, model, api_key, base_url, api_type,
+                     escape_watcher=None):
+    """Send message with inline spinner, tool display. Returns reply."""
+    global _tool_count
+    _tool_count = 0
+
+    # Patch display functions
+    orig_call = backend._display_tool_call
+    orig_result = backend._display_tool_result
+
+    def patched_call(name, args):
+        global _tool_count
+        _tool_count += 1
+        if _show_tools:
+            display_tool_call(name, args)
+
+    def patched_result(name, result_str):
+        if _show_tools:
+            display_tool_result(name, result_str)
+
+    backend._display_tool_call = patched_call
+    backend._display_tool_result = patched_result
+
+    try:
+        reply = backend.send_message_with_fallback(
+            messages, model, api_key, base_url, api_type,
+            silent=True, escape_watcher=escape_watcher,
+        )
+        return reply
+    except backend.TaskCancelled:
+        console.print(f"\n  [dim]✘ Cancelled[/]")
+        return None
+    finally:
+        backend._display_tool_call = orig_call
+        backend._display_tool_result = orig_result
+
+
+# --- Main loop ---
+
+def run_interactive(args):
+    backend._delegate_api_key = args.api_key
+    backend._delegate_base_url = args.base_url
+    backend._delegate_api_type = args.api_type
+    backend._delegate_fallback_model = args.model
+
+    current_model, _ = backend._switch_agent(args.agent, args)
+
+    backend._scheduler = backend.Scheduler()
+    backend._scheduler.start()
+    backend._task_runner = backend.TaskRunner()
+
+    history = []
+
+    pt_history = InMemoryHistory()
+    completer = WordCompleter(
+        ["/help", "/new", "/agent", "/model", "/models", "/tools", "/schedule"],
+        sentence=True,
+    )
+    pt_style = PTStyle.from_dict({"prompt": "#00ff00 bold"})
+    session = PromptSession(
+        history=pt_history, completer=completer, style=pt_style,
+        complete_while_typing=False,
+    )
+
+    console.clear()
+    print_greeting(current_model, args.agent)
+
+    try:
+        while True:
+            try:
+                message = session.prompt(HTML("<prompt>❯ </prompt>"))
+            except KeyboardInterrupt:
+                continue
+            except EOFError:
+                console.print("[dim]Bye![/]")
+                break
+
+            stripped = message.strip()
+            if not stripped:
+                continue
+            low = stripped.lower()
+
+            if low in ("exit", "quit"):
+                console.print("[dim]Bye![/]")
+                break
+
+            if low == "/help":
+                print_help(); continue
+
+            if low == "/new":
+                history = []
+                console.rule(style="dim")
+                console.print("  [dim]New conversation[/]")
+                console.rule(style="dim")
+                continue
+
+            if low == "/tools":
+                global _show_tools
+                _show_tools = not _show_tools
+                s = "[green]visible[/]" if _show_tools else "[dim]hidden[/]"
+                console.print(f"  [dim]Tool display:[/] {s}")
+                continue
+
+            if low.startswith("/agent"):
+                arg = stripped[6:].strip()
+                agents = backend.list_agents()
+                if arg:
+                    if arg not in agents:
+                        console.print(f"  [dim]Creating:[/] [bold]{arg}[/]")
+                    current_model, _ = backend._switch_agent(arg, args)
+                    history = []
+                    console.print(f"  [dim]→[/] [agent]{arg}[/] [dim]({current_model})[/]")
+                else:
+                    labels = []
+                    for a in agents:
+                        cfg = backend.AgentConfig(a)
+                        m = f" [{cfg.preferred_model}]" if cfg.preferred_model else ""
+                        labels.append(f"{a}{m} — {cfg.description}")
+                    cur = backend._current_agent.agent_id if backend._current_agent else "main"
+                    console.print()
+                    choice = select_inline(agents, labels=labels, active=cur)
+                    if choice:
+                        current_model, _ = backend._switch_agent(choice, args)
+                        history = []
+                        console.print(f"  [dim]→[/] [agent]{choice}[/] [dim]({current_model})[/]")
+                continue
+
+            if low.startswith("/model") and not low.startswith("/models"):
+                arg = stripped[6:].strip()
+                if arg:
+                    current_model = arg
+                    console.print(f"  [dim]→[/] [model]{current_model}[/]")
+                else:
+                    models = backend.get_available_models(args.api_key, args.base_url, args.api_type)
+                    if models:
+                        console.print()
+                        choice = select_inline(models, active=current_model)
+                        if choice:
+                            current_model = choice
+                            console.print(f"  [dim]→[/] [model]{current_model}[/]")
+                    else:
+                        console.print("  [dim]No models available[/]")
+                continue
+
+            if low == "/models":
+                models = backend.get_available_models(args.api_key, args.base_url, args.api_type)
+                if models:
+                    console.print()
+                    choice = select_inline(models, active=current_model)
+                    if choice:
+                        current_model = choice
+                        console.print(f"  [dim]→[/] [model]{current_model}[/]")
+                else:
+                    console.print("  [dim]No models available[/]")
+                continue
+
+            if low.startswith("/schedule"):
+                _handle_schedule(stripped[9:].strip(), session)
+                continue
+
+            # --- Send message ---
+            history.append({"role": "user", "content": message})
+
+            history, _ = backend._check_and_compact(
+                history, current_model, args.api_key, args.base_url,
+                args.api_type, max_tokens=args.max_context,
+            )
+
+            escape_watcher = backend.EscapeWatcher()
+            escape_watcher.start()
+            start_time = time.time()
+
+            console.print()
+            reply_box = [None]
+
+            def worker():
+                reply_box[0] = run_with_spinner(
+                    history, current_model, args.api_key, args.base_url,
+                    args.api_type, escape_watcher,
                 )
-                self.call_from_thread(
-                    self._append_to_log,
-                    SystemMessage("[dim]Context compacted to fit window[/dim]"),
-                )
 
-            reply = claude_cli.send_message_with_fallback(
-                self._history,
-                self._model,
-                self._api_key,
-                self._base_url,
-                self._api_type,
-                silent=True,
-                tools=True,
-            )
-        except claude_cli.TaskCancelled:
-            error = "Cancelled"
-            # Remove the user message on cancel
-            if self._history and self._history[-1].get("role") == "user":
-                self._history.pop()
-        except Exception as e:
-            error = str(e)
-        finally:
-            claude_cli._display_tool_call = original_display_call
-            claude_cli._display_tool_result = original_display_result
+            t = threading.Thread(target=worker, daemon=True)
+            t.start()
 
-        elapsed = time.time() - start_time
+            try:
+                with console.status(
+                    "  [bold #ff8700]Thinking...[/]",
+                    spinner="dots", spinner_style="#ff8700",
+                ):
+                    while t.is_alive():
+                        t.join(timeout=0.2)
+            except KeyboardInterrupt:
+                escape_watcher._cancelled.set()
+                t.join(timeout=5)
+            finally:
+                escape_watcher.stop()
 
-        # Post results back to the UI thread
-        self.call_from_thread(self._on_response_complete, reply, error, elapsed, tool_events)
+            elapsed = time.time() - start_time
+            reply = reply_box[0]
 
-    def _on_response_complete(
-        self,
-        reply: str | None,
-        error: str | None,
-        elapsed: float,
-        tool_events: list[tuple[str, str, dict | str]],
-    ) -> None:
-        """Called on the main thread after the worker finishes."""
-        # Re-enable input
-        input_widget = self.query_one(ChatInput)
-        input_widget.disabled = False
-        input_widget.focus()
+            if reply:
+                history.append({"role": "assistant", "content": reply})
+                console.print()
+                console.print(Markdown(reply))
+                est = backend._estimate_conversation_tokens(history)
+                pct = min(99, int(est / args.max_context * 100))
+                console.print(f"\n  [dim]✻ {elapsed:.0f}s · {est:,}/{args.max_context//1000}k ({pct}%)[/]")
+            else:
+                if not escape_watcher.cancelled:
+                    console.print("  [dim](no response)[/]")
 
-        # Show tool calls/results if any
-        if self._show_tools:
-            for event_type, name, data in tool_events:
-                if event_type == "call":
-                    self._append_to_log(ToolCallMessage(name, data))
-                elif event_type == "result":
-                    self._append_to_log(ToolResultMessage(name, data))
+    except Exception as e:
+        console.print(f"[error]Error: {e}[/]")
+        import traceback
+        traceback.print_exc()
+    finally:
+        if backend._scheduler:
+            backend._scheduler.stop()
 
-        if error:
-            self._append_to_log(
-                SystemMessage(f"[red]{error}[/red]")
-            )
-        elif reply:
-            # The send_message_with_fallback already appends to self._history
-            # (the assistant message is added inside _handle_*_response)
-            # But we need to ensure the final text reply is in history
-            # Check if the last history item is an assistant message
-            if not self._history or self._history[-1].get("role") != "assistant":
-                self._history.append({"role": "assistant", "content": reply})
 
-            # Clean ANSI codes from reply and render as markdown
-            clean_reply = _strip_ansi(reply)
-            self._append_to_log(AssistantMessage(clean_reply))
+def _handle_schedule(arg: str, session):
+    sched = backend._scheduler
+    if not sched:
+        console.print("  [dim]Scheduler not running[/]"); return
 
-            self._append_to_log(
-                SystemMessage(f"[dim]{elapsed:.1f}s[/dim]")
-            )
+    if not arg or arg == "list":
+        schedules = sched.list_all()
+        if not schedules:
+            console.print("  [dim]No scheduled tasks[/]"); return
+        t = Table(show_header=True, box=None, padding=(0, 1))
+        t.add_column("Name", style="bold")
+        t.add_column("Status")
+        t.add_column("Schedule", style="dim")
+        t.add_column("Agent", style="cyan")
+        t.add_column("Next", style="dim")
+        for s in schedules:
+            st = "[green]active[/]" if s["enabled"] else "[dim]paused[/]"
+            nr = s.get("next_run", "")[:16] if s.get("next_run") else "—"
+            t.add_row(s["name"], st, s["schedule"], s["agent"], nr)
+        console.print(); console.print(t); console.print()
+
+    elif arg == "add":
+        try:
+            name = session.prompt(HTML("  <b>Name:</b> "))
+            task = session.prompt(HTML("  <b>Task:</b> "))
+            sched_str = session.prompt(HTML("  <b>Schedule:</b> "))
+            agent = session.prompt(HTML("  <b>Agent</b> (main): ")) or "main"
+            model = session.prompt(HTML("  <b>Model</b> (current): ")) or None
+        except (KeyboardInterrupt, EOFError):
+            return
+        r = sched.add(name.strip(), task.strip(), sched_str.strip(), agent.strip(), model)
+        if r.get("error"):
+            console.print(f"  [error]{r['error']}[/]")
         else:
-            self._append_to_log(SystemMessage("[dim](no response)[/dim]"))
+            console.print(f"  [success]✔ Created:[/] [bold]{name}[/]")
 
-        self._update_status_bar()
+    elif arg.startswith("pause "):
+        r = sched.pause(arg[6:].strip())
+        msg = "[dim]Paused[/]" if not r.get("error") else f"[error]{r['error']}[/]"
+        console.print(f"  {msg}")
+    elif arg.startswith("resume "):
+        r = sched.resume(arg[7:].strip())
+        msg = "[dim]Resumed[/]" if not r.get("error") else f"[error]{r['error']}[/]"
+        console.print(f"  {msg}")
+    elif arg.startswith(("delete ", "rm ")):
+        r = sched.remove(arg.split(" ", 1)[1].strip())
+        msg = "[dim]Deleted[/]" if not r.get("error") else f"[error]{r['error']}[/]"
+        console.print(f"  {msg}")
+    elif arg == "history":
+        h = sched.get_history(limit=10)
+        if not h:
+            console.print("  [dim]No history[/]"); return
+        for e in h:
+            sty = "green" if e["status"] == "success" else "red"
+            console.print(f"  [{sty}]{e['status']}[/] [bold]{e['schedule_name']}[/] [dim]{e['finished_at'][:16]}[/]")
+    else:
+        console.print("  [dim]/schedule [list|add|pause|resume|delete|history][/]")
 
-        # Scroll to bottom
-        chat_log = self.query_one("#chat-log", VerticalScroll)
-        chat_log.scroll_end(animate=False)
 
-    def on_unmount(self) -> None:
-        """Clean up backend resources."""
-        if claude_cli._scheduler:
-            claude_cli._scheduler.stop()
-
-
-# ---------------------------------------------------------------------------
-# CLI entry point
-# ---------------------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(
-        description=f"Brain Agent TUI v{VERSION}"
-    )
-    parser.add_argument(
-        "message", nargs="?",
-        help="Initial message (optional, starts interactive mode regardless)",
-    )
-    parser.add_argument(
-        "-m", "--model", default="claude-opus-4-5-20251101",
-        help="Model to use (default: claude-opus-4-5-20251101)",
-    )
-    parser.add_argument(
-        "-i", "--interactive", action="store_true",
-        help="Interactive mode (always on for TUI, kept for CLI compat)",
-    )
-    parser.add_argument(
-        "-l", "--list-models", action="store_true",
-        help="List available models and exit",
-    )
-    parser.add_argument(
-        "--api-key", default="sk-Xk7kOHpIpZkLutwnyxHpRO9jn4ZwyPaS",
-        help="API key for authentication",
-    )
-    parser.add_argument(
-        "--base-url", default="http://localhost:8317/v1",
-        help="Base URL for the API (default: http://localhost:8317/v1)",
-    )
-    parser.add_argument(
-        "-t", "--api-type", choices=["anthropic", "openai"], default="anthropic",
-        help="API type: anthropic or openai (default: anthropic)",
-    )
-    parser.add_argument(
-        "--max-context", type=int, default=claude_cli.DEFAULT_MAX_CONTEXT_TOKENS,
-        help=f"Max context window in tokens (default: {claude_cli.DEFAULT_MAX_CONTEXT_TOKENS})",
-    )
-    parser.add_argument(
-        "--agent", default="main",
-        help="Agent ID to start with (default: 'main')",
-    )
-
+    parser = argparse.ArgumentParser(description=f"Brain Agent v{backend.VERSION}")
+    parser.add_argument("message", nargs="?")
+    parser.add_argument("-m", "--model", default="claude-opus-4-5-20251101")
+    parser.add_argument("-i", "--interactive", action="store_true")
+    parser.add_argument("-l", "--list-models", action="store_true")
+    parser.add_argument("--api-key", default="sk-Xk7kOHpIpZkLutwnyxHpRO9jn4ZwyPaS")
+    parser.add_argument("--base-url", default="http://localhost:8317/v1")
+    parser.add_argument("-t", "--api-type", choices=["anthropic", "openai"], default="anthropic")
+    parser.add_argument("--max-context", type=int, default=backend.DEFAULT_MAX_CONTEXT_TOKENS)
+    parser.add_argument("--agent", default="main")
     args = parser.parse_args()
 
     if args.list_models:
-        claude_cli.list_models(args.api_key, args.base_url, args.api_type)
+        backend.list_models(args.api_key, args.base_url, args.api_type)
         sys.exit(0)
+    if args.interactive:
+        run_interactive(args)
+        sys.exit(0)
+    if not args.message:
+        parser.print_help(); sys.exit(1)
 
-    app = BrainApp(
-        model=args.model,
-        api_key=args.api_key,
-        base_url=args.base_url,
-        api_type=args.api_type,
-        agent_id=args.agent,
-        max_context=args.max_context,
-    )
-    app.run()
+    messages = [{"role": "user", "content": args.message}]
+    reply = backend.send_message_with_fallback(
+        messages, args.model, args.api_key, args.base_url, args.api_type, silent=True)
+    if reply:
+        console.print(Markdown(reply))
 
 
 if __name__ == "__main__":
