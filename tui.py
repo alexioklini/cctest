@@ -382,13 +382,13 @@ def run_interactive(args):
 
     pt_style = PTStyle.from_dict({
         "prompt": "#00ff00 bold",
-        "bottom-toolbar":  "#888888",
-        "bottom-toolbar.text": "",
-        "tb.agent": "#00cccc bold",
-        "tb.label": "#666666",
-        "tb.model": "#00cc66",
-        "tb.sep":   "#444444",
-        "tb.ctx":   "#00cc66",
+        "bottom-toolbar":              "bg:default #888888 noreverse",
+        "bottom-toolbar.text":         "bg:default noreverse",
+        "tb.agent": "bg:default #00cccc bold noreverse",
+        "tb.label": "bg:default #666666 noreverse",
+        "tb.model": "bg:default #00cc66 noreverse",
+        "tb.sep":   "bg:default #444444 noreverse",
+        "tb.ctx":   "bg:default #00cc66 noreverse",
     })
 
     session = PromptSession(
