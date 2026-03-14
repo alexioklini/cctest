@@ -95,6 +95,12 @@ def print_greeting(model: str, agent_id: str):
             more = f" [dim]+{len(skills)-5}[/]" if len(skills) > 5 else ""
             console.print(f"  [dim]Skills[/] [dim]{', '.join(names)}{more}[/]")
 
+    # MCP servers
+    if backend._mcp_manager and backend._mcp_manager.clients:
+        servers = backend._mcp_manager.list_servers()
+        srv_names = [f"{s['name']}({s['tool_count']})" for s in servers]
+        console.print(f"  [dim]MCP[/]    [dim]{', '.join(srv_names)}[/]")
+
     console.print()
     console.print("  [dim]/help for commands · Ctrl+C to cancel · Ctrl+D to quit[/]")
 

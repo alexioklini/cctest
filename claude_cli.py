@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 VERSION_DATE = "2026-03-14"
 CHANGELOG = [
+    ("1.1.0", "2026-03-14", "MCP support: stdio + SSE transports, per-agent + global servers"),
     ("1.0.0", "2026-03-14", "Background threads per agent, async delegation, task status/cancel"),
     ("0.9.0", "2026-03-14", "Skills system: on-demand SKILL.md loading, per-agent + global"),
     ("0.8.0", "2026-03-14", "Multi-agent system with soul.md, delegation, /agent switching"),
@@ -695,6 +696,341 @@ def exa_search(query: str, num_results: int = 5, category: str | None = None) ->
         return json.dumps({"query": query, "results": [], "error": str(e)})
 
 
+# --- MCP Client ---
+
+class MCPStdioClient:
+    """MCP client over stdio — launches a subprocess and communicates via JSON-RPC."""
+
+    def __init__(self, name: str, command: str, args: list[str] | None = None,
+                 env: dict | None = None):
+        self.name = name
+        self.command = command
+        self.args = args or []
+        self.env = env
+        self.process = None
+        self._request_id = 0
+        self._lock = threading.Lock()
+        self.tools: list[dict] = []
+
+    def start(self) -> bool:
+        """Start the MCP server subprocess."""
+        try:
+            run_env = os.environ.copy()
+            if self.env:
+                run_env.update(self.env)
+            self.process = subprocess.Popen(
+                [self.command] + self.args,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                env=run_env, start_new_session=True,
+            )
+            # Initialize
+            resp = self._send_request("initialize", {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "brain-agent", "version": VERSION},
+            })
+            if resp and not resp.get("error"):
+                # Send initialized notification
+                self._send_notification("notifications/initialized", {})
+                # List tools
+                tools_resp = self._send_request("tools/list", {})
+                if tools_resp and tools_resp.get("result"):
+                    self.tools = tools_resp["result"].get("tools", [])
+                return True
+            return False
+        except Exception:
+            return False
+
+    def stop(self):
+        """Stop the subprocess."""
+        if self.process:
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=5)
+            except Exception:
+                try:
+                    self.process.kill()
+                except Exception:
+                    pass
+            self.process = None
+
+    def call_tool(self, tool_name: str, arguments: dict) -> str:
+        """Call a tool on the MCP server. Returns JSON string."""
+        resp = self._send_request("tools/call", {
+            "name": tool_name,
+            "arguments": arguments,
+        })
+        if resp and resp.get("result"):
+            content = resp["result"].get("content", [])
+            # Extract text from content blocks
+            texts = []
+            for block in content:
+                if isinstance(block, dict):
+                    if block.get("type") == "text":
+                        texts.append(block.get("text", ""))
+                    else:
+                        texts.append(json.dumps(block))
+                elif isinstance(block, str):
+                    texts.append(block)
+            return json.dumps({"result": "\n".join(texts)})
+        elif resp and resp.get("error"):
+            return json.dumps({"error": resp["error"].get("message", str(resp["error"]))})
+        return json.dumps({"error": "No response from MCP server"})
+
+    def _send_request(self, method: str, params: dict) -> dict | None:
+        with self._lock:
+            self._request_id += 1
+            msg = {
+                "jsonrpc": "2.0",
+                "id": self._request_id,
+                "method": method,
+                "params": params,
+            }
+            return self._send_and_receive(msg)
+
+    def _send_notification(self, method: str, params: dict):
+        with self._lock:
+            msg = {
+                "jsonrpc": "2.0",
+                "method": method,
+                "params": params,
+            }
+            self._write(msg)
+
+    def _send_and_receive(self, msg: dict) -> dict | None:
+        try:
+            self._write(msg)
+            return self._read()
+        except Exception:
+            return None
+
+    def _write(self, msg: dict):
+        if not self.process or not self.process.stdin:
+            return
+        data = json.dumps(msg)
+        self.process.stdin.write(f"{data}\n".encode("utf-8"))
+        self.process.stdin.flush()
+
+    def _read(self) -> dict | None:
+        if not self.process or not self.process.stdout:
+            return None
+        # Read lines until we get a JSON-RPC response (skip notifications)
+        while True:
+            line = self.process.stdout.readline()
+            if not line:
+                return None
+            line = line.decode("utf-8").strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+                if "id" in msg:  # It's a response
+                    return msg
+                # Skip notifications
+            except json.JSONDecodeError:
+                continue
+
+
+class MCPSSEClient:
+    """MCP client over SSE/HTTP — connects to a running server."""
+
+    def __init__(self, name: str, url: str, headers: dict | None = None):
+        self.name = name
+        self.url = url.rstrip("/")
+        self.headers = headers or {}
+        self._request_id = 0
+        self.tools: list[dict] = []
+
+    def start(self) -> bool:
+        """Initialize connection and list tools."""
+        try:
+            resp = self._post("initialize", {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "brain-agent", "version": VERSION},
+            })
+            if resp and not resp.get("error"):
+                self._post("notifications/initialized", {}, is_notification=True)
+                tools_resp = self._post("tools/list", {})
+                if tools_resp and tools_resp.get("result"):
+                    self.tools = tools_resp["result"].get("tools", [])
+                return True
+            return False
+        except Exception:
+            return False
+
+    def stop(self):
+        pass  # No cleanup needed for HTTP
+
+    def call_tool(self, tool_name: str, arguments: dict) -> str:
+        """Call a tool on the MCP server."""
+        resp = self._post("tools/call", {
+            "name": tool_name,
+            "arguments": arguments,
+        })
+        if resp and resp.get("result"):
+            content = resp["result"].get("content", [])
+            texts = []
+            for block in content:
+                if isinstance(block, dict):
+                    if block.get("type") == "text":
+                        texts.append(block.get("text", ""))
+                    else:
+                        texts.append(json.dumps(block))
+                elif isinstance(block, str):
+                    texts.append(block)
+            return json.dumps({"result": "\n".join(texts)})
+        elif resp and resp.get("error"):
+            return json.dumps({"error": resp["error"].get("message", str(resp["error"]))})
+        return json.dumps({"error": "No response from MCP server"})
+
+    def _post(self, method: str, params: dict, is_notification: bool = False) -> dict | None:
+        self._request_id += 1
+        msg = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        }
+        if not is_notification:
+            msg["id"] = self._request_id
+
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        headers.update(self.headers)
+
+        try:
+            data = json.dumps(msg).encode("utf-8")
+            req = urllib.request.Request(
+                f"{self.url}/message" if "/message" not in self.url else self.url,
+                data=data, headers=headers, method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                body = resp.read().decode("utf-8")
+                if body.strip():
+                    return json.loads(body)
+                return {} if is_notification else None
+        except Exception:
+            return None
+
+
+class MCPManager:
+    """Manages MCP server connections for an agent."""
+
+    def __init__(self):
+        self.clients: dict[str, MCPStdioClient | MCPSSEClient] = {}
+        self._tool_to_server: dict[str, str] = {}  # tool_name -> server_name
+
+    def load_config(self, config_path: str) -> int:
+        """Load MCP servers from a mcp.json config file. Returns count of servers started."""
+        if not os.path.exists(config_path):
+            return 0
+        try:
+            with open(config_path, "r") as f:
+                config = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return 0
+
+        count = 0
+        for name, cfg in config.items():
+            transport = cfg.get("transport", "stdio")
+            if transport == "stdio":
+                client = MCPStdioClient(
+                    name=name,
+                    command=cfg.get("command", ""),
+                    args=cfg.get("args", []),
+                    env=cfg.get("env"),
+                )
+            elif transport in ("sse", "http"):
+                client = MCPSSEClient(
+                    name=name,
+                    url=cfg.get("url", ""),
+                    headers=cfg.get("headers"),
+                )
+            else:
+                continue
+
+            if client.start():
+                self.clients[name] = client
+                # Map tool names to server
+                for tool in client.tools:
+                    tool_name = f"mcp_{name}_{tool['name']}"
+                    self._tool_to_server[tool_name] = name
+                count += 1
+        return count
+
+    def get_tool_definitions(self) -> list[dict]:
+        """Get all MCP tool definitions in Anthropic format."""
+        defs = []
+        for server_name, client in self.clients.items():
+            for tool in client.tools:
+                # Prefix tool names to avoid conflicts
+                prefixed_name = f"mcp_{server_name}_{tool['name']}"
+                defs.append({
+                    "name": prefixed_name,
+                    "description": f"[MCP:{server_name}] {tool.get('description', '')}",
+                    "input_schema": tool.get("inputSchema", {
+                        "type": "object", "properties": {}, "required": [],
+                    }),
+                })
+        return defs
+
+    def get_tool_definitions_openai(self) -> list[dict]:
+        """Get all MCP tool definitions in OpenAI format."""
+        defs = []
+        for td in self.get_tool_definitions():
+            defs.append({
+                "type": "function",
+                "function": {
+                    "name": td["name"],
+                    "description": td["description"],
+                    "parameters": {
+                        "type": td["input_schema"].get("type", "object"),
+                        "properties": td["input_schema"].get("properties", {}),
+                        "required": td["input_schema"].get("required", []),
+                    },
+                },
+            })
+        return defs
+
+    def call_tool(self, prefixed_name: str, arguments: dict) -> str:
+        """Call an MCP tool by its prefixed name."""
+        server_name = self._tool_to_server.get(prefixed_name)
+        if not server_name or server_name not in self.clients:
+            return json.dumps({"error": f"MCP tool '{prefixed_name}' not found"})
+        # Strip prefix to get original tool name
+        prefix = f"mcp_{server_name}_"
+        original_name = prefixed_name[len(prefix):]
+        return self.clients[server_name].call_tool(original_name, arguments)
+
+    def is_mcp_tool(self, name: str) -> bool:
+        return name in self._tool_to_server
+
+    def list_servers(self) -> list[dict]:
+        """List all connected MCP servers and their tools."""
+        result = []
+        for name, client in self.clients.items():
+            result.append({
+                "name": name,
+                "transport": "stdio" if isinstance(client, MCPStdioClient) else "sse",
+                "tools": [t["name"] for t in client.tools],
+                "tool_count": len(client.tools),
+            })
+        return result
+
+    def stop_all(self):
+        """Stop all MCP server connections."""
+        for client in self.clients.values():
+            client.stop()
+        self.clients.clear()
+        self._tool_to_server.clear()
+
+
+# Global MCP manager
+_mcp_manager: MCPManager | None = None
+
+
 # --- Agent System ---
 
 AGENTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agents")
@@ -785,6 +1121,10 @@ Adapt your behavior to the tasks you are given.
     @property
     def skills_dir(self) -> str:
         return os.path.join(self.dir, "skills")
+
+    @property
+    def mcp_config_path(self) -> str:
+        return os.path.join(self.dir, "mcp.json")
 
     def list_skills(self) -> list[dict]:
         """List all skills for this agent (own + main's global skills)."""
@@ -2812,6 +3152,9 @@ TOOL_DISPATCH = {
 
 def _execute_tool(name: str, args: dict) -> str:
     """Execute a tool by name with the given arguments."""
+    # Check MCP tools first
+    if _mcp_manager and _mcp_manager.is_mcp_tool(name):
+        return _mcp_manager.call_tool(name, args)
     fn = TOOL_DISPATCH.get(name)
     if fn:
         return fn(args)
@@ -2913,6 +3256,15 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                     system_instruction += f"  - {s['name']} [{status}]: {s['task'][:80]} (next: {next_r})\n"
                 system_instruction += "Use schedule_list and schedule_history tools to query scheduler state.\n\n"
 
+        # MCP servers
+        if _mcp_manager and _mcp_manager.clients:
+            system_instruction += "\nMCP SERVERS — external tools available via connected servers:\n"
+            for srv in _mcp_manager.list_servers():
+                tools_list = ", ".join(srv["tools"][:5])
+                more = f" +{srv['tool_count']-5}" if srv["tool_count"] > 5 else ""
+                system_instruction += f"  - {srv['name']} ({srv['transport']}): {tools_list}{more}\n"
+            system_instruction += "MCP tools are prefixed with mcp_<server>_ — use them like any other tool.\n\n"
+
         if tools_guide:
             system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
         if api_type == "openai":
@@ -2929,9 +3281,15 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
 
     if tools:
         if api_type == "openai":
-            payload["tools"] = TOOL_DEFINITIONS_OPENAI
+            all_tools = list(TOOL_DEFINITIONS_OPENAI)
+            if _mcp_manager:
+                all_tools.extend(_mcp_manager.get_tool_definitions_openai())
+            payload["tools"] = all_tools
         else:
-            payload["tools"] = TOOL_DEFINITIONS
+            all_tools = list(TOOL_DEFINITIONS)
+            if _mcp_manager:
+                all_tools.extend(_mcp_manager.get_tool_definitions())
+            payload["tools"] = all_tools
             payload["system"] = system_instruction
 
     data = json.dumps(payload).encode("utf-8")
@@ -3775,11 +4133,20 @@ def _replace_line(buf: list, pos: int, new_text: str) -> None:
 
 def _switch_agent(agent_id: str, args) -> tuple[str, AgentConfig]:
     """Switch to a different agent. Returns (model, agent_config)."""
-    global _current_agent, _memory_store
+    global _current_agent, _memory_store, _mcp_manager
     agent = AgentConfig(agent_id)
     _current_agent = agent
     _memory_store = MemoryStore(agent_id=agent_id, base_dir=agent.memory_dir)
-    # Use agent's preferred model if set, otherwise keep current
+
+    # Load MCP servers: main's (global) + agent-specific
+    if _mcp_manager:
+        _mcp_manager.stop_all()
+    _mcp_manager = MCPManager()
+    main_mcp = os.path.join(AGENTS_DIR, "main", "mcp.json")
+    _mcp_manager.load_config(main_mcp)
+    if agent_id != "main":
+        _mcp_manager.load_config(agent.mcp_config_path)
+
     model = agent.preferred_model or args.model
     return model, agent
 
@@ -4092,6 +4459,8 @@ def _run_interactive(args):
     finally:
         if _scheduler:
             _scheduler.stop()
+        if _mcp_manager:
+            _mcp_manager.stop_all()
         signal.signal(signal.SIGWINCH, old_sigwinch)
         _restore_scroll_region()
 
