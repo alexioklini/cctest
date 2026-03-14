@@ -370,9 +370,8 @@ def run_interactive(args):
         model_short = model if len(model) <= max_model_len else model[:max_model_len - 1] + "…"
 
         parts = []
-        if agent_id != "main":
-            parts.append(("class:tb.agent", f" {agent_id} "))
-            parts.append(("class:tb.sep", "│"))
+        parts.append(("class:tb.agent", f" {agent_id} "))
+        parts.append(("class:tb.sep", "│"))
         parts.append(("class:tb.label", " Model: "))
         parts.append(("class:tb.model", f"{model_short} "))
         parts.append(("class:tb.sep", "│ "))
