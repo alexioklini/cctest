@@ -122,7 +122,9 @@ TOOL_DEFINITIONS = [
         "name": "execute_command",
         "description": (
             "Execute a shell command and return its output (stdout + stderr). "
-            "Commands run in the current working directory. "
+            "Commands run in the current working directory with no TTY (non-interactive). "
+            "IMPORTANT: Only use non-interactive commands. For example use 'top -l 1' (not 'top'), "
+            "'ps aux' (not 'htop'), 'cat' (not 'less'). "
             "Use this for: running scripts, git commands, package managers, compiling, testing, "
             "system administration, or any shell operation."
         ),
@@ -384,23 +386,37 @@ def tool_search_files(args: dict) -> str:
 def tool_execute_command(args: dict) -> str:
     command = args.get("command", "")
     cwd = args.get("cwd")
-    timeout = args.get("timeout", 120)
+    timeout = args.get("timeout", 30)
     try:
         if cwd:
             cwd = os.path.expanduser(cwd)
+
+        # Force non-interactive environment: no TTY allocation, disable pagers,
+        # set COLUMNS so tools like ps/top produce reasonable width output
+        env = os.environ.copy()
+        env["TERM"] = "dumb"
+        env["NO_COLOR"] = "1"
+        env["PAGER"] = "cat"
+        env["COLUMNS"] = "200"
+
         result = subprocess.run(
             command, shell=True, capture_output=True, text=True,
-            cwd=cwd, timeout=timeout,
+            cwd=cwd, timeout=timeout, env=env,
+            stdin=subprocess.DEVNULL,  # no stdin — kills interactive commands fast
         )
         output = result.stdout
         if result.stderr:
             output += ("\n--- stderr ---\n" + result.stderr) if output else result.stderr
+        # Strip ANSI escape codes from output
+        output = re.sub(r"\033\[[^m]*m", "", output)
+        output = re.sub(r"\033\[\?[0-9;]*[a-zA-Z]", "", output)
+        output = re.sub(r"\033\([A-Z]", "", output)
         # Truncate very long output
-        if len(output) > 100000:
-            output = output[:100000] + "\n... (truncated)"
+        if len(output) > 50000:
+            output = output[:50000] + "\n... (truncated)"
         return _ok({"command": command, "exit_code": result.returncode, "output": output})
     except subprocess.TimeoutExpired:
-        return _err(f"execute_command: timed out after {timeout}s")
+        return _err(f"execute_command: timed out after {timeout}s — use non-interactive commands (e.g. 'top -l 1' instead of 'top', 'ps aux' instead of 'htop')")
     except Exception as e:
         return _err(f"execute_command: {e}")
 
