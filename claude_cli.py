@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 VERSION_DATE = "2026-03-14"
 CHANGELOG = [
+    ("0.6.0", "2026-03-14", "Context window management with auto-compaction at 75%"),
     ("0.5.0", "2026-03-14", "Full agent toolkit: file ops, shell, search, web fetch, edit"),
     ("0.4.0", "2026-03-14", "Escape to cancel, dynamic terminal rendering, startup greeting"),
     ("0.3.0", "2026-03-13", "Exa web search tool with agentic tool-use loop"),
@@ -542,6 +543,162 @@ def exa_search(query: str, num_results: int = 5, category: str | None = None) ->
         return json.dumps({"query": query, "results": [], "error": f"HTTP {e.code}: {error_body}"})
     except Exception as e:
         return json.dumps({"query": query, "results": [], "error": str(e)})
+
+
+# --- Context Window Management ---
+
+DEFAULT_MAX_CONTEXT_TOKENS = 131072
+COMPACT_THRESHOLD = 0.75  # compact at 75% full
+KEEP_RECENT_MESSAGES = 6  # always keep the last N messages untouched
+CHARS_PER_TOKEN = 4       # conservative estimate
+
+
+def _estimate_tokens_str(text: str) -> int:
+    """Estimate token count for a string."""
+    return max(1, len(text) // CHARS_PER_TOKEN)
+
+
+def _estimate_tokens_message(msg: dict) -> int:
+    """Estimate token count for a single message (any format)."""
+    content = msg.get("content", "")
+    if isinstance(content, str):
+        return _estimate_tokens_str(content) + 4  # role overhead
+    elif isinstance(content, list):
+        # Anthropic-style content blocks (text, tool_use, tool_result, etc.)
+        total = 4
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "text":
+                    total += _estimate_tokens_str(block.get("text", ""))
+                elif block.get("type") == "tool_use":
+                    total += _estimate_tokens_str(json.dumps(block.get("input", {}))) + 20
+                elif block.get("type") == "tool_result":
+                    total += _estimate_tokens_str(str(block.get("content", "")))
+                else:
+                    total += _estimate_tokens_str(json.dumps(block))
+            elif isinstance(block, str):
+                total += _estimate_tokens_str(block)
+        return total
+    return 10
+
+
+def _estimate_conversation_tokens(messages: list[dict], system_prompt: str = "") -> int:
+    """Estimate total token count for the full conversation."""
+    total = _estimate_tokens_str(system_prompt) if system_prompt else 0
+    for msg in messages:
+        total += _estimate_tokens_message(msg)
+    return total
+
+
+def _compact_conversation(messages: list[dict], model: str, api_key: str,
+                          base_url: str, api_type: str,
+                          max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS) -> list[dict]:
+    """Compact the conversation by summarizing older messages.
+
+    Strategy:
+    1. Keep the last KEEP_RECENT_MESSAGES as-is
+    2. Summarize everything before that into a single system-style message
+    3. If the model is available, use it to summarize; otherwise do a simple truncation
+    """
+    if len(messages) <= KEEP_RECENT_MESSAGES:
+        return messages
+
+    # Split into old and recent
+    recent = messages[-KEEP_RECENT_MESSAGES:]
+    old = messages[:-KEEP_RECENT_MESSAGES]
+
+    # Build a text representation of old messages for summarization
+    old_text_parts = []
+    for msg in old:
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            text_pieces = []
+            for block in content:
+                if isinstance(block, dict):
+                    if block.get("type") == "text":
+                        text_pieces.append(block.get("text", ""))
+                    elif block.get("type") == "tool_use":
+                        text_pieces.append(f"[Called tool: {block.get('name', '')}]")
+                    elif block.get("type") == "tool_result":
+                        c = block.get("content", "")
+                        text_pieces.append(f"[Tool result: {str(c)[:200]}]")
+                    else:
+                        text_pieces.append(f"[{block.get('type', 'block')}]")
+            text = " ".join(text_pieces)
+        else:
+            text = str(content)
+
+        # Truncate individual messages in the summary source
+        if len(text) > 500:
+            text = text[:500] + "..."
+        old_text_parts.append(f"{role}: {text}")
+
+    old_summary_source = "\n".join(old_text_parts)
+
+    # Try to use the model to summarize
+    summary = None
+    try:
+        summary_messages = [{
+            "role": "user",
+            "content": (
+                "Summarize the following conversation history in 2-3 concise paragraphs. "
+                "Focus on: key decisions made, information learned, files modified, "
+                "and current task context. Be factual and brief.\n\n"
+                f"{old_summary_source}"
+            )
+        }]
+        summary = send_message(
+            summary_messages, model, api_key, base_url, api_type,
+            silent=True, tools=False, _tool_round=0,
+        )
+    except Exception:
+        pass
+
+    if not summary:
+        # Fallback: simple truncation
+        if len(old_summary_source) > 2000:
+            summary = old_summary_source[:2000] + "\n...(earlier conversation truncated)"
+        else:
+            summary = old_summary_source
+
+    # Build compacted conversation
+    compacted = [
+        {"role": "user", "content": f"[Previous conversation summary]\n{summary}"},
+        {"role": "assistant", "content": "Understood. I have the context from our previous conversation. How can I help?"},
+    ]
+    compacted.extend(recent)
+
+    return compacted
+
+
+def _check_and_compact(messages: list[dict], model: str, api_key: str,
+                       base_url: str, api_type: str,
+                       system_prompt: str = "",
+                       max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS) -> tuple[list[dict], bool]:
+    """Check if conversation needs compaction and do it if necessary.
+
+    Returns (messages, was_compacted).
+    """
+    estimated = _estimate_conversation_tokens(messages, system_prompt)
+    threshold = int(max_tokens * COMPACT_THRESHOLD)
+
+    if estimated < threshold:
+        return messages, False
+
+    # Show compaction notice
+    pct = int(estimated / max_tokens * 100)
+    print(f"\n  {DIM}⟳ Context {pct}% full (~{estimated:,} tokens), compacting...{RESET}")
+    sys.stdout.flush()
+
+    compacted = _compact_conversation(messages, model, api_key, base_url, api_type, max_tokens)
+    new_estimated = _estimate_conversation_tokens(compacted, system_prompt)
+    new_pct = int(new_estimated / max_tokens * 100)
+    print(f"  {DIM}✔ Compacted: {pct}% → {new_pct}% (~{new_estimated:,} tokens){RESET}")
+
+    return compacted, True
 
 
 # --- Task cancellation ---
@@ -1666,15 +1823,29 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
 
 # --- TUI helpers ---
 
-def _draw_status_bar(model: str) -> None:
+def _draw_status_bar(model: str, history: list[dict] | None = None,
+                     max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS) -> None:
     """Draw a status bar on the last terminal line with black background."""
     cols = shutil.get_terminal_size().columns
     rows = shutil.get_terminal_size().lines
-    # Build status with distinct colored segments on black background
-    label = f" {FG_GRAY}Model:{RESET}{BG_DARK} {GREEN}{BOLD}{model}{RESET}{BG_DARK} "
-    # Pad the rest with black background
-    # visible length = " Model: " + model + " "
-    visible_len = 9 + len(model)
+
+    # Context usage
+    ctx_part = ""
+    ctx_visible = 0
+    if history is not None:
+        est = _estimate_conversation_tokens(history)
+        pct = min(99, int(est / max_tokens * 100))
+        if pct >= 75:
+            color = RED
+        elif pct >= 50:
+            color = YELLOW
+        else:
+            color = FG_GRAY
+        ctx_part = f" {DIM}│{RESET}{BG_DARK} {color}{pct}%{RESET}{BG_DARK}"
+        ctx_visible = 5 + len(str(pct))  # " │ NN%"
+
+    label = f" {FG_GRAY}Model:{RESET}{BG_DARK} {GREEN}{BOLD}{model}{RESET}{BG_DARK}{ctx_part} "
+    visible_len = 9 + len(model) + ctx_visible + 1
     padding = max(0, cols - visible_len)
     bar = f"\033[48;5;235m{label}{' ' * padding}{RESET}"
     sys.stdout.write(f"\0337\033[{rows};1H{bar}\0338")
@@ -1730,6 +1901,10 @@ def main():
     parser.add_argument(
         "-t", "--api-type", choices=["anthropic", "openai"], default="anthropic",
         help="API type: anthropic or openai (default: anthropic)",
+    )
+    parser.add_argument(
+        "--max-context", type=int, default=DEFAULT_MAX_CONTEXT_TOKENS,
+        help=f"Max context window in tokens (default: {DEFAULT_MAX_CONTEXT_TOKENS})",
     )
 
     args = parser.parse_args()
@@ -1982,12 +2157,12 @@ def _run_interactive(args):
     sys.stdout.flush()
 
     _setup_scroll_region()
-    _draw_status_bar(current_model)
+    _draw_status_bar(current_model, history, args.max_context)
 
     # Handle terminal resize
     def _on_resize(signum, frame):
         _setup_scroll_region()
-        _draw_status_bar(current_model)
+        _draw_status_bar(current_model, history, args.max_context)
 
     old_sigwinch = signal.signal(signal.SIGWINCH, _on_resize)
 
@@ -2072,7 +2247,7 @@ def _run_interactive(args):
                     print(f"  {DIM}Switched to:{RESET} {BOLD}{current_model}{RESET}")
                 else:
                     print(f"  {DIM}No models available. Use: /model <name>{RESET}")
-                _draw_status_bar(current_model)
+                _draw_status_bar(current_model, history, args.max_context)
                 continue
 
             if not message.strip():
@@ -2085,6 +2260,12 @@ def _run_interactive(args):
             # Send message
             history.append({"role": "user", "content": message})
             _reset_tool_tracking()
+
+            # Check context window and compact if needed
+            history, was_compacted = _check_and_compact(
+                history, current_model, args.api_key, args.base_url,
+                args.api_type, max_tokens=args.max_context,
+            )
 
             # Start spinner and escape watcher
             spinner = Spinner(current_model)
@@ -2108,7 +2289,7 @@ def _run_interactive(args):
                 # Remove the user message that was cancelled
                 history.pop()
                 print(f"\n{DIM}✘ Cancelled (Esc){RESET}")
-                _draw_status_bar(current_model)
+                _draw_status_bar(current_model, history, args.max_context)
                 continue
 
             if reply:
@@ -2149,7 +2330,7 @@ def _run_interactive(args):
                 print(f"\n{DIM}(no response){RESET}")
 
             # Restore status bar after response
-            _draw_status_bar(current_model)
+            _draw_status_bar(current_model, history, args.max_context)
 
     finally:
         signal.signal(signal.SIGWINCH, old_sigwinch)
