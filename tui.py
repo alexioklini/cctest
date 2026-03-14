@@ -44,29 +44,25 @@ console = Console(theme=THEME, highlight=False)
 
 def print_greeting(model: str, agent_id: str):
     """Print Claude Code-style greeting."""
-    C = [
-        "\033[38;5;213m", "\033[38;5;177m", "\033[38;5;141m",
-        "\033[38;5;105m", "\033[38;5;69m", "\033[38;5;33m",
-    ]
-    R = "\033[0m"
-
-    brain_lines = [
-        f"{C[0]}      ⣀⣀⣤⣤⣤⣤⣤⣤⣀⣀{R}",
-        f"{C[0]}    ⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦{R}",
-        f"{C[1]}   ⣾⣿⣿⡟⠛⠛⣿⣿⡟⠛⠛⣿⣿⣿⣷{R}",
-        f"{C[1]}  ⣸⣿⣿⡇  ⣸⣿⣿⡇  ⢸⣿⣿⣿⣇{R}",
-        f"{C[2]}  ⣿⣿⣿⣇  ⣿⣿⣿⣇  ⣸⣿⣿⣿⣿{R}",
-        f"{C[2]}  ⢿⣿⣿⣿⣦⣤⣿⣿⣿⣦⣤⣾⣿⣿⣿⡿{R}",
-        f"{C[3]}   ⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟{R}",
-        f"{C[4]}    ⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋{R}",
-        f"{C[5]}      ⠉⠛⠿⣿⣿⣿⠿⠛⠉{R}",
+    # ASCII art brain — works in any monospace font
+    brain = [
+        ("color(213)", r"        .---.        "),
+        ("color(213)", r"       /     \       "),
+        ("color(177)", r"      | () () |      "),
+        ("color(177)", r"      |  ,_,  |      "),
+        ("color(141)", r"     /|  |||  |\     "),
+        ("color(141)", r"    / |  |||  | \    "),
+        ("color(105)", r"   |  \_///\\_/  |   "),
+        ("color(69)",  r"   \    ///\\    /   "),
+        ("color(33)",  r"    '-.//////.-'    "),
     ]
 
     console.print()
-    for line in brain_lines:
-        console.print(f"  {line}")
+    for style, line in brain:
+        console.print(f"  [{style}]{line}[/]")
     console.print()
 
+    # Title with Rich markup
     title = Text()
     for i, ch in enumerate("Brain"):
         title.append(ch, style=f"bold color({[213,177,141,105,69][i]})")
@@ -74,9 +70,9 @@ def print_greeting(model: str, agent_id: str):
     title.append("Agent", style="bold #ff8700")
     title.append(f" v{backend.VERSION}", style="dim")
     if agent_id != "main":
-        title.append(" │ ", style="dim")
+        title.append(" | ", style="dim")
         title.append(agent_id, style="cyan bold")
-    console.print(f"  {title}")
+    console.print("  ", title)
     console.print()
 
     console.print(f"  [dim]Model[/]  [green]{model}[/]")
@@ -358,35 +354,41 @@ def run_interactive(args):
         model = status["model"]
         est = status["tokens"]
         max_t = status["max"]
-        pct = min(99, int(est / max_t * 100)) if max_t > 0 else 0
+
         if est >= 1000:
             tok = f"{est // 1000}k"
         else:
             tok = str(est)
         tok_display = f"{tok}/{max_t // 1000}k"
 
+        # Truncate model name to fit
+        try:
+            cols = os.get_terminal_size().columns
+        except OSError:
+            cols = 80
+        max_model_len = max(10, cols - 30)
+        model_short = model if len(model) <= max_model_len else model[:max_model_len - 1] + "…"
+
         parts = []
         if agent_id != "main":
-            parts.append(("class:toolbar.agent", f" {agent_id} "))
-            parts.append(("class:toolbar.sep", " │ "))
-        parts.append(("class:toolbar.label", " Model: "))
-        parts.append(("class:toolbar.value", f"{model} "))
-        parts.append(("class:toolbar.sep", "│ "))
-        parts.append(("class:toolbar.label", "Context: "))
-        if pct >= 75:
-            parts.append(("class:toolbar.warn", f"{tok_display} "))
-        else:
-            parts.append(("class:toolbar.value", f"{tok_display} "))
+            parts.append(("class:tb.agent", f" {agent_id} "))
+            parts.append(("class:tb.sep", "│"))
+        parts.append(("class:tb.label", " Model: "))
+        parts.append(("class:tb.model", f"{model_short} "))
+        parts.append(("class:tb.sep", "│ "))
+        parts.append(("class:tb.label", "Ctx: "))
+        parts.append(("class:tb.ctx", f"{tok_display} "))
         return parts
 
     pt_style = PTStyle.from_dict({
         "prompt": "#00ff00 bold",
-        "bottom-toolbar": "bg:#000000 #888888",
-        "toolbar.agent": "bg:#000000 #00cccc bold",
-        "toolbar.label": "bg:#000000 #666666",
-        "toolbar.value": "bg:#000000 #00cc66",
-        "toolbar.sep": "bg:#000000 #444444",
-        "toolbar.warn": "bg:#000000 #cc6600",
+        "bottom-toolbar":  "#888888",
+        "bottom-toolbar.text": "",
+        "tb.agent": "#00cccc bold",
+        "tb.label": "#666666",
+        "tb.model": "#00cc66",
+        "tb.sep":   "#444444",
+        "tb.ctx":   "#00cc66",
     })
 
     session = PromptSession(
