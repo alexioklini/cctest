@@ -44,7 +44,9 @@ class TelegramBot:
             if updates:
                 self.offset = updates[-1]["update_id"] + 1
             return updates
-        except Exception:
+        except Exception as e:
+            print(f"  get_updates error: {e}", flush=True)
+            time.sleep(2)
             return []
 
     def send_message(self, chat_id: int, text: str, parse_mode: str = "Markdown"):
@@ -292,16 +294,18 @@ def run_bot(args):
 
     bot = TelegramBot(args.token)
 
-    # Load config
+    # Load allowed users from config.json
     allowed = None
-    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               "agents", "main", "telegram.json")
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
     if os.path.exists(config_path):
         try:
             with open(config_path) as f:
                 config = json.load(f)
-                allowed = config.get("allowed_users")
-                print(f"Allowed users: {allowed}")
+                allowed = config.get("telegram", {}).get("allowed_users")
+                if allowed:
+                    print(f"Allowed users: {allowed}")
+                else:
+                    print("Allowed users: all (no whitelist)")
         except Exception:
             pass
 
@@ -338,7 +342,7 @@ def run_bot(args):
                     continue
 
                 user_name = msg.get("from", {}).get("first_name", "?")
-                print(f"[{user_name}] {text[:80]}")
+                print(f"[{user_name}] {text[:80]}", flush=True)
 
                 if text.startswith("/"):
                     handle_command(bot, manager, chat_id, text)
