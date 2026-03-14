@@ -11,6 +11,47 @@ import urllib.error
 
 from client import BrainAgentClient
 
+# --- Markdown to Telegram HTML ---
+
+import re
+import html as html_mod
+
+
+def md_to_telegram_html(text: str) -> str:
+    """Convert LLM markdown to Telegram-compatible HTML."""
+    # Escape HTML entities first
+    text = html_mod.escape(text)
+
+    # Code blocks: ```lang\n...\n``` → <pre><code>...</code></pre>
+    def replace_code_block(m):
+        lang = m.group(1) or ""
+        code = m.group(2)
+        if lang:
+            return f'<pre><code class="language-{lang}">{code}</code></pre>'
+        return f"<pre>{code}</pre>"
+    text = re.sub(r"```(\w*)\n(.*?)```", replace_code_block, text, flags=re.DOTALL)
+
+    # Inline code: `...` → <code>...</code>
+    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+
+    # Bold: **text** → <b>text</b>
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+
+    # Italic: *text* → <i>text</i>  (but not inside bold)
+    text = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", text)
+
+    # Strikethrough: ~~text~~ → <s>text</s>
+    text = re.sub(r"~~(.+?)~~", r"<s>\1</s>", text)
+
+    # Links: [text](url) → <a href="url">text</a>
+    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', text)
+
+    # Headers: # text → <b>text</b> (Telegram has no headers)
+    text = re.sub(r"^#{1,6}\s+(.+)$", r"<b>\1</b>", text, flags=re.MULTILINE)
+
+    return text
+
+
 # --- Telegram Bot API ---
 
 class TelegramBot:
@@ -49,38 +90,48 @@ class TelegramBot:
             time.sleep(2)
             return []
 
-    def send_message(self, chat_id: int, text: str, parse_mode: str | None = None) -> int | None:
+    def send_message(self, chat_id: int, text: str, as_html: bool = False) -> int | None:
         """Send a message. Returns message_id for later editing."""
         if len(text) > 4000:
             text = text[:4000] + "\n\n(truncated)"
         msg = {"chat_id": chat_id, "text": text}
-        if parse_mode:
-            msg["parse_mode"] = parse_mode
+        if as_html:
+            msg["parse_mode"] = "HTML"
         try:
             result = self._call("sendMessage", msg)
             return result.get("result", {}).get("message_id")
         except Exception as e:
-            print(f"  send_message error: {e}", flush=True)
-            if parse_mode:
-                try:
-                    result = self._call("sendMessage", {"chat_id": chat_id, "text": text})
-                    return result.get("result", {}).get("message_id")
-                except Exception as e2:
-                    print(f"  send_message fallback error: {e2}", flush=True)
+            # Fallback: send without formatting
+            try:
+                result = self._call("sendMessage", {"chat_id": chat_id, "text": text})
+                return result.get("result", {}).get("message_id")
+            except Exception as e2:
+                print(f"  send_message error: {e2}", flush=True)
         return None
 
-    def edit_message(self, chat_id: int, message_id: int, text: str):
+    def edit_message(self, chat_id: int, message_id: int, text: str, as_html: bool = False):
         """Edit an existing message."""
         if len(text) > 4000:
             text = text[:4000] + "\n\n(truncated)"
+        msg = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+        }
+        if as_html:
+            msg["parse_mode"] = "HTML"
         try:
-            self._call("editMessageText", {
-                "chat_id": chat_id,
-                "message_id": message_id,
-                "text": text,
-            })
+            self._call("editMessageText", msg)
         except Exception:
-            pass  # Telegram rate-limits edits, silently skip
+            # Fallback without formatting
+            try:
+                self._call("editMessageText", {
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "text": text,
+                })
+            except Exception:
+                pass
 
     def send_action(self, chat_id: int, action: str = "typing"):
         try:
@@ -273,7 +324,8 @@ def handle_message(bot: TelegramBot, manager: ChatManager,
                 # Edit message with accumulated text (rate limited)
                 now = time.time()
                 if msg_id and now - last_edit > 1.0 and len(streaming_text) > 0:
-                    bot.edit_message(chat_id, msg_id, streaming_text + " ▍")
+                    bot.edit_message(chat_id, msg_id,
+                                     md_to_telegram_html(streaming_text) + " ▍", as_html=True)
                     last_edit = now
             elif event_type == "tool_call":
                 tool_count += 1
@@ -299,11 +351,11 @@ def handle_message(bot: TelegramBot, manager: ChatManager,
         footer_parts = [f"[{agent}]"]
         if tool_count > 0:
             footer_parts.append(f"{tool_count} tool{'s' if tool_count > 1 else ''}")
-        final = full_text + f"\n\n— {' · '.join(footer_parts)}"
+        final_html = md_to_telegram_html(full_text) + f"\n\n<i>— {' · '.join(footer_parts)}</i>"
         if msg_id:
-            bot.edit_message(chat_id, msg_id, final)
+            bot.edit_message(chat_id, msg_id, final_html, as_html=True)
         else:
-            bot.send_message(chat_id, final)
+            bot.send_message(chat_id, final_html, as_html=True)
     else:
         if msg_id:
             bot.edit_message(chat_id, msg_id, "(no response)")
