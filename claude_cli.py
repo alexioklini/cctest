@@ -235,6 +235,27 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "memory_shared",
+        "description": (
+            "Access the main agent's shared memory. This contains global knowledge like "
+            "infrastructure details, user preferences, project-wide decisions, and reference data "
+            "that applies across all agents. Use this when you need context that isn't in your own memory."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "description": "Action to perform", "enum": ["recall", "store"]},
+                "query": {"type": "string", "description": "Search query for recall, or empty to list all"},
+                "name": {"type": "string", "description": "Memory name (required for store)"},
+                "content": {"type": "string", "description": "Content to store (required for store)"},
+                "description": {"type": "string", "description": "One-line description (for store)"},
+                "type": {"type": "string", "description": "Memory type", "enum": ["user", "project", "feedback", "reference", "general"]},
+                "limit": {"type": "integer", "description": "Max results for recall (default: 10)"},
+            },
+            "required": ["action"],
+        },
+    },
+    {
         "name": "delegate_task",
         "description": (
             "Delegate a task to another agent. The target agent runs in its own context "
@@ -1019,6 +1040,37 @@ def tool_memory_delete(args: dict) -> str:
         return _err("memory_delete: name is required")
     result = _memory_store.delete(name)
     return _ok(result)
+
+
+def tool_memory_shared(args: dict) -> str:
+    """Access the main agent's shared memory."""
+    action = args.get("action", "recall")
+    # Always use the main agent's memory store
+    main_agent = AgentConfig("main")
+    shared_store = MemoryStore(agent_id="main", base_dir=main_agent.memory_dir)
+
+    if action == "store":
+        name = args.get("name", "")
+        content = args.get("content", "")
+        description = args.get("description", "")
+        mem_type = args.get("type", "general")
+        if not name or not content:
+            return _err("memory_shared store: name and content are required")
+        result = shared_store.store(name, content, description, mem_type)
+        result["source"] = "main (shared)"
+        return _ok(result)
+    else:  # recall
+        query = args.get("query", "")
+        limit = args.get("limit", 10)
+        mem_type = args.get("type")
+        if not query:
+            results = shared_store.list_all(mem_type)
+        else:
+            results = shared_store.recall(query, limit, mem_type)
+            for r in results:
+                if r.get("content") and len(r["content"]) > 1000:
+                    r["content"] = r["content"][:1000] + "..."
+        return _ok({"query": query, "source": "main (shared)", "results": results, "count": len(results)})
 
 
 def tool_delegate_task(args: dict) -> str:
@@ -1837,7 +1889,7 @@ TOOL_ICONS = {
     "read_file": "r", "write_file": "w", "edit_file": "e",
     "list_directory": "d", "search_files": "s", "execute_command": "$",
     "web_fetch": "~", "exa_search": "?",
-    "memory_store": "+", "memory_recall": "m", "memory_delete": "-",
+    "memory_store": "+", "memory_recall": "m", "memory_delete": "-", "memory_shared": "M",
     "delegate_task": ">",
 }
 
@@ -1845,7 +1897,7 @@ TOOL_VERBS = {
     "read_file": "Reading", "write_file": "Writing", "edit_file": "Editing",
     "list_directory": "Listing", "search_files": "Searching", "execute_command": "Executing",
     "web_fetch": "Fetching", "exa_search": "Searching",
-    "memory_store": "Remembering", "memory_recall": "Recalling", "memory_delete": "Forgetting",
+    "memory_store": "Remembering", "memory_recall": "Recalling", "memory_delete": "Forgetting", "memory_shared": "Shared Memory",
     "delegate_task": "Delegating",
 }
 
@@ -1932,6 +1984,13 @@ def _format_tool_call(name: str, args: dict) -> list[str]:
     elif name == "memory_recall":
         q = args.get("query", "(list all)")
         lines.append(_box_mid(f"{MAGENTA}{q}{RESET}"))
+    elif name == "memory_shared":
+        action = args.get("action", "recall")
+        if action == "store":
+            lines.append(_box_mid(f"{CYAN}store → main:{RESET} {MAGENTA}{args.get('name', '')}{RESET}"))
+        else:
+            q = args.get("query", "(list all)")
+            lines.append(_box_mid(f"{CYAN}recall ← main:{RESET} {MAGENTA}{q}{RESET}"))
     elif name == "memory_delete":
         lines.append(_box_mid(f"{RED}{args.get('name', '')}{RESET}"))
     elif name == "delegate_task":
@@ -2053,6 +2112,18 @@ def _format_tool_result(name: str, result_str: str) -> list[str]:
                 out.append(_box_mid(f"  {DIM}{desc[:max_w]}{RESET}"))
         if count > 5:
             out.append(_box_mid(f"{DIM}... and {count - 5} more{RESET}"))
+    elif name == "memory_shared":
+        source = rdata.get("source", "main")
+        if rdata.get("status") == "stored":
+            out.append(_box_top(f"{GREEN}{BOLD}✔ Stored → {source}{RESET}"))
+            out.append(_box_mid(f"{rdata.get('name', '')} → {rdata.get('file', '')}"))
+        else:
+            count = rdata.get("count", 0)
+            out.append(_box_top(f"{GREEN}{BOLD}✔ {count} shared memories{RESET} {DIM}({source}){RESET}"))
+            for r in rdata.get("results", [])[:5]:
+                out.append(_box_mid(f"{BOLD}{r.get('name', '')}{RESET} {DIM}[{r.get('type', '')}]{RESET}"))
+            if count > 5:
+                out.append(_box_mid(f"{DIM}... and {count - 5} more{RESET}"))
     elif name == "memory_delete":
         out.append(_box_top(f"{GREEN}{BOLD}✔ Deleted{RESET}"))
         out.append(_box_mid(f"{rdata.get('name', '')}"))
@@ -2100,6 +2171,7 @@ TOOL_DISPATCH = {
     "memory_store": tool_memory_store,
     "memory_recall": tool_memory_recall,
     "memory_delete": tool_memory_delete,
+    "memory_shared": tool_memory_shared,
     "delegate_task": tool_delegate_task,
 }
 
@@ -2178,6 +2250,10 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
             "- Memory types: user, project, feedback, reference, general\n"
             "- When the user says 'remember this', store it immediately\n"
             "- When the user asks 'do you remember', recall and search for it\n\n"
+            "SHARED MEMORY: Use memory_shared to access the main agent's memory.\n"
+            "- Contains global knowledge: infrastructure, user prefs, project-wide decisions\n"
+            "- All agents can read from shared memory; store shared facts there too\n"
+            "- Check shared memory when your own memory doesn't have what you need\n\n"
         )
         if agent_registry:
             system_instruction += f"\n{agent_registry}\n\n"
