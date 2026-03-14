@@ -3418,7 +3418,155 @@ def _print_greeting(model: str, agent_id: str = "default") -> None:
     print()
 
 
-def _readline(prompt: str, input_history: list[str], history_idx_ref: list[int]) -> str | None:
+# --- Slash commands registry ---
+
+SLASH_COMMANDS = {
+    "/help":     "Show this help",
+    "/new":      "Start a new conversation",
+    "/agent":    "Switch agent or list agents",
+    "/model":    "Switch model",
+    "/models":   "List available models",
+    "/tools":    "Toggle tool call display",
+    "/schedule": "Manage scheduled tasks (list/add/pause/resume/delete/history)",
+}
+
+
+def _print_help() -> None:
+    """Print help for all slash commands."""
+    print()
+    print(f"  {BOLD}Commands{RESET}")
+    print()
+    for cmd, desc in SLASH_COMMANDS.items():
+        print(f"  {GREEN}{BOLD}{cmd:12s}{RESET} {DIM}{desc}{RESET}")
+    print()
+    print(f"  {BOLD}Schedule subcommands{RESET}")
+    print()
+    for sub, desc in [
+        ("list", "List all scheduled tasks"),
+        ("add", "Create a new scheduled task"),
+        ("pause NAME", "Pause a task"),
+        ("resume NAME", "Resume a task"),
+        ("delete NAME", "Delete a task"),
+        ("history", "Show execution history"),
+    ]:
+        print(f"  {GREEN}{BOLD}  {sub:16s}{RESET} {DIM}{desc}{RESET}")
+    print()
+    print(f"  {BOLD}Keyboard{RESET}")
+    print()
+    for key, desc in [
+        ("Esc", "Cancel current request"),
+        ("Tab", "Autocomplete slash commands"),
+        ("Up/Down", "Input history"),
+        ("Ctrl+A/E", "Beginning/end of line"),
+        ("Ctrl+W", "Delete word backward"),
+        ("Ctrl+U", "Clear line"),
+        ("o", "Toggle tool output (when hidden)"),
+    ]:
+        print(f"  {YELLOW}{key:12s}{RESET} {DIM}{desc}{RESET}")
+    print()
+
+
+def _select_menu(items: list[str], prompt: str = "Select",
+                 labels: list[str] | None = None,
+                 active: str | None = None) -> str | None:
+    """Interactive arrow-key selection menu. Returns selected item or None on Esc/Ctrl-C."""
+    if not items:
+        return None
+    display = labels if labels and len(labels) == len(items) else items
+    selected = 0
+    # Find active item
+    if active and active in items:
+        selected = items.index(active)
+
+    fd = sys.stdin.fileno()
+    try:
+        old_settings = termios.tcgetattr(fd)
+    except termios.error:
+        return None
+
+    # Count lines we'll draw so we can clean up
+    menu_lines = len(items)
+
+    try:
+        new_settings = termios.tcgetattr(fd)
+        new_settings[3] = new_settings[3] & ~(termios.ICANON | termios.ECHO)
+        new_settings[6][termios.VMIN] = 0
+        new_settings[6][termios.VTIME] = 0
+        termios.tcsetattr(fd, termios.TCSANOW, new_settings)
+
+        # Draw initial menu
+        print(f"\n  {DIM}{prompt}:{RESET}")
+        for i, label in enumerate(display):
+            _draw_menu_item(i, label, i == selected, items[i] == active if active else False)
+        sys.stdout.flush()
+
+        while True:
+            if select.select([fd], [], [], 0.1)[0]:
+                ch = os.read(fd, 1)
+                if ch == b'\r' or ch == b'\n':  # Enter
+                    break
+                elif ch == b'\x1b':  # Escape or arrow
+                    seq1 = os.read(fd, 1) if select.select([fd], [], [], 0.05)[0] else b''
+                    if seq1 == b'[':
+                        seq2 = os.read(fd, 1) if select.select([fd], [], [], 0.05)[0] else b''
+                        if seq2 == b'A':  # Up
+                            selected = (selected - 1) % len(items)
+                        elif seq2 == b'B':  # Down
+                            selected = (selected + 1) % len(items)
+                        else:
+                            # Bare Esc or unknown sequence — cancel
+                            _erase_menu(menu_lines + 1)
+                            return None
+                    else:
+                        # Bare Esc — cancel
+                        _erase_menu(menu_lines + 1)
+                        return None
+                elif ch == b'\x03':  # Ctrl-C
+                    _erase_menu(menu_lines + 1)
+                    return None
+                else:
+                    continue
+
+                # Redraw menu
+                # Move cursor up to start of menu
+                sys.stdout.write(f"\033[{menu_lines}A")
+                for i, label in enumerate(display):
+                    sys.stdout.write(f"\r\033[K")
+                    _draw_menu_item(i, label, i == selected, items[i] == active if active else False)
+                sys.stdout.flush()
+
+        # Erase menu after selection
+        _erase_menu(menu_lines + 1)
+        return items[selected]
+
+    except Exception:
+        return None
+    finally:
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        except termios.error:
+            pass
+
+
+def _draw_menu_item(idx: int, label: str, is_selected: bool, is_active: bool):
+    """Draw a single menu item line."""
+    marker = f"{CYAN}{BOLD}❯{RESET}" if is_selected else " "
+    active_tag = f" {GREEN}(active){RESET}" if is_active else ""
+    if is_selected:
+        print(f"  {marker} {BOLD}{label}{RESET}{active_tag}")
+    else:
+        print(f"  {marker} {DIM}{label}{RESET}{active_tag}")
+
+
+def _erase_menu(lines: int):
+    """Erase N lines above cursor."""
+    for _ in range(lines):
+        sys.stdout.write(f"\033[A\r\033[K")
+    sys.stdout.flush()
+
+
+def _readline(prompt: str, input_history: list[str], history_idx_ref: list[int],
+              completions: list[str] | None = None) -> str | None:
     """Read a line with arrow-key history navigation and inline editing.
 
     Returns the entered string, or None on Ctrl-C / Ctrl-D.
@@ -3567,6 +3715,35 @@ def _readline(prompt: str, input_history: list[str], history_idx_ref: list[int])
 
                 # Bare Escape — ignore (don't break input)
 
+            elif ch == b'\t':  # Tab — autocomplete
+                current = "".join(buf)
+                comp_list = completions or list(SLASH_COMMANDS.keys())
+                if current.startswith("/"):
+                    matches = [c for c in comp_list if c.startswith(current)]
+                    if len(matches) == 1:
+                        # Single match — complete it
+                        completion = matches[0]
+                        # Add space after completed command
+                        if not completion.endswith(" "):
+                            completion += " "
+                        _replace_line(buf, pos, completion)
+                        buf[:] = list(completion)
+                        pos = len(buf)
+                    elif len(matches) > 1:
+                        # Multiple matches — find common prefix
+                        prefix = os.path.commonprefix(matches)
+                        if len(prefix) > len(current):
+                            _replace_line(buf, pos, prefix)
+                            buf[:] = list(prefix)
+                            pos = len(buf)
+                        else:
+                            # Show options briefly below
+                            sys.stdout.write(f"\n  {DIM}{' '.join(matches)}{RESET}")
+                            sys.stdout.write(f"\033[A")  # move back up
+                            # Redraw prompt + buffer
+                            sys.stdout.write(f"\r{prompt}{''.join(buf)}")
+                            sys.stdout.flush()
+
             elif ch >= b' ':  # Printable character
                 char = ch.decode("utf-8", errors="replace")
                 buf.insert(pos, char)
@@ -3665,6 +3842,10 @@ def _run_interactive(args):
                 print(f"{DIM}Bye!{RESET}")
                 break
 
+            if stripped == "/help":
+                _print_help()
+                continue
+
             if stripped == "/new":
                 history = []
                 print(f"\n{DIM}{'─' * 40}{RESET}")
@@ -3684,41 +3865,24 @@ def _run_interactive(args):
                 arg = message.strip()[6:].strip()
                 agents = list_agents()
                 if arg:
-                    # Direct switch
                     if arg not in agents:
-                        # Create new agent
                         print(f"  {DIM}Creating new agent:{RESET} {BOLD}{arg}{RESET}")
                     current_model, _ = _switch_agent(arg, args)
-                    history = []  # fresh context for new agent
+                    history = []
                     print(f"  {DIM}Switched to agent:{RESET} {BOLD}{arg}{RESET} {DIM}(model: {current_model}){RESET}")
                 else:
-                    # List agents
-                    print()
-                    for idx, aid in enumerate(agents, 1):
+                    # Build labels with descriptions
+                    labels = []
+                    for aid in agents:
                         cfg = AgentConfig(aid)
-                        active = " (active)" if _current_agent and aid == _current_agent.agent_id else ""
                         model_info = f" [{cfg.preferred_model}]" if cfg.preferred_model else ""
-                        if active:
-                            print(f"  {GREEN}{BOLD}{idx}. {aid}{active}{model_info}{RESET}")
-                        else:
-                            print(f"  {DIM}{idx}. {aid}{model_info} — {cfg.description}{RESET}")
-                    # Prompt for selection
-                    choice = _readline(f"  {DIM}Select (number or name, empty to cancel):{RESET} ", [], [0])
-                    if choice is None or not choice.strip():
-                        continue
-                    choice = choice.strip()
-                    try:
-                        idx = int(choice) - 1
-                        if 0 <= idx < len(agents):
-                            choice = agents[idx]
-                        else:
-                            print(f"  {DIM}Invalid index.{RESET}")
-                            continue
-                    except ValueError:
-                        pass  # use as agent name directly
-                    current_model, _ = _switch_agent(choice, args)
-                    history = []
-                    print(f"  {DIM}Switched to agent:{RESET} {BOLD}{choice}{RESET} {DIM}(model: {current_model}){RESET}")
+                        labels.append(f"{aid}{model_info} — {cfg.description}")
+                    current_aid = _current_agent.agent_id if _current_agent else "main"
+                    choice = _select_menu(agents, "Select agent", labels=labels, active=current_aid)
+                    if choice:
+                        current_model, _ = _switch_agent(choice, args)
+                        history = []
+                        print(f"  {DIM}Switched to agent:{RESET} {BOLD}{choice}{RESET} {DIM}(model: {current_model}){RESET}")
                 _draw_status_bar(current_model, history, args.max_context)
                 continue
 
@@ -3818,51 +3982,26 @@ def _run_interactive(args):
             if stripped == "/models":
                 models = get_available_models(args.api_key, args.base_url, args.api_type)
                 if models:
-                    print()
-                    for idx, mid in enumerate(models, 1):
-                        if mid == current_model:
-                            print(f"  {GREEN}{BOLD}{idx}. {mid} (active){RESET}")
-                        else:
-                            print(f"  {DIM}{idx}. {mid}{RESET}")
+                    choice = _select_menu(models, "Select model", active=current_model)
+                    if choice:
+                        current_model = choice
+                        print(f"  {DIM}Switched to:{RESET} {BOLD}{current_model}{RESET}")
+                        _draw_status_bar(current_model, history, args.max_context)
                 else:
-                    print(f"{DIM}No models available{RESET}")
+                    print(f"  {DIM}No models available{RESET}")
                 continue
 
             if stripped.startswith("/model"):
                 arg = message.strip()[6:].strip()
                 models = get_available_models(args.api_key, args.base_url, args.api_type)
                 if arg:
-                    try:
-                        idx = int(arg) - 1
-                        if 0 <= idx < len(models):
-                            current_model = models[idx]
-                        else:
-                            print(f"  {DIM}Invalid index. Use 1-{len(models)}{RESET}")
-                            continue
-                    except ValueError:
-                        current_model = arg
+                    current_model = arg
                     print(f"  {DIM}Switched to:{RESET} {BOLD}{current_model}{RESET}")
                 elif models:
-                    print()
-                    for idx, mid in enumerate(models, 1):
-                        if mid == current_model:
-                            print(f"  {GREEN}{BOLD}{idx}. {mid} (active){RESET}")
-                        else:
-                            print(f"  {DIM}{idx}. {mid}{RESET}")
-                    choice = _readline(f"  {DIM}Select (number or name):{RESET} ", [], [0])
-                    if choice is None:
-                        continue
-                    choice = choice.strip()
-                    try:
-                        idx = int(choice) - 1
-                        if 0 <= idx < len(models):
-                            current_model = models[idx]
-                        else:
-                            print(f"  {DIM}Invalid index.{RESET}")
-                            continue
-                    except ValueError:
+                    choice = _select_menu(models, "Select model", active=current_model)
+                    if choice:
                         current_model = choice
-                    print(f"  {DIM}Switched to:{RESET} {BOLD}{current_model}{RESET}")
+                        print(f"  {DIM}Switched to:{RESET} {BOLD}{current_model}{RESET}")
                 else:
                     print(f"  {DIM}No models available. Use: /model <name>{RESET}")
                 _draw_status_bar(current_model, history, args.max_context)
