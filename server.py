@@ -151,6 +151,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_list_schedule()
         elif path == "/v1/tasks":
             self._handle_list_tasks()
+        elif path == "/v1/providers":
+            self._handle_list_providers()
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -387,6 +389,26 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         else:
             self._send_json({"schedules": engine._scheduler.list_all()})
 
+    def _handle_list_providers(self):
+        providers = server_config.get("providers", {})
+        result = []
+        for name, p in providers.items():
+            # Try to fetch models dynamically
+            models = []
+            try:
+                models = engine.get_available_models(
+                    p.get("api_key", ""), p.get("base_url", ""), p.get("type", "openai"))
+            except Exception:
+                pass
+            result.append({
+                "name": name,
+                "base_url": p.get("base_url", ""),
+                "type": p.get("type", "openai"),
+                "default_model": p.get("default_model", ""),
+                "models": models,
+            })
+        self._send_json({"providers": result})
+
     def _handle_list_tasks(self):
         if engine._task_runner:
             tasks = engine._task_runner.list_tasks()
@@ -400,18 +422,39 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
 # --- Main ---
 
+def _load_config_file() -> dict:
+    """Load config.json if it exists."""
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
 def main():
+    # Load config.json for defaults
+    file_config = _load_config_file()
+    providers = file_config.get("providers", {})
+    default_provider = file_config.get("default_provider", "")
+    provider = providers.get(default_provider, {}) if default_provider else {}
+    srv_cfg = file_config.get("server", {})
+
     parser = argparse.ArgumentParser(description=f"Brain Agent Server v{engine.VERSION}")
-    parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
-    parser.add_argument("--port", type=int, default=8420, help="Bind port (default: 8420)")
-    parser.add_argument("--api-key", default="sk-Xk7kOHpIpZkLutwnyxHpRO9jn4ZwyPaS")
-    parser.add_argument("--base-url", default="http://localhost:8317/v1")
-    parser.add_argument("-t", "--api-type", choices=["anthropic", "openai"], default="anthropic")
-    parser.add_argument("-m", "--model", default="claude-opus-4-5-20251101")
-    parser.add_argument("--max-context", type=int, default=131072)
+    parser.add_argument("--host", default=srv_cfg.get("host", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=srv_cfg.get("port", 8420))
+    parser.add_argument("--api-key", default=provider.get("api_key", ""))
+    parser.add_argument("--base-url", default=provider.get("base_url", "http://localhost:8317/v1"))
+    parser.add_argument("-t", "--api-type", choices=["anthropic", "openai"],
+                        default=provider.get("type", "anthropic"))
+    parser.add_argument("-m", "--model", default=provider.get("default_model", ""))
+    parser.add_argument("--max-context", type=int, default=file_config.get("max_context", 131072))
     args = parser.parse_args()
 
-    # Set server config
+    # Store all providers for multi-provider support
+    server_config["providers"] = providers
     server_config["api_key"] = args.api_key
     server_config["base_url"] = args.base_url
     server_config["api_type"] = args.api_type

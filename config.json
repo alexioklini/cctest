@@ -1,0 +1,20 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8420
+  },
+  "providers": {
+    "local-inferencer": {
+      "base_url": "http://192.168.1.221:8081/v1",
+      "api_key": "kilo",
+      "type": "openai",
+      "default_model": "<distributed>/Qwen3-Coder-Next-REAP-48B-A3B-mlx-mxfp4"
+    }
+  },
+  "default_provider": "local-inferencer",
+  "max_context": 131072,
+  "telegram": {
+    "bot_token": "",
+    "allowed_users": []
+  }
+}
