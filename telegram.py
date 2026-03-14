@@ -49,24 +49,38 @@ class TelegramBot:
             time.sleep(2)
             return []
 
-    def send_message(self, chat_id: int, text: str, parse_mode: str | None = None):
-        # Truncate if too long for Telegram (4096 chars)
+    def send_message(self, chat_id: int, text: str, parse_mode: str | None = None) -> int | None:
+        """Send a message. Returns message_id for later editing."""
         if len(text) > 4000:
             text = text[:4000] + "\n\n(truncated)"
-        # Try plain text first — most reliable
         msg = {"chat_id": chat_id, "text": text}
         if parse_mode:
             msg["parse_mode"] = parse_mode
         try:
-            self._call("sendMessage", msg)
+            result = self._call("sendMessage", msg)
+            return result.get("result", {}).get("message_id")
         except Exception as e:
-            print(f"  send_message error (parse_mode={parse_mode}): {e}", flush=True)
+            print(f"  send_message error: {e}", flush=True)
             if parse_mode:
-                # Retry without parse_mode
                 try:
-                    self._call("sendMessage", {"chat_id": chat_id, "text": text})
+                    result = self._call("sendMessage", {"chat_id": chat_id, "text": text})
+                    return result.get("result", {}).get("message_id")
                 except Exception as e2:
                     print(f"  send_message fallback error: {e2}", flush=True)
+        return None
+
+    def edit_message(self, chat_id: int, message_id: int, text: str):
+        """Edit an existing message."""
+        if len(text) > 4000:
+            text = text[:4000] + "\n\n(truncated)"
+        try:
+            self._call("editMessageText", {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text,
+            })
+        except Exception:
+            pass  # Telegram rate-limits edits, silently skip
 
     def send_action(self, chat_id: int, action: str = "typing"):
         try:
@@ -239,23 +253,29 @@ def handle_command(bot: TelegramBot, manager: ChatManager,
 def handle_message(bot: TelegramBot, manager: ChatManager,
                    chat_id: int, text: str):
     """Handle a regular chat message."""
-    print(f"  → Creating/getting session for {chat_id}", flush=True)
     sid = manager.get_session(chat_id)
-    print(f"  → Session: {sid}", flush=True)
     chat_client = BrainAgentClient(manager.client.server_url)
     chat_client.session_id = sid
 
-    bot.send_action(chat_id)
-    print(f"  → Calling chat API...", flush=True)
+    # Send initial "thinking" message that we'll edit with streamed text
+    msg_id = bot.send_message(chat_id, "⏳ Thinking...")
 
     full_text = ""
+    streaming_text = ""
     tool_count = 0
     error_msg = ""
+    last_edit = 0  # rate limit edits to ~1 per second
 
     try:
         for event_type, data in chat_client.chat(text):
-            print(f"  → Event: {event_type}: {str(data)[:80]}", flush=True)
-            if event_type == "tool_call":
+            if event_type == "text_delta":
+                streaming_text += data.get("text", "")
+                # Edit message with accumulated text (rate limited)
+                now = time.time()
+                if msg_id and now - last_edit > 1.0 and len(streaming_text) > 0:
+                    bot.edit_message(chat_id, msg_id, streaming_text + " ▍")
+                    last_edit = now
+            elif event_type == "tool_call":
                 tool_count += 1
                 bot.send_action(chat_id)
             elif event_type == "done":
@@ -264,27 +284,31 @@ def handle_message(bot: TelegramBot, manager: ChatManager,
             elif event_type == "error":
                 error_msg = data.get("message", "Unknown error")
                 break
-        print(f"  → Stream ended. text={len(full_text)} chars, tools={tool_count}", flush=True)
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
-        print(f"  → EXCEPTION: {error_msg}", flush=True)
-        import traceback
-        traceback.print_exc()
+        print(f"  Error: {error_msg}", flush=True)
 
+    # Final update
+    agent = manager.chat_state.get(chat_id, {}).get("agent", "main")
     if error_msg:
-        bot.send_message(chat_id, f"⚠️ {error_msg}")
+        if msg_id:
+            bot.edit_message(chat_id, msg_id, f"⚠️ {error_msg}")
+        else:
+            bot.send_message(chat_id, f"⚠️ {error_msg}")
     elif full_text:
-        # Add footer with agent info and tool count
-        agent = manager.chat_state.get(chat_id, {}).get("agent", "main")
         footer_parts = [f"[{agent}]"]
         if tool_count > 0:
             footer_parts.append(f"{tool_count} tool{'s' if tool_count > 1 else ''}")
-        full_text += f"\n\n— {' · '.join(footer_parts)}"
-        print(f"  → Sending reply ({len(full_text)} chars)...", flush=True)
-        bot.send_message(chat_id, full_text)
-        print(f"  → Sent!", flush=True)
+        final = full_text + f"\n\n— {' · '.join(footer_parts)}"
+        if msg_id:
+            bot.edit_message(chat_id, msg_id, final)
+        else:
+            bot.send_message(chat_id, final)
     else:
-        bot.send_message(chat_id, "(no response)")
+        if msg_id:
+            bot.edit_message(chat_id, msg_id, "(no response)")
+        else:
+            bot.send_message(chat_id, "(no response)")
 
 
 # --- Main loop ---
