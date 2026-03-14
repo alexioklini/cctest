@@ -1093,8 +1093,14 @@ TOOL_VERBS = {
 }
 
 
+# Global flag: whether to show tool call/result boxes
+_show_tools = True
+
+
 def _display_tool_call(name: str, args: dict) -> None:
     """Print a styled tool invocation box."""
+    if not _show_tools:
+        return
     icon = TOOL_ICONS.get(name, "⚡")
     verb = TOOL_VERBS.get(name, "Running")
     max_w = max(20, _term_cols() - 8)
@@ -1132,6 +1138,8 @@ def _display_tool_call(name: str, args: dict) -> None:
 
 def _display_tool_result(name: str, result_str: str) -> None:
     """Print a styled tool result summary box."""
+    if not _show_tools:
+        return
     max_w = max(20, _term_cols() - 8)
     try:
         rdata = json.loads(result_str)
@@ -1698,6 +1706,7 @@ def _print_greeting(model: str) -> None:
     # Tools summary
     tool_names = [t["name"] for t in TOOL_DEFINITIONS]
     print(f"  {DIM}Tools:{RESET} {DIM}{', '.join(tool_names)}{RESET}")
+    print(f"  {DIM}/new /model /models /tools  Esc cancel  exit quit{RESET}")
 
     # Tip / changelog line
     if latest:
@@ -1926,6 +1935,13 @@ def _run_interactive(args):
                 print(f"\n{DIM}{'─' * 40}{RESET}")
                 print(f"{DIM}  New chat started{RESET}")
                 print(f"{DIM}{'─' * 40}{RESET}")
+                continue
+
+            if stripped == "/tools":
+                global _show_tools
+                _show_tools = not _show_tools
+                state = f"{GREEN}visible{RESET}" if _show_tools else f"{DIM}hidden{RESET}"
+                print(f"  {DIM}Tool display:{RESET} {state}")
                 continue
 
             if stripped == "/models":
