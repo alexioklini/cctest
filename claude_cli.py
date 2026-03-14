@@ -384,12 +384,13 @@ def tool_search_files(args: dict) -> str:
 
 
 def _strip_ansi(text: str) -> str:
-    """Remove all ANSI escape sequences from text."""
+    """Remove all ANSI escape sequences, control chars, and normalize whitespace."""
     text = re.sub(r"\033\[[0-9;]*[a-zA-Z]", "", text)
     text = re.sub(r"\033\[\?[0-9;]*[a-zA-Z]", "", text)
     text = re.sub(r"\033\([A-Z]", "", text)
     text = re.sub(r"\033][^\a]*\a", "", text)  # OSC sequences
     text = re.sub(r"\r", "", text)  # Carriage returns
+    text = text.replace("\t", "    ")  # Expand tabs
     return text
 
 
@@ -689,42 +690,76 @@ def _box_top(label: str = "") -> str:
     """Draw ┌─ label ───...┐ spanning the available width."""
     w = _box_width()
     if label:
-        # label includes ANSI codes, so measure visible length separately
-        visible_label = re.sub(r"\033\[[^m]*m", "", label)
-        fill = max(0, w - 2 - len(visible_label))
+        vlen = _visible_len(label)
+        # "┌─ " + label + " " + fill + "┐"  →  3 + vlen + 1 + fill + 1 = w + 2
+        fill = max(0, w - 4 - vlen)
         return f"  {DIM}┌─ {RESET}{label}{DIM} {'─' * fill}┐{RESET}"
     else:
         return f"  {DIM}┌{'─' * w}┐{RESET}"
 
 
 def _visible_len(text: str) -> int:
-    """Get the visible length of a string, ignoring ANSI escape codes."""
-    return len(re.sub(r"\033\[[^m]*m", "", text))
+    """Get the visible (column) length of a string, ignoring ANSI escape codes.
+    Handles wide Unicode characters and tabs."""
+    import unicodedata
+    stripped = re.sub(r"\033\[[0-9;]*[a-zA-Z]", "", text)
+    stripped = re.sub(r"\033\[\?[0-9;]*[a-zA-Z]", "", stripped)
+    stripped = re.sub(r"\033\([A-Z]", "", stripped)
+    w = 0
+    for ch in stripped:
+        if ch == '\t':
+            w += (8 - w % 8)
+        elif unicodedata.east_asian_width(ch) in ('W', 'F'):
+            w += 2
+        elif unicodedata.category(ch) in ('Mn', 'Me', 'Cf'):
+            pass  # zero-width combining/format chars
+        else:
+            w += 1
+    return w
 
 
-def _truncate_visible(text: str, max_visible: int) -> str:
-    """Truncate a string with ANSI codes to max visible characters."""
-    visible = 0
+def _truncate_visible(text: str, max_cols: int) -> str:
+    """Truncate a string (may contain ANSI codes) to max visible columns."""
+    import unicodedata
+    cols = 0
     i = 0
-    while i < len(text) and visible < max_visible:
+    while i < len(text) and cols < max_cols:
         if text[i] == '\033':
-            # Skip ANSI escape sequence
+            # Skip full ANSI sequence
             j = i + 1
-            while j < len(text) and text[j] != 'm':
+            while j < len(text) and text[j] not in 'mABCDHJKfhlGn':
                 j += 1
             i = j + 1
-        else:
-            visible += 1
+        elif text[i] == '\t':
+            add = 8 - cols % 8
+            if cols + add > max_cols:
+                break
+            cols += add
             i += 1
-    if visible >= max_visible and i < len(text):
-        return text[:i] + RESET + "…"
+        else:
+            ch = text[i]
+            cw = 2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1
+            if unicodedata.category(ch) in ('Mn', 'Me', 'Cf'):
+                cw = 0
+            if cols + cw > max_cols:
+                break
+            cols += cw
+            i += 1
+    if i < len(text):
+        # Check if remaining is only ANSI codes
+        rest = text[i:]
+        rest_stripped = re.sub(r"\033\[[0-9;]*[a-zA-Z]", "", rest)
+        if rest_stripped.strip():
+            return text[:i] + RESET
     return text
 
 
 def _box_mid(content: str = "") -> str:
-    """Draw │ content — truncated to fit terminal width."""
-    # "  │  " = 5 chars prefix, leave 1 char margin
+    """Draw │ content — truncated to fit terminal width. No wrapping."""
+    # "  │  " = 5 visible chars prefix
     max_content = max(10, _term_cols() - 6)
+    # Expand tabs to spaces first to avoid variable-width issues
+    content = content.replace("\t", "    ")
     truncated = _truncate_visible(content, max_content)
     return f"  {DIM}│{RESET}  {truncated}"
 
@@ -1037,9 +1072,9 @@ def _stream_openai(response) -> str:
 
 
 TOOL_ICONS = {
-    "read_file": "📄", "write_file": "✏️", "edit_file": "🔧",
-    "list_directory": "📁", "search_files": "🔍", "execute_command": "⚙️",
-    "web_fetch": "🌐", "exa_search": "🔎",
+    "read_file": "r", "write_file": "w", "edit_file": "e",
+    "list_directory": "d", "search_files": "s", "execute_command": "$",
+    "web_fetch": "~", "exa_search": "?",
 }
 
 TOOL_VERBS = {
@@ -1132,7 +1167,7 @@ def _display_tool_result(name: str, result_str: str) -> None:
         count = rdata.get("count", 0)
         print(_box_top(f"{GREEN}{BOLD}✔ {count} entries{RESET}"))
         for e in rdata.get("entries", [])[:8]:
-            icon = "📁" if e.get("type") == "directory" else "  "
+            icon = "d" if e.get("type") == "directory" else " "
             print(_box_mid(f"{icon} {e.get('name', '')}"))
         if count > 8:
             print(_box_mid(f"{DIM}... and {count - 8} more{RESET}"))
