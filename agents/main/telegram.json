@@ -1,0 +1,4 @@
+{
+  "allowed_users": [],
+  "note": "Add Telegram user IDs to allowed_users to restrict access. Empty = allow all."
+}
