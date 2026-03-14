@@ -6,15 +6,15 @@
   "providers": {
     "inferencer": {
       "base_url": "http://192.168.1.221:8081/v1",
-      "api_key": "kilo",
+      "api_key": "YOUR_API_KEY",
       "type": "openai",
-      "default_model": "<distributed>/Qwen3-Coder-Next-REAP-48B-A3B-mlx-mxfp4"
+      "default_model": "YOUR_MODEL_NAME"
     }
   },
   "default_provider": "inferencer",
   "max_context": 131072,
   "telegram": {
-    "bot_token": "",
+    "bot_token": "YOUR_BOT_TOKEN",
     "allowed_users": []
   }
 }
