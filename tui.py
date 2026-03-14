@@ -349,17 +349,68 @@ def run_interactive(args):
         ["/help", "/new", "/agent", "/model", "/models", "/tools", "/schedule"],
         sentence=True,
     )
-    pt_style = PTStyle.from_dict({"prompt": "#00ff00 bold"})
+
+    # Status bar data (mutable, read by toolbar)
+    status = {"model": current_model, "agent": args.agent, "tokens": 0, "max": args.max_context}
+
+    def bottom_toolbar():
+        agent_id = status["agent"]
+        model = status["model"]
+        est = status["tokens"]
+        max_t = status["max"]
+        pct = min(99, int(est / max_t * 100)) if max_t > 0 else 0
+        if est >= 1000:
+            tok = f"{est // 1000}k"
+        else:
+            tok = str(est)
+        tok_display = f"{tok}/{max_t // 1000}k"
+
+        parts = []
+        if agent_id != "main":
+            parts.append(("class:toolbar.agent", f" {agent_id} "))
+            parts.append(("class:toolbar.sep", " │ "))
+        parts.append(("class:toolbar.label", " Model: "))
+        parts.append(("class:toolbar.value", f"{model} "))
+        parts.append(("class:toolbar.sep", "│ "))
+        parts.append(("class:toolbar.label", "Context: "))
+        if pct >= 75:
+            parts.append(("class:toolbar.warn", f"{tok_display} "))
+        else:
+            parts.append(("class:toolbar.value", f"{tok_display} "))
+        return parts
+
+    pt_style = PTStyle.from_dict({
+        "prompt": "#00ff00 bold",
+        "bottom-toolbar": "bg:#1a1a2e #8888aa",
+        "toolbar.agent": "bg:#1a1a2e #00cccc bold",
+        "toolbar.label": "bg:#1a1a2e #666688",
+        "toolbar.value": "bg:#1a1a2e #00cc66",
+        "toolbar.sep": "bg:#1a1a2e #444466",
+        "toolbar.warn": "bg:#1a1a2e #cc6600",
+        "separator": "#444466",
+    })
+
     session = PromptSession(
         history=pt_history, completer=completer, style=pt_style,
-        complete_while_typing=False,
+        complete_while_typing=False, bottom_toolbar=bottom_toolbar,
     )
+
+    def _update_status():
+        status["model"] = current_model
+        status["agent"] = backend._current_agent.agent_id if backend._current_agent else "main"
+        status["tokens"] = backend._estimate_conversation_tokens(history)
 
     console.clear()
     print_greeting(current_model, args.agent)
 
+    # Separator line width
+    def _sep():
+        cols = os.get_terminal_size().columns
+        console.print(f"[#444466]{'─' * cols}[/]")
+
     try:
         while True:
+            _sep()
             try:
                 message = session.prompt(HTML("<prompt>❯ </prompt>"))
             except KeyboardInterrupt:
@@ -382,6 +433,7 @@ def run_interactive(args):
 
             if low == "/new":
                 history = []
+                _update_status()
                 console.rule(style="dim")
                 console.print("  [dim]New conversation[/]")
                 console.rule(style="dim")
@@ -402,6 +454,7 @@ def run_interactive(args):
                         console.print(f"  [dim]Creating:[/] [bold]{arg}[/]")
                     current_model, _ = backend._switch_agent(arg, args)
                     history = []
+                    _update_status()
                     console.print(f"  [dim]→[/] [agent]{arg}[/] [dim]({current_model})[/]")
                 else:
                     labels = []
@@ -415,6 +468,7 @@ def run_interactive(args):
                     if choice:
                         current_model, _ = backend._switch_agent(choice, args)
                         history = []
+                        _update_status()
                         console.print(f"  [dim]→[/] [agent]{choice}[/] [dim]({current_model})[/]")
                 continue
 
@@ -422,6 +476,7 @@ def run_interactive(args):
                 arg = stripped[6:].strip()
                 if arg:
                     current_model = arg
+                    _update_status()
                     console.print(f"  [dim]→[/] [model]{current_model}[/]")
                 else:
                     models = backend.get_available_models(args.api_key, args.base_url, args.api_type)
@@ -430,6 +485,7 @@ def run_interactive(args):
                         choice = select_inline(models, active=current_model)
                         if choice:
                             current_model = choice
+                            _update_status()
                             console.print(f"  [dim]→[/] [model]{current_model}[/]")
                     else:
                         console.print("  [dim]No models available[/]")
@@ -442,6 +498,7 @@ def run_interactive(args):
                     choice = select_inline(models, active=current_model)
                     if choice:
                         current_model = choice
+                        _update_status()
                         console.print(f"  [dim]→[/] [model]{current_model}[/]")
                 else:
                     console.print("  [dim]No models available[/]")
@@ -496,6 +553,7 @@ def run_interactive(args):
                 console.print()
                 console.print(Markdown(reply))
                 est = backend._estimate_conversation_tokens(history)
+                status["tokens"] = est
                 pct = min(99, int(est / args.max_context * 100))
                 console.print(f"\n  [dim]✻ {elapsed:.0f}s · {est:,}/{args.max_context//1000}k ({pct}%)[/]")
             else:
