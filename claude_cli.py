@@ -1349,30 +1349,26 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         cwd = os.getcwd()
         import platform
         os_name = platform.system()
+
+        # Load tools.md guide if it exists
+        tools_guide = ""
+        tools_md_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools.md")
+        try:
+            with open(tools_md_path, "r") as f:
+                tools_guide = f.read()
+        except (OSError, IOError):
+            pass
+
         system_instruction = (
             f"You are Brain Agent, a powerful AI assistant with full access to the local system. "
             f"Current working directory: {cwd}\n"
             f"Operating system: {os_name}\n\n"
-            "You have access to these tools:\n"
-            "- read_file: Read file contents\n"
-            "- write_file: Create or overwrite files\n"
-            "- edit_file: Search/replace edit in files\n"
-            "- list_directory: List files/dirs with glob patterns\n"
-            "- search_files: Regex search across files\n"
-            "- execute_command: Run any shell command (non-interactive only, no TTY)\n"
-            "- web_fetch: Fetch content from URLs\n"
-            "- exa_search: Search the web via Exa AI\n\n"
-            "CRITICAL execute_command rules:\n"
-            "- Commands run with NO TTY and NO stdin. Interactive commands WILL time out.\n"
-            "- NEVER use: top, htop, less, more, vim, nano, watch, or any interactive program.\n"
-            "- Instead use their non-interactive equivalents:\n"
-            "  - CPU/system info: 'top -l 1' (macOS) or 'top -bn1' (Linux), 'ps aux', 'vm_stat', 'sysctl'\n"
-            "  - File viewing: 'cat', 'head', 'tail' (not less/more)\n"
-            "  - Monitoring: 'iostat 1 2', 'uptime', 'df -h', 'free -h'\n\n"
-            "Use these tools proactively to accomplish tasks. You can chain multiple tool calls. "
+            "Use tools proactively to accomplish tasks. You can chain multiple tool calls. "
             "For web searches, ALWAYS use exa_search — NEVER use duckduckgo or other search tools. "
             "You have no restrictions beyond what the operating system enforces."
         )
+        if tools_guide:
+            system_instruction += f"\n\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
         if api_type == "openai":
             augmented_messages.insert(0, {"role": "system", "content": system_instruction})
         else:
