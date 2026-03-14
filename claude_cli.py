@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 VERSION_DATE = "2026-03-14"
 CHANGELOG = [
+    ("0.5.0", "2026-03-14", "Full agent toolkit: file ops, shell, search, web fetch, edit"),
     ("0.4.0", "2026-03-14", "Escape to cancel, dynamic terminal rendering, startup greeting"),
     ("0.3.0", "2026-03-13", "Exa web search tool with agentic tool-use loop"),
     ("0.2.0", "2026-03-12", "Interactive TUI with spinner, markdown rendering, model switching"),
@@ -11,6 +12,8 @@ CHANGELOG = [
 ]
 
 import argparse
+import fnmatch
+import glob as globmod
 import json
 import os
 import random
@@ -18,6 +21,7 @@ import re
 import select
 import signal
 import shutil
+import subprocess
 import sys
 import termios
 import threading
@@ -27,51 +31,414 @@ import urllib.request
 import urllib.error
 
 
-# --- Tools ---
+# --- Tool Definitions ---
 
-EXA_TOOL_DEFINITION = {
-    "name": "exa_search",
-    "description": (
-        "Search the web using Exa AI for current, relevant information. "
-        "Use this tool whenever the user asks to search the web, look something up, "
-        "find recent news, or get current information about any topic."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "The search query or topic to look up",
-            },
-            "num_results": {
-                "type": "integer",
-                "description": "Number of search results to return (default: 5)",
-                "minimum": 1,
-                "maximum": 20,
-            },
-            "category": {
-                "type": "string",
-                "description": "Optional category: news, research paper, tweet, company, people",
-                "enum": ["news", "research paper", "tweet", "company", "people"],
-            },
-        },
-        "required": ["query"],
-    },
-}
-
-# OpenAI-compatible format
-EXA_TOOL_DEFINITION_OPENAI = {
-    "type": "function",
-    "function": {
-        "name": "exa_search",
-        "description": EXA_TOOL_DEFINITION["description"],
-        "parameters": {
+TOOL_DEFINITIONS = [
+    {
+        "name": "read_file",
+        "description": (
+            "Read the contents of a file. Returns the full text content. "
+            "Use offset and limit to read a specific range of lines from large files."
+        ),
+        "input_schema": {
             "type": "object",
-            "properties": EXA_TOOL_DEFINITION["input_schema"]["properties"],
+            "properties": {
+                "path": {"type": "string", "description": "Absolute or relative file path to read"},
+                "offset": {"type": "integer", "description": "Line number to start reading from (1-based, default: 1)"},
+                "limit": {"type": "integer", "description": "Maximum number of lines to read (default: all)"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "write_file",
+        "description": (
+            "Create a new file or overwrite an existing file with the given content. "
+            "Creates parent directories automatically if they don't exist."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File path to write to"},
+                "content": {"type": "string", "description": "The full content to write to the file"},
+            },
+            "required": ["path", "content"],
+        },
+    },
+    {
+        "name": "edit_file",
+        "description": (
+            "Edit an existing file by replacing an exact string match with new content. "
+            "The old_string must match exactly (including whitespace/indentation). "
+            "Use replace_all=true to replace every occurrence."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File path to edit"},
+                "old_string": {"type": "string", "description": "Exact string to find and replace"},
+                "new_string": {"type": "string", "description": "Replacement string"},
+                "replace_all": {"type": "boolean", "description": "Replace all occurrences (default: false)"},
+            },
+            "required": ["path", "old_string", "new_string"],
+        },
+    },
+    {
+        "name": "list_directory",
+        "description": (
+            "List files and directories at a given path. "
+            "Supports glob patterns (e.g. '*.py', '**/*.js'). "
+            "Returns file names, sizes, and types."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Directory path to list (default: current directory)"},
+                "pattern": {"type": "string", "description": "Glob pattern to filter results (e.g. '*.py', '**/*.ts')"},
+                "recursive": {"type": "boolean", "description": "List recursively (default: false)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "search_files",
+        "description": (
+            "Search for a regex pattern across files. Returns matching lines with file paths and line numbers. "
+            "Similar to grep/ripgrep. Use glob to filter which files to search."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Regex pattern to search for"},
+                "path": {"type": "string", "description": "Directory or file to search in (default: current directory)"},
+                "glob": {"type": "string", "description": "Glob pattern to filter files (e.g. '*.py')"},
+                "case_insensitive": {"type": "boolean", "description": "Case-insensitive search (default: false)"},
+                "max_results": {"type": "integer", "description": "Maximum number of matches to return (default: 50)"},
+            },
+            "required": ["pattern"],
+        },
+    },
+    {
+        "name": "execute_command",
+        "description": (
+            "Execute a shell command and return its output (stdout + stderr). "
+            "Commands run in the current working directory. "
+            "Use this for: running scripts, git commands, package managers, compiling, testing, "
+            "system administration, or any shell operation."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "The shell command to execute"},
+                "cwd": {"type": "string", "description": "Working directory for the command (default: current directory)"},
+                "timeout": {"type": "integer", "description": "Timeout in seconds (default: 120)"},
+            },
+            "required": ["command"],
+        },
+    },
+    {
+        "name": "web_fetch",
+        "description": (
+            "Fetch content from a URL. Returns the response body as text. "
+            "Works with web pages, APIs, raw files, etc."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "The URL to fetch"},
+                "method": {"type": "string", "description": "HTTP method (default: GET)", "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"]},
+                "headers": {"type": "object", "description": "Additional HTTP headers as key-value pairs"},
+                "body": {"type": "string", "description": "Request body (for POST/PUT/PATCH)"},
+                "max_length": {"type": "integer", "description": "Max response length in characters (default: 50000)"},
+            },
+            "required": ["url"],
+        },
+    },
+    {
+        "name": "exa_search",
+        "description": (
+            "Search the web using Exa AI for current, relevant information. "
+            "Use this tool whenever the user asks to search the web, look something up, "
+            "find recent news, or get current information about any topic."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query or topic to look up",
+                },
+                "num_results": {
+                    "type": "integer",
+                    "description": "Number of search results to return (default: 5)",
+                    "minimum": 1,
+                    "maximum": 20,
+                },
+                "category": {
+                    "type": "string",
+                    "description": "Optional category: news, research paper, tweet, company, people",
+                    "enum": ["news", "research paper", "tweet", "company", "people"],
+                },
+            },
             "required": ["query"],
         },
     },
-}
+]
+
+# Build OpenAI-compatible format automatically
+TOOL_DEFINITIONS_OPENAI = []
+for _td in TOOL_DEFINITIONS:
+    TOOL_DEFINITIONS_OPENAI.append({
+        "type": "function",
+        "function": {
+            "name": _td["name"],
+            "description": _td["description"],
+            "parameters": {
+                "type": _td["input_schema"]["type"],
+                "properties": _td["input_schema"]["properties"],
+                "required": _td["input_schema"].get("required", []),
+            },
+        },
+    })
+
+
+# --- Tool Execution ---
+
+def _ok(result: dict) -> str:
+    return json.dumps(result, ensure_ascii=False)
+
+
+def _err(msg: str) -> str:
+    return json.dumps({"error": msg}, ensure_ascii=False)
+
+
+def tool_read_file(args: dict) -> str:
+    path = args.get("path", "")
+    offset = args.get("offset", 1)
+    limit = args.get("limit")
+    try:
+        path = os.path.expanduser(path)
+        if not os.path.isabs(path):
+            path = os.path.abspath(path)
+        with open(path, "r", errors="replace") as f:
+            lines = f.readlines()
+        total = len(lines)
+        start = max(0, offset - 1)
+        end = start + limit if limit else total
+        selected = lines[start:end]
+        # Number lines
+        numbered = []
+        for i, line in enumerate(selected, start=start + 1):
+            numbered.append(f"{i:>6}\t{line.rstrip()}")
+        content = "\n".join(numbered)
+        return _ok({"path": path, "total_lines": total, "showing": f"{start+1}-{min(end, total)}", "content": content})
+    except Exception as e:
+        return _err(f"read_file: {e}")
+
+
+def tool_write_file(args: dict) -> str:
+    path = args.get("path", "")
+    content = args.get("content", "")
+    try:
+        path = os.path.expanduser(path)
+        if not os.path.isabs(path):
+            path = os.path.abspath(path)
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w") as f:
+            f.write(content)
+        size = os.path.getsize(path)
+        return _ok({"path": path, "size": size, "status": "written"})
+    except Exception as e:
+        return _err(f"write_file: {e}")
+
+
+def tool_edit_file(args: dict) -> str:
+    path = args.get("path", "")
+    old_string = args.get("old_string", "")
+    new_string = args.get("new_string", "")
+    replace_all = args.get("replace_all", False)
+    try:
+        path = os.path.expanduser(path)
+        if not os.path.isabs(path):
+            path = os.path.abspath(path)
+        with open(path, "r") as f:
+            content = f.read()
+        count = content.count(old_string)
+        if count == 0:
+            return _err(f"edit_file: old_string not found in {path}")
+        if count > 1 and not replace_all:
+            return _err(f"edit_file: old_string found {count} times — use replace_all=true or provide a more specific match")
+        if replace_all:
+            new_content = content.replace(old_string, new_string)
+        else:
+            new_content = content.replace(old_string, new_string, 1)
+        with open(path, "w") as f:
+            f.write(new_content)
+        return _ok({"path": path, "replacements": count if replace_all else 1, "status": "edited"})
+    except Exception as e:
+        return _err(f"edit_file: {e}")
+
+
+def tool_list_directory(args: dict) -> str:
+    path = args.get("path", ".")
+    pattern = args.get("pattern")
+    recursive = args.get("recursive", False)
+    try:
+        path = os.path.expanduser(path)
+        if not os.path.isabs(path):
+            path = os.path.abspath(path)
+
+        if pattern:
+            if recursive or "**" in pattern:
+                full_pattern = os.path.join(path, pattern)
+                entries = globmod.glob(full_pattern, recursive=True)
+            else:
+                full_pattern = os.path.join(path, pattern)
+                entries = globmod.glob(full_pattern)
+        elif recursive:
+            entries = []
+            for root, dirs, files in os.walk(path):
+                # Skip hidden dirs
+                dirs[:] = [d for d in dirs if not d.startswith(".")]
+                for f in files:
+                    if not f.startswith("."):
+                        entries.append(os.path.join(root, f))
+        else:
+            entries = [os.path.join(path, e) for e in os.listdir(path)]
+
+        results = []
+        for entry in sorted(entries)[:500]:
+            try:
+                st = os.stat(entry)
+                is_dir = os.path.isdir(entry)
+                results.append({
+                    "name": os.path.relpath(entry, path),
+                    "type": "directory" if is_dir else "file",
+                    "size": st.st_size if not is_dir else None,
+                })
+            except OSError:
+                results.append({"name": os.path.relpath(entry, path), "type": "unknown"})
+
+        return _ok({"path": path, "count": len(results), "entries": results})
+    except Exception as e:
+        return _err(f"list_directory: {e}")
+
+
+def tool_search_files(args: dict) -> str:
+    pattern = args.get("pattern", "")
+    path = args.get("path", ".")
+    file_glob = args.get("glob")
+    case_insensitive = args.get("case_insensitive", False)
+    max_results = args.get("max_results", 50)
+    try:
+        path = os.path.expanduser(path)
+        if not os.path.isabs(path):
+            path = os.path.abspath(path)
+
+        flags = re.IGNORECASE if case_insensitive else 0
+        regex = re.compile(pattern, flags)
+
+        matches = []
+        files_searched = 0
+
+        if os.path.isfile(path):
+            file_list = [path]
+        else:
+            file_list = []
+            for root, dirs, files in os.walk(path):
+                dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("node_modules", "__pycache__", ".git")]
+                for f in files:
+                    if f.startswith("."):
+                        continue
+                    fp = os.path.join(root, f)
+                    if file_glob and not fnmatch.fnmatch(f, file_glob):
+                        continue
+                    file_list.append(fp)
+
+        for fp in file_list:
+            if len(matches) >= max_results:
+                break
+            files_searched += 1
+            try:
+                with open(fp, "r", errors="replace") as fh:
+                    for lineno, line in enumerate(fh, 1):
+                        if regex.search(line):
+                            matches.append({
+                                "file": os.path.relpath(fp, path) if not os.path.isfile(path) else fp,
+                                "line": lineno,
+                                "text": line.rstrip()[:500],
+                            })
+                            if len(matches) >= max_results:
+                                break
+            except (OSError, UnicodeDecodeError):
+                continue
+
+        return _ok({"pattern": pattern, "path": path, "files_searched": files_searched,
+                     "match_count": len(matches), "matches": matches})
+    except re.error as e:
+        return _err(f"search_files: invalid regex: {e}")
+    except Exception as e:
+        return _err(f"search_files: {e}")
+
+
+def tool_execute_command(args: dict) -> str:
+    command = args.get("command", "")
+    cwd = args.get("cwd")
+    timeout = args.get("timeout", 120)
+    try:
+        if cwd:
+            cwd = os.path.expanduser(cwd)
+        result = subprocess.run(
+            command, shell=True, capture_output=True, text=True,
+            cwd=cwd, timeout=timeout,
+        )
+        output = result.stdout
+        if result.stderr:
+            output += ("\n--- stderr ---\n" + result.stderr) if output else result.stderr
+        # Truncate very long output
+        if len(output) > 100000:
+            output = output[:100000] + "\n... (truncated)"
+        return _ok({"command": command, "exit_code": result.returncode, "output": output})
+    except subprocess.TimeoutExpired:
+        return _err(f"execute_command: timed out after {timeout}s")
+    except Exception as e:
+        return _err(f"execute_command: {e}")
+
+
+def tool_web_fetch(args: dict) -> str:
+    url = args.get("url", "")
+    method = args.get("method", "GET")
+    headers = args.get("headers", {})
+    body = args.get("body")
+    max_length = args.get("max_length", 50000)
+    try:
+        req_headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        }
+        req_headers.update(headers)
+        data = body.encode("utf-8") if body else None
+        req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read()
+            encoding = resp.headers.get("Content-Encoding", "")
+            if encoding == "gzip":
+                import gzip
+                raw = gzip.decompress(raw)
+            charset = resp.headers.get_content_charset() or "utf-8"
+            text = raw.decode(charset, errors="replace")
+        if len(text) > max_length:
+            text = text[:max_length] + "\n... (truncated)"
+        return _ok({"url": url, "status": resp.status, "length": len(text), "content": text})
+    except urllib.error.HTTPError as e:
+        body_text = ""
+        try:
+            body_text = e.read().decode("utf-8", errors="replace")[:5000]
+        except Exception:
+            pass
+        return _err(f"web_fetch: HTTP {e.code} {e.reason}\n{body_text}")
+    except Exception as e:
+        return _err(f"web_fetch: {e}")
 
 
 def exa_search(query: str, num_results: int = 5, category: str | None = None) -> str:
@@ -605,15 +972,163 @@ def _stream_openai(response) -> str:
     return "".join(collected)
 
 
+TOOL_ICONS = {
+    "read_file": "📄", "write_file": "✏️", "edit_file": "🔧",
+    "list_directory": "📁", "search_files": "🔍", "execute_command": "⚙️",
+    "web_fetch": "🌐", "exa_search": "🔎",
+}
+
+TOOL_VERBS = {
+    "read_file": "Reading", "write_file": "Writing", "edit_file": "Editing",
+    "list_directory": "Listing", "search_files": "Searching", "execute_command": "Executing",
+    "web_fetch": "Fetching", "exa_search": "Searching",
+}
+
+
+def _display_tool_call(name: str, args: dict) -> None:
+    """Print a styled tool invocation box."""
+    icon = TOOL_ICONS.get(name, "⚡")
+    verb = TOOL_VERBS.get(name, "Running")
+    max_w = max(20, _term_cols() - 8)
+
+    print(f"\n{_box_top(f'{FG_ORANGE}{BOLD}{icon} {verb}{RESET}')}")
+
+    # Show compact args summary
+    if name == "exa_search":
+        print(_box_mid(f"{CYAN}{name}{RESET}({MAGENTA}query{RESET}={WHITE}\"{args.get('query', '')}\"{RESET})"))
+    elif name == "execute_command":
+        cmd = args.get("command", "")
+        if len(cmd) > max_w:
+            cmd = cmd[:max_w - 3] + "..."
+        print(_box_mid(f"{YELLOW}$ {cmd}{RESET}"))
+    elif name in ("read_file", "write_file", "edit_file"):
+        print(_box_mid(f"{CYAN}{name}{RESET} {WHITE}{args.get('path', '')}{RESET}"))
+    elif name == "list_directory":
+        p = args.get("path", ".")
+        pat = args.get("pattern", "")
+        label = f"{p}/{pat}" if pat else p
+        print(_box_mid(f"{CYAN}{name}{RESET} {WHITE}{label}{RESET}"))
+    elif name == "search_files":
+        print(_box_mid(f"{CYAN}{name}{RESET} {MAGENTA}/{args.get('pattern', '')}/{RESET} in {WHITE}{args.get('path', '.')}{RESET}"))
+    elif name == "web_fetch":
+        print(_box_mid(f"{CYAN}{args.get('method', 'GET')}{RESET} {WHITE}{args.get('url', '')}{RESET}"))
+    else:
+        summary = ", ".join(f"{k}={v!r}" for k, v in list(args.items())[:3])
+        if len(summary) > max_w:
+            summary = summary[:max_w - 3] + "..."
+        print(_box_mid(f"{CYAN}{name}{RESET}({summary})"))
+
+    print(_box_bot())
+    sys.stdout.flush()
+
+
+def _display_tool_result(name: str, result_str: str) -> None:
+    """Print a styled tool result summary box."""
+    max_w = max(20, _term_cols() - 8)
+    try:
+        rdata = json.loads(result_str)
+    except json.JSONDecodeError:
+        return
+
+    if rdata.get("error"):
+        print(_box_top(f"{RED}{BOLD}✘ Error{RESET}"))
+        err_msg = rdata["error"]
+        for line in err_msg.split("\n")[:5]:
+            print(_box_mid(line[:max_w]))
+        print(f"{_box_bot()}\n")
+        sys.stdout.flush()
+        return
+
+    # Tool-specific result summaries
+    if name == "exa_search":
+        count = rdata.get("result_count", 0)
+        print(_box_top(f"{GREEN}{BOLD}✔ {count} results{RESET}"))
+        for r in rdata.get("results", [])[:3]:
+            print(_box_mid(f"{BOLD}{r.get('title', '')[:max_w]}{RESET}"))
+        if count > 3:
+            print(_box_mid(f"{DIM}... and {count - 3} more{RESET}"))
+    elif name == "read_file":
+        total = rdata.get("total_lines", 0)
+        showing = rdata.get("showing", "")
+        print(_box_top(f"{GREEN}{BOLD}✔ {total} lines{RESET} {DIM}(showing {showing}){RESET}"))
+        content = rdata.get("content", "")
+        lines = content.split("\n")
+        for line in lines[:5]:
+            print(_box_mid(f"{DIM}{line[:max_w]}{RESET}"))
+        if len(lines) > 5:
+            print(_box_mid(f"{DIM}... {len(lines) - 5} more lines{RESET}"))
+    elif name == "write_file":
+        print(_box_top(f"{GREEN}{BOLD}✔ Written{RESET}"))
+        print(_box_mid(f"{rdata.get('path', '')} ({rdata.get('size', 0)} bytes)"))
+    elif name == "edit_file":
+        n = rdata.get("replacements", 0)
+        print(_box_top(f"{GREEN}{BOLD}✔ {n} replacement{'s' if n != 1 else ''}{RESET}"))
+        print(_box_mid(f"{rdata.get('path', '')}"))
+    elif name == "list_directory":
+        count = rdata.get("count", 0)
+        print(_box_top(f"{GREEN}{BOLD}✔ {count} entries{RESET}"))
+        for e in rdata.get("entries", [])[:8]:
+            icon = "📁" if e.get("type") == "directory" else "  "
+            print(_box_mid(f"{icon} {e.get('name', '')}"))
+        if count > 8:
+            print(_box_mid(f"{DIM}... and {count - 8} more{RESET}"))
+    elif name == "search_files":
+        mc = rdata.get("match_count", 0)
+        fs = rdata.get("files_searched", 0)
+        print(_box_top(f"{GREEN}{BOLD}✔ {mc} matches{RESET} {DIM}({fs} files searched){RESET}"))
+        for m in rdata.get("matches", [])[:5]:
+            print(_box_mid(f"{CYAN}{m.get('file', '')}:{m.get('line', '')}{RESET} {m.get('text', '')[:max_w]}"))
+        if mc > 5:
+            print(_box_mid(f"{DIM}... and {mc - 5} more{RESET}"))
+    elif name == "execute_command":
+        ec = rdata.get("exit_code", -1)
+        label = f"{GREEN}{BOLD}✔ exit {ec}{RESET}" if ec == 0 else f"{RED}{BOLD}✘ exit {ec}{RESET}"
+        print(_box_top(label))
+        output = rdata.get("output", "")
+        lines = output.split("\n")
+        for line in lines[:10]:
+            print(_box_mid(f"{DIM}{line[:max_w]}{RESET}"))
+        if len(lines) > 10:
+            print(_box_mid(f"{DIM}... {len(lines) - 10} more lines{RESET}"))
+    elif name == "web_fetch":
+        status = rdata.get("status", "")
+        length = rdata.get("length", 0)
+        print(_box_top(f"{GREEN}{BOLD}✔ HTTP {status}{RESET} {DIM}({length} chars){RESET}"))
+        content = rdata.get("content", "")
+        lines = content.split("\n")
+        for line in lines[:5]:
+            print(_box_mid(f"{DIM}{line[:max_w]}{RESET}"))
+        if len(lines) > 5:
+            print(_box_mid(f"{DIM}... {len(lines) - 5} more lines{RESET}"))
+    else:
+        print(_box_top(f"{GREEN}{BOLD}✔ Done{RESET}"))
+
+    print(f"{_box_bot()}\n")
+    sys.stdout.flush()
+
+
+TOOL_DISPATCH = {
+    "read_file": tool_read_file,
+    "write_file": tool_write_file,
+    "edit_file": tool_edit_file,
+    "list_directory": tool_list_directory,
+    "search_files": tool_search_files,
+    "execute_command": tool_execute_command,
+    "web_fetch": tool_web_fetch,
+    "exa_search": lambda args: exa_search(
+        query=args.get("query", ""),
+        num_results=args.get("num_results", 5),
+        category=args.get("category"),
+    ),
+}
+
+
 def _execute_tool(name: str, args: dict) -> str:
     """Execute a tool by name with the given arguments."""
-    if name == "exa_search":
-        return exa_search(
-            query=args.get("query", ""),
-            num_results=args.get("num_results", 5),
-            category=args.get("category"),
-        )
-    return json.dumps({"error": f"Unknown tool: {name}"})
+    fn = TOOL_DISPATCH.get(name)
+    if fn:
+        return fn(args)
+    return _err(f"Unknown tool: {name}")
 
 
 def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
@@ -634,21 +1149,30 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     else:
         endpoint = f"{base_url}/messages"
 
-    # Prepend system instruction to prefer exa_search over server-side search tools
+    # System instruction for the agent
     augmented_messages = list(messages)
     if tools:
+        cwd = os.getcwd()
         system_instruction = (
-            "You have access to the `exa_search` tool for web searches. "
-            "ALWAYS use `exa_search` when the user asks to search the web, look something up, "
-            "or find information online. NEVER use duckduckgo_search or any other search tool. "
-            "The ONLY search tool you are allowed to use is `exa_search`. "
-            "If `exa_search` returns an error, report the error to the user — do NOT fall back to other search tools."
+            f"You are Brain Agent, a powerful AI assistant with full access to the local system. "
+            f"Current working directory: {cwd}\n\n"
+            "You have access to these tools:\n"
+            "- read_file: Read file contents\n"
+            "- write_file: Create or overwrite files\n"
+            "- edit_file: Search/replace edit in files\n"
+            "- list_directory: List files/dirs with glob patterns\n"
+            "- search_files: Regex search across files\n"
+            "- execute_command: Run any shell command\n"
+            "- web_fetch: Fetch content from URLs\n"
+            "- exa_search: Search the web via Exa AI\n\n"
+            "Use these tools proactively to accomplish tasks. You can chain multiple tool calls. "
+            "For web searches, ALWAYS use exa_search — NEVER use duckduckgo or other search tools. "
+            "You have no restrictions beyond what the operating system enforces."
         )
         if api_type == "openai":
             augmented_messages.insert(0, {"role": "system", "content": system_instruction})
         else:
-            # For Anthropic, use the top-level "system" field
-            pass  # handled below in payload
+            pass  # handled below via payload["system"]
 
     payload = {
         "model": model,
@@ -659,16 +1183,10 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
 
     if tools:
         if api_type == "openai":
-            payload["tools"] = [EXA_TOOL_DEFINITION_OPENAI]
+            payload["tools"] = TOOL_DEFINITIONS_OPENAI
         else:
-            payload["tools"] = [EXA_TOOL_DEFINITION]
-            payload["system"] = (
-                "You have access to the `exa_search` tool for web searches. "
-                "ALWAYS use `exa_search` when the user asks to search the web, look something up, "
-                "or find information online. NEVER use duckduckgo_search or any other search tool. "
-                "The ONLY search tool you are allowed to use is `exa_search`. "
-                "If `exa_search` returns an error, report the error to the user — do NOT fall back to other search tools."
-            )
+            payload["tools"] = TOOL_DEFINITIONS
+            payload["system"] = system_instruction
 
     data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
@@ -799,35 +1317,9 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
     # Execute each tool and build tool_result messages
     tool_results = []
     for tu in tool_uses:
-        # Always show tool invocation, even in silent/TUI mode
-        query_str = tu['input'].get('query', '')
-        print(f"\n{_box_top(f'{FG_ORANGE}{BOLD}⚡ Searching{RESET}')}")
-        print(_box_mid(f"{CYAN}{tu['name']}{RESET}({MAGENTA}query{RESET}={WHITE}\"{query_str}\"{RESET})"))
-        print(_box_bot())
-        sys.stdout.flush()
-
+        _display_tool_call(tu["name"], tu["input"])
         result = _execute_tool(tu["name"], tu["input"])
-
-        # Always show result summary
-        try:
-            rdata = json.loads(result)
-            count = rdata.get("result_count", 0)
-            max_title = max(20, _term_cols() - 8)
-            if rdata.get("error"):
-                print(_box_top(f"{RED}{BOLD}✘ Error{RESET}"))
-                print(_box_mid(rdata['error'][:max_title]))
-                print(f"{_box_bot()}\n")
-            else:
-                print(_box_top(f"{GREEN}{BOLD}✔ {count} results{RESET}"))
-                for r in rdata.get("results", [])[:3]:
-                    title = r.get("title", "")[:max_title]
-                    print(_box_mid(f"{BOLD}{title}{RESET}"))
-                if count > 3:
-                    print(_box_mid(f"{DIM}... and {count - 3} more{RESET}"))
-                print(f"{_box_bot()}\n")
-        except json.JSONDecodeError:
-            pass
-        sys.stdout.flush()
+        _display_tool_result(tu["name"], result)
 
         tool_results.append({
             "type": "tool_result",
@@ -920,32 +1412,10 @@ def _handle_openai_response(response, payload, messages, model, api_key,
         except json.JSONDecodeError:
             args = {}
 
-        print(f"\n{_box_top(f'{FG_ORANGE}{BOLD}⚡ Searching{RESET}')}")
-        print(_box_mid(f"{CYAN}{tc['function']['name']}{RESET}({MAGENTA}query{RESET}={WHITE}\"{args.get('query', '')}\"{RESET})"))
-        print(_box_bot())
-        sys.stdout.flush()
-
-        result = _execute_tool(tc["function"]["name"], args)
-
-        try:
-            rdata = json.loads(result)
-            count = rdata.get("result_count", 0)
-            max_title = max(20, _term_cols() - 8)
-            if rdata.get("error"):
-                print(_box_top(f"{RED}{BOLD}✘ Error{RESET}"))
-                print(_box_mid(rdata['error'][:max_title]))
-                print(f"{_box_bot()}\n")
-            else:
-                print(_box_top(f"{GREEN}{BOLD}✔ {count} results{RESET}"))
-                for r in rdata.get("results", [])[:3]:
-                    title = r.get("title", "")[:max_title]
-                    print(_box_mid(f"{BOLD}{title}{RESET}"))
-                if count > 3:
-                    print(_box_mid(f"{DIM}... and {count - 3} more{RESET}"))
-                print(f"{_box_bot()}\n")
-        except json.JSONDecodeError:
-            pass
-        sys.stdout.flush()
+        tool_name = tc["function"]["name"]
+        _display_tool_call(tool_name, args)
+        result = _execute_tool(tool_name, args)
+        _display_tool_result(tool_name, result)
 
         messages.append({
             "role": "tool",
@@ -1103,6 +1573,10 @@ def _print_greeting(model: str) -> None:
     print()
     for i in range(len(icon)):
         print(f"{icon[i]}{info[i]}")
+
+    # Tools summary
+    tool_names = [t["name"] for t in TOOL_DEFINITIONS]
+    print(f"  {DIM}Tools:{RESET} {DIM}{', '.join(tool_names)}{RESET}")
 
     # Tip / changelog line
     if latest:
