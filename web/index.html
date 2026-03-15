@@ -483,6 +483,257 @@ tailwind.config = {
 // ─── Configuration ──────────────────────────────────────────
 const BASE_URL = window.location.origin;
 
+// ─── Pixel Art Avatars (Sierra-style 16x16) ─────────────────
+// Each avatar is a 16x16 grid encoded as a compact string.
+// Palette per avatar, pixels reference palette index.
+const AVATARS = {
+  commander: {
+    label: 'Commander', desc: 'General purpose leader',
+    palette: ['transparent','#2a1a4e','#4a3a8e','#6a5aae','#ffcc88','#ff8844','#ffffff','#333'],
+    pixels: `
+      0000011110000000
+      0000111111000000
+      0001444441000000
+      0001444441000000
+      0000144410000000
+      0002233220000000
+      0023333332000000
+      0023355332000000
+      0002333320000000
+      0000233200000000
+      0002222220000000
+      0022222222000000
+      0022200222000000
+      0022200222000000
+      0077000077000000
+      0077000077000000`
+  },
+  scientist: {
+    label: 'Scientist', desc: 'Research & analysis',
+    palette: ['transparent','#ffffff','#cccccc','#4488cc','#ffcc88','#664422','#88bbee','#333'],
+    pixels: `
+      0000055500000000
+      0000555550000000
+      0001444410000000
+      0011444411000000
+      0001144110000000
+      0003333330000000
+      0033113133000000
+      0331111113300000
+      0033111133000000
+      0003311330000000
+      0003333330000000
+      0033333333000000
+      0033300333000000
+      0033300333000000
+      0022200222000000
+      0022200222000000`
+  },
+  medic: {
+    label: 'Medic', desc: 'Health & wellness',
+    palette: ['transparent','#ff4444','#ffffff','#ffcc88','#dd2222','#228844','#ccddcc','#333'],
+    pixels: `
+      0000022200000000
+      0000222220000000
+      0002333320000000
+      0002333320000000
+      0000233200000000
+      0002222220000000
+      0021212120000000
+      0222111222000000
+      0022141220000000
+      0002414200000000
+      0002141200000000
+      0022222220000000
+      0022200222000000
+      0022200222000000
+      0077000077000000
+      0077000077000000`
+  },
+  knight: {
+    label: 'Knight', desc: 'Security & protection',
+    palette: ['transparent','#888899','#aaaabb','#666677','#ffcc88','#4444aa','#ddddee','#333'],
+    pixels: `
+      0000111100000000
+      0001666610000000
+      0016111610000000
+      0001444100000000
+      0000144100000000
+      0001111110000000
+      0011222211000000
+      0122222221000000
+      0012222210000000
+      0001222100000000
+      0001333100000000
+      0013333310000000
+      0013300331000000
+      0013300331000000
+      0033300333000000
+      0033300333000000`
+  },
+  wizard: {
+    label: 'Wizard', desc: 'Data & analytics',
+    palette: ['transparent','#5522aa','#7744cc','#9966ee','#ffcc88','#ffff44','#bb88ff','#333'],
+    pixels: `
+      0000001000000000
+      0000011100000000
+      0000111110000000
+      0001111111000000
+      0000544500000000
+      0000444400000000
+      0000144100000000
+      0001111110000000
+      0012222210000000
+      0122555221000000
+      0012222210000000
+      0001222100000000
+      0011111110000000
+      0011100111000000
+      0011100111000000
+      0033300333000000`
+  },
+  artist: {
+    label: 'Artist', desc: 'Creative & design',
+    palette: ['transparent','#ff44aa','#ff88cc','#ffaadd','#ffcc88','#44ccff','#ffff44','#333'],
+    pixels: `
+      0000066600000000
+      0000655560000000
+      0002444420000000
+      0002444420000000
+      0000244200000000
+      0001111110000000
+      0011222211000000
+      0122212221000000
+      0012222210000000
+      0001222100000000
+      0001111100000000
+      0011111110000000
+      0011100111000000
+      0011100111000000
+      0077000077000000
+      0077000077000000`
+  },
+  robot: {
+    label: 'Robot', desc: 'Automation & bots',
+    palette: ['transparent','#44aaff','#2288dd','#115599','#ccddee','#ff8800','#aaccee','#333'],
+    pixels: `
+      0001111100000000
+      0011666110000000
+      0014444410000000
+      0015444510000000
+      0014444410000000
+      0011111110000000
+      0002222200000000
+      0033333330000000
+      0231111320000000
+      0033333330000000
+      0033333330000000
+      0033333330000000
+      0033300330000000
+      0033300330000000
+      0033300330000000
+      0011100110000000`
+  },
+  explorer: {
+    label: 'Explorer', desc: 'Web & research',
+    palette: ['transparent','#886622','#aa8844','#ccaa66','#ffcc88','#44aa44','#88cc44','#333'],
+    pixels: `
+      0001111100000000
+      0011111110000000
+      0011111110000000
+      0000444000000000
+      0000444400000000
+      0000144100000000
+      0005555550000000
+      0055555555000000
+      0055555555000000
+      0005555500000000
+      0001111100000000
+      0011111110000000
+      0011100111000000
+      0011100111000000
+      0033300333000000
+      0033300333000000`
+  },
+  scribe: {
+    label: 'Scribe', desc: 'Writing & documentation',
+    palette: ['transparent','#8b6914','#c49a2a','#f0c050','#ffcc88','#ffffff','#4a3510','#333'],
+    pixels: `
+      0000000000000000
+      0000333300000000
+      0002444420000000
+      0002444420000000
+      0000244200000000
+      0006666660000000
+      0061111160000000
+      0611111116000000
+      0061111160000000
+      0006111600000000
+      0006666600000000
+      0066666660000000
+      0066600666000000
+      0066600666000000
+      0077000077000000
+      0077000077000000`
+  },
+  chef: {
+    label: 'Chef', desc: 'Nutrition & food',
+    palette: ['transparent','#ffffff','#eeeeee','#dddddd','#ffcc88','#ff4444','#44aa44','#333'],
+    pixels: `
+      0001111100000000
+      0011111110000000
+      0111111111000000
+      0011111110000000
+      0002444200000000
+      0002444200000000
+      0000244200000000
+      0001111110000000
+      0015555150000000
+      0155555551000000
+      0015555150000000
+      0001111100000000
+      0011111110000000
+      0011100111000000
+      0077000077000000
+      0077000077000000`
+  },
+};
+
+function renderAvatar(avatarId, size = 48) {
+  const av = AVATARS[avatarId];
+  if (!av) return `<div style="width:${size}px;height:${size}px;background:var(--surface-lighter);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:${size/2}px">🤖</div>`;
+  const rows = av.pixels.trim().split('\n').map(r => r.trim());
+  const cellSize = size / 16;
+  let rects = '';
+  for (let y = 0; y < rows.length && y < 16; y++) {
+    for (let x = 0; x < rows[y].length && x < 16; x++) {
+      const idx = parseInt(rows[y][x]);
+      if (idx > 0 && av.palette[idx]) {
+        rects += `<rect x="${x * cellSize}" y="${y * cellSize}" width="${cellSize + 0.5}" height="${cellSize + 0.5}" fill="${av.palette[idx]}"/>`;
+      }
+    }
+  }
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="image-rendering:pixelated;border-radius:6px;background:var(--surface-lighter)">${rects}</svg>`;
+}
+
+function getAgentAvatar(agentData) {
+  // Check agent.json for avatar field, or auto-assign based on name
+  if (typeof agentData === 'object') {
+    if (agentData.avatar && AVATARS[agentData.avatar]) return agentData.avatar;
+    const id = agentData.id || agentData.name || '';
+    if (id.includes('research')) return 'scientist';
+    if (id.includes('health') || id.includes('nutrition')) return 'medic';
+    if (id.includes('infra') || id.includes('devops')) return 'robot';
+    if (id.includes('security')) return 'knight';
+    if (id.includes('data') || id.includes('analytics')) return 'wizard';
+    if (id.includes('creative') || id.includes('design')) return 'artist';
+    if (id.includes('write') || id.includes('docs') || id.includes('notes')) return 'scribe';
+    if (id.includes('chef') || id.includes('food') || id.includes('cook')) return 'chef';
+    if (id.includes('web') || id.includes('explore')) return 'explorer';
+  }
+  return 'commander';
+}
+
 // ─── Markdown Setup ─────────────────────────────────────────
 marked.setOptions({
   highlight: (code, lang) => {
@@ -727,23 +978,20 @@ function renderAgentCards() {
     const isSelected = name === state.activeAgentId;
     const hasChat = !!state.agentChats[name];
 
+    const avatarId = getAgentAvatar(a);
     const card = document.createElement('div');
-    card.className = `agent-card-compact flex flex-col p-3 gap-1.5 fade-in ${isSelected ? 'selected' : ''}`;
+    card.className = `agent-card-compact flex flex-col items-center p-3 gap-1 fade-in ${isSelected ? 'selected' : ''}`;
     card.style.animationDelay = `${i * 0.04}s`;
     card.innerHTML = `
-      <div class="flex items-center gap-2">
-        <span class="font-display font-bold text-agent text-sm truncate flex-1">${esc(name)}</span>
-        ${hasChat ? '<span class="w-1.5 h-1.5 rounded-full bg-success breathing-dot flex-shrink-0" title="Active chat"></span>' : ''}
+      <div class="relative mb-1">
+        ${renderAvatar(avatarId, 48)}
+        ${hasChat ? '<span class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-success breathing-dot border border-surface" title="Active chat"></span>' : ''}
       </div>
-      <div class="text-text-muted text-[11px] truncate leading-tight" style="min-height:16px">${desc ? esc(desc) : '<span class="italic">No description</span>'}</div>
-      ${skillsCount > 0 ? `<div class="text-[10px] text-text-muted flex items-center gap-1"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>${skillsCount} skills</div>` : '<div style="height:14px"></div>'}
-      <div class="flex items-center gap-1.5 mt-auto pt-1">
-        <button class="btn-cfg-card text-text-muted hover:text-accent text-xs transition-colors p-1 rounded hover:bg-surface-light" title="Configure">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        </button>
-        <button class="btn-chat-card text-text-muted hover:text-agent text-xs transition-colors p-1 rounded hover:bg-surface-light" title="Chat">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        </button>
+      <span class="font-display font-bold text-agent text-xs truncate w-full text-center">${esc(name)}</span>
+      <div class="text-text-muted text-[9px] truncate w-full text-center leading-tight">${desc ? esc(desc).substring(0, 30) : ''}</div>
+      <div class="flex items-center gap-1 mt-auto pt-1">
+        <button class="btn-cfg-card text-text-muted hover:text-accent text-[10px] transition-colors p-1 rounded hover:bg-surface-light" title="Configure">⚙️</button>
+        <button class="btn-chat-card text-text-muted hover:text-agent text-[10px] transition-colors p-1 rounded hover:bg-surface-light" title="Chat">💬</button>
       </div>
     `;
     // Click card body = select agent
@@ -804,8 +1052,10 @@ function updateChatArea() {
   dom.chatTopBar.style.display = '';
   dom.chatInputArea.style.display = '';
 
-  // Update top bar
-  dom.chatAgentName.querySelector('span:last-child').textContent = chat.agent;
+  // Update top bar with avatar
+  const agentObj = state.agents.find(a => getAgentName(a) === chat.agent);
+  const avatarId = getAgentAvatar(agentObj || {id: chat.agent});
+  dom.chatAgentName.innerHTML = `${renderAvatar(avatarId, 24)} <span>${esc(chat.agent)}</span>`;
 
   // Set model selector
   if (chat.model) {
@@ -1125,6 +1375,17 @@ async function loadConfigTabContent(tab, agentName) {
             <input id="cfg-description" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" value="${esc(parsed.description || '')}">
           </div>
           <div>
+            <label class="text-[11px] text-text-secondary font-medium block mb-2 uppercase tracking-wider">Avatar</label>
+            <div class="flex flex-wrap gap-2" id="avatar-picker">
+              ${Object.entries(AVATARS).map(([id, av]) => `
+                <button class="avatar-pick p-1.5 rounded-lg border-2 transition-all hover:scale-110 ${(parsed.avatar || getAgentAvatar({id: agentName})) === id ? 'border-accent bg-accent/10' : 'border-transparent hover:border-border'}" data-avatar="${id}" title="${av.label}: ${av.desc}" onclick="pickAvatar('${id}')">
+                  ${renderAvatar(id, 36)}
+                </button>
+              `).join('')}
+            </div>
+            <input type="hidden" id="cfg-avatar" value="${esc(parsed.avatar || getAgentAvatar({id: agentName}))}">
+          </div>
+          <div>
             <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Default Model</label>
             <select id="cfg-model" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary mono focus:border-accent transition-colors">
               <option value="">-- Use system default --</option>
@@ -1386,6 +1647,16 @@ window.submitScheduleTask = async function() {
   }
 };
 
+window.pickAvatar = function(avatarId) {
+  const hidden = document.getElementById('cfg-avatar');
+  if (hidden) hidden.value = avatarId;
+  document.querySelectorAll('#avatar-picker .avatar-pick').forEach(btn => {
+    btn.classList.toggle('border-accent', btn.dataset.avatar === avatarId);
+    btn.classList.toggle('bg-accent/10', btn.dataset.avatar === avatarId);
+    btn.classList.toggle('border-transparent', btn.dataset.avatar !== avatarId);
+  });
+};
+
 window.saveSoul = async function(agentName) {
   const content = $('#soul-editor')?.value;
   if (content === undefined) return;
@@ -1406,9 +1677,11 @@ window.saveAgentSettings = async function(agentName) {
     const descVal = $('#cfg-description')?.value;
     const modelVal = $('#cfg-model')?.value;
     const maxCtxVal = $('#cfg-max-context')?.value;
+    const avatarVal = $('#cfg-avatar')?.value;
     if (descVal !== undefined) parsed.description = descVal;
     if (modelVal !== undefined) parsed.model = modelVal || undefined;
     if (maxCtxVal) parsed.max_context = parseInt(maxCtxVal);
+    if (avatarVal) parsed.avatar = avatarVal;
     const finalJson = JSON.stringify(parsed, null, 2);
     await API.writeAgentFile(agentName, 'agent.json', finalJson);
     showToast('Settings saved');
