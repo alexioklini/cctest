@@ -1231,6 +1231,7 @@ def get_agent_summaries() -> list[dict]:
             "description": cfg.description,
             "soul_summary": summary,
             "model": cfg.preferred_model,
+            "avatar": cfg.config.get("avatar"),
         })
     return result
 
