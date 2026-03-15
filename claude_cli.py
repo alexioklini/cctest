@@ -1228,10 +1228,12 @@ def get_agent_summaries() -> list[dict]:
                 break
         result.append({
             "id": agent_id,
+            "display_name": cfg.config.get("display_name", ""),
             "description": cfg.description,
             "soul_summary": summary,
             "model": cfg.preferred_model,
             "avatar": cfg.config.get("avatar"),
+            "paused": cfg.config.get("paused", False),
         })
     return result
 

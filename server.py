@@ -180,6 +180,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_switch_agent()
         elif path == "/v1/agents/create":
             self._handle_create_agent()
+        elif path == "/v1/agents/delete":
+            self._handle_delete_agent()
         elif path.startswith("/v1/agents/") and "/file" in path:
             self._handle_agent_file_write(path)
         elif path == "/v1/schedule":
@@ -477,6 +479,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 if os.path.exists(config_path):
                     with open(config_path) as f:
                         config = json.load(f)
+                # If _keep_key is set, preserve existing api_key
+                if provider.pop("_keep_key", False):
+                    existing = config.get("providers", {}).get(name, {})
+                    provider["api_key"] = existing.get("api_key", "")
                 config.setdefault("providers", {})[name] = provider
                 with open(config_path, "w") as f:
                     json.dump(config, f, indent=2)
@@ -609,6 +615,27 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             with open(os.path.join(agent.dir, "soul.md"), "w") as f:
                 f.write(body["soul"])
         self._send_json({"status": "created", "agent": agent_id})
+
+    def _handle_delete_agent(self):
+        """POST /v1/agents/delete — soft-delete an agent (move to .trash)."""
+        body = self._read_json()
+        agent_id = body.get("agent", "")
+        if not agent_id or agent_id == "main" or ".." in agent_id:
+            self._send_json({"error": "Cannot delete this agent"}, 400)
+            return
+        agent_dir = os.path.join(engine.AGENTS_DIR, agent_id)
+        if not os.path.isdir(agent_dir):
+            self._send_json({"error": f"Agent '{agent_id}' not found"}, 404)
+            return
+        try:
+            trash_dir = os.path.join(engine.AGENTS_DIR, ".trash")
+            os.makedirs(trash_dir, exist_ok=True)
+            import shutil
+            dest = os.path.join(trash_dir, f"{agent_id}_{int(time.time())}")
+            shutil.move(agent_dir, dest)
+            self._send_json({"status": "deleted", "agent": agent_id, "moved_to": dest})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
 
     # --- Static file serving ---
 

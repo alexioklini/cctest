@@ -843,6 +843,7 @@ class API {
   static async getAgentFile(id, name) { return this.get(`/v1/agents/${encodeURIComponent(id)}/file?name=${encodeURIComponent(name)}`); }
   static async writeAgentFile(id, name, content) { return this.post(`/v1/agents/${encodeURIComponent(id)}/file`, { name, content }); }
   static async createAgent(agent, description, soul) { return this.post('/v1/agents/create', { agent, description, soul }); }
+  static async deleteAgent(agent) { return this.post('/v1/agents/delete', { agent }); }
   static async switchAgent(sessionId, agent) { return this.post('/v1/agents/switch', { session_id: sessionId, agent }); }
   static async getModels() { return this.get('/v1/models'); }
   static async getProviders() { return this.get('/v1/providers'); }
@@ -855,6 +856,8 @@ class API {
 }
 
 // ─── App State ──────────────────────────────────────────────
+let editingProvider = null; // tracks provider name being edited, null = adding new
+
 class AppState {
   constructor() {
     this.connected = false;
@@ -978,6 +981,12 @@ function getAgentMcpCount(a) {
 function getAgentModel(a) {
   return typeof a === 'object' ? (a.model || a.default_model || '') : '';
 }
+function getAgentDisplayName(a) {
+  return typeof a === 'object' ? (a.display_name || '') : '';
+}
+function getAgentPaused(a) {
+  return typeof a === 'object' ? (a.paused === true) : false;
+}
 
 // Build a flat list of { id, label } from all providers
 function getAllProviderModels() {
@@ -1007,33 +1016,44 @@ function renderAgentCards() {
   state.agents.forEach((a, i) => {
     const name = getAgentName(a);
     const desc = getAgentDesc(a);
+    const displayName = getAgentDisplayName(a);
+    const isPaused = getAgentPaused(a);
     const skillsCount = getAgentSkillsCount(a);
     const isSelected = name === state.activeAgentId;
     const hasChat = !!state.agentChats[name];
+    const isMain = name === 'main';
 
     const avatarId = getAgentAvatar(a);
     const card = document.createElement('div');
-    card.className = `agent-card-compact flex flex-col items-center p-3 gap-1 fade-in ${isSelected ? 'selected' : ''}`;
+    card.className = `agent-card-compact flex flex-col items-center p-3 gap-1 fade-in ${isSelected ? 'selected' : ''} ${isPaused ? 'opacity-40 grayscale' : ''}`;
     card.style.animationDelay = `${i * 0.04}s`;
     card.innerHTML = `
       <div class="relative mb-1">
         ${renderAvatar(avatarId, 48)}
         ${hasChat ? '<span class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-success breathing-dot border border-surface" title="Active chat"></span>' : ''}
+        ${isPaused ? '<span class="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[8px] bg-surface-lighter border border-border rounded px-1 text-text-muted font-medium uppercase tracking-wider">Paused</span>' : ''}
       </div>
-      <span class="font-display font-bold text-agent text-xs truncate w-full text-center">${esc(name)}</span>
-      <div class="text-text-muted text-[9px] truncate w-full text-center leading-tight">${desc ? esc(desc).substring(0, 30) : ''}</div>
+      <span class="font-display font-bold text-agent text-xs truncate w-full text-center">${esc(displayName || name)}</span>
+      ${displayName ? `<div class="text-text-muted text-[9px] truncate w-full text-center leading-tight mono">${esc(name)}</div>` : `<div class="text-text-muted text-[9px] truncate w-full text-center leading-tight">${desc ? esc(desc).substring(0, 30) : ''}</div>`}
       <div class="flex items-center gap-1 mt-auto pt-1">
+        ${!isMain ? `<button class="btn-pause-card text-text-muted hover:text-yellow-500 text-[10px] transition-colors p-1 rounded hover:bg-surface-light" title="${isPaused ? 'Resume' : 'Pause'}">${isPaused ? '▶️' : '⏸'}</button>` : ''}
+        ${!isMain ? `<button class="btn-delete-card text-text-muted hover:text-error text-[10px] transition-colors p-1 rounded hover:bg-surface-light" title="Delete agent">🗑</button>` : ''}
         <button class="btn-cfg-card text-text-muted hover:text-accent text-[10px] transition-colors p-1 rounded hover:bg-surface-light" title="Configure">⚙️</button>
-        <button class="btn-chat-card text-text-muted hover:text-agent text-[10px] transition-colors p-1 rounded hover:bg-surface-light" title="Chat">💬</button>
+        <button class="btn-chat-card text-text-muted hover:text-agent text-[10px] transition-colors p-1 rounded hover:bg-surface-light ${isPaused ? 'pointer-events-none opacity-30' : ''}" title="Chat">💬</button>
       </div>
     `;
     // Click card body = select agent
     card.onclick = (e) => {
-      if (e.target.closest('.btn-cfg-card') || e.target.closest('.btn-chat-card')) return;
+      if (e.target.closest('.btn-cfg-card') || e.target.closest('.btn-chat-card') || e.target.closest('.btn-pause-card') || e.target.closest('.btn-delete-card')) return;
+      if (isPaused) return;
       selectAgent(name);
     };
-    card.querySelector('.btn-chat-card').onclick = () => selectAgent(name);
+    card.querySelector('.btn-chat-card').onclick = () => { if (!isPaused) selectAgent(name); };
     card.querySelector('.btn-cfg-card').onclick = () => openConfigModal(name);
+    if (!isMain) {
+      card.querySelector('.btn-pause-card').onclick = () => toggleAgentPaused(name, a);
+      card.querySelector('.btn-delete-card').onclick = () => deleteAgent(name);
+    }
     row.appendChild(card);
   });
 
@@ -1085,10 +1105,11 @@ function updateChatArea() {
   dom.chatTopBar.style.display = '';
   dom.chatInputArea.style.display = '';
 
-  // Update top bar with avatar
+  // Update top bar with avatar and display name
   const agentObj = state.agents.find(a => getAgentName(a) === chat.agent);
   const avatarId = getAgentAvatar(agentObj || {id: chat.agent});
-  dom.chatAgentName.innerHTML = `${renderAvatar(avatarId, 24)} <span>${esc(chat.agent)}</span>`;
+  const chatDisplayName = agentObj ? getAgentDisplayName(agentObj) : '';
+  dom.chatAgentName.innerHTML = `${renderAvatar(avatarId, 24)} <span>${esc(chatDisplayName || chat.agent)}</span>${chatDisplayName ? `<span class="text-text-muted text-[10px] mono ml-1">(${esc(chat.agent)})</span>` : ''}`;
 
   // Set model selector
   if (chat.model) {
@@ -1411,6 +1432,10 @@ async function loadConfigTabContent(tab, agentName) {
       el.innerHTML = `
         <div class="space-y-5">
           <h3 class="section-header text-sm">Agent Settings (agent.json)</h3>
+          <div>
+            <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Display Name</label>
+            <input id="cfg-display-name" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" value="${esc(parsed.display_name || '')}" placeholder="Friendly name shown on cards">
+          </div>
           <div>
             <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Description</label>
             <input id="cfg-description" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" value="${esc(parsed.description || '')}">
@@ -1869,10 +1894,12 @@ window.saveAgentSettings = async function(agentName) {
   try {
     const parsed = JSON.parse(raw);
     // Sync form fields into parsed JSON
+    const displayNameVal = $('#cfg-display-name')?.value;
     const descVal = $('#cfg-description')?.value;
     const modelVal = $('#cfg-model')?.value;
     const maxCtxVal = $('#cfg-max-context')?.value;
     const avatarVal = $('#cfg-avatar')?.value;
+    if (displayNameVal !== undefined) parsed.display_name = displayNameVal || undefined;
     if (descVal !== undefined) parsed.description = descVal;
     if (modelVal !== undefined) parsed.model = modelVal || undefined;
     if (maxCtxVal) parsed.max_context = parseInt(maxCtxVal);
@@ -2019,6 +2046,7 @@ async function renderSettingsContent() {
                   <span class="${statusColor} text-xs">${esc(p.status || 'unknown')}</span>
                 </div>
                 <div class="flex items-center gap-2">
+                  <button onclick="editProvider('${esc(pName)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg" title="Edit provider">✎ Edit</button>
                   <button onclick="testProvider('${esc(pName)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg" title="Test connection">🔌 Test</button>
                   <button onclick="deleteProvider('${esc(pName)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg text-error hover:bg-error/10" title="Remove">✕</button>
                 </div>
@@ -2037,9 +2065,9 @@ async function renderSettingsContent() {
         </div>
       </div>
 
-      <!-- Add Provider Form (hidden by default) -->
+      <!-- Add/Edit Provider Form (hidden by default) -->
       <div id="add-provider-form" class="glass-card p-6 hidden">
-        <h3 class="section-header mb-4 text-sm">Add Provider</h3>
+        <h3 id="prov-form-title" class="section-header mb-4 text-sm">Add Provider</h3>
         <div class="space-y-3">
           <div>
             <label class="text-xs text-text-muted uppercase tracking-wider block mb-1">Name</label>
@@ -2078,9 +2106,50 @@ async function renderSettingsContent() {
 }
 
 function showAddProviderForm() {
+  editingProvider = null;
   const form = document.getElementById('add-provider-form');
   if (form) form.classList.remove('hidden');
+  const title = document.getElementById('prov-form-title');
+  if (title) title.textContent = 'Add Provider';
+  const nameInput = document.getElementById('prov-name');
+  if (nameInput) { nameInput.value = ''; nameInput.readOnly = false; nameInput.style.opacity = '1'; }
+  const urlInput = document.getElementById('prov-url');
+  if (urlInput) urlInput.value = '';
+  const keyInput = document.getElementById('prov-key');
+  if (keyInput) keyInput.value = '';
+  const typeInput = document.getElementById('prov-type');
+  if (typeInput) typeInput.value = 'openai';
+  const modelInput = document.getElementById('prov-model');
+  if (modelInput) modelInput.value = '';
+  const testResult = document.getElementById('prov-test-result');
+  if (testResult) testResult.classList.add('hidden');
 }
+
+window.editProvider = function(provName) {
+  editingProvider = provName;
+  const p = state.providers.find(x => (x.name || x) === provName);
+  if (!p) return;
+  const form = document.getElementById('add-provider-form');
+  if (form) form.classList.remove('hidden');
+  const title = document.getElementById('prov-form-title');
+  if (title) title.textContent = 'Edit Provider';
+  const nameInput = document.getElementById('prov-name');
+  if (nameInput) { nameInput.value = provName; nameInput.readOnly = true; nameInput.style.opacity = '0.6'; }
+  const urlInput = document.getElementById('prov-url');
+  if (urlInput) urlInput.value = p.base_url || '';
+  const keyInput = document.getElementById('prov-key');
+  // Show full key placeholder since we only have masked version
+  if (keyInput) keyInput.value = '';
+  keyInput.placeholder = p.api_key ? `Current: ${p.api_key} (leave empty to keep)` : 'sk-...';
+  const typeInput = document.getElementById('prov-type');
+  if (typeInput) typeInput.value = p.type || 'openai';
+  const modelInput = document.getElementById('prov-model');
+  if (modelInput) modelInput.value = p.default_model || '';
+  const testResult = document.getElementById('prov-test-result');
+  if (testResult) testResult.classList.add('hidden');
+  // Scroll form into view
+  form.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+};
 
 async function testNewProvider() {
   const url = document.getElementById('prov-url')?.value;
@@ -2118,12 +2187,25 @@ async function saveNewProvider() {
   const type = document.getElementById('prov-type')?.value;
   const model = document.getElementById('prov-model')?.value?.trim();
   if (!name || !url) { showToast('Name and URL required', 'error'); return; }
+
+  // When editing, if key is empty, we need to preserve existing key on server side
+  const providerData = { base_url: url, type, default_model: model || null };
+  if (key) {
+    providerData.api_key = key;
+  } else if (editingProvider) {
+    // Leave api_key out so server preserves existing value
+    providerData._keep_key = true;
+  } else {
+    providerData.api_key = '';
+  }
+
   try {
     await API.post('/v1/providers', {
       action: 'add', name,
-      provider: { base_url: url, api_key: key, type, default_model: model || null }
+      provider: providerData,
     });
-    showToast(`Provider "${name}" added`);
+    showToast(editingProvider ? `Provider "${name}" updated` : `Provider "${name}" added`);
+    editingProvider = null;
     // Refresh providers in state
     const res = await API.getProviders();
     state.providers = res.providers || res || [];
@@ -2163,6 +2245,49 @@ async function deleteProvider(name) {
     renderSettingsContent();
     renderModelSelector();
   } catch (e) { showToast(e.message, 'error'); }
+}
+
+// ─── Agent Pause / Delete ────────────────────────────────────
+async function toggleAgentPaused(agentName, agentObj) {
+  const isPaused = getAgentPaused(agentObj);
+  try {
+    // Read current agent.json
+    const res = await API.getAgentFile(agentName, 'agent.json');
+    const content = typeof res === 'string' ? res : (res.content || JSON.stringify(res, null, 2));
+    let parsed = {};
+    try { parsed = typeof content === 'string' ? JSON.parse(content) : content; } catch {}
+    parsed.paused = !isPaused;
+    await API.writeAgentFile(agentName, 'agent.json', JSON.stringify(parsed, null, 2));
+    showToast(isPaused ? `${agentName} resumed` : `${agentName} paused`);
+    // Refresh agents
+    const agents = await API.getAgents();
+    state.agents = Array.isArray(agents) ? agents : (agents.agents || []);
+    renderAgentCards();
+    updateChatArea();
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+}
+
+async function deleteAgent(agentName) {
+  if (agentName === 'main') return;
+  if (!confirm(`Delete agent "${agentName}"? This will move the agent to a .trash folder (recoverable).`)) return;
+  try {
+    await API.post('/v1/agents/delete', { agent: agentName });
+    showToast(`Agent "${agentName}" deleted`);
+    // Remove from local state
+    if (state.agentChats[agentName]) {
+      closeChat(agentName);
+    }
+    state.agents = state.agents.filter(a => getAgentName(a) !== agentName);
+    if (state.activeAgentId === agentName) {
+      state.activeAgentId = null;
+    }
+    renderAgentCards();
+    updateChatArea();
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
 }
 
 // ─── Create Agent Modal ─────────────────────────────────────
