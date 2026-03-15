@@ -1957,28 +1957,22 @@ function _q(id) {
 }
 
 function buildScheduleFromUI() {
-  const typeEl = _q('sched-freq-type');
-  const timeEl = _q('sched-time');
-  const intervalEl = _q('sched-interval');
-  const dayEl = _q('sched-day');
-  const dateEl = _q('sched-date');
-
-  const type = typeEl?.value;
-  const time = timeEl?.value;
-  const interval = intervalEl?.value;
-  const day = dayEl?.value;
-  const date = dateEl?.value;
+  const type = _q('sched-freq-type')?.value;
+  const time = _q('sched-time')?.value;
+  const interval = _q('sched-interval')?.value;
+  const day = _q('sched-day')?.value;
+  const date = _q('sched-date')?.value;
   const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-
-  // DEBUG: show what we found
-  alert(`type=${type} time=${time} interval=${interval} day=${day} date=${date}\ntypeEl=${!!typeEl} timeEl=${!!timeEl}`);
 
   if (type === 'every-min') return `every ${parseInt(interval) || 30}m`;
   if (type === 'every-hr') return `every ${parseInt(interval) || 1}h`;
   if (type === 'daily') return `daily ${time || '09:00'}`;
   if (type === 'weekly') return `weekly ${dayNames[parseInt(day) || 0]} ${time || '09:00'}`;
-  if (type === 'once' && date) return `once ${date} ${time || '09:00'}`;
-  return 'every 30m';
+  if (type === 'once') {
+    if (!date) { showToast('Please select a date for one-time schedule', true); return null; }
+    return `once ${date} ${time || '09:00'}`;
+  }
+  return `daily ${time || '09:00'}`;
 }
 
 window.editScheduleTask = function(taskJson) {
@@ -2068,6 +2062,7 @@ window.submitScheduleTask = async function() {
   const agentName = _q('sched-agent-select')?.value || state.configAgent;
   const model = _q('sched-model-override')?.value || undefined;
   const schedule = buildScheduleFromUI();
+  if (!schedule) return;  // validation failed inside buildScheduleFromUI
   if (!name || !task) { showToast('Name and description are required', true); return; }
   try {
     if (editingName) {
