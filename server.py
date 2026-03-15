@@ -365,6 +365,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_browse_skills()
         elif path == "/v1/skills/install":
             self._handle_install_skill()
+        elif path == "/v1/skills/install-zip":
+            self._handle_install_skill_zip()
         elif path == "/v1/skills/remove":
             self._handle_remove_skill()
         elif path == "/v1/restart":
@@ -1000,6 +1002,72 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "skill": skill_name,
                 "agent": agent_id,
                 "path": skill_path,
+            })
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_install_skill_zip(self):
+        """POST /v1/skills/install-zip — install skill from uploaded zip (base64 in JSON)."""
+        body = self._read_json()
+        agent_id = body.get("agent", "main")
+        zip_data_b64 = body.get("zip_data", "")
+        skill_name = body.get("name", "")
+
+        if not zip_data_b64:
+            self._send_json({"error": "No zip data"}, 400)
+            return
+
+        try:
+            import base64
+            import zipfile
+            import io
+
+            zip_bytes = base64.b64decode(zip_data_b64)
+            zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+
+            # Find SKILL.md in the zip
+            skill_md_path = None
+            for name in zf.namelist():
+                if name.endswith("SKILL.md"):
+                    skill_md_path = name
+                    break
+
+            if not skill_md_path:
+                self._send_json({"error": "No SKILL.md found in zip"}, 400)
+                return
+
+            # Determine skill name from path or provided name
+            parts = skill_md_path.split("/")
+            if not skill_name:
+                # Use parent directory name, or filename prefix
+                if len(parts) >= 2:
+                    skill_name = parts[-2]
+                else:
+                    skill_name = "imported-skill"
+
+            # Extract all files to agent's skills directory
+            agent = engine.AgentConfig(agent_id)
+            skill_dir = os.path.join(agent.skills_dir, skill_name)
+            os.makedirs(skill_dir, exist_ok=True)
+
+            # Find the common prefix to strip
+            prefix = "/".join(parts[:-1]) + "/" if len(parts) > 1 else ""
+
+            for zpath in zf.namelist():
+                if zpath.endswith("/"):
+                    continue
+                # Strip prefix to get relative path
+                rel = zpath[len(prefix):] if zpath.startswith(prefix) else zpath.split("/")[-1]
+                dest = os.path.join(skill_dir, rel)
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                with open(dest, "wb") as f:
+                    f.write(zf.read(zpath))
+
+            self._send_json({
+                "status": "installed",
+                "skill": skill_name,
+                "agent": agent_id,
+                "files": [n for n in zf.namelist() if not n.endswith("/")],
             })
         except Exception as e:
             self._send_json({"error": str(e)}, 500)

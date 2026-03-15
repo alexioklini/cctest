@@ -1758,9 +1758,20 @@ async function loadConfigTabContent(tab, agentName) {
             <div class="flex items-center justify-between mb-3">
               <h3 class="section-header text-sm">Browse Skills Repository</h3>
             </div>
-            <div class="flex items-center gap-2 mb-4">
+            <div class="flex items-center gap-2 mb-3">
               <input id="skill-search" class="flex-1 bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted" placeholder="Search skills...">
-              <button class="btn-primary text-xs px-4 py-2 rounded-lg font-display" onclick="browseSkills('${esc(agentName)}')">Browse</button>
+              <button class="btn-primary text-xs px-4 py-2 rounded-lg font-display" onclick="browseSkills('${esc(agentName)}')">Search</button>
+            </div>
+            <div class="flex items-center gap-2 mb-2">
+              <input id="skill-url" class="flex-1 bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono placeholder-text-muted" placeholder="https://clawhub.ai/author/skill-name">
+              <button class="btn-secondary text-xs px-4 py-2 rounded-lg font-display" onclick="installFromUrl('${esc(agentName)}')">Install URL</button>
+            </div>
+            <div class="flex items-center gap-2 mb-4">
+              <label class="flex-1 flex items-center gap-2 bg-surface-light border border-dashed border-border rounded-lg px-3 py-2 text-sm text-text-muted cursor-pointer hover:border-accent transition-colors">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <span>Upload skill .zip file</span>
+                <input type="file" accept=".zip" style="display:none" onchange="installFromZip(event,'${esc(agentName)}')">
+              </label>
             </div>
             <div id="skill-browse-results" class="space-y-2"></div>
           </div>
@@ -1971,6 +1982,76 @@ window.submitScheduleTask = async function() {
 };
 
 // ─── Skill Browsing & Install ────────────────────────────────
+window.installFromUrl = async function(agentName) {
+  const url = document.getElementById('skill-url')?.value?.trim();
+  if (!url) { showToast('Enter a ClawHub or GitHub URL', 'error'); return; }
+
+  // Parse URL: https://clawhub.ai/author/skill or https://github.com/openclaw/skills/.../author/skill
+  let author = '', skillName = '';
+  try {
+    const u = new URL(url);
+    const parts = u.pathname.replace(/^\/+|\/+$/g, '').split('/');
+    if (u.hostname.includes('clawhub')) {
+      // clawhub.ai/author/skill-name
+      if (parts.length >= 2) { author = parts[0]; skillName = parts[1]; }
+    } else if (u.hostname.includes('github.com')) {
+      // github.com/openclaw/skills/.../skills/author/skill-name
+      const idx = parts.indexOf('skills', 2);
+      if (idx >= 0 && parts.length > idx + 2) { author = parts[idx + 1]; skillName = parts[idx + 2]; }
+    }
+  } catch {}
+
+  if (!author || !skillName) {
+    showToast('Could not parse URL. Expected: https://clawhub.ai/author/skill-name', 'error');
+    return;
+  }
+
+  showToast(`Installing ${author}/${skillName}...`);
+  try {
+    const res = await API.post('/v1/skills/install', { skill: skillName, author, agent: agentName });
+    if (res.error) {
+      showToast(res.error, 'error');
+    } else {
+      showToast(`Installed "${skillName}" from ${author}`);
+      document.getElementById('skill-url').value = '';
+      if (state.configAgent === agentName && state.configTab === 'skills') {
+        loadConfigTabContent('skills', agentName);
+      }
+    }
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+};
+
+window.installFromZip = async function(event, agentName) {
+  const file = event.target.files[0];
+  if (!file) return;
+  if (!file.name.endsWith('.zip')) { showToast('Please select a .zip file', 'error'); return; }
+
+  showToast(`Uploading ${file.name}...`);
+  const reader = new FileReader();
+  reader.onload = async function(e) {
+    // Convert to base64
+    const base64 = btoa(new Uint8Array(e.target.result).reduce((s, b) => s + String.fromCharCode(b), ''));
+    const name = file.name.replace('.zip', '').replace(/[^a-zA-Z0-9_-]/g, '-');
+    try {
+      const res = await API.post('/v1/skills/install-zip', { zip_data: base64, agent: agentName, name });
+      if (res.error) {
+        showToast(res.error, 'error');
+      } else {
+        showToast(`Installed "${res.skill}" (${(res.files || []).length} files)`);
+        if (state.configAgent === agentName && state.configTab === 'skills') {
+          loadConfigTabContent('skills', agentName);
+        }
+      }
+    } catch (e) {
+      showToast(e.message, 'error');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+  event.target.value = '';  // reset file input
+};
+
 window.browseSkills = async function(agentName) {
   const search = document.getElementById('skill-search')?.value || '';
   const resultsEl = document.getElementById('skill-browse-results');
