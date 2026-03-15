@@ -1,2 +1,13 @@
 config.json
 gmail.json
+.DS_Store
+__pycache__/
+*.pyc
+*.db
+*.db-shm
+*.db-wal
+*.xcuserstate
+xcschememanagement.plist
+gmail.json
+sample.docx
+memory.md
