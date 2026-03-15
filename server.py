@@ -362,6 +362,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_list_schedule()
         elif path == "/v1/tasks":
             self._handle_list_tasks()
+        elif path == "/v1/schedule/running":
+            self._handle_running_tasks()
         elif path == "/v1/providers":
             self._handle_list_providers()
         elif path == "/" or path.startswith("/web/") or path.endswith((".html", ".css", ".js", ".ico")):
@@ -400,6 +402,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_install_skill()
         elif path == "/v1/skills/install-zip":
             self._handle_install_skill_zip()
+        elif path == "/v1/schedule/cancel":
+            self._handle_cancel_scheduled()
         elif path == "/v1/skills/remove":
             self._handle_remove_skill()
         elif path == "/v1/restart":
@@ -654,9 +658,17 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     def _handle_list_schedule(self):
         if engine._scheduler:
-            self._send_json({"schedules": engine._scheduler.list_all()})
+            schedules = engine._scheduler.list_all()
+            running = engine._scheduler.get_running_tasks()
+            running_names = {r["name"] for r in running}
+            # Mark running tasks
+            for s in schedules:
+                s["is_running"] = s.get("name", "") in running_names
+            self._send_json({"schedules": schedules, "running": [
+                {k: v for k, v in r.items() if k != "cancel_token"} for r in running
+            ]})
         else:
-            self._send_json({"schedules": []})
+            self._send_json({"schedules": [], "running": []})
 
     def _handle_modify_schedule(self):
         body = self._read_json()
@@ -792,6 +804,29 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "error": str(e),
                 "models": [],
             })
+
+    def _handle_running_tasks(self):
+        """GET /v1/schedule/running — list currently executing scheduled tasks."""
+        if engine._scheduler:
+            running = engine._scheduler.get_running_tasks()
+            # Remove cancel_token from response (not serializable)
+            for r in running:
+                r.pop("cancel_token", None)
+            self._send_json({"running": running})
+        else:
+            self._send_json({"running": []})
+
+    def _handle_cancel_scheduled(self):
+        """POST /v1/schedule/cancel — cancel a running scheduled task."""
+        body = self._read_json()
+        name = body.get("name", "")
+        if not name:
+            self._send_json({"error": "Task name required"}, 400)
+            return
+        if engine._scheduler and engine._scheduler.cancel_running_task(name):
+            self._send_json({"status": "cancelling", "name": name})
+        else:
+            self._send_json({"error": f"Task '{name}' not running"}, 404)
 
     def _handle_list_tasks(self):
         if engine._task_runner:

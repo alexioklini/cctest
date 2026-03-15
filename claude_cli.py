@@ -1914,7 +1914,9 @@ MAX_DELEGATE_TOOL_ROUNDS = 5  # Stricter limit for delegated/scheduled tasks
 
 
 def _run_delegate(messages: list[dict], model: str, system_prompt: str,
-                  memory_store: MemoryStore | None = None) -> str | None:
+                  memory_store: MemoryStore | None = None,
+                  cancel_token: CancelToken | None = None,
+                  event_callback=None) -> str | None:
     """Run a delegated task in a fresh context. Returns the final text response.
     Thread-safe: uses thread-local storage for memory instead of swapping globals."""
     # Store memory in thread-local so tool_memory_* can find it
@@ -1956,11 +1958,13 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
                 if api_type == "openai":
                     return _handle_openai_response(
                         response, payload, messages, model, api_key, base_url,
-                        api_type, True, True, headers, endpoint, None, 0)
+                        api_type, True, True, headers, endpoint,
+                        cancel_token, 0, event_callback)
                 else:
                     return _handle_anthropic_response(
                         response, payload, messages, model, api_key, base_url,
-                        api_type, True, True, headers, endpoint, None, 0)
+                        api_type, True, True, headers, endpoint,
+                        cancel_token, 0, event_callback)
         finally:
             globals()['MAX_TOOL_ROUNDS'] = saved_max
     except Exception as e:
@@ -2184,6 +2188,8 @@ class Scheduler:
         self._init_db()
         self._stop = threading.Event()
         self._thread = None
+        self._lock = threading.Lock()
+        self._running_tasks: dict[str, dict] = {}
 
     def _init_db(self):
         with sqlite3.connect(SCHEDULER_DB) as conn:
@@ -2413,6 +2419,21 @@ class Scheduler:
                 pass
             self._stop.wait(30)
 
+    def get_running_tasks(self) -> list[dict]:
+        """Get currently running scheduled tasks with live stats."""
+        with self._lock:
+            return [dict(t) for t in self._running_tasks.values()]
+
+    def cancel_running_task(self, name: str) -> bool:
+        """Cancel a running scheduled task."""
+        with self._lock:
+            task = self._running_tasks.get(name)
+            if task and task.get("cancel_token"):
+                task["cancel_token"].cancel()
+                task["status"] = "cancelling"
+                return True
+        return False
+
     def _execute_scheduled(self, task_row: dict):
         """Execute a single scheduled task."""
         agent_id = task_row.get("agent", "main")
@@ -2420,6 +2441,24 @@ class Scheduler:
         model = task_row.get("model")
         schedule_id = task_row.get("id")
         name = task_row.get("name", "")
+
+        # Track this execution
+        cancel_token = CancelToken()
+        run_info = {
+            "name": name,
+            "agent": agent_id,
+            "task": task[:200],
+            "model": model,
+            "status": "running",
+            "started_at": datetime.datetime.now().isoformat(),
+            "tool_calls": 0,
+            "tool_log": [],
+            "cancel_token": cancel_token,
+        }
+        with self._lock:
+            if not hasattr(self, '_running_tasks'):
+                self._running_tasks = {}
+            self._running_tasks[name] = run_info
 
         # Use delegation infrastructure
         target = AgentConfig(agent_id)
@@ -2452,15 +2491,34 @@ class Scheduler:
 
         messages = [{"role": "user", "content": task}]
 
-        # Run with isolated memory — no global swap (thread-safe)
+        # Run with isolated memory and live tracking
         result_text = ""
         status = "success"
+
+        def on_event(event_type, data):
+            if event_type == "tool_call":
+                run_info["tool_calls"] += 1
+                entry = f"{data.get('name','')}({str(data.get('args',{}))[:80]})"
+                run_info["tool_log"].append(entry)
+                # Keep log bounded
+                if len(run_info["tool_log"]) > 50:
+                    run_info["tool_log"] = run_info["tool_log"][-50:]
+
         try:
             result_text = _run_delegate(messages, model, system_prompt,
-                                        memory_store=target_memory) or ""
+                                        memory_store=target_memory,
+                                        cancel_token=cancel_token,
+                                        event_callback=on_event) or ""
+        except TaskCancelled:
+            result_text = "Cancelled by user"
+            status = "cancelled"
         except Exception as e:
             result_text = str(e)
             status = "error"
+        finally:
+            with self._lock:
+                if hasattr(self, '_running_tasks'):
+                    self._running_tasks.pop(name, None)
 
         self.mark_executed(schedule_id, name, agent_id, task, status, result_text)
 

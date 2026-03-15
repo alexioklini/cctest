@@ -179,6 +179,8 @@ tailwind.config = {
 
   @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
   .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+  @keyframes running-pulse-anim { 0%, 100% { opacity: 1; box-shadow: 0 0 6px rgba(234,179,8,0.6); } 50% { opacity: 0.3; box-shadow: 0 0 2px rgba(234,179,8,0.2); } }
+  .running-pulse { animation: running-pulse-anim 1.5s ease-in-out infinite; }
 
   /* Transitions */
   textarea { resize: none; }
@@ -924,6 +926,8 @@ class API {
   static async manageSession(body) { return this.post('/v1/sessions/manage', body); }
   static async getSchedule() { return this.get('/v1/schedule'); }
   static async manageSchedule(body) { return this.post('/v1/schedule', body); }
+  static async getRunningTasks() { return this.get('/v1/schedule/running'); }
+  static async cancelScheduledTask(name) { return this.post('/v1/schedule/cancel', { name }); }
   static async getTasks() { return this.get('/v1/tasks'); }
 }
 
@@ -1639,11 +1643,24 @@ function openConfigModal(agentName) {
   // Bind tab clicks
   modal.querySelectorAll('#config-tabs .config-tab').forEach(tab => {
     tab.onclick = () => {
+      stopRunningTasksRefresh();
       state.configTab = tab.dataset.tab;
       modal.querySelectorAll('#config-tabs .config-tab').forEach(t => t.classList.toggle('active', t === tab));
       loadConfigTabContent(state.configTab, state.configAgent);
     };
   });
+
+  // Clean up running tasks refresh when modal closes
+  const origOnclick = modal.onclick;
+  modal.onclick = (e) => {
+    if (e.target === modal) { stopRunningTasksRefresh(); modal.remove(); }
+  };
+  // Also clean up if modal-close button is clicked
+  const closeBtn = modal.querySelector('.modal-close');
+  if (closeBtn) {
+    const origClose = closeBtn.onclick;
+    closeBtn.onclick = () => { stopRunningTasksRefresh(); modal.closest('.modal-overlay')?.remove(); };
+  }
 
   loadConfigTabContent('soul', agentName);
 }
@@ -1803,9 +1820,22 @@ async function loadConfigTabContent(tab, agentName) {
       const tasks = await API.getSchedule();
       const allAgents = state.agents;
       const list = (Array.isArray(tasks) ? tasks : (tasks.schedules || tasks.tasks || [])).filter(t => t.agent === agentName);
+      const runningFromSchedule = Array.isArray(tasks.running) ? tasks.running.filter(r => r.agent === agentName) : [];
       el.innerHTML = `
         <div class="space-y-6">
           <h3 class="section-header text-sm">Scheduled Tasks for ${esc(agentName)}</h3>
+
+          <!-- Running Tasks Section -->
+          <div id="running-tasks-section" style="display:${runningFromSchedule.length ? 'block' : 'none'}">
+            <div class="glass-card overflow-hidden border border-yellow-500/30" style="background: rgba(234,179,8,0.03)">
+              <div class="px-4 py-3 border-b border-yellow-500/20 flex items-center gap-2">
+                <span class="inline-block w-2 h-2 rounded-full bg-yellow-400 running-pulse"></span>
+                <span class="text-yellow-400 font-display font-semibold text-sm">Running Tasks</span>
+              </div>
+              <div id="running-tasks-body">${renderRunningTasksRows(runningFromSchedule)}</div>
+            </div>
+          </div>
+
           ${list.length === 0 ? '<div class="text-text-muted text-sm py-4">No scheduled tasks for this agent</div>' :
             `<div class="glass-card overflow-hidden">
               <table class="w-full text-sm">
@@ -1819,15 +1849,17 @@ async function loadConfigTabContent(tab, agentName) {
                 </thead>
                 <tbody class="divide-y divide-border/50">
                   ${list.map(t => {
+                    const isRunning = t.is_running === true;
                     const isActive = t.enabled === 1 || t.enabled === true || t.status === 'active';
-                    const statusLabel = isActive ? 'active' : 'paused';
+                    const statusLabel = isRunning ? 'running' : (isActive ? 'active' : 'paused');
                     const nextRun = (t.next_run || '').substring(0, 16);
                     return `
                     <tr class="sched-row">
                       <td class="px-4 py-3 text-text-primary font-medium">${esc(t.name || '')}</td>
                       <td class="px-4 py-3 mono text-xs text-text-secondary">${esc(t.schedule || '')}</td>
                       <td class="px-4 py-3">
-                        <span class="px-2.5 py-1 rounded-full text-[10px] font-medium uppercase tracking-wider ${isActive ? 'bg-success/10 text-success border border-success/20' : 'bg-surface-lighter text-text-muted border border-border'}">${statusLabel}</span>
+                        ${isRunning ? `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium uppercase tracking-wider bg-yellow-500/10 text-yellow-400 border border-yellow-500/20"><span class="inline-block w-1.5 h-1.5 rounded-full bg-yellow-400 running-pulse"></span>Running</span>` :
+                        `<span class="px-2.5 py-1 rounded-full text-[10px] font-medium uppercase tracking-wider ${isActive ? 'bg-success/10 text-success border border-success/20' : 'bg-surface-lighter text-text-muted border border-border'}">${statusLabel}</span>`}
                         ${nextRun ? `<div class="text-[10px] text-text-muted mt-1">next: ${esc(nextRun)}</div>` : ''}
                       </td>
                       <td class="px-4 py-3 space-x-2">
@@ -1892,11 +1924,153 @@ async function loadConfigTabContent(tab, agentName) {
           </div>
         </div>`;
       updateScheduleFreqUI();
+      startRunningTasksRefresh(agentName);
     } catch (e) {
       el.innerHTML = `<div class="text-error text-sm">Error loading schedule: ${esc(e.message)}</div>`;
     }
   }
 }
+
+// ─── Running Tasks Helpers ──────────────────────────────────
+let _runningTasksInterval = null;
+
+function renderRunningTasksRows(running) {
+  if (!running || running.length === 0) return '';
+  return `<table class="w-full text-sm">
+    <thead>
+      <tr class="text-left border-b border-yellow-500/20">
+        <th class="text-yellow-400/70 text-[11px] font-medium uppercase tracking-wider px-4 py-2">Name</th>
+        <th class="text-yellow-400/70 text-[11px] font-medium uppercase tracking-wider px-4 py-2">Agent</th>
+        <th class="text-yellow-400/70 text-[11px] font-medium uppercase tracking-wider px-4 py-2">Started</th>
+        <th class="text-yellow-400/70 text-[11px] font-medium uppercase tracking-wider px-4 py-2">Elapsed</th>
+        <th class="text-yellow-400/70 text-[11px] font-medium uppercase tracking-wider px-4 py-2">Tool Calls</th>
+        <th class="text-yellow-400/70 text-[11px] font-medium uppercase tracking-wider px-4 py-2">Status</th>
+        <th class="text-yellow-400/70 text-[11px] font-medium uppercase tracking-wider px-4 py-2">Actions</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-yellow-500/10">
+      ${running.map(r => {
+        const startedAt = r.started_at ? new Date(r.started_at) : null;
+        const elapsed = startedAt ? formatElapsed(Date.now() - startedAt.getTime()) : '--';
+        const startedStr = startedAt ? startedAt.toLocaleTimeString() : '--';
+        return `
+        <tr>
+          <td class="px-4 py-2.5 text-text-primary font-medium">${esc(r.name || '')}</td>
+          <td class="px-4 py-2.5 text-text-secondary text-xs">${esc(r.agent || '')}</td>
+          <td class="px-4 py-2.5 mono text-xs text-text-secondary">${esc(startedStr)}</td>
+          <td class="px-4 py-2.5 mono text-xs text-yellow-400 running-elapsed" data-started="${startedAt ? startedAt.getTime() : ''}">${elapsed}</td>
+          <td class="px-4 py-2.5 mono text-xs text-text-secondary">${r.tool_calls ?? 0}</td>
+          <td class="px-4 py-2.5">
+            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wider bg-yellow-500/10 text-yellow-400 border border-yellow-500/20">
+              <span class="inline-block w-1.5 h-1.5 rounded-full bg-yellow-400 running-pulse"></span>${esc(r.status || 'running')}
+            </span>
+          </td>
+          <td class="px-4 py-2.5 space-x-2">
+            <button class="text-xs text-yellow-400 hover:text-yellow-300 transition-colors" onclick="toggleRunningTaskLog(this, '${esc(r.name)}')">Log</button>
+            <button class="text-xs text-error hover:text-red-300 transition-colors" onclick="cancelRunningTask('${esc(r.name)}')">Stop</button>
+          </td>
+        </tr>
+        <tr class="running-log-row hidden" data-log-task="${esc(r.name)}">
+          <td colspan="7" class="px-4 py-2">
+            <div class="bg-black/40 rounded-lg p-3 max-h-48 overflow-auto mono text-xs text-text-secondary leading-relaxed running-log-content" style="font-size:11px">${(r.tool_log || []).map(l => `<div>${esc(typeof l === 'string' ? l : JSON.stringify(l))}</div>`).join('') || '<div class="text-text-muted">No log entries yet</div>'}</div>
+          </td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table>`;
+}
+
+function formatElapsed(ms) {
+  if (ms < 0) ms = 0;
+  const secs = Math.floor(ms / 1000);
+  const mins = Math.floor(secs / 60);
+  const hrs = Math.floor(mins / 60);
+  if (hrs > 0) return `${hrs}h ${mins % 60}m ${secs % 60}s`;
+  if (mins > 0) return `${mins}m ${secs % 60}s`;
+  return `${secs}s`;
+}
+
+function updateElapsedTimers() {
+  document.querySelectorAll('.running-elapsed').forEach(el => {
+    const started = parseInt(el.dataset.started);
+    if (started) el.textContent = formatElapsed(Date.now() - started);
+  });
+}
+
+function startRunningTasksRefresh(agentName) {
+  stopRunningTasksRefresh();
+  // Update elapsed every second
+  const elapsedTimer = setInterval(updateElapsedTimers, 1000);
+  // Refresh running tasks from server every 5 seconds
+  const refreshTimer = setInterval(() => refreshRunningTasks(agentName), 5000);
+  _runningTasksInterval = { elapsedTimer, refreshTimer };
+}
+
+function stopRunningTasksRefresh() {
+  if (_runningTasksInterval) {
+    clearInterval(_runningTasksInterval.elapsedTimer);
+    clearInterval(_runningTasksInterval.refreshTimer);
+    _runningTasksInterval = null;
+  }
+}
+
+async function refreshRunningTasks(agentName) {
+  // Only refresh if schedule tab is still open
+  if (state.configTab !== 'schedule') { stopRunningTasksRefresh(); return; }
+  const section = _q('running-tasks-section');
+  const body = _q('running-tasks-body');
+  if (!section || !body) { stopRunningTasksRefresh(); return; }
+  try {
+    const res = await API.getRunningTasks();
+    const running = (res.running || []).filter(r => r.agent === agentName);
+    if (running.length > 0) {
+      section.style.display = 'block';
+      // Preserve expanded log rows
+      const expandedLogs = new Set();
+      body.querySelectorAll('.running-log-row:not(.hidden)').forEach(row => {
+        expandedLogs.add(row.dataset.logTask);
+      });
+      body.innerHTML = renderRunningTasksRows(running);
+      // Re-expand previously expanded logs
+      expandedLogs.forEach(name => {
+        const logRow = body.querySelector(`.running-log-row[data-log-task="${name}"]`);
+        if (logRow) logRow.classList.remove('hidden');
+      });
+      // Auto-scroll expanded log containers to bottom
+      body.querySelectorAll('.running-log-row:not(.hidden) .running-log-content').forEach(el => {
+        el.scrollTop = el.scrollHeight;
+      });
+    } else {
+      section.style.display = 'none';
+      body.innerHTML = '';
+    }
+  } catch (e) {
+    // Silently ignore refresh errors
+  }
+}
+
+window.toggleRunningTaskLog = function(btn, taskName) {
+  const logRow = btn.closest('tbody')?.querySelector(`.running-log-row[data-log-task="${taskName}"]`);
+  if (!logRow) return;
+  logRow.classList.toggle('hidden');
+  if (!logRow.classList.contains('hidden')) {
+    const content = logRow.querySelector('.running-log-content');
+    if (content) content.scrollTop = content.scrollHeight;
+  }
+};
+
+window.cancelRunningTask = async function(taskName) {
+  if (!confirm(`Stop running task "${taskName}"?`)) return;
+  try {
+    await API.cancelScheduledTask(taskName);
+    showToast(`Task "${taskName}" cancelled`);
+    if (state.configAgent && state.configTab === 'schedule') {
+      loadConfigTabContent('schedule', state.configAgent);
+    }
+  } catch (e) {
+    showToast(`Error cancelling task: ${e.message}`, true);
+  }
+};
 
 window.updateScheduleFreqUI = function() {
   const type = _q('sched-freq-type')?.value;
