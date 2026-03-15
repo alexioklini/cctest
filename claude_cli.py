@@ -1161,6 +1161,7 @@ Adapt your behavior to the tasks you are given.
                             fm[k.strip()] = v.strip().strip('"').strip("'")
                     result[name] = {
                         "name": fm.get("name", name),
+                        "slug": name,
                         "description": fm.get("description", ""),
                         "source": source,
                         "path": skill_file,
@@ -1168,6 +1169,7 @@ Adapt your behavior to the tasks you are given.
                 else:
                     result[name] = {
                         "name": name,
+                        "slug": name,
                         "description": "",
                         "source": source,
                         "path": skill_file,

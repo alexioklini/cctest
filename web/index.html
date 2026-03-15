@@ -1746,8 +1746,8 @@ async function loadConfigTabContent(tab, agentName) {
                       ${s.description ? `<div class="text-text-muted text-xs mt-1">${esc(s.description)}</div>` : ''}
                     </div>
                     <div class="flex items-center gap-2 flex-shrink-0">
-                      <button class="text-[11px] text-model hover:text-blue-300 font-medium transition-colors px-2 py-1 rounded hover:bg-surface-lighter" onclick="viewSkillContent('${esc(agentName)}','${esc(s.name)}')">View</button>
-                      ${s.source === agentName ? `<button class="text-[11px] text-error hover:text-red-300 font-medium transition-colors px-2 py-1 rounded hover:bg-error/10" onclick="removeSkill('${esc(s.name)}','${esc(agentName)}')">Remove</button>` : ''}
+                      <button class="text-[11px] text-model hover:text-blue-300 font-medium transition-colors px-2 py-1 rounded hover:bg-surface-lighter" onclick="viewSkillContent('${esc(agentName)}','${esc(s.slug || s.name)}')">View</button>
+                      ${s.source === agentName ? `<button class="text-[11px] text-error hover:text-red-300 font-medium transition-colors px-2 py-1 rounded hover:bg-error/10" onclick="removeSkill('${esc(s.slug || s.name)}','${esc(agentName)}')">Remove</button>` : ''}
                     </div>
                   </div>`).join('')}
             </div>
