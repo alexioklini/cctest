@@ -23,13 +23,35 @@ import sqlite3
 CHAT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agents", "main", "chats.db")
 
 
+def _db_conn():
+    """Create a resilient SQLite connection with timeouts."""
+    conn = sqlite3.connect(CHAT_DB, timeout=10)
+    conn.execute("PRAGMA busy_timeout = 5000")
+    conn.execute("PRAGMA journal_mode = WAL")
+    return conn
+
+
+def _db_safe(default=None):
+    """Decorator: catch SQLite errors and return default instead of crashing."""
+    def decorator(fn):
+        def wrapper(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except (sqlite3.Error, OSError) as e:
+                import traceback
+                traceback.print_exc()
+                return default() if callable(default) else default
+        return wrapper
+    return decorator
+
+
 class ChatDB:
     """SQLite persistence for chat sessions and messages."""
 
     @staticmethod
     def init():
         os.makedirs(os.path.dirname(CHAT_DB), exist_ok=True)
-        with sqlite3.connect(CHAT_DB) as conn:
+        with _db_conn() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS sessions (
@@ -61,8 +83,9 @@ class ChatDB:
             conn.commit()
 
     @staticmethod
+    @_db_safe(default=None)
     def save_session(sid, agent_id, model, title, status, created_at, last_active):
-        with sqlite3.connect(CHAT_DB) as conn:
+        with _db_conn() as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO sessions (id, agent_id, model, title, status, created_at, last_active)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -70,16 +93,18 @@ class ChatDB:
             conn.commit()
 
     @staticmethod
+    @_db_safe(default=None)
     def save_message(session_id, role, content):
         c = json.dumps(content) if not isinstance(content, str) else content
-        with sqlite3.connect(CHAT_DB) as conn:
+        with _db_conn() as conn:
             conn.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
                          (session_id, role, c))
             conn.commit()
 
     @staticmethod
+    @_db_safe(default=list)
     def load_messages(session_id):
-        with sqlite3.connect(CHAT_DB) as conn:
+        with _db_conn() as conn:
             rows = conn.execute(
                 "SELECT id, role, content FROM messages WHERE session_id = ? ORDER BY id",
                 (session_id,)
@@ -94,8 +119,9 @@ class ChatDB:
             return messages
 
     @staticmethod
+    @_db_safe(default=list)
     def list_sessions(agent_id=None, status=None):
-        with sqlite3.connect(CHAT_DB) as conn:
+        with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
             q = "SELECT s.*, (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) as message_count FROM sessions s WHERE 1=1"
             params = []
@@ -110,46 +136,53 @@ class ChatDB:
             return [dict(r) for r in rows]
 
     @staticmethod
+    @_db_safe(default=None)
     def get_session_info(session_id):
-        with sqlite3.connect(CHAT_DB) as conn:
+        with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
             return dict(row) if row else None
 
     @staticmethod
+    @_db_safe(default=None)
     def archive_session(session_id):
-        with sqlite3.connect(CHAT_DB) as conn:
+        with _db_conn() as conn:
             conn.execute("UPDATE sessions SET status = 'archived' WHERE id = ?", (session_id,))
             conn.commit()
 
     @staticmethod
+    @_db_safe(default=None)
     def unarchive_session(session_id):
-        with sqlite3.connect(CHAT_DB) as conn:
+        with _db_conn() as conn:
             conn.execute("UPDATE sessions SET status = 'active' WHERE id = ?", (session_id,))
             conn.commit()
 
     @staticmethod
+    @_db_safe(default=None)
     def delete_session(session_id):
-        with sqlite3.connect(CHAT_DB) as conn:
+        with _db_conn() as conn:
             conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
             conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
             conn.commit()
 
     @staticmethod
+    @_db_safe(default=None)
     def clear_messages(session_id):
-        with sqlite3.connect(CHAT_DB) as conn:
+        with _db_conn() as conn:
             conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
             conn.commit()
 
     @staticmethod
+    @_db_safe(default=None)
     def delete_message(message_id):
-        with sqlite3.connect(CHAT_DB) as conn:
+        with _db_conn() as conn:
             conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
             conn.commit()
 
     @staticmethod
+    @_db_safe(default=None)
     def archive_all(agent_id=None):
-        with sqlite3.connect(CHAT_DB) as conn:
+        with _db_conn() as conn:
             if agent_id:
                 conn.execute("UPDATE sessions SET status = 'archived' WHERE agent_id = ? AND status = 'active'", (agent_id,))
             else:
