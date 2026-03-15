@@ -6,16 +6,8 @@
     <string>com.brain-agent.server</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/python3</string>
+        <string>/opt/homebrew/bin/python3</string>
         <string>/Users/alexander/Documents/dev/cctest/server.py</string>
-        <string>--base-url</string>
-        <string>http://192.168.1.221:8081/v1</string>
-        <string>--api-key</string>
-        <string>kilo</string>
-        <string>-t</string>
-        <string>openai</string>
-        <string>-m</string>
-        <string>&lt;distributed&gt;/Qwen3-Coder-Next-REAP-48B-A3B-mlx-mxfp4</string>
     </array>
     <key>WorkingDirectory</key>
     <string>/Users/alexander/Documents/dev/cctest</string>
@@ -27,5 +19,20 @@
     <string>/Users/alexander/.brain-agent/server.log</string>
     <key>StandardErrorPath</key>
     <string>/Users/alexander/.brain-agent/server.error.log</string>
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>65536</integer>
+    </dict>
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>65536</integer>
+    </dict>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
 </dict>
 </plist>
