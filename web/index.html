@@ -1412,38 +1412,39 @@ async function loadConfigTabContent(tab, agentName) {
   } else if (tab === 'skills') {
     try {
       const filesRes = await API.getAgentFiles(agentName);
-      const files = Array.isArray(filesRes) ? filesRes : (filesRes.files || []);
-      const skillFiles = files.filter(f => {
-        const fname = typeof f === 'string' ? f : (f.name || '');
-        return fname.startsWith('skills/') || fname.endsWith('.skill') || fname.includes('skill');
-      });
+      const agentFiles = Array.isArray(filesRes) ? filesRes : (filesRes.files || []);
+      const installedSkills = (filesRes.skills || []);
+
       el.innerHTML = `
-        <div class="space-y-4">
-          <h3 class="section-header text-sm">Skills</h3>
-          ${skillFiles.length === 0 ? '<div class="text-text-muted text-sm py-4">No skills found</div>' :
-            `<div class="space-y-2">
-              ${skillFiles.map(f => {
-                const fname = typeof f === 'string' ? f : (f.name || '');
-                return `<div class="glass-card flex items-center gap-3 px-4 py-3 text-sm">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ff7b00" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                  <span class="text-text-primary mono text-xs flex-1">${esc(fname)}</span>
-                  <button class="text-[11px] text-model hover:text-blue-300 font-medium transition-colors" onclick="viewAgentFile('${esc(agentName)}','${esc(fname)}')">View</button>
-                </div>`;
-              }).join('')}
-            </div>`
-          }
-          <div class="pt-2">
-            <p class="text-text-muted text-xs">All agent files:</p>
-            <div class="space-y-1 mt-2">
-              ${files.map(f => {
-                const fname = typeof f === 'string' ? f : (f.name || '');
-                return `<div class="flex items-center gap-2 text-xs text-text-secondary px-2 py-1">
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                  <span class="mono">${esc(fname)}</span>
-                  <button class="text-model hover:text-blue-300 transition-colors ml-auto" onclick="viewAgentFile('${esc(agentName)}','${esc(fname)}')">View</button>
-                </div>`;
-              }).join('')}
+        <div class="space-y-6">
+          <!-- Installed skills -->
+          <div>
+            <h3 class="section-header text-sm mb-3">Installed Skills</h3>
+            <div id="installed-skills-list" class="space-y-2">
+              ${installedSkills.length === 0 ? '<div class="text-text-muted text-sm py-3">No skills installed</div>' :
+                installedSkills.map(s => `
+                  <div class="glass-card flex items-center gap-3 px-4 py-3 text-sm">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                    <div class="flex-1">
+                      <span class="text-text-primary font-display font-medium">${esc(s.name)}</span>
+                      <span class="text-text-muted text-[10px] ml-2">${esc(s.source || '')}</span>
+                      ${s.description ? `<div class="text-text-muted text-xs mt-0.5">${esc(s.description)}</div>` : ''}
+                    </div>
+                    <button class="text-[11px] text-model hover:text-blue-300 font-medium transition-colors" onclick="viewSkillContent('${esc(agentName)}','${esc(s.name)}')">View</button>
+                  </div>`).join('')}
             </div>
+          </div>
+
+          <!-- Browse & Install -->
+          <div>
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="section-header text-sm">Browse Skills Repository</h3>
+            </div>
+            <div class="flex items-center gap-2 mb-4">
+              <input id="skill-search" class="flex-1 bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted" placeholder="Search skills...">
+              <button class="btn-primary text-xs px-4 py-2 rounded-lg font-display" onclick="browseSkills('${esc(agentName)}')">Browse</button>
+            </div>
+            <div id="skill-browse-results" class="space-y-2"></div>
           </div>
         </div>`;
     } catch (e) {
@@ -1648,6 +1649,83 @@ window.submitScheduleTask = async function() {
     loadConfigTabContent('schedule', state.configAgent);
   } catch (e) {
     showToast(`Error: ${e.message}`, true);
+  }
+};
+
+// ─── Skill Browsing & Install ────────────────────────────────
+window.browseSkills = async function(agentName) {
+  const search = document.getElementById('skill-search')?.value || '';
+  const resultsEl = document.getElementById('skill-browse-results');
+  if (!resultsEl) return;
+  resultsEl.innerHTML = '<div class="text-text-muted text-sm py-3">Loading skills from repository...</div>';
+  try {
+    const res = await API.post('/v1/skills/browse', { search, author: 'steipete' });
+    const skills = res.skills || [];
+    if (skills.length === 0) {
+      resultsEl.innerHTML = '<div class="text-text-muted text-sm py-3">No skills found</div>';
+      return;
+    }
+    resultsEl.innerHTML = skills.map(s => `
+      <div class="glass-card flex items-center gap-3 px-4 py-3 text-sm">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--model-color, #64b5f6)" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-text-primary font-display font-medium">${esc(s.display_name || s.name)}</span>
+            ${s.version ? `<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-lighter text-text-muted">${esc(s.version)}</span>` : ''}
+          </div>
+          ${s.description ? `<div class="text-text-muted text-xs mt-0.5 truncate">${esc(s.description)}</div>` : ''}
+          <div class="text-text-muted text-[10px] mt-0.5">by ${esc(s.author)}</div>
+        </div>
+        <button class="btn-primary text-xs px-3 py-1.5 rounded-lg flex-shrink-0" onclick="installSkill('${esc(s.name)}','${esc(s.author)}','${esc(agentName)}',this)">Install</button>
+      </div>
+    `).join('');
+  } catch (e) {
+    resultsEl.innerHTML = `<div class="text-error text-sm py-3">Error: ${esc(e.message)}</div>`;
+  }
+};
+
+window.installSkill = async function(skillName, author, agentName, btn) {
+  if (btn) { btn.textContent = '...'; btn.disabled = true; }
+  try {
+    const res = await API.post('/v1/skills/install', { skill: skillName, author, agent: agentName });
+    if (res.error) {
+      showToast(res.error, 'error');
+      if (btn) { btn.textContent = 'Install'; btn.disabled = false; }
+      return;
+    }
+    showToast(`Skill "${skillName}" installed to ${agentName}`);
+    if (btn) { btn.textContent = '✔ Installed'; btn.className = 'btn-secondary text-xs px-3 py-1.5 rounded-lg flex-shrink-0 text-success'; }
+    // Refresh installed skills list
+    if (state.configAgent === agentName && state.configTab === 'skills') {
+      loadConfigTabContent('skills', agentName);
+    }
+  } catch (e) {
+    showToast(e.message, 'error');
+    if (btn) { btn.textContent = 'Install'; btn.disabled = false; }
+  }
+};
+
+window.viewSkillContent = async function(agentName, skillName) {
+  try {
+    // Skills are in skills/<name>/SKILL.md
+    const path = `skills/${skillName}/SKILL.md`;
+    // Use a direct fetch to the server for the skill file
+    const agent = new engine?.AgentConfig?.(agentName);
+    // Fallback: try reading via agent files API
+    const res = await API.getAgentFile(agentName, path);
+    const content = typeof res === 'string' ? res : (res.content || JSON.stringify(res, null, 2));
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+    modal.innerHTML = `
+      <div class="modal-content p-6" style="max-width:600px">
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+        <h3 class="font-display font-semibold text-accent mb-4">${esc(skillName)}</h3>
+        <div class="msg-content text-sm">${marked.parse(content)}</div>
+      </div>`;
+    document.body.appendChild(modal);
+  } catch (e) {
+    showToast(`Error viewing skill: ${e.message}`, 'error');
   }
 };
 

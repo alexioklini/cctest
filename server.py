@@ -185,6 +185,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_save_providers()
         elif path == "/v1/providers/test":
             self._handle_test_provider()
+        elif path == "/v1/skills/browse":
+            self._handle_browse_skills()
+        elif path == "/v1/skills/install":
+            self._handle_install_skill()
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -599,6 +603,120 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         self._send_json({"status": "created", "agent": agent_id})
 
     # --- Static file serving ---
+
+    # --- Skill browsing & installation ---
+
+    SKILL_REPO = "openclaw/skills"
+    SKILL_AUTHORS = ["steipete"]  # known skill authors to browse
+
+    def _handle_browse_skills(self):
+        """POST /v1/skills/browse — browse skills from GitHub repository."""
+        body = self._read_json()
+        search = body.get("search", "").lower()
+        author = body.get("author", "steipete")
+
+        try:
+            # Fetch skill list from GitHub API
+            url = f"https://api.github.com/repos/{self.SKILL_REPO}/contents/skills/{author}"
+            req = urllib.request.Request(url, headers={
+                "Accept": "application/vnd.github.v3+json",
+                "User-Agent": "Brain-Agent",
+            })
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                items = json.loads(resp.read().decode("utf-8"))
+
+            skills = []
+            for item in items:
+                if item.get("type") != "dir":
+                    continue
+                name = item["name"]
+                if search and search not in name.lower():
+                    continue
+                # Try to fetch _meta.json for display name
+                meta = {"slug": name, "displayName": name, "owner": author}
+                try:
+                    meta_url = f"https://raw.githubusercontent.com/{self.SKILL_REPO}/main/skills/{author}/{name}/_meta.json"
+                    meta_req = urllib.request.Request(meta_url, headers={"User-Agent": "Brain-Agent"})
+                    with urllib.request.urlopen(meta_req, timeout=5) as mresp:
+                        meta = json.loads(mresp.read().decode("utf-8"))
+                except Exception:
+                    pass
+
+                # Try to fetch SKILL.md frontmatter for description
+                description = ""
+                try:
+                    skill_url = f"https://raw.githubusercontent.com/{self.SKILL_REPO}/main/skills/{author}/{name}/SKILL.md"
+                    skill_req = urllib.request.Request(skill_url, headers={"User-Agent": "Brain-Agent"})
+                    with urllib.request.urlopen(skill_req, timeout=5) as sresp:
+                        content = sresp.read().decode("utf-8")
+                        # Parse frontmatter description
+                        import re as _re
+                        fm = _re.match(r'^---\s*\n(.*?)\n---', content, _re.DOTALL)
+                        if fm:
+                            for line in fm.group(1).split("\n"):
+                                if line.startswith("description:"):
+                                    description = line.split(":", 1)[1].strip().strip('"').strip("'")
+                                    break
+                except Exception:
+                    pass
+
+                skills.append({
+                    "name": name,
+                    "display_name": meta.get("displayName", name),
+                    "author": author,
+                    "description": description,
+                    "version": meta.get("latest", {}).get("version", ""),
+                })
+
+            self._send_json({"skills": skills, "author": author, "count": len(skills)})
+        except Exception as e:
+            self._send_json({"error": str(e), "skills": []})
+
+    def _handle_install_skill(self):
+        """POST /v1/skills/install — install a skill from GitHub to an agent."""
+        body = self._read_json()
+        skill_name = body.get("skill", "")
+        author = body.get("author", "steipete")
+        agent_id = body.get("agent", "main")
+
+        if not skill_name:
+            self._send_json({"error": "Skill name required"}, 400)
+            return
+
+        try:
+            # Fetch SKILL.md
+            skill_url = f"https://raw.githubusercontent.com/{self.SKILL_REPO}/main/skills/{author}/{skill_name}/SKILL.md"
+            req = urllib.request.Request(skill_url, headers={"User-Agent": "Brain-Agent"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                skill_content = resp.read().decode("utf-8")
+
+            # Install to agent's skills directory
+            agent = engine.AgentConfig(agent_id)
+            skill_dir = os.path.join(agent.skills_dir, skill_name)
+            os.makedirs(skill_dir, exist_ok=True)
+            skill_path = os.path.join(skill_dir, "SKILL.md")
+            with open(skill_path, "w") as f:
+                f.write(skill_content)
+
+            # Also fetch _meta.json if available
+            try:
+                meta_url = f"https://raw.githubusercontent.com/{self.SKILL_REPO}/main/skills/{author}/{skill_name}/_meta.json"
+                meta_req = urllib.request.Request(meta_url, headers={"User-Agent": "Brain-Agent"})
+                with urllib.request.urlopen(meta_req, timeout=5) as mresp:
+                    meta_content = mresp.read().decode("utf-8")
+                    with open(os.path.join(skill_dir, "_meta.json"), "w") as f:
+                        f.write(meta_content)
+            except Exception:
+                pass
+
+            self._send_json({
+                "status": "installed",
+                "skill": skill_name,
+                "agent": agent_id,
+                "path": skill_path,
+            })
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
 
     def _serve_static(self, path):
         """Serve static files from web/ directory."""
