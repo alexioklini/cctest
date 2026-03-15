@@ -1707,12 +1707,8 @@ window.installSkill = async function(skillName, author, agentName, btn) {
 
 window.viewSkillContent = async function(agentName, skillName) {
   try {
-    // Skills are in skills/<name>/SKILL.md
-    const path = `skills/${skillName}/SKILL.md`;
-    // Use a direct fetch to the server for the skill file
-    const agent = new engine?.AgentConfig?.(agentName);
-    // Fallback: try reading via agent files API
-    const res = await API.getAgentFile(agentName, path);
+    // Skills are in skills/<name>/SKILL.md — read via agent files API
+    const res = await API.getAgentFile(agentName, `skills/${skillName}/SKILL.md`);
     const content = typeof res === 'string' ? res : (res.content || JSON.stringify(res, null, 2));
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
