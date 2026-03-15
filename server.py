@@ -546,12 +546,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     def _handle_agent_file_read(self, path):
         """GET /v1/agents/<id>/file?name=soul.md — read a file."""
+        from urllib.parse import unquote
         parts = path.split("/")
         agent_id = parts[3]
         # Parse query string
         qs = self.path.split("?", 1)[1] if "?" in self.path else ""
         params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
-        filename = params.get("name", "")
+        filename = unquote(params.get("name", ""))
         if not filename or ".." in filename:
             self._send_json({"error": "Invalid filename"}, 400)
             return
