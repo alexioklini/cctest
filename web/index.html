@@ -236,6 +236,48 @@ tailwind.config = {
   /* Scheduler table */
   .sched-row { transition: background 0.15s ease; }
   .sched-row:hover { background: #1e1e38; }
+
+  /* Agent card grid */
+  .agent-card {
+    background: #16162a;
+    border: 1px solid #2a2a45;
+    border-radius: 0.75rem;
+    transition: all 0.2s ease;
+  }
+  .agent-card:hover {
+    background: rgba(30,30,56,0.85);
+    backdrop-filter: blur(8px);
+    border-color: #3a3a5a;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  }
+  .agent-card-create {
+    border: 2px dashed #2a2a45;
+    background: transparent;
+    border-radius: 0.75rem;
+    transition: all 0.2s ease;
+    cursor: pointer;
+  }
+  .agent-card-create:hover {
+    border-color: #ff7b00;
+    background: rgba(255,123,0,0.03);
+  }
+
+  /* Config tabs */
+  .config-tab {
+    transition: all 0.2s ease;
+    border-bottom: 2px solid transparent;
+    color: #555570;
+    cursor: pointer;
+    padding: 0.5rem 1rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+  }
+  .config-tab:hover { color: #8888aa; }
+  .config-tab.active {
+    border-bottom-color: #ff7b00;
+    color: #e8e8f0;
+  }
 </style>
 </head>
 <body class="bg-base">
@@ -262,49 +304,32 @@ tailwind.config = {
     <!-- LEFT SIDEBAR -->
     <aside id="sidebar" class="sidebar-transition flex flex-col bg-surface/80 border-r border-border overflow-hidden flex-shrink-0 backdrop-blur-sm" style="width:260px">
       <div class="flex-1 overflow-y-auto py-3">
-        <!-- Nav: Chat -->
+        <!-- Nav: Home -->
         <div class="px-4 py-2 stagger-1">
-          <button class="nav-section-btn section-header w-full flex items-center gap-2 hover:text-text-secondary transition-colors" data-section="chat">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-            Chat Sessions
+          <button class="nav-section-btn section-header w-full flex items-center gap-2 hover:text-text-secondary transition-colors" data-view="home">
+            <span style="font-size:13px">&#127968;</span>
+            Home
+          </button>
+        </div>
+
+        <div class="border-t border-border/50 mx-4 my-2"></div>
+
+        <!-- Nav: Active Chats -->
+        <div class="px-4 py-2 stagger-2">
+          <button class="nav-section-btn section-header w-full flex items-center gap-2 hover:text-text-secondary transition-colors" data-view="chat">
+            <span style="font-size:13px">&#128172;</span>
+            Active Chats
           </button>
         </div>
         <div id="nav-chat-list" class="px-3 space-y-0.5"></div>
-        <div class="px-3 pt-1 pb-2">
-          <button id="btn-new-chat" class="w-full text-left text-xs text-accent hover:text-orange-300 flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface-lighter transition-all duration-200">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            New Chat
-          </button>
-        </div>
-
-        <div class="border-t border-border/50 mx-4 my-2"></div>
-
-        <!-- Nav: Agents -->
-        <div class="px-4 py-2 stagger-2">
-          <button class="nav-section-btn section-header w-full flex items-center gap-2 hover:text-text-secondary transition-colors" data-view="agents">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
-            Agents
-          </button>
-        </div>
-        <div id="nav-agents-list" class="px-3 space-y-0.5"></div>
-
-        <div class="border-t border-border/50 mx-4 my-2"></div>
-
-        <!-- Nav: Scheduler -->
-        <div class="px-4 py-2 stagger-3">
-          <button class="nav-section-btn section-header w-full flex items-center gap-2 hover:text-text-secondary transition-colors" data-view="scheduler">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-            Scheduler
-          </button>
-        </div>
 
         <div class="border-t border-border/50 mx-4 my-2"></div>
 
         <!-- Nav: Settings -->
-        <div class="px-4 py-2 stagger-4">
+        <div class="px-4 py-2 stagger-3">
           <button class="nav-section-btn section-header w-full flex items-center gap-2 hover:text-text-secondary transition-colors" data-view="settings">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-            Settings
+            <span style="font-size:13px">&#9881;&#65039;</span>
+            Server Settings
           </button>
         </div>
       </div>
@@ -325,10 +350,36 @@ tailwind.config = {
 
     <!-- MAIN AREA -->
     <main id="main-area" class="flex-1 flex flex-col overflow-hidden bg-base">
-      <!-- Chat View -->
-      <div id="view-chat" class="flex-1 flex flex-col overflow-hidden">
-        <!-- Tab bar -->
-        <div id="chat-tab-bar" class="flex items-center bg-surface/50 border-b border-border overflow-x-auto flex-shrink-0 px-2 gap-1" style="min-height:38px"></div>
+
+      <!-- HOME VIEW (agent cards grid) -->
+      <div id="view-home" class="flex-1 overflow-y-auto p-8">
+        <div class="max-w-5xl mx-auto">
+          <h2 class="font-display text-xl font-semibold text-text-primary mb-6">Agents</h2>
+          <div id="home-agents-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+        </div>
+      </div>
+
+      <!-- CHAT VIEW -->
+      <div id="view-chat" class="flex-1 flex flex-col overflow-hidden hidden">
+        <!-- Top bar -->
+        <div id="chat-top-bar" class="flex items-center bg-surface/50 border-b border-border flex-shrink-0 px-4 gap-3" style="min-height:44px">
+          <button id="btn-back-home" class="text-text-muted hover:text-text-primary transition-colors text-sm flex items-center gap-1.5" title="Back to Home">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <span id="chat-agent-name" class="text-agent font-display font-semibold text-sm flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-agent breathing-dot"></span>
+            <span></span>
+          </span>
+          <div class="flex-1"></div>
+          <select id="model-selector" class="bg-surface-light border border-border rounded-lg px-3 py-1.5 text-xs text-model mono focus:border-model transition-colors"></select>
+          <button id="btn-new-session" class="btn-secondary text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all" title="New session for this agent">
+            /new
+          </button>
+          <button id="btn-stop" class="hidden btn-secondary text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="#f87171"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+            <span class="text-error">Stop</span>
+          </button>
+        </div>
         <!-- Messages -->
         <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-6">
           <div class="max-w-[800px] mx-auto space-y-5"></div>
@@ -336,13 +387,6 @@ tailwind.config = {
         <!-- Input area -->
         <div class="flex-shrink-0 p-4 pt-2">
           <div class="max-w-[800px] mx-auto">
-            <div class="flex items-center gap-3 mb-2.5">
-              <select id="model-selector" class="bg-surface-light border border-border rounded-lg px-3 py-1.5 text-xs text-model mono focus:border-model transition-colors"></select>
-              <button id="btn-stop" class="hidden btn-secondary text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="#f87171"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-                <span class="text-error">Stop</span>
-              </button>
-            </div>
             <div class="chat-input-wrapper flex items-end gap-2 p-2">
               <textarea id="chat-input" class="flex-1 bg-transparent border-none px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none font-body" rows="2" placeholder="Type a message... (Ctrl+Enter to send)" style="box-shadow:none !important;"></textarea>
               <button id="btn-send" class="btn-primary px-5 py-2 rounded-xl text-sm flex items-center gap-2 self-end font-display font-semibold">
@@ -354,64 +398,30 @@ tailwind.config = {
         </div>
       </div>
 
-      <!-- Agents View -->
-      <div id="view-agents" class="flex-1 overflow-hidden hidden">
-        <div class="flex h-full">
-          <div id="agent-sidebar" class="w-72 border-r border-border overflow-y-auto p-4 space-y-1 flex-shrink-0 bg-surface/30"></div>
-          <div id="agent-detail" class="flex-1 overflow-y-auto p-8">
-            <div class="text-text-muted text-sm font-body">Select an agent to configure</div>
+      <!-- AGENT CONFIG VIEW -->
+      <div id="view-config" class="flex-1 overflow-y-auto hidden p-8">
+        <div class="max-w-4xl mx-auto">
+          <button id="btn-config-back" class="text-text-muted hover:text-text-primary transition-colors text-sm flex items-center gap-1.5 mb-6">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+            Back to Home
+          </button>
+          <h2 id="config-agent-title" class="font-display text-xl font-semibold text-agent mb-4"></h2>
+          <!-- Config tabs -->
+          <div id="config-tabs" class="flex items-center border-b border-border mb-6 gap-0">
+            <button class="config-tab active" data-tab="soul">Soul</button>
+            <button class="config-tab" data-tab="settings">Settings</button>
+            <button class="config-tab" data-tab="skills">Skills</button>
+            <button class="config-tab" data-tab="mcp">MCP</button>
+            <button class="config-tab" data-tab="schedule">Schedule</button>
           </div>
+          <div id="config-tab-content"></div>
         </div>
       </div>
 
-      <!-- Scheduler View -->
-      <div id="view-scheduler" class="flex-1 overflow-y-auto hidden p-8">
-        <div class="max-w-5xl mx-auto">
-          <div class="flex items-center justify-between mb-6">
-            <h2 class="font-display text-xl font-semibold text-text-primary">Scheduled Tasks</h2>
-            <button id="btn-add-task" class="btn-primary px-4 py-2 rounded-xl text-sm font-display">
-              <span class="flex items-center gap-2">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                Add Task
-              </span>
-            </button>
-          </div>
-          <div id="scheduler-content"></div>
-        </div>
-        <!-- Add task modal -->
-        <div id="task-modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-          <div class="bg-surface rounded-2xl border border-border p-8 w-full max-w-lg shadow-2xl">
-            <h3 class="text-text-primary font-display font-semibold text-lg mb-6">New Scheduled Task</h3>
-            <div class="space-y-4">
-              <div>
-                <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Name</label>
-                <input id="task-name" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" placeholder="Task name">
-              </div>
-              <div>
-                <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Agent</label>
-                <select id="task-agent" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors"></select>
-              </div>
-              <div>
-                <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Schedule (cron)</label>
-                <input id="task-schedule" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary mono focus:border-accent transition-colors" placeholder="*/30 * * * *">
-              </div>
-              <div>
-                <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Message</label>
-                <textarea id="task-message" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" rows="3" placeholder="Task message to send"></textarea>
-              </div>
-              <div class="flex justify-end gap-3 pt-3">
-                <button id="task-cancel" class="btn-secondary px-5 py-2 rounded-xl text-sm font-display">Cancel</button>
-                <button id="task-submit" class="btn-primary px-5 py-2 rounded-xl text-sm font-display">Create Task</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Settings View -->
+      <!-- SETTINGS VIEW -->
       <div id="view-settings" class="flex-1 overflow-y-auto hidden p-8">
         <div class="max-w-4xl mx-auto">
-          <h2 class="font-display text-xl font-semibold text-text-primary mb-6">Settings</h2>
+          <h2 class="font-display text-xl font-semibold text-text-primary mb-6">Server Settings</h2>
           <div id="settings-content" class="space-y-6"></div>
         </div>
       </div>
@@ -529,16 +539,17 @@ class AppState {
     this.agents = [];
     this.models = [];
     this.providers = [];
-    this.sessions = [];
-    this.chats = []; // { id, sessionId, agent, model, messages[], streaming }
-    this.activeChatIdx = -1;
-    this.currentView = 'chat';
+    this.currentView = 'home';
     this.serverInfo = null;
-    this.abortControllers = {};
+    // One chat per agent: { agentId: { sessionId, agent, model, messages[], streaming, totalTokens, msgContainer } }
+    this.agentChats = {};
+    this.activeAgentId = null;
+    this.configAgent = null;
+    this.configTab = 'soul';
   }
 
   get activeChat() {
-    return this.activeChatIdx >= 0 ? this.chats[this.activeChatIdx] : null;
+    return this.activeAgentId ? this.agentChats[this.activeAgentId] : null;
   }
 }
 
@@ -554,38 +565,42 @@ const dom = {
   serverUrl: $('#server-url'),
   sidebar: $('#sidebar'),
   expandBtn: $('#btn-expand-sidebar'),
-  chatTabBar: $('#chat-tab-bar'),
   chatMessages: $('#chat-messages'),
   chatInput: $('#chat-input'),
   modelSelector: $('#model-selector'),
   btnSend: $('#btn-send'),
   btnStop: $('#btn-stop'),
-  btnNewChat: $('#btn-new-chat'),
+  btnBackHome: $('#btn-back-home'),
+  btnNewSession: $('#btn-new-session'),
+  chatAgentName: $('#chat-agent-name'),
   navChatList: $('#nav-chat-list'),
-  navAgentsList: $('#nav-agents-list'),
+  homeAgentsGrid: $('#home-agents-grid'),
   statusModel: $('#status-model'),
   statusAgent: $('#status-agent'),
   statusTokens: $('#status-tokens'),
   statusSession: $('#status-session'),
-  agentSidebar: $('#agent-sidebar'),
-  agentDetail: $('#agent-detail'),
-  schedulerContent: $('#scheduler-content'),
   settingsContent: $('#settings-content'),
-  taskModal: $('#task-modal'),
+  configAgentTitle: $('#config-agent-title'),
+  configTabs: $('#config-tabs'),
+  configTabContent: $('#config-tab-content'),
+  btnConfigBack: $('#btn-config-back'),
 };
 
 // ─── View Management ────────────────────────────────────────
 function switchView(view) {
   state.currentView = view;
-  ['chat', 'agents', 'scheduler', 'settings'].forEach(v => {
+  ['home', 'chat', 'config', 'settings'].forEach(v => {
     const el = $(`#view-${v}`);
     if (el) el.classList.toggle('hidden', v !== view);
   });
+  // Highlight sidebar
   $$('.nav-section-btn').forEach(btn => {
-    const bv = btn.dataset.view || (btn.dataset.section === 'chat' ? 'chat' : null);
+    const bv = btn.dataset.view;
     const container = btn.closest('.px-4');
     if (container) {
-      if (bv === view) {
+      // 'chat' highlights when in chat view, 'home' highlights for home and config
+      const isActive = (bv === view) || (bv === 'home' && view === 'config');
+      if (isActive) {
         container.style.background = 'linear-gradient(90deg, rgba(255,123,0,0.06), transparent)';
         container.style.borderLeft = '2px solid #ff7b00';
         container.style.marginLeft = '-2px';
@@ -596,9 +611,13 @@ function switchView(view) {
       }
     }
   });
-  if (view === 'agents') renderAgentsView();
-  if (view === 'scheduler') renderSchedulerView();
+  if (view === 'home') renderHomeView();
   if (view === 'settings') renderSettingsView();
+  if (view === 'chat') {
+    renderChatView();
+    renderNavChats();
+  }
+  if (view === 'config') renderConfigView();
 }
 
 // ─── Connection ─────────────────────────────────────────────
@@ -640,10 +659,8 @@ async function loadInitialData() {
     }
   } catch {}
   renderModelSelector();
-  renderNavAgents();
-  if (state.chats.length === 0) {
-    createNewChat();
-  }
+  renderHomeView();
+  renderNavChats();
 }
 
 // ─── Rendering: Models ──────────────────────────────────────
@@ -663,115 +680,165 @@ function renderModelSelector() {
   });
 }
 
-// ─── Rendering: Nav Agents ──────────────────────────────────
-function renderNavAgents() {
-  dom.navAgentsList.innerHTML = '';
-  state.agents.forEach(a => {
-    const name = typeof a === 'string' ? a : (a.name || a.agent || a.id || '');
-    const desc = typeof a === 'object' ? (a.description || '') : '';
-    const div = document.createElement('div');
-    div.className = 'nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer text-sm';
-    div.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-agent flex-shrink-0"></span><span class="truncate text-text-secondary hover:text-text-primary transition-colors">${esc(name)}</span>`;
-    div.title = desc;
-    div.onclick = () => {
-      switchView('agents');
-      selectAgent(name);
-    };
-    dom.navAgentsList.appendChild(div);
-  });
+// ─── Helpers ────────────────────────────────────────────────
+function getAgentName(a) {
+  return typeof a === 'string' ? a : (a.name || a.agent || a.id || '');
+}
+function getAgentDesc(a) {
+  return typeof a === 'object' ? (a.description || '') : '';
+}
+function getAgentSoulPreview(a) {
+  return typeof a === 'object' ? (a.soul_preview || a.soul_first_line || '') : '';
+}
+function getAgentSkillsCount(a) {
+  return typeof a === 'object' ? (a.skills_count || (a.skills ? a.skills.length : 0)) : 0;
+}
+function getAgentMcpCount(a) {
+  return typeof a === 'object' ? (a.mcp_count || (a.mcp_servers ? a.mcp_servers.length : 0)) : 0;
 }
 
-// ─── Rendering: Chat Tabs ───────────────────────────────────
-function renderChatTabs() {
-  dom.chatTabBar.innerHTML = '';
-  state.chats.forEach((chat, idx) => {
-    const tab = document.createElement('button');
-    const isActive = idx === state.activeChatIdx;
-    tab.className = `tab-item flex items-center gap-1.5 px-3 py-2 text-xs whitespace-nowrap transition-all flex-shrink-0 ${
-      isActive ? 'tab-active' : ''
-    }`;
-    const agentLabel = chat.agent || 'Chat';
-    tab.innerHTML = `<span class="text-agent font-medium">${esc(agentLabel)}</span>
-      <span class="text-text-muted">#${idx + 1}</span>
-      <span class="ml-1 text-text-muted hover:text-error transition-colors close-tab" data-idx="${idx}">&times;</span>`;
-    tab.onclick = (e) => {
-      if (e.target.classList.contains('close-tab')) {
-        closeChat(parseInt(e.target.dataset.idx));
-      } else {
-        state.activeChatIdx = idx;
-        renderChatTabs();
-        renderMessages();
-        updateStatusBar();
-      }
-    };
-    dom.chatTabBar.appendChild(tab);
+// ─── HOME VIEW ──────────────────────────────────────────────
+function renderHomeView() {
+  const grid = dom.homeAgentsGrid;
+  grid.innerHTML = '';
+  state.agents.forEach((a, i) => {
+    const name = getAgentName(a);
+    const desc = getAgentDesc(a);
+    const soulPreview = getAgentSoulPreview(a);
+    const skillsCount = getAgentSkillsCount(a);
+    const mcpCount = getAgentMcpCount(a);
+    const hasChat = !!state.agentChats[name];
+
+    const card = document.createElement('div');
+    card.className = 'agent-card p-5 flex flex-col gap-3 fade-in';
+    card.style.animationDelay = `${i * 0.05}s`;
+    card.innerHTML = `
+      <div class="flex items-start justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-agent/10 flex items-center justify-center flex-shrink-0">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#b48eff" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+          </div>
+          <div>
+            <h3 class="font-display font-semibold text-agent text-base">${esc(name)}</h3>
+          </div>
+        </div>
+        ${hasChat ? '<span class="w-2 h-2 rounded-full bg-success breathing-dot flex-shrink-0 mt-2" title="Active chat"></span>' : ''}
+      </div>
+      ${desc ? `<p class="text-text-secondary text-sm leading-relaxed">${esc(desc)}</p>` : '<p class="text-text-muted text-sm italic">No description</p>'}
+      ${soulPreview ? `<p class="text-text-muted text-xs truncate mono">${esc(soulPreview)}</p>` : ''}
+      <div class="flex items-center gap-3 text-[11px] text-text-muted">
+        ${skillsCount > 0 ? `<span class="flex items-center gap-1"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>${skillsCount} skills</span>` : ''}
+        ${mcpCount > 0 ? `<span class="flex items-center gap-1"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M9 9h6v6H9z"/></svg>${mcpCount} MCP</span>` : ''}
+      </div>
+      <div class="flex items-center gap-2 mt-auto pt-2">
+        <button class="btn-chat btn-primary px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 flex-1 justify-center font-display">
+          <span>&#128172;</span> Chat
+        </button>
+        <button class="btn-configure btn-secondary px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 flex-1 justify-center font-display">
+          <span>&#9881;&#65039;</span> Configure
+        </button>
+      </div>
+    `;
+    card.querySelector('.btn-chat').onclick = () => openChat(name);
+    card.querySelector('.btn-configure').onclick = () => openConfig(name);
+    grid.appendChild(card);
   });
+
+  // Create Agent card
+  const createCard = document.createElement('div');
+  createCard.className = 'agent-card-create flex flex-col items-center justify-center gap-3 p-8 min-h-[200px]';
+  createCard.innerHTML = `
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#555570" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    <span class="text-text-muted text-sm font-display">Create Agent</span>
+  `;
+  createCard.onclick = () => showCreateAgentModal();
+  grid.appendChild(createCard);
 }
 
-// ─── Rendering: Nav Chat List ───────────────────────────────
-function renderNavChats() {
-  dom.navChatList.innerHTML = '';
-  state.chats.forEach((chat, idx) => {
-    const div = document.createElement('div');
-    const isActive = idx === state.activeChatIdx && state.currentView === 'chat';
-    div.className = `nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer text-sm ${
-      isActive ? 'active' : ''
-    }`;
-    const label = chat.agent || 'Chat';
-    const msgCount = chat.messages.length;
-    div.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0"></span>
-      <span class="truncate text-text-secondary flex-1">${esc(label)} #${idx + 1}</span>
-      <span class="text-text-muted text-[10px] mono">${msgCount}</span>`;
-    div.onclick = () => {
-      state.activeChatIdx = idx;
-      switchView('chat');
-      renderChatTabs();
-      renderMessages();
-      renderNavChats();
-      updateStatusBar();
+// ─── CHAT MANAGEMENT ────────────────────────────────────────
+function openChat(agentName) {
+  state.activeAgentId = agentName;
+  // Create chat entry if not exists
+  if (!state.agentChats[agentName]) {
+    const model = dom.modelSelector.value || (state.models[0]?.id || state.models[0] || '');
+    state.agentChats[agentName] = {
+      sessionId: null,
+      agent: agentName,
+      model,
+      messages: [],
+      streaming: false,
+      totalTokens: 0,
+      msgContainer: null,
     };
-    dom.navChatList.appendChild(div);
-  });
+  }
+  switchView('chat');
 }
 
-// ─── Chat Management ────────────────────────────────────────
-function createNewChat() {
-  const model = dom.modelSelector.value || (state.models[0]?.id || state.models[0] || '');
-  const agent = state.agents.length > 0 ? (typeof state.agents[0] === 'string' ? state.agents[0] : (state.agents[0].name || state.agents[0].agent || '')) : '';
-  const chat = {
-    id: Date.now().toString(36),
-    sessionId: null,
-    agent,
-    model,
-    messages: [],
-    streaming: false,
-    totalTokens: 0,
-  };
-  state.chats.push(chat);
-  state.activeChatIdx = state.chats.length - 1;
-  renderChatTabs();
-  renderNavChats();
+function renderChatView() {
+  const chat = state.activeChat;
+  if (!chat) return;
+
+  // Update top bar
+  dom.chatAgentName.querySelector('span:last-child').textContent = chat.agent;
+
+  // Set model selector
+  if (chat.model) {
+    dom.modelSelector.value = chat.model;
+  }
+
   renderMessages();
   updateStatusBar();
   dom.chatInput.focus();
 }
 
-function closeChat(idx) {
-  const chat = state.chats[idx];
-  if (chat.sessionId) {
-    API.deleteSession(chat.sessionId).catch(() => {});
-  }
-  state.chats.splice(idx, 1);
-  if (state.chats.length === 0) {
-    createNewChat();
+// ─── Rendering: Nav Chat List (Active Chats) ────────────────
+function renderNavChats() {
+  dom.navChatList.innerHTML = '';
+  const chatEntries = Object.entries(state.agentChats);
+  if (chatEntries.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'px-3 py-2 text-[11px] text-text-muted';
+    empty.textContent = 'No active chats';
+    dom.navChatList.appendChild(empty);
     return;
   }
-  if (state.activeChatIdx >= state.chats.length) state.activeChatIdx = state.chats.length - 1;
-  else if (state.activeChatIdx > idx) state.activeChatIdx--;
-  renderChatTabs();
+  chatEntries.forEach(([agentId, chat]) => {
+    const div = document.createElement('div');
+    const isActive = agentId === state.activeAgentId && state.currentView === 'chat';
+    div.className = `nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer text-sm ${isActive ? 'active' : ''}`;
+    const msgCount = chat.messages.length;
+    div.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-agent flex-shrink-0"></span>
+      <span class="truncate text-text-secondary flex-1">${esc(chat.agent)}</span>
+      <span class="text-text-muted text-[10px] mono">${msgCount}</span>
+      <span class="close-chat text-text-muted hover:text-error text-xs transition-colors" data-agent="${esc(agentId)}">&times;</span>`;
+    div.onclick = (e) => {
+      if (e.target.classList.contains('close-chat')) {
+        closeChat(e.target.dataset.agent);
+        return;
+      }
+      openChat(agentId);
+    };
+    dom.navChatList.appendChild(div);
+  });
+}
+
+function closeChat(agentId) {
+  const chat = state.agentChats[agentId];
+  if (chat && chat.sessionId) {
+    API.deleteSession(chat.sessionId).catch(() => {});
+  }
+  delete state.agentChats[agentId];
+  if (state.activeAgentId === agentId) {
+    state.activeAgentId = null;
+    const remaining = Object.keys(state.agentChats);
+    if (remaining.length > 0) {
+      openChat(remaining[0]);
+    } else {
+      switchView('home');
+    }
+  }
   renderNavChats();
-  renderMessages();
-  updateStatusBar();
+  if (state.currentView === 'home') renderHomeView();
 }
 
 async function ensureSession(chat) {
@@ -784,6 +851,24 @@ async function ensureSession(chat) {
     addSystemMessage(chat, `Failed to create session: ${e.message}`);
     throw e;
   }
+}
+
+function resetSession(agentId) {
+  const chat = state.agentChats[agentId];
+  if (!chat) return;
+  if (chat.sessionId) {
+    API.deleteSession(chat.sessionId).catch(() => {});
+  }
+  chat.sessionId = null;
+  chat.messages = [];
+  chat.totalTokens = 0;
+  chat.streaming = false;
+  if (state.activeAgentId === agentId && state.currentView === 'chat') {
+    renderMessages();
+    updateStatusBar();
+  }
+  renderNavChats();
+  showToast('Session reset');
 }
 
 // ─── Messages ───────────────────────────────────────────────
@@ -805,12 +890,11 @@ function renderMessages() {
         <div class="w-16 h-16 rounded-2xl bg-surface-light border border-border flex items-center justify-center">
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#555570" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a8 8 0 0 0-8 8c0 3 1.5 5 3 6.5V20h10v-3.5c1.5-1.5 3-3.5 3-6.5a8 8 0 0 0-8-8z"/><path d="M10 20v2h4v-2"/></svg>
         </div>
-        <span class="text-sm font-display font-medium">Start a conversation</span>
+        <span class="text-sm font-display font-medium">Chat with ${esc(chat.agent)}</span>
         <span class="text-xs text-text-muted">Messages will appear here</span>
       </div>`;
     return;
   }
-  // Create centered container
   const container = document.createElement('div');
   container.className = 'max-w-[800px] mx-auto space-y-5';
   dom.chatMessages.appendChild(container);
@@ -841,7 +925,6 @@ function renderMessage(msg, idx, container) {
     div.innerHTML = `<div class="text-[11px] text-text-muted bg-surface/80 backdrop-blur-sm px-4 py-1.5 rounded-full border border-border/50">${esc(msg.content)}</div>`;
   }
   targetContainer.appendChild(div);
-  // Re-highlight code blocks
   div.querySelectorAll('pre code').forEach(block => {
     hljs.highlightElement(block);
   });
@@ -875,7 +958,6 @@ function updateStreamingMessage(chat) {
     contentDiv.innerHTML = marked.parse(msg.content || '');
     contentDiv.querySelectorAll('pre code').forEach(block => hljs.highlightElement(block));
   }
-  // Update tools
   const parent = lastDiv.querySelector('.assistant-msg') || lastDiv.querySelector('.max-w-\\[90\\%\\]');
   if (parent) {
     const existingTools = parent.querySelectorAll('.tool-block');
@@ -886,7 +968,6 @@ function updateStreamingMessage(chat) {
       toolDiv.innerHTML = renderToolBlock(newTool);
       parent.insertBefore(toolDiv.firstElementChild, contentDiv);
     } else if (toolsNeeded > 0) {
-      // Update last tool block
       const lastToolEl = parent.querySelectorAll('.tool-block')[toolsNeeded - 1];
       if (lastToolEl) {
         const t = msg.tools[toolsNeeded - 1];
@@ -923,7 +1004,6 @@ async function sendMessage() {
   dom.btnStop.classList.remove('hidden');
   dom.btnSend.disabled = true;
 
-  // Create assistant message placeholder
   const assistantMsg = { role: 'assistant', content: '', tools: [], ts: Date.now() };
   chat.messages.push(assistantMsg);
   renderMessages();
@@ -983,75 +1063,300 @@ function updateStatusBar() {
   dom.statusSession.textContent = chat?.sessionId ? `Session: ${chat.sessionId.substring(0, 8)}` : '';
 }
 
-// ─── Agents View ────────────────────────────────────────────
-function renderAgentsView() {
-  dom.agentSidebar.innerHTML = '';
-  state.agents.forEach(a => {
-    const name = typeof a === 'string' ? a : (a.name || a.agent || a.id || '');
-    const desc = typeof a === 'object' ? (a.description || '') : '';
-    const div = document.createElement('div');
-    div.className = 'glass-card flex items-center gap-3 px-4 py-3 cursor-pointer text-sm mb-1.5';
-    div.innerHTML = `<div class="w-8 h-8 rounded-lg bg-agent/10 flex items-center justify-center flex-shrink-0">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#b48eff" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
-      </div>
-      <div class="flex-1 min-w-0">
-        <div class="text-text-primary font-medium truncate">${esc(name)}</div>
-        <div class="text-text-muted text-xs truncate">${esc(desc)}</div>
-      </div>`;
-    div.onclick = () => selectAgent(name);
-    dom.agentSidebar.appendChild(div);
-  });
-  // Create agent button
-  const btn = document.createElement('button');
-  btn.className = 'w-full text-left text-xs text-accent hover:text-orange-300 flex items-center gap-2 px-4 py-3 mt-3 rounded-xl hover:bg-surface-lighter transition-all duration-200 border border-dashed border-border';
-  btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Create Agent';
-  btn.onclick = showCreateAgentForm;
-  dom.agentSidebar.appendChild(btn);
+// ─── AGENT CONFIG VIEW ──────────────────────────────────────
+function openConfig(agentName) {
+  state.configAgent = agentName;
+  state.configTab = 'soul';
+  switchView('config');
 }
 
-async function selectAgent(name) {
-  dom.agentDetail.innerHTML = '<div class="text-text-muted text-sm">Loading...</div>';
-  try {
-    const [filesRes, soulRes] = await Promise.allSettled([
-      API.getAgentFiles(name),
-      API.getAgentFile(name, 'soul.md'),
-    ]);
-    const files = filesRes.status === 'fulfilled' ? (Array.isArray(filesRes.value) ? filesRes.value : (filesRes.value.files || [])) : [];
-    const soulContent = soulRes.status === 'fulfilled' ? (typeof soulRes.value === 'string' ? soulRes.value : (soulRes.value.content || '')) : '';
+function renderConfigView() {
+  const name = state.configAgent;
+  if (!name) return;
+  dom.configAgentTitle.textContent = name;
 
-    dom.agentDetail.innerHTML = `
-      <div class="flex gap-8">
-        <!-- Left: Files -->
-        <div class="w-64 flex-shrink-0">
-          <div class="flex items-center gap-2 mb-4">
-            <div class="w-10 h-10 rounded-xl bg-agent/10 flex items-center justify-center">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#b48eff" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+  // Reset tab highlights
+  $$('#config-tabs .config-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === state.configTab);
+  });
+
+  loadConfigTabContent(state.configTab, name);
+}
+
+async function loadConfigTabContent(tab, agentName) {
+  const el = dom.configTabContent;
+  el.innerHTML = '<div class="text-text-muted text-sm">Loading...</div>';
+
+  if (tab === 'soul') {
+    try {
+      const res = await API.getAgentFile(agentName, 'soul.md');
+      const content = typeof res === 'string' ? res : (res.content || '');
+      el.innerHTML = `
+        <div class="space-y-4">
+          <h3 class="section-header text-sm">Soul (soul.md)</h3>
+          <textarea id="soul-editor" class="w-full bg-surface-light border border-border rounded-xl px-5 py-4 text-sm text-text-primary mono focus:border-accent transition-colors" rows="20">${esc(content)}</textarea>
+          <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="saveSoul('${esc(agentName)}')">Save Soul</button>
+        </div>`;
+    } catch (e) {
+      el.innerHTML = `<div class="text-error text-sm">Error loading soul.md: ${esc(e.message)}</div>`;
+    }
+  } else if (tab === 'settings') {
+    try {
+      const res = await API.getAgentFile(agentName, 'agent.json');
+      const content = typeof res === 'string' ? res : (res.content || JSON.stringify(res, null, 2));
+      let parsed = {};
+      try { parsed = typeof res === 'string' ? JSON.parse(res) : (res.content ? JSON.parse(res.content) : res); } catch {}
+      el.innerHTML = `
+        <div class="space-y-5">
+          <h3 class="section-header text-sm">Agent Settings (agent.json)</h3>
+          <div>
+            <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Description</label>
+            <input id="cfg-description" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" value="${esc(parsed.description || '')}">
+          </div>
+          <div>
+            <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Model</label>
+            <input id="cfg-model" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary mono focus:border-accent transition-colors" value="${esc(parsed.model || '')}">
+          </div>
+          <div>
+            <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Max Context</label>
+            <input id="cfg-max-context" type="number" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary mono focus:border-accent transition-colors" value="${parsed.max_context || ''}">
+          </div>
+          <div>
+            <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Raw JSON</label>
+            <textarea id="cfg-raw-json" class="w-full bg-surface-light border border-border rounded-xl px-5 py-4 text-sm text-text-primary mono focus:border-accent transition-colors" rows="10">${esc(typeof content === 'string' ? content : JSON.stringify(content, null, 2))}</textarea>
+          </div>
+          <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="saveAgentSettings('${esc(agentName)}')">Save Settings</button>
+        </div>`;
+    } catch (e) {
+      el.innerHTML = `<div class="text-error text-sm">Error loading agent.json: ${esc(e.message)}</div>`;
+    }
+  } else if (tab === 'skills') {
+    try {
+      const filesRes = await API.getAgentFiles(agentName);
+      const files = Array.isArray(filesRes) ? filesRes : (filesRes.files || []);
+      const skillFiles = files.filter(f => {
+        const fname = typeof f === 'string' ? f : (f.name || '');
+        return fname.startsWith('skills/') || fname.endsWith('.skill') || fname.includes('skill');
+      });
+      el.innerHTML = `
+        <div class="space-y-4">
+          <h3 class="section-header text-sm">Skills</h3>
+          ${skillFiles.length === 0 ? '<div class="text-text-muted text-sm py-4">No skills found</div>' :
+            `<div class="space-y-2">
+              ${skillFiles.map(f => {
+                const fname = typeof f === 'string' ? f : (f.name || '');
+                return `<div class="glass-card flex items-center gap-3 px-4 py-3 text-sm">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ff7b00" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                  <span class="text-text-primary mono text-xs flex-1">${esc(fname)}</span>
+                  <button class="text-[11px] text-model hover:text-blue-300 font-medium transition-colors" onclick="viewAgentFile('${esc(agentName)}','${esc(fname)}')">View</button>
+                </div>`;
+              }).join('')}
+            </div>`
+          }
+          <div class="pt-2">
+            <p class="text-text-muted text-xs">All agent files:</p>
+            <div class="space-y-1 mt-2">
+              ${files.map(f => {
+                const fname = typeof f === 'string' ? f : (f.name || '');
+                return `<div class="flex items-center gap-2 text-xs text-text-secondary px-2 py-1">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                  <span class="mono">${esc(fname)}</span>
+                  <button class="text-model hover:text-blue-300 transition-colors ml-auto" onclick="viewAgentFile('${esc(agentName)}','${esc(fname)}')">View</button>
+                </div>`;
+              }).join('')}
             </div>
-            <h2 class="font-display text-xl font-semibold text-text-primary">${esc(name)}</h2>
           </div>
-          <h3 class="section-header mb-3">Files</h3>
-          <div class="space-y-1.5">
-            ${files.map(f => {
-              const fname = typeof f === 'string' ? f : (f.name || f);
-              return `<div class="glass-card flex items-center gap-2.5 px-3 py-2.5 text-sm">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#555570" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                <span class="text-text-secondary mono text-xs flex-1 truncate">${esc(fname)}</span>
-                <button class="text-[11px] text-model hover:text-blue-300 font-medium transition-colors" onclick="viewAgentFile('${esc(name)}','${esc(fname)}')">View</button>
-              </div>`;
-            }).join('')}
+        </div>`;
+    } catch (e) {
+      el.innerHTML = `<div class="text-error text-sm">Error loading skills: ${esc(e.message)}</div>`;
+    }
+  } else if (tab === 'mcp') {
+    try {
+      const res = await API.getAgentFile(agentName, 'mcp.json');
+      const content = typeof res === 'string' ? res : (res.content || JSON.stringify(res, null, 2));
+      el.innerHTML = `
+        <div class="space-y-4">
+          <h3 class="section-header text-sm">MCP Servers (mcp.json)</h3>
+          <textarea id="mcp-editor" class="w-full bg-surface-light border border-border rounded-xl px-5 py-4 text-sm text-text-primary mono focus:border-accent transition-colors" rows="15">${esc(typeof content === 'string' ? content : JSON.stringify(content, null, 2))}</textarea>
+          <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="saveMcpConfig('${esc(agentName)}')">Save MCP Config</button>
+        </div>`;
+    } catch (e) {
+      el.innerHTML = `
+        <div class="space-y-4">
+          <h3 class="section-header text-sm">MCP Servers (mcp.json)</h3>
+          <p class="text-text-muted text-sm">No mcp.json found. Create one below:</p>
+          <textarea id="mcp-editor" class="w-full bg-surface-light border border-border rounded-xl px-5 py-4 text-sm text-text-primary mono focus:border-accent transition-colors" rows="15">${esc(JSON.stringify({ servers: [] }, null, 2))}</textarea>
+          <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="saveMcpConfig('${esc(agentName)}')">Save MCP Config</button>
+        </div>`;
+    }
+  } else if (tab === 'schedule') {
+    try {
+      const tasks = await API.getSchedule();
+      const list = (Array.isArray(tasks) ? tasks : (tasks.tasks || [])).filter(t => t.agent === agentName);
+      el.innerHTML = `
+        <div class="space-y-6">
+          <h3 class="section-header text-sm">Scheduled Tasks for ${esc(agentName)}</h3>
+          ${list.length === 0 ? '<div class="text-text-muted text-sm py-4">No scheduled tasks for this agent</div>' :
+            `<div class="glass-card overflow-hidden">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="text-left border-b border-border">
+                    <th class="section-header px-4 py-3">Name</th>
+                    <th class="section-header px-4 py-3">Schedule</th>
+                    <th class="section-header px-4 py-3">Status</th>
+                    <th class="section-header px-4 py-3">Actions</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-border/50">
+                  ${list.map(t => `
+                    <tr class="sched-row">
+                      <td class="px-4 py-3 text-text-primary font-medium">${esc(t.name || t.id || '')}</td>
+                      <td class="px-4 py-3 mono text-xs text-text-secondary">${esc(t.schedule || t.cron || '')}</td>
+                      <td class="px-4 py-3">
+                        <span class="px-2.5 py-1 rounded-full text-[10px] font-medium uppercase tracking-wider ${t.status === 'active' || t.status === 'running' ? 'bg-success/10 text-success border border-success/20' : 'bg-surface-lighter text-text-muted border border-border'}">${esc(t.status || 'unknown')}</span>
+                      </td>
+                      <td class="px-4 py-3 space-x-2">
+                        ${t.status === 'active' ? `<button class="text-xs text-yellow-500 hover:text-yellow-400 transition-colors" onclick="scheduleAction('pause','${esc(t.id || t.name)}')">Pause</button>` : `<button class="text-xs text-success hover:text-green-300 transition-colors" onclick="scheduleAction('resume','${esc(t.id || t.name)}')">Resume</button>`}
+                        <button class="text-xs text-error hover:text-red-300 transition-colors" onclick="scheduleAction('delete','${esc(t.id || t.name)}')">Delete</button>
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>`
+          }
+
+          <!-- Add Task Form -->
+          <div class="glass-card p-6">
+            <h4 class="text-text-primary font-display font-semibold text-sm mb-5">Add Scheduled Task</h4>
+            <div class="space-y-4">
+              <div>
+                <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Task Name</label>
+                <input id="sched-task-name" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" placeholder="e.g. Daily summary">
+              </div>
+              <div>
+                <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Frequency</label>
+                <select id="sched-freq-type" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" onchange="updateScheduleFreqUI()">
+                  <option value="every">Every X minutes/hours</option>
+                  <option value="daily">Daily at specific time</option>
+                  <option value="weekly">Weekly on a day at specific time</option>
+                  <option value="once">Once on a specific date/time</option>
+                </select>
+              </div>
+              <div id="sched-freq-details"></div>
+              <div>
+                <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Task Description</label>
+                <textarea id="sched-task-message" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" rows="3" placeholder="What should the agent do?"></textarea>
+              </div>
+              <div>
+                <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Model Override (optional)</label>
+                <select id="sched-model-override" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary mono focus:border-accent transition-colors">
+                  <option value="">Use agent default</option>
+                  ${state.models.map(m => {
+                    const id = typeof m === 'string' ? m : (m.id || m.name || m);
+                    return `<option value="${esc(id)}">${esc(id)}</option>`;
+                  }).join('')}
+                </select>
+              </div>
+              <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="submitScheduleTask('${esc(agentName)}')">Create Task</button>
+            </div>
           </div>
-        </div>
-        <!-- Right: Editor -->
-        <div class="flex-1 min-w-0">
-          <h3 class="section-header mb-3">Soul (soul.md)</h3>
-          <textarea id="soul-editor" class="w-full bg-surface-light border border-border rounded-xl px-5 py-4 text-sm text-text-primary mono focus:border-accent transition-colors" rows="18">${esc(soulContent)}</textarea>
-          <button id="btn-save-soul" class="btn-primary px-5 py-2 rounded-xl text-sm mt-3 font-display" onclick="saveSoul('${esc(name)}')">Save Soul</button>
-        </div>
-      </div>`;
-  } catch (e) {
-    dom.agentDetail.innerHTML = `<div class="text-error text-sm">Error: ${esc(e.message)}</div>`;
+        </div>`;
+      updateScheduleFreqUI();
+    } catch (e) {
+      el.innerHTML = `<div class="text-error text-sm">Error loading schedule: ${esc(e.message)}</div>`;
+    }
   }
 }
+
+window.updateScheduleFreqUI = function() {
+  const type = $('#sched-freq-type')?.value;
+  const details = $('#sched-freq-details');
+  if (!details) return;
+  if (type === 'every') {
+    details.innerHTML = `
+      <div class="flex items-center gap-3">
+        <label class="text-[11px] text-text-secondary font-medium uppercase tracking-wider flex-shrink-0">Every</label>
+        <input id="sched-interval" type="number" min="1" value="30" class="w-24 bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono focus:border-accent transition-colors">
+        <select id="sched-interval-unit" class="bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:border-accent transition-colors">
+          <option value="minutes">Minutes</option>
+          <option value="hours">Hours</option>
+          <option value="days">Days</option>
+        </select>
+      </div>`;
+  } else if (type === 'daily') {
+    details.innerHTML = `
+      <div class="flex items-center gap-3">
+        <label class="text-[11px] text-text-secondary font-medium uppercase tracking-wider flex-shrink-0">At</label>
+        <input id="sched-time" type="time" value="09:00" class="bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono focus:border-accent transition-colors">
+      </div>`;
+  } else if (type === 'weekly') {
+    details.innerHTML = `
+      <div class="flex items-center gap-3 flex-wrap">
+        <label class="text-[11px] text-text-secondary font-medium uppercase tracking-wider flex-shrink-0">On</label>
+        <select id="sched-day" class="bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:border-accent transition-colors">
+          <option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option>
+          <option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option>
+        </select>
+        <label class="text-[11px] text-text-secondary font-medium uppercase tracking-wider flex-shrink-0">at</label>
+        <input id="sched-time" type="time" value="09:00" class="bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono focus:border-accent transition-colors">
+      </div>`;
+  } else if (type === 'once') {
+    details.innerHTML = `
+      <div class="flex items-center gap-3">
+        <label class="text-[11px] text-text-secondary font-medium uppercase tracking-wider flex-shrink-0">On</label>
+        <input id="sched-date" type="date" class="bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono focus:border-accent transition-colors">
+        <label class="text-[11px] text-text-secondary font-medium uppercase tracking-wider flex-shrink-0">at</label>
+        <input id="sched-time" type="time" value="09:00" class="bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono focus:border-accent transition-colors">
+      </div>`;
+  }
+};
+
+function buildCronFromUI() {
+  const type = $('#sched-freq-type')?.value;
+  if (type === 'every') {
+    const interval = parseInt($('#sched-interval')?.value) || 30;
+    const unit = $('#sched-interval-unit')?.value || 'minutes';
+    if (unit === 'minutes') return `*/${interval} * * * *`;
+    if (unit === 'hours') return `0 */${interval} * * *`;
+    if (unit === 'days') return `0 0 */${interval} * *`;
+  } else if (type === 'daily') {
+    const time = $('#sched-time')?.value || '09:00';
+    const [h, m] = time.split(':');
+    return `${parseInt(m)} ${parseInt(h)} * * *`;
+  } else if (type === 'weekly') {
+    const day = $('#sched-day')?.value || '1';
+    const time = $('#sched-time')?.value || '09:00';
+    const [h, m] = time.split(':');
+    return `${parseInt(m)} ${parseInt(h)} * * ${day}`;
+  } else if (type === 'once') {
+    // For "once", we still generate a cron-like expression; server handles it
+    const date = $('#sched-date')?.value;
+    const time = $('#sched-time')?.value || '09:00';
+    if (date) {
+      const [y, mo, d] = date.split('-');
+      const [h, mi] = time.split(':');
+      return `${parseInt(mi)} ${parseInt(h)} ${parseInt(d)} ${parseInt(mo)} *`;
+    }
+    return '0 0 * * *';
+  }
+  return '*/30 * * * *';
+}
+
+window.submitScheduleTask = async function(agentName) {
+  const name = $('#sched-task-name')?.value.trim();
+  const message = $('#sched-task-message')?.value.trim();
+  const model = $('#sched-model-override')?.value || undefined;
+  const schedule = buildCronFromUI();
+  if (!name || !message) { showToast('Name and description are required', true); return; }
+  try {
+    await API.manageSchedule({ action: 'add', name, agent: agentName, schedule, message, model });
+    showToast('Task created');
+    loadConfigTabContent('schedule', agentName);
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
 
 window.saveSoul = async function(agentName) {
   const content = $('#soul-editor')?.value;
@@ -1061,6 +1366,35 @@ window.saveSoul = async function(agentName) {
     showToast('Soul saved successfully');
   } catch (e) {
     showToast(`Error saving: ${e.message}`, true);
+  }
+};
+
+window.saveAgentSettings = async function(agentName) {
+  const raw = $('#cfg-raw-json')?.value;
+  if (raw === undefined) return;
+  try {
+    JSON.parse(raw); // Validate
+    await API.writeAgentFile(agentName, 'agent.json', raw);
+    showToast('Settings saved');
+    // Reload agents data
+    try {
+      const agents = await API.getAgents();
+      state.agents = Array.isArray(agents) ? agents : (agents.agents || []);
+    } catch {}
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+window.saveMcpConfig = async function(agentName) {
+  const content = $('#mcp-editor')?.value;
+  if (content === undefined) return;
+  try {
+    JSON.parse(content); // Validate
+    await API.writeAgentFile(agentName, 'mcp.json', content);
+    showToast('MCP config saved');
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
   }
 };
 
@@ -1083,93 +1417,6 @@ window.viewAgentFile = async function(agentName, fileName) {
     showToast(`Error: ${e.message}`, true);
   }
 };
-
-function showCreateAgentForm() {
-  dom.agentDetail.innerHTML = `
-    <div class="max-w-lg space-y-5">
-      <h2 class="font-display text-xl font-semibold text-text-primary">Create New Agent</h2>
-      <div>
-        <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Agent Name</label>
-        <input id="new-agent-name" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" placeholder="agent-name">
-      </div>
-      <div>
-        <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Description</label>
-        <input id="new-agent-desc" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" placeholder="Brief description">
-      </div>
-      <div>
-        <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Soul (initial soul.md content)</label>
-        <textarea id="new-agent-soul" class="w-full bg-surface-light border border-border rounded-xl px-5 py-4 text-sm text-text-primary mono focus:border-accent transition-colors" rows="10" placeholder="You are..."></textarea>
-      </div>
-      <button class="btn-primary px-5 py-2.5 rounded-xl text-sm font-display" onclick="submitCreateAgent()">Create Agent</button>
-    </div>`;
-}
-
-window.submitCreateAgent = async function() {
-  const name = $('#new-agent-name')?.value.trim();
-  const desc = $('#new-agent-desc')?.value.trim();
-  const soul = $('#new-agent-soul')?.value.trim();
-  if (!name) { showToast('Name is required', true); return; }
-  try {
-    await API.createAgent(name, desc, soul);
-    showToast('Agent created');
-    await loadInitialData();
-    renderAgentsView();
-    selectAgent(name);
-  } catch (e) {
-    showToast(`Error: ${e.message}`, true);
-  }
-};
-
-// ─── Scheduler View ─────────────────────────────────────────
-async function renderSchedulerView() {
-  dom.schedulerContent.innerHTML = '<div class="text-text-muted text-sm">Loading...</div>';
-  try {
-    const tasks = await API.getSchedule();
-    const list = Array.isArray(tasks) ? tasks : (tasks.tasks || []);
-    if (list.length === 0) {
-      dom.schedulerContent.innerHTML = `<div class="text-text-muted text-sm py-12 text-center flex flex-col items-center gap-3">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#555570" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        <span>No scheduled tasks</span>
-      </div>`;
-      return;
-    }
-    dom.schedulerContent.innerHTML = `
-      <div class="glass-card overflow-hidden">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="text-left border-b border-border">
-              <th class="section-header px-4 py-3">Name</th>
-              <th class="section-header px-4 py-3">Agent</th>
-              <th class="section-header px-4 py-3">Schedule</th>
-              <th class="section-header px-4 py-3">Status</th>
-              <th class="section-header px-4 py-3">Next Run</th>
-              <th class="section-header px-4 py-3">Actions</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-border/50">
-            ${list.map(t => `
-              <tr class="sched-row">
-                <td class="px-4 py-3 text-text-primary font-medium">${esc(t.name || t.id || '')}</td>
-                <td class="px-4 py-3 text-agent">${esc(t.agent || '')}</td>
-                <td class="px-4 py-3 mono text-xs text-text-secondary">${esc(t.schedule || t.cron || '')}</td>
-                <td class="px-4 py-3">
-                  <span class="px-2.5 py-1 rounded-full text-[10px] font-medium uppercase tracking-wider ${t.status === 'active' || t.status === 'running' ? 'bg-success/10 text-success border border-success/20' : 'bg-surface-lighter text-text-muted border border-border'}">${esc(t.status || 'unknown')}</span>
-                </td>
-                <td class="px-4 py-3 text-xs text-text-muted mono">${esc(t.next_run || '')}</td>
-                <td class="px-4 py-3 space-x-2">
-                  ${t.status === 'active' ? `<button class="text-xs text-yellow-500 hover:text-yellow-400 transition-colors" onclick="scheduleAction('pause','${esc(t.id || t.name)}')">Pause</button>` : `<button class="text-xs text-success hover:text-green-300 transition-colors" onclick="scheduleAction('resume','${esc(t.id || t.name)}')">Resume</button>`}
-                  <button class="text-xs text-error hover:text-red-300 transition-colors" onclick="scheduleAction('delete','${esc(t.id || t.name)}')">Delete</button>
-                  <button class="text-xs text-model hover:text-blue-300 transition-colors" onclick="scheduleAction('history','${esc(t.id || t.name)}')">History</button>
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>`;
-  } catch (e) {
-    dom.schedulerContent.innerHTML = `<div class="text-error text-sm">Error: ${esc(e.message)}</div>`;
-  }
-}
 
 window.scheduleAction = async function(action, taskId) {
   try {
@@ -1195,34 +1442,54 @@ window.scheduleAction = async function(action, taskId) {
     } else {
       await API.manageSchedule({ action, task_id: taskId });
       showToast(`Task ${action}d`);
-      renderSchedulerView();
+      if (state.currentView === 'config' && state.configTab === 'schedule') {
+        loadConfigTabContent('schedule', state.configAgent);
+      }
     }
   } catch (e) {
     showToast(`Error: ${e.message}`, true);
   }
 };
 
-// Task modal
-$('#btn-add-task').onclick = () => {
-  dom.taskModal.classList.remove('hidden');
-  const sel = $('#task-agent');
-  sel.innerHTML = state.agents.map(a => {
-    const name = typeof a === 'string' ? a : (a.name || a.agent || '');
-    return `<option value="${esc(name)}">${esc(name)}</option>`;
-  }).join('');
-};
-$('#task-cancel').onclick = () => dom.taskModal.classList.add('hidden');
-$('#task-submit').onclick = async () => {
-  const name = $('#task-name').value.trim();
-  const agent = $('#task-agent').value;
-  const schedule = $('#task-schedule').value.trim();
-  const message = $('#task-message').value.trim();
-  if (!name || !schedule || !message) { showToast('All fields required', true); return; }
+// ─── Create Agent Modal ─────────────────────────────────────
+function showCreateAgentModal() {
+  const modal = document.createElement('div');
+  modal.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50';
+  modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+  modal.innerHTML = `<div class="bg-surface rounded-2xl border border-border p-8 w-full max-w-lg shadow-2xl">
+    <h3 class="text-text-primary font-display font-semibold text-lg mb-6">Create New Agent</h3>
+    <div class="space-y-4">
+      <div>
+        <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Agent Name</label>
+        <input id="new-agent-name" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" placeholder="agent-name">
+      </div>
+      <div>
+        <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Description</label>
+        <input id="new-agent-desc" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" placeholder="Brief description">
+      </div>
+      <div>
+        <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Soul (initial soul.md)</label>
+        <textarea id="new-agent-soul" class="w-full bg-surface-light border border-border rounded-xl px-5 py-4 text-sm text-text-primary mono focus:border-accent transition-colors" rows="8" placeholder="You are..."></textarea>
+      </div>
+      <div class="flex justify-end gap-3 pt-3">
+        <button class="btn-secondary px-5 py-2 rounded-xl text-sm font-display" onclick="this.closest('.fixed').remove()">Cancel</button>
+        <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="submitCreateAgent()">Create Agent</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(modal);
+}
+
+window.submitCreateAgent = async function() {
+  const name = $('#new-agent-name')?.value.trim();
+  const desc = $('#new-agent-desc')?.value.trim();
+  const soul = $('#new-agent-soul')?.value.trim();
+  if (!name) { showToast('Name is required', true); return; }
   try {
-    await API.manageSchedule({ action: 'add', name, agent, schedule, message });
-    dom.taskModal.classList.add('hidden');
-    showToast('Task created');
-    renderSchedulerView();
+    await API.createAgent(name, desc, soul);
+    showToast('Agent created');
+    document.querySelector('.fixed.inset-0')?.remove();
+    await loadInitialData();
   } catch (e) {
     showToast(`Error: ${e.message}`, true);
   }
@@ -1257,8 +1524,8 @@ async function renderSettingsView() {
             <span class="text-text-primary mono font-medium">${Array.isArray(status.sessions) ? status.sessions.length : (status.sessions || 'N/A')}</span>
           </div>
           <div class="flex items-center gap-3">
-            <span class="text-text-muted text-xs uppercase tracking-wider">Tasks</span>
-            <span class="text-text-primary mono font-medium">${Array.isArray(status.scheduler_tasks) ? status.scheduler_tasks.length : (status.scheduler_tasks || 'N/A')}</span>
+            <span class="text-text-muted text-xs uppercase tracking-wider">Uptime</span>
+            <span class="text-text-primary mono font-medium">${esc(status.uptime || 'N/A')}</span>
           </div>
         </div>
         ${status.agents ? `<div class="mt-4 pt-4 border-t border-border/50">
@@ -1325,9 +1592,15 @@ dom.expandBtn.onclick = () => {
 };
 
 // ─── Event Listeners ────────────────────────────────────────
-dom.btnNewChat.onclick = () => { createNewChat(); switchView('chat'); };
 dom.btnSend.onclick = sendMessage;
 dom.btnStop.onclick = stopGeneration;
+dom.btnBackHome.onclick = () => switchView('home');
+dom.btnNewSession.onclick = () => {
+  if (state.activeAgentId) {
+    resetSession(state.activeAgentId);
+  }
+};
+dom.btnConfigBack.onclick = () => switchView('home');
 
 dom.chatInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.ctrlKey) {
@@ -1346,8 +1619,32 @@ dom.chatInput.addEventListener('input', () => {
 $$('.nav-section-btn').forEach(btn => {
   btn.onclick = () => {
     const view = btn.dataset.view;
-    if (view) switchView(view);
-    else if (btn.dataset.section === 'chat') switchView('chat');
+    if (view === 'chat') {
+      // If there's an active chat, go to it; otherwise go home
+      if (state.activeAgentId && state.agentChats[state.activeAgentId]) {
+        switchView('chat');
+      } else {
+        // Pick first active chat if any
+        const chats = Object.keys(state.agentChats);
+        if (chats.length > 0) {
+          state.activeAgentId = chats[0];
+          switchView('chat');
+        } else {
+          switchView('home');
+        }
+      }
+    } else if (view) {
+      switchView(view);
+    }
+  };
+});
+
+// Config tabs
+$$('#config-tabs .config-tab').forEach(tab => {
+  tab.onclick = () => {
+    state.configTab = tab.dataset.tab;
+    $$('#config-tabs .config-tab').forEach(t => t.classList.toggle('active', t === tab));
+    loadConfigTabContent(state.configTab, state.configAgent);
   };
 });
 
@@ -1363,7 +1660,6 @@ dom.modelSelector.addEventListener('change', () => {
 // ─── Initialization ─────────────────────────────────────────
 (async function init() {
   await loadInitialData();
-  // Periodic connection check
   setInterval(async () => {
     await checkConnection();
   }, 30000);
