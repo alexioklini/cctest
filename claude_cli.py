@@ -1910,7 +1910,7 @@ def tool_use_skill(args: dict) -> str:
 _thread_local = threading.local()
 
 
-MAX_DELEGATE_TOOL_ROUNDS = 3  # Stricter limit for delegated/scheduled tasks
+MAX_DELEGATE_TOOL_ROUNDS = 10  # Limit for delegated/scheduled tasks (timeout is the real safety net)
 
 
 def _run_delegate(messages: list[dict], model: str, system_prompt: str,
@@ -2221,23 +2221,29 @@ class Scheduler:
                     FOREIGN KEY (schedule_id) REFERENCES schedules(id)
                 )
             """)
+            # Migration: add timeout column if missing
+            try:
+                conn.execute("ALTER TABLE schedules ADD COLUMN timeout INTEGER DEFAULT 300")
+            except sqlite3.OperationalError:
+                pass
             conn.commit()
 
     def add(self, name: str, task: str, schedule: str,
-            agent: str = "main", model: str | None = None) -> dict:
-        """Add a scheduled task. Schedule format: 'every Xm/Xh/Xd', 'daily HH:MM', 'weekly DOW HH:MM'."""
+            agent: str = "main", model: str | None = None,
+            timeout: int = 300) -> dict:
+        """Add a scheduled task. timeout in seconds (default: 300 = 5 min)."""
         next_run = self._calc_next_run(schedule)
         if next_run is None:
             return {"error": f"Invalid schedule format: {schedule}"}
         try:
             with sqlite3.connect(SCHEDULER_DB) as conn:
                 conn.execute("""
-                    INSERT INTO schedules (name, task, schedule, agent, model, next_run)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (name, task, schedule, agent, model, next_run.isoformat()))
+                    INSERT INTO schedules (name, task, schedule, agent, model, next_run, timeout)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (name, task, schedule, agent, model, next_run.isoformat(), timeout))
                 conn.commit()
             return {"name": name, "schedule": schedule, "agent": agent,
-                    "next_run": next_run.isoformat(), "status": "created"}
+                    "next_run": next_run.isoformat(), "timeout": timeout, "status": "created"}
         except sqlite3.IntegrityError:
             return {"error": f"Schedule '{name}' already exists"}
 
@@ -2491,6 +2497,9 @@ class Scheduler:
 
         messages = [{"role": "user", "content": task}]
 
+        # Get timeout (default 5 min)
+        task_timeout = task_row.get("timeout") or 300
+
         # Run with isolated memory and live tracking
         result_text = ""
         status = "success"
@@ -2500,9 +2509,17 @@ class Scheduler:
                 run_info["tool_calls"] += 1
                 entry = f"{data.get('name','')}({str(data.get('args',{}))[:80]})"
                 run_info["tool_log"].append(entry)
-                # Keep log bounded
                 if len(run_info["tool_log"]) > 50:
                     run_info["tool_log"] = run_info["tool_log"][-50:]
+
+        # Timeout watchdog — cancels the task after timeout seconds
+        def watchdog():
+            if not cancel_token._cancelled.wait(task_timeout):
+                cancel_token.cancel()
+                run_info["status"] = "timeout"
+
+        timer = threading.Thread(target=watchdog, daemon=True)
+        timer.start()
 
         try:
             result_text = _run_delegate(messages, model, system_prompt,
@@ -2510,15 +2527,19 @@ class Scheduler:
                                         cancel_token=cancel_token,
                                         event_callback=on_event) or ""
         except TaskCancelled:
-            result_text = result_text or "Stopped — tool call loop detected or cancelled by user"
-            status = "cancelled"
+            if run_info.get("status") == "timeout":
+                result_text = result_text or f"Timed out after {task_timeout}s"
+                status = "timeout"
+            else:
+                result_text = result_text or "Cancelled by user or loop detected"
+                status = "cancelled"
         except Exception as e:
             result_text = str(e)
             status = "error"
         finally:
+            cancel_token.cancel()  # stop the watchdog if still running
             with self._lock:
-                if hasattr(self, '_running_tasks'):
-                    self._running_tasks.pop(name, None)
+                self._running_tasks.pop(name, None)
 
         self.mark_executed(schedule_id, name, agent_id, task, status, result_text)
 
@@ -3626,7 +3647,7 @@ def _execute_tool(name: str, args: dict) -> str:
     return _err(f"Unknown tool: {name}")
 
 
-MAX_TOOL_ROUNDS = 10  # Maximum number of tool-use round trips before forcing a text response
+MAX_TOOL_ROUNDS = 15  # Maximum number of tool-use round trips before forcing a text response
 
 
 def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
@@ -3651,9 +3672,9 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     # Reset dedup tracker at the start of each conversation turn
     if _tool_round == 0:
         reset_tool_dedup()
-    # Hard stop after MAX_TOOL_ROUNDS — abort completely, return what we have
+    # Soft stop after MAX_TOOL_ROUNDS — disable tools, force text response
     if _tool_round >= MAX_TOOL_ROUNDS:
-        return "[Task completed — tool call limit reached. Summary of actions taken above.]"
+        tools = False
     headers = make_headers(api_key, api_type)
 
     if api_type == "openai":

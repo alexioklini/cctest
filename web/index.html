@@ -1918,6 +1918,11 @@ async function loadConfigTabContent(tab, agentName) {
                   }).join('')}
                 </select>
               </div>
+              <div>
+                <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Timeout (minutes)</label>
+                <input id="sched-timeout" type="number" min="1" max="60" value="5" class="w-32 bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary mono focus:border-accent transition-colors">
+                <span class="text-text-muted text-xs ml-2">Task will be stopped after this time</span>
+              </div>
               <button id="sched-submit-btn" class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="submitScheduleTask()">Create Task</button>
               <button class="btn-secondary px-5 py-2 rounded-xl text-sm font-display hidden" id="sched-cancel-edit" onclick="cancelScheduleEdit()">Cancel Edit</button>
             </div>
@@ -2167,6 +2172,8 @@ window.editScheduleTask = function(taskJson) {
     if (msgEl) msgEl.value = t.task || '';
     if (agentEl) agentEl.value = t.agent || 'main';
     if (modelEl) modelEl.value = t.model || '';
+    const timeoutEl = _q('sched-timeout');
+    if (timeoutEl) timeoutEl.value = Math.round((t.timeout || 300) / 60);
     if (editingEl) editingEl.value = t.name || '';
     if (titleEl) titleEl.textContent = 'Edit Scheduled Task';
     if (submitBtn) submitBtn.textContent = 'Save Changes';
@@ -2235,6 +2242,7 @@ window.submitScheduleTask = async function() {
   const task = _q('sched-task-message')?.value?.trim();
   const agentName = _q('sched-agent-select')?.value || state.configAgent;
   const model = _q('sched-model-override')?.value || undefined;
+  const timeout = (parseInt(_q('sched-timeout')?.value) || 5) * 60; // convert minutes to seconds
   const schedule = buildScheduleFromUI();
   if (!schedule) return;  // validation failed inside buildScheduleFromUI
   if (!name || !task) { showToast('Name and description are required', true); return; }
@@ -2243,7 +2251,7 @@ window.submitScheduleTask = async function() {
       // Delete old and re-create (simplest way to update all fields)
       await API.manageSchedule({ action: 'delete', name: editingName });
     }
-    await API.manageSchedule({ action: 'add', name, agent: agentName, schedule, task, model });
+    await API.manageSchedule({ action: 'add', name, agent: agentName, schedule, task, model, timeout });
     showToast(editingName ? 'Task updated' : 'Task created');
     cancelScheduleEdit();
     loadConfigTabContent('schedule', state.configAgent);

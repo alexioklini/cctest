@@ -681,7 +681,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             result = engine._scheduler.add(
                 body.get("name", ""), body.get("task", ""),
                 body.get("schedule", ""), body.get("agent", "main"),
-                body.get("model"),
+                body.get("model"), timeout=int(body.get("timeout", 300)),
             )
             self._send_json(result)
         elif action == "pause":
