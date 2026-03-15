@@ -1910,6 +1910,9 @@ def tool_use_skill(args: dict) -> str:
 _thread_local = threading.local()
 
 
+MAX_DELEGATE_TOOL_ROUNDS = 5  # Stricter limit for delegated/scheduled tasks
+
+
 def _run_delegate(messages: list[dict], model: str, system_prompt: str,
                   memory_store: MemoryStore | None = None) -> str | None:
     """Run a delegated task in a fresh context. Returns the final text response.
@@ -1945,15 +1948,21 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
     request = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
 
     try:
-        with urllib.request.urlopen(request) as response:
-            if api_type == "openai":
-                return _handle_openai_response(
-                    response, payload, messages, model, api_key, base_url,
-                    api_type, True, True, headers, endpoint, None, 0)
-            else:
-                return _handle_anthropic_response(
-                    response, payload, messages, model, api_key, base_url,
-                    api_type, True, True, headers, endpoint, None, 0)
+        # Use stricter tool round limit for delegated tasks
+        saved_max = MAX_TOOL_ROUNDS
+        globals()['MAX_TOOL_ROUNDS'] = MAX_DELEGATE_TOOL_ROUNDS
+        try:
+            with urllib.request.urlopen(request) as response:
+                if api_type == "openai":
+                    return _handle_openai_response(
+                        response, payload, messages, model, api_key, base_url,
+                        api_type, True, True, headers, endpoint, None, 0)
+                else:
+                    return _handle_anthropic_response(
+                        response, payload, messages, model, api_key, base_url,
+                        api_type, True, True, headers, endpoint, None, 0)
+        finally:
+            globals()['MAX_TOOL_ROUNDS'] = saved_max
     except Exception as e:
         return f"Delegation error: {e}"
 
@@ -2431,7 +2440,12 @@ class Scheduler:
             f"You are agent '{agent_id}' executing a scheduled task: '{name}'.\n"
             f"Current working directory: {cwd}\n"
             f"Operating system: {os_name}\n\n"
-            "Complete the task and provide a concise result summary.\n"
+            "IMPORTANT RULES FOR SCHEDULED TASKS:\n"
+            "- Complete the task QUICKLY and CONCISELY. You have a limited number of tool calls.\n"
+            "- Do NOT repeat the same tool call. If a search returns results, use them — don't search again.\n"
+            "- Do NOT loop. One search per topic is enough. Summarize what you found.\n"
+            "- Provide a concise result summary within 3-5 tool calls maximum.\n"
+            "- If you can't find what you need in 2 searches, summarize what you have and stop.\n\n"
         )
         if tools_guide:
             system_prompt += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
@@ -3519,7 +3533,7 @@ def _execute_tool(name: str, args: dict) -> str:
     return _err(f"Unknown tool: {name}")
 
 
-MAX_TOOL_ROUNDS = 15  # Maximum number of tool-use round trips before forcing a text response
+MAX_TOOL_ROUNDS = 10  # Maximum number of tool-use round trips before forcing a text response
 
 
 def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
