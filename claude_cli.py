@@ -1910,7 +1910,7 @@ def tool_use_skill(args: dict) -> str:
 _thread_local = threading.local()
 
 
-MAX_DELEGATE_TOOL_ROUNDS = 5  # Stricter limit for delegated/scheduled tasks
+MAX_DELEGATE_TOOL_ROUNDS = 3  # Stricter limit for delegated/scheduled tasks
 
 
 def _run_delegate(messages: list[dict], model: str, system_prompt: str,
@@ -3580,8 +3580,39 @@ TOOL_DISPATCH = {
 }
 
 
+# Per-thread tool call dedup tracking
+_tool_call_history = threading.local()
+
+
+def _check_tool_dedup(name: str, args: dict) -> str | None:
+    """Check if this exact tool call was already made. Returns error message if duplicate."""
+    if not hasattr(_tool_call_history, 'calls'):
+        _tool_call_history.calls = set()
+    # Create a hashable key from tool name + args
+    key = f"{name}:{json.dumps(args, sort_keys=True)}"
+    if key in _tool_call_history.calls:
+        return _err(
+            f"DUPLICATE: You already called {name} with these exact arguments. "
+            "Do NOT repeat tool calls. Use the previous result and provide your final answer NOW."
+        )
+    _tool_call_history.calls.add(key)
+    # Cap history size
+    if len(_tool_call_history.calls) > 100:
+        _tool_call_history.calls = set(list(_tool_call_history.calls)[-50:])
+    return None
+
+
+def reset_tool_dedup():
+    """Reset the dedup tracker (call at start of each conversation turn)."""
+    _tool_call_history.calls = set()
+
+
 def _execute_tool(name: str, args: dict) -> str:
     """Execute a tool by name with the given arguments."""
+    # Check for duplicate tool calls
+    dedup = _check_tool_dedup(name, args)
+    if dedup:
+        return dedup
     # Check MCP tools first
     if _mcp_manager and _mcp_manager.is_mcp_tool(name):
         return _mcp_manager.call_tool(name, args)
@@ -3613,6 +3644,9 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     Returns the assistant's full response text on success, None on model-related errors.
     Raises TaskCancelled if escape_watcher detects cancellation.
     """
+    # Reset dedup tracker at the start of each conversation turn
+    if _tool_round == 0:
+        reset_tool_dedup()
     # Stop tool loops after MAX_TOOL_ROUNDS
     if _tool_round >= MAX_TOOL_ROUNDS:
         tools = False
