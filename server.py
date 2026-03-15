@@ -181,6 +181,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_agent_file_write(path)
         elif path == "/v1/schedule":
             self._handle_modify_schedule()
+        elif path == "/v1/providers":
+            self._handle_save_providers()
+        elif path == "/v1/providers/test":
+            self._handle_test_provider()
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -407,7 +411,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         providers = server_config.get("providers", {})
         result = []
         for name, p in providers.items():
-            # Try to fetch models dynamically
             models = []
             try:
                 models = engine.get_available_models(
@@ -417,11 +420,97 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             result.append({
                 "name": name,
                 "base_url": p.get("base_url", ""),
+                "api_key": p.get("api_key", "")[:4] + "***" if p.get("api_key") else "",
                 "type": p.get("type", "openai"),
                 "default_model": p.get("default_model", ""),
                 "models": models,
+                "model_count": len(models),
+                "status": "connected" if models else "unreachable",
             })
         self._send_json({"providers": result})
+
+    def _handle_save_providers(self):
+        """POST /v1/providers — save provider config."""
+        body = self._read_json()
+        action = body.get("action", "save")
+
+        if action == "save":
+            # Save all providers to config.json
+            providers = body.get("providers", {})
+            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+            try:
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                config["providers"] = providers
+                if body.get("default_provider"):
+                    config["default_provider"] = body["default_provider"]
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+                # Update server config in memory
+                server_config["providers"] = providers
+                self._send_json({"status": "saved"})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif action == "add":
+            name = body.get("name", "")
+            provider = body.get("provider", {})
+            if not name:
+                self._send_json({"error": "Provider name required"}, 400)
+                return
+            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+            try:
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                config.setdefault("providers", {})[name] = provider
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+                server_config.setdefault("providers", {})[name] = provider
+                self._send_json({"status": "added", "name": name})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif action == "delete":
+            name = body.get("name", "")
+            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+            try:
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                config.get("providers", {}).pop(name, None)
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+                server_config.get("providers", {}).pop(name, None)
+                self._send_json({"status": "deleted", "name": name})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+        else:
+            self._send_json({"error": f"Unknown action: {action}"}, 400)
+
+    def _handle_test_provider(self):
+        """POST /v1/providers/test — test provider connection."""
+        body = self._read_json()
+        base_url = body.get("base_url", "")
+        api_key = body.get("api_key", "")
+        api_type = body.get("type", "openai")
+        try:
+            models = engine.get_available_models(api_key, base_url, api_type)
+            self._send_json({
+                "status": "connected",
+                "models": models,
+                "model_count": len(models),
+            })
+        except Exception as e:
+            self._send_json({
+                "status": "error",
+                "error": str(e),
+                "models": [],
+            })
 
     def _handle_list_tasks(self):
         if engine._task_runner:

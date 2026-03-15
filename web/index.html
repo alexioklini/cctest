@@ -1519,54 +1519,181 @@ async function renderSettingsContent() {
 
     el.innerHTML = `
       <!-- Server Status -->
-      <div class="glass-card p-6">
+      <div class="glass-card p-6 mb-6">
         <h3 class="section-header mb-4 text-sm">Server Status</h3>
         <div class="grid grid-cols-2 gap-4 text-sm">
-          <div class="flex items-center gap-3">
-            <span class="text-text-muted text-xs uppercase tracking-wider">Version</span>
-            <span class="text-text-primary mono font-medium">${esc(status.version || 'N/A')}</span>
-          </div>
-          <div class="flex items-center gap-3">
-            <span class="text-text-muted text-xs uppercase tracking-wider">URL</span>
-            <span class="text-text-primary mono text-xs">${esc(BASE_URL)}</span>
-          </div>
-          <div class="flex items-center gap-3">
-            <span class="text-text-muted text-xs uppercase tracking-wider">Sessions</span>
-            <span class="text-text-primary mono font-medium">${Array.isArray(status.sessions) ? status.sessions.length : (status.sessions || 'N/A')}</span>
-          </div>
-          <div class="flex items-center gap-3">
-            <span class="text-text-muted text-xs uppercase tracking-wider">Uptime</span>
-            <span class="text-text-primary mono font-medium">${esc(status.uptime || 'N/A')}</span>
-          </div>
+          <div><span class="text-text-muted text-xs uppercase tracking-wider">Version</span> <span class="text-text-primary mono font-medium ml-2">${esc(status.version || 'N/A')}</span></div>
+          <div><span class="text-text-muted text-xs uppercase tracking-wider">URL</span> <span class="text-text-primary mono text-xs ml-2">${esc(BASE_URL)}</span></div>
+          <div><span class="text-text-muted text-xs uppercase tracking-wider">Sessions</span> <span class="text-text-primary mono font-medium ml-2">${Array.isArray(status.sessions) ? status.sessions.length : (status.sessions || 0)}</span></div>
+          <div><span class="text-text-muted text-xs uppercase tracking-wider">Agents</span> <span class="text-text-primary mono font-medium ml-2">${(Array.isArray(status.agents) ? status.agents : []).join(', ')}</span></div>
         </div>
-        ${status.agents ? `<div class="mt-4 pt-4 border-t border-border/50">
-          <span class="text-text-muted text-xs uppercase tracking-wider">Agents</span>
-          <div class="flex flex-wrap gap-2 mt-2">${(Array.isArray(status.agents) ? status.agents : []).map(a => `<span class="px-3 py-1 bg-agent/10 rounded-lg text-xs text-agent border border-agent/20 font-medium">${esc(typeof a === 'string' ? a : a.name || '')}</span>`).join('')}</div>
-        </div>` : ''}
       </div>
 
       <!-- Providers -->
-      <div class="glass-card p-6">
-        <h3 class="section-header mb-4 text-sm">Providers &amp; Models</h3>
-        <div class="space-y-5">
+      <div class="glass-card p-6 mb-6">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="section-header text-sm">Providers</h3>
+          <button onclick="showAddProviderForm()" class="btn-primary text-xs px-3 py-1.5 rounded-lg">+ Add Provider</button>
+        </div>
+        <div id="providers-list" class="space-y-4">
           ${providers.map(p => {
-            const pName = typeof p === 'string' ? p : (p.name || p.provider || p.id || '');
-            const pModels = typeof p === 'object' ? (p.models || []) : [];
-            return `<div>
-              <div class="text-sm text-text-primary font-display font-medium mb-2">${esc(pName)}</div>
-              <div class="flex flex-wrap gap-2">
-                ${pModels.map(m => {
+            const pName = p.name || '';
+            const statusColor = p.status === 'connected' ? 'text-success' : 'text-error';
+            const statusDot = p.status === 'connected' ? 'bg-success' : 'bg-error';
+            const pModels = p.models || [];
+            return `<div class="border border-border/50 rounded-lg p-4">
+              <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center gap-3">
+                  <span class="w-2 h-2 rounded-full ${statusDot}"></span>
+                  <span class="text-text-primary font-display font-semibold">${esc(pName)}</span>
+                  <span class="text-xs px-2 py-0.5 rounded bg-surface-lighter text-text-muted">${esc(p.type || 'openai')}</span>
+                  <span class="${statusColor} text-xs">${esc(p.status || 'unknown')}</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <button onclick="testProvider('${esc(pName)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg" title="Test connection">🔌 Test</button>
+                  <button onclick="deleteProvider('${esc(pName)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg text-error hover:bg-error/10" title="Remove">✕</button>
+                </div>
+              </div>
+              <div class="text-xs text-text-muted mono mb-2">${esc(p.base_url || '')}</div>
+              <div class="text-xs text-text-muted mb-1">API Key: ${esc(p.api_key || '(none)')}</div>
+              ${p.default_model ? `<div class="text-xs text-model mb-2">Default: <span class="mono">${esc(p.default_model)}</span></div>` : ''}
+              <div class="flex flex-wrap gap-1.5 mt-2">
+                ${pModels.length > 0 ? pModels.map(m => {
                   const mName = typeof m === 'string' ? m : (m.id || m.name || '');
-                  return `<span class="px-3 py-1 bg-model/10 rounded-lg text-xs text-model border border-model/20 mono">${esc(mName)}</span>`;
-                }).join('') || '<span class="text-xs text-text-muted">No models</span>'}
+                  return `<span class="px-2 py-0.5 bg-model/10 rounded text-[10px] text-model border border-model/20 mono">${esc(mName)}</span>`;
+                }).join('') : '<span class="text-xs text-text-muted italic">No models loaded — try Test</span>'}
               </div>
             </div>`;
-          }).join('') || '<div class="text-text-muted text-sm">No providers found</div>'}
+          }).join('') || '<div class="text-text-muted text-sm">No providers configured</div>'}
+        </div>
+      </div>
+
+      <!-- Add Provider Form (hidden by default) -->
+      <div id="add-provider-form" class="glass-card p-6 hidden">
+        <h3 class="section-header mb-4 text-sm">Add Provider</h3>
+        <div class="space-y-3">
+          <div>
+            <label class="text-xs text-text-muted uppercase tracking-wider block mb-1">Name</label>
+            <input id="prov-name" class="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary" placeholder="e.g. anthropic, local-inferencer">
+          </div>
+          <div>
+            <label class="text-xs text-text-muted uppercase tracking-wider block mb-1">Base URL</label>
+            <input id="prov-url" class="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono" placeholder="http://localhost:8081/v1">
+          </div>
+          <div>
+            <label class="text-xs text-text-muted uppercase tracking-wider block mb-1">API Key</label>
+            <input id="prov-key" class="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono" placeholder="sk-...">
+          </div>
+          <div>
+            <label class="text-xs text-text-muted uppercase tracking-wider block mb-1">Type</label>
+            <select id="prov-type" class="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary">
+              <option value="openai">OpenAI Compatible</option>
+              <option value="anthropic">Anthropic</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-text-muted uppercase tracking-wider block mb-1">Default Model (optional)</label>
+            <input id="prov-model" class="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono" placeholder="model-name">
+          </div>
+          <div id="prov-test-result" class="hidden text-sm p-3 rounded-lg"></div>
+          <div class="flex items-center gap-3 pt-2">
+            <button onclick="testNewProvider()" class="btn-secondary text-xs px-4 py-2 rounded-lg">🔌 Test Connection</button>
+            <button onclick="saveNewProvider()" class="btn-primary text-xs px-4 py-2 rounded-lg">Save Provider</button>
+            <button onclick="document.getElementById('add-provider-form').classList.add('hidden')" class="text-xs text-text-muted hover:text-text-primary transition-colors px-3 py-2">Cancel</button>
+          </div>
         </div>
       </div>`;
   } catch (e) {
     el.innerHTML = `<div class="text-error text-sm">Error: ${esc(e.message)}</div>`;
   }
+}
+
+function showAddProviderForm() {
+  const form = document.getElementById('add-provider-form');
+  if (form) form.classList.remove('hidden');
+}
+
+async function testNewProvider() {
+  const url = document.getElementById('prov-url')?.value;
+  const key = document.getElementById('prov-key')?.value;
+  const type = document.getElementById('prov-type')?.value;
+  const resultEl = document.getElementById('prov-test-result');
+  if (!url || !resultEl) return;
+  resultEl.className = 'text-sm p-3 rounded-lg bg-surface-lighter text-text-muted';
+  resultEl.classList.remove('hidden');
+  resultEl.textContent = 'Testing connection...';
+  try {
+    const r = await API.post('/v1/providers/test', { base_url: url, api_key: key, type: type });
+    if (r.status === 'connected') {
+      resultEl.className = 'text-sm p-3 rounded-lg bg-success/10 text-success border border-success/20';
+      resultEl.textContent = `✔ Connected — ${r.model_count} model${r.model_count !== 1 ? 's' : ''} available`;
+      // Auto-fill default model if empty
+      const modelInput = document.getElementById('prov-model');
+      if (modelInput && !modelInput.value && r.models?.length) {
+        modelInput.value = typeof r.models[0] === 'string' ? r.models[0] : (r.models[0].id || '');
+      }
+    } else {
+      resultEl.className = 'text-sm p-3 rounded-lg bg-error/10 text-error border border-error/20';
+      resultEl.textContent = `✘ ${r.error || 'Connection failed'}`;
+    }
+  } catch (e) {
+    resultEl.className = 'text-sm p-3 rounded-lg bg-error/10 text-error border border-error/20';
+    resultEl.textContent = `✘ ${e.message}`;
+  }
+}
+
+async function saveNewProvider() {
+  const name = document.getElementById('prov-name')?.value?.trim();
+  const url = document.getElementById('prov-url')?.value?.trim();
+  const key = document.getElementById('prov-key')?.value?.trim();
+  const type = document.getElementById('prov-type')?.value;
+  const model = document.getElementById('prov-model')?.value?.trim();
+  if (!name || !url) { showToast('Name and URL required', 'error'); return; }
+  try {
+    await API.post('/v1/providers', {
+      action: 'add', name,
+      provider: { base_url: url, api_key: key, type, default_model: model || null }
+    });
+    showToast(`Provider "${name}" added`);
+    // Refresh providers in state
+    const res = await API.getProviders();
+    state.providers = res.providers || res || [];
+    renderSettingsContent();
+    renderModelSelector();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function testProvider(name) {
+  const p = state.providers.find(x => (x.name || x) === name);
+  if (!p) return;
+  showToast(`Testing ${name}...`);
+  try {
+    const r = await API.post('/v1/providers/test', {
+      base_url: p.base_url, api_key: p.api_key_full || p.api_key, type: p.type
+    });
+    if (r.status === 'connected') {
+      showToast(`${name}: Connected — ${r.model_count} models`);
+    } else {
+      showToast(`${name}: ${r.error || 'Failed'}`, 'error');
+    }
+    // Refresh
+    const res = await API.getProviders();
+    state.providers = res.providers || res || [];
+    renderSettingsContent();
+    renderModelSelector();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function deleteProvider(name) {
+  if (!confirm(`Delete provider "${name}"?`)) return;
+  try {
+    await API.post('/v1/providers', { action: 'delete', name });
+    showToast(`Provider "${name}" deleted`);
+    const res = await API.getProviders();
+    state.providers = res.providers || res || [];
+    renderSettingsContent();
+    renderModelSelector();
+  } catch (e) { showToast(e.message, 'error'); }
 }
 
 // ─── Create Agent Modal ─────────────────────────────────────
