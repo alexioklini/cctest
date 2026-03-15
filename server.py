@@ -640,13 +640,19 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         t = threading.Thread(target=worker, daemon=True)
         t.start()
 
-        # Stream events to client
+        # Stream events to client with keepalive
         try:
             while True:
                 try:
-                    event = event_queue.get(timeout=300)
+                    event = event_queue.get(timeout=5)
                 except queue.Empty:
-                    break
+                    # Send keepalive comment to prevent browser timeout
+                    try:
+                        self.wfile.write(b": keepalive\n\n")
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        break
+                    continue
                 if event is None:
                     break
                 event_type, data = event
