@@ -163,6 +163,68 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "gmail_inbox",
+        "description": "List recent emails from Gmail inbox. Returns subject, from, date for each email.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Number of emails to return (default: 10)"},
+                "folder": {"type": "string", "description": "Mailbox folder (default: INBOX)"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "gmail_read",
+        "description": "Read a specific email by its ID. Returns full body, attachments list, headers.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "Email ID from gmail_inbox or gmail_search"},
+                "folder": {"type": "string", "description": "Mailbox folder (default: INBOX)"},
+            },
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "gmail_search",
+        "description": "Search emails using Gmail search syntax (from:, subject:, is:unread, after:, has:attachment, etc).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Gmail search query"},
+                "limit": {"type": "integer", "description": "Max results (default: 10)"},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "gmail_send",
+        "description": "Send an email via Gmail.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Recipient email address"},
+                "subject": {"type": "string", "description": "Email subject"},
+                "body": {"type": "string", "description": "Email body (plain text)"},
+                "cc": {"type": "string", "description": "CC email address (optional)"},
+            },
+            "required": ["to", "subject", "body"],
+        },
+    },
+    {
+        "name": "gmail_reply",
+        "description": "Reply to an existing email by its ID. Preserves threading.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "Email ID to reply to"},
+                "body": {"type": "string", "description": "Reply body (plain text)"},
+            },
+            "required": ["id", "body"],
+        },
+    },
+    {
         "name": "exa_search",
         "description": (
             "Search the web using Exa AI for current, relevant information. "
@@ -593,6 +655,255 @@ def tool_execute_command(args: dict) -> str:
         return _ok({"command": command, "exit_code": proc.returncode, "output": output})
     except Exception as e:
         return _err(f"execute_command: {e}")
+
+
+# --- Gmail Tools ---
+
+import imaplib
+import smtplib
+import email
+import email.mime.text
+import email.mime.multipart
+from email.header import decode_header as _decode_header
+
+
+def _gmail_config():
+    """Load Gmail credentials from gmail.json in main agent dir."""
+    config_path = os.path.join(AGENTS_DIR, "main", "gmail.json")
+    if not os.path.exists(config_path):
+        return None
+    try:
+        with open(config_path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _decode_mime_header(raw):
+    """Decode a MIME-encoded header value."""
+    if not raw:
+        return ""
+    parts = _decode_header(raw)
+    decoded = []
+    for data, charset in parts:
+        if isinstance(data, bytes):
+            decoded.append(data.decode(charset or "utf-8", errors="replace"))
+        else:
+            decoded.append(str(data))
+    return " ".join(decoded)
+
+
+def _get_email_body(msg):
+    """Extract plain text body from email message."""
+    if msg.is_multipart():
+        for part in msg.walk():
+            ct = part.get_content_type()
+            if ct == "text/plain" and "attachment" not in str(part.get("Content-Disposition", "")):
+                payload = part.get_payload(decode=True)
+                if payload:
+                    charset = part.get_content_charset() or "utf-8"
+                    return payload.decode(charset, errors="replace")
+        # Fallback to HTML
+        for part in msg.walk():
+            ct = part.get_content_type()
+            if ct == "text/html":
+                payload = part.get_payload(decode=True)
+                if payload:
+                    charset = part.get_content_charset() or "utf-8"
+                    text = payload.decode(charset, errors="replace")
+                    # Strip HTML tags roughly
+                    text = re.sub(r'<[^>]+>', ' ', text)
+                    text = re.sub(r'\s+', ' ', text).strip()
+                    return text
+    else:
+        payload = msg.get_payload(decode=True)
+        if payload:
+            charset = msg.get_content_charset() or "utf-8"
+            return payload.decode(charset, errors="replace")
+    return ""
+
+
+def tool_gmail_inbox(args: dict) -> str:
+    """List recent emails from Gmail inbox."""
+    cfg = _gmail_config()
+    if not cfg:
+        return _err("Gmail not configured. Create agents/main/gmail.json with email and app_password.")
+    limit = args.get("limit", 10)
+    folder = args.get("folder", "INBOX")
+    try:
+        imap = imaplib.IMAP4_SSL("imap.gmail.com")
+        imap.login(cfg["email"], cfg["app_password"])
+        imap.select(folder, readonly=True)
+        _, data = imap.search(None, "ALL")
+        ids = data[0].split()
+        ids = ids[-limit:]  # most recent
+        ids.reverse()
+
+        emails = []
+        for eid in ids:
+            _, msg_data = imap.fetch(eid, "(RFC822.HEADER)")
+            raw = msg_data[0][1]
+            msg = email.message_from_bytes(raw)
+            emails.append({
+                "id": eid.decode(),
+                "from": _decode_mime_header(msg.get("From", "")),
+                "subject": _decode_mime_header(msg.get("Subject", "")),
+                "date": msg.get("Date", ""),
+            })
+        imap.logout()
+        return _ok({"folder": folder, "count": len(emails), "emails": emails})
+    except Exception as e:
+        return _err(f"gmail_inbox: {e}")
+
+
+def tool_gmail_read(args: dict) -> str:
+    """Read a specific email by ID."""
+    cfg = _gmail_config()
+    if not cfg:
+        return _err("Gmail not configured.")
+    email_id = args.get("id", "")
+    folder = args.get("folder", "INBOX")
+    if not email_id:
+        return _err("gmail_read: email id is required")
+    try:
+        imap = imaplib.IMAP4_SSL("imap.gmail.com")
+        imap.login(cfg["email"], cfg["app_password"])
+        imap.select(folder, readonly=True)
+        _, msg_data = imap.fetch(email_id.encode(), "(RFC822)")
+        raw = msg_data[0][1]
+        msg = email.message_from_bytes(raw)
+        body = _get_email_body(msg)
+        # Truncate long bodies
+        if len(body) > 10000:
+            body = body[:10000] + "\n...(truncated)"
+        attachments = []
+        if msg.is_multipart():
+            for part in msg.walk():
+                fn = part.get_filename()
+                if fn:
+                    attachments.append(_decode_mime_header(fn))
+        imap.logout()
+        return _ok({
+            "id": email_id,
+            "from": _decode_mime_header(msg.get("From", "")),
+            "to": _decode_mime_header(msg.get("To", "")),
+            "cc": _decode_mime_header(msg.get("Cc", "")),
+            "subject": _decode_mime_header(msg.get("Subject", "")),
+            "date": msg.get("Date", ""),
+            "body": body,
+            "attachments": attachments,
+            "message_id": msg.get("Message-ID", ""),
+        })
+    except Exception as e:
+        return _err(f"gmail_read: {e}")
+
+
+def tool_gmail_search(args: dict) -> str:
+    """Search emails using Gmail search syntax."""
+    cfg = _gmail_config()
+    if not cfg:
+        return _err("Gmail not configured.")
+    query = args.get("query", "")
+    limit = args.get("limit", 10)
+    if not query:
+        return _err("gmail_search: query is required")
+    try:
+        imap = imaplib.IMAP4_SSL("imap.gmail.com")
+        imap.login(cfg["email"], cfg["app_password"])
+        imap.select("INBOX", readonly=True)
+        # Gmail supports X-GM-RAW for full Gmail search syntax
+        _, data = imap.search(None, f'X-GM-RAW "{query}"')
+        ids = data[0].split()
+        ids = ids[-limit:]
+        ids.reverse()
+
+        emails = []
+        for eid in ids:
+            _, msg_data = imap.fetch(eid, "(RFC822.HEADER)")
+            raw = msg_data[0][1]
+            msg = email.message_from_bytes(raw)
+            emails.append({
+                "id": eid.decode(),
+                "from": _decode_mime_header(msg.get("From", "")),
+                "subject": _decode_mime_header(msg.get("Subject", "")),
+                "date": msg.get("Date", ""),
+            })
+        imap.logout()
+        return _ok({"query": query, "count": len(emails), "emails": emails})
+    except Exception as e:
+        return _err(f"gmail_search: {e}")
+
+
+def tool_gmail_send(args: dict) -> str:
+    """Send an email via Gmail SMTP."""
+    cfg = _gmail_config()
+    if not cfg:
+        return _err("Gmail not configured.")
+    to = args.get("to", "")
+    subject = args.get("subject", "")
+    body = args.get("body", "")
+    cc = args.get("cc", "")
+    if not to or not subject:
+        return _err("gmail_send: to and subject are required")
+    try:
+        msg = email.mime.multipart.MIMEMultipart()
+        msg["From"] = cfg["email"]
+        msg["To"] = to
+        msg["Subject"] = subject
+        if cc:
+            msg["Cc"] = cc
+        msg.attach(email.mime.text.MIMEText(body, "plain"))
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+            smtp.login(cfg["email"], cfg["app_password"])
+            recipients = [to] + ([cc] if cc else [])
+            smtp.send_message(msg, to_addrs=recipients)
+
+        return _ok({"status": "sent", "to": to, "subject": subject})
+    except Exception as e:
+        return _err(f"gmail_send: {e}")
+
+
+def tool_gmail_reply(args: dict) -> str:
+    """Reply to an email."""
+    cfg = _gmail_config()
+    if not cfg:
+        return _err("Gmail not configured.")
+    email_id = args.get("id", "")
+    body = args.get("body", "")
+    if not email_id or not body:
+        return _err("gmail_reply: id and body are required")
+    try:
+        # Fetch original email to get headers
+        imap = imaplib.IMAP4_SSL("imap.gmail.com")
+        imap.login(cfg["email"], cfg["app_password"])
+        imap.select("INBOX", readonly=True)
+        _, msg_data = imap.fetch(email_id.encode(), "(RFC822)")
+        raw = msg_data[0][1]
+        original = email.message_from_bytes(raw)
+        imap.logout()
+
+        # Build reply
+        reply_to = original.get("Reply-To") or original.get("From", "")
+        subject = original.get("Subject", "")
+        if not subject.lower().startswith("re:"):
+            subject = f"Re: {subject}"
+
+        msg = email.mime.multipart.MIMEMultipart()
+        msg["From"] = cfg["email"]
+        msg["To"] = reply_to
+        msg["Subject"] = subject
+        msg["In-Reply-To"] = original.get("Message-ID", "")
+        msg["References"] = original.get("Message-ID", "")
+        msg.attach(email.mime.text.MIMEText(body, "plain"))
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+            smtp.login(cfg["email"], cfg["app_password"])
+            smtp.send_message(msg)
+
+        return _ok({"status": "replied", "to": reply_to, "subject": subject})
+    except Exception as e:
+        return _err(f"gmail_reply: {e}")
 
 
 def tool_web_fetch(args: dict) -> str:
@@ -2887,6 +3198,8 @@ TOOL_ICONS = {
     "web_fetch": "~", "exa_search": "?",
     "memory_store": "+", "memory_recall": "m", "memory_delete": "-", "memory_shared": "M",
     "delegate_task": ">", "use_skill": "*",
+    "gmail_inbox": "@", "gmail_read": "@", "gmail_search": "@",
+    "gmail_send": "@", "gmail_reply": "@",
     "task_status": "?", "task_cancel": "x",
     "schedule_list": "t", "schedule_history": "h",
 }
@@ -2897,6 +3210,8 @@ TOOL_VERBS = {
     "web_fetch": "Fetching", "exa_search": "Searching",
     "memory_store": "Remembering", "memory_recall": "Recalling", "memory_delete": "Forgetting", "memory_shared": "Shared Memory",
     "delegate_task": "Delegating", "use_skill": "Loading Skill",
+    "gmail_inbox": "Inbox", "gmail_read": "Reading Email", "gmail_search": "Searching Email",
+    "gmail_send": "Sending Email", "gmail_reply": "Replying",
     "task_status": "Task Status", "task_cancel": "Cancelling",
     "schedule_list": "Schedules", "schedule_history": "History",
 }
@@ -3179,6 +3494,11 @@ TOOL_DISPATCH = {
     "memory_recall": tool_memory_recall,
     "memory_delete": tool_memory_delete,
     "memory_shared": tool_memory_shared,
+    "gmail_inbox": tool_gmail_inbox,
+    "gmail_read": tool_gmail_read,
+    "gmail_search": tool_gmail_search,
+    "gmail_send": tool_gmail_send,
+    "gmail_reply": tool_gmail_reply,
     "delegate_task": tool_delegate_task,
     "task_status": tool_task_status,
     "task_cancel": tool_task_cancel,
