@@ -1957,12 +1957,21 @@ function _q(id) {
 }
 
 function buildScheduleFromUI() {
-  const type = _q('sched-freq-type')?.value;
-  const time = _q('sched-time')?.value;
-  const interval = _q('sched-interval')?.value;
-  const day = _q('sched-day')?.value;
-  const date = _q('sched-date')?.value;
+  const typeEl = _q('sched-freq-type');
+  const timeEl = _q('sched-time');
+  const intervalEl = _q('sched-interval');
+  const dayEl = _q('sched-day');
+  const dateEl = _q('sched-date');
+
+  const type = typeEl?.value;
+  const time = timeEl?.value;
+  const interval = intervalEl?.value;
+  const day = dayEl?.value;
+  const date = dateEl?.value;
   const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+  // DEBUG: show what we found
+  alert(`type=${type} time=${time} interval=${interval} day=${day} date=${date}\ntypeEl=${!!typeEl} timeEl=${!!timeEl}`);
 
   if (type === 'every-min') return `every ${parseInt(interval) || 30}m`;
   if (type === 'every-hr') return `every ${parseInt(interval) || 1}h`;
