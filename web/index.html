@@ -690,6 +690,10 @@ const AVATARS = {
 };
 
 function renderAvatar(avatarId, size = 48) {
+  // Custom uploaded image (data: URI)
+  if (avatarId && avatarId.startsWith('data:')) {
+    return `<img src="${avatarId}" style="width:${size}px;height:${size}px;object-fit:cover;border-radius:8px;image-rendering:pixelated">`;
+  }
   const av = AVATARS[avatarId];
   if (!av) return `<div style="width:${size}px;height:${size}px;background:var(--surface-lighter);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:${size/2}px">🤖</div>`;
   const rows = av.pixels.trim().split('\n').map(r => r.trim()).filter(r => r.length > 0);
@@ -712,7 +716,7 @@ function renderAvatar(avatarId, size = 48) {
 function getAgentAvatar(agentData) {
   // Check agent.json for avatar field, or auto-assign based on name
   if (typeof agentData === 'object') {
-    if (agentData.avatar && AVATARS[agentData.avatar]) return agentData.avatar;
+    if (agentData.avatar && (AVATARS[agentData.avatar] || agentData.avatar.startsWith('data:'))) return agentData.avatar;
     const id = (agentData.id || agentData.name || '').toLowerCase();
     if (id.includes('research') || id.includes('science')) return 'professor';
     if (id.includes('health') || id.includes('nutrition') || id.includes('medic')) return 'doctor';
@@ -1369,12 +1373,19 @@ async function loadConfigTabContent(tab, agentName) {
           </div>
           <div>
             <label class="text-[11px] text-text-secondary font-medium block mb-2 uppercase tracking-wider">Avatar</label>
-            <div class="flex flex-wrap gap-2" id="avatar-picker">
+            <div class="flex flex-wrap gap-2 items-center" id="avatar-picker">
               ${Object.entries(AVATARS).map(([id, av]) => `
                 <button class="avatar-pick p-1.5 rounded-lg border-2 transition-all hover:scale-110 ${(parsed.avatar || getAgentAvatar({id: agentName})) === id ? 'border-accent bg-accent/10' : 'border-transparent hover:border-border'}" data-avatar="${id}" title="${av.label}: ${av.desc}" onclick="pickAvatar('${id}')">
                   ${renderAvatar(id, 36)}
                 </button>
               `).join('')}
+              <!-- Custom image upload -->
+              <button class="avatar-pick p-1.5 rounded-lg border-2 transition-all hover:scale-110 ${(parsed.avatar || '').startsWith('data:') ? 'border-accent bg-accent/10' : 'border-transparent border-dashed hover:border-border'}" title="Upload custom image" onclick="document.getElementById('avatar-upload').click()" id="btn-avatar-upload">
+                <div id="custom-avatar-preview" style="width:36px;height:36px;border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:var(--surface-lighter)">
+                  ${(parsed.avatar || '').startsWith('data:') ? `<img src="${parsed.avatar}" style="width:100%;height:100%;object-fit:cover">` : '<span style="font-size:16px;opacity:0.4">📷</span>'}
+                </div>
+              </button>
+              <input type="file" id="avatar-upload" accept="image/*" style="display:none" onchange="handleAvatarUpload(event)">
             </div>
             <input type="hidden" id="cfg-avatar" value="${esc(parsed.avatar || getAgentAvatar({id: agentName}))}">
           </div>
@@ -1643,11 +1654,62 @@ window.submitScheduleTask = async function() {
 window.pickAvatar = function(avatarId) {
   const hidden = document.getElementById('cfg-avatar');
   if (hidden) hidden.value = avatarId;
+  // Deselect all
   document.querySelectorAll('#avatar-picker .avatar-pick').forEach(btn => {
-    btn.classList.toggle('border-accent', btn.dataset.avatar === avatarId);
-    btn.classList.toggle('bg-accent/10', btn.dataset.avatar === avatarId);
-    btn.classList.toggle('border-transparent', btn.dataset.avatar !== avatarId);
+    const isMatch = btn.dataset.avatar === avatarId;
+    btn.classList.toggle('border-accent', isMatch);
+    btn.classList.toggle('bg-accent/10', isMatch);
+    if (!isMatch) {
+      btn.classList.add('border-transparent');
+      btn.classList.remove('border-accent', 'bg-accent/10');
+    }
   });
+  // Deselect custom upload button if picking a preset
+  const uploadBtn = document.getElementById('btn-avatar-upload');
+  if (uploadBtn && !avatarId.startsWith('data:')) {
+    uploadBtn.classList.remove('border-accent', 'bg-accent/10');
+    uploadBtn.classList.add('border-transparent');
+  }
+};
+
+window.handleAvatarUpload = function(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  // Resize to 64x64 and convert to base64
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const img = new Image();
+    img.onload = function() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 64;
+      const ctx = canvas.getContext('2d');
+      // Center crop to square
+      const s = Math.min(img.width, img.height);
+      const sx = (img.width - s) / 2;
+      const sy = (img.height - s) / 2;
+      ctx.drawImage(img, sx, sy, s, s, 0, 0, 64, 64);
+      const dataUrl = canvas.toDataURL('image/png');
+      // Set as avatar value
+      const hidden = document.getElementById('cfg-avatar');
+      if (hidden) hidden.value = dataUrl;
+      // Update preview
+      const preview = document.getElementById('custom-avatar-preview');
+      if (preview) preview.innerHTML = `<img src="${dataUrl}" style="width:100%;height:100%;object-fit:cover">`;
+      // Highlight upload button, deselect presets
+      document.querySelectorAll('#avatar-picker .avatar-pick').forEach(btn => {
+        btn.classList.remove('border-accent', 'bg-accent/10');
+        btn.classList.add('border-transparent');
+      });
+      const uploadBtn = document.getElementById('btn-avatar-upload');
+      if (uploadBtn) {
+        uploadBtn.classList.add('border-accent', 'bg-accent/10');
+        uploadBtn.classList.remove('border-transparent');
+      }
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
 };
 
 window.saveSoul = async function(agentName) {
