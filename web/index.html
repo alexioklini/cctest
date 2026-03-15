@@ -1,0 +1,1146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Brain Agent</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        accent: '#ff8700',
+        agent: '#af87ff',
+        model: '#5f87ff',
+        surface: '#1e2030',
+        'surface-light': '#262840',
+        'surface-lighter': '#2e3050',
+        base: '#181926',
+        border: '#3a3c55',
+      }
+    }
+  }
+}
+</script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; font-family: 'Inter', system-ui, sans-serif; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #3a3c55; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #4a4c65; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .fade-in { animation: fadeIn 0.2s ease-in; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+  .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+  .sidebar-transition { transition: width 0.2s ease, opacity 0.15s ease; }
+  textarea { resize: none; }
+  .msg-content pre { margin: 0.75rem 0; border-radius: 0.5rem; overflow-x: auto; }
+  .msg-content pre code { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; padding: 1rem !important; display: block; }
+  .msg-content code:not(pre code) { font-family: 'JetBrains Mono', monospace; font-size: 0.85em; background: #2e3050; padding: 0.15em 0.4em; border-radius: 0.25rem; }
+  .msg-content p { margin: 0.4em 0; line-height: 1.65; }
+  .msg-content ul, .msg-content ol { margin: 0.5em 0; padding-left: 1.5em; }
+  .msg-content li { margin: 0.2em 0; }
+  .msg-content h1, .msg-content h2, .msg-content h3 { margin: 0.8em 0 0.4em; font-weight: 600; }
+  .msg-content h1 { font-size: 1.3em; }
+  .msg-content h2 { font-size: 1.15em; }
+  .msg-content h3 { font-size: 1.05em; }
+  .msg-content blockquote { border-left: 3px solid #ff8700; padding-left: 1em; margin: 0.5em 0; opacity: 0.85; }
+  .msg-content table { border-collapse: collapse; margin: 0.5em 0; }
+  .msg-content th, .msg-content td { border: 1px solid #3a3c55; padding: 0.4em 0.8em; }
+  .msg-content th { background: #2e3050; }
+  .tool-block { border-left: 3px solid #ff8700; background: #1a1c2e; border-radius: 0 0.5rem 0.5rem 0; }
+  .nav-item { transition: background 0.15s, border-color 0.15s; }
+  .nav-item:hover { background: #2e3050; }
+  .nav-item.active { background: #2e3050; border-left-color: #ff8700; }
+  .btn-primary { background: #ff8700; color: #181926; font-weight: 600; }
+  .btn-primary:hover { background: #e07800; }
+  .btn-secondary { background: #2e3050; color: #c0c4e0; border: 1px solid #3a3c55; }
+  .btn-secondary:hover { background: #3a3c55; }
+  .chat-input-area { background: linear-gradient(to top, #181926 60%, transparent); }
+  .tab-active { background: #2e3050; border-bottom: 2px solid #ff8700; }
+</style>
+</head>
+<body class="bg-base text-gray-200">
+
+<div id="app" class="flex flex-col h-screen">
+  <!-- HEADER -->
+  <header class="flex items-center justify-between px-4 py-2 bg-surface border-b border-border flex-shrink-0">
+    <div class="flex items-center gap-3">
+      <span class="text-2xl">&#x1f9e0;</span>
+      <h1 class="text-lg font-semibold text-white tracking-tight">Brain Agent</h1>
+    </div>
+    <div class="flex items-center gap-3 text-sm">
+      <span id="conn-status" class="flex items-center gap-1.5">
+        <span id="conn-dot" class="w-2 h-2 rounded-full bg-red-500 pulse-dot"></span>
+        <span id="conn-label" class="text-gray-400">Disconnected</span>
+      </span>
+      <span class="text-gray-500 mono text-xs" id="server-url"></span>
+    </div>
+  </header>
+
+  <div class="flex flex-1 overflow-hidden">
+    <!-- LEFT SIDEBAR -->
+    <aside id="sidebar" class="sidebar-transition flex flex-col bg-surface border-r border-border overflow-hidden flex-shrink-0" style="width:280px">
+      <div class="flex-1 overflow-y-auto py-2">
+        <!-- Nav: Chat -->
+        <div class="px-3 py-2">
+          <button class="nav-section-btn w-full flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-gray-400 hover:text-gray-200 transition-colors" data-section="chat">
+            <span>&#x1f4ac;</span> Chat Sessions
+          </button>
+        </div>
+        <div id="nav-chat-list" class="px-2 space-y-0.5"></div>
+        <div class="px-3 pt-1 pb-2">
+          <button id="btn-new-chat" class="w-full text-left text-xs text-accent hover:text-orange-300 flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-surface-lighter transition-colors">
+            <span class="text-sm">+</span> New Chat
+          </button>
+        </div>
+
+        <div class="border-t border-border my-1"></div>
+
+        <!-- Nav: Agents -->
+        <div class="px-3 py-2">
+          <button class="nav-section-btn w-full flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-gray-400 hover:text-gray-200 transition-colors" data-view="agents">
+            <span>&#x1f916;</span> Agents
+          </button>
+        </div>
+        <div id="nav-agents-list" class="px-2 space-y-0.5"></div>
+
+        <div class="border-t border-border my-1"></div>
+
+        <!-- Nav: Scheduler -->
+        <div class="px-3 py-2">
+          <button class="nav-section-btn w-full flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-gray-400 hover:text-gray-200 transition-colors" data-view="scheduler">
+            <span>&#x23f1;&#xfe0f;</span> Scheduler
+          </button>
+        </div>
+
+        <div class="border-t border-border my-1"></div>
+
+        <!-- Nav: Settings -->
+        <div class="px-3 py-2">
+          <button class="nav-section-btn w-full flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-gray-400 hover:text-gray-200 transition-colors" data-view="settings">
+            <span>&#x2699;&#xfe0f;</span> Settings
+          </button>
+        </div>
+      </div>
+
+      <!-- Sidebar toggle -->
+      <div class="border-t border-border p-2">
+        <button id="btn-toggle-sidebar" class="w-full text-center text-gray-500 hover:text-gray-300 text-xs py-1 transition-colors">&laquo; Collapse</button>
+      </div>
+    </aside>
+
+    <!-- Collapsed sidebar toggle -->
+    <button id="btn-expand-sidebar" class="hidden flex-shrink-0 w-8 bg-surface border-r border-border flex items-center justify-center text-gray-500 hover:text-gray-300 hover:bg-surface-light transition-colors" title="Expand sidebar">&raquo;</button>
+
+    <!-- MAIN AREA -->
+    <main id="main-area" class="flex-1 flex flex-col overflow-hidden">
+      <!-- Chat View -->
+      <div id="view-chat" class="flex-1 flex flex-col overflow-hidden">
+        <!-- Tab bar -->
+        <div id="chat-tab-bar" class="flex items-center bg-surface border-b border-border overflow-x-auto flex-shrink-0" style="min-height:36px"></div>
+        <!-- Messages -->
+        <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-4 space-y-4"></div>
+        <!-- Input area -->
+        <div class="flex-shrink-0 border-t border-border bg-surface p-3">
+          <div class="flex items-center gap-2 mb-2">
+            <select id="model-selector" class="bg-surface-lighter border border-border rounded px-2 py-1 text-xs text-model mono focus:border-model outline-none"></select>
+            <button id="btn-stop" class="hidden btn-secondary text-xs px-2 py-1 rounded flex items-center gap-1">
+              <span class="text-red-400">&#9632;</span> Stop
+            </button>
+          </div>
+          <div class="flex gap-2">
+            <textarea id="chat-input" class="flex-1 bg-surface-lighter border border-border rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:border-accent outline-none transition-colors" rows="2" placeholder="Type a message... (Ctrl+Enter to send)"></textarea>
+            <button id="btn-send" class="btn-primary px-4 rounded-lg text-sm flex items-center gap-1 self-end">
+              Send <span class="text-xs opacity-70">&#x23CE;</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Agents View -->
+      <div id="view-agents" class="flex-1 overflow-hidden hidden">
+        <div class="flex h-full">
+          <div id="agent-sidebar" class="w-64 border-r border-border overflow-y-auto p-3 space-y-1 flex-shrink-0"></div>
+          <div id="agent-detail" class="flex-1 overflow-y-auto p-6">
+            <div class="text-gray-500 text-sm">Select an agent to configure</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scheduler View -->
+      <div id="view-scheduler" class="flex-1 overflow-y-auto hidden p-6">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-semibold text-white">Scheduled Tasks</h2>
+          <button id="btn-add-task" class="btn-primary px-3 py-1.5 rounded text-sm">+ Add Task</button>
+        </div>
+        <div id="scheduler-content"></div>
+        <!-- Add task modal -->
+        <div id="task-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div class="bg-surface rounded-xl border border-border p-6 w-full max-w-lg shadow-2xl">
+            <h3 class="text-white font-semibold mb-4">New Scheduled Task</h3>
+            <div class="space-y-3">
+              <div>
+                <label class="text-xs text-gray-400 block mb-1">Name</label>
+                <input id="task-name" class="w-full bg-surface-lighter border border-border rounded px-3 py-2 text-sm text-gray-200 focus:border-accent outline-none" placeholder="Task name">
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 block mb-1">Agent</label>
+                <select id="task-agent" class="w-full bg-surface-lighter border border-border rounded px-3 py-2 text-sm text-gray-200 focus:border-accent outline-none"></select>
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 block mb-1">Schedule (cron expression)</label>
+                <input id="task-schedule" class="w-full bg-surface-lighter border border-border rounded px-3 py-2 text-sm text-gray-200 mono focus:border-accent outline-none" placeholder="*/30 * * * *">
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 block mb-1">Message</label>
+                <textarea id="task-message" class="w-full bg-surface-lighter border border-border rounded px-3 py-2 text-sm text-gray-200 focus:border-accent outline-none" rows="3" placeholder="Task message to send"></textarea>
+              </div>
+              <div class="flex justify-end gap-2 pt-2">
+                <button id="task-cancel" class="btn-secondary px-4 py-1.5 rounded text-sm">Cancel</button>
+                <button id="task-submit" class="btn-primary px-4 py-1.5 rounded text-sm">Create Task</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings View -->
+      <div id="view-settings" class="flex-1 overflow-y-auto hidden p-6">
+        <h2 class="text-lg font-semibold text-white mb-4">Settings</h2>
+        <div id="settings-content" class="space-y-6"></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- FOOTER STATUS BAR -->
+  <footer class="flex items-center justify-between px-4 py-1.5 bg-surface border-t border-border text-xs text-gray-500 flex-shrink-0">
+    <div class="flex items-center gap-4">
+      <span id="status-model" class="text-model mono"></span>
+      <span id="status-agent" class="text-agent"></span>
+    </div>
+    <div class="flex items-center gap-4">
+      <span id="status-tokens" class="mono"></span>
+      <span id="status-session" class="mono"></span>
+    </div>
+  </footer>
+</div>
+
+<script>
+// ─── Configuration ──────────────────────────────────────────
+const BASE_URL = window.location.origin;
+
+// ─── Markdown Setup ─────────────────────────────────────────
+marked.setOptions({
+  highlight: (code, lang) => {
+    if (lang && hljs.getLanguage(lang)) {
+      try { return hljs.highlight(code, { language: lang }).value; } catch {}
+    }
+    return hljs.highlightAuto(code).value;
+  },
+  breaks: true,
+  gfm: true,
+});
+
+// ─── API Client ─────────────────────────────────────────────
+class API {
+  static async get(path) {
+    const res = await fetch(`${BASE_URL}${path}`);
+    if (!res.ok) throw new Error(`GET ${path}: ${res.status}`);
+    return res.json();
+  }
+
+  static async post(path, body) {
+    const res = await fetch(`${BASE_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`POST ${path}: ${res.status}`);
+    return res.json();
+  }
+
+  static async del(path) {
+    const res = await fetch(`${BASE_URL}${path}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`DELETE ${path}: ${res.status}`);
+    return res.json();
+  }
+
+  static async streamChat(sessionId, message, callbacks) {
+    const res = await fetch(`${BASE_URL}/v1/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId, message }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Chat error: ${err}`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      let eventType = '';
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith('data: ')) {
+          const raw = line.slice(6);
+          try {
+            const data = JSON.parse(raw);
+            if (callbacks[eventType]) callbacks[eventType](data);
+          } catch {}
+        }
+      }
+    }
+  }
+
+  static async getStatus() { return this.get('/v1/status'); }
+  static async getAgents() { return this.get('/v1/agents'); }
+  static async getAgentFiles(id) { return this.get(`/v1/agents/${encodeURIComponent(id)}/files`); }
+  static async getAgentFile(id, name) { return this.get(`/v1/agents/${encodeURIComponent(id)}/file?name=${encodeURIComponent(name)}`); }
+  static async writeAgentFile(id, name, content) { return this.post(`/v1/agents/${encodeURIComponent(id)}/file`, { name, content }); }
+  static async createAgent(agent, description, soul) { return this.post('/v1/agents/create', { agent, description, soul }); }
+  static async switchAgent(sessionId, agent) { return this.post('/v1/agents/switch', { session_id: sessionId, agent }); }
+  static async getModels() { return this.get('/v1/models'); }
+  static async getProviders() { return this.get('/v1/providers'); }
+  static async createSession(agent, model) { return this.post('/v1/sessions', { agent, model }); }
+  static async deleteSession(id) { return this.del(`/v1/sessions/${id}`); }
+  static async cancelChat(sessionId) { return this.post('/v1/chat/cancel', { session_id: sessionId }); }
+  static async getSchedule() { return this.get('/v1/schedule'); }
+  static async manageSchedule(body) { return this.post('/v1/schedule', body); }
+  static async getTasks() { return this.get('/v1/tasks'); }
+}
+
+// ─── App State ──────────────────────────────────────────────
+class AppState {
+  constructor() {
+    this.connected = false;
+    this.agents = [];
+    this.models = [];
+    this.providers = [];
+    this.sessions = [];
+    this.chats = []; // { id, sessionId, agent, model, messages[], streaming }
+    this.activeChatIdx = -1;
+    this.currentView = 'chat';
+    this.serverInfo = null;
+    this.abortControllers = {};
+  }
+
+  get activeChat() {
+    return this.activeChatIdx >= 0 ? this.chats[this.activeChatIdx] : null;
+  }
+}
+
+const state = new AppState();
+
+// ─── DOM Refs ───────────────────────────────────────────────
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => document.querySelectorAll(sel);
+
+const dom = {
+  connDot: $('#conn-dot'),
+  connLabel: $('#conn-label'),
+  serverUrl: $('#server-url'),
+  sidebar: $('#sidebar'),
+  expandBtn: $('#btn-expand-sidebar'),
+  chatTabBar: $('#chat-tab-bar'),
+  chatMessages: $('#chat-messages'),
+  chatInput: $('#chat-input'),
+  modelSelector: $('#model-selector'),
+  btnSend: $('#btn-send'),
+  btnStop: $('#btn-stop'),
+  btnNewChat: $('#btn-new-chat'),
+  navChatList: $('#nav-chat-list'),
+  navAgentsList: $('#nav-agents-list'),
+  statusModel: $('#status-model'),
+  statusAgent: $('#status-agent'),
+  statusTokens: $('#status-tokens'),
+  statusSession: $('#status-session'),
+  agentSidebar: $('#agent-sidebar'),
+  agentDetail: $('#agent-detail'),
+  schedulerContent: $('#scheduler-content'),
+  settingsContent: $('#settings-content'),
+  taskModal: $('#task-modal'),
+};
+
+// ─── View Management ────────────────────────────────────────
+function switchView(view) {
+  state.currentView = view;
+  ['chat', 'agents', 'scheduler', 'settings'].forEach(v => {
+    const el = $(`#view-${v}`);
+    if (el) el.classList.toggle('hidden', v !== view);
+  });
+  $$('.nav-section-btn').forEach(btn => {
+    const bv = btn.dataset.view || (btn.dataset.section === 'chat' ? 'chat' : null);
+    btn.closest('.px-3')?.classList.toggle('bg-surface-lighter', bv === view);
+  });
+  if (view === 'agents') renderAgentsView();
+  if (view === 'scheduler') renderSchedulerView();
+  if (view === 'settings') renderSettingsView();
+}
+
+// ─── Connection ─────────────────────────────────────────────
+async function checkConnection() {
+  try {
+    const info = await API.getStatus();
+    state.connected = true;
+    state.serverInfo = info;
+    dom.connDot.className = 'w-2 h-2 rounded-full bg-green-500 pulse-dot';
+    dom.connLabel.textContent = `v${info.version || '?'}`;
+    dom.serverUrl.textContent = BASE_URL;
+    return true;
+  } catch {
+    state.connected = false;
+    dom.connDot.className = 'w-2 h-2 rounded-full bg-red-500 pulse-dot';
+    dom.connLabel.textContent = 'Disconnected';
+    dom.serverUrl.textContent = BASE_URL;
+    return false;
+  }
+}
+
+async function loadInitialData() {
+  const ok = await checkConnection();
+  if (!ok) return;
+  try {
+    const [agents, models, providers] = await Promise.allSettled([
+      API.getAgents(),
+      API.getModels(),
+      API.getProviders(),
+    ]);
+    if (agents.status === 'fulfilled') {
+      state.agents = Array.isArray(agents.value) ? agents.value : (agents.value.agents || []);
+    }
+    if (models.status === 'fulfilled') {
+      state.models = Array.isArray(models.value) ? models.value : (models.value.models || models.value.data || []);
+    }
+    if (providers.status === 'fulfilled') {
+      state.providers = Array.isArray(providers.value) ? providers.value : (providers.value.providers || []);
+    }
+  } catch {}
+  renderModelSelector();
+  renderNavAgents();
+  if (state.chats.length === 0) {
+    createNewChat();
+  }
+}
+
+// ─── Rendering: Models ──────────────────────────────────────
+function renderModelSelector() {
+  dom.modelSelector.innerHTML = '';
+  const models = state.models;
+  if (models.length === 0) {
+    dom.modelSelector.innerHTML = '<option value="">No models</option>';
+    return;
+  }
+  models.forEach(m => {
+    const id = typeof m === 'string' ? m : (m.id || m.name || m);
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = id;
+    dom.modelSelector.appendChild(opt);
+  });
+}
+
+// ─── Rendering: Nav Agents ──────────────────────────────────
+function renderNavAgents() {
+  dom.navAgentsList.innerHTML = '';
+  state.agents.forEach(a => {
+    const name = typeof a === 'string' ? a : (a.name || a.agent || a.id || '');
+    const desc = typeof a === 'object' ? (a.description || '') : '';
+    const div = document.createElement('div');
+    div.className = 'nav-item flex items-center gap-2 px-3 py-1.5 rounded cursor-pointer text-sm border-l-2 border-transparent';
+    div.innerHTML = `<span class="text-agent text-xs">&#x25cf;</span><span class="truncate text-gray-300">${esc(name)}</span>`;
+    div.title = desc;
+    div.onclick = () => {
+      switchView('agents');
+      selectAgent(name);
+    };
+    dom.navAgentsList.appendChild(div);
+  });
+}
+
+// ─── Rendering: Chat Tabs ───────────────────────────────────
+function renderChatTabs() {
+  dom.chatTabBar.innerHTML = '';
+  state.chats.forEach((chat, idx) => {
+    const tab = document.createElement('button');
+    const isActive = idx === state.activeChatIdx;
+    tab.className = `flex items-center gap-1.5 px-3 py-1.5 text-xs whitespace-nowrap border-b-2 transition-colors flex-shrink-0 ${
+      isActive ? 'tab-active text-white' : 'border-transparent text-gray-400 hover:text-gray-200 hover:bg-surface-lighter'
+    }`;
+    const agentLabel = chat.agent || 'Chat';
+    tab.innerHTML = `<span class="text-agent">${esc(agentLabel)}</span>
+      <span class="text-gray-500">#${idx + 1}</span>
+      <span class="ml-1 text-gray-600 hover:text-red-400 transition-colors close-tab" data-idx="${idx}">&times;</span>`;
+    tab.onclick = (e) => {
+      if (e.target.classList.contains('close-tab')) {
+        closeChat(parseInt(e.target.dataset.idx));
+      } else {
+        state.activeChatIdx = idx;
+        renderChatTabs();
+        renderMessages();
+        updateStatusBar();
+      }
+    };
+    dom.chatTabBar.appendChild(tab);
+  });
+}
+
+// ─── Rendering: Nav Chat List ───────────────────────────────
+function renderNavChats() {
+  dom.navChatList.innerHTML = '';
+  state.chats.forEach((chat, idx) => {
+    const div = document.createElement('div');
+    const isActive = idx === state.activeChatIdx && state.currentView === 'chat';
+    div.className = `nav-item flex items-center gap-2 px-3 py-1.5 rounded cursor-pointer text-sm border-l-2 ${
+      isActive ? 'active border-l-accent' : 'border-transparent'
+    }`;
+    const label = chat.agent || 'Chat';
+    const msgCount = chat.messages.length;
+    div.innerHTML = `<span class="text-accent text-xs">&#x25cf;</span>
+      <span class="truncate text-gray-300 flex-1">${esc(label)} #${idx + 1}</span>
+      <span class="text-gray-600 text-xs">${msgCount}</span>`;
+    div.onclick = () => {
+      state.activeChatIdx = idx;
+      switchView('chat');
+      renderChatTabs();
+      renderMessages();
+      renderNavChats();
+      updateStatusBar();
+    };
+    dom.navChatList.appendChild(div);
+  });
+}
+
+// ─── Chat Management ────────────────────────────────────────
+function createNewChat() {
+  const model = dom.modelSelector.value || (state.models[0]?.id || state.models[0] || '');
+  const agent = state.agents.length > 0 ? (typeof state.agents[0] === 'string' ? state.agents[0] : (state.agents[0].name || state.agents[0].agent || '')) : '';
+  const chat = {
+    id: Date.now().toString(36),
+    sessionId: null,
+    agent,
+    model,
+    messages: [],
+    streaming: false,
+    totalTokens: 0,
+  };
+  state.chats.push(chat);
+  state.activeChatIdx = state.chats.length - 1;
+  renderChatTabs();
+  renderNavChats();
+  renderMessages();
+  updateStatusBar();
+  dom.chatInput.focus();
+}
+
+function closeChat(idx) {
+  const chat = state.chats[idx];
+  if (chat.sessionId) {
+    API.deleteSession(chat.sessionId).catch(() => {});
+  }
+  state.chats.splice(idx, 1);
+  if (state.chats.length === 0) {
+    createNewChat();
+    return;
+  }
+  if (state.activeChatIdx >= state.chats.length) state.activeChatIdx = state.chats.length - 1;
+  else if (state.activeChatIdx > idx) state.activeChatIdx--;
+  renderChatTabs();
+  renderNavChats();
+  renderMessages();
+  updateStatusBar();
+}
+
+async function ensureSession(chat) {
+  if (chat.sessionId) return;
+  try {
+    const res = await API.createSession(chat.agent || undefined, chat.model || undefined);
+    chat.sessionId = res.session_id;
+    updateStatusBar();
+  } catch (e) {
+    addSystemMessage(chat, `Failed to create session: ${e.message}`);
+    throw e;
+  }
+}
+
+// ─── Messages ───────────────────────────────────────────────
+function addSystemMessage(chat, text) {
+  chat.messages.push({ role: 'system', content: text, ts: Date.now() });
+  if (chat === state.activeChat) renderMessages();
+}
+
+function renderMessages() {
+  const chat = state.activeChat;
+  dom.chatMessages.innerHTML = '';
+  if (!chat) {
+    dom.chatMessages.innerHTML = '<div class="flex items-center justify-center h-full text-gray-600 text-sm">No active chat</div>';
+    return;
+  }
+  if (chat.messages.length === 0) {
+    dom.chatMessages.innerHTML = `
+      <div class="flex flex-col items-center justify-center h-full text-gray-600 gap-3">
+        <span class="text-4xl">&#x1f9e0;</span>
+        <span class="text-sm">Start a conversation</span>
+        <span class="text-xs text-gray-700">Messages will appear here</span>
+      </div>`;
+    return;
+  }
+  chat.messages.forEach((msg, i) => renderMessage(msg, i));
+  scrollToBottom();
+}
+
+function renderMessage(msg, idx) {
+  const div = document.createElement('div');
+  div.className = 'fade-in';
+  div.dataset.idx = idx;
+
+  if (msg.role === 'user') {
+    div.className += ' flex justify-end';
+    div.innerHTML = `<div class="max-w-2xl bg-surface-lighter rounded-xl rounded-tr-sm px-4 py-2.5 text-sm text-gray-200 msg-content">${marked.parse(msg.content)}</div>`;
+  } else if (msg.role === 'assistant') {
+    div.className += ' flex justify-start';
+    const toolsHtml = (msg.tools || []).map(t => renderToolBlock(t)).join('');
+    const content = msg.content ? marked.parse(msg.content) : '';
+    div.innerHTML = `<div class="max-w-3xl text-sm text-gray-200">
+      ${toolsHtml}
+      <div class="msg-content">${content}</div>
+      ${msg.tokens ? `<div class="text-xs text-gray-600 mt-1 mono">${msg.tokens} tokens</div>` : ''}
+    </div>`;
+  } else if (msg.role === 'system') {
+    div.className += ' flex justify-center';
+    div.innerHTML = `<div class="text-xs text-gray-600 bg-surface-lighter px-3 py-1 rounded-full">${esc(msg.content)}</div>`;
+  }
+  dom.chatMessages.appendChild(div);
+  // Re-highlight code blocks
+  div.querySelectorAll('pre code').forEach(block => {
+    hljs.highlightElement(block);
+  });
+}
+
+function renderToolBlock(tool) {
+  const statusIcon = tool.result !== undefined ? '&#x2705;' : '&#x26a1;';
+  const name = esc(tool.name || '');
+  const argsPreview = tool.args ? esc(typeof tool.args === 'string' ? tool.args : JSON.stringify(tool.args)).substring(0, 120) : '';
+  const resultContent = tool.result !== undefined ? `<div class="mt-2 text-xs text-gray-400 mono whitespace-pre-wrap max-h-40 overflow-y-auto">${esc(typeof tool.result === 'string' ? tool.result : JSON.stringify(tool.result, null, 2))}</div>` : '';
+  return `<div class="tool-block px-3 py-2 mb-2 text-xs cursor-pointer" onclick="this.querySelector('.tool-detail')?.classList.toggle('hidden')">
+    <div class="flex items-center gap-2">
+      <span>${statusIcon}</span>
+      <span class="text-accent font-medium">${name}</span>
+      <span class="text-gray-500 truncate">${argsPreview}</span>
+    </div>
+    <div class="tool-detail hidden">${resultContent}</div>
+  </div>`;
+}
+
+function updateStreamingMessage(chat) {
+  const msg = chat.messages[chat.messages.length - 1];
+  if (!msg || msg.role !== 'assistant') return;
+  const lastDiv = dom.chatMessages.lastElementChild;
+  if (!lastDiv) return;
+  const contentDiv = lastDiv.querySelector('.msg-content');
+  if (contentDiv) {
+    contentDiv.innerHTML = marked.parse(msg.content || '');
+    contentDiv.querySelectorAll('pre code').forEach(block => hljs.highlightElement(block));
+  }
+  // Update tools
+  const parent = lastDiv.querySelector('.max-w-3xl');
+  if (parent) {
+    const existingTools = parent.querySelectorAll('.tool-block');
+    const toolsNeeded = msg.tools?.length || 0;
+    if (toolsNeeded > existingTools.length) {
+      const newTool = msg.tools[toolsNeeded - 1];
+      const toolDiv = document.createElement('div');
+      toolDiv.innerHTML = renderToolBlock(newTool);
+      parent.insertBefore(toolDiv.firstElementChild, contentDiv);
+    } else if (toolsNeeded > 0) {
+      // Update last tool block
+      const lastToolEl = parent.querySelectorAll('.tool-block')[toolsNeeded - 1];
+      if (lastToolEl) {
+        const t = msg.tools[toolsNeeded - 1];
+        lastToolEl.outerHTML = renderToolBlock(t);
+      }
+    }
+  }
+  scrollToBottom();
+}
+
+function scrollToBottom() {
+  requestAnimationFrame(() => {
+    dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
+  });
+}
+
+// ─── Send Message ───────────────────────────────────────────
+async function sendMessage() {
+  const chat = state.activeChat;
+  if (!chat || chat.streaming) return;
+  const text = dom.chatInput.value.trim();
+  if (!text) return;
+  dom.chatInput.value = '';
+  dom.chatInput.style.height = 'auto';
+
+  chat.messages.push({ role: 'user', content: text, ts: Date.now() });
+  renderMessages();
+
+  try {
+    await ensureSession(chat);
+  } catch { return; }
+
+  chat.streaming = true;
+  dom.btnStop.classList.remove('hidden');
+  dom.btnSend.disabled = true;
+
+  // Create assistant message placeholder
+  const assistantMsg = { role: 'assistant', content: '', tools: [], ts: Date.now() };
+  chat.messages.push(assistantMsg);
+  renderMessages();
+
+  try {
+    await API.streamChat(chat.sessionId, text, {
+      text_delta: (d) => {
+        assistantMsg.content += d.text || '';
+        updateStreamingMessage(chat);
+      },
+      tool_call: (d) => {
+        assistantMsg.tools.push({ name: d.name, args: d.args });
+        updateStreamingMessage(chat);
+      },
+      tool_result: (d) => {
+        const tool = assistantMsg.tools.find(t => t.name === d.name && t.result === undefined);
+        if (tool) tool.result = d.result;
+        updateStreamingMessage(chat);
+      },
+      done: (d) => {
+        if (d.text && !assistantMsg.content) assistantMsg.content = d.text;
+        assistantMsg.tokens = d.tokens;
+        chat.totalTokens += d.tokens || 0;
+      },
+      error: (d) => {
+        assistantMsg.content += `\n\n**Error:** ${d.message || 'Unknown error'}`;
+      },
+    });
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      assistantMsg.content += `\n\n**Error:** ${e.message}`;
+    }
+  } finally {
+    chat.streaming = false;
+    dom.btnStop.classList.add('hidden');
+    dom.btnSend.disabled = false;
+    renderMessages();
+    updateStatusBar();
+    renderNavChats();
+  }
+}
+
+async function stopGeneration() {
+  const chat = state.activeChat;
+  if (!chat || !chat.sessionId) return;
+  try {
+    await API.cancelChat(chat.sessionId);
+  } catch {}
+}
+
+// ─── Status Bar ─────────────────────────────────────────────
+function updateStatusBar() {
+  const chat = state.activeChat;
+  dom.statusModel.textContent = chat?.model || '';
+  dom.statusAgent.textContent = chat?.agent ? `Agent: ${chat.agent}` : '';
+  dom.statusTokens.textContent = chat?.totalTokens ? `${chat.totalTokens} tokens` : '';
+  dom.statusSession.textContent = chat?.sessionId ? `Session: ${chat.sessionId.substring(0, 8)}` : '';
+}
+
+// ─── Agents View ────────────────────────────────────────────
+function renderAgentsView() {
+  dom.agentSidebar.innerHTML = '';
+  state.agents.forEach(a => {
+    const name = typeof a === 'string' ? a : (a.name || a.agent || a.id || '');
+    const desc = typeof a === 'object' ? (a.description || '') : '';
+    const div = document.createElement('div');
+    div.className = 'flex items-center gap-2 px-3 py-2 rounded cursor-pointer text-sm hover:bg-surface-lighter transition-colors';
+    div.innerHTML = `<span class="text-agent">&#x1f916;</span>
+      <div class="flex-1 truncate">
+        <div class="text-gray-200">${esc(name)}</div>
+        <div class="text-gray-500 text-xs truncate">${esc(desc)}</div>
+      </div>`;
+    div.onclick = () => selectAgent(name);
+    dom.agentSidebar.appendChild(div);
+  });
+  // Create agent button
+  const btn = document.createElement('button');
+  btn.className = 'w-full text-left text-xs text-accent hover:text-orange-300 flex items-center gap-1.5 px-3 py-2 mt-2 rounded hover:bg-surface-lighter transition-colors';
+  btn.innerHTML = '<span class="text-sm">+</span> Create Agent';
+  btn.onclick = showCreateAgentForm;
+  dom.agentSidebar.appendChild(btn);
+}
+
+async function selectAgent(name) {
+  dom.agentDetail.innerHTML = '<div class="text-gray-500 text-sm">Loading...</div>';
+  try {
+    const [filesRes, soulRes] = await Promise.allSettled([
+      API.getAgentFiles(name),
+      API.getAgentFile(name, 'soul.md'),
+    ]);
+    const files = filesRes.status === 'fulfilled' ? (Array.isArray(filesRes.value) ? filesRes.value : (filesRes.value.files || [])) : [];
+    const soulContent = soulRes.status === 'fulfilled' ? (typeof soulRes.value === 'string' ? soulRes.value : (soulRes.value.content || '')) : '';
+
+    dom.agentDetail.innerHTML = `
+      <div class="space-y-6">
+        <div>
+          <h2 class="text-xl font-semibold text-white flex items-center gap-2">
+            <span class="text-agent">&#x1f916;</span> ${esc(name)}
+          </h2>
+        </div>
+        <div>
+          <h3 class="text-sm font-semibold text-gray-400 mb-2">Soul (soul.md)</h3>
+          <textarea id="soul-editor" class="w-full bg-surface-lighter border border-border rounded-lg px-4 py-3 text-sm text-gray-200 mono focus:border-accent outline-none" rows="16">${esc(soulContent)}</textarea>
+          <button id="btn-save-soul" class="btn-primary px-4 py-1.5 rounded text-sm mt-2" onclick="saveSoul('${esc(name)}')">Save Soul</button>
+        </div>
+        <div>
+          <h3 class="text-sm font-semibold text-gray-400 mb-2">Files</h3>
+          <div class="space-y-1">
+            ${files.map(f => {
+              const fname = typeof f === 'string' ? f : (f.name || f);
+              return `<div class="flex items-center gap-2 px-3 py-1.5 bg-surface-lighter rounded text-sm">
+                <span class="text-gray-500">&#x1f4c4;</span>
+                <span class="text-gray-300 mono text-xs">${esc(fname)}</span>
+                <button class="ml-auto text-xs text-model hover:text-blue-300" onclick="viewAgentFile('${esc(name)}','${esc(fname)}')">View</button>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+      </div>`;
+  } catch (e) {
+    dom.agentDetail.innerHTML = `<div class="text-red-400 text-sm">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+window.saveSoul = async function(agentName) {
+  const content = $('#soul-editor')?.value;
+  if (content === undefined) return;
+  try {
+    await API.writeAgentFile(agentName, 'soul.md', content);
+    showToast('Soul saved successfully');
+  } catch (e) {
+    showToast(`Error saving: ${e.message}`, true);
+  }
+};
+
+window.viewAgentFile = async function(agentName, fileName) {
+  try {
+    const res = await API.getAgentFile(agentName, fileName);
+    const content = typeof res === 'string' ? res : (res.content || JSON.stringify(res, null, 2));
+    const modal = document.createElement('div');
+    modal.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50';
+    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+    modal.innerHTML = `<div class="bg-surface rounded-xl border border-border p-6 w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-white font-semibold mono text-sm">${esc(fileName)}</h3>
+        <button class="text-gray-500 hover:text-white text-lg" onclick="this.closest('.fixed').remove()">&times;</button>
+      </div>
+      <pre class="flex-1 overflow-auto bg-surface-lighter rounded-lg p-4 text-xs text-gray-300 mono">${esc(content)}</pre>
+    </div>`;
+    document.body.appendChild(modal);
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+function showCreateAgentForm() {
+  dom.agentDetail.innerHTML = `
+    <div class="space-y-4">
+      <h2 class="text-xl font-semibold text-white">Create New Agent</h2>
+      <div>
+        <label class="text-xs text-gray-400 block mb-1">Agent Name</label>
+        <input id="new-agent-name" class="w-full bg-surface-lighter border border-border rounded px-3 py-2 text-sm text-gray-200 focus:border-accent outline-none" placeholder="agent-name">
+      </div>
+      <div>
+        <label class="text-xs text-gray-400 block mb-1">Description</label>
+        <input id="new-agent-desc" class="w-full bg-surface-lighter border border-border rounded px-3 py-2 text-sm text-gray-200 focus:border-accent outline-none" placeholder="Brief description">
+      </div>
+      <div>
+        <label class="text-xs text-gray-400 block mb-1">Soul (initial soul.md content)</label>
+        <textarea id="new-agent-soul" class="w-full bg-surface-lighter border border-border rounded-lg px-4 py-3 text-sm text-gray-200 mono focus:border-accent outline-none" rows="10" placeholder="You are..."></textarea>
+      </div>
+      <button class="btn-primary px-4 py-2 rounded text-sm" onclick="submitCreateAgent()">Create Agent</button>
+    </div>`;
+}
+
+window.submitCreateAgent = async function() {
+  const name = $('#new-agent-name')?.value.trim();
+  const desc = $('#new-agent-desc')?.value.trim();
+  const soul = $('#new-agent-soul')?.value.trim();
+  if (!name) { showToast('Name is required', true); return; }
+  try {
+    await API.createAgent(name, desc, soul);
+    showToast('Agent created');
+    await loadInitialData();
+    renderAgentsView();
+    selectAgent(name);
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+// ─── Scheduler View ─────────────────────────────────────────
+async function renderSchedulerView() {
+  dom.schedulerContent.innerHTML = '<div class="text-gray-500 text-sm">Loading...</div>';
+  try {
+    const tasks = await API.getSchedule();
+    const list = Array.isArray(tasks) ? tasks : (tasks.tasks || []);
+    if (list.length === 0) {
+      dom.schedulerContent.innerHTML = '<div class="text-gray-500 text-sm py-8 text-center">No scheduled tasks</div>';
+      return;
+    }
+    dom.schedulerContent.innerHTML = `
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-xs text-gray-500 uppercase tracking-wider">
+              <th class="px-3 py-2">Name</th>
+              <th class="px-3 py-2">Agent</th>
+              <th class="px-3 py-2">Schedule</th>
+              <th class="px-3 py-2">Status</th>
+              <th class="px-3 py-2">Next Run</th>
+              <th class="px-3 py-2">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-border">
+            ${list.map(t => `
+              <tr class="hover:bg-surface-lighter transition-colors">
+                <td class="px-3 py-2.5 text-gray-200">${esc(t.name || t.id || '')}</td>
+                <td class="px-3 py-2.5 text-agent">${esc(t.agent || '')}</td>
+                <td class="px-3 py-2.5 mono text-xs text-gray-400">${esc(t.schedule || t.cron || '')}</td>
+                <td class="px-3 py-2.5">
+                  <span class="px-2 py-0.5 rounded-full text-xs ${t.status === 'active' || t.status === 'running' ? 'bg-green-900/30 text-green-400' : 'bg-gray-800 text-gray-500'}">${esc(t.status || 'unknown')}</span>
+                </td>
+                <td class="px-3 py-2.5 text-xs text-gray-500">${esc(t.next_run || '')}</td>
+                <td class="px-3 py-2.5 space-x-1">
+                  ${t.status === 'active' ? `<button class="text-xs text-yellow-500 hover:text-yellow-400" onclick="scheduleAction('pause','${esc(t.id || t.name)}')">Pause</button>` : `<button class="text-xs text-green-500 hover:text-green-400" onclick="scheduleAction('resume','${esc(t.id || t.name)}')">Resume</button>`}
+                  <button class="text-xs text-red-500 hover:text-red-400" onclick="scheduleAction('delete','${esc(t.id || t.name)}')">Delete</button>
+                  <button class="text-xs text-model hover:text-blue-300" onclick="scheduleAction('history','${esc(t.id || t.name)}')">History</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  } catch (e) {
+    dom.schedulerContent.innerHTML = `<div class="text-red-400 text-sm">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+window.scheduleAction = async function(action, taskId) {
+  try {
+    if (action === 'history') {
+      const res = await API.manageSchedule({ action: 'history', task_id: taskId });
+      const history = Array.isArray(res) ? res : (res.history || []);
+      const modal = document.createElement('div');
+      modal.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50';
+      modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+      modal.innerHTML = `<div class="bg-surface rounded-xl border border-border p-6 w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-white font-semibold">Task History: ${esc(taskId)}</h3>
+          <button class="text-gray-500 hover:text-white text-lg" onclick="this.closest('.fixed').remove()">&times;</button>
+        </div>
+        <div class="flex-1 overflow-auto text-sm text-gray-300 space-y-2">
+          ${history.length === 0 ? '<div class="text-gray-500">No history</div>' : history.map(h => `<div class="bg-surface-lighter rounded p-3">
+            <div class="text-xs text-gray-500">${esc(h.time || h.timestamp || '')}</div>
+            <div class="text-gray-300 mt-1">${esc(h.result || h.message || JSON.stringify(h))}</div>
+          </div>`).join('')}
+        </div>
+      </div>`;
+      document.body.appendChild(modal);
+    } else {
+      await API.manageSchedule({ action, task_id: taskId });
+      showToast(`Task ${action}d`);
+      renderSchedulerView();
+    }
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+// Task modal
+$('#btn-add-task').onclick = () => {
+  dom.taskModal.classList.remove('hidden');
+  const sel = $('#task-agent');
+  sel.innerHTML = state.agents.map(a => {
+    const name = typeof a === 'string' ? a : (a.name || a.agent || '');
+    return `<option value="${esc(name)}">${esc(name)}</option>`;
+  }).join('');
+};
+$('#task-cancel').onclick = () => dom.taskModal.classList.add('hidden');
+$('#task-submit').onclick = async () => {
+  const name = $('#task-name').value.trim();
+  const agent = $('#task-agent').value;
+  const schedule = $('#task-schedule').value.trim();
+  const message = $('#task-message').value.trim();
+  if (!name || !schedule || !message) { showToast('All fields required', true); return; }
+  try {
+    await API.manageSchedule({ action: 'add', name, agent, schedule, message });
+    dom.taskModal.classList.add('hidden');
+    showToast('Task created');
+    renderSchedulerView();
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+// ─── Settings View ──────────────────────────────────────────
+async function renderSettingsView() {
+  dom.settingsContent.innerHTML = '<div class="text-gray-500 text-sm">Loading...</div>';
+  try {
+    const [statusRes, providersRes] = await Promise.allSettled([
+      API.getStatus(),
+      API.getProviders(),
+    ]);
+    const status = statusRes.status === 'fulfilled' ? statusRes.value : {};
+    const providers = providersRes.status === 'fulfilled' ? (Array.isArray(providersRes.value) ? providersRes.value : (providersRes.value.providers || [])) : [];
+
+    dom.settingsContent.innerHTML = `
+      <!-- Server Status -->
+      <div class="bg-surface-lighter rounded-xl border border-border p-5">
+        <h3 class="text-sm font-semibold text-gray-400 mb-3">Server Status</h3>
+        <div class="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <span class="text-gray-500">Version:</span>
+            <span class="text-gray-200 ml-2 mono">${esc(status.version || 'N/A')}</span>
+          </div>
+          <div>
+            <span class="text-gray-500">URL:</span>
+            <span class="text-gray-200 ml-2 mono text-xs">${esc(BASE_URL)}</span>
+          </div>
+          <div>
+            <span class="text-gray-500">Sessions:</span>
+            <span class="text-gray-200 ml-2 mono">${Array.isArray(status.sessions) ? status.sessions.length : (status.sessions || 'N/A')}</span>
+          </div>
+          <div>
+            <span class="text-gray-500">Scheduler Tasks:</span>
+            <span class="text-gray-200 ml-2 mono">${Array.isArray(status.scheduler_tasks) ? status.scheduler_tasks.length : (status.scheduler_tasks || 'N/A')}</span>
+          </div>
+        </div>
+        ${status.agents ? `<div class="mt-3">
+          <span class="text-gray-500 text-sm">Agents:</span>
+          <div class="flex flex-wrap gap-1.5 mt-1">${(Array.isArray(status.agents) ? status.agents : []).map(a => `<span class="px-2 py-0.5 bg-surface rounded text-xs text-agent">${esc(typeof a === 'string' ? a : a.name || '')}</span>`).join('')}</div>
+        </div>` : ''}
+      </div>
+
+      <!-- Providers -->
+      <div class="bg-surface-lighter rounded-xl border border-border p-5">
+        <h3 class="text-sm font-semibold text-gray-400 mb-3">Providers &amp; Models</h3>
+        <div class="space-y-4">
+          ${providers.map(p => {
+            const pName = typeof p === 'string' ? p : (p.name || p.provider || p.id || '');
+            const pModels = typeof p === 'object' ? (p.models || []) : [];
+            return `<div>
+              <div class="text-sm text-gray-200 font-medium mb-1.5">${esc(pName)}</div>
+              <div class="flex flex-wrap gap-1.5">
+                ${pModels.map(m => {
+                  const mName = typeof m === 'string' ? m : (m.id || m.name || '');
+                  return `<span class="px-2 py-0.5 bg-surface rounded text-xs text-model mono">${esc(mName)}</span>`;
+                }).join('') || '<span class="text-xs text-gray-600">No models</span>'}
+              </div>
+            </div>`;
+          }).join('') || '<div class="text-gray-600 text-sm">No providers found</div>'}
+        </div>
+      </div>`;
+  } catch (e) {
+    dom.settingsContent.innerHTML = `<div class="text-red-400 text-sm">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+// ─── Toast Notification ─────────────────────────────────────
+function showToast(msg, isError = false) {
+  const toast = document.createElement('div');
+  toast.className = `fixed bottom-12 right-4 px-4 py-2 rounded-lg text-sm shadow-lg z-50 fade-in ${isError ? 'bg-red-900/90 text-red-200 border border-red-700' : 'bg-surface-lighter text-gray-200 border border-border'}`;
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+  setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(() => toast.remove(), 300); }, 3000);
+}
+
+// ─── Utilities ──────────────────────────────────────────────
+function esc(str) {
+  if (typeof str !== 'string') str = String(str || '');
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ─── Sidebar Toggle ─────────────────────────────────────────
+$('#btn-toggle-sidebar').onclick = () => {
+  dom.sidebar.style.width = '0';
+  dom.sidebar.style.opacity = '0';
+  dom.sidebar.style.overflow = 'hidden';
+  dom.expandBtn.classList.remove('hidden');
+  dom.expandBtn.classList.add('flex');
+};
+dom.expandBtn.onclick = () => {
+  dom.sidebar.style.width = '280px';
+  dom.sidebar.style.opacity = '1';
+  dom.sidebar.style.overflow = '';
+  dom.expandBtn.classList.add('hidden');
+  dom.expandBtn.classList.remove('flex');
+};
+
+// ─── Event Listeners ────────────────────────────────────────
+dom.btnNewChat.onclick = () => { createNewChat(); switchView('chat'); };
+dom.btnSend.onclick = sendMessage;
+dom.btnStop.onclick = stopGeneration;
+
+dom.chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.ctrlKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+// Auto-resize textarea
+dom.chatInput.addEventListener('input', () => {
+  dom.chatInput.style.height = 'auto';
+  dom.chatInput.style.height = Math.min(dom.chatInput.scrollHeight, 200) + 'px';
+});
+
+// Navigation buttons
+$$('.nav-section-btn').forEach(btn => {
+  btn.onclick = () => {
+    const view = btn.dataset.view;
+    if (view) switchView(view);
+    else if (btn.dataset.section === 'chat') switchView('chat');
+  };
+});
+
+// Model selector change
+dom.modelSelector.addEventListener('change', () => {
+  const chat = state.activeChat;
+  if (chat) {
+    chat.model = dom.modelSelector.value;
+    updateStatusBar();
+  }
+});
+
+// ─── Initialization ─────────────────────────────────────────
+(async function init() {
+  await loadInitialData();
+  // Periodic connection check
+  setInterval(async () => {
+    await checkConnection();
+  }, 30000);
+})();
+</script>
+</body>
+</html>

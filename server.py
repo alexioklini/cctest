@@ -145,6 +145,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_status()
         elif path == "/v1/agents":
             self._handle_list_agents()
+        elif path.startswith("/v1/agents/") and "/files" in path:
+            self._handle_agent_files(path)
+        elif path.startswith("/v1/agents/") and "/file" in path:
+            self._handle_agent_file_read(path)
         elif path == "/v1/models":
             self._handle_list_models()
         elif path == "/v1/sessions":
@@ -155,6 +159,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_list_tasks()
         elif path == "/v1/providers":
             self._handle_list_providers()
+        elif path == "/" or path.startswith("/web/") or path.endswith((".html", ".css", ".js", ".ico")):
+            self._serve_static(path)
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -169,6 +175,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_cancel()
         elif path == "/v1/agents/switch":
             self._handle_switch_agent()
+        elif path == "/v1/agents/create":
+            self._handle_create_agent()
+        elif path.startswith("/v1/agents/") and "/file" in path:
+            self._handle_agent_file_write(path)
         elif path == "/v1/schedule":
             self._handle_modify_schedule()
         else:
@@ -422,6 +432,116 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"tasks": tasks})
         else:
             self._send_json({"tasks": []})
+
+    # --- Agent file management ---
+
+    def _handle_agent_files(self, path):
+        """GET /v1/agents/<id>/files — list agent files."""
+        parts = path.split("/")
+        agent_id = parts[3]
+        agent = engine.AgentConfig(agent_id)
+        files = []
+        if os.path.isdir(agent.dir):
+            for f in sorted(os.listdir(agent.dir)):
+                fp = os.path.join(agent.dir, f)
+                if os.path.isfile(fp):
+                    files.append({"name": f, "size": os.path.getsize(fp)})
+        skills = agent.list_skills()
+        self._send_json({"agent": agent_id, "files": files, "skills": skills})
+
+    def _handle_agent_file_read(self, path):
+        """GET /v1/agents/<id>/file?name=soul.md — read a file."""
+        parts = path.split("/")
+        agent_id = parts[3]
+        # Parse query string
+        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+        filename = params.get("name", "")
+        if not filename or ".." in filename:
+            self._send_json({"error": "Invalid filename"}, 400)
+            return
+        agent = engine.AgentConfig(agent_id)
+        filepath = os.path.join(agent.dir, filename)
+        if not os.path.isfile(filepath):
+            self._send_json({"error": "File not found"}, 404)
+            return
+        try:
+            with open(filepath, "r") as f:
+                content = f.read()
+            self._send_json({"name": filename, "content": content})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_agent_file_write(self, path):
+        """POST /v1/agents/<id>/file — write a file."""
+        parts = path.split("/")
+        agent_id = parts[3]
+        body = self._read_json()
+        filename = body.get("name", "")
+        content = body.get("content", "")
+        if not filename or ".." in filename:
+            self._send_json({"error": "Invalid filename"}, 400)
+            return
+        agent = engine.AgentConfig(agent_id)
+        filepath = os.path.join(agent.dir, filename)
+        try:
+            with open(filepath, "w") as f:
+                f.write(content)
+            self._send_json({"status": "saved", "name": filename})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_create_agent(self):
+        """POST /v1/agents/create — create a new agent."""
+        body = self._read_json()
+        agent_id = body.get("agent", "")
+        if not agent_id or ".." in agent_id:
+            self._send_json({"error": "Invalid agent name"}, 400)
+            return
+        agent = engine.AgentConfig(agent_id)  # auto-creates defaults
+        if body.get("description"):
+            cfg = agent.config
+            cfg["description"] = body["description"]
+            with open(os.path.join(agent.dir, "agent.json"), "w") as f:
+                json.dump(cfg, f, indent=2)
+        if body.get("soul"):
+            with open(os.path.join(agent.dir, "soul.md"), "w") as f:
+                f.write(body["soul"])
+        self._send_json({"status": "created", "agent": agent_id})
+
+    # --- Static file serving ---
+
+    def _serve_static(self, path):
+        """Serve static files from web/ directory."""
+        if path == "/":
+            path = "/web/index.html"
+        elif not path.startswith("/web/"):
+            path = "/web" + path
+
+        base = os.path.dirname(os.path.abspath(__file__))
+        filepath = os.path.join(base, path.lstrip("/"))
+
+        if not os.path.isfile(filepath):
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b"Not found")
+            return
+
+        ext = filepath.rsplit(".", 1)[-1].lower()
+        content_types = {
+            "html": "text/html", "css": "text/css", "js": "application/javascript",
+            "json": "application/json", "png": "image/png", "svg": "image/svg+xml",
+            "ico": "image/x-icon",
+        }
+        ct = content_types.get(ext, "application/octet-stream")
+
+        with open(filepath, "rb") as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", ct)
+        self.send_header("Content-Length", len(data))
+        self.end_headers()
+        self.wfile.write(data)
 
 
 # --- Main ---
