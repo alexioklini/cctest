@@ -1899,9 +1899,8 @@ async function loadConfigTabContent(tab, agentName) {
 }
 
 window.updateScheduleFreqUI = function() {
-  const modal = document.getElementById('config-modal');
-  const type = (modal ? modal.querySelector('#sched-freq-type') : document.getElementById('sched-freq-type'))?.value;
-  const details = modal ? modal.querySelector('#sched-freq-details') : document.getElementById('sched-freq-details');
+  const type = _q('sched-freq-type')?.value;
+  const details = _q('sched-freq-details');
   if (!details) return;
   if (type === 'every-min') {
     details.innerHTML = `
@@ -1945,56 +1944,47 @@ window.updateScheduleFreqUI = function() {
   }
 };
 
-function buildScheduleFromUI() {
-  // Build schedule string in the engine's format (not cron)
-  // Read from within the details container to avoid stale refs
-  // Find elements within the modal context
-  const modal = document.getElementById('config-modal');
-  const container = modal ? modal.querySelector('#sched-freq-details') : document.getElementById('sched-freq-details');
-  const type = (modal ? modal.querySelector('#sched-freq-type') : document.getElementById('sched-freq-type'))?.value;
-  const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-  const getVal = (id) => {
-    const el = modal ? modal.querySelector('#' + id) : document.getElementById(id);
-    return el ? el.value : undefined;
-  };
-
-  if (type === 'every-min') {
-    const interval = parseInt(getVal('sched-interval')) || 30;
-    return `every ${interval}m`;
-  } else if (type === 'every-hr') {
-    const interval = parseInt(getVal('sched-interval')) || 1;
-    return `every ${interval}h`;
-  } else if (type === 'daily') {
-    const time = getVal('sched-time') || '09:00';
-    return `daily ${time}`;
-  } else if (type === 'weekly') {
-    const day = getVal('sched-day') || '1';
-    const time = getVal('sched-time') || '09:00';
-    return `weekly ${dayNames[parseInt(day)] || 'mon'} ${time}`;
-  } else if (type === 'once') {
-    const date = getVal('sched-date');
-    const time = getVal('sched-time') || '09:00';
-    if (date) return `once ${date} ${time}`;
-    return 'daily 09:00';
+// Robust element finder — tries multiple strategies
+function _q(id) {
+  // 1. Try inside the config modal overlay
+  const modals = document.querySelectorAll('.modal-overlay');
+  for (const m of modals) {
+    const el = m.querySelector('#' + id);
+    if (el) return el;
   }
+  // 2. Global fallback
+  return document.getElementById(id);
+}
+
+function buildScheduleFromUI() {
+  const type = _q('sched-freq-type')?.value;
+  const time = _q('sched-time')?.value;
+  const interval = _q('sched-interval')?.value;
+  const day = _q('sched-day')?.value;
+  const date = _q('sched-date')?.value;
+  const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+  if (type === 'every-min') return `every ${parseInt(interval) || 30}m`;
+  if (type === 'every-hr') return `every ${parseInt(interval) || 1}h`;
+  if (type === 'daily') return `daily ${time || '09:00'}`;
+  if (type === 'weekly') return `weekly ${dayNames[parseInt(day) || 0]} ${time || '09:00'}`;
+  if (type === 'once' && date) return `once ${date} ${time || '09:00'}`;
   return 'every 30m';
 }
 
 window.editScheduleTask = function(taskJson) {
   try {
     const t = typeof taskJson === 'string' ? JSON.parse(taskJson) : taskJson;
-    const modal = document.getElementById('config-modal');
-    const q = (id) => modal ? modal.querySelector('#' + id) : document.getElementById(id);
     // Fill in form fields
-    const nameEl = q('sched-task-name');
-    const msgEl = q('sched-task-message');
-    const agentEl = q('sched-agent-select');
-    const modelEl = q('sched-model-override');
-    const freqEl = q('sched-freq-type');
-    const editingEl = q('sched-editing-name');
-    const titleEl = q('sched-form-title');
-    const submitBtn = q('sched-submit-btn');
-    const cancelBtn = q('sched-cancel-edit');
+    const nameEl = _q('sched-task-name');
+    const msgEl = _q('sched-task-message');
+    const agentEl = _q('sched-agent-select');
+    const modelEl = _q('sched-model-override');
+    const freqEl = _q('sched-freq-type');
+    const editingEl = _q('sched-editing-name');
+    const titleEl = _q('sched-form-title');
+    const submitBtn = _q('sched-submit-btn');
+    const cancelBtn = _q('sched-cancel-edit');
 
     if (nameEl) { nameEl.value = t.name || ''; nameEl.readOnly = true; nameEl.style.opacity = '0.6'; }
     if (msgEl) msgEl.value = t.task || '';
@@ -2010,33 +2000,33 @@ window.editScheduleTask = function(taskJson) {
     if (sched.startsWith('every') && sched.endsWith('m')) {
       if (freqEl) freqEl.value = 'every-min';
       updateScheduleFreqUI();
-      const intEl = q('sched-interval');
+      const intEl = _q('sched-interval');
       if (intEl) intEl.value = parseInt(sched.replace(/\D/g, '')) || 30;
     } else if (sched.startsWith('every') && sched.endsWith('h')) {
       if (freqEl) freqEl.value = 'every-hr';
       updateScheduleFreqUI();
-      const intEl = q('sched-interval');
+      const intEl = _q('sched-interval');
       if (intEl) intEl.value = parseInt(sched.replace(/\D/g, '')) || 1;
     } else if (sched.startsWith('daily')) {
       if (freqEl) freqEl.value = 'daily';
       updateScheduleFreqUI();
-      const timeEl = q('sched-time');
+      const timeEl = _q('sched-time');
       if (timeEl) timeEl.value = sched.split(' ')[1] || '09:00';
     } else if (sched.startsWith('weekly')) {
       if (freqEl) freqEl.value = 'weekly';
       updateScheduleFreqUI();
       const parts = sched.split(' ');
       const dayMap = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
-      const dayEl = q('sched-day');
-      const timeEl = q('sched-time');
+      const dayEl = _q('sched-day');
+      const timeEl = _q('sched-time');
       if (dayEl && parts[1]) dayEl.value = dayMap[parts[1]] ?? 1;
       if (timeEl && parts[2]) timeEl.value = parts[2];
     } else if (sched.startsWith('once')) {
       if (freqEl) freqEl.value = 'once';
       updateScheduleFreqUI();
       const parts = sched.split(' ');
-      const dateEl = q('sched-date');
-      const timeEl = q('sched-time');
+      const dateEl = _q('sched-date');
+      const timeEl = _q('sched-time');
       if (dateEl && parts[1]) dateEl.value = parts[1];
       if (timeEl && parts[2]) timeEl.value = parts[2];
     }
@@ -2049,13 +2039,11 @@ window.editScheduleTask = function(taskJson) {
 };
 
 window.cancelScheduleEdit = function() {
-  const modal = document.getElementById('config-modal');
-  const q = (id) => modal ? modal.querySelector('#' + id) : document.getElementById(id);
-  const nameEl = q('sched-task-name');
-  const editingEl = q('sched-editing-name');
-  const titleEl = q('sched-form-title');
-  const submitBtn = q('sched-submit-btn');
-  const cancelBtn = q('sched-cancel-edit');
+  const nameEl = _q('sched-task-name');
+  const editingEl = _q('sched-editing-name');
+  const titleEl = _q('sched-form-title');
+  const submitBtn = _q('sched-submit-btn');
+  const cancelBtn = _q('sched-cancel-edit');
   if (nameEl) { nameEl.value = ''; nameEl.readOnly = false; nameEl.style.opacity = '1'; }
   if (editingEl) editingEl.value = '';
   if (titleEl) titleEl.textContent = 'Add Scheduled Task';
@@ -2065,13 +2053,11 @@ window.cancelScheduleEdit = function() {
 };
 
 window.submitScheduleTask = async function() {
-  const modal = document.getElementById('config-modal');
-  const q = (id) => modal ? modal.querySelector('#' + id) : document.getElementById(id);
-  const editingName = q('sched-editing-name')?.value;
-  const name = q('sched-task-name')?.value?.trim();
-  const task = q('sched-task-message')?.value?.trim();
-  const agentName = q('sched-agent-select')?.value || state.configAgent;
-  const model = q('sched-model-override')?.value || undefined;
+  const editingName = _q('sched-editing-name')?.value;
+  const name = _q('sched-task-name')?.value?.trim();
+  const task = _q('sched-task-message')?.value?.trim();
+  const agentName = _q('sched-agent-select')?.value || state.configAgent;
+  const model = _q('sched-model-override')?.value || undefined;
   const schedule = buildScheduleFromUI();
   if (!name || !task) { showToast('Name and description are required', true); return; }
   try {
