@@ -16,17 +16,156 @@ from socketserver import ThreadingMixIn
 
 import claude_cli as engine
 
-# --- Session Management ---
+# --- Session Management with SQLite persistence ---
+
+import sqlite3
+
+CHAT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agents", "main", "chats.db")
+
+
+class ChatDB:
+    """SQLite persistence for chat sessions and messages."""
+
+    @staticmethod
+    def init():
+        os.makedirs(os.path.dirname(CHAT_DB), exist_ok=True)
+        with sqlite3.connect(CHAT_DB) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    model TEXT,
+                    title TEXT DEFAULT '',
+                    status TEXT DEFAULT 'active',
+                    created_at REAL,
+                    last_active REAL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at REAL DEFAULT (strftime('%s','now')),
+                    FOREIGN KEY (session_id) REFERENCES sessions(id)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_msg_session ON messages(session_id)")
+            # Add status column if missing (migration)
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN status TEXT DEFAULT 'active'")
+            except sqlite3.OperationalError:
+                pass
+            conn.commit()
+
+    @staticmethod
+    def save_session(sid, agent_id, model, title, status, created_at, last_active):
+        with sqlite3.connect(CHAT_DB) as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO sessions (id, agent_id, model, title, status, created_at, last_active)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (sid, agent_id, model, title, status, created_at, last_active))
+            conn.commit()
+
+    @staticmethod
+    def save_message(session_id, role, content):
+        c = json.dumps(content) if not isinstance(content, str) else content
+        with sqlite3.connect(CHAT_DB) as conn:
+            conn.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
+                         (session_id, role, c))
+            conn.commit()
+
+    @staticmethod
+    def load_messages(session_id):
+        with sqlite3.connect(CHAT_DB) as conn:
+            rows = conn.execute(
+                "SELECT id, role, content FROM messages WHERE session_id = ? ORDER BY id",
+                (session_id,)
+            ).fetchall()
+            messages = []
+            for mid, role, content in rows:
+                try:
+                    parsed = json.loads(content)
+                except (json.JSONDecodeError, TypeError):
+                    parsed = content
+                messages.append({"id": mid, "role": role, "content": parsed})
+            return messages
+
+    @staticmethod
+    def list_sessions(agent_id=None, status=None):
+        with sqlite3.connect(CHAT_DB) as conn:
+            conn.row_factory = sqlite3.Row
+            q = "SELECT s.*, (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) as message_count FROM sessions s WHERE 1=1"
+            params = []
+            if agent_id:
+                q += " AND s.agent_id = ?"
+                params.append(agent_id)
+            if status:
+                q += " AND s.status = ?"
+                params.append(status)
+            q += " ORDER BY s.last_active DESC"
+            rows = conn.execute(q, params).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    def get_session_info(session_id):
+        with sqlite3.connect(CHAT_DB) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    def archive_session(session_id):
+        with sqlite3.connect(CHAT_DB) as conn:
+            conn.execute("UPDATE sessions SET status = 'archived' WHERE id = ?", (session_id,))
+            conn.commit()
+
+    @staticmethod
+    def unarchive_session(session_id):
+        with sqlite3.connect(CHAT_DB) as conn:
+            conn.execute("UPDATE sessions SET status = 'active' WHERE id = ?", (session_id,))
+            conn.commit()
+
+    @staticmethod
+    def delete_session(session_id):
+        with sqlite3.connect(CHAT_DB) as conn:
+            conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+            conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            conn.commit()
+
+    @staticmethod
+    def clear_messages(session_id):
+        with sqlite3.connect(CHAT_DB) as conn:
+            conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+            conn.commit()
+
+    @staticmethod
+    def delete_message(message_id):
+        with sqlite3.connect(CHAT_DB) as conn:
+            conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+            conn.commit()
+
+    @staticmethod
+    def archive_all(agent_id=None):
+        with sqlite3.connect(CHAT_DB) as conn:
+            if agent_id:
+                conn.execute("UPDATE sessions SET status = 'archived' WHERE agent_id = ? AND status = 'active'", (agent_id,))
+            else:
+                conn.execute("UPDATE sessions SET status = 'archived' WHERE status = 'active'")
+            conn.commit()
+
 
 class Session:
     """A conversation session with an agent."""
 
     def __init__(self, agent_id: str = "main", model: str | None = None,
                  api_key: str = "", base_url: str = "", api_type: str = "anthropic",
-                 max_context: int = 131072):
-        self.id = uuid.uuid4().hex[:12]
+                 max_context: int = 131072, session_id: str | None = None):
+        self.id = session_id or uuid.uuid4().hex[:12]
         self.agent_id = agent_id
-        self.model = model or "claude-opus-4-5-20251101"
+        self.model = model or ""
         self.api_key = api_key
         self.base_url = base_url
         self.api_type = api_type
@@ -35,32 +174,48 @@ class Session:
         self.cancel_token = engine.CancelToken()
         self.created_at = time.time()
         self.last_active = time.time()
+        self.title = ""
+        self.status = "active"
         self.lock = threading.Lock()
 
-        # Initialize agent
         self.agent = engine.AgentConfig(agent_id)
         self.memory = engine.MemoryStore(agent_id, base_dir=self.agent.memory_dir)
 
-    def switch_agent(self, agent_id: str, model: str | None = None):
-        self.agent_id = agent_id
-        self.agent = engine.AgentConfig(agent_id)
-        self.memory = engine.MemoryStore(agent_id, base_dir=self.agent.memory_dir)
-        if model:
-            self.model = model
-        elif self.agent.preferred_model:
-            self.model = self.agent.preferred_model
-        self.messages = []
+    def add_message(self, role: str, content):
+        self.messages.append({"role": role, "content": content})
+        self.last_active = time.time()
+        # Auto-title from first user message
+        if not self.title and role == "user":
+            text = content if isinstance(content, str) else str(content)
+            self.title = text[:60].strip()
+        ChatDB.save_message(self.id, role, content)
+        ChatDB.save_session(self.id, self.agent_id, self.model, self.title,
+                           self.status, self.created_at, self.last_active)
+
+    def load_from_db(self):
+        """Load messages from database (for restoring sessions)."""
+        db_msgs = ChatDB.load_messages(self.id)
+        self.messages = [{"role": m["role"], "content": m["content"]} for m in db_msgs]
+        info = ChatDB.get_session_info(self.id)
+        if info:
+            self.title = info.get("title", "")
+            self.status = info.get("status", "active")
+            self.created_at = info.get("created_at", self.created_at)
+            self.last_active = info.get("last_active", self.last_active)
 
 
 class SessionManager:
-    """Thread-safe session storage."""
+    """Thread-safe session storage with SQLite persistence."""
 
     def __init__(self):
         self._sessions: dict[str, Session] = {}
         self._lock = threading.Lock()
+        ChatDB.init()
 
     def create(self, **kwargs) -> Session:
         session = Session(**kwargs)
+        ChatDB.save_session(session.id, session.agent_id, session.model,
+                           session.title, session.status, session.created_at, session.last_active)
         with self._lock:
             self._sessions[session.id] = session
         return session
@@ -70,22 +225,34 @@ class SessionManager:
             s = self._sessions.get(session_id)
             if s:
                 s.last_active = time.time()
+                return s
+        # Try loading from DB
+        info = ChatDB.get_session_info(session_id)
+        if info:
+            s = Session(
+                agent_id=info["agent_id"], model=info.get("model", ""),
+                api_key=server_config.get("api_key", ""),
+                base_url=server_config.get("base_url", ""),
+                api_type=server_config.get("api_type", "anthropic"),
+                session_id=session_id,
+            )
+            s.load_from_db()
+            with self._lock:
+                self._sessions[session_id] = s
             return s
+        return None
 
     def delete(self, session_id: str) -> bool:
         with self._lock:
-            return self._sessions.pop(session_id, None) is not None
+            self._sessions.pop(session_id, None)
+        ChatDB.delete_session(session_id)
+        return True
 
     def list_all(self) -> list[dict]:
-        with self._lock:
-            return [{
-                "id": s.id,
-                "agent": s.agent_id,
-                "model": s.model,
-                "messages": len(s.messages),
-                "created_at": s.created_at,
-                "last_active": s.last_active,
-            } for s in self._sessions.values()]
+        return ChatDB.list_sessions()
+
+    def list_for_agent(self, agent_id: str, status: str | None = None) -> list[dict]:
+        return ChatDB.list_sessions(agent_id=agent_id, status=status)
 
 
 # --- Server globals ---
@@ -156,6 +323,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_list_models()
         elif path == "/v1/sessions":
             self._handle_list_sessions()
+        elif path.startswith("/v1/sessions/") and path.endswith("/messages"):
+            self._handle_get_messages(path)
         elif path == "/v1/schedule":
             self._handle_list_schedule()
         elif path == "/v1/tasks":
@@ -176,6 +345,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_chat()
         elif path == "/v1/chat/cancel":
             self._handle_cancel()
+        elif path == "/v1/sessions/manage":
+            self._handle_manage_session()
         elif path == "/v1/agents/switch":
             self._handle_switch_agent()
         elif path == "/v1/agents/create":
@@ -240,7 +411,64 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         self._send_json({"models": models})
 
     def _handle_list_sessions(self):
-        self._send_json({"sessions": sessions.list_all()})
+        # Support ?agent=X&status=active|archived
+        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+        from urllib.parse import unquote
+        agent = unquote(params.get("agent", ""))
+        status = unquote(params.get("status", ""))
+        if agent:
+            self._send_json({"sessions": sessions.list_for_agent(agent, status or None)})
+        else:
+            self._send_json({"sessions": sessions.list_all()})
+
+    def _handle_get_messages(self, path):
+        """GET /v1/sessions/<id>/messages"""
+        parts = path.split("/")
+        sid = parts[3]
+        msgs = ChatDB.load_messages(sid)
+        self._send_json({"session_id": sid, "messages": msgs})
+
+    def _handle_manage_session(self):
+        """POST /v1/sessions/manage — archive, unarchive, clear, delete_message"""
+        body = self._read_json()
+        action = body.get("action", "")
+        sid = body.get("session_id", "")
+
+        if action == "archive":
+            ChatDB.archive_session(sid)
+            with sessions._lock:
+                sessions._sessions.pop(sid, None)
+            self._send_json({"status": "archived", "session_id": sid})
+        elif action == "unarchive":
+            ChatDB.unarchive_session(sid)
+            self._send_json({"status": "unarchived", "session_id": sid})
+        elif action == "clear":
+            ChatDB.clear_messages(sid)
+            s = sessions.get(sid)
+            if s:
+                s.messages = []
+            self._send_json({"status": "cleared", "session_id": sid})
+        elif action == "delete_message":
+            msg_id = body.get("message_id")
+            if msg_id:
+                ChatDB.delete_message(msg_id)
+                # Also remove from in-memory session
+                s = sessions.get(sid)
+                if s:
+                    s.messages = [m for m in s.messages if m.get("id") != msg_id]
+                self._send_json({"status": "deleted", "message_id": msg_id})
+            else:
+                self._send_json({"error": "message_id required"}, 400)
+        elif action == "archive_all":
+            agent = body.get("agent")
+            ChatDB.archive_all(agent)
+            self._send_json({"status": "archived_all"})
+        elif action == "delete":
+            sessions.delete(sid)
+            self._send_json({"status": "deleted", "session_id": sid})
+        else:
+            self._send_json({"error": f"Unknown action: {action}"}, 400)
 
     def _handle_create_session(self):
         body = self._read_json()
@@ -301,8 +529,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         # Reset cancel token
         session.cancel_token = engine.CancelToken()
 
-        # Add user message
-        session.messages.append({"role": "user", "content": message})
+        # Add user message (persisted to DB)
+        session.add_message("user", message)
 
         # Check context and compact
         session.messages, _ = engine._check_and_compact(
@@ -349,7 +577,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     event_callback=event_callback,
                 )
                 if reply:
-                    session.messages.append({"role": "assistant", "content": reply})
+                    session.add_message("assistant", reply)
                     event_queue.put(("done", {
                         "text": reply,
                         "tokens": engine._estimate_conversation_tokens(session.messages),

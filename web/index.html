@@ -241,6 +241,72 @@ tailwind.config = {
     color: var(--color-text-primary);
   }
 
+  /* Session bar */
+  .session-bar {
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    overflow-x: auto;
+    flex-shrink: 0;
+    min-height: 36px;
+  }
+  .session-chip {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    cursor: pointer;
+    white-space: nowrap;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-light);
+    color: var(--color-text-secondary);
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+  }
+  .session-chip:hover { background: var(--color-surface-lighter); }
+  .session-chip.active {
+    border-color: var(--color-accent);
+    background: rgba(255,123,0,0.08);
+    color: var(--color-text-primary);
+    font-weight: 500;
+  }
+  .session-chip .session-actions {
+    display: none;
+    align-items: center;
+    gap: 2px;
+    margin-left: 4px;
+  }
+  .session-chip:hover .session-actions,
+  .session-chip.active .session-actions { display: inline-flex; }
+  .session-chip .session-actions button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 0 2px;
+    opacity: 0.5;
+    transition: opacity 0.15s;
+  }
+  .session-chip .session-actions button:hover { opacity: 1; }
+  .session-bar-toggle {
+    font-size: 10px;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: none;
+    background: none;
+    transition: color 0.15s;
+    flex-shrink: 0;
+  }
+  .session-bar-toggle:hover { color: var(--color-text-primary); }
+
   /* Chat input area */
   .chat-input-wrapper {
     background: var(--color-base);
@@ -480,6 +546,9 @@ tailwind.config = {
         <svg width="10" height="10" viewBox="0 0 24 24" fill="#f87171"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
         <span class="text-error">Stop</span>
       </button>
+    </div>
+    <!-- Session History Bar -->
+    <div id="session-bar" class="session-bar" style="display:none">
     </div>
     <!-- Messages -->
     <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-6">
@@ -850,6 +919,9 @@ class API {
   static async createSession(agent, model) { return this.post('/v1/sessions', { agent, model }); }
   static async deleteSession(id) { return this.del(`/v1/sessions/${id}`); }
   static async cancelChat(sessionId) { return this.post('/v1/chat/cancel', { session_id: sessionId }); }
+  static async getSessionsForAgent(agentId, status = 'active') { return this.get(`/v1/sessions?agent=${encodeURIComponent(agentId)}&status=${encodeURIComponent(status)}`); }
+  static async getSessionMessages(sessionId) { return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}/messages`); }
+  static async manageSession(body) { return this.post('/v1/sessions/manage', body); }
   static async getSchedule() { return this.get('/v1/schedule'); }
   static async manageSchedule(body) { return this.post('/v1/schedule', body); }
   static async getTasks() { return this.get('/v1/tasks'); }
@@ -865,8 +937,10 @@ class AppState {
     this.models = [];
     this.providers = [];
     this.serverInfo = null;
-    // One chat per agent: { agentId: { sessionId, agent, model, messages[], streaming, totalTokens } }
+    // Active chat per agent: { agentId: { sessionId, agent, model, messages[], streaming, totalTokens } }
     this.agentChats = {};
+    // Session history per agent: { agentId: { sessions: [], showArchived: false, loaded: false } }
+    this.agentSessions = {};
     this.activeAgentId = null;
     this.configAgent = null;
     this.configTab = 'soul';
@@ -888,6 +962,7 @@ const dom = {
   connLabel: $('#conn-label'),
   serverUrl: $('#server-url'),
   agentCardsRow: $('#agent-cards-row'),
+  sessionBar: $('#session-bar'),
   chatMessages: $('#chat-messages'),
   chatInput: $('#chat-input'),
   chatInputArea: $('#chat-input-area'),
@@ -1069,15 +1144,18 @@ function renderAgentCards() {
 }
 
 // ─── Select Agent ───────────────────────────────────────────
+function getDefaultModel(agentName) {
+  const agentObj = state.agents.find(a => getAgentName(a) === agentName);
+  const agentModel = agentObj ? getAgentModel(agentObj) : '';
+  const allModels = getAllProviderModels();
+  return agentModel || (allModels.length > 0 ? allModels[0].id : '') || dom.modelSelector.value || '';
+}
+
 function selectAgent(agentName) {
   state.activeAgentId = agentName;
   // Create chat entry if not exists
   if (!state.agentChats[agentName]) {
-    // Use agent's configured model if available
-    const agentObj = state.agents.find(a => getAgentName(a) === agentName);
-    const agentModel = agentObj ? getAgentModel(agentObj) : '';
-    const allModels = getAllProviderModels();
-    const model = agentModel || (allModels.length > 0 ? allModels[0].id : '') || dom.modelSelector.value || '';
+    const model = getDefaultModel(agentName);
     state.agentChats[agentName] = {
       sessionId: null,
       agent: agentName,
@@ -1087,9 +1165,163 @@ function selectAgent(agentName) {
       totalTokens: 0,
     };
   }
+  // Load sessions for this agent if not loaded yet
+  if (!state.agentSessions[agentName]) {
+    state.agentSessions[agentName] = { sessions: [], showArchived: false, loaded: false };
+  }
+  if (!state.agentSessions[agentName].loaded) {
+    loadAgentSessions(agentName);
+  }
   renderAgentCards();
   updateChatArea();
 }
+
+async function loadAgentSessions(agentName) {
+  const entry = state.agentSessions[agentName] || { sessions: [], showArchived: false, loaded: false };
+  state.agentSessions[agentName] = entry;
+  try {
+    const status = entry.showArchived ? 'all' : 'active';
+    const res = await API.getSessionsForAgent(agentName, status);
+    entry.sessions = res.sessions || [];
+    entry.loaded = true;
+  } catch {
+    entry.sessions = [];
+    entry.loaded = true;
+  }
+  if (state.activeAgentId === agentName) {
+    renderSessionBar();
+  }
+}
+
+function renderSessionBar() {
+  const agentId = state.activeAgentId;
+  if (!agentId) { dom.sessionBar.style.display = 'none'; return; }
+  dom.sessionBar.style.display = '';
+  const entry = state.agentSessions[agentId];
+  if (!entry) { dom.sessionBar.innerHTML = ''; return; }
+  const chat = state.agentChats[agentId];
+  const currentSessionId = chat?.sessionId;
+  const showArchived = entry.showArchived;
+  const sessions = entry.sessions || [];
+
+  let html = '';
+
+  // + New Chat button
+  html += `<button class="session-chip" style="border-style:dashed;color:var(--color-accent)" onclick="newChatSession()" title="Start new chat">+ New</button>`;
+
+  // Current unsaved session (no session id yet or session not in list)
+  if (chat && !currentSessionId && chat.messages.length === 0) {
+    html += `<span class="session-chip active" style="font-style:italic">New chat</span>`;
+  }
+
+  // Sessions from history
+  sessions.forEach(s => {
+    const isActive = currentSessionId === s.id;
+    const title = s.title || 'Untitled';
+    const date = s.created_at ? new Date(s.created_at).toLocaleDateString(undefined, {month:'short',day:'numeric'}) : '';
+    const count = s.message_count || 0;
+    const isArchived = s.status === 'archived';
+    html += `<span class="session-chip ${isActive ? 'active' : ''} ${isArchived ? 'opacity-50' : ''}" onclick="loadSession('${esc(s.id)}')" title="${esc(title)} - ${count} messages">
+      <span class="truncate" style="max-width:120px">${esc(title)}</span>
+      <span style="font-size:9px;color:var(--color-text-muted)">${date}${count ? ' (' + count + ')' : ''}</span>
+      <span class="session-actions">
+        ${isArchived
+          ? `<button onclick="event.stopPropagation();sessionAction('unarchive','${esc(s.id)}')" title="Unarchive">📂</button>`
+          : `<button onclick="event.stopPropagation();sessionAction('archive','${esc(s.id)}')" title="Archive">📦</button>`
+        }
+        <button onclick="event.stopPropagation();sessionAction('delete','${esc(s.id)}')" title="Delete">🗑</button>
+      </span>
+    </span>`;
+  });
+
+  // Show/Hide archived toggle
+  html += `<button class="session-bar-toggle" onclick="toggleShowArchived()">${showArchived ? 'Hide Archived' : 'Show Archived'}</button>`;
+
+  dom.sessionBar.innerHTML = html;
+}
+
+window.newChatSession = function() {
+  const agentId = state.activeAgentId;
+  if (!agentId) return;
+  const chat = state.agentChats[agentId];
+  // If current chat is already empty and has no session, do nothing
+  if (chat && !chat.sessionId && chat.messages.length === 0) return;
+  // Create a fresh chat entry without deleting the old session
+  const model = getDefaultModel(agentId);
+  state.agentChats[agentId] = {
+    sessionId: null,
+    agent: agentId,
+    model,
+    messages: [],
+    streaming: false,
+    totalTokens: 0,
+  };
+  renderSessionBar();
+  renderMessages();
+  updateStatusBar();
+  showToast('New chat started');
+};
+
+window.loadSession = async function(sessionId) {
+  const agentId = state.activeAgentId;
+  if (!agentId) return;
+  const chat = state.agentChats[agentId];
+  // If already viewing this session, do nothing
+  if (chat && chat.sessionId === sessionId) return;
+  try {
+    const res = await API.getSessionMessages(sessionId);
+    const messages = (res.messages || []).map(m => ({
+      role: m.role,
+      content: m.content,
+      id: m.id,
+    }));
+    const entry = state.agentSessions[agentId];
+    const sessionInfo = entry?.sessions?.find(s => s.id === sessionId);
+    const model = sessionInfo?.model || getDefaultModel(agentId);
+    state.agentChats[agentId] = {
+      sessionId,
+      agent: agentId,
+      model,
+      messages,
+      streaming: false,
+      totalTokens: 0,
+    };
+    renderSessionBar();
+    updateChatArea();
+    showToast(`Loaded session: ${sessionInfo?.title || sessionId.substring(0, 8)}`);
+  } catch (e) {
+    showToast(`Error loading session: ${e.message}`, true);
+  }
+};
+
+window.sessionAction = async function(action, sessionId) {
+  const agentId = state.activeAgentId;
+  if (!agentId) return;
+  if (action === 'delete' && !confirm('Permanently delete this session?')) return;
+  try {
+    await API.manageSession({ action, session_id: sessionId });
+    // If we deleted/archived the currently active session, start a new chat
+    const chat = state.agentChats[agentId];
+    if (chat && chat.sessionId === sessionId && (action === 'delete' || action === 'archive')) {
+      newChatSession();
+    }
+    // Reload sessions list
+    await loadAgentSessions(agentId);
+    showToast(`Session ${action}d`);
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+window.toggleShowArchived = async function() {
+  const agentId = state.activeAgentId;
+  if (!agentId) return;
+  const entry = state.agentSessions[agentId];
+  if (!entry) return;
+  entry.showArchived = !entry.showArchived;
+  entry.loaded = false;
+  await loadAgentSessions(agentId);
+};
 
 // ─── Update Chat Area ───────────────────────────────────────
 function updateChatArea() {
@@ -1097,6 +1329,7 @@ function updateChatArea() {
   if (!chat) {
     // No agent selected
     dom.chatTopBar.style.display = 'none';
+    dom.sessionBar.style.display = 'none';
     dom.chatInputArea.style.display = 'none';
     dom.chatMessages.innerHTML = '<div class="flex items-center justify-center h-full text-text-muted text-sm font-body">Select an agent above to start chatting</div>';
     updateStatusBar();
@@ -1104,6 +1337,7 @@ function updateChatArea() {
   }
   dom.chatTopBar.style.display = '';
   dom.chatInputArea.style.display = '';
+  renderSessionBar();
 
   // Update top bar with avatar and display name
   const agentObj = state.agents.find(a => getAgentName(a) === chat.agent);
@@ -1145,6 +1379,11 @@ async function ensureSession(chat) {
     const res = await API.createSession(chat.agent || undefined, chat.model || undefined);
     chat.sessionId = res.session_id;
     updateStatusBar();
+    // Refresh session list for this agent
+    if (chat.agent && state.agentSessions[chat.agent]) {
+      state.agentSessions[chat.agent].loaded = false;
+      loadAgentSessions(chat.agent);
+    }
   } catch (e) {
     addSystemMessage(chat, `Failed to create session: ${e.message}`);
     throw e;
@@ -1348,6 +1587,11 @@ async function sendMessage() {
     renderMessages();
     updateStatusBar();
     renderAgentCards();
+    // Refresh session list to update title/message count
+    if (chat.agent && state.agentSessions[chat.agent]) {
+      state.agentSessions[chat.agent].loaded = false;
+      loadAgentSessions(chat.agent);
+    }
   }
 }
 
@@ -2398,7 +2642,7 @@ dom.btnSend.onclick = sendMessage;
 dom.btnStop.onclick = stopGeneration;
 dom.btnNewSession.onclick = () => {
   if (state.activeAgentId) {
-    resetSession(state.activeAgentId);
+    newChatSession();
   }
 };
 
