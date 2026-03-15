@@ -193,6 +193,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_install_skill()
         elif path == "/v1/skills/remove":
             self._handle_remove_skill()
+        elif path == "/v1/restart":
+            self._handle_restart()
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -742,6 +744,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "removed", "skill": skill_name, "agent": agent_id})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
+
+    def _handle_restart(self):
+        """POST /v1/restart — restart the server process."""
+        self._send_json({"status": "restarting"})
+        # Schedule restart after response is sent
+        def do_restart():
+            time.sleep(0.5)
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        threading.Thread(target=do_restart, daemon=True).start()
 
     def _serve_static(self, path):
         """Serve static files from web/ directory."""
