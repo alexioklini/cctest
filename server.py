@@ -104,6 +104,7 @@ server_config = {
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
+    allow_reuse_address = True
 
 
 class BrainAgentHandler(BaseHTTPRequestHandler):
