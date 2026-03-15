@@ -23,11 +23,21 @@ import sqlite3
 CHAT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agents", "main", "chats.db")
 
 
-def _db_conn():
-    """Create a resilient SQLite connection with timeouts."""
-    conn = sqlite3.connect(CHAT_DB, timeout=10)
-    conn.execute("PRAGMA busy_timeout = 5000")
-    conn.execute("PRAGMA journal_mode = WAL")
+_db_pool_lock = threading.Lock()
+_db_pool: dict[str, sqlite3.Connection] = {}
+
+
+def _db_conn(db_path=None):
+    """Get a thread-safe SQLite connection (reused per database path)."""
+    path = db_path or CHAT_DB
+    tid = f"{path}:{threading.current_thread().ident}"
+    with _db_pool_lock:
+        conn = _db_pool.get(tid)
+        if conn is None:
+            conn = sqlite3.connect(path, timeout=10, check_same_thread=False)
+            conn.execute("PRAGMA busy_timeout = 5000")
+            conn.execute("PRAGMA journal_mode = WAL")
+            _db_pool[tid] = conn
     return conn
 
 

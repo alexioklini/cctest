@@ -2179,6 +2179,22 @@ import datetime
 
 SCHEDULER_DB = os.path.join(AGENTS_DIR, "main", "scheduler.db")
 
+_sched_db_lock = threading.Lock()
+_sched_db_pool: dict[int, sqlite3.Connection] = {}
+
+
+def _sched_conn():
+    """Get a thread-safe reusable SQLite connection for the scheduler DB."""
+    tid = threading.current_thread().ident
+    with _sched_db_lock:
+        conn = _sched_db_pool.get(tid)
+        if conn is None:
+            conn = sqlite3.connect(SCHEDULER_DB, timeout=10, check_same_thread=False)
+            conn.execute("PRAGMA busy_timeout = 5000")
+            conn.execute("PRAGMA journal_mode = WAL")
+            _sched_db_pool[tid] = conn
+    return conn
+
 
 class Scheduler:
     """Background task scheduler with cron-like scheduling."""
@@ -2192,7 +2208,7 @@ class Scheduler:
         self._running_tasks: dict[str, dict] = {}
 
     def _init_db(self):
-        with sqlite3.connect(SCHEDULER_DB) as conn:
+        with _sched_conn() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS schedules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2236,7 +2252,7 @@ class Scheduler:
         if next_run is None:
             return {"error": f"Invalid schedule format: {schedule}"}
         try:
-            with sqlite3.connect(SCHEDULER_DB) as conn:
+            with _sched_conn() as conn:
                 conn.execute("""
                     INSERT INTO schedules (name, task, schedule, agent, model, next_run, timeout)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -2248,7 +2264,7 @@ class Scheduler:
             return {"error": f"Schedule '{name}' already exists"}
 
     def remove(self, name: str) -> dict:
-        with sqlite3.connect(SCHEDULER_DB) as conn:
+        with _sched_conn() as conn:
             r = conn.execute("DELETE FROM schedules WHERE name = ?", (name,))
             conn.commit()
             if r.rowcount == 0:
@@ -2256,7 +2272,7 @@ class Scheduler:
         return {"name": name, "status": "deleted"}
 
     def pause(self, name: str) -> dict:
-        with sqlite3.connect(SCHEDULER_DB) as conn:
+        with _sched_conn() as conn:
             r = conn.execute("UPDATE schedules SET enabled = 0 WHERE name = ?", (name,))
             conn.commit()
             if r.rowcount == 0:
@@ -2265,7 +2281,7 @@ class Scheduler:
 
     def resume(self, name: str) -> dict:
         next_run = None
-        with sqlite3.connect(SCHEDULER_DB) as conn:
+        with _sched_conn() as conn:
             row = conn.execute("SELECT schedule FROM schedules WHERE name = ?", (name,)).fetchone()
             if not row:
                 return {"error": f"Schedule '{name}' not found"}
@@ -2276,13 +2292,13 @@ class Scheduler:
         return {"name": name, "status": "resumed", "next_run": next_run.isoformat() if next_run else None}
 
     def list_all(self) -> list[dict]:
-        with sqlite3.connect(SCHEDULER_DB) as conn:
+        with _sched_conn() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("SELECT * FROM schedules ORDER BY name").fetchall()
             return [dict(r) for r in rows]
 
     def get_history(self, name: str | None = None, limit: int = 20) -> list[dict]:
-        with sqlite3.connect(SCHEDULER_DB) as conn:
+        with _sched_conn() as conn:
             conn.row_factory = sqlite3.Row
             if name:
                 rows = conn.execute(
@@ -2367,7 +2383,7 @@ class Scheduler:
     def get_due_tasks(self) -> list[dict]:
         """Get tasks that are due for execution."""
         now = datetime.datetime.now().isoformat()
-        with sqlite3.connect(SCHEDULER_DB) as conn:
+        with _sched_conn() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("""
                 SELECT * FROM schedules WHERE enabled = 1 AND next_run <= ?
@@ -2378,7 +2394,7 @@ class Scheduler:
                       status: str, result: str):
         """Record execution and update next_run."""
         now = datetime.datetime.now()
-        with sqlite3.connect(SCHEDULER_DB) as conn:
+        with _sched_conn() as conn:
             # Record history
             conn.execute("""
                 INSERT INTO schedule_history (schedule_id, schedule_name, agent, task, status, result, started_at)
