@@ -1832,6 +1832,7 @@ async function loadConfigTabContent(tab, agentName) {
                       </td>
                       <td class="px-4 py-3 space-x-2">
                         ${isActive ? `<button class="text-xs text-yellow-500 hover:text-yellow-400 transition-colors" onclick="scheduleAction('pause','${esc(t.name)}')">Pause</button>` : `<button class="text-xs text-success hover:text-green-300 transition-colors" onclick="scheduleAction('resume','${esc(t.name)}')">Resume</button>`}
+                        <button class="text-xs text-accent hover:text-orange-300 transition-colors" onclick="editScheduleTask(${esc(JSON.stringify(JSON.stringify(t)))})">Edit</button>
                         <button class="text-xs text-model hover:text-blue-300 transition-colors" onclick="scheduleAction('history','${esc(t.name)}')">History</button>
                         <button class="text-xs text-error hover:text-red-300 transition-colors" onclick="scheduleAction('delete','${esc(t.name)}')">Delete</button>
                       </td>
@@ -1844,7 +1845,8 @@ async function loadConfigTabContent(tab, agentName) {
 
           <!-- Add Task Form -->
           <div class="glass-card p-6">
-            <h4 class="text-text-primary font-display font-semibold text-sm mb-5">Add Scheduled Task</h4>
+            <h4 id="sched-form-title" class="text-text-primary font-display font-semibold text-sm mb-5">Add Scheduled Task</h4>
+            <input type="hidden" id="sched-editing-name" value="">
             <div class="space-y-4">
               <div>
                 <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Task Name</label>
@@ -1884,7 +1886,8 @@ async function loadConfigTabContent(tab, agentName) {
                   }).join('')}
                 </select>
               </div>
-              <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="submitScheduleTask()">Create Task</button>
+              <button id="sched-submit-btn" class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="submitScheduleTask()">Create Task</button>
+              <button class="btn-secondary px-5 py-2 rounded-xl text-sm font-display hidden" id="sched-cancel-edit" onclick="cancelScheduleEdit()">Cancel Edit</button>
             </div>
           </div>
         </div>`;
@@ -1971,17 +1974,102 @@ function buildScheduleFromUI() {
   return 'every 30m';
 }
 
+window.editScheduleTask = function(taskJson) {
+  try {
+    const t = typeof taskJson === 'string' ? JSON.parse(taskJson) : taskJson;
+    // Fill in form fields
+    const nameEl = document.getElementById('sched-task-name');
+    const msgEl = document.getElementById('sched-task-message');
+    const agentEl = document.getElementById('sched-agent-select');
+    const modelEl = document.getElementById('sched-model-override');
+    const freqEl = document.getElementById('sched-freq-type');
+    const editingEl = document.getElementById('sched-editing-name');
+    const titleEl = document.getElementById('sched-form-title');
+    const submitBtn = document.getElementById('sched-submit-btn');
+    const cancelBtn = document.getElementById('sched-cancel-edit');
+
+    if (nameEl) { nameEl.value = t.name || ''; nameEl.readOnly = true; nameEl.style.opacity = '0.6'; }
+    if (msgEl) msgEl.value = t.task || '';
+    if (agentEl) agentEl.value = t.agent || 'main';
+    if (modelEl) modelEl.value = t.model || '';
+    if (editingEl) editingEl.value = t.name || '';
+    if (titleEl) titleEl.textContent = 'Edit Scheduled Task';
+    if (submitBtn) submitBtn.textContent = 'Save Changes';
+    if (cancelBtn) cancelBtn.classList.remove('hidden');
+
+    // Parse schedule string to set frequency type and details
+    const sched = (t.schedule || '').toLowerCase();
+    if (sched.startsWith('every') && sched.endsWith('m')) {
+      if (freqEl) freqEl.value = 'every-min';
+      updateScheduleFreqUI();
+      const intEl = document.getElementById('sched-interval');
+      if (intEl) intEl.value = parseInt(sched.replace(/\D/g, '')) || 30;
+    } else if (sched.startsWith('every') && sched.endsWith('h')) {
+      if (freqEl) freqEl.value = 'every-hr';
+      updateScheduleFreqUI();
+      const intEl = document.getElementById('sched-interval');
+      if (intEl) intEl.value = parseInt(sched.replace(/\D/g, '')) || 1;
+    } else if (sched.startsWith('daily')) {
+      if (freqEl) freqEl.value = 'daily';
+      updateScheduleFreqUI();
+      const timeEl = document.getElementById('sched-time');
+      if (timeEl) timeEl.value = sched.split(' ')[1] || '09:00';
+    } else if (sched.startsWith('weekly')) {
+      if (freqEl) freqEl.value = 'weekly';
+      updateScheduleFreqUI();
+      const parts = sched.split(' ');
+      const dayMap = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+      const dayEl = document.getElementById('sched-day');
+      const timeEl = document.getElementById('sched-time');
+      if (dayEl && parts[1]) dayEl.value = dayMap[parts[1]] ?? 1;
+      if (timeEl && parts[2]) timeEl.value = parts[2];
+    } else if (sched.startsWith('once')) {
+      if (freqEl) freqEl.value = 'once';
+      updateScheduleFreqUI();
+      const parts = sched.split(' ');
+      const dateEl = document.getElementById('sched-date');
+      const timeEl = document.getElementById('sched-time');
+      if (dateEl && parts[1]) dateEl.value = parts[1];
+      if (timeEl && parts[2]) timeEl.value = parts[2];
+    }
+
+    // Scroll to form
+    document.getElementById('sched-form-title')?.scrollIntoView({ behavior: 'smooth' });
+  } catch (e) {
+    showToast('Error loading task for edit', 'error');
+  }
+};
+
+window.cancelScheduleEdit = function() {
+  const nameEl = document.getElementById('sched-task-name');
+  const editingEl = document.getElementById('sched-editing-name');
+  const titleEl = document.getElementById('sched-form-title');
+  const submitBtn = document.getElementById('sched-submit-btn');
+  const cancelBtn = document.getElementById('sched-cancel-edit');
+  if (nameEl) { nameEl.value = ''; nameEl.readOnly = false; nameEl.style.opacity = '1'; }
+  if (editingEl) editingEl.value = '';
+  if (titleEl) titleEl.textContent = 'Add Scheduled Task';
+  if (submitBtn) submitBtn.textContent = 'Create Task';
+  if (cancelBtn) cancelBtn.classList.add('hidden');
+  document.getElementById('sched-task-message').value = '';
+};
+
 window.submitScheduleTask = async function() {
+  const editingName = document.getElementById('sched-editing-name')?.value;
   const name = $('#sched-task-name')?.value.trim();
   const task = $('#sched-task-message')?.value.trim();
   const agentName = $('#sched-agent-select')?.value || state.configAgent;
   const model = $('#sched-model-override')?.value || undefined;
   const schedule = buildScheduleFromUI();
-  console.log('Schedule debug:', { name, task, schedule, type: $('#sched-freq-type')?.value, time: $('#sched-time')?.value, interval: $('#sched-interval')?.value });
   if (!name || !task) { showToast('Name and description are required', true); return; }
   try {
+    if (editingName) {
+      // Delete old and re-create (simplest way to update all fields)
+      await API.manageSchedule({ action: 'delete', name: editingName });
+    }
     await API.manageSchedule({ action: 'add', name, agent: agentName, schedule, task, model });
-    showToast('Task created');
+    showToast(editingName ? 'Task updated' : 'Task created');
+    cancelScheduleEdit();
     loadConfigTabContent('schedule', state.configAgent);
   } catch (e) {
     showToast(`Error: ${e.message}`, true);
