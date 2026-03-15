@@ -1943,24 +1943,28 @@ window.updateScheduleFreqUI = function() {
 
 function buildScheduleFromUI() {
   // Build schedule string in the engine's format (not cron)
-  const type = $('#sched-freq-type')?.value;
-  const dayNames = ['', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+  // Read from within the details container to avoid stale refs
+  const container = document.getElementById('sched-freq-details');
+  const type = document.getElementById('sched-freq-type')?.value;
+  const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  const getVal = (id) => container?.querySelector('#' + id)?.value || document.getElementById(id)?.value;
+
   if (type === 'every-min') {
-    const interval = parseInt($('#sched-interval')?.value) || 30;
+    const interval = parseInt(getVal('sched-interval')) || 30;
     return `every ${interval}m`;
   } else if (type === 'every-hr') {
-    const interval = parseInt($('#sched-interval')?.value) || 1;
+    const interval = parseInt(getVal('sched-interval')) || 1;
     return `every ${interval}h`;
   } else if (type === 'daily') {
-    const time = $('#sched-time')?.value || '09:00';
+    const time = getVal('sched-time') || '09:00';
     return `daily ${time}`;
   } else if (type === 'weekly') {
-    const day = $('#sched-day')?.value || '1';
-    const time = $('#sched-time')?.value || '09:00';
+    const day = getVal('sched-day') || '1';
+    const time = getVal('sched-time') || '09:00';
     return `weekly ${dayNames[parseInt(day)] || 'mon'} ${time}`;
   } else if (type === 'once') {
-    const date = $('#sched-date')?.value;
-    const time = $('#sched-time')?.value || '09:00';
+    const date = getVal('sched-date');
+    const time = getVal('sched-time') || '09:00';
     if (date) return `once ${date} ${time}`;
     return 'daily 09:00';
   }
@@ -1973,6 +1977,7 @@ window.submitScheduleTask = async function() {
   const agentName = $('#sched-agent-select')?.value || state.configAgent;
   const model = $('#sched-model-override')?.value || undefined;
   const schedule = buildScheduleFromUI();
+  console.log('Schedule debug:', { name, task, schedule, type: $('#sched-freq-type')?.value, time: $('#sched-time')?.value, interval: $('#sched-interval')?.value });
   if (!name || !task) { showToast('Name and description are required', true); return; }
   try {
     await API.manageSchedule({ action: 'add', name, agent: agentName, schedule, task, model });
