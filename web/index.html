@@ -1802,7 +1802,7 @@ async function loadConfigTabContent(tab, agentName) {
     try {
       const tasks = await API.getSchedule();
       const allAgents = state.agents;
-      const list = (Array.isArray(tasks) ? tasks : (tasks.tasks || [])).filter(t => t.agent === agentName);
+      const list = (Array.isArray(tasks) ? tasks : (tasks.schedules || tasks.tasks || [])).filter(t => t.agent === agentName);
       el.innerHTML = `
         <div class="space-y-6">
           <h3 class="section-header text-sm">Scheduled Tasks for ${esc(agentName)}</h3>
@@ -1818,19 +1818,25 @@ async function loadConfigTabContent(tab, agentName) {
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-border/50">
-                  ${list.map(t => `
+                  ${list.map(t => {
+                    const isActive = t.enabled === 1 || t.enabled === true || t.status === 'active';
+                    const statusLabel = isActive ? 'active' : 'paused';
+                    const nextRun = (t.next_run || '').substring(0, 16);
+                    return `
                     <tr class="sched-row">
-                      <td class="px-4 py-3 text-text-primary font-medium">${esc(t.name || t.id || '')}</td>
-                      <td class="px-4 py-3 mono text-xs text-text-secondary">${esc(t.schedule || t.cron || '')}</td>
+                      <td class="px-4 py-3 text-text-primary font-medium">${esc(t.name || '')}</td>
+                      <td class="px-4 py-3 mono text-xs text-text-secondary">${esc(t.schedule || '')}</td>
                       <td class="px-4 py-3">
-                        <span class="px-2.5 py-1 rounded-full text-[10px] font-medium uppercase tracking-wider ${t.status === 'active' || t.status === 'running' ? 'bg-success/10 text-success border border-success/20' : 'bg-surface-lighter text-text-muted border border-border'}">${esc(t.status || 'unknown')}</span>
+                        <span class="px-2.5 py-1 rounded-full text-[10px] font-medium uppercase tracking-wider ${isActive ? 'bg-success/10 text-success border border-success/20' : 'bg-surface-lighter text-text-muted border border-border'}">${statusLabel}</span>
+                        ${nextRun ? `<div class="text-[10px] text-text-muted mt-1">next: ${esc(nextRun)}</div>` : ''}
                       </td>
                       <td class="px-4 py-3 space-x-2">
-                        ${t.status === 'active' ? `<button class="text-xs text-yellow-500 hover:text-yellow-400 transition-colors" onclick="scheduleAction('pause','${esc(t.id || t.name)}')">Pause</button>` : `<button class="text-xs text-success hover:text-green-300 transition-colors" onclick="scheduleAction('resume','${esc(t.id || t.name)}')">Resume</button>`}
-                        <button class="text-xs text-error hover:text-red-300 transition-colors" onclick="scheduleAction('delete','${esc(t.id || t.name)}')">Delete</button>
+                        ${isActive ? `<button class="text-xs text-yellow-500 hover:text-yellow-400 transition-colors" onclick="scheduleAction('pause','${esc(t.name)}')">Pause</button>` : `<button class="text-xs text-success hover:text-green-300 transition-colors" onclick="scheduleAction('resume','${esc(t.name)}')">Resume</button>`}
+                        <button class="text-xs text-model hover:text-blue-300 transition-colors" onclick="scheduleAction('history','${esc(t.name)}')">History</button>
+                        <button class="text-xs text-error hover:text-red-300 transition-colors" onclick="scheduleAction('delete','${esc(t.name)}')">Delete</button>
                       </td>
-                    </tr>
-                  `).join('')}
+                    </tr>`;
+                  }).join('')}
                 </tbody>
               </table>
             </div>`
