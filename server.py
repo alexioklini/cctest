@@ -894,8 +894,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 if item.get("type") != "dir":
                     continue
                 name = item["name"]
-                if search and search not in name.lower():
-                    continue
                 # Try to fetch _meta.json for display name
                 meta = {"slug": name, "displayName": name, "owner": author}
                 try:
@@ -924,9 +922,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
 
+                # Filter across name, display name, and description
+                display_name = meta.get("displayName", name)
+                if search and search not in name.lower() and search not in display_name.lower() and search not in description.lower():
+                    continue
+
                 skills.append({
                     "name": name,
-                    "display_name": meta.get("displayName", name),
+                    "display_name": display_name,
                     "author": author,
                     "description": description,
                     "version": meta.get("latest", {}).get("version", ""),
