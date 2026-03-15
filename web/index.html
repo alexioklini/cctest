@@ -787,6 +787,7 @@ class API {
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
       let eventType = '';
+      let finished = false;
       for (const line of lines) {
         if (line.startsWith('event: ')) {
           eventType = line.slice(7).trim();
@@ -795,9 +796,11 @@ class API {
           try {
             const data = JSON.parse(raw);
             if (callbacks[eventType]) callbacks[eventType](data);
+            if (eventType === 'done' || eventType === 'error') finished = true;
           } catch {}
         }
       }
+      if (finished) { reader.cancel(); break; }
     }
   }
 
