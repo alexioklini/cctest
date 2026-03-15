@@ -2510,7 +2510,7 @@ class Scheduler:
                                         cancel_token=cancel_token,
                                         event_callback=on_event) or ""
         except TaskCancelled:
-            result_text = "Cancelled by user"
+            result_text = result_text or "Stopped — tool call loop detected or cancelled by user"
             status = "cancelled"
         except Exception as e:
             result_text = str(e)
@@ -3585,26 +3585,30 @@ _tool_call_history = threading.local()
 
 
 def _check_tool_dedup(name: str, args: dict) -> str | None:
-    """Check if this exact tool call was already made. Returns error message if duplicate."""
+    """Check if this exact tool call was already made. Raises TaskCancelled after 2 dupes."""
     if not hasattr(_tool_call_history, 'calls'):
         _tool_call_history.calls = set()
-    # Create a hashable key from tool name + args
+        _tool_call_history.dupe_count = 0
     key = f"{name}:{json.dumps(args, sort_keys=True)}"
     if key in _tool_call_history.calls:
+        _tool_call_history.dupe_count += 1
+        if _tool_call_history.dupe_count >= 2:
+            # Hard abort — model is stuck in a loop
+            raise TaskCancelled()
         return _err(
             f"DUPLICATE: You already called {name} with these exact arguments. "
-            "Do NOT repeat tool calls. Use the previous result and provide your final answer NOW."
+            "STOP calling tools. Provide your final answer NOW using previous results."
         )
     _tool_call_history.calls.add(key)
-    # Cap history size
     if len(_tool_call_history.calls) > 100:
         _tool_call_history.calls = set(list(_tool_call_history.calls)[-50:])
     return None
 
 
 def reset_tool_dedup():
-    """Reset the dedup tracker (call at start of each conversation turn)."""
+    """Reset the dedup tracker."""
     _tool_call_history.calls = set()
+    _tool_call_history.dupe_count = 0
 
 
 def _execute_tool(name: str, args: dict) -> str:
@@ -3647,9 +3651,9 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     # Reset dedup tracker at the start of each conversation turn
     if _tool_round == 0:
         reset_tool_dedup()
-    # Stop tool loops after MAX_TOOL_ROUNDS
+    # Hard stop after MAX_TOOL_ROUNDS — abort completely, return what we have
     if _tool_round >= MAX_TOOL_ROUNDS:
-        tools = False
+        return "[Task completed — tool call limit reached. Summary of actions taken above.]"
     headers = make_headers(api_key, api_type)
 
     if api_type == "openai":
