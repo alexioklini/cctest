@@ -549,6 +549,12 @@ tailwind.config = {
         <span class="text-error">Stop</span>
       </button>
     </div>
+    <!-- Spinner bar (visible during streaming) -->
+    <div id="chat-spinner-bar" class="hidden flex items-center gap-3 px-5 py-2 border-b border-border/50 bg-surface/30" style="min-height:36px">
+      <div class="dot-pulse"><span></span><span></span><span></span></div>
+      <span id="spinner-label" class="text-xs text-text-muted font-display">Thinking...</span>
+      <span id="spinner-elapsed" class="text-[10px] text-text-muted mono ml-auto"></span>
+    </div>
     <!-- Session History Bar -->
     <div id="session-bar" class="session-bar" style="display:none">
     </div>
@@ -1552,6 +1558,21 @@ async function sendMessage() {
   dom.btnStop.classList.remove('hidden');
   dom.btnSend.disabled = true;
 
+  // Show spinner bar
+  const spinnerBar = document.getElementById('chat-spinner-bar');
+  const spinnerLabel = document.getElementById('spinner-label');
+  const spinnerElapsed = document.getElementById('spinner-elapsed');
+  if (spinnerBar) spinnerBar.classList.remove('hidden');
+  if (spinnerLabel) spinnerLabel.textContent = 'Thinking...';
+  const spinnerStart = Date.now();
+  let toolCallCount = 0;
+  const spinnerTimer = setInterval(() => {
+    if (spinnerElapsed) {
+      const s = Math.round((Date.now() - spinnerStart) / 1000);
+      spinnerElapsed.textContent = `${s}s`;
+    }
+  }, 1000);
+
   const assistantMsg = { role: 'assistant', content: '', tools: [], ts: Date.now() };
   chat.messages.push(assistantMsg);
   renderMessages();
@@ -1560,10 +1581,13 @@ async function sendMessage() {
     await API.streamChat(chat.sessionId, text, {
       text_delta: (d) => {
         assistantMsg.content += d.text || '';
+        if (spinnerLabel) spinnerLabel.textContent = 'Generating...';
         updateStreamingMessage(chat);
       },
       tool_call: (d) => {
+        toolCallCount++;
         assistantMsg.tools.push({ name: d.name, args: d.args });
+        if (spinnerLabel) spinnerLabel.textContent = `Tool: ${d.name} (${toolCallCount})`;
         updateStreamingMessage(chat);
       },
       tool_result: (d) => {
@@ -1586,6 +1610,8 @@ async function sendMessage() {
     }
   } finally {
     chat.streaming = false;
+    clearInterval(spinnerTimer);
+    if (spinnerBar) spinnerBar.classList.add('hidden');
     dom.btnStop.classList.add('hidden');
     dom.btnSend.disabled = false;
     renderMessages();
