@@ -1977,7 +1977,7 @@ window.browseSkills = async function(agentName) {
   if (!resultsEl) return;
   resultsEl.innerHTML = '<div class="text-text-muted text-sm py-3">Loading skills from repository...</div>';
   try {
-    const res = await API.post('/v1/skills/browse', { search, author: 'steipete' });
+    const res = await API.post('/v1/skills/browse', { search });
     const skills = res.skills || [];
     if (skills.length === 0) {
       resultsEl.innerHTML = '<div class="text-text-muted text-sm py-3">No skills found</div>';

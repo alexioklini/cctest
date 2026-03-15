@@ -873,69 +873,88 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
     SKILL_REPO = "openclaw/skills"
     SKILL_AUTHORS = ["steipete"]  # known skill authors to browse
 
+    # Cache for the full skill tree (refreshed every 10 minutes)
+    _skill_tree_cache = None
+    _skill_tree_time = 0
+
+    def _get_skill_tree(self):
+        """Fetch full skill tree from GitHub (cached 10 min)."""
+        now = time.time()
+        if BrainAgentHandler._skill_tree_cache and now - BrainAgentHandler._skill_tree_time < 600:
+            return BrainAgentHandler._skill_tree_cache
+
+        url = f"https://api.github.com/repos/{self.SKILL_REPO}/git/trees/main?recursive=1"
+        req = urllib.request.Request(url, headers={
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "Brain-Agent",
+        })
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+
+        skills = {}  # (author, name) -> True
+        for item in data.get("tree", []):
+            p = item.get("path", "")
+            if p.endswith("/SKILL.md") and p.startswith("skills/"):
+                parts = p.split("/")
+                if len(parts) >= 3:
+                    skills[(parts[1], parts[2])] = True
+
+        BrainAgentHandler._skill_tree_cache = skills
+        BrainAgentHandler._skill_tree_time = now
+        return skills
+
     def _handle_browse_skills(self):
-        """POST /v1/skills/browse — browse skills from GitHub repository."""
+        """POST /v1/skills/browse — search all 7000+ skills from GitHub."""
         body = self._read_json()
-        search = body.get("search", "").lower()
-        author = body.get("author", "steipete")
+        search = body.get("search", "").lower().strip()
+
+        if not search or len(search) < 2:
+            self._send_json({"error": "Search term must be at least 2 characters", "skills": []})
+            return
 
         try:
-            # Fetch skill list from GitHub API
-            url = f"https://api.github.com/repos/{self.SKILL_REPO}/contents/skills/{author}"
-            req = urllib.request.Request(url, headers={
-                "Accept": "application/vnd.github.v3+json",
-                "User-Agent": "Brain-Agent",
-            })
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                items = json.loads(resp.read().decode("utf-8"))
+            tree = self._get_skill_tree()
 
+            # Filter by name match
+            matches = []
+            for (author, name) in tree:
+                if search in name.lower():
+                    matches.append((author, name))
+            matches.sort(key=lambda x: x[1])
+
+            # Limit results and fetch metadata for top matches
             skills = []
-            for item in items:
-                if item.get("type") != "dir":
-                    continue
-                name = item["name"]
-                # Try to fetch _meta.json for display name
-                meta = {"slug": name, "displayName": name, "owner": author}
-                try:
-                    meta_url = f"https://raw.githubusercontent.com/{self.SKILL_REPO}/main/skills/{author}/{name}/_meta.json"
-                    meta_req = urllib.request.Request(meta_url, headers={"User-Agent": "Brain-Agent"})
-                    with urllib.request.urlopen(meta_req, timeout=5) as mresp:
-                        meta = json.loads(mresp.read().decode("utf-8"))
-                except Exception:
-                    pass
-
-                # Try to fetch SKILL.md frontmatter for description
+            for author, name in matches[:30]:
+                display_name = name
                 description = ""
+                version = ""
+
+                # Fetch SKILL.md frontmatter for description
                 try:
                     skill_url = f"https://raw.githubusercontent.com/{self.SKILL_REPO}/main/skills/{author}/{name}/SKILL.md"
                     skill_req = urllib.request.Request(skill_url, headers={"User-Agent": "Brain-Agent"})
                     with urllib.request.urlopen(skill_req, timeout=5) as sresp:
                         content = sresp.read().decode("utf-8")
-                        # Parse frontmatter description
                         import re as _re
                         fm = _re.match(r'^---\s*\n(.*?)\n---', content, _re.DOTALL)
                         if fm:
                             for line in fm.group(1).split("\n"):
-                                if line.startswith("description:"):
+                                if line.strip().startswith("name:"):
+                                    display_name = line.split(":", 1)[1].strip().strip('"').strip("'")
+                                elif line.strip().startswith("description:"):
                                     description = line.split(":", 1)[1].strip().strip('"').strip("'")
-                                    break
                 except Exception:
                     pass
-
-                # Filter across name, display name, and description
-                display_name = meta.get("displayName", name)
-                if search and search not in name.lower() and search not in display_name.lower() and search not in description.lower():
-                    continue
 
                 skills.append({
                     "name": name,
                     "display_name": display_name,
                     "author": author,
                     "description": description,
-                    "version": meta.get("latest", {}).get("version", ""),
+                    "version": version,
                 })
 
-            self._send_json({"skills": skills, "author": author, "count": len(skills)})
+            self._send_json({"skills": skills, "count": len(skills), "total_in_repo": len(tree)})
         except Exception as e:
             self._send_json({"error": str(e), "skills": []})
 
