@@ -557,9 +557,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             engine._thread_local.memory_store = session.memory
 
             # Temporarily set agent globals for system prompt building
+            # Create fresh AgentConfig to pick up newly installed skills/config
             old_agent = engine._current_agent
             old_mcp = engine._mcp_manager
-            engine._current_agent = session.agent
+            engine._current_agent = engine.AgentConfig(session.agent_id)
 
             # Load MCP for this agent
             mcp = engine.MCPManager()
