@@ -1179,8 +1179,9 @@ Adapt your behavior to the tasks you are given.
         return result
 
     def load_skill(self, skill_name: str) -> str | None:
-        """Load the full SKILL.md body for a specific skill."""
-        # Check own skills first
+        """Load the full SKILL.md body for a specific skill.
+        Accepts either the directory name (slug) or the display name."""
+        # Try direct match first (slug = directory name)
         own_path = os.path.join(self.skills_dir, skill_name, "SKILL.md")
         if os.path.isfile(own_path):
             return self._read_skill_body(own_path)
@@ -1189,6 +1190,18 @@ Adapt your behavior to the tasks you are given.
             main_path = os.path.join(AGENTS_DIR, "main", "skills", skill_name, "SKILL.md")
             if os.path.isfile(main_path):
                 return self._read_skill_body(main_path)
+        # Try matching by display name → slug lookup
+        for s in self.list_skills():
+            if s.get("name", "").lower() == skill_name.lower() or s.get("slug", "").lower() == skill_name.lower():
+                slug = s.get("slug", "")
+                if slug:
+                    own_path = os.path.join(self.skills_dir, slug, "SKILL.md")
+                    if os.path.isfile(own_path):
+                        return self._read_skill_body(own_path)
+                    if self.agent_id != "main":
+                        main_path = os.path.join(AGENTS_DIR, "main", "skills", slug, "SKILL.md")
+                        if os.path.isfile(main_path):
+                            return self._read_skill_body(main_path)
         return None
 
     @staticmethod
@@ -1576,7 +1589,7 @@ def tool_use_skill(args: dict) -> str:
 
     body = _current_agent.load_skill(skill_name)
     if body is None:
-        available = [s["name"] for s in _current_agent.list_skills()]
+        available = [s.get("slug", s["name"]) for s in _current_agent.list_skills()]
         return _err(f"use_skill: skill '{skill_name}' not found. Available: {', '.join(available) or 'none'}")
 
     return _ok({"skill": skill_name, "instructions": body})
@@ -3271,10 +3284,13 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         if _current_agent:
             skills = _current_agent.list_skills()
             if skills:
-                system_instruction += "\nSKILLS AVAILABLE — call use_skill(skill=\"name\") to load instructions before performing the task:\n"
+                system_instruction += "\nSKILLS AVAILABLE — call use_skill(skill=\"slug\") to load instructions before performing the task:\n"
                 for s in skills:
+                    slug = s.get('slug', s['name'])
                     source_tag = f" (from {s['source']})" if s['source'] != agent_id else ""
-                    system_instruction += f"  - {s['name']}: {s['description']}{source_tag}\n"
+                    display = s['name'] if s['name'] != slug else ""
+                    label = f"{slug}" + (f" ({display})" if display else "")
+                    system_instruction += f"  - {label}: {s['description']}{source_tag}\n"
                 system_instruction += "\n"
 
         # Scheduler status
