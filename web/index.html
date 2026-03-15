@@ -1,31 +1,31 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Brain Agent</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script>
 tailwind.config = {
   theme: {
     extend: {
       colors: {
-        accent: '#ff7b00',
-        agent: '#b48eff',
-        model: '#64b5f6',
-        surface: '#16162a',
-        'surface-light': '#1e1e38',
-        'surface-lighter': '#282850',
-        base: '#0f0f1a',
-        border: '#2a2a45',
+        accent: 'var(--color-accent)',
+        agent: 'var(--color-agent)',
+        model: 'var(--color-model)',
+        surface: 'var(--color-surface)',
+        'surface-light': 'var(--color-surface-light)',
+        'surface-lighter': 'var(--color-surface-lighter)',
+        base: 'var(--color-base)',
+        border: 'var(--color-border)',
         success: '#4ade80',
         error: '#f87171',
-        'text-primary': '#e8e8f0',
-        'text-secondary': '#8888aa',
-        'text-muted': '#555570',
+        'text-primary': 'var(--color-text-primary)',
+        'text-secondary': 'var(--color-text-secondary)',
+        'text-muted': 'var(--color-text-muted)',
       },
       fontFamily: {
         display: ['Outfit', 'sans-serif'],
@@ -39,8 +39,74 @@ tailwind.config = {
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap');
 
+  /* ── Light theme (default) ── */
+  :root, [data-theme="light"] {
+    --color-base: #ffffff;
+    --color-surface: #f8f9fa;
+    --color-surface-light: #f0f1f3;
+    --color-surface-lighter: #e8e9ec;
+    --color-border: #e0e0e6;
+    --color-text-primary: #1a1a2e;
+    --color-text-secondary: #666680;
+    --color-text-muted: #9999aa;
+    --color-accent: #ff7b00;
+    --color-agent: #7c3aed;
+    --color-model: #2563eb;
+    --color-code-bg: #f5f5f8;
+    --color-code-text: #1a1a2e;
+    --color-user-border: rgba(255,123,0,0.4);
+    --color-user-shadow: rgba(255,123,0,0.06);
+    --color-assistant-border: rgba(124,58,237,0.35);
+    --color-inline-code-bg: #eeeef3;
+    --color-tool-bg: rgba(240,241,243,0.7);
+    --color-tool-hover-bg: rgba(232,233,236,0.6);
+    --color-modal-bg: #ffffff;
+    --color-modal-overlay: rgba(0,0,0,0.3);
+    --color-toast-bg: rgba(255,255,255,0.95);
+    --color-header-gradient-1: rgba(124,58,237,0.04);
+    --color-header-gradient-2: rgba(255,123,0,0.03);
+    --color-header-gradient-3: rgba(37,99,235,0.02);
+    --color-input-shadow: rgba(0,0,0,0.08);
+    --color-scrollbar: #d0d0d8;
+    --color-scrollbar-hover: #b0b0bc;
+    --noise-opacity: 0.015;
+  }
+
+  /* ── Dark theme ── */
+  [data-theme="dark"] {
+    --color-base: #0f0f1a;
+    --color-surface: #16162a;
+    --color-surface-light: #1e1e38;
+    --color-surface-lighter: #282850;
+    --color-border: #2a2a45;
+    --color-text-primary: #e8e8f0;
+    --color-text-secondary: #8888aa;
+    --color-text-muted: #555570;
+    --color-accent: #ff7b00;
+    --color-agent: #b48eff;
+    --color-model: #64b5f6;
+    --color-code-bg: #16162a;
+    --color-code-text: #e8e8f0;
+    --color-user-border: rgba(255,123,0,0.5);
+    --color-user-shadow: rgba(255,123,0,0.06);
+    --color-assistant-border: rgba(180,142,255,0.4);
+    --color-inline-code-bg: #1e1e38;
+    --color-tool-bg: rgba(18,18,34,0.6);
+    --color-tool-hover-bg: rgba(30,30,56,0.4);
+    --color-modal-bg: #16162a;
+    --color-modal-overlay: rgba(0,0,0,0.6);
+    --color-toast-bg: rgba(22,22,42,0.9);
+    --color-header-gradient-1: rgba(180,142,255,0.06);
+    --color-header-gradient-2: rgba(255,123,0,0.04);
+    --color-header-gradient-3: rgba(100,181,246,0.03);
+    --color-input-shadow: rgba(0,0,0,0.3);
+    --color-scrollbar: #2a2a45;
+    --color-scrollbar-hover: #3a3a5a;
+    --noise-opacity: 0.025;
+  }
+
   * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; font-family: 'IBM Plex Sans', sans-serif; color: #e8e8f0; }
+  html, body { height: 100%; margin: 0; font-family: 'IBM Plex Sans', sans-serif; color: var(--color-text-primary); }
 
   /* Noise texture overlay */
   body::before {
@@ -49,7 +115,7 @@ tailwind.config = {
     inset: 0;
     z-index: 9999;
     pointer-events: none;
-    opacity: 0.025;
+    opacity: var(--noise-opacity);
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
     background-repeat: repeat;
     background-size: 128px 128px;
@@ -58,8 +124,8 @@ tailwind.config = {
   /* Scrollbar */
   ::-webkit-scrollbar { width: 5px; height: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #2a2a45; border-radius: 10px; }
-  ::-webkit-scrollbar-thumb:hover { background: #3a3a5a; }
+  ::-webkit-scrollbar-thumb { background: var(--color-scrollbar); border-radius: 10px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--color-scrollbar-hover); }
 
   /* Mono utility */
   .mono { font-family: 'IBM Plex Mono', monospace; }
@@ -85,37 +151,37 @@ tailwind.config = {
   textarea { resize: none; }
 
   /* Message content */
-  .msg-content pre { margin: 0.75rem 0; border-radius: 0.5rem; overflow-x: auto; border-top: 2px solid #ff7b00; background: #16162a !important; }
-  .msg-content pre code { font-family: 'IBM Plex Mono', monospace; font-size: 0.8rem; padding: 1rem !important; display: block; background: transparent !important; }
-  .msg-content code:not(pre code) { font-family: 'IBM Plex Mono', monospace; font-size: 0.82em; background: #1e1e38; padding: 0.15em 0.45em; border-radius: 0.3rem; color: #ff7b00; }
+  .msg-content pre { margin: 0.75rem 0; border-radius: 0.5rem; overflow-x: auto; border-top: 2px solid var(--color-accent); background: var(--color-code-bg) !important; }
+  .msg-content pre code { font-family: 'IBM Plex Mono', monospace; font-size: 0.8rem; padding: 1rem !important; display: block; background: transparent !important; color: var(--color-code-text); }
+  .msg-content code:not(pre code) { font-family: 'IBM Plex Mono', monospace; font-size: 0.82em; background: var(--color-inline-code-bg); padding: 0.15em 0.45em; border-radius: 0.3rem; color: var(--color-accent); }
   .msg-content p { margin: 0.4em 0; line-height: 1.7; }
   .msg-content ul, .msg-content ol { margin: 0.5em 0; padding-left: 1.5em; }
   .msg-content li { margin: 0.25em 0; }
-  .msg-content h1, .msg-content h2, .msg-content h3 { margin: 0.8em 0 0.4em; font-weight: 600; font-family: 'Outfit', sans-serif; color: #e8e8f0; }
+  .msg-content h1, .msg-content h2, .msg-content h3 { margin: 0.8em 0 0.4em; font-weight: 600; font-family: 'Outfit', sans-serif; color: var(--color-text-primary); }
   .msg-content h1 { font-size: 1.3em; }
   .msg-content h2 { font-size: 1.15em; }
   .msg-content h3 { font-size: 1.05em; }
-  .msg-content blockquote { border-left: 3px solid #b48eff; padding-left: 1em; margin: 0.5em 0; opacity: 0.85; }
+  .msg-content blockquote { border-left: 3px solid var(--color-agent); padding-left: 1em; margin: 0.5em 0; opacity: 0.85; }
   .msg-content table { border-collapse: collapse; margin: 0.5em 0; width: 100%; }
-  .msg-content th, .msg-content td { border: 1px solid #2a2a45; padding: 0.4em 0.8em; }
-  .msg-content th { background: #1e1e38; font-weight: 500; }
+  .msg-content th, .msg-content td { border: 1px solid var(--color-border); padding: 0.4em 0.8em; }
+  .msg-content th { background: var(--color-surface-light); font-weight: 500; }
 
   /* Tool blocks */
   .tool-block {
-    border-left: 3px solid #ff7b00;
-    background: #12122299;
+    border-left: 3px solid var(--color-accent);
+    background: var(--color-tool-bg);
     border-radius: 0 0.5rem 0.5rem 0;
     backdrop-filter: blur(4px);
     transition: background 0.2s ease;
   }
-  .tool-block:hover { background: #1e1e3866; }
+  .tool-block:hover { background: var(--color-tool-hover-bg); }
   .tool-chevron { transition: transform 0.2s ease; display: inline-block; }
   .tool-block.open .tool-chevron { transform: rotate(90deg); }
 
   /* Buttons */
   .btn-primary {
     background: linear-gradient(135deg, #ff7b00, #ff9a3d);
-    color: #0f0f1a;
+    color: #ffffff;
     font-weight: 600;
     transition: all 0.2s ease;
     box-shadow: 0 2px 8px rgba(255,123,0,0.15);
@@ -123,60 +189,60 @@ tailwind.config = {
   .btn-primary:hover { box-shadow: 0 4px 16px rgba(255,123,0,0.3); transform: translateY(-1px); }
   .btn-primary:active { transform: translateY(0); }
   .btn-secondary {
-    background: #1e1e38;
-    color: #8888aa;
-    border: 1px solid #2a2a45;
+    background: var(--color-surface-light);
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border);
     transition: all 0.2s ease;
   }
-  .btn-secondary:hover { background: #282850; color: #e8e8f0; border-color: #3a3a5a; }
+  .btn-secondary:hover { background: var(--color-surface-lighter); color: var(--color-text-primary); border-color: var(--color-scrollbar-hover); }
 
   /* Tab bar */
   .tab-item {
     transition: all 0.2s ease;
     border-bottom: 2px solid transparent;
-    color: #555570;
+    color: var(--color-text-muted);
   }
-  .tab-item:hover { color: #8888aa; }
+  .tab-item:hover { color: var(--color-text-secondary); }
   .tab-item.tab-active {
-    border-bottom-color: #ff7b00;
-    color: #e8e8f0;
+    border-bottom-color: var(--color-accent);
+    color: var(--color-text-primary);
   }
 
   /* Chat input area */
   .chat-input-wrapper {
-    background: #16162a;
-    border: 1px solid #2a2a45;
+    background: var(--color-base);
+    border: 1px solid var(--color-border);
     border-radius: 1rem;
-    box-shadow: 0 -4px 20px rgba(0,0,0,0.3);
+    box-shadow: 0 -4px 20px var(--color-input-shadow);
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
   }
   .chat-input-wrapper:focus-within {
-    border-color: #ff7b00;
+    border-color: var(--color-accent);
     box-shadow: 0 -4px 24px rgba(255,123,0,0.08);
   }
 
   /* Glass morphism on hover for cards */
   .glass-card {
-    background: #16162a;
-    border: 1px solid #2a2a45;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
     border-radius: 0.75rem;
     transition: all 0.2s ease;
   }
   .glass-card:hover {
-    background: rgba(30,30,56,0.85);
+    background: var(--color-surface-light);
     backdrop-filter: blur(8px);
-    border-color: #3a3a5a;
+    border-color: var(--color-scrollbar-hover);
   }
 
   /* User message glow */
   .user-msg {
-    border-left: 3px solid rgba(255,123,0,0.5);
-    box-shadow: -4px 0 12px rgba(255,123,0,0.06);
+    border-left: 3px solid var(--color-user-border);
+    box-shadow: -4px 0 12px var(--color-user-shadow);
   }
 
   /* Assistant message */
   .assistant-msg {
-    border-left: 3px solid rgba(180,142,255,0.4);
+    border-left: 3px solid var(--color-assistant-border);
   }
 
   /* Section header */
@@ -186,7 +252,7 @@ tailwind.config = {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.1em;
-    color: #555570;
+    color: var(--color-text-muted);
   }
 
   /* Header gradient mesh */
@@ -199,9 +265,9 @@ tailwind.config = {
     position: absolute;
     inset: 0;
     background:
-      radial-gradient(ellipse 300px 80px at 20% 50%, rgba(180,142,255,0.06), transparent),
-      radial-gradient(ellipse 200px 60px at 80% 30%, rgba(255,123,0,0.04), transparent),
-      radial-gradient(ellipse 250px 70px at 60% 80%, rgba(100,181,246,0.03), transparent);
+      radial-gradient(ellipse 300px 80px at 20% 50%, var(--color-header-gradient-1), transparent),
+      radial-gradient(ellipse 200px 60px at 80% 30%, var(--color-header-gradient-2), transparent),
+      radial-gradient(ellipse 250px 70px at 60% 80%, var(--color-header-gradient-3), transparent);
     pointer-events: none;
   }
 
@@ -217,18 +283,18 @@ tailwind.config = {
   /* Input focus ring */
   input:focus, textarea:focus, select:focus {
     outline: none;
-    border-color: #ff7b00 !important;
+    border-color: var(--color-accent) !important;
     box-shadow: 0 0 0 1px rgba(255,123,0,0.15);
   }
 
   /* Scheduler table */
   .sched-row { transition: background 0.15s ease; }
-  .sched-row:hover { background: #1e1e38; }
+  .sched-row:hover { background: var(--color-surface-light); }
 
   /* Agent card - compact horizontal style */
   .agent-card-compact {
-    background: #16162a;
-    border: 1px solid #2a2a45;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
     border-radius: 0.75rem;
     transition: all 0.2s ease;
     cursor: pointer;
@@ -238,17 +304,17 @@ tailwind.config = {
     position: relative;
   }
   .agent-card-compact:hover {
-    background: rgba(30,30,56,0.85);
+    background: var(--color-surface-light);
     backdrop-filter: blur(8px);
-    border-color: #3a3a5a;
+    border-color: var(--color-scrollbar-hover);
   }
   .agent-card-compact.selected {
-    border-color: #ff7b00;
-    box-shadow: 0 3px 0 0 #ff7b00, 0 4px 12px rgba(255,123,0,0.15);
+    border-color: var(--color-accent);
+    box-shadow: 0 3px 0 0 var(--color-accent), 0 4px 12px rgba(255,123,0,0.15);
   }
 
   .agent-card-create-compact {
-    border: 2px dashed #2a2a45;
+    border: 2px dashed var(--color-border);
     background: transparent;
     border-radius: 0.75rem;
     transition: all 0.2s ease;
@@ -257,7 +323,7 @@ tailwind.config = {
     flex-shrink: 0;
   }
   .agent-card-create-compact:hover {
-    border-color: #ff7b00;
+    border-color: var(--color-accent);
     background: rgba(255,123,0,0.03);
   }
 
@@ -265,23 +331,23 @@ tailwind.config = {
   .config-tab {
     transition: all 0.2s ease;
     border-bottom: 2px solid transparent;
-    color: #555570;
+    color: var(--color-text-muted);
     cursor: pointer;
     padding: 0.5rem 1rem;
     font-size: 0.8rem;
     font-weight: 500;
   }
-  .config-tab:hover { color: #8888aa; }
+  .config-tab:hover { color: var(--color-text-secondary); }
   .config-tab.active {
-    border-bottom-color: #ff7b00;
-    color: #e8e8f0;
+    border-bottom-color: var(--color-accent);
+    color: var(--color-text-primary);
   }
 
   /* Modal overlay */
   .modal-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.6);
+    background: var(--color-modal-overlay);
     backdrop-filter: blur(4px);
     z-index: 50;
     display: flex;
@@ -289,10 +355,10 @@ tailwind.config = {
     justify-content: center;
   }
   .modal-content {
-    background: #16162a;
-    border: 1px solid #2a2a45;
+    background: var(--color-modal-bg);
+    border: 1px solid var(--color-border);
     border-radius: 1rem;
-    box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+    box-shadow: 0 24px 64px rgba(0,0,0,0.25);
     width: 100%;
     max-width: 700px;
     max-height: 80vh;
@@ -305,13 +371,32 @@ tailwind.config = {
     right: 1rem;
     background: none;
     border: none;
-    color: #8888aa;
+    color: var(--color-text-secondary);
     font-size: 1.25rem;
     cursor: pointer;
     transition: color 0.2s;
     z-index: 10;
   }
-  .modal-close:hover { color: #e8e8f0; }
+  .modal-close:hover { color: var(--color-text-primary); }
+
+  /* Theme toggle button */
+  .theme-toggle {
+    background: none;
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    padding: 0.35rem;
+    cursor: pointer;
+    color: var(--color-text-muted);
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .theme-toggle:hover {
+    color: var(--color-accent);
+    border-color: var(--color-accent);
+    background: rgba(255,123,0,0.05);
+  }
 </style>
 </head>
 <body class="bg-base">
@@ -331,6 +416,10 @@ tailwind.config = {
         <span id="conn-label" class="text-text-secondary font-body">Disconnected</span>
       </span>
       <span class="text-text-muted mono text-[10px]" id="server-url"></span>
+      <button id="btn-theme-toggle" class="theme-toggle" title="Toggle light/dark mode">
+        <svg id="theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        <svg id="theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
       <button id="btn-header-settings" class="text-text-muted hover:text-text-primary transition-colors p-1 rounded-lg hover:bg-surface-light" title="Server Settings">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </button>
@@ -573,16 +662,15 @@ async function loadInitialData() {
 // ─── Rendering: Models ──────────────────────────────────────
 function renderModelSelector() {
   dom.modelSelector.innerHTML = '';
-  const models = state.models;
-  if (models.length === 0) {
+  const allModels = getAllProviderModels();
+  if (allModels.length === 0) {
     dom.modelSelector.innerHTML = '<option value="">No models</option>';
     return;
   }
-  models.forEach(m => {
-    const id = typeof m === 'string' ? m : (m.id || m.name || m);
+  allModels.forEach(pm => {
     const opt = document.createElement('option');
-    opt.value = id;
-    opt.textContent = id;
+    opt.value = pm.id;
+    opt.textContent = pm.label;
     dom.modelSelector.appendChild(opt);
   });
 }
@@ -602,6 +690,30 @@ function getAgentSkillsCount(a) {
 }
 function getAgentMcpCount(a) {
   return typeof a === 'object' ? (a.mcp_count || (a.mcp_servers ? a.mcp_servers.length : 0)) : 0;
+}
+function getAgentModel(a) {
+  return typeof a === 'object' ? (a.model || a.default_model || '') : '';
+}
+
+// Build a flat list of { id, label } from all providers
+function getAllProviderModels() {
+  const result = [];
+  (state.providers || []).forEach(p => {
+    const pName = typeof p === 'string' ? p : (p.name || p.provider || p.id || '');
+    const pModels = typeof p === 'object' ? (p.models || []) : [];
+    pModels.forEach(m => {
+      const mId = typeof m === 'string' ? m : (m.id || m.name || '');
+      result.push({ id: mId, label: `${pName}: ${mId}` });
+    });
+  });
+  // Also include models from the /v1/models endpoint if providers are empty
+  if (result.length === 0) {
+    (state.models || []).forEach(m => {
+      const id = typeof m === 'string' ? m : (m.id || m.name || m);
+      result.push({ id, label: id });
+    });
+  }
+  return result;
 }
 
 // ─── AGENT CARDS ROW ────────────────────────────────────────
@@ -660,7 +772,11 @@ function selectAgent(agentName) {
   state.activeAgentId = agentName;
   // Create chat entry if not exists
   if (!state.agentChats[agentName]) {
-    const model = dom.modelSelector.value || (state.models[0]?.id || state.models[0] || '');
+    // Use agent's configured model if available
+    const agentObj = state.agents.find(a => getAgentName(a) === agentName);
+    const agentModel = agentObj ? getAgentModel(agentObj) : '';
+    const allModels = getAllProviderModels();
+    const model = agentModel || (allModels.length > 0 ? allModels[0].id : '') || dom.modelSelector.value || '';
     state.agentChats[agentName] = {
       sessionId: null,
       agent: agentName,
@@ -1000,6 +1116,7 @@ async function loadConfigTabContent(tab, agentName) {
       const content = typeof res === 'string' ? res : (res.content || JSON.stringify(res, null, 2));
       let parsed = {};
       try { parsed = typeof res === 'string' ? JSON.parse(res) : (res.content ? JSON.parse(res.content) : res); } catch {}
+      const allProviderModels = getAllProviderModels();
       el.innerHTML = `
         <div class="space-y-5">
           <h3 class="section-header text-sm">Agent Settings (agent.json)</h3>
@@ -1008,8 +1125,11 @@ async function loadConfigTabContent(tab, agentName) {
             <input id="cfg-description" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" value="${esc(parsed.description || '')}">
           </div>
           <div>
-            <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Model</label>
-            <input id="cfg-model" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary mono focus:border-accent transition-colors" value="${esc(parsed.model || '')}">
+            <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Default Model</label>
+            <select id="cfg-model" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary mono focus:border-accent transition-colors">
+              <option value="">-- Use system default --</option>
+              ${allProviderModels.map(pm => `<option value="${esc(pm.id)}" ${parsed.model === pm.id ? 'selected' : ''}>${esc(pm.label)}</option>`).join('')}
+            </select>
           </div>
           <div>
             <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Max Context</label>
@@ -1281,8 +1401,16 @@ window.saveAgentSettings = async function(agentName) {
   const raw = $('#cfg-raw-json')?.value;
   if (raw === undefined) return;
   try {
-    JSON.parse(raw); // Validate
-    await API.writeAgentFile(agentName, 'agent.json', raw);
+    const parsed = JSON.parse(raw);
+    // Sync form fields into parsed JSON
+    const descVal = $('#cfg-description')?.value;
+    const modelVal = $('#cfg-model')?.value;
+    const maxCtxVal = $('#cfg-max-context')?.value;
+    if (descVal !== undefined) parsed.description = descVal;
+    if (modelVal !== undefined) parsed.model = modelVal || undefined;
+    if (maxCtxVal) parsed.max_context = parseInt(maxCtxVal);
+    const finalJson = JSON.stringify(parsed, null, 2);
+    await API.writeAgentFile(agentName, 'agent.json', finalJson);
     showToast('Settings saved');
     // Reload agents data
     try {
@@ -1503,6 +1631,47 @@ function esc(str) {
   return div.innerHTML;
 }
 
+// ─── Theme Toggle ───────────────────────────────────────────
+function getTheme() {
+  return document.documentElement.getAttribute('data-theme') || 'light';
+}
+
+function setTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('theme', theme);
+  // Update icon visibility
+  const sunIcon = document.getElementById('theme-icon-sun');
+  const moonIcon = document.getElementById('theme-icon-moon');
+  if (theme === 'dark') {
+    sunIcon.style.display = 'block';
+    moonIcon.style.display = 'none';
+  } else {
+    sunIcon.style.display = 'none';
+    moonIcon.style.display = 'block';
+  }
+  // Switch highlight.js theme
+  const hljsLink = document.getElementById('hljs-theme');
+  if (hljsLink) {
+    hljsLink.href = theme === 'dark'
+      ? 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css'
+      : 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css';
+  }
+}
+
+function toggleTheme() {
+  setTheme(getTheme() === 'dark' ? 'light' : 'dark');
+}
+
+// Apply saved theme preference
+(function applyStoredTheme() {
+  const stored = localStorage.getItem('theme');
+  if (stored) {
+    setTheme(stored);
+  } else {
+    setTheme('light');
+  }
+})();
+
 // ─── Event Listeners ────────────────────────────────────────
 dom.btnSend.onclick = sendMessage;
 dom.btnStop.onclick = stopGeneration;
@@ -1512,6 +1681,7 @@ dom.btnNewSession.onclick = () => {
   }
 };
 
+$('#btn-theme-toggle').onclick = toggleTheme;
 $('#btn-header-settings').onclick = () => openSettingsModal();
 
 dom.chatInput.addEventListener('keydown', (e) => {
