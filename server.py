@@ -8,6 +8,8 @@ import queue
 import sys
 import threading
 import time
+import urllib.request
+import urllib.error
 import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
