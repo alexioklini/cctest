@@ -82,7 +82,6 @@ tailwind.config = {
   .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
 
   /* Transitions */
-  .sidebar-transition { transition: width 0.2s ease, opacity 0.15s ease; }
   textarea { resize: none; }
 
   /* Message content */
@@ -112,17 +111,6 @@ tailwind.config = {
   .tool-block:hover { background: #1e1e3866; }
   .tool-chevron { transition: transform 0.2s ease; display: inline-block; }
   .tool-block.open .tool-chevron { transform: rotate(90deg); }
-
-  /* Nav items */
-  .nav-item {
-    transition: all 0.2s ease;
-    border-left: 2px solid transparent;
-  }
-  .nav-item:hover { background: #1e1e38; }
-  .nav-item.active {
-    background: linear-gradient(90deg, rgba(255,123,0,0.08), transparent);
-    border-left-color: #ff7b00;
-  }
 
   /* Buttons */
   .btn-primary {
@@ -237,28 +225,38 @@ tailwind.config = {
   .sched-row { transition: background 0.15s ease; }
   .sched-row:hover { background: #1e1e38; }
 
-  /* Agent card grid */
-  .agent-card {
+  /* Agent card - compact horizontal style */
+  .agent-card-compact {
     background: #16162a;
     border: 1px solid #2a2a45;
     border-radius: 0.75rem;
     transition: all 0.2s ease;
+    cursor: pointer;
+    min-width: 180px;
+    max-width: 200px;
+    flex-shrink: 0;
+    position: relative;
   }
-  .agent-card:hover {
+  .agent-card-compact:hover {
     background: rgba(30,30,56,0.85);
     backdrop-filter: blur(8px);
     border-color: #3a3a5a;
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
   }
-  .agent-card-create {
+  .agent-card-compact.selected {
+    border-color: #ff7b00;
+    box-shadow: 0 3px 0 0 #ff7b00, 0 4px 12px rgba(255,123,0,0.15);
+  }
+
+  .agent-card-create-compact {
     border: 2px dashed #2a2a45;
     background: transparent;
     border-radius: 0.75rem;
     transition: all 0.2s ease;
     cursor: pointer;
+    min-width: 80px;
+    flex-shrink: 0;
   }
-  .agent-card-create:hover {
+  .agent-card-create-compact:hover {
     border-color: #ff7b00;
     background: rgba(255,123,0,0.03);
   }
@@ -278,12 +276,48 @@ tailwind.config = {
     border-bottom-color: #ff7b00;
     color: #e8e8f0;
   }
+
+  /* Modal overlay */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(4px);
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-content {
+    background: #16162a;
+    border: 1px solid #2a2a45;
+    border-radius: 1rem;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+    width: 100%;
+    max-width: 700px;
+    max-height: 80vh;
+    overflow-y: auto;
+    position: relative;
+  }
+  .modal-close {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    background: none;
+    border: none;
+    color: #8888aa;
+    font-size: 1.25rem;
+    cursor: pointer;
+    transition: color 0.2s;
+    z-index: 10;
+  }
+  .modal-close:hover { color: #e8e8f0; }
 </style>
 </head>
 <body class="bg-base">
 
 <div id="app" class="flex flex-col h-screen">
-  <!-- HEADER -->
+  <!-- HEADER (48px) -->
   <header class="header-mesh flex items-center justify-between px-5 bg-surface border-b border-border flex-shrink-0" style="height:48px">
     <div class="flex items-center gap-3">
       <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-accent to-orange-400 flex items-center justify-center">
@@ -297,135 +331,50 @@ tailwind.config = {
         <span id="conn-label" class="text-text-secondary font-body">Disconnected</span>
       </span>
       <span class="text-text-muted mono text-[10px]" id="server-url"></span>
+      <button id="btn-header-settings" class="text-text-muted hover:text-text-primary transition-colors p-1 rounded-lg hover:bg-surface-light" title="Server Settings">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
     </div>
   </header>
 
-  <div class="flex flex-1 overflow-hidden">
-    <!-- LEFT SIDEBAR -->
-    <aside id="sidebar" class="sidebar-transition flex flex-col bg-surface/80 border-r border-border overflow-hidden flex-shrink-0 backdrop-blur-sm" style="width:260px">
-      <div class="flex-1 overflow-y-auto py-3">
-        <!-- Nav: Home -->
-        <div class="px-4 py-2 stagger-1">
-          <button class="nav-section-btn section-header w-full flex items-center gap-2 hover:text-text-secondary transition-colors" data-view="home">
-            <span style="font-size:13px">&#127968;</span>
-            Home
-          </button>
-        </div>
+  <!-- AGENT CARDS ROW (always visible) -->
+  <div id="agent-cards-row" class="flex items-stretch gap-3 px-5 py-3 bg-surface/50 border-b border-border flex-shrink-0 overflow-x-auto" style="min-height:100px">
+  </div>
 
-        <div class="border-t border-border/50 mx-4 my-2"></div>
-
-        <!-- Nav: Active Chats -->
-        <div class="px-4 py-2 stagger-2">
-          <button class="nav-section-btn section-header w-full flex items-center gap-2 hover:text-text-secondary transition-colors" data-view="chat">
-            <span style="font-size:13px">&#128172;</span>
-            Active Chats
-          </button>
-        </div>
-        <div id="nav-chat-list" class="px-3 space-y-0.5"></div>
-
-        <div class="border-t border-border/50 mx-4 my-2"></div>
-
-        <!-- Nav: Settings -->
-        <div class="px-4 py-2 stagger-3">
-          <button class="nav-section-btn section-header w-full flex items-center gap-2 hover:text-text-secondary transition-colors" data-view="settings">
-            <span style="font-size:13px">&#9881;&#65039;</span>
-            Server Settings
+  <!-- CHAT AREA (fills remaining) -->
+  <div id="chat-area" class="flex-1 flex flex-col overflow-hidden bg-base">
+    <!-- Chat top bar -->
+    <div id="chat-top-bar" class="flex items-center bg-surface/50 border-b border-border flex-shrink-0 px-4 gap-3" style="min-height:44px">
+      <span id="chat-agent-name" class="text-agent font-display font-semibold text-sm flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-agent breathing-dot"></span>
+        <span></span>
+      </span>
+      <div class="flex-1"></div>
+      <select id="model-selector" class="bg-surface-light border border-border rounded-lg px-3 py-1.5 text-xs text-model mono focus:border-model transition-colors"></select>
+      <button id="btn-new-session" class="btn-secondary text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all" title="New session for this agent">
+        /new
+      </button>
+      <button id="btn-stop" class="hidden btn-secondary text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="#f87171"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+        <span class="text-error">Stop</span>
+      </button>
+    </div>
+    <!-- Messages -->
+    <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-6">
+      <div class="flex items-center justify-center h-full text-text-muted text-sm font-body">Select an agent above to start chatting</div>
+    </div>
+    <!-- Input area -->
+    <div id="chat-input-area" class="flex-shrink-0 p-4 pt-2">
+      <div class="max-w-[800px] mx-auto">
+        <div class="chat-input-wrapper flex items-end gap-2 p-2">
+          <textarea id="chat-input" class="flex-1 bg-transparent border-none px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none font-body" rows="2" placeholder="Type a message... (Ctrl+Enter to send)" style="box-shadow:none !important;"></textarea>
+          <button id="btn-send" class="btn-primary px-5 py-2 rounded-xl text-sm flex items-center gap-2 self-end font-display font-semibold">
+            Send
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           </button>
         </div>
       </div>
-
-      <!-- Sidebar toggle -->
-      <div class="border-t border-border/50 p-2">
-        <button id="btn-toggle-sidebar" class="w-full flex items-center justify-center gap-1.5 text-text-muted hover:text-text-secondary text-[10px] py-1.5 transition-colors rounded hover:bg-surface-light">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/></svg>
-          Collapse
-        </button>
-      </div>
-    </aside>
-
-    <!-- Collapsed sidebar toggle -->
-    <button id="btn-expand-sidebar" class="hidden flex-shrink-0 w-8 bg-surface border-r border-border flex items-center justify-center text-text-muted hover:text-text-secondary hover:bg-surface-light transition-all duration-200" title="Expand sidebar">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg>
-    </button>
-
-    <!-- MAIN AREA -->
-    <main id="main-area" class="flex-1 flex flex-col overflow-hidden bg-base">
-
-      <!-- HOME VIEW (agent cards grid) -->
-      <div id="view-home" class="flex-1 overflow-y-auto p-8">
-        <div class="max-w-5xl mx-auto">
-          <h2 class="font-display text-xl font-semibold text-text-primary mb-6">Agents</h2>
-          <div id="home-agents-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
-        </div>
-      </div>
-
-      <!-- CHAT VIEW -->
-      <div id="view-chat" class="flex-1 flex flex-col overflow-hidden hidden">
-        <!-- Top bar -->
-        <div id="chat-top-bar" class="flex items-center bg-surface/50 border-b border-border flex-shrink-0 px-4 gap-3" style="min-height:44px">
-          <button id="btn-back-home" class="text-text-muted hover:text-text-primary transition-colors text-sm flex items-center gap-1.5" title="Back to Home">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
-          </button>
-          <span id="chat-agent-name" class="text-agent font-display font-semibold text-sm flex items-center gap-2">
-            <span class="w-2 h-2 rounded-full bg-agent breathing-dot"></span>
-            <span></span>
-          </span>
-          <div class="flex-1"></div>
-          <select id="model-selector" class="bg-surface-light border border-border rounded-lg px-3 py-1.5 text-xs text-model mono focus:border-model transition-colors"></select>
-          <button id="btn-new-session" class="btn-secondary text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all" title="New session for this agent">
-            /new
-          </button>
-          <button id="btn-stop" class="hidden btn-secondary text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="#f87171"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-            <span class="text-error">Stop</span>
-          </button>
-        </div>
-        <!-- Messages -->
-        <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-6">
-          <div class="max-w-[800px] mx-auto space-y-5"></div>
-        </div>
-        <!-- Input area -->
-        <div class="flex-shrink-0 p-4 pt-2">
-          <div class="max-w-[800px] mx-auto">
-            <div class="chat-input-wrapper flex items-end gap-2 p-2">
-              <textarea id="chat-input" class="flex-1 bg-transparent border-none px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none font-body" rows="2" placeholder="Type a message... (Ctrl+Enter to send)" style="box-shadow:none !important;"></textarea>
-              <button id="btn-send" class="btn-primary px-5 py-2 rounded-xl text-sm flex items-center gap-2 self-end font-display font-semibold">
-                Send
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- AGENT CONFIG VIEW -->
-      <div id="view-config" class="flex-1 overflow-y-auto hidden p-8">
-        <div class="max-w-4xl mx-auto">
-          <button id="btn-config-back" class="text-text-muted hover:text-text-primary transition-colors text-sm flex items-center gap-1.5 mb-6">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
-            Back to Home
-          </button>
-          <h2 id="config-agent-title" class="font-display text-xl font-semibold text-agent mb-4"></h2>
-          <!-- Config tabs -->
-          <div id="config-tabs" class="flex items-center border-b border-border mb-6 gap-0">
-            <button class="config-tab active" data-tab="soul">Soul</button>
-            <button class="config-tab" data-tab="settings">Settings</button>
-            <button class="config-tab" data-tab="skills">Skills</button>
-            <button class="config-tab" data-tab="mcp">MCP</button>
-            <button class="config-tab" data-tab="schedule">Schedule</button>
-          </div>
-          <div id="config-tab-content"></div>
-        </div>
-      </div>
-
-      <!-- SETTINGS VIEW -->
-      <div id="view-settings" class="flex-1 overflow-y-auto hidden p-8">
-        <div class="max-w-4xl mx-auto">
-          <h2 class="font-display text-xl font-semibold text-text-primary mb-6">Server Settings</h2>
-          <div id="settings-content" class="space-y-6"></div>
-        </div>
-      </div>
-    </main>
+    </div>
   </div>
 
   <!-- FOOTER STATUS BAR -->
@@ -539,9 +488,8 @@ class AppState {
     this.agents = [];
     this.models = [];
     this.providers = [];
-    this.currentView = 'home';
     this.serverInfo = null;
-    // One chat per agent: { agentId: { sessionId, agent, model, messages[], streaming, totalTokens, msgContainer } }
+    // One chat per agent: { agentId: { sessionId, agent, model, messages[], streaming, totalTokens } }
     this.agentChats = {};
     this.activeAgentId = null;
     this.configAgent = null;
@@ -563,62 +511,21 @@ const dom = {
   connDot: $('#conn-dot'),
   connLabel: $('#conn-label'),
   serverUrl: $('#server-url'),
-  sidebar: $('#sidebar'),
-  expandBtn: $('#btn-expand-sidebar'),
+  agentCardsRow: $('#agent-cards-row'),
   chatMessages: $('#chat-messages'),
   chatInput: $('#chat-input'),
+  chatInputArea: $('#chat-input-area'),
+  chatTopBar: $('#chat-top-bar'),
   modelSelector: $('#model-selector'),
   btnSend: $('#btn-send'),
   btnStop: $('#btn-stop'),
-  btnBackHome: $('#btn-back-home'),
   btnNewSession: $('#btn-new-session'),
   chatAgentName: $('#chat-agent-name'),
-  navChatList: $('#nav-chat-list'),
-  homeAgentsGrid: $('#home-agents-grid'),
   statusModel: $('#status-model'),
   statusAgent: $('#status-agent'),
   statusTokens: $('#status-tokens'),
   statusSession: $('#status-session'),
-  settingsContent: $('#settings-content'),
-  configAgentTitle: $('#config-agent-title'),
-  configTabs: $('#config-tabs'),
-  configTabContent: $('#config-tab-content'),
-  btnConfigBack: $('#btn-config-back'),
 };
-
-// ─── View Management ────────────────────────────────────────
-function switchView(view) {
-  state.currentView = view;
-  ['home', 'chat', 'config', 'settings'].forEach(v => {
-    const el = $(`#view-${v}`);
-    if (el) el.classList.toggle('hidden', v !== view);
-  });
-  // Highlight sidebar
-  $$('.nav-section-btn').forEach(btn => {
-    const bv = btn.dataset.view;
-    const container = btn.closest('.px-4');
-    if (container) {
-      // 'chat' highlights when in chat view, 'home' highlights for home and config
-      const isActive = (bv === view) || (bv === 'home' && view === 'config');
-      if (isActive) {
-        container.style.background = 'linear-gradient(90deg, rgba(255,123,0,0.06), transparent)';
-        container.style.borderLeft = '2px solid #ff7b00';
-        container.style.marginLeft = '-2px';
-      } else {
-        container.style.background = '';
-        container.style.borderLeft = '';
-        container.style.marginLeft = '';
-      }
-    }
-  });
-  if (view === 'home') renderHomeView();
-  if (view === 'settings') renderSettingsView();
-  if (view === 'chat') {
-    renderChatView();
-    renderNavChats();
-  }
-  if (view === 'config') renderConfigView();
-}
 
 // ─── Connection ─────────────────────────────────────────────
 async function checkConnection() {
@@ -659,8 +566,8 @@ async function loadInitialData() {
     }
   } catch {}
   renderModelSelector();
-  renderHomeView();
-  renderNavChats();
+  renderAgentCards();
+  updateChatArea();
 }
 
 // ─── Rendering: Models ──────────────────────────────────────
@@ -697,66 +604,59 @@ function getAgentMcpCount(a) {
   return typeof a === 'object' ? (a.mcp_count || (a.mcp_servers ? a.mcp_servers.length : 0)) : 0;
 }
 
-// ─── HOME VIEW ──────────────────────────────────────────────
-function renderHomeView() {
-  const grid = dom.homeAgentsGrid;
-  grid.innerHTML = '';
+// ─── AGENT CARDS ROW ────────────────────────────────────────
+function renderAgentCards() {
+  const row = dom.agentCardsRow;
+  row.innerHTML = '';
   state.agents.forEach((a, i) => {
     const name = getAgentName(a);
     const desc = getAgentDesc(a);
-    const soulPreview = getAgentSoulPreview(a);
     const skillsCount = getAgentSkillsCount(a);
-    const mcpCount = getAgentMcpCount(a);
+    const isSelected = name === state.activeAgentId;
     const hasChat = !!state.agentChats[name];
 
     const card = document.createElement('div');
-    card.className = 'agent-card p-5 flex flex-col gap-3 fade-in';
-    card.style.animationDelay = `${i * 0.05}s`;
+    card.className = `agent-card-compact flex flex-col p-3 gap-1.5 fade-in ${isSelected ? 'selected' : ''}`;
+    card.style.animationDelay = `${i * 0.04}s`;
     card.innerHTML = `
-      <div class="flex items-start justify-between">
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-xl bg-agent/10 flex items-center justify-center flex-shrink-0">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#b48eff" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
-          </div>
-          <div>
-            <h3 class="font-display font-semibold text-agent text-base">${esc(name)}</h3>
-          </div>
-        </div>
-        ${hasChat ? '<span class="w-2 h-2 rounded-full bg-success breathing-dot flex-shrink-0 mt-2" title="Active chat"></span>' : ''}
+      <div class="flex items-center gap-2">
+        <span class="font-display font-bold text-agent text-sm truncate flex-1">${esc(name)}</span>
+        ${hasChat ? '<span class="w-1.5 h-1.5 rounded-full bg-success breathing-dot flex-shrink-0" title="Active chat"></span>' : ''}
       </div>
-      ${desc ? `<p class="text-text-secondary text-sm leading-relaxed">${esc(desc)}</p>` : '<p class="text-text-muted text-sm italic">No description</p>'}
-      ${soulPreview ? `<p class="text-text-muted text-xs truncate mono">${esc(soulPreview)}</p>` : ''}
-      <div class="flex items-center gap-3 text-[11px] text-text-muted">
-        ${skillsCount > 0 ? `<span class="flex items-center gap-1"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>${skillsCount} skills</span>` : ''}
-        ${mcpCount > 0 ? `<span class="flex items-center gap-1"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M9 9h6v6H9z"/></svg>${mcpCount} MCP</span>` : ''}
-      </div>
-      <div class="flex items-center gap-2 mt-auto pt-2">
-        <button class="btn-chat btn-primary px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 flex-1 justify-center font-display">
-          <span>&#128172;</span> Chat
+      <div class="text-text-muted text-[11px] truncate leading-tight" style="min-height:16px">${desc ? esc(desc) : '<span class="italic">No description</span>'}</div>
+      ${skillsCount > 0 ? `<div class="text-[10px] text-text-muted flex items-center gap-1"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>${skillsCount} skills</div>` : '<div style="height:14px"></div>'}
+      <div class="flex items-center gap-1.5 mt-auto pt-1">
+        <button class="btn-cfg-card text-text-muted hover:text-accent text-xs transition-colors p-1 rounded hover:bg-surface-light" title="Configure">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         </button>
-        <button class="btn-configure btn-secondary px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 flex-1 justify-center font-display">
-          <span>&#9881;&#65039;</span> Configure
+        <button class="btn-chat-card text-text-muted hover:text-agent text-xs transition-colors p-1 rounded hover:bg-surface-light" title="Chat">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         </button>
       </div>
     `;
-    card.querySelector('.btn-chat').onclick = () => openChat(name);
-    card.querySelector('.btn-configure').onclick = () => openConfig(name);
-    grid.appendChild(card);
+    // Click card body = select agent
+    card.onclick = (e) => {
+      if (e.target.closest('.btn-cfg-card') || e.target.closest('.btn-chat-card')) return;
+      selectAgent(name);
+    };
+    card.querySelector('.btn-chat-card').onclick = () => selectAgent(name);
+    card.querySelector('.btn-cfg-card').onclick = () => openConfigModal(name);
+    row.appendChild(card);
   });
 
-  // Create Agent card
+  // Create Agent "+" card
   const createCard = document.createElement('div');
-  createCard.className = 'agent-card-create flex flex-col items-center justify-center gap-3 p-8 min-h-[200px]';
+  createCard.className = 'agent-card-create-compact flex flex-col items-center justify-center gap-1.5 p-3';
   createCard.innerHTML = `
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#555570" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-    <span class="text-text-muted text-sm font-display">Create Agent</span>
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#555570" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    <span class="text-text-muted text-[10px] font-display">New</span>
   `;
   createCard.onclick = () => showCreateAgentModal();
-  grid.appendChild(createCard);
+  row.appendChild(createCard);
 }
 
-// ─── CHAT MANAGEMENT ────────────────────────────────────────
-function openChat(agentName) {
+// ─── Select Agent ───────────────────────────────────────────
+function selectAgent(agentName) {
   state.activeAgentId = agentName;
   // Create chat entry if not exists
   if (!state.agentChats[agentName]) {
@@ -768,15 +668,25 @@ function openChat(agentName) {
       messages: [],
       streaming: false,
       totalTokens: 0,
-      msgContainer: null,
     };
   }
-  switchView('chat');
+  renderAgentCards();
+  updateChatArea();
 }
 
-function renderChatView() {
+// ─── Update Chat Area ───────────────────────────────────────
+function updateChatArea() {
   const chat = state.activeChat;
-  if (!chat) return;
+  if (!chat) {
+    // No agent selected
+    dom.chatTopBar.style.display = 'none';
+    dom.chatInputArea.style.display = 'none';
+    dom.chatMessages.innerHTML = '<div class="flex items-center justify-center h-full text-text-muted text-sm font-body">Select an agent above to start chatting</div>';
+    updateStatusBar();
+    return;
+  }
+  dom.chatTopBar.style.display = '';
+  dom.chatInputArea.style.display = '';
 
   // Update top bar
   dom.chatAgentName.querySelector('span:last-child').textContent = chat.agent;
@@ -791,37 +701,7 @@ function renderChatView() {
   dom.chatInput.focus();
 }
 
-// ─── Rendering: Nav Chat List (Active Chats) ────────────────
-function renderNavChats() {
-  dom.navChatList.innerHTML = '';
-  const chatEntries = Object.entries(state.agentChats);
-  if (chatEntries.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'px-3 py-2 text-[11px] text-text-muted';
-    empty.textContent = 'No active chats';
-    dom.navChatList.appendChild(empty);
-    return;
-  }
-  chatEntries.forEach(([agentId, chat]) => {
-    const div = document.createElement('div');
-    const isActive = agentId === state.activeAgentId && state.currentView === 'chat';
-    div.className = `nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer text-sm ${isActive ? 'active' : ''}`;
-    const msgCount = chat.messages.length;
-    div.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-agent flex-shrink-0"></span>
-      <span class="truncate text-text-secondary flex-1">${esc(chat.agent)}</span>
-      <span class="text-text-muted text-[10px] mono">${msgCount}</span>
-      <span class="close-chat text-text-muted hover:text-error text-xs transition-colors" data-agent="${esc(agentId)}">&times;</span>`;
-    div.onclick = (e) => {
-      if (e.target.classList.contains('close-chat')) {
-        closeChat(e.target.dataset.agent);
-        return;
-      }
-      openChat(agentId);
-    };
-    dom.navChatList.appendChild(div);
-  });
-}
-
+// ─── CHAT MANAGEMENT ────────────────────────────────────────
 function closeChat(agentId) {
   const chat = state.agentChats[agentId];
   if (chat && chat.sessionId) {
@@ -832,13 +712,11 @@ function closeChat(agentId) {
     state.activeAgentId = null;
     const remaining = Object.keys(state.agentChats);
     if (remaining.length > 0) {
-      openChat(remaining[0]);
-    } else {
-      switchView('home');
+      state.activeAgentId = remaining[0];
     }
   }
-  renderNavChats();
-  if (state.currentView === 'home') renderHomeView();
+  renderAgentCards();
+  updateChatArea();
 }
 
 async function ensureSession(chat) {
@@ -863,11 +741,10 @@ function resetSession(agentId) {
   chat.messages = [];
   chat.totalTokens = 0;
   chat.streaming = false;
-  if (state.activeAgentId === agentId && state.currentView === 'chat') {
+  if (state.activeAgentId === agentId) {
     renderMessages();
     updateStatusBar();
   }
-  renderNavChats();
   showToast('Session reset');
 }
 
@@ -1042,7 +919,7 @@ async function sendMessage() {
     dom.btnSend.disabled = false;
     renderMessages();
     updateStatusBar();
-    renderNavChats();
+    renderAgentCards();
   }
 }
 
@@ -1063,28 +940,45 @@ function updateStatusBar() {
   dom.statusSession.textContent = chat?.sessionId ? `Session: ${chat.sessionId.substring(0, 8)}` : '';
 }
 
-// ─── AGENT CONFIG VIEW ──────────────────────────────────────
-function openConfig(agentName) {
+// ─── CONFIG MODAL ───────────────────────────────────────────
+function openConfigModal(agentName) {
   state.configAgent = agentName;
   state.configTab = 'soul';
-  switchView('config');
-}
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.id = 'config-modal';
+  modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+  modal.innerHTML = `
+    <div class="modal-content p-6">
+      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+      <h2 class="font-display text-lg font-semibold text-agent mb-4">${esc(agentName)}</h2>
+      <div id="config-tabs" class="flex items-center border-b border-border mb-6 gap-0">
+        <button class="config-tab active" data-tab="soul">Soul</button>
+        <button class="config-tab" data-tab="settings">Settings</button>
+        <button class="config-tab" data-tab="skills">Skills</button>
+        <button class="config-tab" data-tab="mcp">MCP</button>
+        <button class="config-tab" data-tab="schedule">Schedule</button>
+      </div>
+      <div id="config-tab-content"></div>
+    </div>
+  `;
+  document.body.appendChild(modal);
 
-function renderConfigView() {
-  const name = state.configAgent;
-  if (!name) return;
-  dom.configAgentTitle.textContent = name;
-
-  // Reset tab highlights
-  $$('#config-tabs .config-tab').forEach(t => {
-    t.classList.toggle('active', t.dataset.tab === state.configTab);
+  // Bind tab clicks
+  modal.querySelectorAll('#config-tabs .config-tab').forEach(tab => {
+    tab.onclick = () => {
+      state.configTab = tab.dataset.tab;
+      modal.querySelectorAll('#config-tabs .config-tab').forEach(t => t.classList.toggle('active', t === tab));
+      loadConfigTabContent(state.configTab, state.configAgent);
+    };
   });
 
-  loadConfigTabContent(state.configTab, name);
+  loadConfigTabContent('soul', agentName);
 }
 
 async function loadConfigTabContent(tab, agentName) {
-  const el = dom.configTabContent;
+  const el = document.querySelector('#config-modal #config-tab-content');
+  if (!el) return;
   el.innerHTML = '<div class="text-text-muted text-sm">Loading...</div>';
 
   if (tab === 'soul') {
@@ -1192,6 +1086,7 @@ async function loadConfigTabContent(tab, agentName) {
   } else if (tab === 'schedule') {
     try {
       const tasks = await API.getSchedule();
+      const allAgents = state.agents;
       const list = (Array.isArray(tasks) ? tasks : (tasks.tasks || [])).filter(t => t.agent === agentName);
       el.innerHTML = `
         <div class="space-y-6">
@@ -1235,15 +1130,25 @@ async function loadConfigTabContent(tab, agentName) {
                 <input id="sched-task-name" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" placeholder="e.g. Daily summary">
               </div>
               <div>
-                <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Frequency</label>
+                <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Schedule Type</label>
                 <select id="sched-freq-type" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" onchange="updateScheduleFreqUI()">
-                  <option value="every">Every X minutes/hours</option>
-                  <option value="daily">Daily at specific time</option>
-                  <option value="weekly">Weekly on a day at specific time</option>
-                  <option value="once">Once on a specific date/time</option>
+                  <option value="every-min">Every X minutes</option>
+                  <option value="every-hr">Every X hours</option>
+                  <option value="daily">Daily at</option>
+                  <option value="weekly">Weekly on DAY at</option>
+                  <option value="once">Once on DATE at</option>
                 </select>
               </div>
               <div id="sched-freq-details"></div>
+              <div>
+                <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Agent</label>
+                <select id="sched-agent-select" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors">
+                  ${allAgents.map(a => {
+                    const n = getAgentName(a);
+                    return `<option value="${esc(n)}" ${n === agentName ? 'selected' : ''}>${esc(n)}</option>`;
+                  }).join('')}
+                </select>
+              </div>
               <div>
                 <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Task Description</label>
                 <textarea id="sched-task-message" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" rows="3" placeholder="What should the agent do?"></textarea>
@@ -1258,7 +1163,7 @@ async function loadConfigTabContent(tab, agentName) {
                   }).join('')}
                 </select>
               </div>
-              <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="submitScheduleTask('${esc(agentName)}')">Create Task</button>
+              <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="submitScheduleTask()">Create Task</button>
             </div>
           </div>
         </div>`;
@@ -1273,16 +1178,19 @@ window.updateScheduleFreqUI = function() {
   const type = $('#sched-freq-type')?.value;
   const details = $('#sched-freq-details');
   if (!details) return;
-  if (type === 'every') {
+  if (type === 'every-min') {
     details.innerHTML = `
       <div class="flex items-center gap-3">
         <label class="text-[11px] text-text-secondary font-medium uppercase tracking-wider flex-shrink-0">Every</label>
         <input id="sched-interval" type="number" min="1" value="30" class="w-24 bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono focus:border-accent transition-colors">
-        <select id="sched-interval-unit" class="bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:border-accent transition-colors">
-          <option value="minutes">Minutes</option>
-          <option value="hours">Hours</option>
-          <option value="days">Days</option>
-        </select>
+        <span class="text-text-secondary text-sm">minutes</span>
+      </div>`;
+  } else if (type === 'every-hr') {
+    details.innerHTML = `
+      <div class="flex items-center gap-3">
+        <label class="text-[11px] text-text-secondary font-medium uppercase tracking-wider flex-shrink-0">Every</label>
+        <input id="sched-interval" type="number" min="1" value="1" class="w-24 bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono focus:border-accent transition-colors">
+        <span class="text-text-secondary text-sm">hours</span>
       </div>`;
   } else if (type === 'daily') {
     details.innerHTML = `
@@ -1314,12 +1222,12 @@ window.updateScheduleFreqUI = function() {
 
 function buildCronFromUI() {
   const type = $('#sched-freq-type')?.value;
-  if (type === 'every') {
+  if (type === 'every-min') {
     const interval = parseInt($('#sched-interval')?.value) || 30;
-    const unit = $('#sched-interval-unit')?.value || 'minutes';
-    if (unit === 'minutes') return `*/${interval} * * * *`;
-    if (unit === 'hours') return `0 */${interval} * * *`;
-    if (unit === 'days') return `0 0 */${interval} * *`;
+    return `*/${interval} * * * *`;
+  } else if (type === 'every-hr') {
+    const interval = parseInt($('#sched-interval')?.value) || 1;
+    return `0 */${interval} * * *`;
   } else if (type === 'daily') {
     const time = $('#sched-time')?.value || '09:00';
     const [h, m] = time.split(':');
@@ -1330,7 +1238,6 @@ function buildCronFromUI() {
     const [h, m] = time.split(':');
     return `${parseInt(m)} ${parseInt(h)} * * ${day}`;
   } else if (type === 'once') {
-    // For "once", we still generate a cron-like expression; server handles it
     const date = $('#sched-date')?.value;
     const time = $('#sched-time')?.value || '09:00';
     if (date) {
@@ -1343,16 +1250,17 @@ function buildCronFromUI() {
   return '*/30 * * * *';
 }
 
-window.submitScheduleTask = async function(agentName) {
+window.submitScheduleTask = async function() {
   const name = $('#sched-task-name')?.value.trim();
   const message = $('#sched-task-message')?.value.trim();
+  const agentName = $('#sched-agent-select')?.value || state.configAgent;
   const model = $('#sched-model-override')?.value || undefined;
   const schedule = buildCronFromUI();
   if (!name || !message) { showToast('Name and description are required', true); return; }
   try {
     await API.manageSchedule({ action: 'add', name, agent: agentName, schedule, message, model });
     showToast('Task created');
-    loadConfigTabContent('schedule', agentName);
+    loadConfigTabContent('schedule', state.configAgent);
   } catch (e) {
     showToast(`Error: ${e.message}`, true);
   }
@@ -1380,6 +1288,7 @@ window.saveAgentSettings = async function(agentName) {
     try {
       const agents = await API.getAgents();
       state.agents = Array.isArray(agents) ? agents : (agents.agents || []);
+      renderAgentCards();
     } catch {}
   } catch (e) {
     showToast(`Error: ${e.message}`, true);
@@ -1403,7 +1312,7 @@ window.viewAgentFile = async function(agentName, fileName) {
     const res = await API.getAgentFile(agentName, fileName);
     const content = typeof res === 'string' ? res : (res.content || JSON.stringify(res, null, 2));
     const modal = document.createElement('div');
-    modal.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50';
+    modal.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60]';
     modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
     modal.innerHTML = `<div class="bg-surface rounded-2xl border border-border p-6 w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl">
       <div class="flex items-center justify-between mb-4">
@@ -1424,7 +1333,7 @@ window.scheduleAction = async function(action, taskId) {
       const res = await API.manageSchedule({ action: 'history', task_id: taskId });
       const history = Array.isArray(res) ? res : (res.history || []);
       const modal = document.createElement('div');
-      modal.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50';
+      modal.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60]';
       modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
       modal.innerHTML = `<div class="bg-surface rounded-2xl border border-border p-6 w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl">
         <div class="flex items-center justify-between mb-4">
@@ -1442,7 +1351,7 @@ window.scheduleAction = async function(action, taskId) {
     } else {
       await API.manageSchedule({ action, task_id: taskId });
       showToast(`Task ${action}d`);
-      if (state.currentView === 'config' && state.configTab === 'schedule') {
+      if (state.configAgent && state.configTab === 'schedule') {
         loadConfigTabContent('schedule', state.configAgent);
       }
     }
@@ -1451,53 +1360,27 @@ window.scheduleAction = async function(action, taskId) {
   }
 };
 
-// ─── Create Agent Modal ─────────────────────────────────────
-function showCreateAgentModal() {
+// ─── SETTINGS MODAL ─────────────────────────────────────────
+function openSettingsModal() {
   const modal = document.createElement('div');
-  modal.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50';
+  modal.className = 'modal-overlay';
+  modal.id = 'settings-modal';
   modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-  modal.innerHTML = `<div class="bg-surface rounded-2xl border border-border p-8 w-full max-w-lg shadow-2xl">
-    <h3 class="text-text-primary font-display font-semibold text-lg mb-6">Create New Agent</h3>
-    <div class="space-y-4">
-      <div>
-        <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Agent Name</label>
-        <input id="new-agent-name" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" placeholder="agent-name">
-      </div>
-      <div>
-        <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Description</label>
-        <input id="new-agent-desc" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" placeholder="Brief description">
-      </div>
-      <div>
-        <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Soul (initial soul.md)</label>
-        <textarea id="new-agent-soul" class="w-full bg-surface-light border border-border rounded-xl px-5 py-4 text-sm text-text-primary mono focus:border-accent transition-colors" rows="8" placeholder="You are..."></textarea>
-      </div>
-      <div class="flex justify-end gap-3 pt-3">
-        <button class="btn-secondary px-5 py-2 rounded-xl text-sm font-display" onclick="this.closest('.fixed').remove()">Cancel</button>
-        <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="submitCreateAgent()">Create Agent</button>
-      </div>
+  modal.innerHTML = `
+    <div class="modal-content p-6">
+      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+      <h2 class="font-display text-lg font-semibold text-text-primary mb-6">Server Settings</h2>
+      <div id="settings-content" class="space-y-6"></div>
     </div>
-  </div>`;
+  `;
   document.body.appendChild(modal);
+  renderSettingsContent();
 }
 
-window.submitCreateAgent = async function() {
-  const name = $('#new-agent-name')?.value.trim();
-  const desc = $('#new-agent-desc')?.value.trim();
-  const soul = $('#new-agent-soul')?.value.trim();
-  if (!name) { showToast('Name is required', true); return; }
-  try {
-    await API.createAgent(name, desc, soul);
-    showToast('Agent created');
-    document.querySelector('.fixed.inset-0')?.remove();
-    await loadInitialData();
-  } catch (e) {
-    showToast(`Error: ${e.message}`, true);
-  }
-};
-
-// ─── Settings View ──────────────────────────────────────────
-async function renderSettingsView() {
-  dom.settingsContent.innerHTML = '<div class="text-text-muted text-sm">Loading...</div>';
+async function renderSettingsContent() {
+  const el = document.querySelector('#settings-modal #settings-content');
+  if (!el) return;
+  el.innerHTML = '<div class="text-text-muted text-sm">Loading...</div>';
   try {
     const [statusRes, providersRes] = await Promise.allSettled([
       API.getStatus(),
@@ -1506,7 +1389,7 @@ async function renderSettingsView() {
     const status = statusRes.status === 'fulfilled' ? statusRes.value : {};
     const providers = providersRes.status === 'fulfilled' ? (Array.isArray(providersRes.value) ? providersRes.value : (providersRes.value.providers || [])) : [];
 
-    dom.settingsContent.innerHTML = `
+    el.innerHTML = `
       <!-- Server Status -->
       <div class="glass-card p-6">
         <h3 class="section-header mb-4 text-sm">Server Status</h3>
@@ -1554,14 +1437,59 @@ async function renderSettingsView() {
         </div>
       </div>`;
   } catch (e) {
-    dom.settingsContent.innerHTML = `<div class="text-error text-sm">Error: ${esc(e.message)}</div>`;
+    el.innerHTML = `<div class="text-error text-sm">Error: ${esc(e.message)}</div>`;
   }
 }
+
+// ─── Create Agent Modal ─────────────────────────────────────
+function showCreateAgentModal() {
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+  modal.innerHTML = `<div class="modal-content p-8" style="max-width:500px">
+    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+    <h3 class="text-text-primary font-display font-semibold text-lg mb-6">Create New Agent</h3>
+    <div class="space-y-4">
+      <div>
+        <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Agent Name</label>
+        <input id="new-agent-name" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" placeholder="agent-name">
+      </div>
+      <div>
+        <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Description</label>
+        <input id="new-agent-desc" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" placeholder="Brief description">
+      </div>
+      <div>
+        <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Soul (initial soul.md)</label>
+        <textarea id="new-agent-soul" class="w-full bg-surface-light border border-border rounded-xl px-5 py-4 text-sm text-text-primary mono focus:border-accent transition-colors" rows="8" placeholder="You are..."></textarea>
+      </div>
+      <div class="flex justify-end gap-3 pt-3">
+        <button class="btn-secondary px-5 py-2 rounded-xl text-sm font-display" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+        <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="submitCreateAgent()">Create Agent</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(modal);
+}
+
+window.submitCreateAgent = async function() {
+  const name = $('#new-agent-name')?.value.trim();
+  const desc = $('#new-agent-desc')?.value.trim();
+  const soul = $('#new-agent-soul')?.value.trim();
+  if (!name) { showToast('Name is required', true); return; }
+  try {
+    await API.createAgent(name, desc, soul);
+    showToast('Agent created');
+    document.querySelector('.modal-overlay')?.remove();
+    await loadInitialData();
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
 
 // ─── Toast Notification ─────────────────────────────────────
 function showToast(msg, isError = false) {
   const toast = document.createElement('div');
-  toast.className = `fixed bottom-12 right-4 px-5 py-3 rounded-xl text-sm shadow-2xl z-50 fade-in backdrop-blur-sm border ${isError ? 'bg-error/20 text-error border-error/30' : 'bg-surface/90 text-text-primary border-border'}`;
+  toast.className = `fixed bottom-12 right-4 px-5 py-3 rounded-xl text-sm shadow-2xl z-[100] fade-in backdrop-blur-sm border ${isError ? 'bg-error/20 text-error border-error/30' : 'bg-surface/90 text-text-primary border-border'}`;
   toast.textContent = msg;
   document.body.appendChild(toast);
   setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(() => toast.remove(), 300); }, 3000);
@@ -1575,32 +1503,16 @@ function esc(str) {
   return div.innerHTML;
 }
 
-// ─── Sidebar Toggle ─────────────────────────────────────────
-$('#btn-toggle-sidebar').onclick = () => {
-  dom.sidebar.style.width = '0';
-  dom.sidebar.style.opacity = '0';
-  dom.sidebar.style.overflow = 'hidden';
-  dom.expandBtn.classList.remove('hidden');
-  dom.expandBtn.classList.add('flex');
-};
-dom.expandBtn.onclick = () => {
-  dom.sidebar.style.width = '260px';
-  dom.sidebar.style.opacity = '1';
-  dom.sidebar.style.overflow = '';
-  dom.expandBtn.classList.add('hidden');
-  dom.expandBtn.classList.remove('flex');
-};
-
 // ─── Event Listeners ────────────────────────────────────────
 dom.btnSend.onclick = sendMessage;
 dom.btnStop.onclick = stopGeneration;
-dom.btnBackHome.onclick = () => switchView('home');
 dom.btnNewSession.onclick = () => {
   if (state.activeAgentId) {
     resetSession(state.activeAgentId);
   }
 };
-dom.btnConfigBack.onclick = () => switchView('home');
+
+$('#btn-header-settings').onclick = () => openSettingsModal();
 
 dom.chatInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.ctrlKey) {
@@ -1613,39 +1525,6 @@ dom.chatInput.addEventListener('keydown', (e) => {
 dom.chatInput.addEventListener('input', () => {
   dom.chatInput.style.height = 'auto';
   dom.chatInput.style.height = Math.min(dom.chatInput.scrollHeight, 200) + 'px';
-});
-
-// Navigation buttons
-$$('.nav-section-btn').forEach(btn => {
-  btn.onclick = () => {
-    const view = btn.dataset.view;
-    if (view === 'chat') {
-      // If there's an active chat, go to it; otherwise go home
-      if (state.activeAgentId && state.agentChats[state.activeAgentId]) {
-        switchView('chat');
-      } else {
-        // Pick first active chat if any
-        const chats = Object.keys(state.agentChats);
-        if (chats.length > 0) {
-          state.activeAgentId = chats[0];
-          switchView('chat');
-        } else {
-          switchView('home');
-        }
-      }
-    } else if (view) {
-      switchView(view);
-    }
-  };
-});
-
-// Config tabs
-$$('#config-tabs .config-tab').forEach(tab => {
-  tab.onclick = () => {
-    state.configTab = tab.dataset.tab;
-    $$('#config-tabs .config-tab').forEach(t => t.classList.toggle('active', t === tab));
-    loadConfigTabContent(state.configTab, state.configAgent);
-  };
 });
 
 // Model selector change
