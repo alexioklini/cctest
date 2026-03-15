@@ -189,6 +189,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_browse_skills()
         elif path == "/v1/skills/install":
             self._handle_install_skill()
+        elif path == "/v1/skills/remove":
+            self._handle_remove_skill()
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -715,6 +717,26 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "agent": agent_id,
                 "path": skill_path,
             })
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_remove_skill(self):
+        """POST /v1/skills/remove — remove a skill from an agent."""
+        body = self._read_json()
+        skill_name = body.get("skill", "")
+        agent_id = body.get("agent", "main")
+        if not skill_name:
+            self._send_json({"error": "Skill name required"}, 400)
+            return
+        agent = engine.AgentConfig(agent_id)
+        skill_dir = os.path.join(agent.skills_dir, skill_name)
+        if not os.path.isdir(skill_dir):
+            self._send_json({"error": f"Skill '{skill_name}' not found"}, 404)
+            return
+        try:
+            import shutil
+            shutil.rmtree(skill_dir)
+            self._send_json({"status": "removed", "skill": skill_name, "agent": agent_id})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 

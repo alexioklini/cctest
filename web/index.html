@@ -1421,16 +1421,21 @@ async function loadConfigTabContent(tab, agentName) {
           <div>
             <h3 class="section-header text-sm mb-3">Installed Skills</h3>
             <div id="installed-skills-list" class="space-y-2">
-              ${installedSkills.length === 0 ? '<div class="text-text-muted text-sm py-3">No skills installed</div>' :
+              ${installedSkills.length === 0 ? '<div class="text-text-muted text-sm py-3">No skills installed. Browse the repository below to add skills.</div>' :
                 installedSkills.map(s => `
                   <div class="glass-card flex items-center gap-3 px-4 py-3 text-sm">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                    <div class="flex-1">
-                      <span class="text-text-primary font-display font-medium">${esc(s.name)}</span>
-                      <span class="text-text-muted text-[10px] ml-2">${esc(s.source || '')}</span>
-                      ${s.description ? `<div class="text-text-muted text-xs mt-0.5">${esc(s.description)}</div>` : ''}
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-2">
+                        <span class="text-text-primary font-display font-semibold">${esc(s.name)}</span>
+                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-lighter text-text-muted">${esc(s.source === agentName ? 'local' : 'from ' + s.source)}</span>
+                      </div>
+                      ${s.description ? `<div class="text-text-muted text-xs mt-1">${esc(s.description)}</div>` : ''}
                     </div>
-                    <button class="text-[11px] text-model hover:text-blue-300 font-medium transition-colors" onclick="viewSkillContent('${esc(agentName)}','${esc(s.name)}')">View</button>
+                    <div class="flex items-center gap-2 flex-shrink-0">
+                      <button class="text-[11px] text-model hover:text-blue-300 font-medium transition-colors px-2 py-1 rounded hover:bg-surface-lighter" onclick="viewSkillContent('${esc(agentName)}','${esc(s.name)}')">View</button>
+                      ${s.source === agentName ? `<button class="text-[11px] text-error hover:text-red-300 font-medium transition-colors px-2 py-1 rounded hover:bg-error/10" onclick="removeSkill('${esc(s.name)}','${esc(agentName)}')">Remove</button>` : ''}
+                    </div>
                   </div>`).join('')}
             </div>
           </div>
@@ -1702,6 +1707,23 @@ window.installSkill = async function(skillName, author, agentName, btn) {
   } catch (e) {
     showToast(e.message, 'error');
     if (btn) { btn.textContent = 'Install'; btn.disabled = false; }
+  }
+};
+
+window.removeSkill = async function(skillName, agentName) {
+  if (!confirm(`Remove skill "${skillName}" from ${agentName}?`)) return;
+  try {
+    const res = await API.post('/v1/skills/remove', { skill: skillName, agent: agentName });
+    if (res.error) {
+      showToast(res.error, 'error');
+      return;
+    }
+    showToast(`Skill "${skillName}" removed`);
+    if (state.configAgent === agentName && state.configTab === 'skills') {
+      loadConfigTabContent('skills', agentName);
+    }
+  } catch (e) {
+    showToast(e.message, 'error');
   }
 };
 
