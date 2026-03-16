@@ -392,6 +392,26 @@ tailwind.config = {
   .sched-row { transition: background 0.15s ease; }
   .sched-row:hover { background: var(--color-surface-light); }
 
+  /* Scheduler dashboard */
+  .sched-dash-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+  .sched-dash-table th { text-align: left; padding: 0.5rem 0.6rem; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--color-text-muted); font-weight: 600; border-bottom: 1px solid var(--color-border); }
+  .sched-dash-table td { padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--color-border); color: var(--color-text-secondary); vertical-align: top; }
+  .sched-dash-table tr:hover td { background: var(--color-surface-light); }
+  .sched-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+  .sched-badge-success { background: rgba(74,222,128,0.15); color: #4ade80; }
+  .sched-badge-error { background: rgba(248,113,113,0.15); color: #f87171; }
+  .sched-badge-timeout { background: rgba(251,146,60,0.15); color: #fb923c; }
+  .sched-badge-cancelled { background: rgba(156,163,175,0.15); color: #9ca3af; }
+  .sched-badge-active { background: rgba(74,222,128,0.15); color: #4ade80; }
+  .sched-badge-paused { background: rgba(250,204,21,0.15); color: #facc15; }
+  .sched-badge-overdue { background: rgba(248,113,113,0.15); color: #f87171; }
+  .sched-badge-running { background: rgba(96,165,250,0.15); color: #60a5fa; }
+  .sched-filter-btn { padding: 3px 10px; border-radius: 6px; font-size: 0.7rem; border: 1px solid var(--color-border); background: var(--color-surface-light); color: var(--color-text-muted); cursor: pointer; transition: all 0.15s; }
+  .sched-filter-btn:hover { color: var(--color-text-primary); }
+  .sched-filter-btn.active { border-color: var(--color-accent); color: var(--color-accent); background: rgba(255,123,0,0.08); }
+  .sched-expanded-row td { background: var(--color-surface); }
+  .sched-log-content { max-height: 200px; overflow-y: auto; font-family: 'IBM Plex Mono', monospace; font-size: 0.75rem; padding: 8px; background: var(--color-code-bg); border-radius: 6px; white-space: pre-wrap; word-break: break-word; }
+
   /* Agent card - compact horizontal style */
   .agent-card-compact {
     background: var(--color-surface);
@@ -521,6 +541,7 @@ tailwind.config = {
         <svg id="theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
         <svg id="theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
       </button>
+      <button id="btn-scheduler-dashboard" class="text-text-muted hover:text-text-primary transition-colors p-1 rounded-lg hover:bg-surface-light" title="Scheduler Dashboard" style="font-size:16px">&#9201;</button>
       <button id="btn-header-settings" class="text-text-muted hover:text-text-primary transition-colors p-1 rounded-lg hover:bg-surface-light" title="Server Settings">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </button>
@@ -3023,6 +3044,309 @@ function toggleTheme() {
   }
 })();
 
+// ─── Scheduler Dashboard ────────────────────────────────────
+let _schedDashInterval = null;
+let _schedDashElapsedInterval = null;
+let _schedDashTab = 'running';
+let _schedDashHistoryFilter = 'all';
+
+function openSchedulerDashboard() {
+  // Clean up any previous intervals
+  if (_schedDashInterval) { clearInterval(_schedDashInterval); _schedDashInterval = null; }
+  if (_schedDashElapsedInterval) { clearInterval(_schedDashElapsedInterval); _schedDashElapsedInterval = null; }
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.id = 'scheduler-dashboard-modal';
+  modal.onclick = (e) => { if (e.target === modal) closeSchedulerDashboard(); };
+  modal.innerHTML = `
+    <div class="modal-content p-6" style="max-width:900px;max-height:85vh">
+      <button class="modal-close" onclick="closeSchedulerDashboard()">&times;</button>
+      <h2 class="font-display text-lg font-semibold text-text-primary mb-4">Scheduler Dashboard</h2>
+      <div class="flex gap-0 border-b border-border mb-4" id="sched-dash-tabs">
+        <button class="config-tab active" data-tab="running" onclick="switchSchedDashTab('running')">Running</button>
+        <button class="config-tab" data-tab="planned" onclick="switchSchedDashTab('planned')">Planned</button>
+        <button class="config-tab" data-tab="history" onclick="switchSchedDashTab('history')">History</button>
+      </div>
+      <div id="sched-dash-content" style="min-height:200px">
+        <div class="text-text-muted text-sm text-center py-8">Loading...</div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  _schedDashTab = 'running';
+  _schedDashHistoryFilter = 'all';
+  loadSchedDashTab();
+
+  // Auto-refresh every 5 seconds
+  _schedDashInterval = setInterval(() => {
+    if (document.getElementById('scheduler-dashboard-modal')) {
+      loadSchedDashTab();
+    } else {
+      clearInterval(_schedDashInterval);
+      _schedDashInterval = null;
+    }
+  }, 5000);
+}
+
+function closeSchedulerDashboard() {
+  if (_schedDashInterval) { clearInterval(_schedDashInterval); _schedDashInterval = null; }
+  if (_schedDashElapsedInterval) { clearInterval(_schedDashElapsedInterval); _schedDashElapsedInterval = null; }
+  const modal = document.getElementById('scheduler-dashboard-modal');
+  if (modal) modal.remove();
+}
+
+function switchSchedDashTab(tab) {
+  _schedDashTab = tab;
+  if (_schedDashElapsedInterval) { clearInterval(_schedDashElapsedInterval); _schedDashElapsedInterval = null; }
+  const tabs = document.querySelectorAll('#sched-dash-tabs .config-tab');
+  tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  loadSchedDashTab();
+}
+
+async function loadSchedDashTab() {
+  const el = document.getElementById('sched-dash-content');
+  if (!el) return;
+
+  try {
+    if (_schedDashTab === 'running') {
+      await renderSchedDashRunning(el);
+    } else if (_schedDashTab === 'planned') {
+      await renderSchedDashPlanned(el);
+    } else if (_schedDashTab === 'history') {
+      await renderSchedDashHistory(el);
+    }
+  } catch (err) {
+    el.innerHTML = `<div class="text-error text-sm py-4">Error loading data: ${esc(err.message)}</div>`;
+  }
+}
+
+function _schedFormatElapsed(startedStr) {
+  const started = new Date(startedStr);
+  const now = new Date();
+  const diff = Math.max(0, Math.floor((now - started) / 1000));
+  const m = Math.floor(diff / 60);
+  const s = diff % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+function _schedFormatDuration(seconds) {
+  if (!seconds && seconds !== 0) return '-';
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+function _schedTruncate(str, len) {
+  if (!str) return '';
+  return str.length > len ? str.substring(0, len) + '...' : str;
+}
+
+async function renderSchedDashRunning(el) {
+  const data = await API.getRunningTasks();
+  const tasks = Array.isArray(data) ? data : (data.running || data.tasks || []);
+
+  if (tasks.length === 0) {
+    el.innerHTML = '<div class="text-text-muted text-sm text-center py-8">No tasks currently running</div>';
+    return;
+  }
+
+  let html = `<table class="sched-dash-table">
+    <thead><tr>
+      <th>Name</th><th>Agent</th><th>Task</th><th>Started</th><th>Elapsed</th><th>Tool Calls</th><th>Status</th><th></th>
+    </tr></thead><tbody>`;
+
+  tasks.forEach((t, i) => {
+    const started = t.started_at || t.started || '';
+    html += `<tr class="sched-row" id="sched-run-row-${i}">
+      <td class="font-medium text-text-primary">${esc(t.name || '')}</td>
+      <td class="text-agent">${esc(t.agent || '')}</td>
+      <td title="${esc(t.task || t.prompt || '')}">${esc(_schedTruncate(t.task || t.prompt || '', 40))}</td>
+      <td class="mono text-xs">${started ? new Date(started).toLocaleTimeString() : '-'}</td>
+      <td class="mono text-xs sched-elapsed" data-started="${esc(started)}">${started ? _schedFormatElapsed(started) : '-'}</td>
+      <td class="mono text-xs">${t.tool_calls != null ? t.tool_calls : '-'}</td>
+      <td><span class="sched-badge sched-badge-running">running</span></td>
+      <td class="flex gap-2">
+        <button class="text-xs text-error hover:text-red-300 transition-colors" onclick="schedDashCancelTask('${esc(t.name || '')}')">Stop</button>
+        <button class="text-xs text-model hover:text-blue-300 transition-colors" onclick="schedDashToggleLog(${i})">Log</button>
+      </td>
+    </tr>
+    <tr id="sched-run-log-${i}" style="display:none" class="sched-expanded-row">
+      <td colspan="8"><div class="sched-log-content">${esc(Array.isArray(t.tool_log) ? t.tool_log.join('\n') : (t.tool_log || t.log || 'No log available'))}</div></td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  el.innerHTML = html;
+
+  // Update elapsed times every 1s
+  if (_schedDashElapsedInterval) clearInterval(_schedDashElapsedInterval);
+  _schedDashElapsedInterval = setInterval(() => {
+    document.querySelectorAll('#sched-dash-content .sched-elapsed').forEach(cell => {
+      const started = cell.dataset.started;
+      if (started) cell.textContent = _schedFormatElapsed(started);
+    });
+  }, 1000);
+}
+
+async function schedDashCancelTask(name) {
+  if (!confirm(`Cancel task "${name}"?`)) return;
+  try {
+    await API.cancelScheduledTask(name);
+    loadSchedDashTab();
+  } catch (err) {
+    alert('Failed to cancel: ' + err.message);
+  }
+}
+
+function schedDashToggleLog(index) {
+  const row = document.getElementById(`sched-run-log-${index}`);
+  if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
+}
+
+async function renderSchedDashPlanned(el) {
+  const data = await API.getSchedule();
+  const tasks = Array.isArray(data) ? data : (data.schedules || data.tasks || []);
+
+  // Sort by next_run
+  tasks.sort((a, b) => {
+    const aNext = a.next_run ? new Date(a.next_run).getTime() : Infinity;
+    const bNext = b.next_run ? new Date(b.next_run).getTime() : Infinity;
+    return aNext - bNext;
+  });
+
+  if (tasks.length === 0) {
+    el.innerHTML = '<div class="text-text-muted text-sm text-center py-8">No scheduled tasks</div>';
+    return;
+  }
+
+  let html = `<table class="sched-dash-table">
+    <thead><tr>
+      <th>Name</th><th>Agent</th><th>Schedule</th><th>Next Run</th><th>Status</th><th>Timeout</th><th></th>
+    </tr></thead><tbody>`;
+
+  const now = new Date();
+  tasks.forEach(t => {
+    const isActive = t.status === 'active' || t.active === true || t.enabled === true;
+    const isPaused = t.status === 'paused' || t.active === false || t.enabled === false;
+    const nextRun = t.next_run ? new Date(t.next_run) : null;
+    const isOverdue = nextRun && nextRun < now && isActive;
+
+    let badgeClass = 'sched-badge-active';
+    let badgeText = 'active';
+    if (isPaused) { badgeClass = 'sched-badge-paused'; badgeText = 'paused'; }
+    if (isOverdue) { badgeClass = 'sched-badge-overdue'; badgeText = 'overdue'; }
+
+    html += `<tr class="sched-row">
+      <td class="font-medium text-text-primary">${esc(t.name || '')}</td>
+      <td class="text-agent">${esc(t.agent || '')}</td>
+      <td class="mono text-xs">${esc(t.schedule || t.cron || '')}</td>
+      <td class="mono text-xs">${nextRun ? nextRun.toLocaleString() : '-'}</td>
+      <td><span class="sched-badge ${badgeClass}">${badgeText}</span></td>
+      <td class="mono text-xs">${t.timeout ? _schedFormatDuration(t.timeout) : '-'}</td>
+      <td class="flex gap-2 flex-wrap">
+        ${isActive
+          ? `<button class="text-xs text-yellow-500 hover:text-yellow-400 transition-colors" onclick="schedDashAction('pause','${esc(t.name)}')">Pause</button>`
+          : `<button class="text-xs text-success hover:text-green-300 transition-colors" onclick="schedDashAction('resume','${esc(t.name)}')">Resume</button>`
+        }
+        <button class="text-xs text-accent hover:text-orange-300 transition-colors" onclick="schedDashEditTask('${esc(t.agent || '')}')">Edit</button>
+        <button class="text-xs text-error hover:text-red-300 transition-colors" onclick="schedDashAction('delete','${esc(t.name)}')">Delete</button>
+      </td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+async function schedDashAction(action, name) {
+  if (action === 'delete' && !confirm(`Delete scheduled task "${name}"?`)) return;
+  try {
+    await API.manageSchedule({ action, name });
+    loadSchedDashTab();
+  } catch (err) {
+    alert(`Failed to ${action}: ${err.message}`);
+  }
+}
+
+function schedDashEditTask(agentName) {
+  closeSchedulerDashboard();
+  if (typeof openConfigModal === 'function') {
+    openConfigModal(agentName);
+    // Try to switch to the schedule tab after a brief delay for DOM to render
+    setTimeout(() => {
+      const tab = document.querySelector('#config-tabs .config-tab[data-tab="schedule"]');
+      if (tab) tab.click();
+    }, 200);
+  }
+}
+
+async function renderSchedDashHistory(el) {
+  const data = await API.manageSchedule({ action: 'history', limit: 50 });
+  const history = Array.isArray(data) ? data : (data.history || data.results || []);
+
+  // Filter buttons
+  let filterHtml = `<div class="flex gap-2 mb-4">
+    <button class="sched-filter-btn ${_schedDashHistoryFilter === 'all' ? 'active' : ''}" onclick="schedDashSetHistoryFilter('all')">All</button>
+    <button class="sched-filter-btn ${_schedDashHistoryFilter === 'success' ? 'active' : ''}" onclick="schedDashSetHistoryFilter('success')">Success</button>
+    <button class="sched-filter-btn ${_schedDashHistoryFilter === 'error' ? 'active' : ''}" onclick="schedDashSetHistoryFilter('error')">Error</button>
+    <button class="sched-filter-btn ${_schedDashHistoryFilter === 'timeout' ? 'active' : ''}" onclick="schedDashSetHistoryFilter('timeout')">Timeout</button>
+  </div>`;
+
+  const filtered = _schedDashHistoryFilter === 'all'
+    ? history
+    : history.filter(h => (h.status || '').toLowerCase() === _schedDashHistoryFilter);
+
+  if (filtered.length === 0) {
+    el.innerHTML = filterHtml + '<div class="text-text-muted text-sm text-center py-8">No history entries</div>';
+    return;
+  }
+
+  let html = filterHtml + `<table class="sched-dash-table">
+    <thead><tr>
+      <th>Name</th><th>Agent</th><th>Status</th><th>Started</th><th>Duration</th><th>Result</th>
+    </tr></thead><tbody>`;
+
+  filtered.forEach((h, i) => {
+    const status = (h.status || '').toLowerCase();
+    let badgeClass = 'sched-badge-cancelled';
+    if (status === 'success') badgeClass = 'sched-badge-success';
+    else if (status === 'error') badgeClass = 'sched-badge-error';
+    else if (status === 'timeout') badgeClass = 'sched-badge-timeout';
+
+    const started = h.started_at || h.started || h.timestamp || '';
+    const duration = h.duration != null ? _schedFormatDuration(h.duration) : '-';
+    const result = h.result || h.output || h.error || '';
+    const isError = status === 'error';
+    const displayResult = isError ? esc(result) : esc(_schedTruncate(result, 60));
+
+    html += `<tr class="sched-row" style="cursor:pointer" onclick="schedDashToggleHistoryRow(${i})">
+      <td class="font-medium text-text-primary">${esc(h.name || '')}</td>
+      <td class="text-agent">${esc(h.agent || '')}</td>
+      <td><span class="sched-badge ${badgeClass}">${esc(status || 'unknown')}</span></td>
+      <td class="mono text-xs">${started ? new Date(started).toLocaleString() : '-'}</td>
+      <td class="mono text-xs">${duration}</td>
+      <td class="text-xs">${isError ? `<span class="text-error">${displayResult}</span>` : displayResult}</td>
+    </tr>
+    <tr id="sched-hist-detail-${i}" style="display:none" class="sched-expanded-row">
+      <td colspan="6"><div class="sched-log-content">${esc(result)}</div></td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+function schedDashToggleHistoryRow(index) {
+  const row = document.getElementById(`sched-hist-detail-${index}`);
+  if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
+}
+
+function schedDashSetHistoryFilter(filter) {
+  _schedDashHistoryFilter = filter;
+  loadSchedDashTab();
+}
+
 // ─── Event Listeners ────────────────────────────────────────
 dom.btnSend.onclick = sendMessage;
 dom.btnStop.onclick = stopGeneration;
@@ -3033,6 +3357,7 @@ dom.btnNewSession.onclick = () => {
 };
 
 $('#btn-theme-toggle').onclick = toggleTheme;
+$('#btn-scheduler-dashboard').onclick = () => openSchedulerDashboard();
 $('#btn-header-settings').onclick = () => openSettingsModal();
 
 dom.chatInput.addEventListener('keydown', (e) => {

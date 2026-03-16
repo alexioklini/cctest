@@ -2391,15 +2391,24 @@ class Scheduler:
             return [dict(r) for r in rows]
 
     def mark_executed(self, schedule_id: int, name: str, agent: str, task: str,
-                      status: str, result: str):
+                      status: str, result: str, started_at: str = None,
+                      tool_calls: int = 0):
         """Record execution and update next_run."""
         now = datetime.datetime.now()
+        start = started_at or now.isoformat()
+        try:
+            start_dt = datetime.datetime.fromisoformat(start)
+            duration = (now - start_dt).total_seconds()
+        except (ValueError, TypeError):
+            duration = 0
         with _sched_conn() as conn:
-            # Record history
+            # Record history with duration and tool_calls
             conn.execute("""
-                INSERT INTO schedule_history (schedule_id, schedule_name, agent, task, status, result, started_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (schedule_id, name, agent, task, status, result[:10000], now.isoformat()))
+                INSERT INTO schedule_history (schedule_id, schedule_name, agent, task, status, result, started_at, finished_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (schedule_id, name, agent, task, status,
+                  f"[Duration: {duration:.0f}s | Tools: {tool_calls}]\n\n{result[:10000]}",
+                  start, now.isoformat()))
 
             # Get schedule to calc next run
             row = conn.execute("SELECT schedule FROM schedules WHERE id = ?", (schedule_id,)).fetchone()
@@ -2544,20 +2553,36 @@ class Scheduler:
                                         event_callback=on_event) or ""
         except TaskCancelled:
             if run_info.get("status") == "timeout":
-                result_text = result_text or f"Timed out after {task_timeout}s"
+                elapsed = (datetime.datetime.now() - datetime.datetime.fromisoformat(run_info["started_at"])).total_seconds()
+                result_text = (result_text or "") + f"\n\n[TIMEOUT] Task timed out after {elapsed:.0f}s (limit: {task_timeout}s). Tool calls made: {run_info['tool_calls']}."
                 status = "timeout"
             else:
-                result_text = result_text or "Cancelled by user or loop detected"
+                result_text = (result_text or "") + f"\n\n[CANCELLED] Task was cancelled. Tool calls made: {run_info['tool_calls']}."
                 status = "cancelled"
+        except urllib.error.HTTPError as e:
+            error_body = ""
+            try:
+                error_body = e.read().decode("utf-8")[:500]
+            except Exception:
+                pass
+            result_text = f"[HTTP ERROR] {e.code} {e.reason}\n{error_body}"
+            status = "error"
+        except urllib.error.URLError as e:
+            result_text = f"[CONNECTION ERROR] Could not reach LLM API: {e.reason}"
+            status = "error"
         except Exception as e:
-            result_text = str(e)
+            import traceback
+            tb = traceback.format_exc()
+            result_text = f"[ERROR] {type(e).__name__}: {e}\n\n{tb[-500:]}"
             status = "error"
         finally:
             cancel_token.cancel()  # stop the watchdog if still running
             with self._lock:
                 self._running_tasks.pop(name, None)
 
-        self.mark_executed(schedule_id, name, agent_id, task, status, result_text)
+        self.mark_executed(schedule_id, name, agent_id, task, status, result_text,
+                           started_at=run_info.get("started_at"),
+                           tool_calls=run_info.get("tool_calls", 0))
 
 
 # Global scheduler instance
