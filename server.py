@@ -235,6 +235,14 @@ class Session:
         ChatDB.save_session(self.id, self.agent_id, self.model, self.title,
                            self.status, self.created_at, self.last_active)
 
+    def switch_agent(self, agent_id: str, model: str | None = None):
+        """Switch this session to a different agent (and optionally model)."""
+        self.agent_id = agent_id
+        self.agent = engine.AgentConfig(agent_id)
+        self.memory = engine.MemoryStore(agent_id, base_dir=self.agent.memory_dir)
+        if model:
+            self.model = model
+
     def load_from_db(self):
         """Load messages from database (for restoring sessions)."""
         db_msgs = ChatDB.load_messages(self.id)
@@ -589,6 +597,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         agent_id = body.get("agent", "main")
         model = body.get("model")
         session.switch_agent(agent_id, model)
+        if model:
+            provider = self._resolve_provider(model)
+            session.api_key = provider["api_key"]
+            session.base_url = provider["base_url"]
+            session.api_type = provider["api_type"]
         self._send_json({
             "session_id": session.id,
             "agent": session.agent_id,

@@ -86,9 +86,22 @@ Server runs on port 8420 (configurable). Key endpoints:
 
 - Server: launchd daemon (`com.brain-agent.server.plist`)
 - Telegram: launchd daemon (`com.brain-agent.telegram.plist`)
+- oMLX: local MLX inference server (`brew services`, port 8000)
 - CLIProxyAPI: local OAuth proxy for Claude models (`brew services`, port 8317)
 - Public: Cloudflare Zero Trust tunnel → `brain.alexklinsky.dev`
 - Tunnel runs on 192.168.4.65 (tunnel: itrmp)
+
+### oMLX (Local MLX Inference)
+
+Local [oMLX](https://github.com/jundot/omlx) instance on port 8000 serves quantized MLX models
+on Apple Silicon. OpenAI-compatible API, no API key needed for local access.
+
+- Models: `~/.omlx/models/` (auto-discovered subdirectories)
+- Current model: `Crow-4B-Opus-4.6-Distill` (4-bit quantized, ~2.5GB)
+- SSD KV cache: `/Volumes/Scratch/omlx-cache` (100GB max, 8GB hot cache in RAM)
+- Admin dashboard: `http://127.0.0.1:8000/admin`
+- Service control: `brew services start/stop/restart omlx`
+- Convert new models: `/opt/homebrew/opt/omlx/libexec/bin/mlx_lm.convert`
 
 ### CLIProxyAPI (Claude OAuth Proxy)
 

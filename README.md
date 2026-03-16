@@ -15,7 +15,7 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
                 ┌───────┴───────┐
                 │   server.py   │  ← always-running daemon
                 │  ┌──────────┐ │
-                │  │Scheduler │ │──▶ LLM API (inferencer)
+                │  │Scheduler │ │──▶ LLM API (oMLX / Claude)
                 │  │Memory    │ │──▶ MCP servers
                 │  │MCP       │ │──▶ Gmail, Exa, tools
                 │  │Sessions  │ │
@@ -217,26 +217,28 @@ Each task runs with a specified agent and model in its own context. Results stor
 {
   "server": {"host": "0.0.0.0", "port": 8420},
   "providers": {
-    "inferencer": {
-      "base_url": "http://192.168.1.221:8081/v1",
-      "api_key": "key",
+    "omlx": {
+      "base_url": "http://127.0.0.1:8000/v1",
+      "api_key": "",
       "type": "openai",
-      "default_model": "model-name"
+      "default_model": "Crow-4B-Opus-4.6-Distill"
     },
     "claude": {
-      "base_url": "https://api.anthropic.com/v1",
-      "api_key": "sk-ant-...",
+      "base_url": "http://127.0.0.1:8317/v1",
+      "api_key": "brain-agent",
       "type": "anthropic",
       "default_model": "claude-opus-4-6"
     }
   },
-  "default_provider": "inferencer",
+  "default_provider": "omlx",
   "max_context": 131072,
   "telegram": {"bot_token": "...", "allowed_users": [123456]}
 }
 ```
 
-**Multi-provider routing:** The server automatically routes API calls to the correct provider based on which model is selected. No manual switching needed — select `claude-opus-4-6` and it routes to the Anthropic provider, select a Qwen model and it routes to the local inferencer.
+**Multi-provider routing:** The server automatically routes API calls to the correct provider based on which model is selected. No manual switching needed — select `claude-opus-4-6` and it routes to Claude via CLIProxyAPI, select `Crow-4B-Opus-4.6-Distill` and it routes to the local oMLX server.
+
+**oMLX (Local MLX Inference):** A local [oMLX](https://github.com/jundot/omlx) instance on port 8000 serves quantized MLX models on Apple Silicon. Models are stored in `~/.omlx/models/` and auto-discovered. Install: `brew install jundot/omlx/omlx`, start: `brew services start omlx`. Admin dashboard at `http://127.0.0.1:8000/admin`.
 
 **CLIProxyAPI (Claude OAuth Proxy):** A local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) instance on port 8317 provides Claude models via OAuth — no API key costs. Also serves Gemini and Qwen models from stored OAuth tokens. Install: `brew install cliproxyapi`, login: `cliproxyapi -claude-login`, start: `brew services start cliproxyapi`. Management panel at `http://127.0.0.1:8317/`.
 ```
@@ -285,6 +287,7 @@ Each task runs with a specified agent and model in its own context. Results stor
 
 | Version | Date | Changes |
 |---|---|---|
+| 1.3.0 | 2026-03-16 | oMLX local inference with Crow-4B-Opus-4.6-Distill model, replaces distributed inferencer |
 | 1.2.1 | 2026-03-16 | Local CLIProxyAPI OAuth proxy for Claude models (no API key costs) |
 | 1.2.0 | 2026-03-16 | Multi-provider routing, scheduler dashboard, Gmail tools, SQLite resilience, Cloudflare deployment |
 | 1.1.0 | 2026-03-15 | Web UI, chat history, skill browser, avatars, light/dark theme |

@@ -926,17 +926,19 @@ class API {
 
   static _abortController = null;
 
-  static async streamChat(sessionId, message, callbacks) {
+  static async streamChat(sessionId, message, callbacks, model) {
     // Abort any previous stream
     if (API._abortController) {
       try { API._abortController.abort(); } catch {}
     }
     API._abortController = new AbortController();
 
+    const body = { session_id: sessionId, message };
+    if (model) body.model = model;
     const res = await fetch(`${BASE_URL}/v1/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId, message }),
+      body: JSON.stringify(body),
       signal: API._abortController.signal,
     });
     if (!res.ok) {
@@ -1686,7 +1688,7 @@ async function sendMessage() {
       error: (d) => {
         assistantMsg.content += `\n\n**Error:** ${d.message || 'Unknown error'}`;
       },
-    });
+    }, chat.model);
   } catch (e) {
     if (e.name !== 'AbortError') {
       assistantMsg.content += `\n\n**Error:** ${e.message}`;
