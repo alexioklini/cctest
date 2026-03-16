@@ -215,19 +215,28 @@ Each task runs with a specified agent and model in its own context. Results stor
 
 ```json
 {
-  "server": {"host": "127.0.0.1", "port": 8420},
+  "server": {"host": "0.0.0.0", "port": 8420},
   "providers": {
     "inferencer": {
       "base_url": "http://192.168.1.221:8081/v1",
       "api_key": "key",
       "type": "openai",
       "default_model": "model-name"
+    },
+    "claude": {
+      "base_url": "https://api.anthropic.com/v1",
+      "api_key": "sk-ant-...",
+      "type": "anthropic",
+      "default_model": "claude-opus-4-6"
     }
   },
   "default_provider": "inferencer",
   "max_context": 131072,
   "telegram": {"bot_token": "...", "allowed_users": [123456]}
 }
+```
+
+**Multi-provider routing:** The server automatically routes API calls to the correct provider based on which model is selected. No manual switching needed — select `claude-opus-4-6` and it routes to the Anthropic provider, select a Qwen model and it routes to the local inferencer.
 ```
 
 ### `agent.json`
@@ -274,7 +283,8 @@ Each task runs with a specified agent and model in its own context. Results stor
 
 | Version | Date | Changes |
 |---|---|---|
-| 1.1.0 | 2026-03-15 | Web UI, chat history, Gmail, skill browser, scheduler fixes, avatars |
+| 1.2.0 | 2026-03-16 | Multi-provider routing, scheduler dashboard, Gmail tools, SQLite resilience, Cloudflare deployment |
+| 1.1.0 | 2026-03-15 | Web UI, chat history, skill browser, avatars, light/dark theme |
 | 1.1.0 | 2026-03-14 | MCP support: stdio + SSE transports, per-agent + global servers |
 | 1.0.0 | 2026-03-14 | Client-server architecture, Telegram bot, background tasks, scheduler |
 | 0.9.0 | 2026-03-14 | Skills system: on-demand SKILL.md loading |

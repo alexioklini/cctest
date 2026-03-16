@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "1.1.0"
-VERSION_DATE = "2026-03-14"
+VERSION = "1.2.0"
+VERSION_DATE = "2026-03-16"
 CHANGELOG = [
+    ("1.2.0", "2026-03-16", "Multi-provider routing, Gmail, scheduler dashboard, SQLite resilience, Cloudflare deployment"),
     ("1.1.0", "2026-03-14", "MCP support: stdio + SSE transports, per-agent + global servers"),
     ("1.0.0", "2026-03-14", "Background threads per agent, async delegation, task status/cancel"),
     ("0.9.0", "2026-03-14", "Skills system: on-demand SKILL.md loading, per-agent + global"),
