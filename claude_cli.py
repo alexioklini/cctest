@@ -2551,6 +2551,10 @@ class Scheduler:
                                         memory_store=target_memory,
                                         cancel_token=cancel_token,
                                         event_callback=on_event) or ""
+            # Check if _run_delegate returned an error string instead of raising
+            if result_text.startswith("Delegation error:"):
+                status = "error"
+                result_text = f"[DELEGATION ERROR] {result_text}"
         except TaskCancelled:
             if run_info.get("status") == "timeout":
                 elapsed = (datetime.datetime.now() - datetime.datetime.fromisoformat(run_info["started_at"])).total_seconds()
