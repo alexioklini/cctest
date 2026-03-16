@@ -237,6 +237,8 @@ Each task runs with a specified agent and model in its own context. Results stor
 ```
 
 **Multi-provider routing:** The server automatically routes API calls to the correct provider based on which model is selected. No manual switching needed — select `claude-opus-4-6` and it routes to the Anthropic provider, select a Qwen model and it routes to the local inferencer.
+
+**CLIProxyAPI (Claude OAuth Proxy):** A local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) instance on port 8317 provides Claude models via OAuth — no API key costs. Also serves Gemini and Qwen models from stored OAuth tokens. Install: `brew install cliproxyapi`, login: `cliproxyapi -claude-login`, start: `brew services start cliproxyapi`. Management panel at `http://127.0.0.1:8317/`.
 ```
 
 ### `agent.json`
@@ -283,6 +285,7 @@ Each task runs with a specified agent and model in its own context. Results stor
 
 | Version | Date | Changes |
 |---|---|---|
+| 1.2.1 | 2026-03-16 | Local CLIProxyAPI OAuth proxy for Claude models (no API key costs) |
 | 1.2.0 | 2026-03-16 | Multi-provider routing, scheduler dashboard, Gmail tools, SQLite resilience, Cloudflare deployment |
 | 1.1.0 | 2026-03-15 | Web UI, chat history, skill browser, avatars, light/dark theme |
 | 1.1.0 | 2026-03-14 | MCP support: stdio + SSE transports, per-agent + global servers |

@@ -86,5 +86,17 @@ Server runs on port 8420 (configurable). Key endpoints:
 
 - Server: launchd daemon (`com.brain-agent.server.plist`)
 - Telegram: launchd daemon (`com.brain-agent.telegram.plist`)
+- CLIProxyAPI: local OAuth proxy for Claude models (`brew services`, port 8317)
 - Public: Cloudflare Zero Trust tunnel → `brain.alexklinsky.dev`
 - Tunnel runs on 192.168.4.65 (tunnel: itrmp)
+
+### CLIProxyAPI (Claude OAuth Proxy)
+
+Local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) instance on port 8317 provides
+Claude models via OAuth (no API key costs). Installed via Homebrew, runs as a launchd service.
+
+- Config: `/opt/homebrew/etc/cliproxyapi.conf`
+- Auth tokens: `~/.cli-proxy-api/` (Claude, Gemini, Qwen OAuth)
+- API key for Brain Agent: `brain-agent`
+- Management panel: `http://127.0.0.1:8317/`
+- Service control: `brew services start/stop/restart cliproxyapi`
