@@ -519,14 +519,58 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)
 
+    # Cache: model -> provider config (refreshed when providers change)
+    _provider_cache: dict[str, dict] = {}
+    _provider_cache_time: float = 0
+
+    def _resolve_provider(self, model: str) -> dict:
+        """Find the provider that has the given model. Returns {api_key, base_url, api_type}."""
+        # Check cache first (refresh every 60s)
+        now = time.time()
+        if model in BrainAgentHandler._provider_cache and now - BrainAgentHandler._provider_cache_time < 60:
+            return BrainAgentHandler._provider_cache[model]
+
+        providers = server_config.get("providers", {})
+        result = None
+
+        for name, p in providers.items():
+            prov = {"api_key": p.get("api_key", ""), "base_url": p.get("base_url", ""),
+                    "api_type": p.get("type", "openai"), "provider_name": name}
+            # Check default model match
+            if p.get("default_model") == model:
+                result = prov
+                break
+            # Check model list
+            try:
+                models = engine.get_available_models(p.get("api_key", ""), p.get("base_url", ""), p.get("type", "openai"))
+                for m in models:
+                    BrainAgentHandler._provider_cache[m] = prov
+                BrainAgentHandler._provider_cache_time = now
+                if model in models:
+                    result = prov
+                    break
+            except Exception:
+                pass
+
+        if not result:
+            result = {"api_key": server_config.get("api_key", ""),
+                      "base_url": server_config.get("base_url", ""),
+                      "api_type": server_config.get("api_type", "openai"),
+                      "provider_name": "default"}
+
+        BrainAgentHandler._provider_cache[model] = result
+        return result
+
     def _handle_create_session(self):
         body = self._read_json()
+        model = body.get("model", server_config["default_model"])
+        provider = self._resolve_provider(model)
         session = sessions.create(
             agent_id=body.get("agent", "main"),
-            model=body.get("model", server_config["default_model"]),
-            api_key=server_config["api_key"],
-            base_url=server_config["base_url"],
-            api_type=server_config["api_type"],
+            model=model,
+            api_key=provider["api_key"],
+            base_url=provider["base_url"],
+            api_type=provider["api_type"],
             max_context=body.get("max_context", server_config["max_context"]),
         )
         self._send_json({
@@ -566,6 +610,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         body = self._read_json()
         sid = body.get("session_id", "")
         message = body.get("message", "")
+        model_override = body.get("model")
         session = sessions.get(sid)
 
         if not session:
@@ -574,6 +619,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         if not message:
             self._send_json({"error": "No message"}, 400)
             return
+
+        # If model changed, re-resolve provider
+        if model_override and model_override != session.model:
+            session.model = model_override
+            provider = self._resolve_provider(model_override)
+            session.api_key = provider["api_key"]
+            session.base_url = provider["base_url"]
+            session.api_type = provider["api_type"]
 
         # Reset cancel token
         session.cancel_token = engine.CancelToken()
