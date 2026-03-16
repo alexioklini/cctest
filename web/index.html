@@ -924,11 +924,20 @@ class API {
     return res.json();
   }
 
+  static _abortController = null;
+
   static async streamChat(sessionId, message, callbacks) {
+    // Abort any previous stream
+    if (API._abortController) {
+      try { API._abortController.abort(); } catch {}
+    }
+    API._abortController = new AbortController();
+
     const res = await fetch(`${BASE_URL}/v1/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: sessionId, message }),
+      signal: API._abortController.signal,
     });
     if (!res.ok) {
       const err = await res.text();
@@ -937,27 +946,33 @@ class API {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      let eventType = '';
-      let finished = false;
-      for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          eventType = line.slice(7).trim();
-        } else if (line.startsWith('data: ')) {
-          const raw = line.slice(6);
-          try {
-            const data = JSON.parse(raw);
-            if (callbacks[eventType]) callbacks[eventType](data);
-            if (eventType === 'done' || eventType === 'error') finished = true;
-          } catch {}
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        let eventType = '';
+        let finished = false;
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            eventType = line.slice(7).trim();
+          } else if (line.startsWith('data: ')) {
+            const raw = line.slice(6);
+            try {
+              const data = JSON.parse(raw);
+              if (callbacks[eventType]) callbacks[eventType](data);
+              if (eventType === 'done' || eventType === 'error') finished = true;
+            } catch {}
+          }
         }
+        if (finished) break;
       }
-      if (finished) { reader.cancel(); break; }
+    } finally {
+      try { reader.cancel(); } catch {}
+      try { API._abortController.abort(); } catch {}
+      API._abortController = null;
     }
   }
 
@@ -973,7 +988,10 @@ class API {
   static async getProviders() { return this.get('/v1/providers'); }
   static async createSession(agent, model) { return this.post('/v1/sessions', { agent, model }); }
   static async deleteSession(id) { return this.del(`/v1/sessions/${id}`); }
-  static async cancelChat(sessionId) { return this.post('/v1/chat/cancel', { session_id: sessionId }); }
+  static async cancelChat(sessionId) {
+    if (API._abortController) { try { API._abortController.abort(); } catch {} API._abortController = null; }
+    return this.post('/v1/chat/cancel', { session_id: sessionId });
+  }
   static async getSessionsForAgent(agentId, status = 'active') { return this.get(`/v1/sessions?agent=${encodeURIComponent(agentId)}&status=${encodeURIComponent(status)}`); }
   static async getSessionMessages(sessionId) { return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}/messages`); }
   static async manageSession(body) { return this.post('/v1/sessions/manage', body); }
