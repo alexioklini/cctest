@@ -115,6 +115,20 @@ TOOL_VERBS = {
 }
 
 
+def model_icon(model: str) -> str:
+    m = model.lower()
+    if m.startswith("crow"): return "🐦‍⬛"
+    if m.startswith("claude-opus") or m == "opus": return "🟣"
+    if m.startswith("claude-sonnet") or m == "sonnet": return "🟠"
+    if m.startswith("claude-haiku") or m == "haiku": return "🟢"
+    if "claude" in m: return "🔵"
+    if "gemini" in m: return "💎"
+    if "qwen" in m: return "🐼"
+    if "llama" in m: return "🦙"
+    if "mistral" in m: return "🌬️"
+    return "🤖"
+
+
 def display_tool_call(name: str, args: dict):
     verb = TOOL_VERBS.get(name, "Running")
     if name.startswith("mcp_"):
@@ -451,6 +465,7 @@ def run_interactive(args):
             start_time = time.time()
             full_text = ""
             tool_count = 0
+            done_model = ""
 
             try:
                 with console.status(
@@ -470,6 +485,7 @@ def run_interactive(args):
                         elif event_type == "done":
                             full_text = data.get("text", "")
                             token_count = data.get("tokens", 0)
+                            done_model = data.get("model", "")
                         elif event_type == "error":
                             console.print(f"  [error]{data.get('message', 'Unknown error')}[/]")
                             break
@@ -488,7 +504,8 @@ def run_interactive(args):
                 console.print()
                 console.print(Markdown(full_text))
                 pct = min(99, int(token_count / args.max_context * 100))
-                console.print(f"\n  [dim]✻ {elapsed:.0f}s · {token_count:,}/{args.max_context//1000}k ({pct}%)[/]")
+                model_tag = f"{model_icon(done_model)} {done_model}  " if done_model else ""
+                console.print(f"\n  [dim]{model_tag}✻ {elapsed:.0f}s · {token_count:,}/{args.max_context//1000}k ({pct}%)[/]")
                 if not show_tools and tool_count > 0:
                     console.print(f"  [dim]{tool_count} tool calls (hidden)[/]")
 

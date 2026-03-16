@@ -697,9 +697,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     event_queue.put(("done", {
                         "text": reply,
                         "tokens": engine._estimate_conversation_tokens(session.messages),
+                        "model": session.model,
                     }))
                 else:
-                    event_queue.put(("done", {"text": "", "tokens": 0}))
+                    event_queue.put(("done", {"text": "", "tokens": 0, "model": session.model}))
             except engine.TaskCancelled:
                 session.messages.pop()  # remove user message
                 event_queue.put(("error", {"message": "Cancelled"}))

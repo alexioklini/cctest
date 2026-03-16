@@ -1490,6 +1490,21 @@ function addSystemMessage(chat, text) {
   if (chat === state.activeChat) renderMessages();
 }
 
+function modelIcon(model) {
+  if (!model) return '';
+  const m = model.toLowerCase();
+  if (m.startsWith('crow')) return '🐦‍⬛';
+  if (m.startsWith('claude-opus') || m === 'opus') return '🟣';
+  if (m.startsWith('claude-sonnet') || m === 'sonnet') return '🟠';
+  if (m.startsWith('claude-haiku') || m === 'haiku') return '🟢';
+  if (m.includes('claude')) return '🔵';
+  if (m.includes('gemini')) return '💎';
+  if (m.includes('qwen')) return '🐼';
+  if (m.includes('llama')) return '🦙';
+  if (m.includes('mistral')) return '🌬️';
+  return '🤖';
+}
+
 function renderMessages() {
   const chat = state.activeChat;
   dom.chatMessages.innerHTML = '';
@@ -1540,7 +1555,7 @@ function renderMessage(msg, idx, container) {
       ${toolsHtml}
       ${spinnerHtml}
       <div class="msg-content">${content}</div>
-      ${msg.tokens ? `<div class="text-[10px] text-text-muted mt-2 mono flex items-center gap-1.5"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>${msg.tokens} tokens</div>` : ''}
+      ${msg.tokens ? `<div class="text-[10px] text-text-muted mt-2 mono flex items-center gap-1.5">${msg.model ? modelIcon(msg.model) + ' ' + esc(msg.model) + '  ·  ' : ''}<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>${msg.tokens} tokens</div>` : ''}
     </div>`;
   } else if (msg.role === 'system') {
     div.className += ' flex justify-center';
@@ -1683,6 +1698,7 @@ async function sendMessage() {
       done: (d) => {
         if (d.text && !assistantMsg.content) assistantMsg.content = d.text;
         assistantMsg.tokens = d.tokens;
+        assistantMsg.model = d.model || '';
         chat.totalTokens += d.tokens || 0;
       },
       error: (d) => {

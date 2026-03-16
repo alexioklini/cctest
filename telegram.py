@@ -18,6 +18,20 @@ import re
 import html as html_mod
 
 
+def model_icon(model: str) -> str:
+    m = model.lower()
+    if m.startswith("crow"): return "🐦‍⬛"
+    if m.startswith("claude-opus") or m == "opus": return "🟣"
+    if m.startswith("claude-sonnet") or m == "sonnet": return "🟠"
+    if m.startswith("claude-haiku") or m == "haiku": return "🟢"
+    if "claude" in m: return "🔵"
+    if "gemini" in m: return "💎"
+    if "qwen" in m: return "🐼"
+    if "llama" in m: return "🦙"
+    if "mistral" in m: return "🌬️"
+    return "🤖"
+
+
 def md_to_telegram_html(text: str) -> str:
     """Convert LLM markdown to Telegram-compatible HTML."""
     # Escape HTML entities first
@@ -332,6 +346,7 @@ def handle_message(bot: TelegramBot, manager: ChatManager,
     error_msg = ""
     last_edit = 0
     tokens = 0
+    done_model = ""
 
     try:
         for event_type, data in chat_client.chat(text):
@@ -350,6 +365,7 @@ def handle_message(bot: TelegramBot, manager: ChatManager,
             elif event_type == "done":
                 full_text = data.get("text", "")
                 tokens = data.get("tokens", 0)
+                done_model = data.get("model", "")
                 break
             elif event_type == "error":
                 error_msg = data.get("message", "Unknown error")
@@ -372,7 +388,8 @@ def handle_message(bot: TelegramBot, manager: ChatManager,
     elif full_text:
         # Build informative footer
         footer = f"\n\n<i>━━━━━━━━━━━━━━━━━━━━\n"
-        footer += f"🤖 {agent}"
+        mi = model_icon(done_model) if done_model else "🤖"
+        footer += f"{mi} {html_mod.escape(done_model) if done_model else agent}"
         footer += f"  ⏱ {elapsed:.1f}s"
         if tokens:
             footer += f"  📊 {tokens:,} tok"
