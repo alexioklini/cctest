@@ -5,6 +5,9 @@ import argparse
 import json
 import os
 import queue
+import shutil
+import signal
+import subprocess
 import sys
 import threading
 import time
@@ -13,6 +16,11 @@ import urllib.error
 import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
+
+_server_start_time = time.time()
+_QMD_PORT = 8181
+_TELEGRAM_PLIST = os.path.expanduser("~/Library/LaunchAgents/com.brain-agent.telegram.plist")
+_QMD_PID_FILE = os.path.expanduser("~/.cache/qmd/mcp.pid")
 
 import claude_cli as engine
 
@@ -384,6 +392,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_running_tasks()
         elif path == "/v1/providers":
             self._handle_list_providers()
+        elif path == "/v1/services":
+            self._handle_services_status()
         elif path == "/" or path.startswith("/web/") or path.endswith((".html", ".css", ".js", ".ico")):
             self._serve_static(path)
         else:
@@ -426,6 +436,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_remove_skill()
         elif path == "/v1/restart":
             self._handle_restart()
+        elif path == "/v1/services/qmd":
+            self._handle_qmd_action()
+        elif path == "/v1/services/telegram":
+            self._handle_telegram_action()
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -1253,6 +1267,205 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "removed", "skill": skill_name, "agent": agent_id})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
+
+    # --- Service Management ---
+
+    @staticmethod
+    def _find_qmd() -> str | None:
+        """Find the qmd binary."""
+        qmd = shutil.which("qmd")
+        if qmd:
+            return qmd
+        for p in [os.path.expanduser("~/.nvm/versions/node"), "/usr/local/bin", "/opt/homebrew/bin"]:
+            if os.path.isdir(p):
+                for d in sorted(os.listdir(p), reverse=True):
+                    candidate = os.path.join(p, d, "bin", "qmd") if "node" in p else os.path.join(p, "qmd")
+                    if os.path.isfile(candidate):
+                        return candidate
+        return None
+
+    @staticmethod
+    def _is_qmd_running() -> bool:
+        try:
+            req = urllib.request.Request(
+                f"http://localhost:{_QMD_PORT}/mcp",
+                data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                    "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                        "clientInfo": {"name": "check", "version": "1.0"}}}).encode(),
+                headers={"Content-Type": "application/json",
+                         "Accept": "application/json, text/event-stream"})
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                return resp.status == 200
+        except Exception:
+            return False
+
+    @staticmethod
+    def _is_telegram_running() -> bool:
+        try:
+            r = subprocess.run(["launchctl", "list", "com.brain-agent.telegram"],
+                               capture_output=True, text=True, timeout=3)
+            if r.returncode == 0 and '"PID"' in r.stdout:
+                return True
+            return False
+        except Exception:
+            return False
+
+    @staticmethod
+    def _qmd_collections() -> list[dict]:
+        try:
+            qmd_bin = BrainAgentHandler._find_qmd()
+            if not qmd_bin:
+                return []
+            qmd_env = os.environ.copy()
+            qmd_env["PATH"] = os.path.dirname(qmd_bin) + ":" + qmd_env.get("PATH", "")
+            r = subprocess.run([qmd_bin, "collection", "list"],
+                               capture_output=True, text=True, timeout=5, env=qmd_env)
+            if r.returncode == 0:
+                collections = []
+                current = None
+                for line in r.stdout.split("\n"):
+                    line = line.strip()
+                    # Parse lines like: "main (qmd://main/)"
+                    if line and not line.startswith(("Collections", "Pattern", "Files", "Updated", "Ignore")) and "(" in line:
+                        name = line.split("(")[0].strip()
+                        if name:
+                            current = {"name": name}
+                            collections.append(current)
+                    elif current and line.startswith("Files:"):
+                        current["files"] = line.split(":")[1].strip().split()[0]
+                return collections
+        except Exception:
+            pass
+        return []
+
+    def _handle_services_status(self):
+        """GET /v1/services — status of all managed services."""
+        uptime = int(time.time() - _server_start_time)
+        qmd_running = self._is_qmd_running()
+        tg_running = self._is_telegram_running()
+
+        collections = self._qmd_collections() if qmd_running else []
+
+        self._send_json({
+            "server": {
+                "status": "running",
+                "version": engine.VERSION,
+                "version_date": engine.VERSION_DATE,
+                "pid": os.getpid(),
+                "uptime_seconds": uptime,
+                "sessions": len(sessions.list_all()),
+                "agents": engine.list_agents(),
+                "scheduler_tasks": len(engine._scheduler.list_all()) if engine._scheduler else 0,
+            },
+            "qmd": {
+                "status": "running" if qmd_running else "stopped",
+                "port": _QMD_PORT,
+                "collections": collections,
+            },
+            "telegram": {
+                "status": "running" if tg_running else "stopped",
+                "label": "com.brain-agent.telegram",
+            },
+        })
+
+    def _handle_qmd_action(self):
+        """POST /v1/services/qmd — start/stop/reindex QMD."""
+        body = self._read_json()
+        action = body.get("action", "")
+
+        if action == "start":
+            if self._is_qmd_running():
+                self._send_json({"status": "already_running"})
+                return
+            qmd_bin = self._find_qmd()
+            if not qmd_bin:
+                self._send_json({"error": "qmd not installed"}, 500)
+                return
+            base = os.path.dirname(os.path.abspath(__file__))
+            log = open(os.path.expanduser("~/.brain-agent/qmd.log"), "a")
+            # Ensure qmd's node version is first in PATH
+            qmd_env = os.environ.copy()
+            qmd_node_dir = os.path.dirname(qmd_bin)
+            qmd_env["PATH"] = qmd_node_dir + ":" + qmd_env.get("PATH", "")
+            subprocess.Popen(
+                [qmd_bin, "mcp", "--http", "--port", str(_QMD_PORT)],
+                stdout=log, stderr=log, env=qmd_env,
+                start_new_session=True, cwd=base)
+            for _ in range(10):
+                time.sleep(0.5)
+                if self._is_qmd_running():
+                    self._send_json({"status": "started"})
+                    return
+            self._send_json({"status": "starting"})
+
+        elif action == "stop":
+            if os.path.exists(_QMD_PID_FILE):
+                try:
+                    with open(_QMD_PID_FILE) as f:
+                        pid = int(f.read().strip())
+                    os.kill(pid, signal.SIGTERM)
+                    self._send_json({"status": "stopped"})
+                    return
+                except Exception:
+                    pass
+            try:
+                r = subprocess.run(["lsof", "-ti", f"tcp:{_QMD_PORT}"],
+                                   capture_output=True, text=True, timeout=3)
+                for pid_str in r.stdout.strip().split("\n"):
+                    if pid_str.strip():
+                        os.kill(int(pid_str), signal.SIGTERM)
+            except Exception:
+                pass
+            self._send_json({"status": "stopped"})
+
+        elif action == "reindex":
+            collection = body.get("collection")
+            qmd_bin = self._find_qmd()
+            if not qmd_bin:
+                self._send_json({"error": "qmd not installed"}, 500)
+                return
+            reindex_env = os.environ.copy()
+            reindex_env["PATH"] = os.path.dirname(qmd_bin) + ":" + reindex_env.get("PATH", "")
+            def do_reindex():
+                subprocess.run([qmd_bin, "update"], capture_output=True, timeout=30, env=reindex_env)
+                if collection:
+                    subprocess.run([qmd_bin, "embed", "-c", collection], capture_output=True, timeout=60, env=reindex_env)
+                else:
+                    subprocess.run([qmd_bin, "embed"], capture_output=True, timeout=60, env=reindex_env)
+            threading.Thread(target=do_reindex, daemon=True).start()
+            self._send_json({"status": "reindexing", "collection": collection or "all"})
+
+        else:
+            self._send_json({"error": f"Unknown action: {action}"}, 400)
+
+    def _handle_telegram_action(self):
+        """POST /v1/services/telegram — start/stop/restart Telegram."""
+        body = self._read_json()
+        action = body.get("action", "")
+
+        if action == "start":
+            subprocess.run(["launchctl", "load", _TELEGRAM_PLIST],
+                           capture_output=True, timeout=5)
+            time.sleep(1)
+            self._send_json({"status": "started", "running": self._is_telegram_running()})
+
+        elif action == "stop":
+            subprocess.run(["launchctl", "unload", _TELEGRAM_PLIST],
+                           capture_output=True, timeout=5)
+            time.sleep(1)
+            self._send_json({"status": "stopped", "running": self._is_telegram_running()})
+
+        elif action == "restart":
+            subprocess.run(["launchctl", "unload", _TELEGRAM_PLIST],
+                           capture_output=True, timeout=5)
+            time.sleep(1)
+            subprocess.run(["launchctl", "load", _TELEGRAM_PLIST],
+                           capture_output=True, timeout=5)
+            time.sleep(1)
+            self._send_json({"status": "restarted", "running": self._is_telegram_running()})
+
+        else:
+            self._send_json({"error": f"Unknown action: {action}"}, 400)
 
     def _handle_restart(self):
         """POST /v1/restart — restart the server process."""

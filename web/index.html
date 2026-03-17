@@ -2720,6 +2720,8 @@ window.scheduleAction = async function(action, taskId) {
 };
 
 // ─── SETTINGS MODAL ─────────────────────────────────────────
+let _settingsTab = 'server';
+
 function openSettingsModal() {
   const modal = document.createElement('div');
   modal.className = 'modal-overlay';
@@ -2728,117 +2730,240 @@ function openSettingsModal() {
   modal.innerHTML = `
     <div class="modal-content p-6">
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-      <h2 class="font-display text-lg font-semibold text-text-primary mb-6">Server Settings</h2>
+      <h2 class="font-display text-lg font-semibold text-text-primary mb-4">Settings & Management</h2>
+      <div class="flex items-center border-b border-border mb-6 gap-0">
+        <button class="config-tab ${_settingsTab === 'server' ? 'active' : ''}" onclick="switchSettingsTab('server')">Server</button>
+        <button class="config-tab ${_settingsTab === 'qmd' ? 'active' : ''}" onclick="switchSettingsTab('qmd')">QMD</button>
+        <button class="config-tab ${_settingsTab === 'telegram' ? 'active' : ''}" onclick="switchSettingsTab('telegram')">Telegram</button>
+        <button class="config-tab ${_settingsTab === 'providers' ? 'active' : ''}" onclick="switchSettingsTab('providers')">Providers</button>
+      </div>
       <div id="settings-content" class="space-y-6"></div>
     </div>
   `;
   document.body.appendChild(modal);
-  renderSettingsContent();
+  loadSettingsTab();
 }
 
-async function renderSettingsContent() {
+function switchSettingsTab(tab) {
+  _settingsTab = tab;
+  document.querySelectorAll('#settings-modal .config-tab').forEach(b => {
+    b.classList.toggle('active', b.textContent.toLowerCase() === tab);
+  });
+  loadSettingsTab();
+}
+
+async function loadSettingsTab() {
   const el = document.querySelector('#settings-modal #settings-content');
   if (!el) return;
   el.innerHTML = '<div class="text-text-muted text-sm">Loading...</div>';
   try {
-    const [statusRes, providersRes] = await Promise.allSettled([
-      API.getStatus(),
-      API.getProviders(),
-    ]);
-    const status = statusRes.status === 'fulfilled' ? statusRes.value : {};
-    const providers = providersRes.status === 'fulfilled' ? (Array.isArray(providersRes.value) ? providersRes.value : (providersRes.value.providers || [])) : [];
-
-    el.innerHTML = `
-      <!-- Server Status -->
-      <div class="glass-card p-6 mb-6">
-        <h3 class="section-header mb-4 text-sm">Server Status</h3>
-        <div class="grid grid-cols-2 gap-4 text-sm">
-          <div><span class="text-text-muted text-xs uppercase tracking-wider">Version</span> <span class="text-text-primary mono font-medium ml-2">${esc(status.version || 'N/A')}</span></div>
-          <div><span class="text-text-muted text-xs uppercase tracking-wider">URL</span> <span class="text-text-primary mono text-xs ml-2">${esc(BASE_URL)}</span></div>
-          <div><span class="text-text-muted text-xs uppercase tracking-wider">Sessions</span> <span class="text-text-primary mono font-medium ml-2">${Array.isArray(status.sessions) ? status.sessions.length : (status.sessions || 0)}</span></div>
-          <div><span class="text-text-muted text-xs uppercase tracking-wider">Agents</span> <span class="text-text-primary mono font-medium ml-2">${(Array.isArray(status.agents) ? status.agents : []).join(', ')}</span></div>
-        </div>
-      </div>
-
-      <!-- Providers -->
-      <div class="glass-card p-6 mb-6">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="section-header text-sm">Providers</h3>
-          <button onclick="showAddProviderForm()" class="btn-primary text-xs px-3 py-1.5 rounded-lg">+ Add Provider</button>
-        </div>
-        <div id="providers-list" class="space-y-4">
-          ${providers.map(p => {
-            const pName = p.name || '';
-            const statusColor = p.status === 'connected' ? 'text-success' : 'text-error';
-            const statusDot = p.status === 'connected' ? 'bg-success' : 'bg-error';
-            const pModels = p.models || [];
-            return `<div class="border border-border/50 rounded-lg p-4">
-              <div class="flex items-center justify-between mb-3">
-                <div class="flex items-center gap-3">
-                  <span class="w-2 h-2 rounded-full ${statusDot}"></span>
-                  <span class="text-text-primary font-display font-semibold">${esc(pName)}</span>
-                  <span class="text-xs px-2 py-0.5 rounded bg-surface-lighter text-text-muted">${esc(p.type || 'openai')}</span>
-                  <span class="${statusColor} text-xs">${esc(p.status || 'unknown')}</span>
-                </div>
-                <div class="flex items-center gap-2">
-                  <button onclick="editProvider('${esc(pName)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg" title="Edit provider">✎ Edit</button>
-                  <button onclick="testProvider('${esc(pName)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg" title="Test connection">🔌 Test</button>
-                  <button onclick="deleteProvider('${esc(pName)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg text-error hover:bg-error/10" title="Remove">✕</button>
-                </div>
-              </div>
-              <div class="text-xs text-text-muted mono mb-2">${esc(p.base_url || '')}</div>
-              <div class="text-xs text-text-muted mb-1">API Key: ${esc(p.api_key || '(none)')}</div>
-              ${p.default_model ? `<div class="text-xs text-model mb-2">Default: <span class="mono">${esc(p.default_model)}</span></div>` : ''}
-              <div class="flex flex-wrap gap-1.5 mt-2">
-                ${pModels.length > 0 ? pModels.map(m => {
-                  const mName = typeof m === 'string' ? m : (m.id || m.name || '');
-                  return `<span class="px-2 py-0.5 bg-model/10 rounded text-[10px] text-model border border-model/20 mono">${esc(mName)}</span>`;
-                }).join('') : '<span class="text-xs text-text-muted italic">No models loaded — try Test</span>'}
-              </div>
-            </div>`;
-          }).join('') || '<div class="text-text-muted text-sm">No providers configured</div>'}
-        </div>
-      </div>
-
-      <!-- Add/Edit Provider Form (hidden by default) -->
-      <div id="add-provider-form" class="glass-card p-6 hidden">
-        <h3 id="prov-form-title" class="section-header mb-4 text-sm">Add Provider</h3>
-        <div class="space-y-3">
-          <div>
-            <label class="text-xs text-text-muted uppercase tracking-wider block mb-1">Name</label>
-            <input id="prov-name" class="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary" placeholder="e.g. anthropic, local-inferencer">
-          </div>
-          <div>
-            <label class="text-xs text-text-muted uppercase tracking-wider block mb-1">Base URL</label>
-            <input id="prov-url" class="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono" placeholder="http://localhost:8081/v1">
-          </div>
-          <div>
-            <label class="text-xs text-text-muted uppercase tracking-wider block mb-1">API Key</label>
-            <input id="prov-key" class="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono" placeholder="sk-...">
-          </div>
-          <div>
-            <label class="text-xs text-text-muted uppercase tracking-wider block mb-1">Type</label>
-            <select id="prov-type" class="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary">
-              <option value="openai">OpenAI Compatible</option>
-              <option value="anthropic">Anthropic</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-xs text-text-muted uppercase tracking-wider block mb-1">Default Model (optional)</label>
-            <input id="prov-model" class="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono" placeholder="model-name">
-          </div>
-          <div id="prov-test-result" class="hidden text-sm p-3 rounded-lg"></div>
-          <div class="flex items-center gap-3 pt-2">
-            <button onclick="testNewProvider()" class="btn-secondary text-xs px-4 py-2 rounded-lg">🔌 Test Connection</button>
-            <button onclick="saveNewProvider()" class="btn-primary text-xs px-4 py-2 rounded-lg">Save Provider</button>
-            <button onclick="document.getElementById('add-provider-form').classList.add('hidden')" class="text-xs text-text-muted hover:text-text-primary transition-colors px-3 py-2">Cancel</button>
-          </div>
-        </div>
-      </div>`;
+    if (_settingsTab === 'server') await renderServerTab(el);
+    else if (_settingsTab === 'qmd') await renderQmdTab(el);
+    else if (_settingsTab === 'telegram') await renderTelegramTab(el);
+    else if (_settingsTab === 'providers') await renderProvidersTab(el);
   } catch (e) {
     el.innerHTML = `<div class="text-error text-sm">Error: ${esc(e.message)}</div>`;
   }
 }
+
+function _fmtUptime(s) {
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  return (d ? d + 'd ' : '') + (h ? h + 'h ' : '') + m + 'm';
+}
+
+async function renderServerTab(el) {
+  const svc = await API.get('/v1/services');
+  const srv = svc.server || {};
+  el.innerHTML = `
+    <div class="glass-card p-6">
+      <div class="grid grid-cols-2 gap-4 text-sm mb-6">
+        <div><span class="text-text-muted text-xs uppercase tracking-wider">Version</span> <span class="text-text-primary mono font-medium ml-2">${esc(srv.version || '?')}</span></div>
+        <div><span class="text-text-muted text-xs uppercase tracking-wider">URL</span> <span class="text-text-primary mono text-xs ml-2">${esc(BASE_URL)}</span></div>
+        <div><span class="text-text-muted text-xs uppercase tracking-wider">PID</span> <span class="text-text-primary mono font-medium ml-2">${srv.pid || '?'}</span></div>
+        <div><span class="text-text-muted text-xs uppercase tracking-wider">Uptime</span> <span class="text-text-primary mono font-medium ml-2">${_fmtUptime(srv.uptime_seconds || 0)}</span></div>
+        <div><span class="text-text-muted text-xs uppercase tracking-wider">Sessions</span> <span class="text-text-primary mono font-medium ml-2">${srv.sessions || 0}</span></div>
+        <div><span class="text-text-muted text-xs uppercase tracking-wider">Agents</span> <span class="text-text-primary mono font-medium ml-2">${(srv.agents || []).join(', ')}</span></div>
+        <div><span class="text-text-muted text-xs uppercase tracking-wider">Scheduled</span> <span class="text-text-primary mono font-medium ml-2">${srv.scheduler_tasks || 0}</span></div>
+      </div>
+      <button onclick="restartServer()" class="btn-secondary text-xs px-4 py-2 rounded-lg">Restart Server</button>
+    </div>`;
+}
+
+window.restartServer = async function() {
+  if (!confirm('Restart the server? Active streams will be interrupted.')) return;
+  showToast('Restarting server...');
+  await API.post('/v1/restart', {});
+  setTimeout(async () => {
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      try { await API.getStatus(); showToast('Server restarted'); loadSettingsTab(); return; } catch {}
+    }
+    showToast('Server may still be restarting', 'error');
+  }, 1000);
+};
+
+async function renderQmdTab(el) {
+  const svc = await API.get('/v1/services');
+  const qmd = svc.qmd || {};
+  const running = qmd.status === 'running';
+  const collections = qmd.collections || [];
+  el.innerHTML = `
+    <div class="glass-card p-6 mb-4">
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-3">
+          <span class="w-2.5 h-2.5 rounded-full ${running ? 'bg-success breathing-dot' : 'bg-error'}"></span>
+          <span class="text-text-primary font-display font-semibold">${running ? 'Running' : 'Stopped'}</span>
+          <span class="text-text-muted text-xs mono">port ${qmd.port || 8181}</span>
+        </div>
+        <div class="flex items-center gap-2">
+          ${running
+            ? `<button onclick="qmdAction('stop')" class="btn-secondary text-xs px-3 py-1.5 rounded-lg">Stop</button>
+               <button onclick="qmdAction('reindex')" class="btn-primary text-xs px-3 py-1.5 rounded-lg">Reindex All</button>`
+            : `<button onclick="qmdAction('start')" class="btn-primary text-xs px-3 py-1.5 rounded-lg">Start</button>`}
+        </div>
+      </div>
+      <div class="text-xs text-text-muted mb-1">Hybrid search: BM25 + vector + LLM reranking</div>
+    </div>
+    ${collections.length ? `
+    <div class="glass-card p-6">
+      <h3 class="section-header mb-3 text-sm">Collections</h3>
+      <div class="space-y-2">
+        ${collections.map(c => {
+          const name = typeof c === 'string' ? c : (c.name || c.id || '?');
+          const docs = typeof c === 'object' ? (c.documents || c.files || '') : '';
+          return `<div class="flex items-center justify-between border border-border/50 rounded-lg px-4 py-2">
+            <div>
+              <span class="text-text-primary font-medium text-sm">${esc(name)}</span>
+              ${docs ? `<span class="text-text-muted text-xs ml-2">${docs} docs</span>` : ''}
+            </div>
+            <button onclick="qmdAction('reindex','${esc(name)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg">Reindex</button>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>` : ''}`;
+}
+
+window.qmdAction = async function(action, collection) {
+  showToast(`QMD: ${action}${collection ? ' ' + collection : ''}...`);
+  try {
+    const r = await API.post('/v1/services/qmd', { action, collection });
+    showToast(`QMD: ${r.status || action}`);
+    setTimeout(() => loadSettingsTab(), 1500);
+  } catch (e) { showToast(e.message, 'error'); }
+};
+
+async function renderTelegramTab(el) {
+  const svc = await API.get('/v1/services');
+  const tg = svc.telegram || {};
+  const running = tg.status === 'running';
+  el.innerHTML = `
+    <div class="glass-card p-6">
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-3">
+          <span class="w-2.5 h-2.5 rounded-full ${running ? 'bg-success breathing-dot' : 'bg-error'}"></span>
+          <span class="text-text-primary font-display font-semibold">${running ? 'Running' : 'Stopped'}</span>
+        </div>
+        <div class="flex items-center gap-2">
+          ${running
+            ? `<button onclick="telegramAction('stop')" class="btn-secondary text-xs px-3 py-1.5 rounded-lg">Stop</button>
+               <button onclick="telegramAction('restart')" class="btn-primary text-xs px-3 py-1.5 rounded-lg">Restart</button>`
+            : `<button onclick="telegramAction('start')" class="btn-primary text-xs px-3 py-1.5 rounded-lg">Start</button>`}
+        </div>
+      </div>
+      <div class="text-xs text-text-muted">Service: <span class="mono">${esc(tg.label || 'com.brain-agent.telegram')}</span></div>
+    </div>`;
+}
+
+window.telegramAction = async function(action) {
+  showToast(`Telegram: ${action}...`);
+  try {
+    const r = await API.post('/v1/services/telegram', { action });
+    showToast(`Telegram: ${r.status || action}${r.running !== undefined ? (r.running ? ' (running)' : ' (stopped)') : ''}`);
+    setTimeout(() => loadSettingsTab(), 1000);
+  } catch (e) { showToast(e.message, 'error'); }
+};
+
+async function renderProvidersTab(el) {
+  const providersRes = await API.getProviders();
+  const providers = Array.isArray(providersRes) ? providersRes : (providersRes.providers || []);
+  el.innerHTML = `
+    <div class="glass-card p-6 mb-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="section-header text-sm">Providers</h3>
+        <button onclick="showAddProviderForm()" class="btn-primary text-xs px-3 py-1.5 rounded-lg">+ Add Provider</button>
+      </div>
+      <div id="providers-list" class="space-y-4">
+        ${providers.map(p => {
+          const pName = p.name || '';
+          const statusColor = p.status === 'connected' ? 'text-success' : 'text-error';
+          const statusDot = p.status === 'connected' ? 'bg-success' : 'bg-error';
+          const pModels = p.models || [];
+          return `<div class="border border-border/50 rounded-lg p-4">
+            <div class="flex items-center justify-between mb-3">
+              <div class="flex items-center gap-3">
+                <span class="w-2 h-2 rounded-full ${statusDot}"></span>
+                <span class="text-text-primary font-display font-semibold">${esc(pName)}</span>
+                <span class="text-xs px-2 py-0.5 rounded bg-surface-lighter text-text-muted">${esc(p.type || 'openai')}</span>
+                <span class="${statusColor} text-xs">${esc(p.status || 'unknown')}</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <button onclick="editProvider('${esc(pName)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg" title="Edit provider">✎ Edit</button>
+                <button onclick="testProvider('${esc(pName)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg" title="Test connection">🔌 Test</button>
+                <button onclick="deleteProvider('${esc(pName)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg text-error hover:bg-error/10" title="Remove">✕</button>
+              </div>
+            </div>
+            <div class="text-xs text-text-muted mono mb-2">${esc(p.base_url || '')}</div>
+            <div class="text-xs text-text-muted mb-1">API Key: ${esc(p.api_key || '(none)')}</div>
+            ${p.default_model ? `<div class="text-xs text-model mb-2">Default: <span class="mono">${esc(p.default_model)}</span></div>` : ''}
+            <div class="flex flex-wrap gap-1.5 mt-2">
+              ${pModels.length > 0 ? pModels.map(m => {
+                const mName = typeof m === 'string' ? m : (m.id || m.name || '');
+                return `<span class="px-2 py-0.5 bg-model/10 rounded text-[10px] text-model border border-model/20 mono">${esc(mName)}</span>`;
+              }).join('') : '<span class="text-xs text-text-muted italic">No models loaded — try Test</span>'}
+            </div>
+          </div>`;
+        }).join('') || '<div class="text-text-muted text-sm">No providers configured</div>'}
+      </div>
+    </div>
+    <!-- Add/Edit Provider Form (hidden by default) -->
+    <div id="add-provider-form" class="glass-card p-6 hidden">
+      <h3 id="prov-form-title" class="section-header mb-4 text-sm">Add Provider</h3>
+      <div class="space-y-3">
+        <div>
+          <label class="text-xs text-text-muted uppercase tracking-wider block mb-1">Name</label>
+          <input id="prov-name" class="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary" placeholder="e.g. anthropic, local-inferencer">
+        </div>
+        <div>
+          <label class="text-xs text-text-muted uppercase tracking-wider block mb-1">Base URL</label>
+          <input id="prov-url" class="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono" placeholder="http://localhost:8081/v1">
+        </div>
+        <div>
+          <label class="text-xs text-text-muted uppercase tracking-wider block mb-1">API Key</label>
+          <input id="prov-key" class="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono" placeholder="sk-...">
+        </div>
+        <div>
+          <label class="text-xs text-text-muted uppercase tracking-wider block mb-1">Type</label>
+          <select id="prov-type" class="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary">
+            <option value="openai">OpenAI Compatible</option>
+            <option value="anthropic">Anthropic</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs text-text-muted uppercase tracking-wider block mb-1">Default Model (optional)</label>
+          <input id="prov-model" class="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono" placeholder="model-name">
+        </div>
+        <div id="prov-test-result" class="hidden text-sm p-3 rounded-lg"></div>
+        <div class="flex items-center gap-3 pt-2">
+          <button onclick="testNewProvider()" class="btn-secondary text-xs px-4 py-2 rounded-lg">🔌 Test Connection</button>
+          <button onclick="saveNewProvider()" class="btn-primary text-xs px-4 py-2 rounded-lg">Save Provider</button>
+          <button onclick="document.getElementById('add-provider-form').classList.add('hidden')" class="text-xs text-text-muted hover:text-text-primary transition-colors px-3 py-2">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+// Keep old name for compatibility with provider save/test/delete functions
+async function renderSettingsContent() { loadSettingsTab(); }
 
 function showAddProviderForm() {
   editingProvider = null;

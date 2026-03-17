@@ -346,12 +346,20 @@ def launch_telegram(config: dict, extra_args: list[str]):
         print("Set it in config.json under telegram.bot_token or pass --token TOKEN")
         sys.exit(1)
 
-    pname, provider = get_provider(config)
+    # Model: use main agent's configured model
+    agent_json = os.path.join(BASE_DIR, "agents", "main", "agent.json")
+    try:
+        with open(agent_json) as f:
+            tg_model = json.load(f).get("model", "")
+    except (OSError, json.JSONDecodeError):
+        _, provider = get_provider(config)
+        tg_model = provider.get("default_model", "")
+
     cmd = [
         sys.executable, os.path.join(BASE_DIR, "telegram.py"),
         "--token", token,
         "--server", server_url(config),
-        "-m", provider.get("default_model", ""),
+        "-m", tg_model,
     ] + extra_args
     os.execv(sys.executable, cmd)
 
