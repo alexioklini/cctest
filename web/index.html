@@ -2785,8 +2785,12 @@ async function renderServerTab(el) {
         <div><span class="text-text-muted text-xs uppercase tracking-wider">Agents</span> <span class="text-text-primary mono font-medium ml-2">${(srv.agents || []).join(', ')}</span></div>
         <div><span class="text-text-muted text-xs uppercase tracking-wider">Scheduled</span> <span class="text-text-primary mono font-medium ml-2">${srv.scheduler_tasks || 0}</span></div>
       </div>
-      <button onclick="restartServer()" class="btn-secondary text-xs px-4 py-2 rounded-lg">Restart Server</button>
-    </div>`;
+      <div class="flex items-center gap-2">
+        <button onclick="restartServer()" class="btn-secondary text-xs px-4 py-2 rounded-lg">Restart Server</button>
+        <button onclick="toggleServiceLog('server')" class="btn-secondary text-xs px-4 py-2 rounded-lg">View Log</button>
+      </div>
+    </div>
+    <div id="log-server" class="hidden mt-4"></div>`;
 }
 
 window.restartServer = async function() {
@@ -2822,8 +2826,12 @@ async function renderQmdTab(el) {
             : `<button onclick="qmdAction('start')" class="btn-primary text-xs px-3 py-1.5 rounded-lg">Start</button>`}
         </div>
       </div>
-      <div class="text-xs text-text-muted mb-1">Hybrid search: BM25 + vector + LLM reranking</div>
+      <div class="flex items-center justify-between">
+        <div class="text-xs text-text-muted">Hybrid search: BM25 + vector + LLM reranking</div>
+        <button onclick="toggleServiceLog('qmd')" class="btn-secondary text-xs px-3 py-1 rounded-lg">View Log</button>
+      </div>
     </div>
+    <div id="log-qmd" class="hidden mt-4"></div>
     ${collections.length ? `
     <div class="glass-card p-6">
       <h3 class="section-header mb-3 text-sm">Collections</h3>
@@ -2850,6 +2858,34 @@ window.qmdAction = async function(action, collection) {
     showToast(`QMD: ${r.status || action}`);
     setTimeout(() => loadSettingsTab(), 1500);
   } catch (e) { showToast(e.message, 'error'); }
+};
+
+window.toggleServiceLog = async function(name) {
+  const el = document.getElementById(`log-${name}`);
+  if (!el) return;
+  if (!el.classList.contains('hidden')) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  el.innerHTML = '<div class="text-text-muted text-xs p-3">Loading log...</div>';
+  try {
+    const r = await API.get(`/v1/services/log?name=${name}&lines=80`);
+    const lines = r.lines || [];
+    el.innerHTML = `
+      <div class="glass-card p-4">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-text-muted text-xs">${esc(name)} log — last ${lines.length} lines${r.total ? ` (${r.total} total)` : ''}</span>
+          <div class="flex gap-2">
+            <button onclick="toggleServiceLog('${name}');toggleServiceLog('${name}')" class="text-xs text-text-muted hover:text-text-primary">↻ Refresh</button>
+            <button onclick="document.getElementById('log-${name}').classList.add('hidden')" class="text-xs text-text-muted hover:text-text-primary">✕ Close</button>
+          </div>
+        </div>
+        <pre class="text-[11px] leading-relaxed text-text-secondary mono overflow-x-auto overflow-y-auto max-h-80 bg-surface rounded-lg p-3 border border-border/30">${esc(lines.join('\n')) || '(empty)'}</pre>
+      </div>`;
+    // Scroll to bottom
+    const pre = el.querySelector('pre');
+    if (pre) pre.scrollTop = pre.scrollHeight;
+  } catch (e) {
+    el.innerHTML = `<div class="text-error text-xs p-3">Error: ${esc(e.message)}</div>`;
+  }
 };
 
 async function renderTelegramTab(el) {

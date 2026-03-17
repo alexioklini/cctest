@@ -394,6 +394,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_list_providers()
         elif path == "/v1/services":
             self._handle_services_status()
+        elif path.startswith("/v1/services/log"):
+            self._handle_service_log()
         elif path == "/" or path.startswith("/web/") or path.endswith((".html", ".css", ".js", ".ico")):
             self._serve_static(path)
         else:
@@ -1367,6 +1369,30 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "label": "com.brain-agent.telegram",
             },
         })
+
+    def _handle_service_log(self):
+        """GET /v1/services/log?name=server|qmd&lines=100 — tail a service log."""
+        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+        name = params.get("name", "server")
+        lines = min(int(params.get("lines", "100")), 500)
+
+        log_paths = {
+            "server": os.path.expanduser("~/.brain-agent/server.log"),
+            "qmd": os.path.expanduser("~/.brain-agent/qmd.log"),
+        }
+        path = log_paths.get(name)
+        if not path or not os.path.isfile(path):
+            self._send_json({"name": name, "lines": [], "error": "Log file not found"})
+            return
+
+        try:
+            with open(path, "r", errors="replace") as f:
+                all_lines = f.readlines()
+            tail = [l.rstrip("\n") for l in all_lines[-lines:]]
+            self._send_json({"name": name, "lines": tail, "total": len(all_lines)})
+        except Exception as e:
+            self._send_json({"name": name, "lines": [], "error": str(e)})
 
     def _handle_qmd_action(self):
         """POST /v1/services/qmd — start/stop/reindex QMD."""
