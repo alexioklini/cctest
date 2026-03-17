@@ -704,6 +704,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             except engine.TaskCancelled:
                 session.messages.pop()  # remove user message
                 event_queue.put(("error", {"message": "Cancelled"}))
+            except SystemExit as e:
+                event_queue.put(("error", {"message": f"Engine fatal error (exit code {e.code})"}))
             except Exception as e:
                 import traceback
                 traceback.print_exc()
@@ -723,6 +725,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 try:
                     event = event_queue.get(timeout=5)
                 except queue.Empty:
+                    # If worker thread died, stop waiting
+                    if not t.is_alive() and event_queue.empty():
+                        try:
+                            sse_err = f'event: error\ndata: {json.dumps({"message": "Server worker terminated unexpectedly"})}\n\n'
+                            self.wfile.write(sse_err.encode("utf-8"))
+                            self.wfile.flush()
+                        except (BrokenPipeError, ConnectionResetError):
+                            pass
+                        break
                     # Send keepalive comment to prevent browser timeout
                     try:
                         self.wfile.write(b": keepalive\n\n")

@@ -1707,7 +1707,11 @@ async function sendMessage() {
     }, chat.model);
   } catch (e) {
     if (e.name !== 'AbortError') {
-      assistantMsg.content += `\n\n**Error:** ${e.message}`;
+      let errMsg = e.message || String(e);
+      if (errMsg === 'Load failed' || errMsg === 'Failed to fetch') {
+        errMsg = 'Connection to server lost — the response may have been too large or the server encountered an error. Try again or check server logs.';
+      }
+      assistantMsg.content += `\n\n**Error:** ${errMsg}`;
     }
   } finally {
     chat.streaming = false;

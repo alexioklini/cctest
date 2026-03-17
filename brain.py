@@ -15,6 +15,7 @@ Usage:
 import argparse
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -26,6 +27,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 PID_FILE = os.path.expanduser("~/.brain-agent/server.pid")
 LOG_FILE = os.path.expanduser("~/.brain-agent/server.log")
+QMD_PID_FILE = os.path.expanduser("~/.cache/qmd/mcp.pid")
+QMD_PORT = 8181
 
 
 def load_config() -> dict:
@@ -191,6 +194,12 @@ def show_status(config: dict):
     except Exception as e:
         print(f"Server: error ({e})")
 
+    # QMD status
+    if is_qmd_running():
+        print(f"QMD:    running (port {QMD_PORT})")
+    else:
+        print("QMD:    not running")
+
 
 def show_config(config: dict):
     """Show current configuration."""
@@ -227,8 +236,77 @@ def show_providers(config: dict):
         print()
 
 
+def is_qmd_running() -> bool:
+    """Check if QMD daemon is responding."""
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{QMD_PORT}/mcp",
+            data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                    "clientInfo": {"name": "brain-check", "version": "1.0"}}}).encode(),
+            headers={"Content-Type": "application/json",
+                     "Accept": "application/json, text/event-stream"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def start_qmd():
+    """Start QMD MCP HTTP daemon if not running."""
+    if is_qmd_running():
+        return
+    qmd_bin = shutil.which("qmd")
+    if not qmd_bin:
+        print("  QMD: not installed (npm install -g @tobilu/qmd)")
+        return
+    os.makedirs(os.path.expanduser("~/.brain-agent"), exist_ok=True)
+    log_fd = open(os.path.expanduser("~/.brain-agent/qmd.log"), "a")
+    subprocess.Popen(
+        [qmd_bin, "mcp", "--http", "--daemon", "--port", str(QMD_PORT)],
+        stdout=log_fd, stderr=log_fd,
+        start_new_session=True, cwd=BASE_DIR,
+    )
+    # Wait briefly for startup
+    for _ in range(10):
+        time.sleep(0.3)
+        if is_qmd_running():
+            print("  QMD: ready (port 8181)")
+            return
+    print("  QMD: started (may take a moment)")
+
+
+def stop_qmd():
+    """Stop QMD daemon."""
+    # QMD writes its own PID file
+    if os.path.exists(QMD_PID_FILE):
+        try:
+            with open(QMD_PID_FILE) as f:
+                pid = int(f.read().strip())
+            os.kill(pid, signal.SIGTERM)
+            print(f"Stopped QMD (pid {pid})")
+            return
+        except (ValueError, ProcessLookupError, OSError):
+            pass
+    # Fallback: find by port
+    try:
+        result = subprocess.run(
+            ["lsof", "-ti", f"tcp:{QMD_PORT}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.stdout.strip():
+            for pid_str in result.stdout.strip().split("\n"):
+                try:
+                    os.kill(int(pid_str), signal.SIGTERM)
+                except (ValueError, ProcessLookupError):
+                    pass
+            print("Stopped QMD")
+    except Exception:
+        pass
+
+
 def ensure_server(config: dict):
-    """Start server if not running."""
+    """Start server and QMD if not running."""
+    start_qmd()
     if not is_server_running(config):
         start_server(config)
         if not is_server_running(config):
@@ -291,9 +369,11 @@ def main():
 
     if command == "start":
         fg = "--foreground" in extra or "-f" in extra
+        start_qmd()
         start_server(config, foreground=fg)
     elif command == "stop":
         stop_server(config)
+        stop_qmd()
     elif command == "restart":
         restart_server(config)
     elif command == "status":

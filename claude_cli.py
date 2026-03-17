@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "1.2.0"
-VERSION_DATE = "2026-03-16"
+VERSION = "1.4.0"
+VERSION_DATE = "2026-03-17"
 CHANGELOG = [
+    ("1.4.0", "2026-03-17", "QMD hybrid memory search, SSE error handling, server resilience"),
     ("1.2.0", "2026-03-16", "Multi-provider routing, Gmail, scheduler dashboard, SQLite resilience, Cloudflare deployment"),
     ("1.1.0", "2026-03-14", "MCP support: stdio + SSE transports, per-agent + global servers"),
     ("1.0.0", "2026-03-14", "Background threads per agent, async delegation, task status/cancel"),
@@ -19,7 +20,9 @@ CHANGELOG = [
 ]
 
 import argparse
+import datetime
 import fnmatch
+import logging
 import glob as globmod
 import json
 import os
@@ -1590,13 +1593,121 @@ def build_agent_registry() -> str:
 _current_agent: AgentConfig | None = None
 
 
-# --- Memory System (SQLite FTS5) ---
+# --- Memory System (QMD hybrid search) ---
 
-import sqlite3
 import hashlib
+import urllib.request
+import urllib.error
+
+# QMD HTTP MCP daemon endpoint
+_QMD_URL = "http://localhost:8181/mcp"
+_QMD_HEADERS = {
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/event-stream",
+}
+
+# Shared MCP session ID (set on first successful init)
+_qmd_session_id: str | None = None
+# Debounce timer for embedding after writes
+_qmd_embed_timer: threading.Timer | None = None
+_qmd_embed_lock = threading.Lock()
+
+# Files to skip when indexing (not memory files)
+_QMD_IGNORE_FILES = {"soul.md", "tools.md"}
+
+
+def _qmd_rpc(method: str, params: dict | None = None) -> dict | None:
+    """Send a JSON-RPC request to the QMD MCP HTTP daemon. Returns result or None on failure."""
+    global _qmd_session_id
+    payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}
+    data = json.dumps(payload).encode()
+    headers = dict(_QMD_HEADERS)
+    if _qmd_session_id:
+        headers["Mcp-Session-Id"] = _qmd_session_id
+    req = urllib.request.Request(_QMD_URL, data=data, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            # Capture session ID from response
+            sid = resp.headers.get("Mcp-Session-Id")
+            if sid:
+                _qmd_session_id = sid
+            body = json.loads(resp.read().decode())
+            if "error" in body:
+                logging.warning("QMD RPC error: %s", body["error"])
+                return None
+            return body.get("result")
+    except Exception as e:
+        logging.debug("QMD unreachable: %s", e)
+        return None
+
+
+def _qmd_init_session() -> bool:
+    """Initialize an MCP session with QMD. Returns True if successful."""
+    result = _qmd_rpc("initialize", {
+        "protocolVersion": "2024-11-05",
+        "capabilities": {},
+        "clientInfo": {"name": "brain-agent", "version": "1.0"},
+    })
+    return result is not None
+
+
+def _qmd_ensure_collection(name: str, directory: str):
+    """Register a collection with QMD if it doesn't exist (via CLI)."""
+    try:
+        result = subprocess.run(
+            ["qmd", "collection", "show", name],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            return  # Already exists
+        subprocess.run(
+            ["qmd", "collection", "add", directory,
+             "--name", name, "--pattern", "*.md",
+             "--ignore", ",".join(_QMD_IGNORE_FILES)],
+            capture_output=True, text=True, timeout=15,
+        )
+    except Exception as e:
+        logging.debug("QMD collection setup failed for %s: %s", name, e)
+
+
+def _qmd_debounced_embed(collection: str):
+    """Schedule a debounced qmd update+embed for a collection (2s delay)."""
+    global _qmd_embed_timer
+    def _do_embed():
+        try:
+            subprocess.run(
+                ["qmd", "update"], capture_output=True, text=True, timeout=30,
+            )
+            subprocess.run(
+                ["qmd", "embed", "-c", collection],
+                capture_output=True, text=True, timeout=60,
+            )
+        except Exception as e:
+            logging.debug("QMD embed failed: %s", e)
+    with _qmd_embed_lock:
+        if _qmd_embed_timer:
+            _qmd_embed_timer.cancel()
+        _qmd_embed_timer = threading.Timer(2.0, _do_embed)
+        _qmd_embed_timer.daemon = True
+        _qmd_embed_timer.start()
+
+
+def _parse_frontmatter(raw: str) -> tuple[dict, str]:
+    """Parse YAML frontmatter from a markdown file. Returns (metadata, body)."""
+    fm_match = re.match(r'^---\s*\n(.*?)\n---\s*\n(.*)$', raw, re.DOTALL)
+    if fm_match:
+        fm_text, body = fm_match.groups()
+        fm = {}
+        for line in fm_text.split("\n"):
+            if ":" in line:
+                k, v = line.split(":", 1)
+                fm[k.strip()] = v.strip()
+        return fm, body.strip()
+    return {}, raw.strip()
+
 
 class MemoryStore:
-    """Per-agent memory store backed by SQLite FTS5 and markdown files."""
+    """Per-agent memory store backed by QMD hybrid search and markdown files."""
 
     def __init__(self, agent_id: str = "main", base_dir: str | None = None):
         self.agent_id = agent_id
@@ -1605,53 +1716,13 @@ class MemoryStore:
         else:
             self.dir = os.path.join(AGENTS_DIR, agent_id)
         os.makedirs(self.dir, exist_ok=True)
-        self.db_path = os.path.join(self.dir, "memory.db")
-        self._init_db()
-
-    def _init_db(self):
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS memories (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    description TEXT,
-                    type TEXT,
-                    content TEXT NOT NULL,
-                    file_path TEXT,
-                    created_at TEXT DEFAULT (datetime('now')),
-                    updated_at TEXT DEFAULT (datetime('now'))
-                )
-            """)
-            # FTS5 virtual table for full-text search
-            conn.execute("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-                    name, description, type, content,
-                    content=memories,
-                    content_rowid=rowid
-                )
-            """)
-            # Triggers to keep FTS in sync
-            conn.execute("""
-                CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-                    INSERT INTO memories_fts(rowid, name, description, type, content)
-                    VALUES (new.rowid, new.name, new.description, new.type, new.content);
-                END
-            """)
-            conn.execute("""
-                CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-                    INSERT INTO memories_fts(memories_fts, rowid, name, description, type, content)
-                    VALUES ('delete', old.rowid, old.name, old.description, old.type, old.content);
-                END
-            """)
-            conn.execute("""
-                CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-                    INSERT INTO memories_fts(memories_fts, rowid, name, description, type, content)
-                    VALUES ('delete', old.rowid, old.name, old.description, old.type, old.content);
-                    INSERT INTO memories_fts(rowid, name, description, type, content)
-                    VALUES (new.rowid, new.name, new.description, new.type, new.content);
-                END
-            """)
-            conn.commit()
+        self._collection = agent_id
+        # Ensure QMD knows about this collection (background, non-blocking)
+        threading.Thread(
+            target=_qmd_ensure_collection,
+            args=(self._collection, self.dir),
+            daemon=True,
+        ).start()
 
     def _make_id(self, name: str) -> str:
         """Generate a stable ID from name."""
@@ -1665,7 +1736,7 @@ class MemoryStore:
 
     def store(self, name: str, content: str, description: str = "",
               mem_type: str = "general") -> dict:
-        """Store or update a memory. Also writes a .md file."""
+        """Store or update a memory. Writes .md file and triggers QMD reindex."""
         mem_id = self._make_id(name)
         filename = self._name_to_filename(name)
         file_path = os.path.join(self.dir, filename)
@@ -1683,127 +1754,196 @@ agent: {self.agent_id}
         with open(file_path, "w") as f:
             f.write(md_content)
 
-        # Upsert into database
-        with sqlite3.connect(self.db_path) as conn:
-            existing = conn.execute(
-                "SELECT id FROM memories WHERE id = ?", (mem_id,)
-            ).fetchone()
-            if existing:
-                conn.execute("""
-                    UPDATE memories SET name=?, description=?, type=?, content=?,
-                    file_path=?, updated_at=datetime('now') WHERE id=?
-                """, (name, description, mem_type, content, file_path, mem_id))
-            else:
-                conn.execute("""
-                    INSERT INTO memories (id, name, description, type, content, file_path)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (mem_id, name, description, mem_type, content, file_path))
-            conn.commit()
+        # Trigger debounced QMD update+embed
+        _qmd_debounced_embed(self._collection)
 
         return {"id": mem_id, "name": name, "file": filename, "status": "stored"}
 
     def recall(self, query: str, limit: int = 10, mem_type: str | None = None) -> list[dict]:
-        """Search memories using FTS5 BM25 ranking."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            # FTS5 query — escape special chars
-            fts_query = re.sub(r'["\'\(\)\*]', ' ', query).strip()
-            # Split into terms and join with OR for broader matching
-            terms = fts_query.split()
-            if not terms:
-                return []
-            fts_expr = " OR ".join(f'"{t}"' for t in terms)
+        """Search memories using QMD hybrid search (BM25 + vector + reranking).
+        Falls back to file-scan substring matching if QMD is unreachable."""
+        # Try QMD first
+        results = self._qmd_query(query, limit, mem_type)
+        if results is not None:
+            return results
+        # Fallback: scan files
+        return self._fallback_search(query, limit, mem_type)
 
-            if mem_type:
-                rows = conn.execute("""
-                    SELECT m.id, m.name, m.description, m.type, m.content, m.file_path,
-                           m.created_at, m.updated_at,
-                           rank
-                    FROM memories_fts fts
-                    JOIN memories m ON m.rowid = fts.rowid
-                    WHERE memories_fts MATCH ? AND m.type = ?
-                    ORDER BY rank
-                    LIMIT ?
-                """, (fts_expr, mem_type, limit)).fetchall()
+    def _qmd_query(self, query: str, limit: int, mem_type: str | None) -> list[dict] | None:
+        """Query QMD via MCP HTTP. Returns list of results or None if unavailable."""
+        global _qmd_session_id
+        # Ensure session
+        if not _qmd_session_id:
+            if not _qmd_init_session():
+                return None
+
+        searches = [
+            {"type": "lex", "query": query},
+            {"type": "vec", "query": query},
+        ]
+        result = _qmd_rpc("tools/call", {
+            "name": "query",
+            "arguments": {
+                "searches": searches,
+                "collections": [self._collection],
+                "limit": limit * 2 if mem_type else limit,  # over-fetch if filtering
+            },
+        })
+        if not result:
+            # Session may have expired, retry once
+            _qmd_session_id = None
+            if not _qmd_init_session():
+                return None
+            result = _qmd_rpc("tools/call", {
+                "name": "query",
+                "arguments": {
+                    "searches": searches,
+                    "collections": [self._collection],
+                    "limit": limit * 2 if mem_type else limit,
+                },
+            })
+            if not result:
+                return None
+
+        # Parse structured results
+        structured = result.get("structuredContent", {})
+        qmd_results = structured.get("results", [])
+        memories = []
+        for r in qmd_results:
+            file_rel = r.get("file", "")
+            # Strip collection prefix (e.g. "main/foo.md" -> "foo.md")
+            if "/" in file_rel:
+                fname = file_rel.split("/", 1)[1]
             else:
-                rows = conn.execute("""
-                    SELECT m.id, m.name, m.description, m.type, m.content, m.file_path,
-                           m.created_at, m.updated_at,
-                           rank
-                    FROM memories_fts fts
-                    JOIN memories m ON m.rowid = fts.rowid
-                    WHERE memories_fts MATCH ?
-                    ORDER BY rank
-                    LIMIT ?
-                """, (fts_expr, limit)).fetchall()
+                fname = file_rel
+            fpath = os.path.join(self.dir, fname)
+            # Read the actual file for full content + frontmatter
+            try:
+                with open(fpath, "r") as f:
+                    raw = f.read()
+                fm, body = _parse_frontmatter(raw)
+            except FileNotFoundError:
+                fm = {"name": r.get("title", fname), "type": "general"}
+                body = r.get("snippet", "")
 
-            return [dict(r) for r in rows]
+            mem = {
+                "id": self._make_id(fm.get("name", fname)),
+                "name": fm.get("name", fname.replace(".md", "")),
+                "description": fm.get("description", ""),
+                "type": fm.get("type", "general"),
+                "content": body,
+                "file_path": fpath,
+                "score": r.get("score", 0),
+            }
+            # Post-filter by type
+            if mem_type and mem["type"] != mem_type:
+                continue
+            memories.append(mem)
+            if len(memories) >= limit:
+                break
+        return memories
 
-    def delete(self, name: str) -> dict:
-        """Delete a memory by name."""
-        mem_id = self._make_id(name)
-        with sqlite3.connect(self.db_path) as conn:
-            row = conn.execute(
-                "SELECT file_path FROM memories WHERE id = ?", (mem_id,)
-            ).fetchone()
-            if not row:
-                return {"error": f"Memory '{name}' not found"}
-            file_path = row[0]
-            conn.execute("DELETE FROM memories WHERE id = ?", (mem_id,))
-            conn.commit()
-        # Remove .md file
-        if file_path and os.path.exists(file_path):
-            os.remove(file_path)
-        return {"name": name, "status": "deleted"}
-
-    def list_all(self, mem_type: str | None = None) -> list[dict]:
-        """List all memories, optionally filtered by type."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            if mem_type:
-                rows = conn.execute(
-                    "SELECT id, name, description, type, created_at, updated_at FROM memories WHERE type = ? ORDER BY updated_at DESC",
-                    (mem_type,)
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT id, name, description, type, created_at, updated_at FROM memories ORDER BY updated_at DESC"
-                ).fetchall()
-            return [dict(r) for r in rows]
-
-    def reindex(self) -> dict:
-        """Rebuild the index from .md files on disk."""
-        count = 0
+    def _fallback_search(self, query: str, limit: int, mem_type: str | None) -> list[dict]:
+        """Fallback: scan .md files and do substring matching."""
+        terms = query.lower().split()
+        if not terms:
+            return []
+        results = []
         for fname in os.listdir(self.dir):
-            if not fname.endswith(".md"):
+            if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
                 continue
             fpath = os.path.join(self.dir, fname)
             try:
                 with open(fpath, "r") as f:
                     raw = f.read()
-                # Parse frontmatter
-                fm_match = re.match(r'^---\s*\n(.*?)\n---\s*\n(.*)$', raw, re.DOTALL)
-                if fm_match:
-                    fm_text, body = fm_match.groups()
-                    fm = {}
-                    for line in fm_text.split("\n"):
-                        if ":" in line:
-                            k, v = line.split(":", 1)
-                            fm[k.strip()] = v.strip()
-                    name = fm.get("name", fname.replace(".md", ""))
-                    desc = fm.get("description", "")
-                    mtype = fm.get("type", "general")
-                else:
-                    name = fname.replace(".md", "")
-                    desc = ""
-                    mtype = "general"
-                    body = raw
-
-                self.store(name, body.strip(), desc, mtype)
-                count += 1
+                fm, body = _parse_frontmatter(raw)
+                mtype = fm.get("type", "general")
+                if mem_type and mtype != mem_type:
+                    continue
+                searchable = (fm.get("name", "") + " " + fm.get("description", "") + " " + body).lower()
+                hits = sum(1 for t in terms if t in searchable)
+                if hits > 0:
+                    results.append({
+                        "id": self._make_id(fm.get("name", fname)),
+                        "name": fm.get("name", fname.replace(".md", "")),
+                        "description": fm.get("description", ""),
+                        "type": mtype,
+                        "content": body,
+                        "file_path": fpath,
+                        "score": hits / len(terms),
+                    })
             except Exception:
                 continue
-        return {"agent": self.agent_id, "reindexed": count}
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results[:limit]
+
+    def delete(self, name: str) -> dict:
+        """Delete a memory by name."""
+        filename = self._name_to_filename(name)
+        file_path = os.path.join(self.dir, filename)
+        if not os.path.exists(file_path):
+            # Try scanning for a file with matching frontmatter name
+            for fname in os.listdir(self.dir):
+                if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
+                    continue
+                fpath = os.path.join(self.dir, fname)
+                try:
+                    with open(fpath, "r") as f:
+                        raw = f.read()
+                    fm, _ = _parse_frontmatter(raw)
+                    if fm.get("name") == name:
+                        file_path = fpath
+                        break
+                except Exception:
+                    continue
+            else:
+                return {"error": f"Memory '{name}' not found"}
+        os.remove(file_path)
+        # Trigger QMD reindex
+        _qmd_debounced_embed(self._collection)
+        return {"name": name, "status": "deleted"}
+
+    def list_all(self, mem_type: str | None = None) -> list[dict]:
+        """List all memories by scanning .md files (no QMD needed)."""
+        results = []
+        for fname in os.listdir(self.dir):
+            if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
+                continue
+            fpath = os.path.join(self.dir, fname)
+            try:
+                with open(fpath, "r") as f:
+                    raw = f.read()
+                fm, _ = _parse_frontmatter(raw)
+                mtype = fm.get("type", "general")
+                if mem_type and mtype != mem_type:
+                    continue
+                mtime = os.path.getmtime(fpath)
+                results.append({
+                    "id": self._make_id(fm.get("name", fname)),
+                    "name": fm.get("name", fname.replace(".md", "")),
+                    "description": fm.get("description", ""),
+                    "type": mtype,
+                    "updated_at": datetime.datetime.fromtimestamp(mtime).isoformat(),
+                })
+            except Exception:
+                continue
+        results.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
+        return results
+
+    def reindex(self) -> dict:
+        """Trigger QMD update+embed for this collection."""
+        try:
+            r1 = subprocess.run(
+                ["qmd", "update"], capture_output=True, text=True, timeout=30,
+            )
+            r2 = subprocess.run(
+                ["qmd", "embed", "-c", self._collection],
+                capture_output=True, text=True, timeout=60,
+            )
+            return {"agent": self.agent_id, "status": "reindexed",
+                    "update": r1.returncode == 0, "embed": r2.returncode == 0}
+        except Exception as e:
+            return {"agent": self.agent_id, "status": "error", "error": str(e)}
 
 
 # Global memory store instance (set in _run_interactive)
@@ -2176,7 +2316,7 @@ def tool_task_cancel(args: dict) -> str:
 
 # --- Scheduler ---
 
-import datetime
+import sqlite3
 
 SCHEDULER_DB = os.path.join(AGENTS_DIR, "main", "scheduler.db")
 
@@ -3862,15 +4002,26 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     except urllib.error.HTTPError as e:
         if e.code == 400:
             return None
-        print(f"HTTP Error {e.code}: {e.reason}", file=sys.stderr)
+        error_msg = f"HTTP Error {e.code}: {e.reason}"
         try:
             error_body = e.read().decode("utf-8")
-            print(error_body, file=sys.stderr)
+            error_msg += f" — {error_body[:200]}"
         except:
             pass
+        print(error_msg, file=sys.stderr)
+        if e.code == 529 or e.code == 503 or e.code == 429:
+            # Overloaded / unavailable / rate limited — return None to trigger fallback
+            if event_callback:
+                event_callback("error", {"message": error_msg})
+            return None
+        if event_callback:
+            raise RuntimeError(error_msg)
         sys.exit(1)
     except urllib.error.URLError as e:
-        print(f"Error: {e.reason}", file=sys.stderr)
+        error_msg = f"Connection error: {e.reason}"
+        print(error_msg, file=sys.stderr)
+        if event_callback:
+            raise RuntimeError(error_msg)
         sys.exit(1)
 
 
@@ -3902,7 +4053,17 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
                 event = json.loads(line[6:])
                 etype = event.get("type")
 
-                if etype == "message_delta":
+                if etype == "error":
+                    err = event.get("error", {})
+                    err_msg = err.get("message", "Unknown API error")
+                    err_type = err.get("type", "error")
+                    if not silent:
+                        print(f"\nAPI error: {err_msg}", file=sys.stderr)
+                    if event_callback:
+                        event_callback("error", {"message": f"{err_type}: {err_msg}"})
+                    return None
+
+                elif etype == "message_delta":
                     stop_reason = event.get("delta", {}).get("stop_reason")
 
                 elif etype == "content_block_start":
@@ -4111,7 +4272,10 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
 
     available_models = get_available_models(api_key, base_url, api_type)
     if not available_models:
-        print(f"Error: Model '{model}' is not available and no fallback models found.", file=sys.stderr)
+        msg = f"Error: Model '{model}' is not available and no fallback models found."
+        print(msg, file=sys.stderr)
+        if event_callback:
+            raise RuntimeError(msg)
         sys.exit(1)
 
     tried_models = {model}
@@ -4126,7 +4290,10 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
         if result is not None:
             return result
 
-    print(f"Error: No working models found. Tried: {', '.join(tried_models)}", file=sys.stderr)
+    msg = f"Error: No working models found. Tried: {', '.join(tried_models)}"
+    print(msg, file=sys.stderr)
+    if event_callback:
+        raise RuntimeError(msg)
     sys.exit(1)
 
 

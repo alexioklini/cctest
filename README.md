@@ -16,7 +16,8 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
                 │   server.py   │  ← always-running daemon
                 │  ┌──────────┐ │
                 │  │Scheduler │ │──▶ LLM API (oMLX / Claude)
-                │  │Memory    │ │──▶ MCP servers
+                │  │Memory    │ │──▶ QMD (hybrid search, port 8181)
+                │  │          │ │──▶ MCP servers
                 │  │MCP       │ │──▶ Gmail, Exa, tools
                 │  │Sessions  │ │
                 │  └──────────┘ │
@@ -95,7 +96,7 @@ brain-agent/
       skills/           # Installed skills
         github/SKILL.md
         word-docx/SKILL.md
-      memory.db         # SQLite FTS5 memory
+      *.md              # Memory files (indexed by QMD)
       chats.db          # Chat history (sessions + messages)
       scheduler.db      # Scheduled tasks + history
     research/           # Example specialized agent
@@ -122,7 +123,7 @@ brain-agent/
 | `gmail_send` | Send email |
 | `gmail_reply` | Reply preserving threading |
 | `memory_store` | Save to agent's memory |
-| `memory_recall` | Search agent's memory (BM25) |
+| `memory_recall` | Search agent's memory (QMD hybrid search) |
 | `memory_shared` | Read/write main agent's shared memory |
 | `memory_delete` | Delete a memory |
 | `delegate_task` | Delegate to another agent (sync/async) |
@@ -152,7 +153,7 @@ Access at `http://127.0.0.1:8420/` after starting the server.
 Each agent has:
 - **`soul.md`** — personality, role, capabilities
 - **`agent.json`** — config: display name, description, model, avatar, max_context
-- **Own memory** — isolated SQLite FTS5 store
+- **Own memory** — QMD-indexed markdown files with hybrid search (BM25 + vector + reranking)
 - **Own skills** — agent-specific + inherits main's global skills
 - **Own MCP servers** — agent-specific + inherits main's global servers
 - **Shared memory** — all agents can read/write main's memory
@@ -287,6 +288,7 @@ Each task runs with a specified agent and model in its own context. Results stor
 
 | Version | Date | Changes |
 |---|---|---|
+| 1.4.0 | 2026-03-17 | QMD hybrid memory search (BM25 + vector + LLM reranking), SSE error handling, server resilience |
 | 1.3.0 | 2026-03-16 | oMLX local inference with Crow-4B-Opus-4.6-Distill model, replaces distributed inferencer |
 | 1.2.1 | 2026-03-16 | Local CLIProxyAPI OAuth proxy for Claude models (no API key costs) |
 | 1.2.0 | 2026-03-16 | Multi-provider routing, scheduler dashboard, Gmail tools, SQLite resilience, Cloudflare deployment |

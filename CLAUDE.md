@@ -21,8 +21,10 @@ This file provides guidance to Claude Code when working with this repository.
 brain.py (gateway)
   ├── server.py (daemon on port 8420, launchd managed)
   │   ├── claude_cli.py (engine: 20+ tools, agents, memory, scheduler)
-  │   ├── SQLite: chats.db, scheduler.db, memory.db (per agent)
+  │   ├── SQLite: chats.db, scheduler.db
   │   └── MCP server connections
+  ├── qmd mcp --http (daemon on port 8181, hybrid memory search)
+  │   └── Collections: one per agent → agents/<name>/*.md
   ├── tui.py (terminal client)
   ├── telegram.py (Telegram client)
   └── web/index.html (browser client)
@@ -45,6 +47,9 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - Tool call dedup tracker prevents infinite loops (2 identical calls = hard abort)
 - Scheduled tasks have configurable timeout (default 5 min) via watchdog thread
 - `_run_delegate` uses `MAX_DELEGATE_TOOL_ROUNDS` and thread-local memory stores
+- Memory uses QMD hybrid search (BM25 + vector + LLM reranking) via HTTP MCP on port 8181
+- Markdown files are source of truth for memory; QMD indexes them with debounced embed after writes
+- If QMD is unreachable, memory recall falls back to file-scan substring matching
 
 ### Agent Directory Structure
 
@@ -56,7 +61,7 @@ agents/<name>/
   mcp.json        # MCP server connections
   gmail.json      # Gmail credentials (not in git)
   skills/         # Installed skills (SKILL.md per skill)
-  memory.db       # SQLite FTS5 memory index
+  *.md            # Memory files (indexed by QMD)
   chats.db        # Chat history (in main agent dir)
   scheduler.db    # Scheduled tasks (in main agent dir)
 ```
@@ -86,6 +91,7 @@ Server runs on port 8420 (configurable). Key endpoints:
 
 - Server: launchd daemon (`com.brain-agent.server.plist`)
 - Telegram: launchd daemon (`com.brain-agent.telegram.plist`)
+- QMD: launchd daemon (`com.brain-agent.qmd.plist`, port 8181) or auto-started by `brain.py start`
 - oMLX: local MLX inference server (`brew services`, port 8000)
 - CLIProxyAPI: local OAuth proxy for Claude models (`brew services`, port 8317)
 - Public: Cloudflare Zero Trust tunnel → `brain.alexklinsky.dev`
@@ -113,3 +119,16 @@ Claude models via OAuth (no API key costs). Installed via Homebrew, runs as a la
 - API key for Brain Agent: `brain-agent`
 - Management panel: `http://127.0.0.1:8317/`
 - Service control: `brew services start/stop/restart cliproxyapi`
+
+### QMD (Hybrid Memory Search)
+
+[QMD](https://github.com/tobi/qmd) provides on-device hybrid search (BM25 + vector semantic + LLM
+reranking) for the memory system. Replaces SQLite FTS5. Indexes `.md` files in agent directories.
+
+- Daemon: `qmd mcp --http --port 8181` (auto-started by `brain.py start`)
+- Collections: one per agent (main, Reporter, Researcher)
+- Index: `~/.cache/qmd/index.sqlite`
+- Embedding model: `embeddinggemma` (328MB, runs locally)
+- `brain.py start` auto-starts QMD; `brain.py stop` stops it
+- Manual: `qmd status`, `qmd update`, `qmd embed`, `qmd query "search terms"`
+- Collection management: `qmd collection add/list/remove/show`
