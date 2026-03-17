@@ -3342,6 +3342,7 @@ def make_headers(api_key: str, api_type: str) -> dict:
     return {
         "Content-Type": "application/json",
         "x-api-key": api_key,
+        "Authorization": f"Bearer {api_key}",
         "anthropic-version": "2023-06-01",
     }
 
