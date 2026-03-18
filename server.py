@@ -19,7 +19,7 @@ from socketserver import ThreadingMixIn
 
 _server_start_time = time.time()
 _QMD_PORT = 8181
-_TELEGRAM_PLIST = os.path.expanduser("~/Library/LaunchAgents/com.brain-agent.telegram.plist")
+import telegram as _telegram_mod
 _QMD_PID_FILE = os.path.expanduser("~/.cache/qmd/mcp.pid")
 
 import claude_cli as engine
@@ -877,6 +877,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     p.get("api_key", ""), p.get("base_url", ""), p.get("type", "openai"))
             except Exception:
                 pass
+            # Include manually-configured models mapped to this provider
+            models_cfg = engine._models_config or {}
+            for mid, mcfg in models_cfg.items():
+                if mcfg.get("provider") == name and mid not in models and mcfg.get("enabled", True):
+                    models.append(mid)
             result.append({
                 "name": name,
                 "base_url": p.get("base_url", ""),
@@ -1531,29 +1536,17 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _is_qmd_running() -> bool:
+        """Check if QMD is reachable with a lightweight socket connect (no session created)."""
+        import socket
         try:
-            req = urllib.request.Request(
-                f"http://localhost:{_QMD_PORT}/mcp",
-                data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
-                    "params": {"protocolVersion": "2024-11-05", "capabilities": {},
-                        "clientInfo": {"name": "check", "version": "1.0"}}}).encode(),
-                headers={"Content-Type": "application/json",
-                         "Accept": "application/json, text/event-stream"})
-            with urllib.request.urlopen(req, timeout=2) as resp:
-                return resp.status == 200
-        except Exception:
+            with socket.create_connection(("localhost", _QMD_PORT), timeout=1):
+                return True
+        except (OSError, socket.timeout):
             return False
 
     @staticmethod
     def _is_telegram_running() -> bool:
-        try:
-            r = subprocess.run(["launchctl", "list", "com.brain-agent.telegram"],
-                               capture_output=True, text=True, timeout=3)
-            if r.returncode == 0 and '"PID"' in r.stdout:
-                return True
-            return False
-        except Exception:
-            return False
+        return _telegram_mod.telegram_service.running
 
     @staticmethod
     def _qmd_collections() -> list[dict]:
@@ -1760,7 +1753,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             },
             "telegram": {
                 "status": "running" if tg_running else "stopped",
-                "label": "com.brain-agent.telegram",
+                "bot": _telegram_mod.telegram_service.bot_username if tg_running else "",
+                "enabled": server_config.get("telegram_enabled", True),
             },
         })
 
@@ -1859,30 +1853,38 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"error": f"Unknown action: {action}"}, 400)
 
     def _handle_telegram_action(self):
-        """POST /v1/services/telegram — start/stop/restart Telegram."""
+        """POST /v1/services/telegram — start/stop/restart/enable/disable Telegram."""
         body = self._read_json()
         action = body.get("action", "")
+        svc = _telegram_mod.telegram_service
 
         if action == "start":
-            subprocess.run(["launchctl", "load", _TELEGRAM_PLIST],
-                           capture_output=True, timeout=5)
-            time.sleep(1)
-            self._send_json({"status": "started", "running": self._is_telegram_running()})
+            ok = _start_telegram_service()
+            self._send_json({"status": "started" if ok else "error",
+                             "running": svc.running, "error": svc.error})
 
         elif action == "stop":
-            subprocess.run(["launchctl", "unload", _TELEGRAM_PLIST],
-                           capture_output=True, timeout=5)
-            time.sleep(1)
-            self._send_json({"status": "stopped", "running": self._is_telegram_running()})
+            svc.stop()
+            self._send_json({"status": "stopped", "running": False})
 
         elif action == "restart":
-            subprocess.run(["launchctl", "unload", _TELEGRAM_PLIST],
-                           capture_output=True, timeout=5)
-            time.sleep(1)
-            subprocess.run(["launchctl", "load", _TELEGRAM_PLIST],
-                           capture_output=True, timeout=5)
-            time.sleep(1)
-            self._send_json({"status": "restarted", "running": self._is_telegram_running()})
+            svc.stop()
+            ok = _start_telegram_service()
+            self._send_json({"status": "restarted" if ok else "error",
+                             "running": svc.running, "error": svc.error})
+
+        elif action == "enable":
+            _set_telegram_enabled(True)
+            if not svc.running:
+                _start_telegram_service()
+            self._send_json({"status": "enabled", "running": svc.running,
+                             "enabled": True})
+
+        elif action == "disable":
+            _set_telegram_enabled(False)
+            svc.stop()
+            self._send_json({"status": "disabled", "running": False,
+                             "enabled": False})
 
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)
@@ -1929,6 +1931,46 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
+# --- Telegram service helpers ---
+
+def _start_telegram_service() -> bool:
+    """Start the in-process Telegram bot using config.json settings."""
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+    try:
+        with open(config_path) as f:
+            config = json.load(f)
+    except Exception:
+        return False
+    tg = config.get("telegram", {})
+    token = tg.get("bot_token", "")
+    if not token:
+        print("Telegram: no bot_token in config.json", flush=True)
+        return False
+    allowed = tg.get("allowed_users")
+    port = server_config.get("port", 8420)
+    server_url = f"http://127.0.0.1:{port}"
+    return _telegram_mod.telegram_service.start(
+        token=token, server_url=server_url,
+        allowed_users=allowed,
+    )
+
+
+def _set_telegram_enabled(enabled: bool):
+    """Persist telegram.enabled to config.json."""
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+    try:
+        config = {}
+        if os.path.exists(config_path):
+            with open(config_path) as f:
+                config = json.load(f)
+        config.setdefault("telegram", {})["enabled"] = enabled
+        with open(config_path, "w") as f:
+            json.dump(config, f, indent=2)
+        server_config["telegram_enabled"] = enabled
+    except Exception as e:
+        print(f"Telegram: failed to save enabled={enabled}: {e}", flush=True)
+
+
 # --- Main ---
 
 def _load_config_file() -> dict:
@@ -1969,6 +2011,8 @@ def main():
     server_config["api_type"] = args.api_type
     server_config["default_model"] = args.model
     server_config["max_context"] = args.max_context
+    server_config["port"] = args.port
+    server_config["telegram_enabled"] = file_config.get("telegram", {}).get("enabled", True)
 
     # Initialize models config
     existing_models = file_config.get("models")
@@ -2195,6 +2239,15 @@ def main():
     print("  GET  /v1/schedule       — scheduled tasks")
     print("  POST /v1/schedule       — manage schedules")
     print("  GET  /v1/tasks          — background tasks")
+    # Auto-start Telegram bot if enabled
+    if server_config.get("telegram_enabled", True):
+        # Delay start slightly so the HTTP server is ready to accept connections
+        def _start_tg():
+            time.sleep(1)
+            _start_telegram_service()
+        threading.Thread(target=_start_tg, daemon=True, name="telegram-start").start()
+    else:
+        print("Telegram: disabled in config")
     print()
 
     try:
@@ -2202,6 +2255,7 @@ def main():
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
+        _telegram_mod.telegram_service.stop()
         if engine._scheduler:
             engine._scheduler.stop()
         if engine._mcp_manager:

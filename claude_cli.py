@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "1.5.0"
+VERSION = "1.5.1"
 VERSION_DATE = "2026-03-18"
 CHANGELOG = [
+    ("1.5.1", "2026-03-18", "MiniMax provider support, Add Model UI, fix QMD session leak, memory_shared returns full content, in-process Telegram bot, lightweight QMD health check"),
     ("1.5.0", "2026-03-18", "Settings dashboard (Server/QMD/Models/Telegram/Providers), agent activity indicators, QMD document browser with index health, smart model routing, self-healing QMD index keeper"),
     ("1.4.0", "2026-03-17", "QMD hybrid memory search, SSE error handling, server resilience"),
     ("1.2.0", "2026-03-16", "Multi-provider routing, Gmail, scheduler dashboard, SQLite resilience, Cloudflare deployment"),
@@ -1632,6 +1633,7 @@ _QMD_HEADERS = {
 
 # Shared MCP session ID (set on first successful init)
 _qmd_session_id: str | None = None
+_qmd_session_lock = threading.Lock()
 # Debounce timer for embedding after writes
 _qmd_embed_timer: threading.Timer | None = None
 _qmd_embed_lock = threading.Lock()
@@ -1666,13 +1668,17 @@ def _qmd_rpc(method: str, params: dict | None = None) -> dict | None:
 
 
 def _qmd_init_session() -> bool:
-    """Initialize an MCP session with QMD. Returns True if successful."""
-    result = _qmd_rpc("initialize", {
-        "protocolVersion": "2024-11-05",
-        "capabilities": {},
-        "clientInfo": {"name": "brain-agent", "version": "1.0"},
-    })
-    return result is not None
+    """Initialize an MCP session with QMD. Returns True if successful.
+    Thread-safe: only one session is created even under concurrent access."""
+    with _qmd_session_lock:
+        if _qmd_session_id:
+            return True  # Another thread already initialized
+        result = _qmd_rpc("initialize", {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "brain-agent", "version": "1.0"},
+        })
+        return result is not None
 
 
 def _qmd_ensure_collection(name: str, directory: str):
@@ -1814,8 +1820,9 @@ agent: {self.agent_id}
             },
         })
         if not result:
-            # Session may have expired, retry once
-            _qmd_session_id = None
+            # Session may have expired, retry once with lock to prevent stampede
+            with _qmd_session_lock:
+                _qmd_session_id = None
             if not _qmd_init_session():
                 return None
             result = _qmd_rpc("tools/call", {
@@ -1937,7 +1944,7 @@ agent: {self.agent_id}
             try:
                 with open(fpath, "r") as f:
                     raw = f.read()
-                fm, _ = _parse_frontmatter(raw)
+                fm, body = _parse_frontmatter(raw)
                 mtype = fm.get("type", "general")
                 if mem_type and mtype != mem_type:
                     continue
@@ -1947,6 +1954,7 @@ agent: {self.agent_id}
                     "name": fm.get("name", fname.replace(".md", "")),
                     "description": fm.get("description", ""),
                     "type": mtype,
+                    "content": body,
                     "updated_at": datetime.datetime.fromtimestamp(mtime).isoformat(),
                 })
             except Exception:

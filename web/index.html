@@ -3225,12 +3225,14 @@ async function renderTelegramTab(el) {
   const svc = await API.get('/v1/services');
   const tg = svc.telegram || {};
   const running = tg.status === 'running';
+  const enabled = tg.enabled !== false;
   el.innerHTML = `
     <div class="glass-card p-6">
       <div class="flex items-center justify-between mb-4">
         <div class="flex items-center gap-3">
           <span class="w-2.5 h-2.5 rounded-full ${running ? 'bg-success breathing-dot' : 'bg-error'}"></span>
           <span class="text-text-primary font-display font-semibold">${running ? 'Running' : 'Stopped'}</span>
+          ${tg.bot ? `<span class="text-text-muted text-xs mono">@${esc(tg.bot)}</span>` : ''}
         </div>
         <div class="flex items-center gap-2">
           ${running
@@ -3239,7 +3241,18 @@ async function renderTelegramTab(el) {
             : `<button onclick="telegramAction('start')" class="btn-primary text-xs px-3 py-1.5 rounded-lg">Start</button>`}
         </div>
       </div>
-      <div class="text-xs text-text-muted">Service: <span class="mono">${esc(tg.label || 'com.brain-agent.telegram')}</span></div>
+      <div class="flex items-center justify-between mt-4 pt-4 border-t border-border/30">
+        <div>
+          <div class="text-text-primary text-sm font-medium">Auto-start on server boot</div>
+          <div class="text-text-muted text-xs">Telegram bot starts automatically when the server starts</div>
+        </div>
+        <button onclick="telegramAction('${enabled ? 'disable' : 'enable'}')"
+          class="relative w-11 h-6 rounded-full transition-colors ${enabled ? 'bg-accent' : 'bg-border'}"
+          title="${enabled ? 'Enabled — click to disable' : 'Disabled — click to enable'}">
+          <span class="absolute top-0.5 ${enabled ? 'left-[22px]' : 'left-0.5'} w-5 h-5 bg-white rounded-full shadow transition-all"></span>
+        </button>
+      </div>
+      <div class="text-xs text-text-muted mt-3">Service runs as a thread inside the server — no separate process needed</div>
     </div>`;
 }
 
@@ -3248,7 +3261,7 @@ window.telegramAction = async function(action) {
   try {
     const r = await API.post('/v1/services/telegram', { action });
     showToast(`Telegram: ${r.status || action}${r.running !== undefined ? (r.running ? ' (running)' : ' (stopped)') : ''}`);
-    setTimeout(() => loadSettingsTab(), 1000);
+    setTimeout(() => loadSettingsTab(), 500);
   } catch (e) { showToast(e.message, 'error'); }
 };
 
@@ -3352,8 +3365,39 @@ async function renderModelsTab(el) {
       <div class="flex items-center justify-between mb-4">
         <h3 class="section-header text-sm">Models Configuration</h3>
         <div class="flex items-center gap-2">
+          <button onclick="showAddModelForm()" class="btn-secondary text-xs px-3 py-1.5 rounded-lg">+ Add Model</button>
           <button onclick="syncModelsFromProviders()" class="btn-secondary text-xs px-3 py-1.5 rounded-lg">🔄 Sync from Providers</button>
           <button onclick="saveModelsConfig()" class="btn-primary text-xs px-3 py-1.5 rounded-lg">Save</button>
+        </div>
+      </div>
+      <div id="add-model-form" class="hidden border border-accent/30 rounded-lg p-4 mb-4 bg-surface-lighter">
+        <h4 class="text-xs font-semibold text-text-primary mb-3">Add Model</h4>
+        <div class="grid grid-cols-4 gap-3 mb-3">
+          <div>
+            <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Model ID</label>
+            <input id="add-model-id" class="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" placeholder="e.g. MiniMax-M2.5">
+          </div>
+          <div>
+            <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Provider</label>
+            <select id="add-model-provider" class="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono">
+              ${(state.providers || []).map(p => {
+                const n = typeof p === 'string' ? p : (p.name || '');
+                return '<option value="' + esc(n) + '">' + esc(n) + '</option>';
+              }).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Context Window</label>
+            <input id="add-model-context" type="number" class="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" value="131072">
+          </div>
+          <div>
+            <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Priority</label>
+            <input id="add-model-priority" type="number" class="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" value="50">
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="addModelFromForm()" class="btn-primary text-xs px-3 py-1.5 rounded-lg">Add</button>
+          <button onclick="document.getElementById('add-model-form').classList.add('hidden')" class="btn-secondary text-xs px-3 py-1.5 rounded-lg">Cancel</button>
         </div>
       </div>
       ${modelIds.length === 0 ? '<div class="text-text-muted text-sm py-4">No models configured. Click "Sync from Providers" to discover models.</div>' : `
@@ -3487,6 +3531,38 @@ window.promptModelIcon = function(el) {
   const current = el.textContent.trim();
   const next = icons[(icons.indexOf(current) + 1) % icons.length];
   el.textContent = next;
+};
+
+window.showAddModelForm = function() {
+  const form = document.getElementById('add-model-form');
+  if (form) form.classList.toggle('hidden');
+};
+
+window.addModelFromForm = async function() {
+  const mid = document.getElementById('add-model-id')?.value?.trim();
+  if (!mid) return showToast('Model ID is required');
+  if (state.modelsConfig[mid]) return showToast('Model already exists');
+  const provider = document.getElementById('add-model-provider')?.value || '';
+  const maxCtx = parseInt(document.getElementById('add-model-context')?.value) || 131072;
+  const priority = parseInt(document.getElementById('add-model-priority')?.value) || 50;
+  state.modelsConfig[mid] = {
+    enabled: true,
+    shortname: mid,
+    icon: '🤖',
+    priority,
+    capabilities: [],
+    provider,
+    max_context: maxCtx,
+  };
+  try {
+    const res = await API.post('/v1/models/config', { action: 'save', models: state.modelsConfig });
+    if (res.models) state.modelsConfig = res.models;
+    showToast('Model added: ' + mid);
+    renderModelSelector();
+    loadSettingsTab();
+  } catch (e) {
+    showToast('Failed: ' + e.message);
+  }
 };
 
 window.syncModelsFromProviders = async function() {

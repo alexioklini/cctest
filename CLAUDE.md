@@ -53,6 +53,11 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - `_qmd_index_keeper` thread: unified background loop (5s mtime poll, 30s deep integrity check) that auto-registers collections, detects file changes, fixes stale indexes, and ensures embeddings — fully automatic, no manual reindex needed
 - QMD docs endpoint returns index health per file: `indexed`, `embedded_at`, `current` (hash match)
 - Smart model routing: `init_models_config()` auto-discovers models from providers, `resolve_model()` picks by purpose
+- Providers without `/models` endpoint: manually-configured models from `_models_config` are included in provider listings
+- QMD session reuse: `_qmd_session_lock` prevents concurrent threads from creating duplicate MCP sessions
+- QMD health check uses lightweight TCP socket connect (no MCP session created)
+- `memory_shared` and `list_all` return full content body, not just metadata
+- Telegram runs as an in-process thread, not a separate launchd daemon
 - Agent activity tracking: `/v1/agents/activity` returns active tasks/chats per agent for UI indicators
 
 ### Agent Directory Structure
@@ -97,7 +102,7 @@ Server runs on port 8420 (configurable). Key endpoints:
 ### Deployment
 
 - Server: launchd daemon (`com.brain-agent.server.plist`)
-- Telegram: launchd daemon (`com.brain-agent.telegram.plist`)
+- Telegram: in-process thread (started/stopped via server, no separate daemon)
 - QMD: launchd daemon (`com.brain-agent.qmd.plist`, port 8181) or auto-started by `brain.py start`
 - oMLX: local MLX inference server (`brew services`, port 8000)
 - CLIProxyAPI: local OAuth proxy for Claude models (`brew services`, port 8317)
@@ -124,8 +129,18 @@ Claude models via OAuth (no API key costs). Installed via Homebrew, runs as a la
 - Config: `/opt/homebrew/etc/cliproxyapi.conf`
 - Auth tokens: `~/.cli-proxy-api/` (Claude, Gemini, Qwen OAuth)
 - API key for Brain Agent: `brain-agent`
-- Management panel: `http://127.0.0.1:8317/`
+- Management panel: `http://127.0.0.1:8317/management.html` (secret-key: `brain-agent`)
 - Service control: `brew services start/stop/restart cliproxyapi`
+
+### MiniMax (Cloud LLM Provider)
+
+MiniMax provides M2.5 and M2.7 models via an Anthropic-compatible API.
+
+- Base URL: `https://api.minimax.io/anthropic/v1`
+- API type: `anthropic`
+- No `/models` endpoint — models must be manually configured in `config.json`
+- M2.7 always produces thinking blocks (cannot be disabled)
+- For coding: use `temperature: 0.2`, `max_tokens: 8192` to avoid thinking consuming the budget
 
 ### QMD (Hybrid Memory Search)
 
