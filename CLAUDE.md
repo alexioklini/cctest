@@ -50,6 +50,10 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - Memory uses QMD hybrid search (BM25 + vector + LLM reranking) via HTTP MCP on port 8181
 - Markdown files are source of truth for memory; QMD indexes them with debounced embed after writes
 - If QMD is unreachable, memory recall falls back to file-scan substring matching
+- `_qmd_index_keeper` thread: unified background loop (5s mtime poll, 30s deep integrity check) that auto-registers collections, detects file changes, fixes stale indexes, and ensures embeddings — fully automatic, no manual reindex needed
+- QMD docs endpoint returns index health per file: `indexed`, `embedded_at`, `current` (hash match)
+- Smart model routing: `init_models_config()` auto-discovers models from providers, `resolve_model()` picks by purpose
+- Agent activity tracking: `/v1/agents/activity` returns active tasks/chats per agent for UI indicators
 
 ### Agent Directory Structure
 
@@ -85,6 +89,9 @@ Server runs on port 8420 (configurable). Key endpoints:
 - `POST /v1/sessions` — auto-resolves provider from model
 - `GET /v1/schedule/running` — live task monitoring
 - `POST /v1/skills/browse` — searches 7000+ skills from ClawHub
+- `GET /v1/services/qmd/docs` — list docs with index health (modified, embedded_at, current)
+- `GET /v1/agents/activity` — active tasks/chats per agent
+- `GET|POST /v1/models/config` — model routing configuration
 - `POST /v1/restart` — re-execs the server process
 
 ### Deployment

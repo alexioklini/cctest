@@ -12,6 +12,7 @@ class BrainAgentClient:
     def __init__(self, server_url: str = "http://127.0.0.1:8420"):
         self.server_url = server_url.rstrip("/")
         self.session_id: str | None = None
+        self.max_context: int | None = None
 
     def _get(self, path: str) -> dict:
         req = urllib.request.Request(f"{self.server_url}{path}")
@@ -44,6 +45,7 @@ class BrainAgentClient:
             data["max_context"] = max_context
         resp = self._post("/v1/sessions", data)
         self.session_id = resp["session_id"]
+        self.max_context = resp.get("max_context")
         return self.session_id
 
     def delete_session(self):

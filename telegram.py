@@ -18,7 +18,15 @@ import re
 import html as html_mod
 
 
+_models_config: dict = {}  # populated from server on startup
+
+
 def model_icon(model: str) -> str:
+    # Check server-provided config first
+    cfg = _models_config.get(model)
+    if cfg and cfg.get("icon"):
+        return cfg["icon"]
+    # Fallback to pattern matching
     m = model.lower()
     if m.startswith("crow"): return "🐦‍⬛"
     if m.startswith("claude-opus") or m == "opus": return "🟣"
@@ -422,6 +430,15 @@ def run_bot(args):
         sys.exit(1)
 
     status = client.status()
+
+    # Load models config for icons
+    global _models_config
+    try:
+        mc = client._get("/v1/models/config")
+        _models_config = mc.get("models", {})
+    except Exception:
+        pass
+
     print(f"Brain Agent Telegram Bot v{status.get('version', '?')}")
     print(f"Server: {args.server}")
     print(f"Agents: {', '.join(status.get('agents', []))}")

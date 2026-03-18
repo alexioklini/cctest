@@ -460,6 +460,60 @@ tailwind.config = {
     box-shadow: 0 3px 0 0 var(--color-accent), 0 4px 12px rgba(255,123,0,0.15);
   }
 
+  /* Active agent — pulsing glow ring */
+  @keyframes agent-active-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255,123,0,0.45), 0 0 8px rgba(255,123,0,0.15); }
+    50% { box-shadow: 0 0 0 4px rgba(255,123,0,0.0), 0 0 16px rgba(255,123,0,0.08); }
+  }
+  .agent-card-compact.agent-active {
+    border-color: var(--color-accent);
+    animation: agent-active-pulse 2s ease-in-out infinite;
+  }
+  .agent-card-compact.agent-active .agent-activity-badge {
+    display: flex;
+  }
+  .agent-activity-badge {
+    display: none;
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    background: var(--color-accent);
+    color: #fff;
+    font-size: 8px;
+    font-weight: 700;
+    font-family: 'IBM Plex Mono', monospace;
+    padding: 1px 5px;
+    border-radius: 6px;
+    border: 2px solid var(--color-surface);
+    align-items: center;
+    gap: 3px;
+    z-index: 2;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .agent-activity-badge .activity-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #fff;
+    animation: breathe 1.5s ease-in-out infinite;
+  }
+
+  /* Inline response pulse — replaces plain thinking indicator when generating */
+  @keyframes response-pulse {
+    0% { opacity: 0.4; transform: scaleX(0.92); }
+    50% { opacity: 1; transform: scaleX(1); }
+    100% { opacity: 0.4; transform: scaleX(0.92); }
+  }
+  .response-pulse-bar {
+    height: 3px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, transparent, var(--color-accent), transparent);
+    animation: response-pulse 1.8s ease-in-out infinite;
+    margin: 8px 0;
+    transform-origin: left;
+  }
+
   .agent-card-create-compact {
     border: 2px dashed var(--color-border);
     background: transparent;
@@ -1021,6 +1075,8 @@ class AppState {
     this.activeAgentId = null;
     this.configAgent = null;
     this.configTab = 'soul';
+    this.modelsConfig = {}; // model_id -> {enabled, shortname, icon, priority, capabilities, provider}
+    this.agentActivity = {}; // agent_id -> ["chat", "delegate", "schedule"]
   }
 
   get activeChat() {
@@ -1078,10 +1134,11 @@ async function loadInitialData() {
   const ok = await checkConnection();
   if (!ok) return;
   try {
-    const [agents, models, providers] = await Promise.allSettled([
+    const [agents, models, providers, modelsConfig] = await Promise.allSettled([
       API.getAgents(),
       API.getModels(),
       API.getProviders(),
+      API.get('/v1/models/config'),
     ]);
     if (agents.status === 'fulfilled') {
       state.agents = Array.isArray(agents.value) ? agents.value : (agents.value.agents || []);
@@ -1091,6 +1148,9 @@ async function loadInitialData() {
     }
     if (providers.status === 'fulfilled') {
       state.providers = Array.isArray(providers.value) ? providers.value : (providers.value.providers || []);
+    }
+    if (modelsConfig.status === 'fulfilled' && modelsConfig.value.models) {
+      state.modelsConfig = modelsConfig.value.models;
     }
   } catch {}
   renderModelSelector();
@@ -1140,24 +1200,40 @@ function getAgentPaused(a) {
   return typeof a === 'object' ? (a.paused === true) : false;
 }
 
-// Build a flat list of { id, label } from all providers
+// Build a flat list of { id, label } from all providers, filtered by models config
 function getAllProviderModels() {
+  const hasConfig = Object.keys(state.modelsConfig || {}).length > 0;
   const result = [];
+  const seen = new Set();
   (state.providers || []).forEach(p => {
     const pName = typeof p === 'string' ? p : (p.name || p.provider || p.id || '');
     const pModels = typeof p === 'object' ? (p.models || []) : [];
     pModels.forEach(m => {
       const mId = typeof m === 'string' ? m : (m.id || m.name || '');
-      result.push({ id: mId, label: `${pName}: ${mId}` });
+      if (seen.has(mId)) return;
+      // Skip disabled models when config exists
+      const cfg = (state.modelsConfig || {})[mId];
+      if (hasConfig && cfg && cfg.enabled === false) return;
+      seen.add(mId);
+      // Use icon + shortname from config if available
+      const label = cfg ? `${cfg.icon || ''} ${cfg.shortname || mId}`.trim() : `${pName}: ${mId}`;
+      result.push({ id: mId, label, priority: cfg ? (cfg.priority || 0) : 0 });
     });
   });
   // Also include models from the /v1/models endpoint if providers are empty
   if (result.length === 0) {
     (state.models || []).forEach(m => {
       const id = typeof m === 'string' ? m : (m.id || m.name || m);
-      result.push({ id, label: id });
+      if (seen.has(id)) return;
+      const cfg = (state.modelsConfig || {})[id];
+      if (hasConfig && cfg && cfg.enabled === false) return;
+      seen.add(id);
+      const label = cfg ? `${cfg.icon || ''} ${cfg.shortname || id}`.trim() : id;
+      result.push({ id, label, priority: cfg ? (cfg.priority || 0) : 0 });
     });
   }
+  // Sort by priority descending
+  if (hasConfig) result.sort((a, b) => (b.priority || 0) - (a.priority || 0));
   return result;
 }
 
@@ -1176,13 +1252,17 @@ function renderAgentCards() {
     const isMain = name === 'main';
 
     const avatarId = getAgentAvatar(a);
+    const agentActivity = (state.agentActivity || {})[name] || [];
+    const isActive = agentActivity.length > 0 || (state.agentChats[name] && state.agentChats[name].streaming);
     const card = document.createElement('div');
-    card.className = `agent-card-compact flex flex-col items-center p-3 gap-1 fade-in ${isSelected ? 'selected' : ''} ${isPaused ? 'opacity-40 grayscale' : ''}`;
+    card.className = `agent-card-compact flex flex-col items-center p-3 gap-1 fade-in ${isSelected ? 'selected' : ''} ${isPaused ? 'opacity-40 grayscale' : ''} ${isActive ? 'agent-active' : ''}`;
     card.style.animationDelay = `${i * 0.04}s`;
+    const activityLabel = agentActivity.length ? agentActivity.join('/') : '';
     card.innerHTML = `
+      ${isActive ? `<div class="agent-activity-badge"><span class="activity-dot"></span>${activityLabel}</div>` : ''}
       <div class="relative mb-1">
         ${renderAvatar(avatarId, 48)}
-        ${hasChat ? '<span class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-success breathing-dot border border-surface" title="Active chat"></span>' : ''}
+        ${hasChat && !isActive ? '<span class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-success breathing-dot border border-surface" title="Active chat"></span>' : ''}
         ${isPaused ? '<span class="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[8px] bg-surface-lighter border border-border rounded px-1 text-text-muted font-medium uppercase tracking-wider">Paused</span>' : ''}
       </div>
       <span class="font-display font-bold text-agent text-xs truncate w-full text-center">${esc(displayName || name)}</span>
@@ -1218,6 +1298,46 @@ function renderAgentCards() {
   `;
   createCard.onclick = () => showCreateAgentModal();
   row.appendChild(createCard);
+}
+
+function updateAgentActivityVisuals() {
+  // Update agent cards in-place without full re-render
+  const row = dom.agentCardsRow;
+  if (!row) return;
+  row.querySelectorAll('.agent-card-compact').forEach(card => {
+    // Find agent name from card text (the font-bold span)
+    const nameEl = card.querySelector('.font-bold');
+    if (!nameEl) return;
+    // Match agent by display name or name
+    const displayText = nameEl.textContent.trim();
+    const agent = state.agents.find(a => {
+      const n = getAgentName(a);
+      const dn = getAgentDisplayName(a);
+      return n === displayText || dn === displayText;
+    });
+    if (!agent) return;
+    const name = getAgentName(agent);
+    const agentActivity = (state.agentActivity || {})[name] || [];
+    const isStreaming = state.agentChats[name] && state.agentChats[name].streaming;
+    const isActive = agentActivity.length > 0 || isStreaming;
+
+    // Toggle active class
+    card.classList.toggle('agent-active', isActive);
+
+    // Update or insert/remove badge
+    let badge = card.querySelector('.agent-activity-badge');
+    if (isActive) {
+      const label = agentActivity.length ? agentActivity.join('/') : (isStreaming ? 'chat' : '');
+      if (!badge) {
+        badge = document.createElement('div');
+        badge.className = 'agent-activity-badge';
+        card.insertBefore(badge, card.firstChild);
+      }
+      badge.innerHTML = `<span class="activity-dot"></span>${label}`;
+    } else if (badge) {
+      badge.remove();
+    }
+  });
 }
 
 // ─── Select Agent ───────────────────────────────────────────
@@ -1492,6 +1612,10 @@ function addSystemMessage(chat, text) {
 
 function modelIcon(model) {
   if (!model) return '';
+  // Check models config first
+  const cfg = (state.modelsConfig || {})[model];
+  if (cfg && cfg.icon) return cfg.icon;
+  // Fallback to pattern matching
   const m = model.toLowerCase();
   if (m.startsWith('crow')) return '🐦‍⬛';
   if (m.startsWith('claude-opus') || m === 'opus') return '🟣';
@@ -1550,6 +1674,7 @@ function renderMessage(msg, idx, container) {
         <span class="thinking-label" id="thinking-status">Thinking...</span>
         <span class="thinking-elapsed" id="thinking-time"></span>
       </div>
+      <div class="response-pulse-bar mt-2"></div>
     </div>` : '';
     div.innerHTML = `<div class="assistant-msg max-w-[90%] pl-4 text-sm text-text-primary">
       ${toolsHtml}
@@ -1605,7 +1730,12 @@ function updateStreamingMessage(chat) {
     }
   }
   if (contentDiv) {
-    contentDiv.innerHTML = marked.parse(msg.content || '');
+    const pulseId = 'streaming-pulse';
+    if (msg.content && chat.streaming) {
+      contentDiv.innerHTML = marked.parse(msg.content) + `<div id="${pulseId}" class="response-pulse-bar"></div>`;
+    } else {
+      contentDiv.innerHTML = marked.parse(msg.content || '');
+    }
     contentDiv.querySelectorAll('pre code').forEach(block => hljs.highlightElement(block));
   }
   const parent = lastDiv.querySelector('.assistant-msg') || lastDiv.querySelector('.max-w-\\[90\\%\\]');
@@ -1651,6 +1781,7 @@ async function sendMessage() {
   } catch { return; }
 
   chat.streaming = true;
+  updateAgentActivityVisuals();
   dom.btnStop.classList.remove('hidden');
   dom.btnSend.disabled = true;
 
@@ -1825,6 +1956,13 @@ async function loadConfigTabContent(tab, agentName) {
         <div class="space-y-5">
           <h3 class="section-header text-sm">Agent Settings (agent.json)</h3>
           <div>
+            <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Agent ID (directory name)</label>
+            <div class="flex gap-2">
+              <input id="cfg-agent-id" class="flex-1 bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary mono focus:border-accent transition-colors" value="${esc(agentName)}" placeholder="agent-id">
+              <button class="btn-secondary px-4 py-2 rounded-lg text-sm font-display" onclick="renameAgent('${esc(agentName)}')">Rename</button>
+            </div>
+          </div>
+          <div>
             <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Display Name</label>
             <input id="cfg-display-name" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary focus:border-accent transition-colors" value="${esc(parsed.display_name || '')}" placeholder="Friendly name shown on cards">
           </div>
@@ -1852,14 +1990,22 @@ async function loadConfigTabContent(tab, agentName) {
           </div>
           <div>
             <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Default Model</label>
-            <select id="cfg-model" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary mono focus:border-accent transition-colors">
+            <select id="cfg-model" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary mono focus:border-accent transition-colors" onchange="document.getElementById('cfg-purpose-row').style.display = this.value === 'auto' ? '' : 'none'">
               <option value="">-- Use system default --</option>
+              <option value="auto" ${parsed.model === 'auto' ? 'selected' : ''}>🤖 Auto (best for purpose)</option>
               ${allProviderModels.map(pm => `<option value="${esc(pm.id)}" ${parsed.model === pm.id ? 'selected' : ''}>${esc(pm.label)}</option>`).join('')}
             </select>
           </div>
-          <div>
-            <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Max Context</label>
-            <input id="cfg-max-context" type="number" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary mono focus:border-accent transition-colors" value="${parsed.max_context || ''}">
+          <div id="cfg-purpose-row" style="display: ${parsed.model === 'auto' ? '' : 'none'}">
+            <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Model Purpose</label>
+            <select id="cfg-model-purpose" class="w-full bg-surface-light border border-border rounded-lg px-4 py-2.5 text-sm text-text-primary mono focus:border-accent transition-colors">
+              <option value="" ${!parsed.model_purpose ? 'selected' : ''}>-- Any --</option>
+              <option value="coding" ${parsed.model_purpose === 'coding' ? 'selected' : ''}>Coding</option>
+              <option value="analysis" ${parsed.model_purpose === 'analysis' ? 'selected' : ''}>Analysis</option>
+              <option value="agentic" ${parsed.model_purpose === 'agentic' ? 'selected' : ''}>Agentic</option>
+              <option value="fast" ${parsed.model_purpose === 'fast' ? 'selected' : ''}>Fast</option>
+              <option value="creative" ${parsed.model_purpose === 'creative' ? 'selected' : ''}>Creative</option>
+            </select>
           </div>
           <div>
             <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Raw JSON</label>
@@ -2632,12 +2778,19 @@ window.saveAgentSettings = async function(agentName) {
     const displayNameVal = $('#cfg-display-name')?.value;
     const descVal = $('#cfg-description')?.value;
     const modelVal = $('#cfg-model')?.value;
-    const maxCtxVal = $('#cfg-max-context')?.value;
     const avatarVal = $('#cfg-avatar')?.value;
     if (displayNameVal !== undefined) parsed.display_name = displayNameVal || undefined;
     if (descVal !== undefined) parsed.description = descVal;
     if (modelVal !== undefined) parsed.model = modelVal || undefined;
-    if (maxCtxVal) parsed.max_context = parseInt(maxCtxVal);
+    // Handle model_purpose for auto mode
+    const purposeVal = $('#cfg-model-purpose')?.value;
+    if (modelVal === 'auto' && purposeVal) {
+      parsed.model_purpose = purposeVal;
+    } else {
+      delete parsed.model_purpose;
+    }
+    // Remove legacy max_context from agent config (now a model-level property)
+    delete parsed.max_context;
     if (avatarVal) parsed.avatar = avatarVal;
     const finalJson = JSON.stringify(parsed, null, 2);
     await API.writeAgentFile(agentName, 'agent.json', finalJson);
@@ -2649,6 +2802,48 @@ window.saveAgentSettings = async function(agentName) {
       renderAgentCards();
       updateChatArea();
     } catch {}
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+window.renameAgent = async function(oldName) {
+  const newName = $('#cfg-agent-id')?.value?.trim();
+  if (!newName || newName === oldName) return;
+  if (!/^[a-zA-Z0-9_-]+$/.test(newName)) {
+    showToast('Agent ID must be alphanumeric (hyphens/underscores allowed)', true);
+    return;
+  }
+  try {
+    const res = await API.post('/v1/agents/rename', { agent: oldName, new_name: newName });
+    if (res.error) throw new Error(res.error);
+    showToast(`Renamed to ${newName}`);
+    // Update local state: rename in agentChats, agentSessions, activeAgentId
+    if (state.agentChats[oldName]) {
+      state.agentChats[newName] = { ...state.agentChats[oldName], agent: newName };
+      delete state.agentChats[oldName];
+    }
+    if (state.agentSessions[oldName]) {
+      state.agentSessions[newName] = state.agentSessions[oldName];
+      delete state.agentSessions[oldName];
+    }
+    if (state.activeAgentId === oldName) state.activeAgentId = newName;
+    // Reload agents list
+    const agents = await API.getAgents();
+    state.agents = Array.isArray(agents) ? agents : (agents.agents || []);
+    renderAgentCards();
+    updateChatArea();
+    // Reopen config modal for new name on settings tab
+    document.getElementById('config-modal')?.remove();
+    state.configAgent = newName;
+    state.configTab = 'settings';
+    openConfigModal(newName);
+    // Switch to settings tab
+    const modal = document.getElementById('config-modal');
+    if (modal) {
+      const settingsTab = modal.querySelector('[data-tab="settings"]');
+      if (settingsTab) settingsTab.click();
+    }
   } catch (e) {
     showToast(`Error: ${e.message}`, true);
   }
@@ -2736,6 +2931,7 @@ function openSettingsModal() {
         <button class="config-tab ${_settingsTab === 'qmd' ? 'active' : ''}" onclick="switchSettingsTab('qmd')">QMD</button>
         <button class="config-tab ${_settingsTab === 'telegram' ? 'active' : ''}" onclick="switchSettingsTab('telegram')">Telegram</button>
         <button class="config-tab ${_settingsTab === 'providers' ? 'active' : ''}" onclick="switchSettingsTab('providers')">Providers</button>
+        <button class="config-tab ${_settingsTab === 'models' ? 'active' : ''}" onclick="switchSettingsTab('models')">Models</button>
       </div>
       <div id="settings-content" class="space-y-6"></div>
     </div>
@@ -2761,6 +2957,7 @@ async function loadSettingsTab() {
     else if (_settingsTab === 'qmd') await renderQmdTab(el);
     else if (_settingsTab === 'telegram') await renderTelegramTab(el);
     else if (_settingsTab === 'providers') await renderProvidersTab(el);
+    else if (_settingsTab === 'models') await renderModelsTab(el);
   } catch (e) {
     el.innerHTML = `<div class="text-error text-sm">Error: ${esc(e.message)}</div>`;
   }
@@ -2835,16 +3032,20 @@ async function renderQmdTab(el) {
     ${collections.length ? `
     <div class="glass-card p-6">
       <h3 class="section-header mb-3 text-sm">Collections</h3>
-      <div class="space-y-2">
+      <div class="space-y-2" id="qmd-collections">
         ${collections.map(c => {
           const name = typeof c === 'string' ? c : (c.name || c.id || '?');
           const docs = typeof c === 'object' ? (c.documents || c.files || '') : '';
-          return `<div class="flex items-center justify-between border border-border/50 rounded-lg px-4 py-2">
-            <div>
-              <span class="text-text-primary font-medium text-sm">${esc(name)}</span>
-              ${docs ? `<span class="text-text-muted text-xs ml-2">${docs} docs</span>` : ''}
+          return `<div class="border border-border/50 rounded-lg overflow-hidden" data-collection="${esc(name)}">
+            <div class="flex items-center justify-between px-4 py-2.5">
+              <div class="flex items-center gap-2">
+                <button class="qmd-expand-btn text-text-muted hover:text-accent transition-colors text-[10px]" onclick="toggleQmdDocs('${esc(name)}')" title="Browse files">▶</button>
+                <span class="text-text-primary font-medium text-sm">${esc(name)}</span>
+                ${docs ? `<span class="text-text-muted text-xs">${docs} docs</span>` : ''}
+              </div>
+              <button onclick="qmdAction('reindex','${esc(name)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg">Reindex</button>
             </div>
-            <button onclick="qmdAction('reindex','${esc(name)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg">Reindex</button>
+            <div class="qmd-docs-panel hidden border-t border-border/30 bg-base/40"></div>
           </div>`;
         }).join('')}
       </div>
@@ -2859,6 +3060,138 @@ window.qmdAction = async function(action, collection) {
     setTimeout(() => loadSettingsTab(), 1500);
   } catch (e) { showToast(e.message, 'error'); }
 };
+
+window.toggleQmdDocs = async function(collection) {
+  const row = document.querySelector(`[data-collection="${CSS.escape(collection)}"]`);
+  if (!row) return;
+  const panel = row.querySelector('.qmd-docs-panel');
+  const btn = row.querySelector('.qmd-expand-btn');
+  if (!panel) return;
+
+  if (!panel.classList.contains('hidden')) {
+    panel.classList.add('hidden');
+    if (btn) btn.textContent = '▶';
+    return;
+  }
+
+  panel.classList.remove('hidden');
+  if (btn) btn.textContent = '▼';
+  panel.innerHTML = '<div class="text-text-muted text-xs px-4 py-3">Loading...</div>';
+
+  try {
+    const r = await API.get(`/v1/services/qmd/docs?collection=${encodeURIComponent(collection)}`);
+    const files = r.files || [];
+    if (!files.length) {
+      panel.innerHTML = '<div class="text-text-muted text-xs px-4 py-3">No .md files found.</div>';
+      return;
+    }
+    panel.innerHTML = `
+      <div class="divide-y divide-border/20">
+        <div class="flex items-center px-4 py-1.5 text-[10px] text-text-muted uppercase tracking-wider gap-2">
+          <span class="flex-1 min-w-0">File</span>
+          <span class="w-[100px] text-right">Modified</span>
+          <span class="w-[100px] text-right">Embedded</span>
+          <span class="w-[60px] text-center">Status</span>
+          <span class="w-5"></span>
+        </div>
+        ${files.map(f => {
+          const modDate = f.modified ? new Date(f.modified * 1000).toLocaleString(undefined, {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+          const embedDate = f.embedded_at ? new Date(f.embedded_at).toLocaleString(undefined, {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+          let statusDot, statusTitle;
+          if (!f.indexed) {
+            statusDot = 'bg-red-400'; statusTitle = 'Not in index';
+          } else if (f.current === false) {
+            statusDot = 'bg-yellow-400'; statusTitle = 'Stale — file changed since last index';
+          } else if (!f.embedded_at) {
+            statusDot = 'bg-blue-400'; statusTitle = 'Indexed (FTS) but not yet embedded';
+          } else {
+            statusDot = 'bg-green-400'; statusTitle = 'Indexed & embedded — up to date';
+          }
+          return `
+          <div class="flex items-center px-4 py-2 hover:bg-surface/50 transition-colors group gap-2">
+            <button class="text-left flex-1 min-w-0" onclick="viewQmdFile('${esc(collection)}','${esc(f.name)}')">
+              <span class="text-text-primary text-xs mono group-hover:text-accent transition-colors">${esc(f.name)}</span>
+              <span class="text-text-muted text-[10px] ml-2">${formatBytes(f.size)}</span>
+            </button>
+            <span class="w-[100px] text-right text-[10px] text-text-muted mono shrink-0">${modDate}</span>
+            <span class="w-[100px] text-right text-[10px] text-text-muted mono shrink-0">${embedDate}</span>
+            <span class="w-[60px] flex justify-center shrink-0"><span class="inline-block w-2 h-2 rounded-full ${statusDot}" title="${statusTitle}"></span></span>
+            <button class="text-text-muted hover:text-accent text-[10px] ml-1 transition-colors shrink-0" onclick="viewQmdFile('${esc(collection)}','${esc(f.name)}')" title="View">&#x1F441;</button>
+          </div>`;
+        }).join('')}
+      </div>`;
+  } catch (e) {
+    panel.innerHTML = `<div class="text-error text-xs px-4 py-3">${esc(e.message)}</div>`;
+  }
+};
+
+window.viewQmdFile = async function(collection, filename) {
+  let modal = document.getElementById('qmd-file-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'qmd-file-modal';
+    modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-6';
+    modal.style.background = 'rgba(0,0,0,0.7)';
+    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+    document.body.appendChild(modal);
+  }
+  modal.innerHTML = '<div class="glass-card p-5 max-w-3xl w-full max-h-[80vh] flex flex-col gap-3"><div class="text-text-muted text-xs">Loading...</div></div>';
+
+  try {
+    const r = await API.get(`/v1/services/qmd/docs?collection=${encodeURIComponent(collection)}&file=${encodeURIComponent(filename)}`);
+    const content = r.content || '';
+    const isReadOnly = ['soul.md','agent.json','mcp.json','gmail.json'].includes(filename) || filename.startsWith('skills/');
+    modal.innerHTML = `
+      <div class="glass-card p-5 max-w-3xl w-full max-h-[80vh] flex flex-col gap-3">
+        <div class="flex items-center justify-between flex-shrink-0">
+          <div>
+            <span class="text-text-primary font-semibold font-display text-sm">${esc(filename)}</span>
+            <span class="text-text-muted text-xs ml-2 mono">${esc(collection)}</span>
+          </div>
+          <div class="flex items-center gap-2">
+            ${!isReadOnly ? `
+              <button onclick="saveQmdFile('${esc(collection)}','${esc(filename)}')" class="btn-primary text-xs px-3 py-1 rounded-lg">Save</button>
+              <button onclick="deleteQmdFile('${esc(collection)}','${esc(filename)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg text-error hover:bg-error/10">Delete</button>` : ''}
+            <button onclick="document.getElementById('qmd-file-modal').remove()" class="text-text-muted hover:text-error text-lg leading-none transition-colors ml-1">×</button>
+          </div>
+        </div>
+        <textarea id="qmd-file-content" class="flex-1 overflow-y-auto text-xs mono text-text-primary bg-base/60 rounded-lg p-4 leading-relaxed resize-none border border-border/40 focus:border-accent transition-colors outline-none min-h-[400px] ${isReadOnly ? 'opacity-70' : ''}" ${isReadOnly ? 'readonly' : ''}>${esc(content)}</textarea>
+        ${isReadOnly ? '<div class="text-text-muted text-[10px] text-center">Read-only — edit via agent config</div>' : ''}
+      </div>`;
+  } catch (e) {
+    modal.innerHTML = `<div class="glass-card p-5"><div class="text-error text-sm">${esc(e.message)}</div></div>`;
+  }
+};
+
+window.saveQmdFile = async function(collection, filename) {
+  const ta = document.getElementById('qmd-file-content');
+  if (!ta) return;
+  try {
+    await API.post(`/v1/services/qmd/docs?collection=${encodeURIComponent(collection)}&file=${encodeURIComponent(filename)}`, { content: ta.value });
+    showToast('Saved');
+  } catch (e) { showToast(e.message, 'error'); }
+};
+
+window.deleteQmdFile = async function(collection, filename) {
+  if (!confirm(`Delete ${filename}?`)) return;
+  try {
+    await API.del(`/v1/services/qmd/docs?collection=${encodeURIComponent(collection)}&file=${encodeURIComponent(filename)}`);
+    document.getElementById('qmd-file-modal')?.remove();
+    showToast(`Deleted ${filename}`);
+    // Refresh the file list
+    const row = document.querySelector(`[data-collection="${CSS.escape(collection)}"]`);
+    if (row && !row.querySelector('.qmd-docs-panel').classList.contains('hidden')) {
+      await toggleQmdDocs(collection);
+      await toggleQmdDocs(collection);
+    }
+  } catch (e) { showToast(e.message, 'error'); }
+};
+
+function formatBytes(b) {
+  if (b < 1024) return b + 'B';
+  if (b < 1024 * 1024) return (b / 1024).toFixed(1) + 'KB';
+  return (b / 1024 / 1024).toFixed(1) + 'MB';
+}
 
 window.toggleServiceLog = async function(name) {
   const el = document.getElementById(`log-${name}`);
@@ -3000,6 +3333,232 @@ async function renderProvidersTab(el) {
 
 // Keep old name for compatibility with provider save/test/delete functions
 async function renderSettingsContent() { loadSettingsTab(); }
+
+const CAPABILITY_OPTIONS = ['coding', 'analysis', 'agentic', 'fast', 'creative', 'local'];
+
+async function renderModelsTab(el) {
+  // Refresh models config from server
+  try {
+    const res = await API.get('/v1/models/config');
+    if (res.models) state.modelsConfig = res.models;
+  } catch {}
+  const models = state.modelsConfig || {};
+  const modelIds = Object.keys(models);
+  // Sort by priority descending
+  modelIds.sort((a, b) => (models[b].priority || 0) - (models[a].priority || 0));
+
+  el.innerHTML = `
+    <div class="glass-card p-6 mb-4">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="section-header text-sm">Models Configuration</h3>
+        <div class="flex items-center gap-2">
+          <button onclick="syncModelsFromProviders()" class="btn-secondary text-xs px-3 py-1.5 rounded-lg">🔄 Sync from Providers</button>
+          <button onclick="saveModelsConfig()" class="btn-primary text-xs px-3 py-1.5 rounded-lg">Save</button>
+        </div>
+      </div>
+      ${modelIds.length === 0 ? '<div class="text-text-muted text-sm py-4">No models configured. Click "Sync from Providers" to discover models.</div>' : `
+      <div class="space-y-3" id="models-config-list">
+        ${modelIds.map(mid => {
+          const cfg = models[mid];
+          const caps = cfg.capabilities || [];
+          const inf = cfg.inference || {};
+          const presets = cfg.presets || {};
+          return `<div class="border border-border/50 rounded-lg p-4" data-model-id="${esc(mid)}">
+            <div class="flex items-center gap-3 mb-3">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" class="mdl-enabled accent-[var(--accent)]" ${cfg.enabled !== false ? 'checked' : ''}>
+              </label>
+              <span class="text-lg mdl-icon cursor-pointer" onclick="promptModelIcon(this)" title="Click to change icon">${esc(cfg.icon || '🤖')}</span>
+              <span class="text-text-primary font-display font-semibold text-sm mono">${esc(mid)}</span>
+              <span class="text-xs text-text-muted">${esc(cfg.provider || '')}</span>
+            </div>
+            <div class="grid grid-cols-4 gap-3 mb-3">
+              <div>
+                <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Shortname</label>
+                <input class="mdl-shortname w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" value="${esc(cfg.shortname || '')}">
+              </div>
+              <div>
+                <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Priority</label>
+                <input type="number" class="mdl-priority w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" value="${cfg.priority || 0}">
+              </div>
+              <div>
+                <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Context Window</label>
+                <input type="number" class="mdl-max-context w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" value="${cfg.max_context || ''}" placeholder="131072">
+              </div>
+              <div>
+                <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Provider</label>
+                <span class="text-xs text-text-muted mono block py-1">${esc(cfg.provider || 'unknown')}</span>
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Capabilities</label>
+              <div class="flex flex-wrap gap-1.5">
+                ${CAPABILITY_OPTIONS.map(cap => {
+                  const active = caps.includes(cap);
+                  return `<button class="mdl-cap px-2 py-0.5 rounded text-[10px] border transition-colors cursor-pointer ${active ? 'bg-accent/20 text-accent border-accent/40' : 'bg-surface-lighter text-text-muted border-border/30 opacity-50'}" data-cap="${cap}" onclick="this.classList.toggle('bg-accent/20');this.classList.toggle('text-accent');this.classList.toggle('border-accent/40');this.classList.toggle('bg-surface-lighter');this.classList.toggle('text-text-muted');this.classList.toggle('border-border/30');this.classList.toggle('opacity-50')">${cap}</button>`;
+                }).join('')}
+              </div>
+            </div>
+            <details class="mb-2">
+              <summary class="text-[10px] text-text-muted uppercase tracking-wider cursor-pointer select-none">Inference Defaults</summary>
+              <div class="grid grid-cols-4 gap-2 mt-2">
+                <div>
+                  <label class="text-[10px] text-text-muted block mb-0.5">temperature</label>
+                  <input type="number" step="0.05" min="0" max="2" class="mdl-inf w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" data-key="temperature" value="${inf.temperature ?? ''}" placeholder="—">
+                </div>
+                <div>
+                  <label class="text-[10px] text-text-muted block mb-0.5">top_p</label>
+                  <input type="number" step="0.05" min="0" max="1" class="mdl-inf w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" data-key="top_p" value="${inf.top_p ?? ''}" placeholder="—">
+                </div>
+                <div>
+                  <label class="text-[10px] text-text-muted block mb-0.5">top_k</label>
+                  <input type="number" step="1" min="0" class="mdl-inf w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" data-key="top_k" value="${inf.top_k ?? ''}" placeholder="—">
+                </div>
+                <div>
+                  <label class="text-[10px] text-text-muted block mb-0.5">max_tokens</label>
+                  <input type="number" step="256" min="1" class="mdl-inf w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" data-key="max_tokens" value="${inf.max_tokens ?? ''}" placeholder="4096">
+                </div>
+                <div>
+                  <label class="text-[10px] text-text-muted block mb-0.5">min_p</label>
+                  <input type="number" step="0.01" min="0" max="1" class="mdl-inf w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" data-key="min_p" value="${inf.min_p ?? ''}" placeholder="—">
+                </div>
+                <div>
+                  <label class="text-[10px] text-text-muted block mb-0.5">freq_penalty</label>
+                  <input type="number" step="0.1" min="-2" max="2" class="mdl-inf w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" data-key="frequency_penalty" value="${inf.frequency_penalty ?? ''}" placeholder="—">
+                </div>
+                <div>
+                  <label class="text-[10px] text-text-muted block mb-0.5">pres_penalty</label>
+                  <input type="number" step="0.1" min="-2" max="2" class="mdl-inf w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" data-key="presence_penalty" value="${inf.presence_penalty ?? ''}" placeholder="—">
+                </div>
+                <div>
+                  <label class="text-[10px] text-text-muted block mb-0.5">rep_penalty</label>
+                  <input type="number" step="0.05" min="0" max="2" class="mdl-inf w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" data-key="repetition_penalty" value="${inf.repetition_penalty ?? ''}" placeholder="—">
+                </div>
+              </div>
+              <div class="flex items-center gap-4 mt-2">
+                <label class="flex items-center gap-1.5 text-[10px] text-text-muted cursor-pointer">
+                  <input type="checkbox" class="mdl-inf-thinking accent-[var(--accent)]" ${inf.thinking ? 'checked' : ''}> thinking
+                </label>
+                <div>
+                  <label class="text-[10px] text-text-muted">budget</label>
+                  <input type="number" step="256" min="0" class="mdl-inf-thinking-budget w-24 bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" value="${inf.thinking_budget ?? ''}" placeholder="4096">
+                </div>
+              </div>
+            </details>
+            <details>
+              <summary class="text-[10px] text-text-muted uppercase tracking-wider cursor-pointer select-none">Purpose Presets</summary>
+              <div class="mt-2 space-y-2 mdl-presets">
+                ${['coding', 'analysis', 'agentic', 'creative', 'fast'].map(p => {
+                  const pr = presets[p] || {};
+                  return `<div class="border border-border/30 rounded p-2" data-preset="${p}">
+                    <div class="text-[10px] text-accent font-semibold mb-1">${p}</div>
+                    <div class="grid grid-cols-4 gap-2">
+                      <div>
+                        <label class="text-[10px] text-text-muted block mb-0.5">temperature</label>
+                        <input type="number" step="0.05" min="0" max="2" class="mdl-preset-val w-full bg-surface border border-border rounded px-1.5 py-0.5 text-[11px] text-text-primary mono" data-key="temperature" value="${pr.temperature ?? ''}" placeholder="—">
+                      </div>
+                      <div>
+                        <label class="text-[10px] text-text-muted block mb-0.5">max_tokens</label>
+                        <input type="number" step="256" min="1" class="mdl-preset-val w-full bg-surface border border-border rounded px-1.5 py-0.5 text-[11px] text-text-primary mono" data-key="max_tokens" value="${pr.max_tokens ?? ''}" placeholder="—">
+                      </div>
+                      <div>
+                        <label class="text-[10px] text-text-muted block mb-0.5">top_p</label>
+                        <input type="number" step="0.05" min="0" max="1" class="mdl-preset-val w-full bg-surface border border-border rounded px-1.5 py-0.5 text-[11px] text-text-primary mono" data-key="top_p" value="${pr.top_p ?? ''}" placeholder="—">
+                      </div>
+                      <div class="flex items-end gap-2">
+                        <label class="flex items-center gap-1 text-[10px] text-text-muted cursor-pointer pb-0.5">
+                          <input type="checkbox" class="mdl-preset-thinking accent-[var(--accent)]" ${pr.thinking ? 'checked' : ''}> think
+                        </label>
+                        <input type="number" step="256" class="mdl-preset-val w-16 bg-surface border border-border rounded px-1.5 py-0.5 text-[11px] text-text-primary mono" data-key="thinking_budget" value="${pr.thinking_budget ?? ''}" placeholder="—">
+                      </div>
+                    </div>
+                  </div>`;
+                }).join('')}
+              </div>
+            </details>
+          </div>`;
+        }).join('')}
+      </div>`}
+    </div>`;
+}
+
+window.promptModelIcon = function(el) {
+  const icons = ['🟣', '🟠', '🟢', '🔵', '💎', '🐼', '🦙', '🌬️', '🐦‍⬛', '🤖', '⚡', '🧠', '🔮', '🎯'];
+  const current = el.textContent.trim();
+  const next = icons[(icons.indexOf(current) + 1) % icons.length];
+  el.textContent = next;
+};
+
+window.syncModelsFromProviders = async function() {
+  try {
+    const res = await API.post('/v1/models/config', { action: 'sync' });
+    if (res.models) {
+      state.modelsConfig = res.models;
+      showToast('Models synced from providers');
+      loadSettingsTab();
+    }
+  } catch (e) {
+    showToast('Sync failed: ' + e.message);
+  }
+};
+
+window.saveModelsConfig = async function() {
+  const list = document.getElementById('models-config-list');
+  if (!list) return;
+  const models = {};
+  list.querySelectorAll('[data-model-id]').forEach(row => {
+    const mid = row.dataset.modelId;
+    const caps = [];
+    row.querySelectorAll('.mdl-cap').forEach(btn => {
+      if (btn.classList.contains('bg-accent/20')) caps.push(btn.dataset.cap);
+    });
+    const entry = {
+      enabled: row.querySelector('.mdl-enabled')?.checked !== false,
+      shortname: row.querySelector('.mdl-shortname')?.value || '',
+      icon: row.querySelector('.mdl-icon')?.textContent?.trim() || '🤖',
+      priority: parseInt(row.querySelector('.mdl-priority')?.value) || 0,
+      capabilities: caps,
+      provider: (state.modelsConfig[mid] || {}).provider || '',
+    };
+    // max_context
+    const mcVal = row.querySelector('.mdl-max-context')?.value;
+    if (mcVal) entry.max_context = parseInt(mcVal);
+    // Inference defaults
+    const inference = {};
+    row.querySelectorAll('.mdl-inf').forEach(inp => {
+      const v = inp.value.trim();
+      if (v !== '') inference[inp.dataset.key] = parseFloat(v);
+    });
+    const thinkingEl = row.querySelector('.mdl-inf-thinking');
+    if (thinkingEl?.checked) inference.thinking = true;
+    const budgetEl = row.querySelector('.mdl-inf-thinking-budget');
+    if (budgetEl?.value.trim()) inference.thinking_budget = parseInt(budgetEl.value);
+    if (Object.keys(inference).length) entry.inference = inference;
+    // Purpose presets
+    const presets = {};
+    row.querySelectorAll('[data-preset]').forEach(pEl => {
+      const pName = pEl.dataset.preset;
+      const preset = {};
+      pEl.querySelectorAll('.mdl-preset-val').forEach(inp => {
+        const v = inp.value.trim();
+        if (v !== '') preset[inp.dataset.key] = parseFloat(v);
+      });
+      const pThink = pEl.querySelector('.mdl-preset-thinking');
+      if (pThink?.checked) preset.thinking = true;
+      if (Object.keys(preset).length) presets[pName] = preset;
+    });
+    if (Object.keys(presets).length) entry.presets = presets;
+    models[mid] = entry;
+  });
+  try {
+    const res = await API.post('/v1/models/config', { action: 'save', models });
+    if (res.models) state.modelsConfig = res.models;
+    showToast('Models config saved');
+    renderModelSelector();
+  } catch (e) {
+    showToast('Save failed: ' + e.message);
+  }
+};
 
 function showAddProviderForm() {
   editingProvider = null;
@@ -3633,6 +4192,25 @@ dom.modelSelector.addEventListener('change', () => {
   setInterval(async () => {
     await checkConnection();
   }, 30000);
+  // Poll agent activity every 3 seconds for live status
+  setInterval(async () => {
+    try {
+      const res = await API.get('/v1/agents/activity');
+      const prev = JSON.stringify(state.agentActivity);
+      state.agentActivity = res.activity || {};
+      // Also mark streaming chats as active
+      for (const [aid, chat] of Object.entries(state.agentChats)) {
+        if (chat.streaming && !state.agentActivity[aid]) {
+          state.agentActivity[aid] = ['chat'];
+        } else if (chat.streaming && state.agentActivity[aid] && !state.agentActivity[aid].includes('chat')) {
+          state.agentActivity[aid].unshift('chat');
+        }
+      }
+      if (JSON.stringify(state.agentActivity) !== prev) {
+        updateAgentActivityVisuals();
+      }
+    } catch {}
+  }, 3000);
 })();
 </script>
 </body>

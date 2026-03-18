@@ -144,7 +144,10 @@ Access at `http://127.0.0.1:8420/` after starting the server.
 - **Agent config** — modal with tabs: Soul, Settings (avatar, model, display name), Skills, MCP, Schedule
 - **Skill browser** — search 7000+ skills from ClawHub, install from URL or zip
 - **Scheduler** — create/edit/pause/resume/delete tasks with user-friendly time picker
-- **Settings** — add/edit/test/delete LLM providers
+- **Settings dashboard** — Server, QMD, Models, Telegram, Providers tabs with service controls and log viewer
+- **QMD document browser** — per-collection file list with modification time, embedding status, index health indicators
+- **Agent activity indicators** — pulsing glow on agent cards during active tasks/chats
+- **Smart model routing** — per-model config with auto-selection by task purpose
 - **Light/dark theme** — toggle with sun/moon icon, saved to localStorage
 - **Pixel art avatars** — retro adventure game style, 10 presets + custom upload
 
@@ -282,12 +285,20 @@ Each task runs with a specified agent and model in its own context. Results stor
 | POST | `/v1/skills/install` | Install from ClawHub |
 | POST | `/v1/skills/install-zip` | Install from zip |
 | POST | `/v1/skills/remove` | Remove skill |
+| GET | `/v1/agents/activity` | Active agent tasks/chats |
+| GET | `/v1/models/config` | Model routing configuration |
+| POST | `/v1/models/config` | Save model routing config |
+| GET | `/v1/services/qmd/docs` | List/read QMD indexed documents with index health |
+| POST | `/v1/services/qmd/docs` | Save document (auto-triggers reindex) |
+| DELETE | `/v1/services/qmd/docs` | Delete document |
+| POST | `/v1/agents/rename` | Rename agent |
 | POST | `/v1/restart` | Restart server |
 
 ## Changelog
 
 | Version | Date | Changes |
 |---|---|---|
+| 1.5.0 | 2026-03-18 | Settings dashboard (Server/QMD/Models/Telegram/Providers), agent activity indicators, QMD document browser with index health, smart model routing, self-healing QMD index keeper |
 | 1.4.0 | 2026-03-17 | QMD hybrid memory search (BM25 + vector + LLM reranking), SSE error handling, server resilience |
 | 1.3.0 | 2026-03-16 | oMLX local inference with Crow-4B-Opus-4.6-Distill model, replaces distributed inferencer |
 | 1.2.1 | 2026-03-16 | Local CLIProxyAPI OAuth proxy for Claude models (no API key costs) |

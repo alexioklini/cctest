@@ -392,8 +392,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_running_tasks()
         elif path == "/v1/providers":
             self._handle_list_providers()
+        elif path == "/v1/models/config":
+            self._handle_models_config_get()
+        elif path == "/v1/agents/activity":
+            self._handle_agents_activity()
         elif path == "/v1/services":
             self._handle_services_status()
+        elif path.startswith("/v1/services/qmd/docs"):
+            self._handle_qmd_docs()
         elif path.startswith("/v1/services/log"):
             self._handle_service_log()
         elif path == "/" or path.startswith("/web/") or path.endswith((".html", ".css", ".js", ".ico")):
@@ -418,6 +424,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_create_agent()
         elif path == "/v1/agents/delete":
             self._handle_delete_agent()
+        elif path == "/v1/agents/rename":
+            self._handle_rename_agent()
         elif path.startswith("/v1/agents/") and "/file" in path:
             self._handle_agent_file_write(path)
         elif path == "/v1/schedule":
@@ -426,6 +434,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_save_providers()
         elif path == "/v1/providers/test":
             self._handle_test_provider()
+        elif path == "/v1/models/config":
+            self._handle_models_config_save()
         elif path == "/v1/skills/browse":
             self._handle_browse_skills()
         elif path == "/v1/skills/install":
@@ -440,6 +450,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_restart()
         elif path == "/v1/services/qmd":
             self._handle_qmd_action()
+        elif path.startswith("/v1/services/qmd/docs"):
+            self._handle_qmd_doc_save()
         elif path == "/v1/services/telegram":
             self._handle_telegram_action()
         else:
@@ -453,6 +465,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 self._send_json({"status": "deleted"})
             else:
                 self._send_json({"error": "Session not found"}, 404)
+        elif path.startswith("/v1/services/qmd/docs"):
+            self._handle_qmd_doc_delete()
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -479,8 +493,16 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         self._send_json({"agents": engine.get_agent_summaries()})
 
     def _handle_list_models(self):
-        models = engine.get_available_models(
-            server_config["api_key"], server_config["base_url"], server_config["api_type"])
+        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+        show_all = params.get("all", "").lower() in ("true", "1")
+
+        if engine._models_config and not show_all:
+            # Return only enabled models from config
+            models = engine.get_enabled_models()
+        else:
+            models = engine.get_available_models(
+                server_config["api_key"], server_config["base_url"], server_config["api_type"])
         self._send_json({"models": models})
 
     def _handle_list_sessions(self):
@@ -549,6 +571,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     def _resolve_provider(self, model: str) -> dict:
         """Find the provider that has the given model. Returns {api_key, base_url, api_type}."""
+        # Resolve shortnames and "auto" via models config
+        if engine._models_config:
+            model = engine.resolve_model(model)
+
         # Check cache first (refresh every 60s)
         now = time.time()
         if model in BrainAgentHandler._provider_cache and now - BrainAgentHandler._provider_cache_time < 60:
@@ -557,24 +583,34 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         providers = server_config.get("providers", {})
         result = None
 
-        for name, p in providers.items():
-            prov = {"api_key": p.get("api_key", ""), "base_url": p.get("base_url", ""),
-                    "api_type": p.get("type", "openai"), "provider_name": name}
-            # Check default model match
-            if p.get("default_model") == model:
-                result = prov
-                break
-            # Check model list
-            try:
-                models = engine.get_available_models(p.get("api_key", ""), p.get("base_url", ""), p.get("type", "openai"))
-                for m in models:
-                    BrainAgentHandler._provider_cache[m] = prov
-                BrainAgentHandler._provider_cache_time = now
-                if model in models:
+        # Fast path: check models config for provider hint
+        model_cfg = engine.get_model_info(model)
+        if model_cfg.get("provider"):
+            prov_name = model_cfg["provider"]
+            p = providers.get(prov_name)
+            if p:
+                result = {"api_key": p.get("api_key", ""), "base_url": p.get("base_url", ""),
+                          "api_type": p.get("type", "openai"), "provider_name": prov_name}
+
+        if not result:
+            for name, p in providers.items():
+                prov = {"api_key": p.get("api_key", ""), "base_url": p.get("base_url", ""),
+                        "api_type": p.get("type", "openai"), "provider_name": name}
+                # Check default model match
+                if p.get("default_model") == model:
                     result = prov
                     break
-            except Exception:
-                pass
+                # Check model list
+                try:
+                    models = engine.get_available_models(p.get("api_key", ""), p.get("base_url", ""), p.get("type", "openai"))
+                    for m in models:
+                        BrainAgentHandler._provider_cache[m] = prov
+                    BrainAgentHandler._provider_cache_time = now
+                    if model in models:
+                        result = prov
+                        break
+                except Exception:
+                    pass
 
         if not result:
             result = {"api_key": server_config.get("api_key", ""),
@@ -595,12 +631,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             api_key=provider["api_key"],
             base_url=provider["base_url"],
             api_type=provider["api_type"],
-            max_context=body.get("max_context", server_config["max_context"]),
+            max_context=body.get("max_context") or engine.get_model_max_context(model),
         )
         self._send_json({
             "session_id": session.id,
             "agent": session.agent_id,
             "model": session.model,
+            "max_context": session.max_context,
         })
 
     def _handle_switch_agent(self):
@@ -657,8 +694,21 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             session.base_url = provider["base_url"]
             session.api_type = provider["api_type"]
 
+        # Auto model selection: if agent uses model="auto", re-resolve per message
+        agent_cfg = session.agent.config
+        if not model_override and agent_cfg.get("model") == "auto":
+            auto_model, auto_purpose = engine.resolve_auto_model_for_task(agent_cfg, message)
+            if auto_model and auto_model != session.model:
+                session.model = auto_model
+                provider = self._resolve_provider(auto_model)
+                session.api_key = provider["api_key"]
+                session.base_url = provider["base_url"]
+                session.api_type = provider["api_type"]
+                session.max_context = engine.get_model_max_context(auto_model)
+
         # Reset cancel token
         session.cancel_token = engine.CancelToken()
+        session._streaming = True
 
         # Add user message (persisted to DB)
         session.add_message("user", message)
@@ -683,6 +733,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         def event_callback(event_type, data):
             event_queue.put((event_type, data))
 
+        handler_self = self  # capture for closure
+
         def worker():
             # Set thread-local memory for tools
             engine._thread_local.memory_store = session.memory
@@ -702,11 +754,19 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             engine._mcp_manager = mcp
 
             try:
+                # Use detected purpose from auto-resolve, or fall back to agent's fixed purpose
+                purpose = session.agent.config.get("model_purpose")
+                if not purpose and session.agent.config.get("model") == "auto":
+                    purpose = engine.classify_task_purpose(message)
+                inf_params = engine.get_inference_params(session.model, purpose)
                 reply = engine.send_message_with_fallback(
                     session.messages, session.model, session.api_key,
                     session.base_url, session.api_type,
                     silent=True, escape_watcher=session.cancel_token,
                     event_callback=event_callback,
+                    provider_resolver=handler_self._resolve_provider,
+                    inference_params=inf_params,
+                    purpose=purpose,
                 )
                 if reply:
                     session.add_message("assistant", reply)
@@ -727,6 +787,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 traceback.print_exc()
                 event_queue.put(("error", {"message": str(e)}))
             finally:
+                session._streaming = False
                 engine._current_agent = old_agent
                 engine._mcp_manager = old_mcp
                 mcp.stop_all()
@@ -915,6 +976,60 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "models": [],
             })
 
+    def _handle_models_config_get(self):
+        """GET /v1/models/config — return models configuration."""
+        self._send_json({
+            "models": dict(engine._models_config),
+            "capabilities": list(engine.CAPABILITY_VALUES),
+        })
+
+    def _handle_models_config_save(self):
+        """POST /v1/models/config — save/update/sync models configuration."""
+        body = self._read_json()
+        action = body.get("action", "save")
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+
+        try:
+            config = {}
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    config = json.load(f)
+
+            if action == "save":
+                models = body.get("models", {})
+                config["models"] = models
+                engine._models_config = dict(models)
+
+            elif action == "update":
+                model_id = body.get("model_id", "")
+                model_cfg = body.get("config", {})
+                if not model_id:
+                    self._send_json({"error": "model_id required"}, 400)
+                    return
+                config.setdefault("models", {})
+                config["models"][model_id] = model_cfg
+                engine._models_config[model_id] = model_cfg
+
+            elif action == "sync":
+                providers = server_config.get("providers", {})
+                existing = config.get("models", {})
+                synced = engine.init_models_config(providers, existing)
+                config["models"] = synced
+
+            else:
+                self._send_json({"error": f"Unknown action: {action}"}, 400)
+                return
+
+            with open(config_path, "w") as f:
+                json.dump(config, f, indent=2)
+
+            # Clear provider cache since model config changed
+            BrainAgentHandler._provider_cache.clear()
+
+            self._send_json({"status": "saved", "models": dict(engine._models_config)})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
     def _handle_running_tasks(self):
         """GET /v1/schedule/running — list currently executing scheduled tasks."""
         if engine._scheduler:
@@ -947,6 +1062,42 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"tasks": tasks})
         else:
             self._send_json({"tasks": []})
+
+    def _handle_agents_activity(self):
+        """GET /v1/agents/activity — which agents are currently doing something."""
+        activity = {}  # agent_id -> list of activity types
+
+        # 1. Streaming chat sessions
+        with sessions._lock:
+            for s in sessions._sessions.values():
+                if hasattr(s, 'cancel_token') and not s.cancel_token.cancelled:
+                    # Check if session has an active worker thread
+                    # A session is "streaming" if it was recently active and not cancelled
+                    pass
+
+        # Simpler: check which sessions are in streaming state via agentChats client-side
+        # Instead, track streaming sessions server-side
+        with sessions._lock:
+            for s in sessions._sessions.values():
+                if hasattr(s, '_streaming') and s._streaming:
+                    activity.setdefault(s.agent_id, []).append("chat")
+
+        # 2. Running delegated tasks
+        if engine._task_runner:
+            for t in engine._task_runner.list_tasks():
+                if t.get("status") == "running":
+                    aid = t.get("agent", "main")
+                    if "delegate" not in activity.get(aid, []):
+                        activity.setdefault(aid, []).append("delegate")
+
+        # 3. Running scheduled tasks
+        if engine._scheduler:
+            for r in engine._scheduler.get_running_tasks():
+                aid = r.get("agent", "main")
+                if "schedule" not in activity.get(aid, []):
+                    activity.setdefault(aid, []).append("schedule")
+
+        self._send_json({"activity": activity})
 
     # --- Agent file management ---
 
@@ -1004,6 +1155,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             with open(filepath, "w") as f:
                 f.write(content)
             self._send_json({"status": "saved", "name": filename})
+            if filename.endswith(".md"):
+                self._qmd_trigger_update()
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
@@ -1023,6 +1176,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         if body.get("soul"):
             with open(os.path.join(agent.dir, "soul.md"), "w") as f:
                 f.write(body["soul"])
+        # Register QMD collection for the new agent
+        self._qmd_register_collection(agent_id, agent.dir)
         self._send_json({"status": "created", "agent": agent_id})
 
     def _handle_delete_agent(self):
@@ -1042,7 +1197,47 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             import shutil
             dest = os.path.join(trash_dir, f"{agent_id}_{int(time.time())}")
             shutil.move(agent_dir, dest)
+            # Remove QMD collection for deleted agent
+            self._qmd_remove_collection(agent_id)
             self._send_json({"status": "deleted", "agent": agent_id, "moved_to": dest})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_rename_agent(self):
+        """POST /v1/agents/rename — rename an agent directory and update QMD collection."""
+        body = self._read_json()
+        old_id = body.get("agent", "")
+        new_id = body.get("new_name", "").strip()
+        if not old_id or not new_id or ".." in old_id or ".." in new_id:
+            self._send_json({"error": "Invalid agent name"}, 400)
+            return
+        if old_id == new_id:
+            self._send_json({"status": "ok", "agent": new_id})
+            return
+        if old_id == "main":
+            self._send_json({"error": "Cannot rename the main agent"}, 400)
+            return
+        # Validate new_id: alphanumeric + hyphens/underscores only
+        import re as _re
+        if not _re.match(r'^[a-zA-Z0-9_-]+$', new_id):
+            self._send_json({"error": "Agent name must be alphanumeric (hyphens/underscores allowed)"}, 400)
+            return
+        old_dir = os.path.join(engine.AGENTS_DIR, old_id)
+        new_dir = os.path.join(engine.AGENTS_DIR, new_id)
+        if not os.path.isdir(old_dir):
+            self._send_json({"error": f"Agent '{old_id}' not found"}, 404)
+            return
+        if os.path.exists(new_dir):
+            self._send_json({"error": f"Agent '{new_id}' already exists"}, 409)
+            return
+        try:
+            os.rename(old_dir, new_dir)
+            # Update QMD: remove old collection, add new one, re-index in background
+            if self._is_qmd_running():
+                self._qmd_run(["collection", "remove", old_id])
+                self._qmd_run(["collection", "add", new_dir, "--name", new_id])
+                self._qmd_trigger_update(delay=1.0)
+            self._send_json({"status": "renamed", "agent": new_id, "old_name": old_id})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
@@ -1286,6 +1481,54 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         return candidate
         return None
 
+    # Debounced QMD update: coalesce rapid file writes into one qmd update+embed run
+    _qmd_update_timer: threading.Timer | None = None
+    _qmd_update_lock = threading.Lock()
+
+    @classmethod
+    def _qmd_trigger_update(cls, delay: float = 2.0) -> None:
+        """Schedule qmd update+embed after `delay` seconds, cancelling any pending one."""
+        with cls._qmd_update_lock:
+            if cls._qmd_update_timer is not None:
+                cls._qmd_update_timer.cancel()
+            def _run():
+                cls._qmd_run(["update"], timeout=120)
+                cls._qmd_run(["embed"], timeout=300)
+            cls._qmd_update_timer = threading.Timer(delay, _run)
+            cls._qmd_update_timer.daemon = True
+            cls._qmd_update_timer.start()
+
+    @staticmethod
+    def _qmd_run(args: list, timeout: int = 10) -> bool:
+        """Run a qmd command. Returns True on success."""
+        qmd_bin = BrainAgentHandler._find_qmd()
+        if not qmd_bin:
+            return False
+        try:
+            env = os.environ.copy()
+            env["PATH"] = os.path.dirname(qmd_bin) + ":" + env.get("PATH", "")
+            r = subprocess.run([qmd_bin] + args, capture_output=True, text=True,
+                               timeout=timeout, env=env)
+            return r.returncode == 0
+        except Exception:
+            return False
+
+    def _qmd_register_collection(self, agent_id: str, agent_dir: str) -> None:
+        """Add a QMD collection for an agent if QMD is running and collection doesn't exist.
+        Runs qmd update in a background thread so files are indexed promptly."""
+        if not self._is_qmd_running():
+            return
+        existing = {(c["name"] if isinstance(c, dict) else c) for c in self._qmd_collections()}
+        if agent_id not in existing:
+            self._qmd_run(["collection", "add", agent_dir, "--name", agent_id])
+            self._qmd_trigger_update(delay=1.0)
+
+    def _qmd_remove_collection(self, agent_id: str) -> None:
+        """Remove a QMD collection for a deleted agent."""
+        if not self._is_qmd_running():
+            return
+        self._qmd_run(["collection", "remove", agent_id])
+
     @staticmethod
     def _is_qmd_running() -> bool:
         try:
@@ -1339,6 +1582,157 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         except Exception:
             pass
         return []
+
+    def _handle_qmd_docs(self):
+        """GET /v1/services/qmd/docs?collection=<name>[&file=<filename>] — list or read indexed docs."""
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        collection = (qs.get("collection") or [""])[0]
+        filename = (qs.get("file") or [""])[0]
+
+        if not collection:
+            self._send_json({"error": "collection required"}, 400)
+            return
+
+        agent_dir = os.path.join(engine.AGENTS_DIR, collection)
+        if not os.path.isdir(agent_dir):
+            self._send_json({"error": f"Collection dir not found: {agent_dir}"}, 404)
+            return
+
+        if filename:
+            fpath, err = self._qmd_safe_path(collection, filename)
+            if err:
+                self._send_json({"error": err}, 400)
+                return
+            if not os.path.isfile(fpath):
+                self._send_json({"error": "File not found"}, 404)
+                return
+            try:
+                with open(fpath, "r", errors="replace") as f:
+                    content = f.read()
+                self._send_json({"file": filename, "collection": collection, "content": content})
+            except OSError as e:
+                self._send_json({"error": str(e)}, 500)
+        else:
+            # List all .md files recursively (matches QMD pattern **/*.md)
+            files = []
+            # Load QMD index data for this collection
+            qmd_index = {}  # rel_path -> {hash, embedded_at}
+            try:
+                import sqlite3 as _sqlite3
+                idx_path = os.path.expanduser("~/.cache/qmd/index.sqlite")
+                if os.path.isfile(idx_path):
+                    conn = _sqlite3.connect(idx_path, timeout=2)
+                    conn.row_factory = _sqlite3.Row
+                    rows = conn.execute(
+                        "SELECT d.path, d.hash, "
+                        "  (SELECT cv.embedded_at FROM content_vectors cv WHERE cv.hash = d.hash LIMIT 1) AS embedded_at "
+                        "FROM documents d WHERE d.collection = ? AND d.active = 1",
+                        (collection,),
+                    ).fetchall()
+                    for r in rows:
+                        qmd_index[r["path"].lower()] = {
+                            "hash": r["hash"],
+                            "embedded_at": r["embedded_at"],
+                        }
+                    conn.close()
+            except Exception:
+                pass  # Index unavailable — degrade gracefully
+            try:
+                import hashlib as _hashlib
+                for dirpath, _, filenames in os.walk(agent_dir):
+                    for fname in sorted(filenames):
+                        if fname.endswith(".md"):
+                            fpath = os.path.join(dirpath, fname)
+                            rel = os.path.relpath(fpath, agent_dir)
+                            stat = os.stat(fpath)
+                            entry = {
+                                "name": rel,
+                                "size": stat.st_size,
+                                "modified": stat.st_mtime,
+                            }
+                            idx = qmd_index.get(rel.lower())
+                            if idx:
+                                # Compute current file hash to compare with indexed hash
+                                try:
+                                    with open(fpath, "rb") as fh:
+                                        file_hash = _hashlib.sha256(fh.read()).hexdigest()
+                                    entry["indexed"] = True
+                                    entry["embedded_at"] = idx["embedded_at"]
+                                    entry["current"] = (file_hash == idx["hash"])
+                                except OSError:
+                                    entry["indexed"] = True
+                                    entry["embedded_at"] = idx["embedded_at"]
+                                    entry["current"] = None
+                            else:
+                                entry["indexed"] = False
+                            files.append(entry)
+                files.sort(key=lambda f: f["name"])
+            except OSError as e:
+                self._send_json({"error": str(e)}, 500)
+                return
+            self._send_json({"collection": collection, "files": files})
+
+    def _qmd_safe_path(self, collection: str, filename: str):
+        """Resolve and validate a file path within a collection. Returns fpath or None."""
+        agent_dir = os.path.join(engine.AGENTS_DIR, collection)
+        if not os.path.isdir(agent_dir):
+            return None, "Collection not found"
+        fpath = os.path.normpath(os.path.join(agent_dir, filename))
+        if not fpath.startswith(agent_dir + os.sep) or not fpath.endswith(".md"):
+            return None, "Invalid filename"
+        return fpath, None
+
+    def _handle_qmd_doc_save(self):
+        """POST /v1/services/qmd/docs — save content to a file."""
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        collection = (qs.get("collection") or [""])[0]
+        filename = (qs.get("file") or [""])[0]
+        if not collection or not filename:
+            self._send_json({"error": "collection and file required"}, 400)
+            return
+        fpath, err = self._qmd_safe_path(collection, filename)
+        if err:
+            self._send_json({"error": err}, 400)
+            return
+        body = self._read_json()
+        content = body.get("content", "")
+        try:
+            os.makedirs(os.path.dirname(fpath), exist_ok=True)
+            with open(fpath, "w") as f:
+                f.write(content)
+            self._send_json({"status": "saved", "file": filename})
+            self._qmd_trigger_update()
+        except OSError as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_qmd_doc_delete(self):
+        """DELETE /v1/services/qmd/docs — delete a file."""
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        collection = (qs.get("collection") or [""])[0]
+        filename = (qs.get("file") or [""])[0]
+        if not collection or not filename:
+            self._send_json({"error": "collection and file required"}, 400)
+            return
+        # Protect non-memory files: soul.md and agent.json are managed elsewhere
+        if filename in ("soul.md", "agent.json", "mcp.json", "gmail.json"):
+            self._send_json({"error": f"{filename} cannot be deleted here"}, 403)
+            return
+        fpath, err = self._qmd_safe_path(collection, filename)
+        if err:
+            self._send_json({"error": err}, 400)
+            return
+        if not os.path.isfile(fpath):
+            self._send_json({"error": "File not found"}, 404)
+            return
+        try:
+            os.remove(fpath)
+            self._send_json({"status": "deleted", "file": filename})
+            self._qmd_trigger_update()
+        except OSError as e:
+            self._send_json({"error": str(e)}, 500)
 
     def _handle_services_status(self):
         """GET /v1/services — status of all managed services."""
@@ -1576,6 +1970,26 @@ def main():
     server_config["default_model"] = args.model
     server_config["max_context"] = args.max_context
 
+    # Initialize models config
+    existing_models = file_config.get("models")
+    if providers:
+        synced = engine.init_models_config(providers, existing_models)
+        if not existing_models and synced:
+            # First run: persist auto-discovered models to config.json
+            try:
+                config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                config["models"] = synced
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+            except Exception:
+                pass
+    elif existing_models:
+        engine._models_config = dict(existing_models)
+
     # Initialize engine globals
     engine._delegate_api_key = args.api_key
     engine._delegate_base_url = args.base_url
@@ -1592,6 +2006,171 @@ def main():
     # Initialize main agent
     engine._current_agent = engine.AgentConfig("main")
     engine._memory_store = engine.MemoryStore("main", base_dir=engine._current_agent.memory_dir)
+
+    # Unified QMD index keeper: collection registration, file watching, and embedding health
+    def _qmd_index_keeper():
+        """Single background loop that keeps QMD fully in sync automatically.
+        - Waits for QMD to become available (retries on startup)
+        - Registers missing collections
+        - Detects file changes via mtime polling (fast, every 5s)
+        - Every 30s deep-checks index integrity: stale hashes, missing embeddings
+        - Runs update+embed as needed — no manual intervention required
+        """
+        import sqlite3 as _sqlite3
+        import hashlib as _hashlib
+
+        agents_dir = engine.AGENTS_DIR
+        idx_path = os.path.expanduser("~/.cache/qmd/index.sqlite")
+        last_mtime_snap: dict[str, float] = {}
+        FAST_INTERVAL = 5       # seconds between mtime polls
+        DEEP_INTERVAL = 30      # seconds between full integrity checks
+        last_deep_check = 0.0
+        qmd_was_running = False
+
+        def _mtime_snapshot() -> dict[str, float]:
+            snap = {}
+            try:
+                for root, dirs, files in os.walk(agents_dir):
+                    dirs[:] = [d for d in dirs if not d.startswith('.')]
+                    for fname in files:
+                        if fname.endswith(".md"):
+                            fpath = os.path.join(root, fname)
+                            try:
+                                snap[fpath] = os.path.getmtime(fpath)
+                            except OSError:
+                                pass
+            except Exception:
+                pass
+            return snap
+
+        def _backfill_collections():
+            """Register any agent dirs missing from QMD."""
+            existing = {(c["name"] if isinstance(c, dict) else c)
+                        for c in BrainAgentHandler._qmd_collections()}
+            added = False
+            for agent_id in engine.list_agents():
+                if agent_id not in existing:
+                    agent_dir = os.path.join(agents_dir, agent_id)
+                    if os.path.isdir(agent_dir):
+                        BrainAgentHandler._qmd_run(["collection", "add", agent_dir, "--name", agent_id])
+                        print(f"QMD: registered collection '{agent_id}'")
+                        added = True
+            return added
+
+        def _deep_check() -> tuple[bool, bool]:
+            """Check index for stale content and missing embeddings.
+            Returns (needs_update, needs_embed)."""
+            needs_update = False
+            needs_embed = False
+            if not os.path.isfile(idx_path):
+                return False, False
+            try:
+                conn = _sqlite3.connect(idx_path, timeout=2)
+                # Pending embeddings
+                pending = conn.execute(
+                    "SELECT COUNT(*) FROM documents d "
+                    "WHERE d.active = 1 AND NOT EXISTS "
+                    "(SELECT 1 FROM content_vectors cv WHERE cv.hash = d.hash)"
+                ).fetchone()[0]
+                if pending > 0:
+                    needs_embed = True
+                # Build indexed lookup
+                indexed = {}
+                for row in conn.execute(
+                    "SELECT collection, path, hash FROM documents WHERE active = 1"
+                ).fetchall():
+                    indexed[(row[0].lower(), row[1].lower())] = row[2]
+                conn.close()
+            except Exception:
+                return False, False
+
+            # Compare every .md on disk against the index
+            try:
+                for agent_id in engine.list_agents():
+                    agent_dir = os.path.join(agents_dir, agent_id)
+                    if not os.path.isdir(agent_dir):
+                        continue
+                    for root, dirs, files in os.walk(agent_dir):
+                        dirs[:] = [d for d in dirs if not d.startswith('.')]
+                        for fname in files:
+                            if not fname.endswith(".md"):
+                                continue
+                            fpath = os.path.join(root, fname)
+                            rel = os.path.relpath(fpath, agent_dir)
+                            key = (agent_id.lower(), rel.lower())
+                            if key not in indexed:
+                                needs_update = True
+                            else:
+                                try:
+                                    with open(fpath, "rb") as fh:
+                                        if _hashlib.sha256(fh.read()).hexdigest() != indexed[key]:
+                                            needs_update = True
+                                except OSError:
+                                    pass
+                            if needs_update:
+                                break
+                        if needs_update:
+                            break
+                    if needs_update:
+                        break
+            except Exception:
+                pass
+            return needs_update, needs_embed
+
+        # --- Main loop ---
+        last_mtime_snap = _mtime_snapshot()
+        while True:
+            time.sleep(FAST_INTERVAL)
+            try:
+                running = BrainAgentHandler._is_qmd_running()
+
+                # QMD just came up (or first time): backfill + full sync
+                if running and not qmd_was_running:
+                    print("QMD: index keeper — QMD detected, syncing...")
+                    if _backfill_collections():
+                        BrainAgentHandler._qmd_run(["update"], timeout=120)
+                        BrainAgentHandler._qmd_run(["embed"], timeout=300)
+                    else:
+                        # Still do a deep check on first connect
+                        nu, ne = _deep_check()
+                        if nu:
+                            BrainAgentHandler._qmd_run(["update"], timeout=120)
+                            BrainAgentHandler._qmd_run(["embed"], timeout=300)
+                        elif ne:
+                            BrainAgentHandler._qmd_run(["embed"], timeout=300)
+                    last_mtime_snap = _mtime_snapshot()
+                    last_deep_check = time.time()
+                    qmd_was_running = True
+                    continue
+
+                qmd_was_running = running
+                if not running:
+                    continue
+
+                # Fast path: mtime change detection
+                current_snap = _mtime_snapshot()
+                if current_snap != last_mtime_snap:
+                    last_mtime_snap = current_snap
+                    BrainAgentHandler._qmd_trigger_update(delay=1.0)
+                    last_deep_check = time.time()  # skip deep check right after trigger
+                    continue
+
+                # Periodic deep integrity check
+                now = time.time()
+                if now - last_deep_check >= DEEP_INTERVAL:
+                    last_deep_check = now
+                    # Also check for new agent collections
+                    _backfill_collections()
+                    nu, ne = _deep_check()
+                    if nu:
+                        BrainAgentHandler._qmd_run(["update"], timeout=120)
+                        BrainAgentHandler._qmd_run(["embed"], timeout=300)
+                    elif ne:
+                        BrainAgentHandler._qmd_run(["embed"], timeout=300)
+            except Exception:
+                pass
+
+    threading.Thread(target=_qmd_index_keeper, daemon=True, name="qmd-index-keeper").start()
 
     # Start server
     server = ThreadingHTTPServer((args.host, args.port), BrainAgentHandler)

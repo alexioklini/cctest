@@ -115,7 +115,15 @@ TOOL_VERBS = {
 }
 
 
+_models_config: dict = {}  # populated from server on startup
+
+
 def model_icon(model: str) -> str:
+    # Check server-provided config first
+    cfg = _models_config.get(model)
+    if cfg and cfg.get("icon"):
+        return cfg["icon"]
+    # Fallback to pattern matching
     m = model.lower()
     if m.startswith("crow"): return "🐦‍⬛"
     if m.startswith("claude-opus") or m == "opus": return "🟣"
@@ -296,8 +304,17 @@ def run_interactive(args):
     # Get server status
     status = client.status()
 
+    # Load models config for icons
+    global _models_config
+    try:
+        mc = client._get("/v1/models/config")
+        _models_config = mc.get("models", {})
+    except Exception:
+        pass
+
     # Create session
     client.create_session(agent=args.agent, model=args.model, max_context=args.max_context)
+    session_max_context = client.max_context or args.max_context
 
     current_agent = args.agent
     current_model = args.model
@@ -316,7 +333,7 @@ def run_interactive(args):
             tok = f"{token_count // 1000}k"
         else:
             tok = str(token_count)
-        tok_display = f"{tok}/{args.max_context // 1000}k"
+        tok_display = f"{tok}/{session_max_context // 1000}k"
 
         try:
             cols = os.get_terminal_size().columns
@@ -503,9 +520,9 @@ def run_interactive(args):
             if full_text:
                 console.print()
                 console.print(Markdown(full_text))
-                pct = min(99, int(token_count / args.max_context * 100))
+                pct = min(99, int(token_count / session_max_context * 100))
                 model_tag = f"{model_icon(done_model)} {done_model}  " if done_model else ""
-                console.print(f"\n  [dim]{model_tag}✻ {elapsed:.0f}s · {token_count:,}/{args.max_context//1000}k ({pct}%)[/]")
+                console.print(f"\n  [dim]{model_tag}✻ {elapsed:.0f}s · {token_count:,}/{session_max_context//1000}k ({pct}%)[/]")
                 if not show_tools and tool_count > 0:
                     console.print(f"  [dim]{tool_count} tool calls (hidden)[/]")
 

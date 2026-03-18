@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "1.4.0"
-VERSION_DATE = "2026-03-17"
+VERSION = "1.5.0"
+VERSION_DATE = "2026-03-18"
 CHANGELOG = [
+    ("1.5.0", "2026-03-18", "Settings dashboard (Server/QMD/Models/Telegram/Providers), agent activity indicators, QMD document browser with index health, smart model routing, self-healing QMD index keeper"),
     ("1.4.0", "2026-03-17", "QMD hybrid memory search, SSE error handling, server resilience"),
     ("1.2.0", "2026-03-16", "Multi-provider routing, Gmail, scheduler dashboard, SQLite resilience, Cloudflare deployment"),
     ("1.1.0", "2026-03-14", "MCP support: stdio + SSE transports, per-agent + global servers"),
@@ -456,6 +457,19 @@ def tool_read_file(args: dict) -> str:
         return _err(f"read_file: {e}")
 
 
+def _maybe_qmd_reindex(path: str) -> None:
+    """If path is a .md file inside an agent dir, trigger debounced QMD reindex."""
+    if not path.endswith(".md"):
+        return
+    agents_dir = os.path.realpath(AGENTS_DIR)
+    real_path = os.path.realpath(path)
+    if not real_path.startswith(agents_dir + os.sep):
+        return
+    rel = real_path[len(agents_dir) + 1:]
+    collection = rel.split(os.sep)[0]
+    _qmd_debounced_embed(collection)
+
+
 def tool_write_file(args: dict) -> str:
     path = args.get("path", "")
     content = args.get("content", "")
@@ -467,6 +481,7 @@ def tool_write_file(args: dict) -> str:
         with open(path, "w") as f:
             f.write(content)
         size = os.path.getsize(path)
+        _maybe_qmd_reindex(path)
         return _ok({"path": path, "size": size, "status": "written"})
     except Exception as e:
         return _err(f"write_file: {e}")
@@ -494,6 +509,7 @@ def tool_edit_file(args: dict) -> str:
             new_content = content.replace(old_string, new_string, 1)
         with open(path, "w") as f:
             f.write(new_content)
+        _maybe_qmd_reindex(path)
         return _ok({"path": path, "replacements": count if replace_all else 1, "status": "edited"})
     except Exception as e:
         return _err(f"edit_file: {e}")
@@ -1376,7 +1392,6 @@ Adapt your behavior to the tasks you are given.
                 json.dump({
                     "description": f"{self.agent_id} agent",
                     "model": None,
-                    "max_context": None,
                 }, f, indent=2)
 
     @property
@@ -1423,11 +1438,20 @@ Adapt your behavior to the tasks you are given.
 
     @property
     def preferred_model(self) -> str | None:
-        return self.config.get("model")
+        raw = self.config.get("model")
+        if not raw:
+            return None
+        purpose = self.config.get("model_purpose")
+        resolved = resolve_model(raw, purpose) if _models_config else raw
+        return resolved or raw
 
     @property
     def max_context(self) -> int | None:
-        return self.config.get("max_context")
+        """Return model's max_context if a preferred model is set."""
+        model = self.preferred_model
+        if model:
+            return get_model_max_context(model)
+        return None
 
     @property
     def memory_dir(self) -> str:
@@ -2057,7 +2081,8 @@ MAX_DELEGATE_TOOL_ROUNDS = 10  # Limit for delegated/scheduled tasks (timeout is
 def _run_delegate(messages: list[dict], model: str, system_prompt: str,
                   memory_store: MemoryStore | None = None,
                   cancel_token: CancelToken | None = None,
-                  event_callback=None) -> str | None:
+                  event_callback=None,
+                  inference_params: dict | None = None) -> str | None:
     """Run a delegated task in a fresh context. Returns the final text response.
     Thread-safe: uses thread-local storage for memory instead of swapping globals."""
     # Store memory in thread-local so tool_memory_* can find it
@@ -2084,6 +2109,9 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
         "stream": True,
         "tools": TOOL_DEFINITIONS if api_type != "openai" else TOOL_DEFINITIONS_OPENAI,
     }
+    if inference_params:
+        provider = _models_config.get(model, {}).get("provider", "")
+        _apply_inference_to_payload(payload, inference_params, api_type, provider)
     if api_type != "openai":
         payload["system"] = system_prompt
 
@@ -2219,8 +2247,10 @@ class TaskRunner:
             if cancel_flag.is_set():
                 status = "cancelled"
             else:
+                delegate_inf = get_inference_params(model, target.config.get("model_purpose"))
                 result_text = _run_delegate(messages, model, system_prompt,
-                                            memory_store=target_memory) or ""
+                                            memory_store=target_memory,
+                                            inference_params=delegate_inf) or ""
                 if cancel_flag.is_set():
                     status = "cancelled"
         except Exception as e:
@@ -2688,10 +2718,12 @@ class Scheduler:
         timer.start()
 
         try:
+            sched_inf = get_inference_params(model, target.config.get("model_purpose"))
             result_text = _run_delegate(messages, model, system_prompt,
                                         memory_store=target_memory,
                                         cancel_token=cancel_token,
-                                        event_callback=on_event) or ""
+                                        event_callback=on_event,
+                                        inference_params=sched_inf) or ""
             # Check if _run_delegate returned an error string instead of raising
             if result_text.startswith("Delegation error:"):
                 status = "error"
@@ -3362,6 +3394,270 @@ def get_available_models(api_key: str, base_url: str, api_type: str) -> list[str
         return []
 
 
+# --- Model Configuration System ---
+
+KNOWN_MODELS = {
+    "claude-opus": {"icon": "\U0001f7e3", "priority": 100, "max_context": 200000, "capabilities": ["coding", "analysis", "agentic", "creative"]},
+    "claude-sonnet": {"icon": "\U0001f7e0", "priority": 80, "max_context": 200000, "capabilities": ["coding", "analysis", "fast"]},
+    "claude-haiku": {"icon": "\U0001f7e2", "priority": 60, "max_context": 200000, "capabilities": ["fast"]},
+    "gemini": {"icon": "\U0001f48e", "priority": 70, "max_context": 1000000, "capabilities": ["coding", "analysis"]},
+    "qwen": {"icon": "\U0001f43c", "priority": 50, "max_context": 131072, "capabilities": ["coding", "analysis"]},
+    "crow": {"icon": "\U0001f426\u200d\u2b1b", "priority": 30, "max_context": 32768, "capabilities": ["fast", "local"]},
+    "llama": {"icon": "\U0001f999", "priority": 40, "max_context": 131072, "capabilities": ["coding", "local"]},
+    "mistral": {"icon": "\U0001f32c\ufe0f", "priority": 45, "max_context": 131072, "capabilities": ["coding", "analysis"]},
+}
+
+CAPABILITY_VALUES = ["coding", "analysis", "agentic", "fast", "creative", "local"]
+
+_models_config: dict = {}
+
+
+def _match_known_model(model_id: str) -> dict:
+    """Match a model ID against KNOWN_MODELS patterns. Returns default config."""
+    m = model_id.lower()
+    for prefix, defaults in KNOWN_MODELS.items():
+        if m.startswith(prefix) or prefix in m:
+            # Generate shortname from model ID
+            shortname = model_id.split("/")[-1]  # strip provider prefix
+            # Simplify common patterns
+            for suffix in ["-20251101", "-20250101", "-20241022", "-20251001"]:
+                shortname = shortname.replace(suffix, "")
+            result = {
+                "enabled": True,
+                "shortname": shortname,
+                "icon": defaults["icon"],
+                "priority": defaults["priority"],
+                "capabilities": list(defaults["capabilities"]),
+            }
+            if "max_context" in defaults:
+                result["max_context"] = defaults["max_context"]
+            return result
+    # Unknown model — enabled with low priority
+    shortname = model_id.split("/")[-1]
+    return {
+        "enabled": True,
+        "shortname": shortname,
+        "icon": "\U0001f916",
+        "priority": 10,
+        "capabilities": [],
+    }
+
+
+def init_models_config(providers: dict, existing_models: dict | None = None) -> dict:
+    """Auto-populate models config from provider model lists.
+
+    Merges with existing config (preserves user edits). Returns the models dict.
+    """
+    global _models_config
+    if existing_models:
+        _models_config = dict(existing_models)
+
+    # Discover models from all providers
+    for name, p in providers.items():
+        try:
+            models = get_available_models(
+                p.get("api_key", ""), p.get("base_url", ""), p.get("type", "openai"))
+        except Exception:
+            models = []
+        for model_id in models:
+            if model_id not in _models_config:
+                entry = _match_known_model(model_id)
+                entry["provider"] = name
+                _models_config[model_id] = entry
+            else:
+                if "provider" not in _models_config[model_id]:
+                    _models_config[model_id]["provider"] = name
+                # Backfill max_context from KNOWN_MODELS if missing
+                if "max_context" not in _models_config[model_id]:
+                    known = _match_known_model(model_id)
+                    if "max_context" in known:
+                        _models_config[model_id]["max_context"] = known["max_context"]
+
+    return _models_config
+
+
+def resolve_model(model_spec: str, purpose: str | None = None) -> str:
+    """Resolve a model specifier to a canonical model ID.
+
+    Handles:
+    - "auto" + purpose → highest-priority enabled model with that capability
+    - shortname (e.g. "opus") → lookup by shortname
+    - canonical ID → pass through
+    """
+    if not model_spec:
+        return ""
+
+    if model_spec == "auto":
+        return _resolve_auto_model(purpose)
+
+    # Try shortname lookup
+    for model_id, cfg in _models_config.items():
+        if cfg.get("shortname") == model_spec:
+            if cfg.get("enabled", True):
+                return model_id
+            break  # Found but disabled
+
+    # Pass through as canonical ID
+    return model_spec
+
+
+def _resolve_auto_model(purpose: str | None) -> str:
+    """Pick the best enabled model for a given purpose."""
+    enabled = [(mid, cfg) for mid, cfg in _models_config.items() if cfg.get("enabled", True)]
+    if not enabled:
+        return ""
+
+    if purpose:
+        # Filter to models with the requested capability
+        matching = [(mid, cfg) for mid, cfg in enabled if purpose in cfg.get("capabilities", [])]
+        if matching:
+            matching.sort(key=lambda x: x[1].get("priority", 0), reverse=True)
+            return matching[0][0]
+
+    # Fallback: highest priority enabled model
+    enabled.sort(key=lambda x: x[1].get("priority", 0), reverse=True)
+    return enabled[0][0]
+
+
+def get_enabled_models() -> list[str]:
+    """Return enabled model IDs sorted by priority descending."""
+    enabled = [(mid, cfg) for mid, cfg in _models_config.items() if cfg.get("enabled", True)]
+    enabled.sort(key=lambda x: x[1].get("priority", 0), reverse=True)
+    return [mid for mid, _ in enabled]
+
+
+# --- Task-based auto model selection ---
+
+_PURPOSE_PATTERNS: dict[str, list[re.Pattern]] = {
+    "coding": [
+        re.compile(r"\b(write|fix|debug|refactor|implement|code|function|class|bug|error|traceback|test|unittest|lint|compile|build|deploy|dockerfile|makefile|git\b|commit|branch|merge|PR\b|pull request|regex|parse|api|endpoint|route|migration|schema|sql|query|index\.)\b", re.I),
+        re.compile(r"\b(python|javascript|typescript|rust|go|java|c\+\+|html|css|json|yaml|toml|bash|shell|script)\b", re.I),
+        re.compile(r"```", re.I),
+    ],
+    "analysis": [
+        re.compile(r"\b(analy[sz]e|explain|compare|evaluate|review|assess|investigate|research|summarize|summary|report|pros?\b|cons?\b|trade-?off|benchmark|metric|statistic|data|insight|trend|pattern|cause|why does|how does|what is|understand)\b", re.I),
+    ],
+    "creative": [
+        re.compile(r"\b(write|draft|compose|story|poem|essay|blog|article|creative|brainstorm|idea|name|slogan|tagline|marketing|copy|narrative|fiction|dialogue|character)\b", re.I),
+    ],
+    "agentic": [
+        re.compile(r"\b(search|find|look up|fetch|download|browse|scrape|monitor|schedule|automate|run|execute|install|setup|configure|deploy|send|email|notify|delegate|background)\b", re.I),
+    ],
+    "fast": [
+        re.compile(r"\b(quick|brief|short|one-?liner|yes or no|true or false|translate|convert|format|list|enumerate|define)\b", re.I),
+    ],
+}
+
+
+def classify_task_purpose(message: str) -> str | None:
+    """Classify a user message into a capability/purpose using keyword heuristics.
+
+    Returns the best-matching purpose or None if no strong signal.
+    Scores each purpose by number of pattern matches; requires at least 2 signal
+    strength to avoid false positives on single-word matches.
+    """
+    if not message:
+        return None
+
+    scores: dict[str, int] = {}
+    for purpose, patterns in _PURPOSE_PATTERNS.items():
+        score = 0
+        for pat in patterns:
+            hits = len(pat.findall(message))
+            score += hits
+        if score > 0:
+            scores[purpose] = score
+
+    if not scores:
+        return None
+
+    best_purpose = max(scores, key=scores.get)
+    # Require some minimum signal (at least 2 keyword hits) to avoid noisy classification
+    if scores[best_purpose] < 2:
+        return None
+
+    return best_purpose
+
+
+def resolve_auto_model_for_task(agent_config: dict, message: str) -> tuple[str, str | None]:
+    """For agents with model="auto", analyze the task and pick the best model.
+
+    Returns (resolved_model_id, detected_purpose).
+    If agent has a fixed model_purpose, uses that instead of classifying.
+    """
+    raw_model = agent_config.get("model", "")
+    if raw_model != "auto":
+        return resolve_model(raw_model, agent_config.get("model_purpose")), agent_config.get("model_purpose")
+
+    fixed_purpose = agent_config.get("model_purpose")
+    if fixed_purpose:
+        return _resolve_auto_model(fixed_purpose), fixed_purpose
+
+    # Classify task from message
+    detected = classify_task_purpose(message)
+    resolved = _resolve_auto_model(detected)
+    return resolved, detected
+
+
+def get_model_info(model: str) -> dict:
+    """Return config entry for a model, or empty dict if not configured."""
+    return _models_config.get(model, {})
+
+
+def get_model_max_context(model: str) -> int:
+    """Return the model's context window size, or DEFAULT_MAX_CONTEXT_TOKENS."""
+    return _models_config.get(model, {}).get("max_context", DEFAULT_MAX_CONTEXT_TOKENS)
+
+
+def get_inference_params(model: str, purpose: str | None = None) -> dict:
+    """Resolve inference parameters for a model, optionally overlaying a purpose preset.
+
+    Returns only explicitly set keys (empty dict = use API defaults).
+    """
+    cfg = _models_config.get(model, {})
+    base = dict(cfg.get("inference", {}))
+    if purpose:
+        preset = cfg.get("presets", {}).get(purpose, {})
+        base.update(preset)
+    return base
+
+
+# Keys valid for all providers
+_INFERENCE_STANDARD_KEYS = {"temperature", "top_p", "top_k", "max_tokens"}
+# Keys only for OpenAI-compatible / oMLX
+_INFERENCE_OPENAI_KEYS = {"frequency_penalty", "presence_penalty"}
+# oMLX extension keys (also OpenAI-compatible endpoint)
+_INFERENCE_OMLX_KEYS = {"min_p", "repetition_penalty"}
+
+
+def _apply_inference_to_payload(payload: dict, params: dict, api_type: str, provider: str = "") -> None:
+    """Apply resolved inference params to an API payload with provider translation."""
+    if not params:
+        return
+
+    is_omlx = provider == "omlx"
+
+    for key in _INFERENCE_STANDARD_KEYS:
+        if key in params:
+            payload[key] = params[key]
+
+    for key in _INFERENCE_OPENAI_KEYS:
+        if key in params and (api_type == "openai" or is_omlx):
+            payload[key] = params[key]
+
+    for key in _INFERENCE_OMLX_KEYS:
+        if key in params and is_omlx:
+            payload[key] = params[key]
+
+    # Thinking translation
+    if params.get("thinking"):
+        budget = params.get("thinking_budget", 4096)
+        if api_type == "anthropic":
+            payload["thinking"] = {"type": "enabled", "budget_tokens": budget}
+        elif is_omlx:
+            payload.setdefault("chat_template_kwargs", {})["enable_thinking"] = True
+
+
 def list_models(api_key: str, base_url: str, api_type: str) -> None:
     """List available models from the API."""
     models = get_available_models(api_key, base_url, api_type)
@@ -3842,7 +4138,8 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                  tools: bool = True,
                  escape_watcher: EscapeWatcher | CancelToken | None = None,
                  _tool_round: int = 0,
-                 event_callback=None) -> str | None:
+                 event_callback=None,
+                 inference_params: dict | None = None) -> str | None:
     """Send messages and stream the response.
 
     If silent=True, collects without printing (for TUI mode).
@@ -3965,6 +4262,11 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         "stream": True,
     }
 
+    # Apply inference parameters (temperature, top_p, thinking, etc.)
+    if inference_params:
+        provider = _models_config.get(model, {}).get("provider", "")
+        _apply_inference_to_payload(payload, inference_params, api_type, provider)
+
     if tools:
         if api_type == "openai":
             all_tools = list(TOOL_DEFINITIONS_OPENAI)
@@ -3993,12 +4295,12 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                 return _handle_openai_response(
                     response, payload, messages, model, api_key, base_url,
                     api_type, silent, tools, headers, endpoint, escape_watcher,
-                    _tool_round, event_callback)
+                    _tool_round, event_callback, inference_params)
             else:
                 return _handle_anthropic_response(
                     response, payload, messages, model, api_key, base_url,
                     api_type, silent, tools, headers, endpoint, escape_watcher,
-                    _tool_round, event_callback)
+                    _tool_round, event_callback, inference_params)
 
     except urllib.error.HTTPError as e:
         if e.code == 400:
@@ -4031,7 +4333,8 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
                                 headers, endpoint,
                                 escape_watcher=None,
                                 _tool_round: int = 0,
-                                event_callback=None) -> str | None:
+                                event_callback=None,
+                                inference_params: dict | None = None) -> str | None:
     """Handle Anthropic SSE response, including tool-use agentic loop."""
     # Parse the full SSE stream to get content blocks and stop reason
     collected_text = []
@@ -4153,7 +4456,8 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
     # Recurse to get the model's final response (or more tool calls)
     return send_message(messages, model, api_key, base_url, api_type,
                         silent=silent, tools=tools, escape_watcher=escape_watcher,
-                        _tool_round=_tool_round + 1, event_callback=event_callback)
+                        _tool_round=_tool_round + 1, event_callback=event_callback,
+                        inference_params=inference_params)
 
 
 def _handle_openai_response(response, payload, messages, model, api_key,
@@ -4161,7 +4465,8 @@ def _handle_openai_response(response, payload, messages, model, api_key,
                              headers, endpoint,
                              escape_watcher=None,
                              _tool_round: int = 0,
-                             event_callback=None) -> str | None:
+                             event_callback=None,
+                             inference_params: dict | None = None) -> str | None:
     """Handle OpenAI SSE response, including tool-use agentic loop."""
     collected_text = []
     tool_calls_map = {}  # index -> {id, name, arguments_str}
@@ -4255,7 +4560,8 @@ def _handle_openai_response(response, payload, messages, model, api_key,
 
     return send_message(messages, model, api_key, base_url, api_type,
                         silent=silent, tools=tools, escape_watcher=escape_watcher,
-                        _tool_round=_tool_round + 1, event_callback=event_callback)
+                        _tool_round=_tool_round + 1, event_callback=event_callback,
+                        inference_params=inference_params)
 
 
 def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
@@ -4263,16 +4569,38 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
                                silent: bool = False,
                                tools: bool = True,
                                escape_watcher=None,
-                               event_callback=None) -> str | None:
-    """Send messages, falling back to available models if the requested one fails."""
+                               event_callback=None,
+                               provider_resolver=None,
+                               inference_params: dict | None = None,
+                               purpose: str | None = None) -> str | None:
+    """Send messages, falling back to available models if the requested one fails.
+
+    If provider_resolver is provided, it's called with (model) -> {api_key, base_url, api_type}
+    to re-resolve credentials for each fallback model.
+    """
     result = send_message(messages, model, api_key, base_url, api_type,
                           silent=silent, tools=tools, escape_watcher=escape_watcher,
-                          event_callback=event_callback)
+                          event_callback=event_callback,
+                          inference_params=inference_params)
     if result is not None:
         return result
 
-    available_models = get_available_models(api_key, base_url, api_type)
-    if not available_models:
+    # Build fallback list — capability-aware if models config exists
+    if _models_config:
+        failed_cfg = _models_config.get(model, {})
+        failed_caps = set(failed_cfg.get("capabilities", []))
+        candidates = []
+        for mid, cfg in _models_config.items():
+            if mid == model or not cfg.get("enabled", True):
+                continue
+            matching_caps = len(failed_caps & set(cfg.get("capabilities", [])))
+            candidates.append((mid, matching_caps, cfg.get("priority", 0)))
+        candidates.sort(key=lambda x: (x[1], x[2]), reverse=True)
+        fallback_models = [mid for mid, _, _ in candidates]
+    else:
+        fallback_models = get_available_models(api_key, base_url, api_type)
+
+    if not fallback_models:
         msg = f"Error: Model '{model}' is not available and no fallback models found."
         print(msg, file=sys.stderr)
         if event_callback:
@@ -4280,14 +4608,26 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
         sys.exit(1)
 
     tried_models = {model}
-    for fallback_model in available_models:
+    for fallback_model in fallback_models:
         if fallback_model in tried_models:
             continue
         tried_models.add(fallback_model)
+        # Re-resolve provider for fallback model
+        fb_api_key, fb_base_url, fb_api_type = api_key, base_url, api_type
+        if provider_resolver:
+            try:
+                prov = provider_resolver(fallback_model)
+                fb_api_key = prov.get("api_key", api_key)
+                fb_base_url = prov.get("base_url", base_url)
+                fb_api_type = prov.get("api_type", api_type)
+            except Exception:
+                pass
         print(f"Note: Model '{model}' not available, using '{fallback_model}'.", flush=True)
-        result = send_message(messages, fallback_model, api_key, base_url, api_type,
+        fb_params = get_inference_params(fallback_model, purpose)
+        result = send_message(messages, fallback_model, fb_api_key, fb_base_url, fb_api_type,
                               silent=silent, tools=tools, escape_watcher=escape_watcher,
-                              event_callback=event_callback)
+                              event_callback=event_callback,
+                              inference_params=fb_params)
         if result is not None:
             return result
 
