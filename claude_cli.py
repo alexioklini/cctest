@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "1.5.2"
+VERSION = "1.5.3"
 VERSION_DATE = "2026-03-20"
 CHANGELOG = [
+    ("1.5.3", "2026-03-20", "Thread-safe agent context, fix old chat provider resolution, per-collection QMD debounce, YAML-safe frontmatter, memory filename collision prevention, concurrent scheduler, thread-local cleanup, recall content limit increase"),
     ("1.5.2", "2026-03-20", "Fix memory summary refresh (direct execution instead of scheduler indirection), fix QMD index path normalization (underscore/hyphen mismatch), QMD collection health stats in settings UI"),
     ("1.5.1", "2026-03-18", "MiniMax provider support, Add Model UI, fix QMD session leak, memory_shared returns full content, in-process Telegram bot, lightweight QMD health check"),
     ("1.5.0", "2026-03-18", "Settings dashboard (Server/QMD/Models/Telegram/Providers), agent activity indicators, QMD document browser with index health, smart model routing, self-healing QMD index keeper"),
@@ -1813,8 +1814,8 @@ _QMD_HEADERS = {
 # Shared MCP session ID (set on first successful init)
 _qmd_session_id: str | None = None
 _qmd_session_lock = threading.Lock()
-# Debounce timer for embedding after writes
-_qmd_embed_timer: threading.Timer | None = None
+# Per-collection debounce timers for embedding after writes
+_qmd_embed_timers: dict[str, threading.Timer] = {}
 _qmd_embed_lock = threading.Lock()
 
 # Files to skip when indexing (not memory files)
@@ -1880,8 +1881,9 @@ def _qmd_ensure_collection(name: str, directory: str):
 
 
 def _qmd_debounced_embed(collection: str):
-    """Schedule a debounced qmd update+embed for a collection (2s delay)."""
-    global _qmd_embed_timer
+    """Schedule a debounced qmd update+embed for a collection (2s delay).
+    Each collection gets its own timer so concurrent writes to different
+    collections don't cancel each other's embed."""
     def _do_embed():
         try:
             subprocess.run(
@@ -1892,17 +1894,24 @@ def _qmd_debounced_embed(collection: str):
                 capture_output=True, text=True, timeout=60,
             )
         except Exception as e:
-            logging.debug("QMD embed failed: %s", e)
+            logging.debug("QMD embed failed for %s: %s", collection, e)
+        finally:
+            with _qmd_embed_lock:
+                _qmd_embed_timers.pop(collection, None)
     with _qmd_embed_lock:
-        if _qmd_embed_timer:
-            _qmd_embed_timer.cancel()
-        _qmd_embed_timer = threading.Timer(2.0, _do_embed)
-        _qmd_embed_timer.daemon = True
-        _qmd_embed_timer.start()
+        old = _qmd_embed_timers.get(collection)
+        if old:
+            old.cancel()
+        timer = threading.Timer(2.0, _do_embed)
+        timer.daemon = True
+        _qmd_embed_timers[collection] = timer
+        timer.start()
 
 
 def _parse_frontmatter(raw: str) -> tuple[dict, str]:
     """Parse YAML frontmatter from a markdown file. Returns (metadata, body)."""
+    # Normalize line endings for cross-platform compatibility
+    raw = raw.replace("\r\n", "\n")
     fm_match = re.match(r'^---\s*\n(.*?)\n---\s*\n(.*)$', raw, re.DOTALL)
     if fm_match:
         fm_text, body = fm_match.groups()
@@ -1915,8 +1924,21 @@ def _parse_frontmatter(raw: str) -> tuple[dict, str]:
     return {}, raw.strip()
 
 
+def _yaml_escape(value: str) -> str:
+    """Escape a string for safe inclusion in YAML frontmatter."""
+    if not value:
+        return '""'
+    # Quote if contains special YAML chars
+    if any(c in value for c in (':', '#', '{', '}', '[', ']', ',', '&', '*', '?', '|', '-', '<', '>', '=', '!', '%', '@', '`', '\n')):
+        escaped = value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
+        return f'"{escaped}"'
+    return value
+
+
 class MemoryStore:
     """Per-agent memory store backed by QMD hybrid search and markdown files."""
+
+    _ensured_collections: set[str] = set()
 
     def __init__(self, agent_id: str = "main", base_dir: str | None = None):
         self.agent_id = agent_id
@@ -1926,22 +1948,43 @@ class MemoryStore:
             self.dir = os.path.join(AGENTS_DIR, agent_id)
         os.makedirs(self.dir, exist_ok=True)
         self._collection = agent_id
-        # Ensure QMD knows about this collection (background, non-blocking)
-        threading.Thread(
-            target=_qmd_ensure_collection,
-            args=(self._collection, self.dir),
-            daemon=True,
-        ).start()
+        # Ensure QMD knows about this collection (once per collection, background)
+        if agent_id not in MemoryStore._ensured_collections:
+            MemoryStore._ensured_collections.add(agent_id)
+            threading.Thread(
+                target=_qmd_ensure_collection,
+                args=(self._collection, self.dir),
+                daemon=True,
+            ).start()
 
     def _make_id(self, name: str) -> str:
         """Generate a stable ID from name."""
         return hashlib.sha256(name.encode()).hexdigest()[:12]
 
     def _name_to_filename(self, name: str) -> str:
-        """Convert a memory name to a safe filename."""
+        """Convert a memory name to a safe filename with hash suffix to avoid collisions."""
         safe = re.sub(r'[^\w\s-]', '', name).strip().lower()
         safe = re.sub(r'[\s]+', '_', safe)
-        return safe[:60] + ".md"
+        # Add short hash to prevent collisions between similar names
+        h = hashlib.sha256(name.encode()).hexdigest()[:6]
+        base = safe[:50]
+        return f"{base}_{h}.md" if base else f"{h}.md"
+
+    def _find_file_for_name(self, name: str) -> str | None:
+        """Find existing file for a memory name by checking frontmatter."""
+        for fname in os.listdir(self.dir):
+            if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
+                continue
+            fpath = os.path.join(self.dir, fname)
+            try:
+                with open(fpath, "r") as f:
+                    raw = f.read(500)  # only need frontmatter
+                fm, _ = _parse_frontmatter(raw)
+                if fm.get("name") == name:
+                    return fpath
+            except Exception:
+                continue
+        return None
 
     def store(self, name: str, content: str, description: str = "",
               mem_type: str = "general") -> dict:
@@ -1950,10 +1993,16 @@ class MemoryStore:
         filename = self._name_to_filename(name)
         file_path = os.path.join(self.dir, filename)
 
-        # Write markdown file with frontmatter
+        # Check if memory already exists under a different filename (migration)
+        existing = self._find_file_for_name(name)
+        if existing and existing != file_path:
+            file_path = existing  # update in place
+            filename = os.path.basename(existing)
+
+        # Write markdown file with properly escaped frontmatter
         md_content = f"""---
-name: {name}
-description: {description}
+name: {_yaml_escape(name)}
+description: {_yaml_escape(description)}
 type: {mem_type}
 agent: {self.agent_id}
 ---
@@ -2057,7 +2106,7 @@ agent: {self.agent_id}
         """Fallback: scan .md files and do substring matching."""
         terms = query.lower().split()
         if not terms:
-            return []
+            return self.list_all(mem_type)[:limit]
         results = []
         for fname in os.listdir(self.dir):
             if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
@@ -2093,19 +2142,9 @@ agent: {self.agent_id}
         file_path = os.path.join(self.dir, filename)
         if not os.path.exists(file_path):
             # Try scanning for a file with matching frontmatter name
-            for fname in os.listdir(self.dir):
-                if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
-                    continue
-                fpath = os.path.join(self.dir, fname)
-                try:
-                    with open(fpath, "r") as f:
-                        raw = f.read()
-                    fm, _ = _parse_frontmatter(raw)
-                    if fm.get("name") == name:
-                        file_path = fpath
-                        break
-                except Exception:
-                    continue
+            found = self._find_file_for_name(name)
+            if found:
+                file_path = found
             else:
                 return {"error": f"Memory '{name}' not found"}
         os.remove(file_path)
@@ -2202,8 +2241,8 @@ def tool_memory_recall(args: dict) -> str:
         return _ok({"query": "", "results": results, "count": len(results)})
     results = ms.recall(query, limit, mem_type)
     for r in results:
-        if r.get("content") and len(r["content"]) > 1000:
-            r["content"] = r["content"][:1000] + "..."
+        if r.get("content") and len(r["content"]) > 4000:
+            r["content"] = r["content"][:4000] + "..."
     return _ok({"query": query, "results": results, "count": len(results)})
 
 
@@ -2228,10 +2267,9 @@ def tool_memory_shared(args: dict) -> str:
     if scope == "team":
         # Find the team head for the calling agent
         caller_id = getattr(_thread_local, "delegate_agent_id", None)
-        if not caller_id and _current_agent:
-            caller_id = _current_agent.agent_id
         if not caller_id:
-            caller_id = "main"
+            agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+            caller_id = agent.agent_id if agent else "main"
         team_info = _get_agent_team_info(caller_id)
         if not team_info:
             return _err("memory_shared: agent is not in any team — use scope='global' instead")
@@ -2273,12 +2311,13 @@ def tool_use_skill(args: dict) -> str:
     skill_name = args.get("skill", "")
     if not skill_name:
         return _err("use_skill: skill name is required")
-    if not _current_agent:
+    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    if not agent:
         return _err("use_skill: no active agent")
 
-    body = _current_agent.load_skill(skill_name)
+    body = agent.load_skill(skill_name)
     if body is None:
-        available = [s.get("slug", s["name"]) for s in _current_agent.list_skills()]
+        available = [s.get("slug", s["name"]) for s in agent.list_skills()]
         return _err(f"use_skill: skill '{skill_name}' not found. Available: {', '.join(available) or 'none'}")
 
     return _ok({"skill": skill_name, "instructions": body})
@@ -2339,9 +2378,11 @@ def _gather_recent_chat_history(agent_id: str, hours: int = 48, max_sessions: in
                                  max_messages_per_session: int = 20) -> str:
     """Read recent chat sessions and messages for an agent directly from chats.db.
     Returns a formatted text digest suitable for inclusion in a prompt."""
+    # Chat DB is always in main agent dir (shared across all agents)
     chat_db_path = os.path.join(AGENTS_DIR, "main", "chats.db")
     if not os.path.exists(chat_db_path):
         return ""
+    conn = None
     try:
         conn = sqlite3.connect(chat_db_path, timeout=5)
         conn.row_factory = sqlite3.Row
@@ -2395,10 +2436,15 @@ def _gather_recent_chat_history(agent_id: str, hours: int = 48, max_sessions: in
                     content = content[:400] + "..."
                 if content and content != "(tool calls)":
                     lines.append(f"  [{role}] {content}")
-        conn.close()
         return "\n".join(lines)
     except Exception as e:
         return f"(Error reading chat history: {e})"
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _gather_recent_schedule_history(agent_id: str, hours: int = 48, limit: int = 15) -> str:
@@ -2659,9 +2705,8 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
     request = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
 
     try:
-        # Use stricter tool round limit for delegated tasks
-        saved_max = MAX_TOOL_ROUNDS
-        globals()['MAX_TOOL_ROUNDS'] = MAX_DELEGATE_TOOL_ROUNDS
+        # Use stricter tool round limit via thread-local (thread-safe)
+        _thread_local.max_tool_rounds = MAX_DELEGATE_TOOL_ROUNDS
         try:
             with urllib.request.urlopen(request) as response:
                 if api_type == "openai":
@@ -2675,7 +2720,7 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
                         api_type, True, True, headers, endpoint,
                         cancel_token, 0, event_callback)
         finally:
-            globals()['MAX_TOOL_ROUNDS'] = saved_max
+            _thread_local.max_tool_rounds = None
     except Exception as e:
         return f"Delegation error: {e}"
 
@@ -2824,6 +2869,10 @@ class TaskRunner:
         except Exception as e:
             result_text = str(e)
             status = "error"
+        finally:
+            # Clean up thread-local state
+            _thread_local.delegate_agent_id = None
+            _thread_local.memory_store = None
 
         with self._lock:
             self._tasks[task_id]["status"] = status
@@ -2831,6 +2880,9 @@ class TaskRunner:
             self._tasks[task_id]["finished_at"] = datetime.datetime.now().isoformat()
             if status == "error":
                 self._tasks[task_id]["error"] = result_text
+            # Clean up thread reference
+            self._threads.pop(task_id, None)
+            self._cancel_flags.pop(task_id, None)
 
 
 # Global task runner
@@ -2849,10 +2901,11 @@ def tool_delegate_task(args: dict) -> str:
     if agent_id not in available:
         return _err(f"delegate_task: agent '{agent_id}' not found. Available: {', '.join(available)}")
 
-    # Team-aware delegation scoping
+    # Team-aware delegation scoping (prefer thread-local for concurrent requests)
     caller_id = getattr(_thread_local, "delegate_agent_id", None)
-    if not caller_id and _current_agent:
-        caller_id = _current_agent.agent_id
+    if not caller_id:
+        agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+        caller_id = agent.agent_id if agent else None
     if caller_id:
         scope = _get_delegation_scope(caller_id)
         if agent_id not in scope:
@@ -3186,14 +3239,18 @@ class Scheduler:
             self._thread.join(timeout=2)
 
     def _run_loop(self):
-        """Background loop that checks for due tasks every 30s."""
+        """Background loop that checks for due tasks every 30s.
+        Each task runs in its own thread to avoid blocking other due tasks."""
         while not self._stop.is_set():
             try:
                 due = self.get_due_tasks()
                 for task_row in due:
                     if self._stop.is_set():
                         break
-                    self._execute_scheduled(task_row)
+                    t = threading.Thread(
+                        target=self._execute_scheduled, args=(task_row,),
+                        daemon=True, name=f"sched_{task_row.get('name', '?')}")
+                    t.start()
             except Exception:
                 pass
             self._stop.wait(30)
@@ -4718,9 +4775,10 @@ def _execute_tool(name: str, args: dict) -> str:
     dedup = _check_tool_dedup(name, args)
     if dedup:
         return dedup
-    # Check MCP tools first
-    if _mcp_manager and _mcp_manager.is_mcp_tool(name):
-        return _mcp_manager.call_tool(name, args)
+    # Check MCP tools first (prefer thread-local for concurrent requests)
+    mcp = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
+    if mcp and mcp.is_mcp_tool(name):
+        return mcp.call_tool(name, args)
     fn = TOOL_DISPATCH.get(name)
     if fn:
         return fn(args)
@@ -4753,8 +4811,9 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     # Reset dedup tracker at the start of each conversation turn
     if _tool_round == 0:
         reset_tool_dedup()
-    # Soft stop after MAX_TOOL_ROUNDS — disable tools, force text response
-    if _tool_round >= MAX_TOOL_ROUNDS:
+    # Soft stop after max tool rounds — use thread-local override if set (delegation)
+    effective_max_rounds = getattr(_thread_local, 'max_tool_rounds', None) or MAX_TOOL_ROUNDS
+    if _tool_round >= effective_max_rounds:
         tools = False
     headers = make_headers(api_key, api_type)
 
@@ -4770,8 +4829,8 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         import platform
         os_name = platform.system()
 
-        # Load agent soul and tools guide
-        agent = _current_agent
+        # Load agent soul and tools guide (prefer thread-local for concurrent requests)
+        agent = getattr(_thread_local, 'current_agent', None) or _current_agent
         agent_id = agent.agent_id if agent else "main"
         soul = agent.soul if agent else ""
         tools_guide = agent.tools_guide if agent else ""
@@ -4865,10 +4924,11 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                     system_instruction += f"  - {s['name']} [{status}]: {s['task'][:80]} (next: {next_r})\n"
                 system_instruction += "Use schedule_list and schedule_history tools to query scheduler state.\n\n"
 
-        # MCP servers
-        if _mcp_manager and _mcp_manager.clients:
+        # MCP servers (prefer thread-local for concurrent requests)
+        mcp_mgr = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
+        if mcp_mgr and mcp_mgr.clients:
             system_instruction += "\nMCP SERVERS — external tools available via connected servers:\n"
-            for srv in _mcp_manager.list_servers():
+            for srv in mcp_mgr.list_servers():
                 tools_list = ", ".join(srv["tools"][:5])
                 more = f" +{srv['tool_count']-5}" if srv["tool_count"] > 5 else ""
                 system_instruction += f"  - {srv['name']} ({srv['transport']}): {tools_list}{more}\n"
@@ -4894,15 +4954,16 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         _apply_inference_to_payload(payload, inference_params, api_type, provider)
 
     if tools:
+        mcp_mgr = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
         if api_type == "openai":
             all_tools = list(TOOL_DEFINITIONS_OPENAI)
-            if _mcp_manager:
-                all_tools.extend(_mcp_manager.get_tool_definitions_openai())
+            if mcp_mgr:
+                all_tools.extend(mcp_mgr.get_tool_definitions_openai())
             payload["tools"] = all_tools
         else:
             all_tools = list(TOOL_DEFINITIONS)
-            if _mcp_manager:
-                all_tools.extend(_mcp_manager.get_tool_definitions())
+            if mcp_mgr:
+                all_tools.extend(mcp_mgr.get_tool_definitions())
             payload["tools"] = all_tools
             payload["system"] = system_instruction
 

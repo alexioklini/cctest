@@ -292,11 +292,18 @@ class SessionManager:
         # Try loading from DB
         info = ChatDB.get_session_info(session_id)
         if info:
+            model = info.get("model", "")
+            # Resolve provider from model to get correct API key/URL/type
+            try:
+                prov = BrainAgentHandler._resolve_provider_static(model) if model else {}
+            except Exception:
+                prov = {}
             s = Session(
-                agent_id=info["agent_id"], model=info.get("model", ""),
-                api_key=server_config.get("api_key", ""),
-                base_url=server_config.get("base_url", ""),
-                api_type=server_config.get("api_type", "anthropic"),
+                agent_id=info["agent_id"], model=model,
+                api_key=prov.get("api_key", server_config.get("api_key", "")),
+                base_url=prov.get("base_url", server_config.get("base_url", "")),
+                api_type=prov.get("api_type", server_config.get("api_type", "anthropic")),
+                max_context=engine.get_model_max_context(model) if model else server_config.get("max_context", 131072),
                 session_id=session_id,
             )
             s.load_from_db()
@@ -616,17 +623,20 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
     # Cache: model -> provider config (refreshed when providers change)
     _provider_cache: dict[str, dict] = {}
     _provider_cache_time: float = 0
+    _provider_cache_lock = threading.Lock()
 
-    def _resolve_provider(self, model: str) -> dict:
-        """Find the provider that has the given model. Returns {api_key, base_url, api_type}."""
-        # Resolve shortnames and "auto" via models config
+    @staticmethod
+    def _resolve_provider_static(model: str) -> dict:
+        """Find the provider that has the given model. Returns {api_key, base_url, api_type}.
+        Thread-safe. Can be called without a handler instance."""
         if engine._models_config:
             model = engine.resolve_model(model)
 
         # Check cache first (refresh every 60s)
         now = time.time()
-        if model in BrainAgentHandler._provider_cache and now - BrainAgentHandler._provider_cache_time < 60:
-            return BrainAgentHandler._provider_cache[model]
+        with BrainAgentHandler._provider_cache_lock:
+            if model in BrainAgentHandler._provider_cache and now - BrainAgentHandler._provider_cache_time < 60:
+                return BrainAgentHandler._provider_cache[model].copy()
 
         providers = server_config.get("providers", {})
         result = None
@@ -644,16 +654,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             for name, p in providers.items():
                 prov = {"api_key": p.get("api_key", ""), "base_url": p.get("base_url", ""),
                         "api_type": p.get("type", "openai"), "provider_name": name}
-                # Check default model match
                 if p.get("default_model") == model:
                     result = prov
                     break
-                # Check model list
                 try:
                     models = engine.get_available_models(p.get("api_key", ""), p.get("base_url", ""), p.get("type", "openai"))
-                    for m in models:
-                        BrainAgentHandler._provider_cache[m] = prov
-                    BrainAgentHandler._provider_cache_time = now
+                    with BrainAgentHandler._provider_cache_lock:
+                        for m in models:
+                            BrainAgentHandler._provider_cache[m] = prov
+                        BrainAgentHandler._provider_cache_time = now
                     if model in models:
                         result = prov
                         break
@@ -666,8 +675,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                       "api_type": server_config.get("api_type", "openai"),
                       "provider_name": "default"}
 
-        BrainAgentHandler._provider_cache[model] = result
+        with BrainAgentHandler._provider_cache_lock:
+            BrainAgentHandler._provider_cache[model] = result
         return result
+
+    def _resolve_provider(self, model: str) -> dict:
+        """Instance method wrapper for _resolve_provider_static."""
+        return BrainAgentHandler._resolve_provider_static(model)
 
     def _handle_create_session(self):
         body = self._read_json()
@@ -784,21 +798,23 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         handler_self = self  # capture for closure
 
         def worker():
-            # Set thread-local memory for tools
+            # Set thread-local agent context (thread-safe, no global mutation)
             engine._thread_local.memory_store = session.memory
+            agent_config = engine.AgentConfig(session.agent_id)
+            engine._thread_local.current_agent = agent_config
 
-            # Temporarily set agent globals for system prompt building
-            # Create fresh AgentConfig to pick up newly installed skills/config
-            old_agent = engine._current_agent
-            old_mcp = engine._mcp_manager
-            engine._current_agent = engine.AgentConfig(session.agent_id)
-
-            # Load MCP for this agent
+            # Load MCP for this agent (thread-local)
             mcp = engine.MCPManager()
             main_mcp = os.path.join(engine.AGENTS_DIR, "main", "mcp.json")
             mcp.load_config(main_mcp)
             if session.agent_id != "main":
                 mcp.load_config(session.agent.mcp_config_path)
+            engine._thread_local.mcp_manager = mcp
+
+            # Set globals as fallback for code that hasn't been migrated yet
+            old_agent = engine._current_agent
+            old_mcp = engine._mcp_manager
+            engine._current_agent = agent_config
             engine._mcp_manager = mcp
 
             try:
@@ -826,7 +842,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 else:
                     event_queue.put(("done", {"text": "", "tokens": 0, "model": session.model}))
             except engine.TaskCancelled:
-                session.messages.pop()  # remove user message
+                # Remove user message from in-memory list and DB
+                if session.messages and session.messages[-1].get("role") == "user":
+                    session.messages.pop()
                 event_queue.put(("error", {"message": "Cancelled"}))
             except SystemExit as e:
                 event_queue.put(("error", {"message": f"Engine fatal error (exit code {e.code})"}))
@@ -838,6 +856,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 session._streaming = False
                 engine._current_agent = old_agent
                 engine._mcp_manager = old_mcp
+                # Clean up thread-local state
+                engine._thread_local.current_agent = None
+                engine._thread_local.mcp_manager = None
+                engine._thread_local.memory_store = None
                 mcp.stop_all()
                 event_queue.put(None)  # sentinel
 

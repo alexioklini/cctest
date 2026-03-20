@@ -46,9 +46,9 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - `AbortController` in web UI ensures proper fetch cleanup between messages
 - Tool call dedup tracker prevents infinite loops (2 identical calls = hard abort)
 - Scheduled tasks have configurable timeout (default 5 min) via watchdog thread
-- `_run_delegate` uses `MAX_DELEGATE_TOOL_ROUNDS` and thread-local memory stores
+- `_run_delegate` uses thread-local `max_tool_rounds` override (no global mutation) and thread-local memory stores
 - Memory uses QMD hybrid search (BM25 + vector + LLM reranking) via HTTP MCP on port 8181
-- Markdown files are source of truth for memory; QMD indexes them with debounced embed after writes
+- Markdown files are source of truth for memory; QMD indexes them with per-collection debounced embed after writes
 - If QMD is unreachable, memory recall falls back to file-scan substring matching
 - QMD docs endpoint returns index health per file: `indexed`, `embedded_at`, `current` (hash match)
 - QMD path normalization: QMD lowercases paths and converts underscores to hyphens — `/docs` endpoint mirrors this when matching filesystem paths to index entries
@@ -59,6 +59,12 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - QMD health check uses lightweight TCP socket connect (no MCP session created)
 - `memory_shared` and `list_all` return full content body, not just metadata
 - Telegram runs as an in-process thread, not a separate launchd daemon
+- Thread-safe agent context: `_thread_local.current_agent` and `_thread_local.mcp_manager` preferred over globals for concurrent requests
+- Session restore resolves provider from model via `_resolve_provider_static()` (no more wrong API key/URL on old chats)
+- Provider cache uses `_provider_cache_lock` for thread-safe access
+- Memory frontmatter uses `_yaml_escape()` to prevent YAML injection from user content
+- Memory filenames include hash suffix to prevent collisions between similar names
+- Scheduler executes due tasks in parallel threads instead of sequentially
 - Agent activity tracking: `/v1/agents/activity` returns active tasks/chats per agent for UI indicators
 - Agent teams: hierarchical team structure with team heads orchestrating members
 
