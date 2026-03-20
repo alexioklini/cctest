@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 VERSION_DATE = "2026-03-20"
 CHANGELOG = [
+    ("1.7.0", "2026-03-20", "Plan mode, web result caching, streaming tool output, cost tracking + rate limiting, custom slash commands, LLM input refinement"),
     ("1.6.0", "2026-03-20", "TUI feature parity (30+ slash commands), slash command popup menus in both TUI and Web UI, roadmap"),
     ("1.5.3", "2026-03-20", "Thread-safe agent context, fix old chat provider resolution, per-collection QMD debounce, YAML-safe frontmatter, memory filename collision prevention, concurrent scheduler, thread-local cleanup, recall content limit increase"),
     ("1.5.2", "2026-03-20", "Fix memory summary refresh (direct execution instead of scheduler indirection), fix QMD index path normalization (underscore/hyphen mismatch), QMD collection health stats in settings UI"),
@@ -45,6 +46,81 @@ import time
 import tty
 import urllib.request
 import urllib.error
+
+
+# --- Web Result Cache ---
+
+class WebCache:
+    """Thread-safe LRU cache with TTL for web results."""
+
+    def __init__(self, max_entries: int = 200, ttl: int = 900):
+        self._cache = collections.OrderedDict()
+        self._lock = threading.Lock()
+        self.max_entries = max_entries
+        self.ttl = ttl
+        self.hits = 0
+        self.misses = 0
+
+    def get(self, key: str) -> dict | None:
+        with self._lock:
+            entry = self._cache.get(key)
+            if entry is None:
+                self.misses += 1
+                return None
+            ts, value = entry
+            if time.time() - ts > self.ttl:
+                del self._cache[key]
+                self.misses += 1
+                return None
+            self._cache.move_to_end(key)
+            self.hits += 1
+            return value
+
+    def put(self, key: str, value: dict):
+        with self._lock:
+            if key in self._cache:
+                del self._cache[key]
+            self._cache[key] = (time.time(), value)
+            while len(self._cache) > self.max_entries:
+                self._cache.popitem(last=False)
+
+    def clear(self):
+        with self._lock:
+            self._cache.clear()
+            self.hits = 0
+            self.misses = 0
+
+    def stats(self) -> dict:
+        with self._lock:
+            return {
+                "entries": len(self._cache),
+                "max_entries": self.max_entries,
+                "ttl": self.ttl,
+                "hits": self.hits,
+                "misses": self.misses,
+                "hit_rate": round(self.hits / max(1, self.hits + self.misses) * 100, 1),
+            }
+
+
+_web_cache = WebCache()
+
+
+# --- Plan Mode ---
+
+READONLY_TOOLS = frozenset({
+    "read_file", "list_directory", "search_files", "web_fetch", "exa_search",
+    "memory_recall", "memory_shared", "task_status", "schedule_list",
+    "schedule_history", "use_skill", "gmail_inbox", "gmail_read", "gmail_search",
+})
+
+PLAN_MODE_PROMPT = (
+    "\n\nPLAN MODE ACTIVE: You are in read-only planning mode. "
+    "You may ONLY use read-only tools (read_file, list_directory, search_files, "
+    "web_fetch, exa_search, memory_recall, memory_shared, task_status, etc.). "
+    "Do NOT attempt to write files, execute commands, store memory, send emails, "
+    "or delegate tasks. Instead, describe a detailed plan of what you WOULD do, "
+    "including specific file paths, commands, and steps.\n"
+)
 
 
 # --- Tool Definitions ---
@@ -635,6 +711,68 @@ def _strip_ansi(text: str) -> str:
     return text
 
 
+def _streaming_execute_command(command: str, timeout: int, cwd: str | None,
+                               event_callback, tool_use_id: str) -> str:
+    """Execute command with streaming output via event_callback."""
+    env = os.environ.copy()
+    env["TERM"] = "dumb"
+    env["NO_COLOR"] = "1"
+    env["PAGER"] = "cat"
+    env["COLUMNS"] = "200"
+    env["LINES"] = "50"
+
+    proc = subprocess.Popen(
+        command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL, cwd=cwd, env=env,
+        start_new_session=True,
+    )
+    output_lines = []
+    import io
+    deadline = time.time() + timeout
+    try:
+        # Read stdout line by line, emitting events
+        for raw_line in iter(proc.stdout.readline, b''):
+            if time.time() > deadline:
+                import signal as sig
+                try:
+                    os.killpg(proc.pid, sig.SIGKILL)
+                except OSError:
+                    proc.kill()
+                proc.wait(timeout=5)
+                line_text = _strip_ansi(raw_line.decode("utf-8", errors="replace"))
+                output_lines.append(line_text)
+                output = "".join(output_lines)
+                if len(output) > 50000:
+                    output = output[:50000] + "\n... (truncated)"
+                return _err(f"execute_command: timed out after {timeout}s\n{output}")
+            line_text = _strip_ansi(raw_line.decode("utf-8", errors="replace"))
+            output_lines.append(line_text)
+            if event_callback:
+                event_callback("tool_output", {
+                    "tool_use_id": tool_use_id,
+                    "line": line_text.rstrip("\n"),
+                })
+        proc.stdout.close()
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        import signal as sig
+        try:
+            os.killpg(proc.pid, sig.SIGKILL)
+        except OSError:
+            proc.kill()
+        proc.wait(timeout=5)
+
+    output = "".join(output_lines)
+    stderr_data = proc.stderr.read() if proc.stderr else b""
+    proc.stderr.close()
+    if stderr_data:
+        err_text = _strip_ansi(stderr_data.decode("utf-8", errors="replace"))
+        output += ("\n--- stderr ---\n" + err_text) if output else err_text
+    if len(output) > 50000:
+        output = output[:50000] + "\n... (truncated)"
+    return _ok({"command": command, "exit_code": proc.returncode, "output": output})
+
+
 def tool_execute_command(args: dict) -> str:
     command = args.get("command", "")
     cwd = args.get("cwd")
@@ -642,6 +780,12 @@ def tool_execute_command(args: dict) -> str:
     try:
         if cwd:
             cwd = os.path.expanduser(cwd)
+
+        # Use streaming version if event_callback is available
+        ecb = getattr(_thread_local, 'event_callback', None)
+        tuid = getattr(_thread_local, 'tool_use_id', None)
+        if ecb and tuid:
+            return _streaming_execute_command(command, timeout, cwd, ecb, tuid)
 
         # Force non-interactive environment
         env = os.environ.copy()
@@ -939,6 +1083,16 @@ def tool_web_fetch(args: dict) -> str:
     headers = args.get("headers", {})
     body = args.get("body")
     max_length = args.get("max_length", 50000)
+    force_fresh = args.get("force_fresh", False)
+
+    # Check cache for GET requests without body
+    cache_key = url if method == "GET" and not body else None
+    if cache_key and not force_fresh:
+        cached = _web_cache.get(cache_key)
+        if cached is not None:
+            cached["cached"] = True
+            return _ok(cached)
+
     try:
         req_headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -957,7 +1111,10 @@ def tool_web_fetch(args: dict) -> str:
             text = raw.decode(charset, errors="replace")
         if len(text) > max_length:
             text = text[:max_length] + "\n... (truncated)"
-        return _ok({"url": url, "status": resp.status, "length": len(text), "content": text})
+        result = {"url": url, "status": resp.status, "length": len(text), "content": text}
+        if cache_key:
+            _web_cache.put(cache_key, dict(result))
+        return _ok(result)
     except urllib.error.HTTPError as e:
         body_text = ""
         try:
@@ -969,8 +1126,17 @@ def tool_web_fetch(args: dict) -> str:
         return _err(f"web_fetch: {e}")
 
 
-def exa_search(query: str, num_results: int = 5, category: str | None = None) -> str:
+def exa_search(query: str, num_results: int = 5, category: str | None = None,
+               force_fresh: bool = False) -> str:
     """Execute an Exa web search and return JSON results. Uses stdlib only."""
+    # Check cache
+    cache_key = f"exa:{query}:{num_results}:{category or ''}"
+    if not force_fresh:
+        cached = _web_cache.get(cache_key)
+        if cached is not None:
+            cached["cached"] = True
+            return json.dumps(cached, indent=1)
+
     api_key = os.environ.get("EXA_API_KEY", "97dbd594-f7b4-4866-9a8e-6a297e3df576")
 
     body = {
@@ -1021,6 +1187,8 @@ def exa_search(query: str, num_results: int = 5, category: str | None = None) ->
             search_info["category"] = category
         if not results:
             search_info["message"] = "No search results found. Try a different query."
+        if results:
+            _web_cache.put(cache_key, dict(search_info))
         return json.dumps(search_info, indent=1)
 
     except urllib.error.HTTPError as e:
@@ -1471,6 +1639,22 @@ Adapt your behavior to the tasks you are given.
     @property
     def mcp_config_path(self) -> str:
         return os.path.join(self.dir, "mcp.json")
+
+    def load_commands(self) -> list[dict]:
+        """Load custom slash commands from commands.json."""
+        path = os.path.join(self.dir, "commands.json")
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+                return data if isinstance(data, list) else []
+        except (OSError, json.JSONDecodeError):
+            return []
+
+    def save_commands(self, commands: list[dict]):
+        """Save custom slash commands to commands.json."""
+        path = os.path.join(self.dir, "commands.json")
+        with open(path, "w") as f:
+            json.dump(commands, f, indent=2)
 
     def list_skills(self) -> list[dict]:
         """List all skills for this agent (own + main's global skills)."""
@@ -5086,6 +5270,13 @@ def reset_tool_dedup():
 
 def _execute_tool(name: str, args: dict) -> str:
     """Execute a tool by name with the given arguments."""
+    # Plan mode: block non-readonly tools
+    if getattr(_thread_local, 'plan_mode', False):
+        # Special case: memory_shared with action=store should be blocked
+        if name == "memory_shared" and args.get("action") == "store":
+            return _err("Blocked in plan mode. Describe what you would do instead.")
+        if name not in READONLY_TOOLS:
+            return _err("Blocked in plan mode. Describe what you would do instead.")
     # Check for duplicate tool calls
     dedup = _check_tool_dedup(name, args)
     if dedup:
@@ -5273,6 +5464,9 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
 
         if tools_guide:
             system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
+        # Append plan mode prompt if active
+        if getattr(_thread_local, 'plan_mode', False):
+            system_instruction += PLAN_MODE_PROMPT
         if api_type == "openai":
             augmented_messages.insert(0, {"role": "system", "content": system_instruction})
         else:
@@ -5490,7 +5684,14 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
         _display_tool_call(tu["name"], tu["input"])
         if event_callback:
             event_callback("tool_call", {"name": tu["name"], "args": tu["input"]})
-        result = _execute_tool(tu["name"], tu["input"])
+        # Store event_callback and tool_use_id for streaming tool output
+        _thread_local.event_callback = event_callback
+        _thread_local.tool_use_id = tu["id"]
+        try:
+            result = _execute_tool(tu["name"], tu["input"])
+        finally:
+            _thread_local.event_callback = None
+            _thread_local.tool_use_id = None
         _display_tool_result(tu["name"], result)
         if event_callback:
             event_callback("tool_result", {"name": tu["name"], "result": result})
@@ -5608,7 +5809,14 @@ def _handle_openai_response(response, payload, messages, model, api_key,
         _display_tool_call(tool_name, args)
         if event_callback:
             event_callback("tool_call", {"name": tool_name, "args": args})
-        result = _execute_tool(tool_name, args)
+        # Store event_callback and tool_use_id for streaming tool output
+        _thread_local.event_callback = event_callback
+        _thread_local.tool_use_id = tc["id"]
+        try:
+            result = _execute_tool(tool_name, args)
+        finally:
+            _thread_local.event_callback = None
+            _thread_local.tool_use_id = None
         _display_tool_result(tool_name, result)
         if event_callback:
             event_callback("tool_result", {"name": tool_name, "result": result})

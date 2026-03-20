@@ -417,10 +417,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_service_log()
         elif path.startswith("/v1/agents/") and path.endswith("/memory-summary"):
             self._handle_memory_summary_get(path)
+        elif path.startswith("/v1/agents/") and path.endswith("/commands"):
+            self._handle_agent_commands_get(path)
         elif path == "/v1/costs":
             self._handle_costs()
         elif path == "/v1/costs/daily":
             self._handle_costs_daily()
+        elif path == "/v1/cache/stats":
+            self._send_json(engine._web_cache.stats())
         elif path == "/" or path.startswith("/web/") or path.endswith((".html", ".css", ".js", ".ico")):
             self._serve_static(path)
         else:
@@ -479,6 +483,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_server_config()
         elif path.startswith("/v1/agents/") and path.endswith("/memory-summary"):
             self._handle_memory_summary_post(path)
+        elif path == "/v1/cache/clear":
+            engine._web_cache.clear()
+            self._send_json({"status": "cleared"})
+        elif path == "/v1/refine":
+            self._handle_refine()
+        elif path.startswith("/v1/agents/") and path.endswith("/commands"):
+            self._handle_agent_commands_post(path)
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -743,6 +754,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         sid = body.get("session_id", "")
         message = body.get("message", "")
         model_override = body.get("model")
+        chat_mode = body.get("mode", "")
         session = sessions.get(sid)
 
         if not session:
@@ -751,6 +763,19 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         if not message:
             self._send_json({"error": "No message"}, 400)
             return
+
+        # Custom command expansion
+        if message.startswith("/"):
+            agent = engine.AgentConfig(session.agent_id)
+            custom_cmds = agent.load_commands()
+            cmd_word = message.split()[0][1:]  # strip / and get first word
+            for cmd in custom_cmds:
+                if cmd.get("name", "").lower() == cmd_word.lower():
+                    template = cmd.get("template", "")
+                    # Replace {{input}} with rest of message
+                    rest = message[len(cmd_word) + 1:].strip()
+                    message = template.replace("{{input}}", rest)
+                    break
 
         # If model changed, re-resolve provider
         if model_override and model_override != session.model:
@@ -815,6 +840,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 mcp.load_config(session.agent.mcp_config_path)
             engine._thread_local.mcp_manager = mcp
 
+            # Set plan mode if requested
+            engine._thread_local.plan_mode = (chat_mode == "plan")
+
             # Set globals as fallback for code that hasn't been migrated yet
             old_agent = engine._current_agent
             old_mcp = engine._mcp_manager
@@ -876,6 +904,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 engine._thread_local.current_agent = None
                 engine._thread_local.mcp_manager = None
                 engine._thread_local.memory_store = None
+                engine._thread_local.plan_mode = False
                 mcp.stop_all()
                 event_queue.put(None)  # sentinel
 
@@ -2110,6 +2139,72 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         days = int(params.get("days", "7"))
         daily = engine._cost_tracker.get_daily(agent=agent, days=days)
         self._send_json({"daily": daily, "days": days, "agent_filter": agent})
+
+    def _handle_agent_commands_get(self, path):
+        """GET /v1/agents/{id}/commands — list custom commands."""
+        parts = path.split("/")
+        agent_id = parts[3] if len(parts) > 3 else "main"
+        from urllib.parse import unquote
+        agent_id = unquote(agent_id)
+        agent = engine.AgentConfig(agent_id)
+        self._send_json({"commands": agent.load_commands()})
+
+    def _handle_agent_commands_post(self, path):
+        """POST /v1/agents/{id}/commands — save custom commands."""
+        parts = path.split("/")
+        agent_id = parts[3] if len(parts) > 3 else "main"
+        from urllib.parse import unquote
+        agent_id = unquote(agent_id)
+        body = self._read_json()
+        commands = body.get("commands", [])
+        agent = engine.AgentConfig(agent_id)
+        agent.save_commands(commands)
+        self._send_json({"status": "saved", "count": len(commands)})
+
+    def _handle_refine(self):
+        """POST /v1/refine — refine text with LLM one-shot call."""
+        body = self._read_json()
+        text = body.get("text", "")
+        context = body.get("context", "general")
+        if not text:
+            self._send_json({"error": "No text provided"}, 400)
+            return
+
+        # Find cheapest available model
+        refine_model = None
+        if engine._models_config:
+            candidates = []
+            for mid, cfg in engine._models_config.items():
+                if not cfg.get("enabled", True):
+                    continue
+                candidates.append((mid, cfg.get("priority", 0)))
+            candidates.sort(key=lambda x: x[1])  # lowest priority = cheapest
+            if candidates:
+                refine_model = candidates[0][0]
+        if not refine_model:
+            refine_model = server_config.get("default_model", "")
+
+        if not refine_model:
+            self._send_json({"error": "No model available for refinement"}, 503)
+            return
+
+        provider = self._resolve_provider(refine_model)
+        system_prompt = (
+            f"You are a text refinement assistant for the '{context}' context. "
+            "Improve the given text: fix grammar, enhance clarity, make it more precise. "
+            "Return ONLY the improved text, nothing else. Do not add quotes or explanations."
+        )
+        messages = [{"role": "user", "content": f"Improve this text:\n\n{text}"}]
+
+        try:
+            result = engine.send_message(
+                messages, refine_model, provider["api_key"],
+                provider["base_url"], provider["api_type"],
+                silent=True, tools=False,
+            )
+            self._send_json({"refined": result or text, "model": refine_model})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
 
     def _handle_services_status(self):
         """GET /v1/services — status of all managed services."""

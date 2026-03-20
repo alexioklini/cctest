@@ -992,6 +992,8 @@ tailwind.config = {
         <div id="slash-popup" class="slash-popup" style="display:none"></div>
         <div class="chat-input-wrapper flex items-end gap-2 p-2">
           <textarea id="chat-input" class="flex-1 bg-transparent border-none px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none font-body" rows="2" placeholder="Type a message... (Ctrl+Enter to send)" style="box-shadow:none !important;"></textarea>
+          <button id="btn-plan-mode" title="Toggle Plan Mode (read-only)" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="togglePlanMode()">Plan</button>
+          <button id="btn-refine" title="Refine message with AI" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="refineMessage()">&#x2728;</button>
           <button id="btn-send" class="btn-primary px-5 py-2 rounded-xl text-sm flex items-center gap-2 self-end font-display font-semibold">
             Send
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
@@ -1338,6 +1340,7 @@ class API {
 
     const body = { session_id: sessionId, message };
     if (model) body.model = model;
+    if (planModeActive) body.mode = 'plan';
     const res = await fetch(`${BASE_URL}/v1/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1437,6 +1440,8 @@ class AppState {
 }
 
 const state = new AppState();
+let planModeActive = false;
+let customCommands = {}; // agentId -> [{name, template, description}]
 
 // ─── DOM Refs ───────────────────────────────────────────────
 const $ = (sel) => document.querySelector(sel);
@@ -1769,6 +1774,8 @@ function selectAgent(agentName) {
   if (!state.agentSessions[agentName].loaded) {
     loadAgentSessions(agentName);
   }
+  // Load custom commands for this agent
+  loadCustomCommands(agentName);
   renderAgentCards();
   updateChatArea();
 }
@@ -2106,15 +2113,26 @@ function renderToolBlock(tool) {
     : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#ff7b00" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>';
   const name = esc(tool.name || '');
   const argsPreview = tool.args ? esc(typeof tool.args === 'string' ? tool.args : JSON.stringify(tool.args)).substring(0, 120) : '';
+  // Check if result contains cached flag
+  let isCached = false;
+  if (tool.result !== undefined) {
+    try {
+      const parsed = typeof tool.result === 'string' ? JSON.parse(tool.result) : tool.result;
+      if (parsed && parsed.cached) isCached = true;
+    } catch {}
+  }
+  const cachedBadge = isCached ? '<span style="background:#3b82f6;color:#fff;font-size:9px;padding:1px 5px;border-radius:4px;margin-left:4px;">cached</span>' : '';
   const resultContent = tool.result !== undefined ? `<div class="mt-2.5 text-xs text-text-secondary mono whitespace-pre-wrap max-h-40 overflow-y-auto bg-base/50 rounded-lg p-3">${esc(typeof tool.result === 'string' ? tool.result : JSON.stringify(tool.result, null, 2))}</div>` : '';
+  // Streaming tool output panel
+  const toolOutputHtml = tool.streamOutput ? `<div class="mt-2 text-xs mono whitespace-pre-wrap max-h-48 overflow-y-auto p-3 rounded-lg" style="background:#1a1a2e;color:#a8b2d1;">${esc(tool.streamOutput)}</div>` : '';
   return `<div class="tool-block px-4 py-2.5 mb-3 text-xs cursor-pointer" onclick="this.classList.toggle('open');this.querySelector('.tool-detail')?.classList.toggle('hidden')">
     <div class="flex items-center gap-2.5">
       <span class="tool-chevron text-text-muted text-[10px]">&#x25B6;</span>
       ${statusIcon}
-      <span class="text-accent font-medium font-mono">${name}</span>
+      <span class="text-accent font-medium font-mono">${name}</span>${cachedBadge}
       <span class="text-text-muted truncate">${argsPreview}</span>
     </div>
-    <div class="tool-detail hidden">${resultContent}</div>
+    <div class="tool-detail hidden">${resultContent}${toolOutputHtml}</div>
   </div>`;
 }
 
@@ -2233,6 +2251,14 @@ async function sendMessage() {
         const tool = assistantMsg.tools.find(t => t.name === d.name && t.result === undefined);
         if (tool) tool.result = d.result;
         updateStreamingMessage(chat);
+      },
+      tool_output: (d) => {
+        // Append streaming line to the matching tool
+        const tool = assistantMsg.tools.find(t => t.result === undefined);
+        if (tool) {
+          tool.streamOutput = (tool.streamOutput || '') + (d.line || '') + '\n';
+          updateStreamingMessage(chat);
+        }
       },
       done: (d) => {
         if (d.text && !assistantMsg.content) assistantMsg.content = d.text;
@@ -5144,6 +5170,63 @@ function schedDashSetHistoryFilter(filter) {
   loadSchedDashTab();
 }
 
+// ─── Plan Mode ──────────────────────────────────────────────
+function togglePlanMode() {
+  planModeActive = !planModeActive;
+  const btn = document.getElementById('btn-plan-mode');
+  if (planModeActive) {
+    btn.style.background = '#3b82f6';
+    btn.style.color = '#fff';
+    btn.style.borderColor = '#3b82f6';
+    btn.textContent = 'Plan ON';
+    showToast('Plan mode ON — read-only tools only');
+  } else {
+    btn.style.background = 'transparent';
+    btn.style.color = 'var(--text-secondary)';
+    btn.style.borderColor = 'var(--border)';
+    btn.textContent = 'Plan';
+    showToast('Plan mode OFF');
+  }
+}
+
+// ─── LLM Refine ─────────────────────────────────────────────
+async function refineMessage() {
+  const text = dom.chatInput.value.trim();
+  if (!text) { showToast('Type something to refine'); return; }
+  try {
+    const res = await API.post('/v1/refine', { text, context: state.activeChat?.agent || 'general' });
+    if (res.error) { showToast('Refine error: ' + res.error); return; }
+    const refined = res.refined || text;
+    // Show preview popup
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+    modal.innerHTML = `<div class="modal-content p-6" style="max-width:560px">
+      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+      <h2 class="font-display text-lg font-semibold text-text-primary mb-4">Refined Message</h2>
+      <div class="text-sm text-text-secondary mb-2">Original:</div>
+      <div class="text-xs mono bg-surface-light rounded-lg p-3 mb-4 text-text-muted">${esc(text)}</div>
+      <div class="text-sm text-text-secondary mb-2">Refined:</div>
+      <textarea id="refine-result" class="w-full text-sm mono bg-surface-light rounded-lg p-3 mb-4 text-text-primary border border-border" rows="5" style="box-shadow:none !important;">${esc(refined)}</textarea>
+      <div class="flex gap-2 justify-end">
+        <button class="btn-secondary px-4 py-2 rounded-lg text-sm" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+        <button class="btn-primary px-4 py-2 rounded-lg text-sm" onclick="dom.chatInput.value=document.getElementById('refine-result').value;this.closest('.modal-overlay').remove();">Accept</button>
+      </div>
+    </div>`;
+    document.body.appendChild(modal);
+  } catch (e) {
+    showToast('Refine failed: ' + e.message);
+  }
+}
+
+// ─── Custom Commands ────────────────────────────────────────
+async function loadCustomCommands(agentId) {
+  try {
+    const data = await API.get(`/v1/agents/${encodeURIComponent(agentId)}/commands`);
+    customCommands[agentId] = data.commands || [];
+  } catch { customCommands[agentId] = []; }
+}
+
 // ─── Event Listeners ────────────────────────────────────────
 dom.btnSend.onclick = sendMessage;
 dom.btnStop.onclick = stopGeneration;
@@ -5191,6 +5274,13 @@ const slashCommands = [
   { cmd: '/providers', desc: 'Open providers settings',   action: () => { _settingsTab = 'providers'; openSettingsModal(); } },
   { cmd: '/teams',     desc: 'Open teams settings',       action: () => { _settingsTab = 'teams'; openSettingsModal(); } },
   { cmd: '/qmd',       desc: 'Open QMD settings',         action: () => { _settingsTab = 'qmd'; openSettingsModal(); } },
+  { cmd: '/plan',      desc: 'Toggle plan mode (read-only)', action: () => togglePlanMode() },
+  { cmd: '/cache',     desc: 'Show web cache stats',      action: async () => {
+    try {
+      const data = await API.get('/v1/cache/stats');
+      showToast(`Cache: ${data.entries} entries, ${data.hit_rate}% hit rate (${data.hits} hits / ${data.misses} misses)`);
+    } catch(e) { showToast('Cache stats error: ' + e.message); }
+  }},
   { cmd: '/help',      desc: 'Show keyboard shortcuts',   action: () => {
     const helpHtml = [
       ['Ctrl+Enter', 'Send message'],
@@ -5217,9 +5307,17 @@ const slashPopup = {
 
 function slashShow(filter) {
   const q = (filter || '').toLowerCase();
+  // Merge built-in + custom commands
+  const agentCmds = (customCommands[state.activeAgentId] || []).map(c => ({
+    cmd: '/' + c.name,
+    desc: (c.description || c.template || '').substring(0, 60) + ' [Custom]',
+    action: () => { dom.chatInput.value = '/' + c.name + ' '; },
+    custom: true,
+  }));
+  const allCommands = [...slashCommands, ...agentCmds];
   slashPopup.filtered = q
-    ? slashCommands.filter(c => c.cmd.slice(1).startsWith(q) || c.desc.toLowerCase().includes(q))
-    : [...slashCommands];
+    ? allCommands.filter(c => c.cmd.slice(1).startsWith(q) || c.desc.toLowerCase().includes(q))
+    : [...allCommands];
   slashPopup.activeIdx = 0;
   if (slashPopup.filtered.length === 0) {
     slashPopup.el.innerHTML = '<div class="slash-popup-empty">No matching commands</div>';
@@ -5227,6 +5325,7 @@ function slashShow(filter) {
     slashPopup.el.innerHTML = slashPopup.filtered.map((c, i) =>
       `<div class="slash-popup-item ${i === 0 ? 'active' : ''}" data-idx="${i}">` +
       `<span class="slash-popup-cmd">${esc(c.cmd)}</span>` +
+      (c.custom ? '<span style="background:#8b5cf6;color:#fff;font-size:9px;padding:1px 4px;border-radius:3px;margin-left:4px;">Custom</span>' : '') +
       `<span class="slash-popup-desc">${esc(c.desc)}</span></div>`
     ).join('') + '<div class="slash-popup-hint">\u2191\u2193 navigate \u00b7 Enter select \u00b7 Esc close</div>';
   }

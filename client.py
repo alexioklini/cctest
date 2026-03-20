@@ -70,19 +70,22 @@ class BrainAgentClient:
 
     # --- Chat (SSE streaming) ---
 
-    def chat(self, message: str):
+    def chat(self, message: str, mode: str | None = None):
         """Send a message and yield SSE events as (event_type, data) tuples.
 
-        Event types: text_delta, tool_call, tool_result, done, error
+        Event types: text_delta, tool_call, tool_result, tool_output, done, error
         Uses raw socket for unbuffered SSE streaming.
         """
         import socket
         from urllib.parse import urlparse
 
-        body = json.dumps({
+        payload = {
             "session_id": self.session_id,
             "message": message,
-        })
+        }
+        if mode:
+            payload["mode"] = mode
+        body = json.dumps(payload)
 
         parsed = urlparse(self.server_url)
         host = parsed.hostname

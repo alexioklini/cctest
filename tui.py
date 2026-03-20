@@ -243,6 +243,13 @@ SLASH_COMMANDS = {
     "/qmd reindex":   "Trigger QMD reindex",
     # Costs
     "/costs":       "Show cost summary (last 24h)",
+    # Cache
+    "/cache":       "Show web cache stats",
+    "/cache clear": "Clear web cache",
+    # Plan mode
+    "/plan":        "Toggle plan mode (read-only tools)",
+    # Refine
+    "/refine":      "Refine text with LLM",
 }
 
 
@@ -338,6 +345,13 @@ def print_help():
         ("/status", "Show server & service status"),
         ("/qmd", "Show QMD status and health"),
         ("/qmd reindex [coll]", "Trigger QMD reindex"),
+    ])
+
+    _section("Cache & Planning", [
+        ("/cache", "Show web cache stats"),
+        ("/cache clear", "Clear web cache"),
+        ("/plan", "Toggle plan mode (read-only tools)"),
+        ("/refine <text>", "Refine text with LLM"),
     ])
 
     _section("Other", [
@@ -1233,6 +1247,14 @@ def run_interactive(args):
     current_model = args.model
     show_tools = True
     token_count = 0
+    plan_mode = False
+    custom_commands = []
+    # Load custom commands
+    try:
+        data = client._get(f"/v1/agents/{current_agent}/commands")
+        custom_commands = data.get("commands", [])
+    except Exception:
+        pass
 
     # Prompt setup
     pt_history = InMemoryHistory()
@@ -1261,6 +1283,11 @@ def run_interactive(args):
             ("class:tb.label", "Ctx: "),
             ("class:tb.ctx", f"{tok_display} "),
         ]
+        if plan_mode:
+            parts.extend([
+                ("class:tb.sep", "│ "),
+                ("class:tb.plan", "[PLAN] "),
+            ])
         return parts
 
     pt_style = PTStyle.from_dict({
@@ -1272,6 +1299,7 @@ def run_interactive(args):
         "tb.model": "bg:default #5f87ff noreverse",
         "tb.sep":   "bg:default #444444 noreverse",
         "tb.ctx":   "bg:default #ff8700 noreverse",
+        "tb.plan":  "bg:default #3b82f6 bold noreverse",
         "completion-menu":             "bg:#333333 #cccccc",
         "completion-menu.completion":  "bg:#333333 #cccccc",
         "completion-menu.completion.current": "bg:#555555 #ffffff bold",
@@ -1475,11 +1503,61 @@ def run_interactive(args):
                 _handle_schedule(low[9:].strip(), client, session)
                 continue
 
+            # --- Cache ---
+
+            if low.startswith("/cache"):
+                arg = stripped[6:].strip().lower()
+                if arg == "clear":
+                    try:
+                        client._post("/v1/cache/clear")
+                        console.print("  [#5f87ff]Cache cleared[/]")
+                    except Exception as e:
+                        console.print(f"  [error]{e}[/]")
+                else:
+                    try:
+                        stats = client._get("/v1/cache/stats")
+                        console.print(f"  [bold]Web Cache[/]")
+                        console.print(f"  [dim]Entries:[/] {stats.get('entries', 0)}/{stats.get('max_entries', 0)}")
+                        console.print(f"  [dim]Hit rate:[/] {stats.get('hit_rate', 0)}% ({stats.get('hits', 0)} hits, {stats.get('misses', 0)} misses)")
+                        console.print(f"  [dim]TTL:[/] {stats.get('ttl', 0)}s")
+                    except Exception as e:
+                        console.print(f"  [error]{e}[/]")
+                continue
+
+            # --- Plan Mode ---
+
+            if low == "/plan":
+                plan_mode = not plan_mode
+                label = "[#3b82f6]ON[/]" if plan_mode else "[dim]OFF[/]"
+                console.print(f"  [dim]Plan mode:[/] {label}")
+                continue
+
+            # --- Refine ---
+
+            if low.startswith("/refine"):
+                refine_text = stripped[7:].strip()
+                if not refine_text:
+                    console.print("  [dim]Usage: /refine <text>[/]")
+                else:
+                    try:
+                        r = client._post("/v1/refine", {"text": refine_text, "context": current_agent})
+                        if r.get("error"):
+                            console.print(f"  [error]{r['error']}[/]")
+                        else:
+                            refined = r.get("refined", refine_text)
+                            console.print(f"\n  [bold]Refined:[/]")
+                            console.print(Markdown(refined))
+                            console.print()
+                    except Exception as e:
+                        console.print(f"  [error]{e}[/]")
+                continue
+
             # --- Send message via SSE ---
             console.print()
             start_time = time.time()
             full_text = ""
             tool_count = 0
+            tool_output_lines = 0
             done_model = ""
             done_cost = None
 
@@ -1488,7 +1566,7 @@ def run_interactive(args):
                     "  [bold #ff8700]Thinking...[/]",
                     spinner="dots", spinner_style="#ff8700",
                 ):
-                    for event_type, data in client.chat(stripped):
+                    for event_type, data in client.chat(stripped, mode="plan" if plan_mode else None):
                         if event_type == "text_delta":
                             pass  # Collecting server-side (silent mode)
                         elif event_type == "tool_call":
@@ -1498,6 +1576,11 @@ def run_interactive(args):
                         elif event_type == "tool_result":
                             if show_tools:
                                 display_tool_result(data.get("name", ""), data.get("result", "{}"))
+                                if tool_output_lines > 0:
+                                    console.print(f"    [dim]{tool_output_lines} output lines[/]")
+                                    tool_output_lines = 0
+                        elif event_type == "tool_output":
+                            tool_output_lines += 1
                         elif event_type == "done":
                             full_text = data.get("text", "")
                             token_count = data.get("tokens", 0)
