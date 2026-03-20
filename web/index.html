@@ -2193,7 +2193,7 @@ function buildSidebarAgentItem(a, i) {
       ${isPaused ? '<span class="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[6px] bg-surface-lighter border border-border rounded px-0.5 text-text-muted font-medium uppercase tracking-wider" style="line-height:1.2">Paused</span>' : ''}
     </div>
     <div class="sb-agent-info">
-      <div class="sb-agent-name">${esc(displayName || name)}${isTeamHead ? ' <span style="font-size:8px;color:var(--color-accent);font-weight:700">HEAD</span>' : ''}</div>
+      <div class="sb-agent-name">${esc(displayName || name)}${isMain ? ' <span style="font-size:7px;background:var(--color-accent);color:var(--color-base);padding:1px 4px;border-radius:3px;font-weight:700;letter-spacing:0.5px;vertical-align:middle">MAIN</span>' : isTeamHead ? ' <span style="font-size:7px;background:color-mix(in srgb, var(--color-accent) 20%, transparent);color:var(--color-accent);padding:1px 4px;border-radius:3px;font-weight:700;letter-spacing:0.5px;vertical-align:middle">HEAD</span>' : ''}</div>
       <div class="sb-agent-meta">${isActive ? `<span class="sb-activity-badge"><span class="activity-dot"></span>${activityLabel}</span>` : (agentModel ? esc(agentModel.split('/').pop().substring(0, 20)) : '')}</div>
     </div>
     <span class="sb-agent-status-dot" style="background:${dotColor};${dotStyle}"></span>
