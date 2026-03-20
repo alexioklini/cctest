@@ -2,20 +2,28 @@
 
 ## Planned
 
-- Optimize Web UI screen space — smaller agent cards or move agents to a collapsible left sidebar menu
-- Custom slash commands — user-defined commands (like Claude Code skills) that can be configured per-agent and trigger predefined prompts or tool sequences
-- Clean up redundant Web UI elements — remove duplicate current agent display (shown in both middle area and status bar), consolidate status information
-- Agent workflows — define custom multi-step task blueprints for agents with sequential/parallel stages, approval gates (from other agents or the user), conditional branching, and reusable templates
-- LLM-assisted input refinement — option to refine/improve user text via LLM before sending, available in chat input, all text boxes, and MD editors (soul.md, memory files, etc.)
-- Self-awareness memory — store Brain Agent's own architecture, inner workings, config structure, and capabilities in main agent's memory so it can help users with setup, troubleshooting, and configuration questions
-- MCP client support for agents — allow agents to initiate MCP client connections to external MCP servers, enabling dynamic tool discovery and cross-system integration
-- Hooks system — pre/post tool execution hooks (deterministic shell scripts), critical gap vs Claude Code
-- Permissions model — per-tool approval with allow/deny patterns at engine level, sandboxing for execute_command
-- Plan mode — read-only analysis mode that disables write tools
-- Provider fallback chains — ordered fallback with exponential backoff retry (gap vs OpenClaw)
-- Docker deployment — Dockerfile for cross-platform usage
-- Discord + Slack adapters — expand beyond Web/TUI/Telegram (gap vs OpenClaw 12+ / OpenFang 40 channels)
-- A2A protocol — Google Agent-to-Agent for cross-system agent interop (gap vs OpenFang)
+Each item has a detailed feature proposal with mockups, user workflows, and effort estimates.
+
+### Security & Control
+- [Hooks system](features/hooks-system.md) — pre/post tool execution hooks (deterministic shell scripts) · ~6 days
+- [Permissions model](features/permissions-model.md) — per-tool approval with allow/deny patterns, sandboxing · ~9 days
+- [Plan mode](features/plan-mode.md) — read-only analysis mode that disables write tools · ~5 days
+
+### Infrastructure & Deployment
+- [Provider fallback chains](features/provider-fallback.md) — ordered fallback with exponential backoff retry · ~8 days
+- [Docker deployment](features/docker-deployment.md) — Dockerfile + docker-compose for cross-platform usage · ~5 days
+- [Discord + Slack adapters](features/discord-slack-adapters.md) — expand beyond Web/TUI/Telegram · ~10 days
+
+### User Features
+- [Agent workflows](features/agent-workflows.md) — multi-step blueprints with approval gates and branching · ~15 days
+- [Custom slash commands](features/custom-slash-commands.md) — user-defined commands with prompt templates · ~7 days
+- [LLM-assisted input refinement](features/llm-input-refinement.md) — AI-powered text improvement in all inputs · ~5 days
+
+### Platform
+- [Web UI optimization](features/webui-optimization.md) — collapsible left sidebar, remove redundant elements · ~6 days
+- [Self-awareness memory](features/self-awareness-memory.md) — teach agents about their own architecture · ~3 days
+- [MCP client support](features/mcp-client-support.md) — dynamic MCP server connections at runtime · ~8 days
+- [A2A protocol](features/a2a-protocol.md) — Google Agent-to-Agent for cross-system interop · ~12 days
 
 ## Done (Research)
 
@@ -26,6 +34,7 @@
 
 ## Completed
 
+- v1.6.0 — TUI feature parity (30+ slash commands), slash command popup menus in TUI and Web UI
 - v1.5.3 — Thread-safe agent context, provider resolution fix, memory robustness, concurrent scheduler
 - v1.5.2 — Memory summary direct execution, QMD index path normalization, collection health stats
 - v1.5.1 — MiniMax provider, Add Model UI, QMD session leak fix, in-process Telegram
