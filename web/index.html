@@ -3349,7 +3349,7 @@ async function loadConfigTabContent(tab, agentName) {
                       const icons = { completed: '<span style="color:#5faf5f">&#10003;</span>', running: '<span style="color:#5f87ff">&#9679;</span>', waiting_approval: '<span style="color:#ff8700">&#9679;</span>', error: '<span style="color:#ff5f5f">&#10007;</span>', rejected: '<span style="color:#ff5f5f">&#10007;</span>' };
                       const icon = icons[s.status] || '<span style="color:var(--color-text-muted)">&#9675;</span>';
                       const elapsed = s.elapsed ? ' ' + Math.round(s.elapsed) + 's' : '';
-                      return \`<span class="text-xs px-1.5 py-0.5 rounded" style="background:var(--color-surface-lighter)" title="\${esc(s.output?.substring(0,200) || '')}">\${icon} \${esc(s.name)}\${elapsed}</span>\${i < ex.stages.length - 1 ? '<span class="text-text-muted text-xs">&#8594;</span>' : ''}\`;
+                      return '<span class="text-xs px-1.5 py-0.5 rounded" style="background:var(--color-surface-lighter)" title="' + esc(s.output?.substring(0,200) || '') + '">' + icon + ' ' + esc(s.name) + elapsed + '</span>' + (i < ex.stages.length - 1 ? '<span class="text-text-muted text-xs">&#8594;</span>' : '');
                     }).join('')}
                   </div>
                   ${ex.error ? `<div class="text-error text-xs mt-2">${esc(ex.error)}</div>` : ''}
