@@ -25,6 +25,7 @@ CHANGELOG = [
 ]
 
 import argparse
+import collections
 import datetime
 import fnmatch
 import logging
@@ -3419,6 +3420,319 @@ class Scheduler:
 _scheduler: Scheduler | None = None
 
 
+# --- Cost Tracking ---
+
+COST_DB = os.path.join(AGENTS_DIR, "main", "costs.db")
+
+_cost_db_lock = threading.Lock()
+_cost_db_pool: dict[int, sqlite3.Connection] = {}
+
+
+def _cost_conn():
+    """Get a thread-safe reusable SQLite connection for the cost DB."""
+    tid = threading.current_thread().ident
+    with _cost_db_lock:
+        conn = _cost_db_pool.get(tid)
+        if conn is None:
+            conn = sqlite3.connect(COST_DB, timeout=10, check_same_thread=False)
+            conn.execute("PRAGMA busy_timeout = 5000")
+            conn.execute("PRAGMA journal_mode = WAL")
+            _cost_db_pool[tid] = conn
+    return conn
+
+
+# Default cost rates per 1M tokens — 0 for free providers
+_cost_rates: dict[str, dict[str, float]] = {
+    "claude-opus-4-6": {"input": 15.0, "output": 75.0},
+    "claude-opus-4-5-20251101": {"input": 15.0, "output": 75.0},
+    "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
+    "claude-sonnet-4-5-20241022": {"input": 3.0, "output": 15.0},
+    "claude-haiku-3.5": {"input": 0.80, "output": 4.0},
+}
+
+
+def _get_cost_rate(model: str) -> dict[str, float]:
+    """Look up cost rate for a model. Checks _models_config first, then defaults."""
+    cfg = _models_config.get(model, {})
+    ci = cfg.get("cost_input")
+    co = cfg.get("cost_output")
+    if ci is not None and co is not None:
+        return {"input": float(ci), "output": float(co)}
+    # Check built-in rates
+    if model in _cost_rates:
+        return _cost_rates[model]
+    # Try prefix matching (e.g. "claude-opus-4-6" matches "claude-opus-4-6-20260101")
+    ml = model.lower()
+    for pattern, rate in _cost_rates.items():
+        if ml.startswith(pattern.lower()) or pattern.lower() in ml:
+            return rate
+    return {"input": 0.0, "output": 0.0}
+
+
+def _compute_cost(model: str, tokens_in: int, tokens_out: int) -> float:
+    """Compute estimated cost in USD."""
+    rate = _get_cost_rate(model)
+    return (tokens_in * rate["input"] + tokens_out * rate["output"]) / 1_000_000
+
+
+class CostTracker:
+    """Thread-safe cost tracking with SQLite persistence."""
+
+    def __init__(self):
+        os.makedirs(os.path.dirname(COST_DB), exist_ok=True)
+        self._init_db()
+
+    def _init_db(self):
+        with _cost_conn() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS cost_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent TEXT NOT NULL,
+                    session_id TEXT,
+                    model TEXT NOT NULL,
+                    provider TEXT NOT NULL DEFAULT '',
+                    tokens_in INTEGER NOT NULL DEFAULT 0,
+                    tokens_out INTEGER NOT NULL DEFAULT 0,
+                    cost_usd REAL NOT NULL DEFAULT 0.0,
+                    tool_round INTEGER DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_agent ON cost_log(agent)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_session ON cost_log(session_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_created ON cost_log(created_at)")
+            conn.commit()
+
+    def log_call(self, agent: str, session_id: str, model: str, provider: str,
+                 tokens_in: int, tokens_out: int, tool_round: int = 0):
+        """Log an LLM call with cost estimation."""
+        cost = _compute_cost(model, tokens_in, tokens_out)
+        try:
+            with _cost_conn() as conn:
+                conn.execute("""
+                    INSERT INTO cost_log (agent, session_id, model, provider, tokens_in, tokens_out, cost_usd, tool_round)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (agent, session_id or "", model, provider, tokens_in, tokens_out, cost, tool_round))
+                conn.commit()
+        except (sqlite3.Error, OSError) as e:
+            logging.warning(f"Cost tracking error: {e}")
+
+    def get_stats(self, agent: str | None = None, hours: int = 24) -> dict:
+        """Get aggregate stats for the last N hours."""
+        try:
+            with _cost_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                where = "WHERE created_at >= datetime('now', ?)"
+                params: list = [f"-{hours} hours"]
+                if agent:
+                    where += " AND agent = ?"
+                    params.append(agent)
+                row = conn.execute(f"""
+                    SELECT COUNT(*) as total_calls,
+                           COALESCE(SUM(tokens_in), 0) as total_tokens_in,
+                           COALESCE(SUM(tokens_out), 0) as total_tokens_out,
+                           COALESCE(SUM(cost_usd), 0.0) as total_cost
+                    FROM cost_log {where}
+                """, params).fetchone()
+                # Per-agent breakdown
+                agents_rows = conn.execute(f"""
+                    SELECT agent,
+                           COUNT(*) as calls,
+                           COALESCE(SUM(tokens_in), 0) as tokens_in,
+                           COALESCE(SUM(tokens_out), 0) as tokens_out,
+                           COALESCE(SUM(cost_usd), 0.0) as cost
+                    FROM cost_log {where}
+                    GROUP BY agent ORDER BY cost DESC
+                """, params).fetchall()
+                # Per-model breakdown
+                models_rows = conn.execute(f"""
+                    SELECT model,
+                           COUNT(*) as calls,
+                           COALESCE(SUM(cost_usd), 0.0) as cost
+                    FROM cost_log {where}
+                    GROUP BY model ORDER BY cost DESC
+                """, params).fetchall()
+                return {
+                    "total_calls": row["total_calls"],
+                    "total_tokens_in": row["total_tokens_in"],
+                    "total_tokens_out": row["total_tokens_out"],
+                    "total_cost": round(row["total_cost"], 4),
+                    "hours": hours,
+                    "agent_filter": agent,
+                    "by_agent": [dict(r) for r in agents_rows],
+                    "by_model": [dict(r) for r in models_rows],
+                }
+        except (sqlite3.Error, OSError) as e:
+            logging.warning(f"Cost stats error: {e}")
+            return {"total_calls": 0, "total_tokens_in": 0, "total_tokens_out": 0,
+                    "total_cost": 0.0, "hours": hours, "agent_filter": agent,
+                    "by_agent": [], "by_model": []}
+
+    def get_daily(self, agent: str | None = None, days: int = 7) -> list[dict]:
+        """Get daily breakdown for the last N days."""
+        try:
+            with _cost_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                where = "WHERE created_at >= datetime('now', ?)"
+                params: list = [f"-{days} days"]
+                if agent:
+                    where += " AND agent = ?"
+                    params.append(agent)
+                rows = conn.execute(f"""
+                    SELECT date(created_at) as day,
+                           COUNT(*) as calls,
+                           COALESCE(SUM(tokens_in), 0) as tokens_in,
+                           COALESCE(SUM(tokens_out), 0) as tokens_out,
+                           COALESCE(SUM(cost_usd), 0.0) as cost
+                    FROM cost_log {where}
+                    GROUP BY date(created_at) ORDER BY day DESC
+                """, params).fetchall()
+                return [dict(r) for r in rows]
+        except (sqlite3.Error, OSError) as e:
+            logging.warning(f"Cost daily error: {e}")
+            return []
+
+    def get_session_cost(self, session_id: str) -> dict:
+        """Get cost for a specific session."""
+        try:
+            with _cost_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute("""
+                    SELECT COUNT(*) as calls,
+                           COALESCE(SUM(tokens_in), 0) as tokens_in,
+                           COALESCE(SUM(tokens_out), 0) as tokens_out,
+                           COALESCE(SUM(cost_usd), 0.0) as cost
+                    FROM cost_log WHERE session_id = ?
+                """, (session_id,)).fetchone()
+                return dict(row) if row else {"calls": 0, "tokens_in": 0, "tokens_out": 0, "cost": 0.0}
+        except (sqlite3.Error, OSError):
+            return {"calls": 0, "tokens_in": 0, "tokens_out": 0, "cost": 0.0}
+
+
+_cost_tracker: CostTracker | None = None
+
+
+# --- Rate Limiting ---
+
+class RateLimiter:
+    """Sliding-window rate limiter per agent. In-memory only (resets on restart)."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._requests: dict[str, collections.deque] = collections.defaultdict(collections.deque)
+        self._tokens: dict[str, collections.deque] = collections.defaultdict(collections.deque)
+        self._cost: dict[str, collections.deque] = collections.defaultdict(collections.deque)
+
+    def _prune(self, dq: collections.deque, cutoff: float):
+        """Remove entries older than cutoff timestamp."""
+        while dq and (dq[0] if isinstance(dq[0], (int, float)) else dq[0][0]) < cutoff:
+            dq.popleft()
+
+    def check(self, agent_id: str) -> tuple[bool, str, dict]:
+        """Check if a request is allowed for this agent.
+
+        Returns (allowed, reason, usage_info).
+        Loads limits from the agent's agent.json rate_limits field.
+        """
+        limits = self._get_limits(agent_id)
+        if not limits:
+            return True, "", {}
+
+        now = time.time()
+        with self._lock:
+            # Check requests/minute
+            rpm_limit = limits.get("max_requests_per_minute")
+            if rpm_limit:
+                dq = self._requests[agent_id]
+                self._prune(dq, now - 60)
+                if len(dq) >= rpm_limit:
+                    oldest = dq[0]
+                    retry = 60 - (now - oldest)
+                    return False, f"Rate limit: {rpm_limit} requests/minute exceeded. Retry in {int(retry)}s.", {
+                        "dimension": "max_requests_per_minute", "current": len(dq), "limit": rpm_limit}
+
+            # Check tokens/hour
+            tph_limit = limits.get("max_tokens_per_hour")
+            if tph_limit:
+                dq = self._tokens[agent_id]
+                self._prune(dq, now - 3600)
+                total = sum(t[1] for t in dq)
+                if total >= tph_limit:
+                    return False, f"Rate limit: {tph_limit} tokens/hour exceeded.", {
+                        "dimension": "max_tokens_per_hour", "current": total, "limit": tph_limit}
+
+            # Check cost/day
+            cpd_limit = limits.get("max_cost_per_day")
+            if cpd_limit:
+                dq = self._cost[agent_id]
+                self._prune(dq, now - 86400)
+                total = sum(t[1] for t in dq)
+                if total >= cpd_limit:
+                    return False, f"Rate limit: ${cpd_limit}/day cost limit exceeded.", {
+                        "dimension": "max_cost_per_day", "current": total, "limit": cpd_limit}
+
+            # Record the request timestamp
+            self._requests[agent_id].append(now)
+
+        return True, "", {}
+
+    def record_usage(self, agent_id: str, tokens: int, cost: float):
+        """Record token and cost usage after a successful response."""
+        now = time.time()
+        with self._lock:
+            self._tokens[agent_id].append((now, tokens))
+            self._cost[agent_id].append((now, cost))
+
+    def get_status(self, agent_id: str | None = None) -> dict:
+        """Get current usage vs limits for display."""
+        result = {}
+        agents_to_check = [agent_id] if agent_id else list(set(
+            list(self._requests.keys()) + list(self._tokens.keys())))
+
+        now = time.time()
+        with self._lock:
+            for aid in agents_to_check:
+                limits = self._get_limits(aid)
+                if not limits:
+                    continue
+                # Requests/minute
+                dq_r = self._requests.get(aid, collections.deque())
+                self._prune(dq_r, now - 60)
+                rpm_limit = limits.get("max_requests_per_minute", 0)
+                # Tokens/hour
+                dq_t = self._tokens.get(aid, collections.deque())
+                self._prune(dq_t, now - 3600)
+                tph_total = sum(t[1] for t in dq_t)
+                tph_limit = limits.get("max_tokens_per_hour", 0)
+                # Cost/day
+                dq_c = self._cost.get(aid, collections.deque())
+                self._prune(dq_c, now - 86400)
+                cpd_total = sum(t[1] for t in dq_c)
+                cpd_limit = limits.get("max_cost_per_day", 0)
+
+                result[aid] = {
+                    "requests_per_minute": {"current": len(dq_r), "limit": rpm_limit},
+                    "tokens_per_hour": {"current": tph_total, "limit": tph_limit},
+                    "cost_per_day": {"current": round(cpd_total, 4), "limit": cpd_limit},
+                }
+        return result
+
+    def _get_limits(self, agent_id: str) -> dict:
+        """Load rate limits from agent.json."""
+        try:
+            agent_json = os.path.join(AGENTS_DIR, agent_id, "agent.json")
+            if os.path.isfile(agent_json):
+                with open(agent_json) as f:
+                    cfg = json.load(f)
+                return cfg.get("rate_limits", {})
+        except (OSError, json.JSONDecodeError):
+            pass
+        return {}
+
+
+_rate_limiter: RateLimiter | None = None
+
+
 def tool_schedule_list(args: dict) -> str:
     """List all scheduled tasks."""
     if not _scheduler:
@@ -4789,13 +5103,35 @@ def _execute_tool(name: str, args: dict) -> str:
 MAX_TOOL_ROUNDS = 15  # Maximum number of tool-use round trips before forcing a text response
 
 
+def _log_call_cost(model: str, tokens_in: int, tokens_out: int,
+                   session_id: str | None = None, tool_round: int = 0):
+    """Log an LLM call to the cost tracker (if initialized)."""
+    if not _cost_tracker:
+        return
+    if tokens_in == 0 and tokens_out == 0:
+        return  # Skip if no usage data available
+    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    agent_id = agent.agent_id if agent else "main"
+    provider = _models_config.get(model, {}).get("provider", "")
+    try:
+        _cost_tracker.log_call(agent_id, session_id, model, provider,
+                               tokens_in, tokens_out, tool_round)
+        # Record in rate limiter too
+        if _rate_limiter:
+            cost = _compute_cost(model, tokens_in, tokens_out)
+            _rate_limiter.record_usage(agent_id, tokens_in + tokens_out, cost)
+    except Exception as e:
+        logging.warning(f"Cost logging error: {e}")
+
+
 def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                  api_type: str, silent: bool = False,
                  tools: bool = True,
                  escape_watcher: EscapeWatcher | CancelToken | None = None,
                  _tool_round: int = 0,
                  event_callback=None,
-                 inference_params: dict | None = None) -> str | None:
+                 inference_params: dict | None = None,
+                 session_id: str | None = None) -> str | None:
     """Send messages and stream the response.
 
     If silent=True, collects without printing (for TUI mode).
@@ -4949,6 +5285,10 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         "stream": True,
     }
 
+    # Request usage stats in streaming responses (OpenAI-compatible APIs)
+    if api_type == "openai":
+        payload["stream_options"] = {"include_usage": True}
+
     # Apply inference parameters (temperature, top_p, thinking, etc.)
     if inference_params:
         provider = _models_config.get(model, {}).get("provider", "")
@@ -4977,18 +5317,26 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     if escape_watcher and escape_watcher.cancelled:
         raise TaskCancelled()
 
+    # Rate limiter check
+    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    agent_id = agent.agent_id if agent else "main"
+    if _rate_limiter and _tool_round == 0:
+        allowed, reason, _usage_info = _rate_limiter.check(agent_id)
+        if not allowed:
+            raise RuntimeError(reason)
+
     try:
         with urllib.request.urlopen(request) as response:
             if api_type == "openai":
                 return _handle_openai_response(
                     response, payload, messages, model, api_key, base_url,
                     api_type, silent, tools, headers, endpoint, escape_watcher,
-                    _tool_round, event_callback, inference_params)
+                    _tool_round, event_callback, inference_params, session_id)
             else:
                 return _handle_anthropic_response(
                     response, payload, messages, model, api_key, base_url,
                     api_type, silent, tools, headers, endpoint, escape_watcher,
-                    _tool_round, event_callback, inference_params)
+                    _tool_round, event_callback, inference_params, session_id)
 
     except urllib.error.HTTPError as e:
         if e.code == 400:
@@ -5022,7 +5370,8 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
                                 escape_watcher=None,
                                 _tool_round: int = 0,
                                 event_callback=None,
-                                inference_params: dict | None = None) -> str | None:
+                                inference_params: dict | None = None,
+                                session_id: str | None = None) -> str | None:
     """Handle Anthropic SSE response, including tool-use agentic loop."""
     # Parse the full SSE stream to get content blocks and stop reason
     collected_text = []
@@ -5031,6 +5380,8 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
     current_block_type = None
     current_block = {}
     stop_reason = None
+    _usage_in = 0
+    _usage_out = 0
 
     for line in response:
         if escape_watcher and escape_watcher.cancelled:
@@ -5045,7 +5396,12 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
                 event = json.loads(line[6:])
                 etype = event.get("type")
 
-                if etype == "error":
+                if etype == "message_start":
+                    msg = event.get("message", {})
+                    usage = msg.get("usage", {})
+                    _usage_in = usage.get("input_tokens", 0)
+
+                elif etype == "error":
                     err = event.get("error", {})
                     err_msg = err.get("message", "Unknown API error")
                     err_type = err.get("type", "error")
@@ -5057,6 +5413,9 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
 
                 elif etype == "message_delta":
                     stop_reason = event.get("delta", {}).get("stop_reason")
+                    usage = event.get("usage", {})
+                    if usage.get("output_tokens"):
+                        _usage_out = usage["output_tokens"]
 
                 elif etype == "content_block_start":
                     block = event.get("content_block", {})
@@ -5096,6 +5455,9 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
                 pass
 
     full_text = "".join(collected_text)
+
+    # Log cost for this API call
+    _log_call_cost(model, _usage_in, _usage_out, session_id, _tool_round)
 
     # If no tool calls, just return the text
     if not tool_uses:
@@ -5145,7 +5507,7 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
     return send_message(messages, model, api_key, base_url, api_type,
                         silent=silent, tools=tools, escape_watcher=escape_watcher,
                         _tool_round=_tool_round + 1, event_callback=event_callback,
-                        inference_params=inference_params)
+                        inference_params=inference_params, session_id=session_id)
 
 
 def _handle_openai_response(response, payload, messages, model, api_key,
@@ -5154,10 +5516,13 @@ def _handle_openai_response(response, payload, messages, model, api_key,
                              escape_watcher=None,
                              _tool_round: int = 0,
                              event_callback=None,
-                             inference_params: dict | None = None) -> str | None:
+                             inference_params: dict | None = None,
+                             session_id: str | None = None) -> str | None:
     """Handle OpenAI SSE response, including tool-use agentic loop."""
     collected_text = []
     tool_calls_map = {}  # index -> {id, name, arguments_str}
+    _usage_in = 0
+    _usage_out = 0
 
     for line in response:
         if escape_watcher and escape_watcher.cancelled:
@@ -5170,6 +5535,11 @@ def _handle_openai_response(response, payload, messages, model, api_key,
             break
         try:
             event = json.loads(payload_str)
+            # Extract usage from final chunk (OpenAI stream_options)
+            usage = event.get("usage")
+            if usage:
+                _usage_in = usage.get("prompt_tokens", 0)
+                _usage_out = usage.get("completion_tokens", 0)
             choices = event.get("choices", [])
             if not choices:
                 continue
@@ -5202,6 +5572,9 @@ def _handle_openai_response(response, payload, messages, model, api_key,
             pass
 
     full_text = "".join(collected_text)
+
+    # Log cost for this API call
+    _log_call_cost(model, _usage_in, _usage_out, session_id, _tool_round)
 
     if not tool_calls_map:
         if not silent and full_text:
@@ -5249,7 +5622,7 @@ def _handle_openai_response(response, payload, messages, model, api_key,
     return send_message(messages, model, api_key, base_url, api_type,
                         silent=silent, tools=tools, escape_watcher=escape_watcher,
                         _tool_round=_tool_round + 1, event_callback=event_callback,
-                        inference_params=inference_params)
+                        inference_params=inference_params, session_id=session_id)
 
 
 def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
@@ -5260,7 +5633,8 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
                                event_callback=None,
                                provider_resolver=None,
                                inference_params: dict | None = None,
-                               purpose: str | None = None) -> str | None:
+                               purpose: str | None = None,
+                               session_id: str | None = None) -> str | None:
     """Send messages, falling back to available models if the requested one fails.
 
     If provider_resolver is provided, it's called with (model) -> {api_key, base_url, api_type}
@@ -5269,7 +5643,8 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
     result = send_message(messages, model, api_key, base_url, api_type,
                           silent=silent, tools=tools, escape_watcher=escape_watcher,
                           event_callback=event_callback,
-                          inference_params=inference_params)
+                          inference_params=inference_params,
+                          session_id=session_id)
     if result is not None:
         return result
 
@@ -5315,7 +5690,8 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
         result = send_message(messages, fallback_model, fb_api_key, fb_base_url, fb_api_type,
                               silent=silent, tools=tools, escape_watcher=escape_watcher,
                               event_callback=event_callback,
-                              inference_params=fb_params)
+                              inference_params=fb_params,
+                              session_id=session_id)
         if result is not None:
             return result
 

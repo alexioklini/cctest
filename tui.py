@@ -241,6 +241,8 @@ SLASH_COMMANDS = {
     # QMD
     "/qmd":         "Show QMD status and health",
     "/qmd reindex":   "Trigger QMD reindex",
+    # Costs
+    "/costs":       "Show cost summary (last 24h)",
 }
 
 
@@ -1083,6 +1085,67 @@ def _handle_qmd(arg: str, client: BrainAgentClient, current_agent: str):
         console.print(f"  [error]{e}[/]")
 
 
+def _handle_costs(client: BrainAgentClient):
+    """Handle /costs command — show cost summary."""
+    try:
+        data = client._get("/v1/costs?hours=24")
+        if data.get("error"):
+            console.print(f"  [error]{data['error']}[/]")
+            return
+        console.print()
+        console.print("  [bold]Cost Summary (last 24h)[/]")
+        console.print()
+
+        by_agent = data.get("by_agent", [])
+        if not by_agent:
+            console.print("  [dim]No API calls recorded yet.[/]")
+            console.print()
+            return
+
+        t = Table(show_header=True, box=None, padding=(0, 2))
+        t.add_column("Agent", style="bold")
+        t.add_column("Requests", justify="right")
+        t.add_column("Tokens In", justify="right")
+        t.add_column("Tokens Out", justify="right")
+        t.add_column("Est. Cost", justify="right", style="#ff8700")
+        for row in by_agent:
+            t.add_row(
+                row["agent"],
+                str(row["calls"]),
+                _fmt_tokens(row["tokens_in"]),
+                _fmt_tokens(row["tokens_out"]),
+                f"${row['cost']:.2f}",
+            )
+        # Total row
+        t.add_row(
+            "[bold]TOTAL[/]",
+            str(data["total_calls"]),
+            _fmt_tokens(data["total_tokens_in"]),
+            _fmt_tokens(data["total_tokens_out"]),
+            f"[bold]${data['total_cost']:.2f}[/]",
+            style="dim",
+        )
+        console.print(t)
+
+        # Top models
+        by_model = data.get("by_model", [])
+        if by_model:
+            parts = [f"{m['model']} (${m['cost']:.2f})" for m in by_model[:4]]
+            console.print(f"\n  [dim]Top models:[/] {', '.join(parts)}")
+        console.print()
+    except Exception as e:
+        console.print(f"  [error]{e}[/]")
+
+
+def _fmt_tokens(n: int) -> str:
+    """Format token count: 1234 -> '1.2K', 1234567 -> '1.2M'."""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return str(n)
+
+
 def _handle_schedule(arg: str, client: BrainAgentClient, session):
     if not arg or arg == "list":
         schedules = client.list_schedule()
@@ -1400,6 +1463,12 @@ def run_interactive(args):
                 _handle_qmd(arg, client, current_agent)
                 continue
 
+            # --- Costs ---
+
+            if low.startswith("/costs"):
+                _handle_costs(client)
+                continue
+
             # --- Schedule ---
 
             if low.startswith("/schedule"):
@@ -1412,6 +1481,7 @@ def run_interactive(args):
             full_text = ""
             tool_count = 0
             done_model = ""
+            done_cost = None
 
             try:
                 with console.status(
@@ -1432,6 +1502,7 @@ def run_interactive(args):
                             full_text = data.get("text", "")
                             token_count = data.get("tokens", 0)
                             done_model = data.get("model", "")
+                            done_cost = data.get("cost")
                         elif event_type == "error":
                             console.print(f"  [error]{data.get('message', 'Unknown error')}[/]")
                             break
@@ -1451,7 +1522,8 @@ def run_interactive(args):
                 console.print(Markdown(full_text))
                 pct = min(99, int(token_count / session_max_context * 100))
                 model_tag = f"{model_icon(done_model)} {done_model}  " if done_model else ""
-                console.print(f"\n  [dim]{model_tag}✻ {elapsed:.0f}s · {token_count:,}/{session_max_context//1000}k ({pct}%)[/]")
+                cost_tag = f" · ${done_cost:.2f}" if done_cost is not None else ""
+                console.print(f"\n  [dim]{model_tag}✻ {elapsed:.0f}s · {token_count:,}/{session_max_context//1000}k ({pct}%){cost_tag}[/]")
                 if not show_tools and tool_count > 0:
                     console.print(f"  [dim]{tool_count} tool calls (hidden)[/]")
 

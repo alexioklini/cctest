@@ -417,6 +417,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_service_log()
         elif path.startswith("/v1/agents/") and path.endswith("/memory-summary"):
             self._handle_memory_summary_get(path)
+        elif path == "/v1/costs":
+            self._handle_costs()
+        elif path == "/v1/costs/daily":
+            self._handle_costs_daily()
         elif path == "/" or path.startswith("/web/") or path.endswith((".html", ".css", ".js", ".ico")):
             self._serve_static(path)
         else:
@@ -831,14 +835,26 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     provider_resolver=handler_self._resolve_provider,
                     inference_params=inf_params,
                     purpose=purpose,
+                    session_id=sid,
                 )
                 if reply:
                     session.add_message("assistant", reply)
-                    event_queue.put(("done", {
+                    # Include session cost in done event
+                    session_cost = None
+                    if engine._cost_tracker:
+                        try:
+                            sc = engine._cost_tracker.get_session_cost(sid)
+                            session_cost = round(sc.get("cost", 0.0), 4)
+                        except Exception:
+                            pass
+                    done_data = {
                         "text": reply,
                         "tokens": engine._estimate_conversation_tokens(session.messages),
                         "model": session.model,
-                    }))
+                    }
+                    if session_cost is not None:
+                        done_data["cost"] = session_cost
+                    event_queue.put(("done", done_data))
                 else:
                     event_queue.put(("done", {"text": "", "tokens": 0, "model": session.model}))
             except engine.TaskCancelled:
@@ -2069,6 +2085,32 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)
 
+    def _handle_costs(self):
+        """GET /v1/costs?agent=X&hours=24 — cost stats."""
+        if not engine._cost_tracker:
+            self._send_json({"error": "Cost tracking not initialized"}, 503)
+            return
+        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+        from urllib.parse import unquote
+        agent = unquote(params.get("agent", "")) or None
+        hours = int(params.get("hours", "24"))
+        stats = engine._cost_tracker.get_stats(agent=agent, hours=hours)
+        self._send_json(stats)
+
+    def _handle_costs_daily(self):
+        """GET /v1/costs/daily?agent=X&days=7 — daily breakdown."""
+        if not engine._cost_tracker:
+            self._send_json({"error": "Cost tracking not initialized"}, 503)
+            return
+        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+        from urllib.parse import unquote
+        agent = unquote(params.get("agent", "")) or None
+        days = int(params.get("days", "7"))
+        daily = engine._cost_tracker.get_daily(agent=agent, days=days)
+        self._send_json({"daily": daily, "days": days, "agent_filter": agent})
+
     def _handle_services_status(self):
         """GET /v1/services — status of all managed services."""
         uptime = int(time.time() - _server_start_time)
@@ -2432,6 +2474,11 @@ def main():
     engine._scheduler = engine.Scheduler()
     engine._scheduler.start()
 
+    # Initialize cost tracking and rate limiting
+    engine._cost_tracker = engine.CostTracker()
+    engine._rate_limiter = engine.RateLimiter()
+    print(f"Cost tracking: {engine.COST_DB}")
+
     # Ensure memory summary schedules for all agents
     try:
         engine.ensure_memory_summary_schedules()
@@ -2634,6 +2681,8 @@ def main():
     print("  GET  /v1/models         — list models")
     print("  GET  /v1/schedule       — scheduled tasks")
     print("  POST /v1/schedule       — manage schedules")
+    print("  GET  /v1/costs          — cost stats")
+    print("  GET  /v1/costs/daily    — daily cost breakdown")
     print("  GET  /v1/tasks          — background tasks")
     # Auto-start Telegram bot if enabled
     if server_config.get("telegram_enabled", True):

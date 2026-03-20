@@ -67,6 +67,9 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - Scheduler executes due tasks in parallel threads instead of sequentially
 - Agent activity tracking: `/v1/agents/activity` returns active tasks/chats per agent for UI indicators
 - Agent teams: hierarchical team structure with team heads orchestrating members
+- Cost tracking: `CostTracker` logs every LLM call to `costs.db` (tokens, model, provider, estimated cost)
+- Rate limiting: `RateLimiter` with sliding-window per agent (requests/min, tokens/hr, cost/day) from `rate_limits` in agent.json
+- Cost rates from `_cost_rates` defaults + `cost_input`/`cost_output` fields in `_models_config`
 
 ### Agent Teams
 
@@ -144,6 +147,8 @@ Server runs on port 8420 (configurable). Key endpoints:
 - `GET /v1/teams` — team structure (heads, members, standalone)
 - `POST /v1/teams` — manage teams (create, update, dissolve, move)
 - `GET|POST /v1/models/config` — model routing configuration
+- `GET /v1/costs` — cost stats (agent, hours params)
+- `GET /v1/costs/daily` — daily cost breakdown (agent, days params)
 - `POST /v1/restart` — re-execs the server process
 
 ### Deployment

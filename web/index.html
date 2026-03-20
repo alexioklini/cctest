@@ -1405,6 +1405,8 @@ class API {
   static async getRunningTasks() { return this.get('/v1/schedule/running'); }
   static async cancelScheduledTask(name) { return this.post('/v1/schedule/cancel', { name }); }
   static async getTasks() { return this.get('/v1/tasks'); }
+  static async getCosts(hours = 24, agent = '') { return this.get(`/v1/costs?hours=${hours}${agent ? '&agent=' + encodeURIComponent(agent) : ''}`); }
+  static async getCostsDaily(days = 7, agent = '') { return this.get(`/v1/costs/daily?days=${days}${agent ? '&agent=' + encodeURIComponent(agent) : ''}`); }
 }
 
 // ─── App State ──────────────────────────────────────────────
@@ -2086,7 +2088,7 @@ function renderMessage(msg, idx, container) {
       ${toolsHtml}
       ${spinnerHtml}
       <div class="msg-content">${content}</div>
-      ${msg.tokens ? `<div class="text-[10px] text-text-muted mt-2 mono flex items-center gap-1.5">${msg.model ? modelIcon(msg.model) + ' ' + esc(msg.model) + '  ·  ' : ''}<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>${msg.tokens} tokens</div>` : ''}
+      ${msg.tokens ? `<div class="text-[10px] text-text-muted mt-2 mono flex items-center gap-1.5">${msg.model ? modelIcon(msg.model) + ' ' + esc(msg.model) + '  ·  ' : ''}<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>${msg.tokens} tokens${msg.cost != null ? '  ·  $' + msg.cost.toFixed(2) : ''}</div>` : ''}
     </div>`;
   } else if (msg.role === 'system') {
     div.className += ' flex justify-center';
@@ -2236,7 +2238,9 @@ async function sendMessage() {
         if (d.text && !assistantMsg.content) assistantMsg.content = d.text;
         assistantMsg.tokens = d.tokens;
         assistantMsg.model = d.model || '';
+        assistantMsg.cost = d.cost || null;
         chat.totalTokens += d.tokens || 0;
+        if (d.cost != null) chat.sessionCost = d.cost;
       },
       error: (d) => {
         assistantMsg.content += `\n\n**Error:** ${d.message || 'Unknown error'}`;
@@ -2280,7 +2284,8 @@ function updateStatusBar() {
   const chat = state.activeChat;
   dom.statusModel.textContent = chat?.model || '';
   dom.statusAgent.textContent = chat?.agent ? `Agent: ${chat.agent}` : '';
-  dom.statusTokens.textContent = chat?.totalTokens ? `${chat.totalTokens} tokens` : '';
+  const costStr = chat?.sessionCost != null ? `  ·  $${chat.sessionCost.toFixed(2)}` : '';
+  dom.statusTokens.textContent = chat?.totalTokens ? `${chat.totalTokens} tokens${costStr}` : '';
   dom.statusSession.textContent = chat?.sessionId ? `Session: ${chat.sessionId.substring(0, 8)}` : '';
 }
 
@@ -3494,6 +3499,7 @@ function openSettingsModal() {
         <button class="config-tab ${_settingsTab === 'teams' ? 'active' : ''}" onclick="switchSettingsTab('teams')">Teams</button>
         <button class="config-tab ${_settingsTab === 'providers' ? 'active' : ''}" onclick="switchSettingsTab('providers')">Providers</button>
         <button class="config-tab ${_settingsTab === 'models' ? 'active' : ''}" onclick="switchSettingsTab('models')">Models</button>
+        <button class="config-tab ${_settingsTab === 'costs' ? 'active' : ''}" onclick="switchSettingsTab('costs')">Costs</button>
       </div>
       <div id="settings-content" class="space-y-6"></div>
     </div>
@@ -3521,6 +3527,7 @@ async function loadSettingsTab() {
     else if (_settingsTab === 'teams') await renderTeamsTab(el);
     else if (_settingsTab === 'providers') await renderProvidersTab(el);
     else if (_settingsTab === 'models') await renderModelsTab(el);
+    else if (_settingsTab === 'costs') await renderCostsTab(el);
   } catch (e) {
     el.innerHTML = `<div class="text-error text-sm">Error: ${esc(e.message)}</div>`;
   }
@@ -4599,6 +4606,78 @@ async function deleteProvider(name) {
     renderSettingsContent();
     renderModelSelector();
   } catch (e) { showToast(e.message, 'error'); }
+}
+
+// ─── Costs Tab ────────────────────────────────────────────────
+async function renderCostsTab(el) {
+  try {
+    const [stats, daily] = await Promise.all([
+      API.get('/v1/costs?hours=24'),
+      API.get('/v1/costs/daily?days=7'),
+    ]);
+    if (stats.error) { el.innerHTML = `<div class="text-text-muted text-sm">${esc(stats.error)}</div>`; return; }
+
+    const byAgent = stats.by_agent || [];
+    const dailyRows = (daily.daily || []).slice(0, 7);
+
+    let html = `<div class="glass-card p-6">
+      <h3 class="section-header text-sm mb-4">Cost Summary (last 24h)</h3>
+      <div class="grid grid-cols-4 gap-4 mb-6">
+        <div class="text-center"><div class="text-2xl font-bold text-accent">$${stats.total_cost.toFixed(2)}</div><div class="text-[10px] text-text-muted">Total Cost</div></div>
+        <div class="text-center"><div class="text-2xl font-bold">${stats.total_calls}</div><div class="text-[10px] text-text-muted">API Calls</div></div>
+        <div class="text-center"><div class="text-2xl font-bold">${_fmtTokens(stats.total_tokens_in)}</div><div class="text-[10px] text-text-muted">Tokens In</div></div>
+        <div class="text-center"><div class="text-2xl font-bold">${_fmtTokens(stats.total_tokens_out)}</div><div class="text-[10px] text-text-muted">Tokens Out</div></div>
+      </div>`;
+
+    if (byAgent.length) {
+      html += `<h4 class="text-xs font-semibold text-text-muted mb-2 uppercase tracking-wider">By Agent</h4>
+        <table class="w-full text-sm mb-6">
+          <thead><tr class="text-text-muted text-[10px] uppercase tracking-wider">
+            <th class="text-left pb-1">Agent</th><th class="text-right pb-1">Calls</th>
+            <th class="text-right pb-1">Tokens In</th><th class="text-right pb-1">Tokens Out</th>
+            <th class="text-right pb-1">Cost</th>
+          </tr></thead><tbody>`;
+      for (const row of byAgent) {
+        html += `<tr class="border-t border-border/50">
+          <td class="py-1 font-medium">${esc(row.agent)}</td>
+          <td class="py-1 text-right text-text-muted">${row.calls}</td>
+          <td class="py-1 text-right text-text-muted">${_fmtTokens(row.tokens_in)}</td>
+          <td class="py-1 text-right text-text-muted">${_fmtTokens(row.tokens_out)}</td>
+          <td class="py-1 text-right font-medium text-accent">$${row.cost.toFixed(2)}</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+    }
+
+    if (dailyRows.length) {
+      html += `<h4 class="text-xs font-semibold text-text-muted mb-2 uppercase tracking-wider">Daily Breakdown (7 days)</h4>
+        <table class="w-full text-sm">
+          <thead><tr class="text-text-muted text-[10px] uppercase tracking-wider">
+            <th class="text-left pb-1">Date</th><th class="text-right pb-1">Calls</th>
+            <th class="text-right pb-1">Tokens</th><th class="text-right pb-1">Cost</th>
+          </tr></thead><tbody>`;
+      for (const row of dailyRows) {
+        html += `<tr class="border-t border-border/50">
+          <td class="py-1">${esc(row.day)}</td>
+          <td class="py-1 text-right text-text-muted">${row.calls}</td>
+          <td class="py-1 text-right text-text-muted">${_fmtTokens(row.tokens_in + row.tokens_out)}</td>
+          <td class="py-1 text-right font-medium text-accent">$${row.cost.toFixed(2)}</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+    }
+
+    html += '</div>';
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = `<div class="text-error text-sm">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+function _fmtTokens(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return String(n);
 }
 
 // ─── Agent Pause / Delete ────────────────────────────────────
