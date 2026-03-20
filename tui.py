@@ -250,6 +250,20 @@ SLASH_COMMANDS = {
     "/plan":        "Toggle plan mode (read-only tools)",
     # Refine
     "/refine":      "Refine text with LLM",
+    # Projects
+    "/projects":      "List projects for current agent",
+    "/projects new":  "Create a new project",
+    "/projects open": "Switch to project context",
+    "/projects close": "Return to agent-level chat",
+    "/projects delete": "Delete a project",
+    "/projects manage": "Show project details",
+    # Ingest
+    "/ingest":        "Ingest file or URL into current project",
+    "/ingest list":   "List ingested documents",
+    "/ingest delete":  "Delete ingested document",
+    "/ingest watch add": "Add watched folder",
+    "/ingest watch remove": "Remove watched folder",
+    "/ingest watch list": "List watched folders",
 }
 
 
@@ -352,6 +366,24 @@ def print_help():
         ("/cache clear", "Clear web cache"),
         ("/plan", "Toggle plan mode (read-only tools)"),
         ("/refine <text>", "Refine text with LLM"),
+    ])
+
+    _section("Projects", [
+        ("/projects", "List projects for current agent"),
+        ("/projects new <name>", "Create a new project"),
+        ("/projects open [name]", "Switch to project context"),
+        ("/projects close", "Return to agent-level chat"),
+        ("/projects delete <name>", "Delete a project"),
+        ("/projects manage <name>", "Show project details"),
+    ])
+
+    _section("Ingest", [
+        ("/ingest <file_or_url>", "Ingest document into current project"),
+        ("/ingest list", "List ingested documents"),
+        ("/ingest delete <source>", "Delete ingested document"),
+        ("/ingest watch add <path>", "Add watched folder"),
+        ("/ingest watch remove <path>", "Remove watched folder"),
+        ("/ingest watch list", "List watched folders"),
     ])
 
     _section("Other", [
@@ -1217,6 +1249,335 @@ def _handle_schedule(arg: str, client: BrainAgentClient, session):
         console.print("  [dim]/schedule [list|add|pause|resume|delete|history][/]")
 
 
+def _handle_projects(arg: str, client: BrainAgentClient, current_agent: str,
+                     current_project: str | None, session) -> str | None:
+    """Handle /projects commands. Returns new current_project or None."""
+    low_arg = arg.lower().strip()
+
+    if not low_arg:
+        # List projects
+        try:
+            projects = client.list_projects(current_agent)
+            if not projects:
+                console.print("  [dim]No projects. Use /projects new <name> to create one.[/]")
+                return current_project
+            t = Table(show_header=True, box=None, padding=(0, 1))
+            t.add_column("Name", style="bold")
+            t.add_column("Description", style="dim")
+            t.add_column("Docs", justify="right")
+            t.add_column("Chunks", justify="right")
+            t.add_column("Folders", justify="right")
+            for p in projects:
+                name = p.get("name", "?")
+                active_marker = " [#5f87ff](active)[/]" if name == current_project else ""
+                t.add_row(
+                    f"{name}{active_marker}",
+                    p.get("description", "")[:40],
+                    str(p.get("document_count", 0)),
+                    str(p.get("chunk_count", 0)),
+                    str(len(p.get("watch_folders", []))),
+                )
+            console.print()
+            console.print(t)
+            console.print()
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return current_project
+
+    if low_arg.startswith("new "):
+        name = arg[4:].strip()
+        if not name:
+            console.print("  [dim]Usage: /projects new <name>[/]")
+            return current_project
+        try:
+            desc = session.prompt(HTML("  <b>Description:</b> "))
+        except (KeyboardInterrupt, EOFError):
+            return current_project
+        try:
+            r = client.create_project(current_agent, name, desc.strip())
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            else:
+                console.print(f"  [#5f87ff]Project created:[/] [bold]{name}[/]")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return current_project
+
+    if low_arg.startswith("open"):
+        name = arg[4:].strip()
+        if not name:
+            # Show selection menu
+            try:
+                projects = client.list_projects(current_agent)
+                if not projects:
+                    console.print("  [dim]No projects[/]")
+                    return current_project
+                names = [p.get("name", "") for p in projects]
+                labels = [f"{p.get('name', '')} — {p.get('description', '')}" for p in projects]
+                console.print()
+                choice = select_inline(names, labels=labels, active=current_project)
+                if choice:
+                    console.print(f"  [#5f87ff]Project:[/] [bold]{choice}[/]")
+                    return choice
+            except Exception as e:
+                console.print(f"  [error]{e}[/]")
+            return current_project
+        console.print(f"  [#5f87ff]Project:[/] [bold]{name}[/]")
+        return name
+
+    if low_arg == "close":
+        console.print("  [dim]Project context cleared[/]")
+        return None
+
+    if low_arg.startswith("delete "):
+        name = arg[7:].strip()
+        if not name:
+            console.print("  [dim]Usage: /projects delete <name>[/]")
+            return current_project
+        try:
+            confirm = session.prompt(HTML(f"  Delete project <b>{name}</b>? [y/N] "))
+        except (KeyboardInterrupt, EOFError):
+            return current_project
+        if confirm.strip().lower() != "y":
+            console.print("  [dim]Cancelled[/]")
+            return current_project
+        try:
+            r = client.delete_project(current_agent, name)
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            else:
+                console.print(f"  [dim]Project deleted:[/] [bold]{name}[/]")
+                if current_project == name:
+                    return None
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return current_project
+
+    if low_arg.startswith("manage "):
+        name = arg[7:].strip()
+        if not name:
+            console.print("  [dim]Usage: /projects manage <name>[/]")
+            return current_project
+        try:
+            p = client.get_project(current_agent, name)
+            console.print()
+            console.print(f"  [bold]{p.get('name', name)}[/]")
+            console.print(f"  [dim]{p.get('description', '')}[/]")
+            console.print()
+
+            # Documents
+            docs = p.get("documents", [])
+            if docs:
+                console.print(f"  [bold]Documents[/] ({len(docs)})")
+                dt = Table(show_header=True, box=None, padding=(0, 1))
+                dt.add_column("Source", style="bold")
+                dt.add_column("Type", style="#5f87ff")
+                dt.add_column("Chunks", justify="right")
+                dt.add_column("Ingested", style="dim")
+                for d in docs:
+                    dt.add_row(
+                        d.get("source", "?")[:40],
+                        d.get("source_type", "?"),
+                        str(d.get("chunks", 0)),
+                        d.get("ingested_at", "")[:16],
+                    )
+                console.print(dt)
+                console.print()
+
+            # Watch folders
+            folders = p.get("watch_folders", [])
+            if folders:
+                console.print(f"  [bold]Watched Folders[/] ({len(folders)})")
+                for f in folders:
+                    console.print(f"    {f.get('path', '?')}  [dim]{f.get('pattern', '*')} "
+                                  f"{'(recursive)' if f.get('recursive') else ''}  "
+                                  f"{f.get('file_count', 0)} files[/]")
+                console.print()
+
+            # Tags
+            tags = p.get("tags", [])
+            if tags:
+                console.print(f"  [dim]Tags:[/] {', '.join(tags)}")
+                console.print()
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return current_project
+
+    console.print("  [dim]/projects [new <name> | open [name] | close | delete <name> | manage <name>][/]")
+    return current_project
+
+
+def _handle_ingest(arg: str, client: BrainAgentClient, current_agent: str,
+                   current_project: str | None, session):
+    """Handle /ingest commands."""
+    low_arg = arg.lower().strip()
+
+    if not arg.strip():
+        console.print("  [dim]Usage: /ingest <file_or_url> | list | delete <source> | watch [add|remove|list][/]")
+        return
+
+    if low_arg == "list":
+        try:
+            docs = client.list_ingested(current_agent, project=current_project)
+            if not docs:
+                scope = f"project '{current_project}'" if current_project else f"agent '{current_agent}'"
+                console.print(f"  [dim]No ingested documents in {scope}[/]")
+                return
+            t = Table(show_header=True, box=None, padding=(0, 1))
+            t.add_column("Source", style="bold")
+            t.add_column("Type", style="#5f87ff")
+            t.add_column("Chunks", justify="right")
+            t.add_column("Size", justify="right", style="dim")
+            t.add_column("Ingested", style="dim")
+            for d in docs:
+                size = d.get("source_size", 0)
+                size_str = f"{size / 1_000_000:.1f}MB" if size >= 1_000_000 else f"{size / 1_000:.0f}KB" if size >= 1000 else str(size)
+                t.add_row(
+                    d.get("source", "?")[:40],
+                    d.get("source_type", "?"),
+                    str(d.get("chunks", 0)),
+                    size_str,
+                    d.get("ingested_at", "")[:16],
+                )
+            console.print()
+            console.print(t)
+            console.print()
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    if low_arg.startswith("delete "):
+        source = arg[7:].strip()
+        if not source:
+            console.print("  [dim]Usage: /ingest delete <source>[/]")
+            return
+        try:
+            confirm = session.prompt(HTML(f"  Delete all chunks from <b>{source}</b>? [y/N] "))
+        except (KeyboardInterrupt, EOFError):
+            return
+        if confirm.strip().lower() != "y":
+            console.print("  [dim]Cancelled[/]")
+            return
+        try:
+            r = client.delete_ingested(current_agent, source, project=current_project)
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            else:
+                deleted = r.get("deleted", 0)
+                console.print(f"  [dim]Deleted {deleted} chunks from {source}[/]")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    if low_arg.startswith("watch"):
+        watch_arg = arg[5:].strip()
+        watch_low = watch_arg.lower().strip()
+
+        if not watch_low or watch_low == "list":
+            try:
+                folders = client.list_watch_folders(current_agent, project=current_project)
+                if not folders:
+                    console.print("  [dim]No watched folders[/]")
+                    return
+                t = Table(show_header=True, box=None, padding=(0, 1))
+                t.add_column("Path", style="bold")
+                t.add_column("Pattern", style="dim")
+                t.add_column("Files", justify="right")
+                t.add_column("Chunks", justify="right")
+                for f in folders:
+                    recursive_tag = " (recursive)" if f.get("recursive") else ""
+                    t.add_row(
+                        f.get("path", "?"),
+                        f"{f.get('pattern', '*')}{recursive_tag}",
+                        str(f.get("file_count", 0)),
+                        str(f.get("chunk_count", 0)),
+                    )
+                console.print()
+                console.print(t)
+                console.print()
+            except Exception as e:
+                console.print(f"  [error]{e}[/]")
+            return
+
+        if watch_low.startswith("add "):
+            path_str = watch_arg[4:].strip()
+            if not path_str:
+                console.print("  [dim]Usage: /ingest watch add <path> [--pattern *.pdf] [--recursive][/]")
+                return
+            # Parse flags
+            parts = path_str.split()
+            folder_path = parts[0]
+            pattern = "*"
+            recursive = False
+            tags_list: list[str] = []
+            i = 1
+            while i < len(parts):
+                if parts[i] == "--pattern" and i + 1 < len(parts):
+                    pattern = parts[i + 1]; i += 2
+                elif parts[i] == "--recursive":
+                    recursive = True; i += 1
+                elif parts[i] == "--tags" and i + 1 < len(parts):
+                    tags_list = [t.strip() for t in parts[i + 1].split(",")]; i += 2
+                else:
+                    i += 1
+            try:
+                r = client.add_watch_folder(current_agent, folder_path,
+                                            pattern=pattern, recursive=recursive,
+                                            project=current_project, tags=tags_list or None)
+                if r.get("error"):
+                    console.print(f"  [error]{r['error']}[/]")
+                else:
+                    console.print(f"  [#5f87ff]Added watch:[/] {folder_path} [dim]({pattern})[/]")
+            except Exception as e:
+                console.print(f"  [error]{e}[/]")
+            return
+
+        if watch_low.startswith("remove "):
+            path_str = watch_arg[7:].strip()
+            if not path_str:
+                console.print("  [dim]Usage: /ingest watch remove <path>[/]")
+                return
+            try:
+                r = client.remove_watch_folder(current_agent, path_str,
+                                               project=current_project)
+                if r.get("error"):
+                    console.print(f"  [error]{r['error']}[/]")
+                else:
+                    console.print(f"  [dim]Watch removed:[/] {path_str}")
+            except Exception as e:
+                console.print(f"  [error]{e}[/]")
+            return
+
+        console.print("  [dim]/ingest watch [list | add <path> | remove <path>][/]")
+        return
+
+    # Default: ingest a file or URL
+    target = arg.strip()
+    try:
+        if target.startswith("http://") or target.startswith("https://"):
+            console.print(f"  [dim]Fetching URL...[/]")
+            r = client.ingest_url(current_agent, target, project=current_project)
+        else:
+            # Expand ~ and resolve path
+            target = os.path.expanduser(target)
+            if not os.path.isabs(target):
+                target = os.path.abspath(target)
+            if not os.path.exists(target):
+                console.print(f"  [error]File not found: {target}[/]")
+                return
+            console.print(f"  [dim]Ingesting {os.path.basename(target)}...[/]")
+            r = client.ingest_file(current_agent, target, project=current_project)
+
+        if r.get("error"):
+            console.print(f"  [error]{r['error']}[/]")
+        else:
+            chunks = r.get("chunks", 0)
+            source = r.get("source", target)
+            console.print(f"  [#5f87ff]Done.[/] {chunks} chunks ingested from {source}")
+    except Exception as e:
+        console.print(f"  [error]{e}[/]")
+
+
 # --- Main loop ---
 
 def run_interactive(args):
@@ -1245,6 +1606,7 @@ def run_interactive(args):
 
     current_agent = args.agent
     current_model = args.model
+    current_project: str | None = None
     show_tools = True
     token_count = 0
     plan_mode = False
@@ -1276,13 +1638,20 @@ def run_interactive(args):
 
         parts = [
             ("class:tb.agent", f" {current_agent} "),
+        ]
+        if current_project:
+            parts.extend([
+                ("class:tb.sep", "·"),
+                ("class:tb.project", f" {current_project} "),
+            ])
+        parts.extend([
             ("class:tb.sep", "│"),
             ("class:tb.label", " Model: "),
             ("class:tb.model", f"{model_short} "),
             ("class:tb.sep", "│ "),
             ("class:tb.label", "Ctx: "),
             ("class:tb.ctx", f"{tok_display} "),
-        ]
+        ])
         if plan_mode:
             parts.extend([
                 ("class:tb.sep", "│ "),
@@ -1299,6 +1668,7 @@ def run_interactive(args):
         "tb.model": "bg:default #5f87ff noreverse",
         "tb.sep":   "bg:default #444444 noreverse",
         "tb.ctx":   "bg:default #ff8700 noreverse",
+        "tb.project": "bg:default #22d3ee bold noreverse",
         "tb.plan":  "bg:default #3b82f6 bold noreverse",
         "completion-menu":             "bg:#333333 #cccccc",
         "completion-menu.completion":  "bg:#333333 #cccccc",
@@ -1404,8 +1774,11 @@ def run_interactive(args):
             # --- Agent management ---
 
             if low.startswith("/agent"):
+                old_agent = current_agent
                 current_agent, current_model = _handle_agent(
                     stripped, client, current_agent, current_model, session)
+                if current_agent != old_agent:
+                    current_project = None  # clear project on agent switch
                 token_count = 0
                 continue
 
@@ -1497,6 +1870,22 @@ def run_interactive(args):
                 _handle_costs(client)
                 continue
 
+            # --- Projects ---
+
+            if low.startswith("/projects"):
+                arg = stripped[9:].strip()
+                result = _handle_projects(arg, client, current_agent,
+                                          current_project, session)
+                current_project = result
+                continue
+
+            # --- Ingest ---
+
+            if low.startswith("/ingest"):
+                arg = stripped[7:].strip()
+                _handle_ingest(arg, client, current_agent, current_project, session)
+                continue
+
             # --- Schedule ---
 
             if low.startswith("/schedule"):
@@ -1566,7 +1955,7 @@ def run_interactive(args):
                     "  [bold #ff8700]Thinking...[/]",
                     spinner="dots", spinner_style="#ff8700",
                 ):
-                    for event_type, data in client.chat(stripped, mode="plan" if plan_mode else None):
+                    for event_type, data in client.chat(stripped, mode="plan" if plan_mode else None, project=current_project):
                         if event_type == "text_delta":
                             pass  # Collecting server-side (silent mode)
                         elif event_type == "tool_call":

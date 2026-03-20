@@ -233,6 +233,8 @@ class Session:
         self.status = "active"
         self.lock = threading.Lock()
 
+        self.project: str | None = None  # Active project name (for scoped chat)
+
         self.agent = engine.AgentConfig(agent_id)
         self.memory = engine.MemoryStore(agent_id, base_dir=self.agent.memory_dir)
 
@@ -425,6 +427,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_costs_daily()
         elif path == "/v1/cache/stats":
             self._send_json(engine._web_cache.stats())
+        # --- Projects & Ingestion GET routes ---
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/docs" in path:
+            self._handle_project_docs(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path:
+            self._handle_project_get(path)
+        elif path.startswith("/v1/agents/") and path.endswith("/projects"):
+            self._handle_list_projects(path)
+        elif path.startswith("/v1/agents/") and path.endswith("/ingested"):
+            self._handle_list_ingested(path)
         elif path == "/" or path.startswith("/web/") or path.endswith((".html", ".css", ".js", ".ico")):
             self._serve_static(path)
         else:
@@ -490,6 +501,20 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_refine()
         elif path.startswith("/v1/agents/") and path.endswith("/commands"):
             self._handle_agent_commands_post(path)
+        # --- Projects & Ingestion POST routes ---
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/ingest" in path:
+            self._handle_project_ingest(path)
+        elif path.startswith("/v1/agents/") and path.endswith("/projects"):
+            self._handle_create_project(path)
+        elif path.startswith("/v1/agents/") and path.endswith("/ingest"):
+            self._handle_agent_ingest(path)
+        else:
+            self._send_json({"error": "Not found"}, 404)
+
+    def do_PUT(self):
+        path = self.path.split("?")[0]
+        if path.startswith("/v1/agents/") and "/projects/" in path:
+            self._handle_project_update(path)
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -510,13 +535,20 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "Session not found"}, 404)
         elif path.startswith("/v1/services/qmd/docs"):
             self._handle_qmd_doc_delete()
+        # --- Projects & Ingestion DELETE routes ---
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/docs/" in path:
+            self._handle_project_doc_delete(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path:
+            self._handle_project_delete(path)
+        elif path.startswith("/v1/agents/") and "/ingested/" in path:
+            self._handle_agent_ingested_delete(path)
         else:
             self._send_json({"error": "Not found"}, 404)
 
     def do_OPTIONS(self):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Session-ID")
         self.end_headers()
 
@@ -755,6 +787,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         message = body.get("message", "")
         model_override = body.get("model")
         chat_mode = body.get("mode", "")
+        project_name = body.get("project")  # Optional project scope
         session = sessions.get(sid)
 
         if not session:
@@ -842,6 +875,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
             # Set plan mode if requested
             engine._thread_local.plan_mode = (chat_mode == "plan")
+
+            # Set project scope if provided
+            if project_name:
+                session.project = project_name
+                engine._thread_local.project = project_name
+            else:
+                engine._thread_local.project = session.project  # Use session's existing project
 
             # Set globals as fallback for code that hasn't been migrated yet
             old_agent = engine._current_agent
@@ -1182,6 +1222,268 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"tasks": tasks})
         else:
             self._send_json({"tasks": []})
+
+    # ─── Projects & Ingestion Handlers ─────────────────────────────
+
+    def _parse_agent_from_path(self, path: str) -> str:
+        """Extract agent_id from /v1/agents/{id}/..."""
+        parts = path.split("/")
+        # /v1/agents/{id}/...
+        if len(parts) >= 4:
+            return parts[3]
+        return ""
+
+    def _parse_project_from_path(self, path: str) -> str:
+        """Extract project name from /v1/agents/{id}/projects/{name}/..."""
+        parts = path.split("/")
+        # /v1/agents/{id}/projects/{name}...
+        if len(parts) >= 6:
+            return parts[5]
+        return ""
+
+    def _handle_list_projects(self, path: str):
+        """GET /v1/agents/{id}/projects"""
+        agent_id = self._parse_agent_from_path(path)
+        if not agent_id:
+            self._send_json({"error": "Missing agent ID"}, 400)
+            return
+        projects = engine.ProjectManager.list_projects(agent_id)
+        self._send_json({"agent": agent_id, "projects": projects})
+
+    def _handle_create_project(self, path: str):
+        """POST /v1/agents/{id}/projects"""
+        agent_id = self._parse_agent_from_path(path)
+        if not agent_id:
+            self._send_json({"error": "Missing agent ID"}, 400)
+            return
+        body = self._read_json()
+        name = body.get("name", "")
+        if not name:
+            self._send_json({"error": "Project name is required"}, 400)
+            return
+        result = engine.ProjectManager.create_project(
+            agent_id, name,
+            description=body.get("description", ""),
+            config=body,
+        )
+        if "error" in result:
+            self._send_json(result, 400)
+        else:
+            self._send_json(result, 201)
+
+    def _handle_project_get(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}"""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = engine.ProjectManager.get_project(agent_id, proj_name)
+        if not project:
+            self._send_json({"error": f"Project '{proj_name}' not found"}, 404)
+            return
+        self._send_json(project)
+
+    def _handle_project_update(self, path: str):
+        """PUT /v1/agents/{id}/projects/{name}"""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        body = self._read_json()
+        result = engine.ProjectManager.update_project(agent_id, proj_name, body)
+        if "error" in result:
+            self._send_json(result, 400)
+        else:
+            self._send_json(result)
+
+    def _handle_project_delete(self, path: str):
+        """DELETE /v1/agents/{id}/projects/{name}"""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        result = engine.ProjectManager.delete_project(agent_id, proj_name)
+        if "error" in result:
+            self._send_json(result, 404)
+        else:
+            self._send_json(result)
+
+    def _handle_agent_ingest(self, path: str):
+        """POST /v1/agents/{id}/ingest — ingest file or URL into agent memory."""
+        agent_id = self._parse_agent_from_path(path)
+        if not agent_id:
+            self._send_json({"error": "Missing agent ID"}, 400)
+            return
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" in content_type:
+            result = self._handle_multipart_ingest(agent_id, None)
+        else:
+            body = self._read_json()
+            url = body.get("url", "")
+            if url:
+                tags = body.get("tags", [])
+                if isinstance(tags, str):
+                    tags = [t.strip() for t in tags.split(",") if t.strip()]
+                result = engine.IngestManager.ingest_url(
+                    agent_id, url,
+                    tags=tags,
+                    chunk_size=body.get("chunk_size", 1500),
+                    chunk_overlap=body.get("chunk_overlap", 200),
+                )
+            else:
+                # Check for file_path (local file ingestion via JSON)
+                file_path = body.get("file_path", "")
+                if not file_path:
+                    self._send_json({"error": "Provide 'url' or 'file_path'"}, 400)
+                    return
+                tags = body.get("tags", [])
+                if isinstance(tags, str):
+                    tags = [t.strip() for t in tags.split(",") if t.strip()]
+                result = engine.IngestManager.ingest_file(
+                    agent_id, file_path,
+                    tags=tags,
+                    chunk_size=body.get("chunk_size", 1500),
+                    chunk_overlap=body.get("chunk_overlap", 200),
+                )
+        if "error" in result:
+            self._send_json(result, 400)
+        else:
+            self._send_json(result)
+
+    def _handle_project_ingest(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/ingest"""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" in content_type:
+            result = self._handle_multipart_ingest(agent_id, proj_name)
+        else:
+            body = self._read_json()
+            url = body.get("url", "")
+            if url:
+                tags = body.get("tags", [])
+                if isinstance(tags, str):
+                    tags = [t.strip() for t in tags.split(",") if t.strip()]
+                result = engine.IngestManager.ingest_url(
+                    agent_id, url, project_name=proj_name,
+                    tags=tags,
+                    chunk_size=body.get("chunk_size", 1500),
+                    chunk_overlap=body.get("chunk_overlap", 200),
+                )
+            else:
+                file_path = body.get("file_path", "")
+                if not file_path:
+                    self._send_json({"error": "Provide 'url' or 'file_path'"}, 400)
+                    return
+                tags = body.get("tags", [])
+                if isinstance(tags, str):
+                    tags = [t.strip() for t in tags.split(",") if t.strip()]
+                result = engine.IngestManager.ingest_file(
+                    agent_id, file_path, project_name=proj_name,
+                    tags=tags,
+                    chunk_size=body.get("chunk_size", 1500),
+                    chunk_overlap=body.get("chunk_overlap", 200),
+                )
+        if "error" in result:
+            self._send_json(result, 400)
+        else:
+            self._send_json(result)
+
+    def _handle_multipart_ingest(self, agent_id: str, project_name: str | None) -> dict:
+        """Parse multipart/form-data upload and ingest the file."""
+        import cgi
+        import tempfile
+        content_type = self.headers.get("Content-Type", "")
+        # Parse multipart form data
+        environ = {
+            "REQUEST_METHOD": "POST",
+            "CONTENT_TYPE": content_type,
+            "CONTENT_LENGTH": self.headers.get("Content-Length", "0"),
+        }
+        try:
+            form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ=environ)
+        except Exception as e:
+            return {"error": f"Failed to parse upload: {e}"}
+        file_item = form["file"] if "file" in form else None
+        if not file_item or not file_item.filename:
+            return {"error": "No file uploaded"}
+        # Save to temp file
+        suffix = os.path.splitext(file_item.filename)[1]
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(file_item.file.read())
+            tmp_path = tmp.name
+        try:
+            tags_raw = form.getvalue("tags", "")
+            tags = [t.strip() for t in tags_raw.split(",") if t.strip()] if tags_raw else []
+            chunk_size = int(form.getvalue("chunk_size", "1500"))
+            chunk_overlap = int(form.getvalue("chunk_overlap", "200"))
+            result = engine.IngestManager.ingest_file(
+                agent_id, tmp_path, project_name=project_name,
+                tags=tags, chunk_size=chunk_size, chunk_overlap=chunk_overlap,
+            )
+            # Replace tmp path source with original filename
+            if "source" in result:
+                result["source"] = file_item.filename
+            return result
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    def _handle_list_ingested(self, path: str):
+        """GET /v1/agents/{id}/ingested"""
+        agent_id = self._parse_agent_from_path(path)
+        if not agent_id:
+            self._send_json({"error": "Missing agent ID"}, 400)
+            return
+        docs = engine.IngestManager.list_ingested(agent_id)
+        self._send_json({"agent": agent_id, "documents": docs})
+
+    def _handle_project_docs(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/docs"""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        docs = engine.IngestManager.list_ingested(agent_id, project_name=proj_name)
+        self._send_json({"agent": agent_id, "project": proj_name, "documents": docs})
+
+    def _handle_agent_ingested_delete(self, path: str):
+        """DELETE /v1/agents/{id}/ingested/{hash}"""
+        agent_id = self._parse_agent_from_path(path)
+        parts = path.split("/")
+        source_hash = parts[-1] if len(parts) >= 5 else ""
+        if not agent_id or not source_hash:
+            self._send_json({"error": "Missing agent or source hash"}, 400)
+            return
+        result = engine.IngestManager.delete_ingested(agent_id, source_hash)
+        if "error" in result:
+            self._send_json(result, 404)
+        else:
+            self._send_json(result)
+
+    def _handle_project_doc_delete(self, path: str):
+        """DELETE /v1/agents/{id}/projects/{name}/docs/{hash}"""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        parts = path.split("/")
+        source_hash = parts[-1] if len(parts) >= 8 else ""
+        if not agent_id or not proj_name or not source_hash:
+            self._send_json({"error": "Missing parameters"}, 400)
+            return
+        result = engine.IngestManager.delete_ingested(agent_id, source_hash, project_name=proj_name)
+        if "error" in result:
+            self._send_json(result, 404)
+        else:
+            self._send_json(result)
 
     def _handle_agents_activity(self):
         """GET /v1/agents/activity — which agents are currently doing something."""
@@ -2583,6 +2885,11 @@ def main():
     # Start task runner
     engine._task_runner = engine.TaskRunner()
 
+    # Start ingest watcher (watched folders auto-ingestion)
+    engine._ingest_watcher = engine.IngestWatcher()
+    engine._ingest_watcher.start()
+    print("Ingest watcher: started (30s poll)")
+
     # Initialize main agent
     engine._current_agent = engine.AgentConfig("main")
     engine._memory_store = engine.MemoryStore("main", base_dir=engine._current_agent.memory_dir)
@@ -2624,7 +2931,7 @@ def main():
             return snap
 
         def _backfill_collections():
-            """Register any agent dirs missing from QMD."""
+            """Register any agent dirs and project dirs missing from QMD."""
             existing = {(c["name"] if isinstance(c, dict) else c)
                         for c in BrainAgentHandler._qmd_collections()}
             added = False
@@ -2635,6 +2942,18 @@ def main():
                         BrainAgentHandler._qmd_run(["collection", "add", agent_dir, "--name", agent_id])
                         print(f"QMD: registered collection '{agent_id}'")
                         added = True
+                # Also register project collections
+                projects_dir = os.path.join(agents_dir, agent_id, "projects")
+                if os.path.isdir(projects_dir):
+                    for proj_name in os.listdir(projects_dir):
+                        proj_dir = os.path.join(projects_dir, proj_name)
+                        if not os.path.isdir(proj_dir) or proj_name.startswith("."):
+                            continue
+                        col_name = f"{agent_id}/{proj_name}"
+                        if col_name not in existing:
+                            BrainAgentHandler._qmd_run(["collection", "add", proj_dir, "--name", col_name])
+                            print(f"QMD: registered project collection '{col_name}'")
+                            added = True
             return added
 
         def _deep_check() -> tuple[bool, bool]:

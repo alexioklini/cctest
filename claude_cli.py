@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "1.7.0"
+VERSION = "2.0.0"
 VERSION_DATE = "2026-03-20"
 CHANGELOG = [
+    ("2.0.0", "2026-03-20", "Projects system, document ingestion (PDF/DOCX/HTML/URL), watched folders, knowledge graph memory with relationship traversal, chat scoping per project"),
     ("1.7.0", "2026-03-20", "Plan mode, web result caching, streaming tool output, cost tracking + rate limiting, custom slash commands, LLM input refinement"),
     ("1.6.0", "2026-03-20", "TUI feature parity (30+ slash commands), slash command popup menus in both TUI and Web UI, roadmap"),
     ("1.5.3", "2026-03-20", "Thread-safe agent context, fix old chat provider resolution, per-collection QMD debounce, YAML-safe frontmatter, memory filename collision prevention, concurrent scheduler, thread-local cleanup, recall content limit increase"),
@@ -2386,13 +2387,764 @@ agent: {self.agent_id}
 _memory_store: MemoryStore | None = None
 
 
+# ─── Projects System ──────────────────────────────────────────────────
+
+class ProjectManager:
+    """CRUD operations for per-agent projects."""
+
+    @staticmethod
+    def _project_dir(agent_id: str, name: str) -> str:
+        return os.path.join(AGENTS_DIR, agent_id, "projects", name)
+
+    @staticmethod
+    def _projects_base(agent_id: str) -> str:
+        return os.path.join(AGENTS_DIR, agent_id, "projects")
+
+    @staticmethod
+    def list_projects(agent_id: str) -> list[dict]:
+        """List all projects for an agent."""
+        base = ProjectManager._projects_base(agent_id)
+        if not os.path.isdir(base):
+            return []
+        projects = []
+        for name in sorted(os.listdir(base)):
+            pdir = os.path.join(base, name)
+            if not os.path.isdir(pdir) or name.startswith("."):
+                continue
+            cfg_path = os.path.join(pdir, "project.json")
+            cfg = {}
+            if os.path.exists(cfg_path):
+                try:
+                    with open(cfg_path, "r") as f:
+                        cfg = json.load(f)
+                except (OSError, json.JSONDecodeError):
+                    pass
+            # Count ingested docs
+            ingested_dir = os.path.join(pdir, "ingested")
+            chunk_count = 0
+            if os.path.isdir(ingested_dir):
+                chunk_count = sum(1 for fn in os.listdir(ingested_dir) if fn.startswith("ingest-") and fn.endswith(".md"))
+            # Count memory files
+            mem_count = sum(1 for fn in os.listdir(pdir) if fn.endswith(".md") and not fn.startswith("ingest-") and fn not in _QMD_IGNORE_FILES)
+            projects.append({
+                "name": name,
+                "description": cfg.get("description", ""),
+                "created_at": cfg.get("created_at", ""),
+                "tags": cfg.get("tags", []),
+                "watch_folders": cfg.get("watch_folders", []),
+                "chunks": chunk_count,
+                "memories": mem_count,
+            })
+        return projects
+
+    @staticmethod
+    def create_project(agent_id: str, name: str, description: str = "",
+                       config: dict | None = None) -> dict:
+        """Create a new project directory with project.json."""
+        # Validate name
+        safe_name = re.sub(r'[^\w\s-]', '', name).strip().lower().replace(' ', '-')
+        if not safe_name:
+            return {"error": "Invalid project name"}
+        pdir = ProjectManager._project_dir(agent_id, safe_name)
+        if os.path.exists(pdir):
+            return {"error": f"Project '{safe_name}' already exists"}
+        os.makedirs(pdir, exist_ok=True)
+        os.makedirs(os.path.join(pdir, "ingested"), exist_ok=True)
+        cfg = {
+            "name": config.get("name", name) if config else name,
+            "description": description,
+            "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "watch_folders": (config or {}).get("watch_folders", []),
+            "tags": (config or {}).get("tags", []),
+            "model": (config or {}).get("model"),
+        }
+        cfg_path = os.path.join(pdir, "project.json")
+        with open(cfg_path, "w") as f:
+            json.dump(cfg, f, indent=2)
+        # Register QMD collection for this project
+        collection_name = f"{agent_id}/{safe_name}"
+        threading.Thread(
+            target=_qmd_ensure_collection,
+            args=(collection_name, pdir),
+            daemon=True,
+        ).start()
+        return {"name": safe_name, "status": "created", "path": pdir}
+
+    @staticmethod
+    def get_project(agent_id: str, name: str) -> dict | None:
+        """Read project.json for a project."""
+        pdir = ProjectManager._project_dir(agent_id, name)
+        cfg_path = os.path.join(pdir, "project.json")
+        if not os.path.exists(cfg_path):
+            return None
+        try:
+            with open(cfg_path, "r") as f:
+                cfg = json.load(f)
+            # Add computed stats
+            ingested_dir = os.path.join(pdir, "ingested")
+            chunk_count = 0
+            if os.path.isdir(ingested_dir):
+                chunk_count = sum(1 for fn in os.listdir(ingested_dir) if fn.startswith("ingest-") and fn.endswith(".md"))
+            cfg["chunks"] = chunk_count
+            cfg["dir"] = pdir
+            return cfg
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    @staticmethod
+    def update_project(agent_id: str, name: str, updates: dict) -> dict:
+        """Update project.json fields."""
+        pdir = ProjectManager._project_dir(agent_id, name)
+        cfg_path = os.path.join(pdir, "project.json")
+        if not os.path.exists(cfg_path):
+            return {"error": f"Project '{name}' not found"}
+        try:
+            with open(cfg_path, "r") as f:
+                cfg = json.load(f)
+            for k in ("description", "watch_folders", "tags", "model", "name"):
+                if k in updates:
+                    cfg[k] = updates[k]
+            with open(cfg_path, "w") as f:
+                json.dump(cfg, f, indent=2)
+            return {"name": name, "status": "updated"}
+        except (OSError, json.JSONDecodeError) as e:
+            return {"error": str(e)}
+
+    @staticmethod
+    def delete_project(agent_id: str, name: str) -> dict:
+        """Soft-delete a project (move to .trash)."""
+        pdir = ProjectManager._project_dir(agent_id, name)
+        if not os.path.isdir(pdir):
+            return {"error": f"Project '{name}' not found"}
+        trash_dir = os.path.join(AGENTS_DIR, ".trash")
+        os.makedirs(trash_dir, exist_ok=True)
+        dest = os.path.join(trash_dir, f"{agent_id}_project_{name}_{int(time.time())}")
+        shutil.move(pdir, dest)
+        # Remove QMD collection
+        collection_name = f"{agent_id}/{name}"
+        try:
+            subprocess.run(
+                ["qmd", "collection", "remove", collection_name],
+                capture_output=True, text=True, timeout=5,
+            )
+        except Exception:
+            pass
+        return {"name": name, "status": "deleted", "moved_to": dest}
+
+
+# ─── Document Ingestion Engine ────────────────────────────────────────
+
+class DocumentParser:
+    """Parse various document formats to plain text."""
+
+    @staticmethod
+    def parse_pdf(path: str) -> str:
+        """Parse PDF to text using pymupdf."""
+        try:
+            import fitz  # pymupdf
+        except ImportError:
+            raise ImportError("Install pymupdf for PDF support: pip3 install pymupdf")
+        doc = fitz.open(path)
+        pages = []
+        for page in doc:
+            pages.append(page.get_text())
+        doc.close()
+        return "\n\n".join(pages)
+
+    @staticmethod
+    def parse_docx(path: str) -> str:
+        """Parse DOCX to text using python-docx."""
+        try:
+            import docx
+        except ImportError:
+            raise ImportError("Install python-docx for DOCX support: pip3 install python-docx")
+        doc = docx.Document(path)
+        paragraphs = []
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if text:
+                # Preserve heading structure
+                if para.style and para.style.name and para.style.name.startswith("Heading"):
+                    level = 1
+                    try:
+                        level = int(para.style.name.replace("Heading", "").strip()) or 1
+                    except ValueError:
+                        pass
+                    text = "#" * level + " " + text
+                paragraphs.append(text)
+        return "\n\n".join(paragraphs)
+
+    @staticmethod
+    def parse_txt(path: str) -> str:
+        """Parse plain text file."""
+        with open(path, "r", errors="replace") as f:
+            return f.read()
+
+    @staticmethod
+    def parse_md(path: str) -> str:
+        """Parse markdown file (keep as-is)."""
+        with open(path, "r", errors="replace") as f:
+            return f.read()
+
+    @staticmethod
+    def parse_html(content: str) -> str:
+        """Strip HTML tags and extract text content."""
+        from html.parser import HTMLParser
+
+        class _TextExtractor(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self._parts: list[str] = []
+                self._skip = False
+                self._skip_tags = {"script", "style", "nav", "header", "footer", "noscript"}
+
+            def handle_starttag(self, tag, attrs):
+                if tag in self._skip_tags:
+                    self._skip = True
+                elif tag in ("p", "div", "br", "h1", "h2", "h3", "h4", "h5", "h6", "li", "tr"):
+                    self._parts.append("\n")
+                    if tag.startswith("h"):
+                        level = int(tag[1])
+                        self._parts.append("#" * level + " ")
+
+            def handle_endtag(self, tag):
+                if tag in self._skip_tags:
+                    self._skip = False
+                elif tag in ("p", "div", "h1", "h2", "h3", "h4", "h5", "h6"):
+                    self._parts.append("\n")
+
+            def handle_data(self, data):
+                if not self._skip:
+                    self._parts.append(data)
+
+        extractor = _TextExtractor()
+        extractor.feed(content)
+        text = "".join(extractor._parts)
+        # Clean up whitespace
+        lines = [line.strip() for line in text.split("\n")]
+        cleaned = "\n".join(lines)
+        # Collapse multiple blank lines
+        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+        return cleaned.strip()
+
+    @staticmethod
+    def parse_url(url: str) -> str:
+        """Fetch URL and parse HTML to text."""
+        req_headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        }
+        req = urllib.request.Request(url, headers=req_headers)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read()
+            encoding = resp.headers.get("Content-Encoding", "")
+            if encoding == "gzip":
+                import gzip
+                raw = gzip.decompress(raw)
+            charset = resp.headers.get_content_charset() or "utf-8"
+            html = raw.decode(charset, errors="replace")
+        return DocumentParser.parse_html(html)
+
+    @staticmethod
+    def parse(path_or_url: str) -> tuple[str, str]:
+        """Auto-detect format and parse. Returns (text, source_type)."""
+        if path_or_url.startswith(("http://", "https://")):
+            return DocumentParser.parse_url(path_or_url), "url"
+        ext = os.path.splitext(path_or_url)[1].lower()
+        parsers = {
+            ".pdf": ("pdf", DocumentParser.parse_pdf),
+            ".docx": ("docx", DocumentParser.parse_docx),
+            ".txt": ("txt", DocumentParser.parse_txt),
+            ".md": ("md", DocumentParser.parse_md),
+            ".html": ("html", lambda p: DocumentParser.parse_html(open(p, "r", errors="replace").read())),
+            ".htm": ("html", lambda p: DocumentParser.parse_html(open(p, "r", errors="replace").read())),
+        }
+        if ext not in parsers:
+            raise ValueError(f"Unsupported format: {ext}. Supported: {', '.join(parsers.keys())}")
+        source_type, parser_fn = parsers[ext]
+        return parser_fn(path_or_url), source_type
+
+
+class DocumentChunker:
+    """Split text into overlapping chunks with section header preservation."""
+
+    @staticmethod
+    def chunk(text: str, chunk_size: int = 1500, chunk_overlap: int = 200,
+              min_chunk_size: int = 100) -> list[dict]:
+        """Split text into chunks. chunk_size/overlap are in ~tokens (chars/4 approximation).
+        Returns list of {text, index, total, header}."""
+        # Convert token counts to char approximation
+        max_chars = chunk_size * 4
+        overlap_chars = chunk_overlap * 4
+        min_chars = min_chunk_size * 4
+
+        # Split into paragraphs
+        paragraphs = re.split(r'\n\s*\n', text)
+        paragraphs = [p.strip() for p in paragraphs if p.strip()]
+
+        chunks: list[dict] = []
+        current_parts: list[str] = []
+        current_len = 0
+        last_header = ""
+
+        def _flush():
+            nonlocal current_parts, current_len
+            if not current_parts:
+                return
+            chunk_text = "\n\n".join(current_parts)
+            if len(chunk_text) < min_chars:
+                return
+            # Prepend section header if available
+            if last_header and not chunk_text.startswith("#"):
+                chunk_text = last_header + "\n\n" + chunk_text
+            chunks.append({
+                "text": chunk_text,
+                "index": len(chunks),
+                "total": 0,  # filled in later
+                "header": last_header,
+            })
+            # Keep overlap: take text from end of current chunk
+            if overlap_chars > 0:
+                overlap_text = chunk_text[-overlap_chars:]
+                current_parts = [overlap_text]
+                current_len = len(overlap_text)
+            else:
+                current_parts = []
+                current_len = 0
+
+        for para in paragraphs:
+            # Track section headers
+            header_match = re.match(r'^(#{1,6}\s+.+)', para.split('\n')[0])
+            if header_match:
+                last_header = header_match.group(1)
+
+            # If a single paragraph exceeds max_chars, split it
+            if len(para) > max_chars:
+                # Flush current buffer first
+                if current_parts:
+                    _flush()
+                # Split on sentences
+                sentences = re.split(r'(?<=[.!?])\s+', para)
+                for sent in sentences:
+                    if len(sent) > max_chars:
+                        # Split on words as last resort
+                        words = sent.split()
+                        for word in words:
+                            if current_len + len(word) + 1 > max_chars:
+                                _flush()
+                            current_parts.append(word)
+                            current_len += len(word) + 1
+                    else:
+                        if current_len + len(sent) + 1 > max_chars:
+                            _flush()
+                        current_parts.append(sent)
+                        current_len += len(sent) + 1
+            else:
+                if current_len + len(para) + 2 > max_chars:
+                    _flush()
+                current_parts.append(para)
+                current_len += len(para) + 2
+
+        # Flush remaining
+        if current_parts:
+            chunk_text = "\n\n".join(current_parts)
+            if len(chunk_text) >= min_chars:
+                if last_header and not chunk_text.startswith("#"):
+                    chunk_text = last_header + "\n\n" + chunk_text
+                chunks.append({
+                    "text": chunk_text,
+                    "index": len(chunks),
+                    "total": 0,
+                    "header": last_header,
+                })
+
+        # Fill in total count
+        for c in chunks:
+            c["total"] = len(chunks)
+
+        return chunks
+
+
+class IngestManager:
+    """Ingest files and URLs into agent or project memory as chunked markdown."""
+
+    @staticmethod
+    def _source_hash(source: str) -> str:
+        """6-char hash of source name/URL."""
+        return hashlib.sha256(source.encode()).hexdigest()[:6]
+
+    @staticmethod
+    def _ingest_dir(agent_id: str, project_name: str | None = None) -> str:
+        """Get the directory where ingested chunks are stored."""
+        if project_name:
+            d = os.path.join(AGENTS_DIR, agent_id, "projects", project_name, "ingested")
+        else:
+            d = os.path.join(AGENTS_DIR, agent_id, "ingested")
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    @staticmethod
+    def _collection_name(agent_id: str, project_name: str | None = None) -> str:
+        """QMD collection name for embedding."""
+        if project_name:
+            return f"{agent_id}/{project_name}"
+        return agent_id
+
+    @staticmethod
+    def ingest_file(agent_id: str, file_path: str,
+                    project_name: str | None = None,
+                    tags: list[str] | None = None,
+                    chunk_size: int = 1500, chunk_overlap: int = 200) -> dict:
+        """Parse, chunk, and store a file as ingested memory chunks."""
+        if not os.path.exists(file_path):
+            return {"error": f"File not found: {file_path}"}
+        source_name = os.path.basename(file_path)
+        try:
+            text, source_type = DocumentParser.parse(file_path)
+        except (ImportError, ValueError) as e:
+            return {"error": str(e)}
+        return IngestManager._store_chunks(
+            agent_id, project_name, source_name, source_type, text,
+            tags=tags, chunk_size=chunk_size, chunk_overlap=chunk_overlap,
+        )
+
+    @staticmethod
+    def ingest_url(agent_id: str, url: str,
+                   project_name: str | None = None,
+                   tags: list[str] | None = None,
+                   chunk_size: int = 1500, chunk_overlap: int = 200) -> dict:
+        """Fetch URL, parse HTML, chunk, and store."""
+        try:
+            text = DocumentParser.parse_url(url)
+        except Exception as e:
+            return {"error": f"Failed to fetch URL: {e}"}
+        return IngestManager._store_chunks(
+            agent_id, project_name, url, "url", text,
+            tags=tags, chunk_size=chunk_size, chunk_overlap=chunk_overlap,
+        )
+
+    @staticmethod
+    def _store_chunks(agent_id: str, project_name: str | None,
+                      source: str, source_type: str, text: str,
+                      tags: list[str] | None = None,
+                      chunk_size: int = 1500, chunk_overlap: int = 200) -> dict:
+        """Chunk text and write as ingest-*.md files with frontmatter."""
+        src_hash = IngestManager._source_hash(source)
+        ingest_dir = IngestManager._ingest_dir(agent_id, project_name)
+        collection = IngestManager._collection_name(agent_id, project_name)
+
+        # Delete existing chunks for this source (re-ingest)
+        existing = [f for f in os.listdir(ingest_dir) if f.startswith(f"ingest-{src_hash}-") and f.endswith(".md")]
+        for f in existing:
+            os.remove(os.path.join(ingest_dir, f))
+
+        # Chunk
+        chunks = DocumentChunker.chunk(text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        if not chunks:
+            return {"error": "No content extracted from document"}
+
+        all_tags = ["ingested"]
+        if tags:
+            all_tags.extend(tags)
+        # Add source name as tag (sanitized)
+        safe_source_tag = re.sub(r'[^\w-]', '', source.split("/")[-1].split(".")[0].lower())
+        if safe_source_tag:
+            all_tags.append(safe_source_tag)
+        tags_yaml = "\n".join(f"  - {t}" for t in all_tags)
+
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        files_written = []
+        for chunk in chunks:
+            idx = chunk["index"]
+            total = chunk["total"]
+            title = chunk["header"] or f"{source} - Chunk {idx + 1}"
+
+            # Build related links
+            related_lines = []
+            if idx > 0:
+                prev_file = f"ingest-{src_hash}-{idx - 1:03d}.md"
+                related_lines.append(f"  - file: {prev_file}\n    type: prev_chunk")
+            if idx < total - 1:
+                next_file = f"ingest-{src_hash}-{idx + 1:03d}.md"
+                related_lines.append(f"  - file: {next_file}\n    type: next_chunk")
+            if idx != 0:
+                first_file = f"ingest-{src_hash}-000.md"
+                related_lines.append(f"  - file: {first_file}\n    type: same_source")
+            related_yaml = ""
+            if related_lines:
+                related_yaml = "related:\n" + "\n".join(related_lines) + "\n"
+
+            filename = f"ingest-{src_hash}-{idx:03d}.md"
+            md_content = f"""---
+title: {_yaml_escape(title)}
+source: {_yaml_escape(source)}
+source_type: {source_type}
+ingested_at: "{now}"
+chunk_index: {idx}
+total_chunks: {total}
+agent: {agent_id}
+tags:
+{tags_yaml}
+{related_yaml}---
+
+{chunk['text']}
+"""
+            fpath = os.path.join(ingest_dir, filename)
+            with open(fpath, "w") as f:
+                f.write(md_content)
+            files_written.append(filename)
+
+        # Trigger QMD indexing
+        _qmd_debounced_embed(collection)
+
+        word_count = len(text.split())
+        return {
+            "source": source,
+            "source_type": source_type,
+            "source_hash": src_hash,
+            "chunks": len(chunks),
+            "words": word_count,
+            "files": files_written,
+            "agent": agent_id,
+            "project": project_name,
+            "status": "ingested",
+        }
+
+    @staticmethod
+    def list_ingested(agent_id: str, project_name: str | None = None) -> list[dict]:
+        """List ingested documents grouped by source."""
+        ingest_dir = IngestManager._ingest_dir(agent_id, project_name)
+        if not os.path.isdir(ingest_dir):
+            return []
+        # Group by source hash
+        groups: dict[str, dict] = {}
+        for fname in os.listdir(ingest_dir):
+            if not fname.startswith("ingest-") or not fname.endswith(".md"):
+                continue
+            fpath = os.path.join(ingest_dir, fname)
+            try:
+                with open(fpath, "r") as f:
+                    raw = f.read(800)
+                fm, _ = _parse_frontmatter(raw)
+            except Exception:
+                continue
+            source = fm.get("source", "unknown")
+            src_hash = fname.split("-")[1] if "-" in fname else "?"
+            if src_hash not in groups:
+                groups[src_hash] = {
+                    "source": source,
+                    "source_type": fm.get("source_type", "unknown"),
+                    "source_hash": src_hash,
+                    "chunks": 0,
+                    "ingested_at": fm.get("ingested_at", ""),
+                    "tags": [],
+                }
+            groups[src_hash]["chunks"] += 1
+            # Parse tags from frontmatter
+            tags_str = fm.get("tags", "")
+            if isinstance(tags_str, str) and tags_str:
+                for t in tags_str.split(","):
+                    t = t.strip().strip("-").strip()
+                    if t and t not in groups[src_hash]["tags"]:
+                        groups[src_hash]["tags"].append(t)
+        return sorted(groups.values(), key=lambda x: x.get("ingested_at", ""), reverse=True)
+
+    @staticmethod
+    def delete_ingested(agent_id: str, source_hash: str,
+                        project_name: str | None = None) -> dict:
+        """Delete all chunks for a source hash."""
+        ingest_dir = IngestManager._ingest_dir(agent_id, project_name)
+        if not os.path.isdir(ingest_dir):
+            return {"error": "No ingested documents found"}
+        deleted = 0
+        source_name = ""
+        for fname in os.listdir(ingest_dir):
+            if fname.startswith(f"ingest-{source_hash}-") and fname.endswith(".md"):
+                if not source_name:
+                    fpath = os.path.join(ingest_dir, fname)
+                    try:
+                        with open(fpath, "r") as f:
+                            fm, _ = _parse_frontmatter(f.read(500))
+                        source_name = fm.get("source", "unknown")
+                    except Exception:
+                        pass
+                os.remove(os.path.join(ingest_dir, fname))
+                deleted += 1
+        collection = IngestManager._collection_name(agent_id, project_name)
+        _qmd_debounced_embed(collection)
+        return {"source": source_name, "source_hash": source_hash, "deleted": deleted}
+
+
+# ─── Watched Folders (Auto-Ingestion) ────────────────────────────────
+
+class IngestWatcher:
+    """Background thread that polls watched folders and auto-ingests new/modified files."""
+
+    POLL_INTERVAL = 30  # seconds
+
+    def __init__(self):
+        self._stop = threading.Event()
+        self._thread = None
+
+    def start(self):
+        """Start the background watcher thread."""
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run_loop, daemon=True, name="ingest_watcher")
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=2)
+
+    def _run_loop(self):
+        """Poll all watched folders across all agents and projects."""
+        while not self._stop.is_set():
+            try:
+                self._scan_all()
+            except Exception as e:
+                logging.debug("IngestWatcher error: %s", e)
+            self._stop.wait(self.POLL_INTERVAL)
+
+    def _scan_all(self):
+        """Scan watched folders for all agents and projects."""
+        if not os.path.isdir(AGENTS_DIR):
+            return
+        for agent_name in os.listdir(AGENTS_DIR):
+            if agent_name.startswith("."):
+                continue
+            agent_dir = os.path.join(AGENTS_DIR, agent_name)
+            if not os.path.isdir(agent_dir):
+                continue
+            # Check agent-level watches (from agent.json)
+            agent_json_path = os.path.join(agent_dir, "agent.json")
+            if os.path.exists(agent_json_path):
+                try:
+                    with open(agent_json_path, "r") as f:
+                        agent_cfg = json.load(f)
+                    watches = agent_cfg.get("ingest_watch", [])
+                    if watches:
+                        self._process_watches(agent_name, None, watches, agent_dir)
+                except (OSError, json.JSONDecodeError):
+                    pass
+            # Check project-level watches
+            projects_dir = os.path.join(agent_dir, "projects")
+            if os.path.isdir(projects_dir):
+                for proj_name in os.listdir(projects_dir):
+                    proj_dir = os.path.join(projects_dir, proj_name)
+                    proj_json = os.path.join(proj_dir, "project.json")
+                    if not os.path.exists(proj_json):
+                        continue
+                    try:
+                        with open(proj_json, "r") as f:
+                            proj_cfg = json.load(f)
+                        watches = proj_cfg.get("watch_folders", [])
+                        if watches:
+                            self._process_watches(agent_name, proj_name, watches, proj_dir)
+                    except (OSError, json.JSONDecodeError):
+                        pass
+
+    def _process_watches(self, agent_id: str, project_name: str | None,
+                         watches: list[dict], base_dir: str):
+        """Process watched folders, detect changes, ingest as needed."""
+        registry_path = os.path.join(base_dir, "ingest_registry.json")
+        registry = {}
+        if os.path.exists(registry_path):
+            try:
+                with open(registry_path, "r") as f:
+                    registry = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                pass
+        watches_reg = registry.get("watches", {})
+        changed = False
+
+        for watch in watches:
+            watch_path = watch.get("path", "")
+            if not watch_path or not os.path.isdir(watch_path):
+                continue
+            pattern = watch.get("pattern", "*")
+            recursive = watch.get("recursive", False)
+            tags = watch.get("tags", [])
+            chunk_size = watch.get("chunk_size", 1500)
+
+            # Get or create registry entry for this watch
+            wreg = watches_reg.get(watch_path, {"files": {}, "last_scan": ""})
+
+            # Scan for matching files
+            if recursive:
+                matched_files = []
+                for root, _dirs, files in os.walk(watch_path):
+                    for fn in files:
+                        if fnmatch.fnmatch(fn, pattern):
+                            matched_files.append(os.path.join(root, fn))
+            else:
+                matched_files = [
+                    os.path.join(watch_path, fn) for fn in os.listdir(watch_path)
+                    if fnmatch.fnmatch(fn, pattern) and os.path.isfile(os.path.join(watch_path, fn))
+                ]
+
+            current_files = set()
+            for fpath in matched_files:
+                fname = os.path.basename(fpath)
+                current_files.add(fname)
+                try:
+                    stat = os.stat(fpath)
+                except OSError:
+                    continue
+                prev = wreg["files"].get(fname, {})
+                if prev.get("mtime") == stat.st_mtime and prev.get("size") == stat.st_size:
+                    continue  # unchanged
+
+                # New or modified file — ingest
+                try:
+                    result = IngestManager.ingest_file(
+                        agent_id, fpath, project_name=project_name,
+                        tags=tags, chunk_size=chunk_size,
+                    )
+                    if "error" not in result:
+                        wreg["files"][fname] = {
+                            "mtime": stat.st_mtime,
+                            "size": stat.st_size,
+                            "hash": result.get("source_hash", ""),
+                            "chunks": result.get("chunks", 0),
+                            "ingested_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                        }
+                        changed = True
+                except Exception as e:
+                    logging.debug("IngestWatcher: failed to ingest %s: %s", fpath, e)
+
+            # Detect deleted files
+            for fname in list(wreg["files"].keys()):
+                if fname not in current_files:
+                    src_hash = wreg["files"][fname].get("hash", "")
+                    if src_hash:
+                        IngestManager.delete_ingested(agent_id, src_hash, project_name)
+                    del wreg["files"][fname]
+                    changed = True
+
+            wreg["last_scan"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            watches_reg[watch_path] = wreg
+
+        if changed:
+            registry["watches"] = watches_reg
+            try:
+                with open(registry_path, "w") as f:
+                    json.dump(registry, f, indent=2)
+            except OSError:
+                pass
+
+
+# Global IngestWatcher instance (started alongside scheduler in server.py)
+_ingest_watcher: IngestWatcher | None = None
+
+
 def _get_memory_store() -> MemoryStore | None:
     """Get the active memory store: thread-local (delegation/scheduler) or global (main thread)."""
     return getattr(_thread_local, 'memory_store', None) or _memory_store
 
 
 def tool_memory_store(args: dict) -> str:
-    """Store a memory."""
+    """Store a memory. When a project is active, writes to project directory."""
     ms = _get_memory_store()
     if not ms:
         return _err("Memory store not initialized")
@@ -2402,6 +3154,16 @@ def tool_memory_store(args: dict) -> str:
     mem_type = args.get("type", "general")
     if not name or not content:
         return _err("memory_store: name and content are required")
+    # If project is active, store in project directory
+    project = getattr(_thread_local, 'project', None)
+    if project:
+        agent_id = ms.agent_id
+        proj_dir = os.path.join(AGENTS_DIR, agent_id, "projects", project)
+        if os.path.isdir(proj_dir):
+            proj_store = MemoryStore(agent_id=f"{agent_id}/{project}", base_dir=proj_dir)
+            result = proj_store.store(name, content, description, mem_type)
+            result["project"] = project
+            return _ok(result)
     result = ms.store(name, content, description, mem_type)
     # Trigger near-term memory summary refresh when user-facing memories are stored
     # (skip if this IS the memory summary being written)
@@ -2414,18 +3176,108 @@ def tool_memory_store(args: dict) -> str:
     return _ok(result)
 
 
+def _graph_expand_results(results: list[dict], base_dir: str, ingest_dir: str,
+                          max_hops: int = 1) -> list[dict]:
+    """Follow 'related' frontmatter links from matched results for context expansion."""
+    seen_files = {r.get("file_path", "") for r in results}
+    expanded = list(results)
+    frontier = list(results)
+    for _hop in range(max_hops):
+        next_frontier = []
+        for r in frontier:
+            fpath = r.get("file_path", "")
+            if not fpath or not os.path.exists(fpath):
+                continue
+            try:
+                with open(fpath, "r") as f:
+                    raw = f.read(2000)
+                fm, _ = _parse_frontmatter(raw)
+            except Exception:
+                continue
+            # Parse related field (simple YAML list parsing)
+            related_raw = fm.get("related", "")
+            if not related_raw:
+                continue
+            # related is stored as multi-line YAML in frontmatter, parse linked files
+            related_files = re.findall(r'file:\s*(\S+\.md)', raw)
+            for rel_file in related_files:
+                # Try ingest_dir first, then base_dir
+                for search_dir in (ingest_dir, base_dir):
+                    rel_path = os.path.join(search_dir, rel_file)
+                    if rel_path in seen_files or not os.path.exists(rel_path):
+                        continue
+                    seen_files.add(rel_path)
+                    try:
+                        with open(rel_path, "r") as f:
+                            rel_raw = f.read()
+                        rel_fm, rel_body = _parse_frontmatter(rel_raw)
+                        mem = {
+                            "id": hashlib.sha256(rel_fm.get("name", rel_file).encode()).hexdigest()[:12],
+                            "name": rel_fm.get("name", rel_fm.get("title", rel_file.replace(".md", ""))),
+                            "description": rel_fm.get("description", ""),
+                            "type": rel_fm.get("type", "general"),
+                            "content": rel_body,
+                            "file_path": rel_path,
+                            "score": max(0, (r.get("score", 0.5) - 0.2)),
+                            "source_scope": "related",
+                        }
+                        expanded.append(mem)
+                        next_frontier.append(mem)
+                    except Exception:
+                        continue
+                    break  # found in one dir, skip the other
+        frontier = next_frontier
+    return expanded
+
+
 def tool_memory_recall(args: dict) -> str:
-    """Recall memories by searching."""
+    """Recall memories by searching. When a project is active, searches project first."""
     ms = _get_memory_store()
     if not ms:
         return _err("Memory store not initialized")
     query = args.get("query", "")
     limit = args.get("limit", 10)
     mem_type = args.get("type")
+    mode = args.get("mode", "")
+
+    # Project-scoped search: search project collection first, then agent
+    project = getattr(_thread_local, 'project', None)
+    if project and query:
+        agent_id = ms.agent_id
+        proj_dir = os.path.join(AGENTS_DIR, agent_id, "projects", project)
+        if os.path.isdir(proj_dir):
+            proj_store = MemoryStore(agent_id=f"{agent_id}/{project}", base_dir=proj_dir)
+            # Also search ingested subdir
+            ingest_dir = os.path.join(proj_dir, "ingested")
+            proj_results = proj_store.recall(query, limit, mem_type)
+            # Tag project results
+            for r in proj_results:
+                r["source_scope"] = "project"
+            # Then agent-level results
+            agent_results = ms.recall(query, max(2, limit - len(proj_results)), mem_type)
+            for r in agent_results:
+                r["source_scope"] = "agent"
+            results = proj_results + agent_results
+            # Graph mode: follow related links for 1-2 hops
+            if mode == "graph":
+                results = _graph_expand_results(results, proj_dir, ingest_dir)
+            for r in results:
+                if r.get("content") and len(r["content"]) > 4000:
+                    r["content"] = r["content"][:4000] + "..."
+            return _ok({"query": query, "project": project, "results": results[:limit], "count": len(results[:limit])})
+
     if not query:
         results = ms.list_all(mem_type)
         return _ok({"query": "", "results": results, "count": len(results)})
     results = ms.recall(query, limit, mem_type)
+
+    # Graph mode: follow related links
+    if mode == "graph" and results:
+        agent_id = ms.agent_id
+        agent_dir = os.path.join(AGENTS_DIR, agent_id)
+        ingest_dir = os.path.join(agent_dir, "ingested")
+        results = _graph_expand_results(results, agent_dir, ingest_dir)
+
     for r in results:
         if r.get("content") and len(r["content"]) > 4000:
             r["content"] = r["content"][:4000] + "..."
@@ -5407,6 +6259,21 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                 )
         except Exception:
             pass
+        # Inject project context if a project is active
+        active_project = getattr(_thread_local, 'project', None)
+        if active_project:
+            proj_cfg = ProjectManager.get_project(agent_id, active_project)
+            if proj_cfg:
+                proj_desc = proj_cfg.get("description", "")
+                system_instruction += (
+                    f"PROJECT CONTEXT: You are working in project '{proj_cfg.get('name', active_project)}'."
+                )
+                if proj_desc:
+                    system_instruction += f" {proj_desc}"
+                system_instruction += (
+                    "\nPrioritize project-specific documents when answering. "
+                    "Memory operations (store/recall) are scoped to this project.\n\n"
+                )
         # Inject team context for interactive sessions
         team_info = _get_agent_team_info(agent_id)
         if team_info:

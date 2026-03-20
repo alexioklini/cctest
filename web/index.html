@@ -657,6 +657,28 @@ tailwind.config = {
     z-index: 1;
   }
 
+  /* Project tabs */
+  .project-tab {
+    padding: 3px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-light);
+    color: var(--color-text-secondary);
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+  }
+  .project-tab:hover { background: var(--color-surface-lighter); color: var(--color-text-primary); }
+  .project-tab.active {
+    border-color: var(--color-accent);
+    background: rgba(255,123,0,0.08);
+    color: var(--color-accent);
+    font-weight: 600;
+  }
+
   /* Config tabs */
   .config-tab {
     transition: all 0.2s ease;
@@ -973,6 +995,8 @@ tailwind.config = {
         <span class="text-error">Stop</span>
       </button>
     </div>
+    <!-- Project tabs (visible when agent has projects) -->
+    <div id="project-tabs" class="flex items-center gap-1 px-4 py-1.5 bg-surface/30 border-b border-border/50 flex-shrink-0 overflow-x-auto" style="display:none"></div>
     <!-- Spinner bar (visible during streaming) -->
     <div id="chat-spinner-bar" class="hidden flex items-center gap-3 px-5 py-2 border-b border-border/50 bg-surface/30" style="min-height:36px">
       <div class="dot-pulse"><span></span><span></span><span></span></div>
@@ -1341,6 +1365,7 @@ class API {
     const body = { session_id: sessionId, message };
     if (model) body.model = model;
     if (planModeActive) body.mode = 'plan';
+    if (state.currentProject) body.project = state.currentProject;
     const res = await fetch(`${BASE_URL}/v1/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1410,6 +1435,34 @@ class API {
   static async getTasks() { return this.get('/v1/tasks'); }
   static async getCosts(hours = 24, agent = '') { return this.get(`/v1/costs?hours=${hours}${agent ? '&agent=' + encodeURIComponent(agent) : ''}`); }
   static async getCostsDaily(days = 7, agent = '') { return this.get(`/v1/costs/daily?days=${days}${agent ? '&agent=' + encodeURIComponent(agent) : ''}`); }
+
+  // --- Projects ---
+  static async getProjects(agent) { return this.get(`/v1/agents/${encodeURIComponent(agent)}/projects`); }
+  static async createProject(agent, name, description) { return this.post(`/v1/agents/${encodeURIComponent(agent)}/projects`, { name, description }); }
+  static async getProject(agent, name) { return this.get(`/v1/agents/${encodeURIComponent(agent)}/projects/${encodeURIComponent(name)}`); }
+  static async updateProject(agent, name, config) {
+    const res = await fetch(`${BASE_URL}/v1/agents/${encodeURIComponent(agent)}/projects/${encodeURIComponent(name)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) });
+    if (!res.ok) throw new Error(`PUT projects/${name}: ${res.status}`);
+    return res.json();
+  }
+  static async deleteProject(agent, name) { return this.del(`/v1/agents/${encodeURIComponent(agent)}/projects/${encodeURIComponent(name)}`); }
+  static async ingestIntoProject(agent, name, data) { return this.post(`/v1/agents/${encodeURIComponent(agent)}/projects/${encodeURIComponent(name)}/ingest`, data); }
+  static async getProjectDocs(agent, name) { return this.get(`/v1/agents/${encodeURIComponent(agent)}/projects/${encodeURIComponent(name)}/docs`); }
+
+  // --- Ingest (agent-level) ---
+  static async ingestAgent(agent, data) { return this.post(`/v1/agents/${encodeURIComponent(agent)}/ingest`, data); }
+  static async getIngested(agent) { return this.get(`/v1/agents/${encodeURIComponent(agent)}/ingested`); }
+  static async deleteIngested(agent, hash) { return this.del(`/v1/agents/${encodeURIComponent(agent)}/ingested/${encodeURIComponent(hash)}`); }
+
+  // --- Watch Folders ---
+  static async getWatchFolders(agent, project) {
+    const path = project ? `/v1/agents/${encodeURIComponent(agent)}/projects/${encodeURIComponent(project)}/watch` : `/v1/agents/${encodeURIComponent(agent)}/watch`;
+    return this.get(path);
+  }
+  static async manageWatchFolder(agent, data, project) {
+    const path = project ? `/v1/agents/${encodeURIComponent(agent)}/projects/${encodeURIComponent(project)}/watch` : `/v1/agents/${encodeURIComponent(agent)}/watch`;
+    return this.post(path, data);
+  }
 }
 
 // ─── App State ──────────────────────────────────────────────
@@ -1432,6 +1485,8 @@ class AppState {
     this.modelsConfig = {}; // model_id -> {enabled, shortname, icon, priority, capabilities, provider}
     this.agentActivity = {}; // agent_id -> ["chat", "delegate", "schedule"]
     this.teamStructure = {}; // {teams: {headId: {head, members}}, standalone: [], main: agent}
+    this.currentProject = null; // active project name for current agent (null = agent-level)
+    this.agentProjects = {}; // agentId -> [{name, description, document_count, chunk_count, watch_folders}]
   }
 
   get activeChat() {
@@ -1755,6 +1810,7 @@ function getDefaultModel(agentName) {
 
 function selectAgent(agentName) {
   state.activeAgentId = agentName;
+  state.currentProject = null; // reset project on agent switch
   // Create chat entry if not exists
   if (!state.agentChats[agentName]) {
     const model = getDefaultModel(agentName);
@@ -1776,8 +1832,56 @@ function selectAgent(agentName) {
   }
   // Load custom commands for this agent
   loadCustomCommands(agentName);
+  // Load projects for this agent
+  loadAgentProjects(agentName);
   renderAgentCards();
   updateChatArea();
+}
+
+async function loadAgentProjects(agentName) {
+  try {
+    const res = await API.getProjects(agentName);
+    state.agentProjects[agentName] = res.projects || [];
+  } catch {
+    state.agentProjects[agentName] = [];
+  }
+  if (state.activeAgentId === agentName) {
+    renderProjectTabs();
+  }
+}
+
+function selectProject(name) {
+  state.currentProject = name || null;
+  renderProjectTabs();
+  updateStatusBar();
+  // Reset session so next message goes to project-scoped context
+  const chat = state.activeChat;
+  if (chat) {
+    if (chat.sessionId) {
+      API.deleteSession(chat.sessionId).catch(() => {});
+    }
+    chat.sessionId = null;
+    chat.messages = [];
+    chat.totalTokens = 0;
+    renderMessages();
+  }
+}
+
+function renderProjectTabs() {
+  const container = document.getElementById('project-tabs');
+  if (!container) return;
+  const projects = state.agentProjects[state.activeAgentId] || [];
+  if (projects.length === 0) {
+    container.style.display = 'none';
+    return;
+  }
+  container.style.display = '';
+  let html = `<button class="project-tab ${!state.currentProject ? 'active' : ''}" onclick="selectProject(null)">No Project</button>`;
+  for (const p of projects) {
+    const isActive = state.currentProject === p.name;
+    html += `<button class="project-tab ${isActive ? 'active' : ''}" onclick="selectProject('${esc(p.name)}')">${esc(p.name)}</button>`;
+  }
+  container.innerHTML = html;
 }
 
 async function loadAgentSessions(agentName) {
@@ -1955,7 +2059,13 @@ function updateChatArea() {
   const agentObj = state.agents.find(a => getAgentName(a) === chat.agent);
   const avatarId = getAgentAvatar(agentObj || {id: chat.agent});
   const chatDisplayName = agentObj ? getAgentDisplayName(agentObj) : '';
-  dom.chatAgentName.innerHTML = `${renderAvatar(avatarId, 24)} <span>${esc(chatDisplayName || chat.agent)}</span>${chatDisplayName ? `<span class="text-text-muted text-[10px] mono ml-1">(${esc(chat.agent)})</span>` : ''}`;
+  const projectBadge = state.currentProject
+    ? `<span class="text-[11px] font-medium px-2 py-0.5 rounded-md ml-2" style="background:rgba(255,123,0,0.1);color:var(--color-accent);border:1px solid rgba(255,123,0,0.2)">${esc(state.currentProject)}</span>`
+    : '';
+  dom.chatAgentName.innerHTML = `${renderAvatar(avatarId, 24)} <span>${esc(chatDisplayName || chat.agent)}</span>${chatDisplayName ? `<span class="text-text-muted text-[10px] mono ml-1">(${esc(chat.agent)})</span>` : ''}${projectBadge}`;
+
+  // Render project tabs
+  renderProjectTabs();
 
   // Set model selector
   if (chat.model) {
@@ -2309,7 +2419,7 @@ async function stopGeneration() {
 function updateStatusBar() {
   const chat = state.activeChat;
   dom.statusModel.textContent = chat?.model || '';
-  dom.statusAgent.textContent = chat?.agent ? `Agent: ${chat.agent}` : '';
+  dom.statusAgent.textContent = chat?.agent ? `Agent: ${chat.agent}${state.currentProject ? ' / ' + state.currentProject : ''}` : '';
   const costStr = chat?.sessionCost != null ? `  ·  $${chat.sessionCost.toFixed(2)}` : '';
   dom.statusTokens.textContent = chat?.totalTokens ? `${chat.totalTokens} tokens${costStr}` : '';
   dom.statusSession.textContent = chat?.sessionId ? `Session: ${chat.sessionId.substring(0, 8)}` : '';
@@ -2334,6 +2444,7 @@ function openConfigModal(agentName) {
         <button class="config-tab" data-tab="settings">Settings</button>
         <button class="config-tab" data-tab="skills">Skills</button>
         <button class="config-tab" data-tab="mcp">MCP</button>
+        <button class="config-tab" data-tab="projects">Projects</button>
         <button class="config-tab" data-tab="memory">Memory</button>
         <button class="config-tab" data-tab="schedule">Schedule</button>
       </div>
@@ -2700,6 +2811,53 @@ async function loadConfigTabContent(tab, agentName) {
     } catch (e) {
       el.innerHTML = `<div class="text-error text-sm">Error loading schedule: ${esc(e.message)}</div>`;
     }
+  } else if (tab === 'projects') {
+    try {
+      const res = await API.getProjects(agentName);
+      const projects = res.projects || [];
+      el.innerHTML = `
+        <div class="space-y-5">
+          <div class="flex items-center justify-between">
+            <h3 class="section-header text-sm">Projects</h3>
+            <button class="btn-primary px-4 py-1.5 rounded-lg text-xs font-display" onclick="showNewProjectForm('${esc(agentName)}')">+ New Project</button>
+          </div>
+          <div id="new-project-form" style="display:none" class="glass-card p-4 space-y-3">
+            <div>
+              <label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">Name</label>
+              <input id="new-project-name" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono focus:border-accent transition-colors" placeholder="ml-research">
+            </div>
+            <div>
+              <label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">Description</label>
+              <input id="new-project-desc" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:border-accent transition-colors" placeholder="Machine learning papers and experiments">
+            </div>
+            <div class="flex gap-2">
+              <button class="btn-primary px-4 py-1.5 rounded-lg text-xs font-display" onclick="createProject('${esc(agentName)}')">Create</button>
+              <button class="btn-secondary px-4 py-1.5 rounded-lg text-xs" onclick="document.getElementById('new-project-form').style.display='none'">Cancel</button>
+            </div>
+          </div>
+          <div id="projects-list" class="space-y-3">
+            ${projects.length === 0 ? '<div class="text-text-muted text-sm text-center py-6">No projects yet. Create one to scope conversations and documents.</div>' :
+              projects.map(p => `
+                <div class="glass-card p-4">
+                  <div class="flex items-center justify-between mb-1">
+                    <h4 class="font-display font-semibold text-text-primary text-sm">${esc(p.name)}</h4>
+                    ${state.currentProject === p.name ? '<span class="text-[10px] font-medium px-2 py-0.5 rounded bg-accent/10 text-accent border border-accent/20">Active</span>' : ''}
+                  </div>
+                  <div class="text-text-secondary text-xs mb-2">${esc(p.description || '')}</div>
+                  <div class="text-text-muted text-[10px] mono mb-3">${p.document_count || 0} documents · ${p.chunk_count || 0} chunks · ${(p.watch_folders || []).length} watched folders</div>
+                  <div class="flex gap-2">
+                    <button class="btn-secondary px-3 py-1 rounded-lg text-xs" onclick="selectProject('${esc(p.name)}');document.getElementById('config-modal')?.remove()">Open Chat</button>
+                    <button class="btn-secondary px-3 py-1 rounded-lg text-xs" onclick="openProjectDetail('${esc(agentName)}','${esc(p.name)}')">Manage</button>
+                    <button class="btn-secondary px-3 py-1 rounded-lg text-xs text-error" onclick="deleteProjectConfirm('${esc(agentName)}','${esc(p.name)}')">Delete</button>
+                  </div>
+                </div>
+              `).join('')
+            }
+          </div>
+        </div>`;
+    } catch (e) {
+      el.innerHTML = `<div class="text-error text-sm">Error loading projects: ${esc(e.message)}</div>`;
+    }
   } else if (tab === 'memory') {
     try {
       const res = await API.get(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`);
@@ -2787,6 +2945,381 @@ window.memorySummaryTogglePause = async function(agentName, pause) {
     loadConfigTabContent('memory', agentName);
   } catch (e) {
     showToast(`Error: ${e.message}`, true);
+  }
+};
+
+// ─── Project Helpers ────────────────────────────────────────
+window.showNewProjectForm = function(agentName) {
+  const form = document.getElementById('new-project-form');
+  if (form) { form.style.display = ''; document.getElementById('new-project-name')?.focus(); }
+};
+
+window.createProject = async function(agentName) {
+  const name = document.getElementById('new-project-name')?.value?.trim();
+  const desc = document.getElementById('new-project-desc')?.value?.trim();
+  if (!name) { showToast('Project name is required'); return; }
+  try {
+    await API.createProject(agentName, name, desc || '');
+    showToast(`Project "${name}" created`);
+    await loadAgentProjects(agentName);
+    loadConfigTabContent('projects', agentName);
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+window.deleteProjectConfirm = async function(agentName, projectName) {
+  if (!confirm(`Delete project "${projectName}" and all its data? This cannot be undone.`)) return;
+  try {
+    await API.deleteProject(agentName, projectName);
+    if (state.currentProject === projectName) state.currentProject = null;
+    showToast(`Project "${projectName}" deleted`);
+    await loadAgentProjects(agentName);
+    loadConfigTabContent('projects', agentName);
+    renderProjectTabs();
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+window.openProjectDetail = async function(agentName, projectName) {
+  const el = document.querySelector('#config-modal #config-tab-content');
+  if (!el) return;
+  el.innerHTML = '<div class="text-text-muted text-sm">Loading project...</div>';
+
+  try {
+    const p = await API.getProject(agentName, projectName);
+    const docs = p.documents || [];
+    const folders = p.watch_folders || [];
+
+    el.innerHTML = `
+      <div class="space-y-5">
+        <div class="flex items-center gap-3 mb-2">
+          <button class="btn-secondary px-3 py-1 rounded-lg text-xs" onclick="loadConfigTabContent('projects','${esc(agentName)}')">&larr; Back</button>
+          <h3 class="font-display font-semibold text-text-primary">${esc(projectName)}</h3>
+        </div>
+
+        <!-- Sub-tabs -->
+        <div class="flex gap-0 border-b border-border">
+          <button class="config-tab active" data-ptab="documents" onclick="showProjectSubTab(this,'documents')">Documents</button>
+          <button class="config-tab" data-ptab="folders" onclick="showProjectSubTab(this,'folders')">Folders</button>
+          <button class="config-tab" data-ptab="psettings" onclick="showProjectSubTab(this,'psettings')">Settings</button>
+        </div>
+
+        <!-- Documents sub-tab -->
+        <div id="ptab-documents" class="space-y-4">
+          <div class="flex items-center justify-between">
+            <span class="section-header">Documents (${docs.length})</span>
+            <div class="flex gap-2">
+              <button class="btn-secondary px-3 py-1.5 rounded-lg text-xs" onclick="showIngestDialog('${esc(agentName)}','${esc(projectName)}')">Upload / Ingest</button>
+            </div>
+          </div>
+          ${docs.length === 0 ? '<div class="text-text-muted text-sm text-center py-4">No documents ingested yet.</div>' : `
+            <table class="w-full text-sm">
+              <thead><tr class="border-b border-border">
+                <th class="text-left text-[10px] text-text-muted uppercase tracking-wider px-2 py-1.5">Source</th>
+                <th class="text-left text-[10px] text-text-muted uppercase tracking-wider px-2 py-1.5">Type</th>
+                <th class="text-right text-[10px] text-text-muted uppercase tracking-wider px-2 py-1.5">Chunks</th>
+                <th class="text-left text-[10px] text-text-muted uppercase tracking-wider px-2 py-1.5">Ingested</th>
+                <th class="text-[10px] text-text-muted uppercase tracking-wider px-2 py-1.5"></th>
+              </tr></thead>
+              <tbody>${docs.map(d => `
+                <tr class="border-b border-border/50 hover:bg-surface-light transition-colors">
+                  <td class="px-2 py-2 text-text-primary font-medium">${esc((d.source || '?').substring(0, 40))}</td>
+                  <td class="px-2 py-2 text-model mono text-xs">${esc(d.source_type || '?')}</td>
+                  <td class="px-2 py-2 text-text-secondary text-right">${d.chunks || 0}</td>
+                  <td class="px-2 py-2 text-text-muted text-xs">${(d.ingested_at || '').substring(0, 16)}</td>
+                  <td class="px-2 py-2"><button class="text-xs text-error hover:underline" onclick="deleteProjectDoc('${esc(agentName)}','${esc(projectName)}','${esc(d.source_hash || d.source || '')}')">Delete</button></td>
+                </tr>
+              `).join('')}</tbody>
+            </table>
+          `}
+        </div>
+
+        <!-- Folders sub-tab -->
+        <div id="ptab-folders" class="space-y-4" style="display:none">
+          <div class="flex items-center justify-between">
+            <span class="section-header">Watched Folders (${folders.length})</span>
+            <button class="btn-secondary px-3 py-1.5 rounded-lg text-xs" onclick="showAddFolderForm('${esc(agentName)}','${esc(projectName)}')">+ Add Folder</button>
+          </div>
+          <div id="add-folder-form" style="display:none" class="glass-card p-4 space-y-3">
+            <div>
+              <label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">Path</label>
+              <input id="folder-path" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono focus:border-accent transition-colors" placeholder="/path/to/folder">
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">Pattern</label>
+                <input id="folder-pattern" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono focus:border-accent transition-colors" value="*.pdf" placeholder="*.pdf">
+              </div>
+              <div class="flex items-end pb-2 gap-2">
+                <label class="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
+                  <input type="checkbox" id="folder-recursive"> Recursive
+                </label>
+              </div>
+            </div>
+            <div class="flex gap-2">
+              <button class="btn-primary px-4 py-1.5 rounded-lg text-xs font-display" onclick="addWatchFolder('${esc(agentName)}','${esc(projectName)}')">Add</button>
+              <button class="btn-secondary px-4 py-1.5 rounded-lg text-xs" onclick="document.getElementById('add-folder-form').style.display='none'">Cancel</button>
+            </div>
+          </div>
+          ${folders.length === 0 ? '<div class="text-text-muted text-sm text-center py-4">No watched folders.</div>' :
+            folders.map(f => `
+              <div class="glass-card p-3 flex items-center justify-between">
+                <div>
+                  <div class="text-sm text-text-primary mono">${esc(f.path || '?')}</div>
+                  <div class="text-[10px] text-text-muted">${esc(f.pattern || '*')} ${f.recursive ? '(recursive)' : ''} · ${f.file_count || 0} files · ${f.chunk_count || 0} chunks</div>
+                </div>
+                <button class="btn-secondary px-3 py-1 rounded-lg text-xs text-error" onclick="removeWatchFolder('${esc(agentName)}','${esc(projectName)}','${esc(f.path || '')}')">Remove</button>
+              </div>
+            `).join('')
+          }
+        </div>
+
+        <!-- Settings sub-tab -->
+        <div id="ptab-psettings" class="space-y-4" style="display:none">
+          <h4 class="section-header">Project Settings</h4>
+          <div>
+            <label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">Name</label>
+            <input id="proj-name" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono focus:border-accent transition-colors" value="${esc(p.name || '')}">
+          </div>
+          <div>
+            <label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">Description</label>
+            <input id="proj-desc" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:border-accent transition-colors" value="${esc(p.description || '')}">
+          </div>
+          <div>
+            <label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">Tags (comma-separated)</label>
+            <input id="proj-tags" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:border-accent transition-colors" value="${esc((p.tags || []).join(', '))}">
+          </div>
+          <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="saveProjectSettings('${esc(agentName)}','${esc(projectName)}')">Save Settings</button>
+        </div>
+      </div>`;
+  } catch (e) {
+    el.innerHTML = `<div class="text-error text-sm">Error loading project: ${esc(e.message)}</div>`;
+  }
+};
+
+window.showProjectSubTab = function(btn, tabName) {
+  // Toggle sub-tab visibility
+  ['documents', 'folders', 'psettings'].forEach(t => {
+    const panel = document.getElementById('ptab-' + t);
+    if (panel) panel.style.display = t === tabName ? '' : 'none';
+  });
+  btn.closest('.flex')?.querySelectorAll('.config-tab').forEach(t => t.classList.toggle('active', t === btn));
+};
+
+window.saveProjectSettings = async function(agentName, projectName) {
+  const name = document.getElementById('proj-name')?.value?.trim();
+  const desc = document.getElementById('proj-desc')?.value?.trim();
+  const tagsStr = document.getElementById('proj-tags')?.value?.trim();
+  const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(Boolean) : [];
+  try {
+    await API.updateProject(agentName, projectName, { name, description: desc, tags });
+    showToast('Project settings saved');
+    await loadAgentProjects(agentName);
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+window.deleteProjectDoc = async function(agentName, projectName, sourceHash) {
+  if (!confirm('Delete all chunks from this document?')) return;
+  try {
+    const path = `/v1/agents/${encodeURIComponent(agentName)}/projects/${encodeURIComponent(projectName)}/ingested/${encodeURIComponent(sourceHash)}`;
+    await API.del(path);
+    showToast('Document chunks deleted');
+    openProjectDetail(agentName, projectName);
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+window.showAddFolderForm = function(agentName, projectName) {
+  const form = document.getElementById('add-folder-form');
+  if (form) { form.style.display = ''; document.getElementById('folder-path')?.focus(); }
+};
+
+window.addWatchFolder = async function(agentName, projectName) {
+  const path = document.getElementById('folder-path')?.value?.trim();
+  const pattern = document.getElementById('folder-pattern')?.value?.trim() || '*';
+  const recursive = document.getElementById('folder-recursive')?.checked || false;
+  if (!path) { showToast('Path is required'); return; }
+  try {
+    await API.manageWatchFolder(agentName, { path, pattern, recursive }, projectName);
+    showToast('Watch folder added');
+    openProjectDetail(agentName, projectName);
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+window.removeWatchFolder = async function(agentName, projectName, path) {
+  if (!confirm(`Remove watch on ${path}?`)) return;
+  try {
+    await API.manageWatchFolder(agentName, { action: 'remove', path }, projectName);
+    showToast('Watch folder removed');
+    openProjectDetail(agentName, projectName);
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+// ─── Ingest Dialog ──────────────────────────────────────────
+window.showIngestDialog = function(agentName, projectName) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.id = 'ingest-modal';
+  modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+  const title = projectName ? `Ingest into ${projectName}` : `Ingest into ${agentName}`;
+  modal.innerHTML = `
+    <div class="modal-content p-6" style="max-width:560px">
+      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+      <h2 class="font-display text-lg font-semibold text-text-primary mb-4">${esc(title)}</h2>
+
+      <!-- Drop zone -->
+      <div id="ingest-dropzone" class="border-2 border-dashed border-border rounded-xl p-8 text-center mb-4 transition-colors cursor-pointer hover:border-accent/50"
+           ondragover="event.preventDefault();this.style.borderColor='var(--color-accent)'"
+           ondragleave="this.style.borderColor=''"
+           ondrop="handleIngestDrop(event,'${esc(agentName)}','${esc(projectName || '')}')"
+           onclick="document.getElementById('ingest-file-input').click()">
+        <div class="text-2xl mb-2">📄</div>
+        <div class="text-sm text-text-secondary">Drop files here or click to browse</div>
+        <div class="text-[10px] text-text-muted mt-1">Supported: PDF, DOCX, TXT, MD, HTML · Max 50MB</div>
+        <input type="file" id="ingest-file-input" style="display:none" accept=".pdf,.docx,.txt,.md,.html" onchange="handleIngestFileSelect(event,'${esc(agentName)}','${esc(projectName || '')}')">
+      </div>
+
+      <!-- URL input -->
+      <div class="flex gap-2 mb-4">
+        <input id="ingest-url" class="flex-1 bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono focus:border-accent transition-colors" placeholder="https://...">
+        <button class="btn-primary px-4 py-2 rounded-lg text-sm font-display" onclick="ingestUrl('${esc(agentName)}','${esc(projectName || '')}')">Fetch</button>
+      </div>
+
+      <!-- Advanced options (collapsed) -->
+      <details class="mb-4">
+        <summary class="text-xs text-text-muted cursor-pointer hover:text-text-secondary">Advanced Options</summary>
+        <div class="grid grid-cols-2 gap-3 mt-3">
+          <div>
+            <label class="text-[10px] text-text-muted font-medium block mb-1 uppercase tracking-wider">Chunk Size (tokens)</label>
+            <input id="ingest-chunk-size" type="number" value="1500" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-xs text-text-primary mono focus:border-accent transition-colors">
+          </div>
+          <div>
+            <label class="text-[10px] text-text-muted font-medium block mb-1 uppercase tracking-wider">Chunk Overlap (tokens)</label>
+            <input id="ingest-chunk-overlap" type="number" value="200" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-xs text-text-primary mono focus:border-accent transition-colors">
+          </div>
+        </div>
+        <div class="mt-3">
+          <label class="text-[10px] text-text-muted font-medium block mb-1 uppercase tracking-wider">Tags (comma-separated)</label>
+          <input id="ingest-tags" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-xs text-text-primary focus:border-accent transition-colors" placeholder="research, papers">
+        </div>
+      </details>
+
+      <!-- Progress area -->
+      <div id="ingest-progress" style="display:none" class="glass-card p-4 space-y-2">
+        <div class="flex items-center gap-2">
+          <div class="dot-pulse"><span></span><span></span><span></span></div>
+          <span id="ingest-progress-label" class="text-xs text-text-secondary">Ingesting...</span>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+};
+
+function getIngestOptions() {
+  return {
+    chunk_size: parseInt(document.getElementById('ingest-chunk-size')?.value) || 1500,
+    chunk_overlap: parseInt(document.getElementById('ingest-chunk-overlap')?.value) || 200,
+    tags: (document.getElementById('ingest-tags')?.value || '').split(',').map(t => t.trim()).filter(Boolean),
+  };
+}
+
+window.handleIngestDrop = async function(e, agentName, projectName) {
+  e.preventDefault();
+  e.currentTarget.style.borderColor = '';
+  const files = e.dataTransfer?.files;
+  if (files && files.length > 0) {
+    await ingestFileObject(files[0], agentName, projectName);
+  }
+};
+
+window.handleIngestFileSelect = async function(e, agentName, projectName) {
+  const files = e.target.files;
+  if (files && files.length > 0) {
+    await ingestFileObject(files[0], agentName, projectName);
+  }
+};
+
+async function ingestFileObject(file, agentName, projectName) {
+  const progress = document.getElementById('ingest-progress');
+  const label = document.getElementById('ingest-progress-label');
+  if (progress) progress.style.display = '';
+  if (label) label.textContent = `Ingesting ${file.name}...`;
+
+  const opts = getIngestOptions();
+
+  // For now, send file_path or name — the server will handle actual upload
+  // In a full implementation this would be multipart upload
+  const data = {
+    file_name: file.name,
+    file_size: file.size,
+    ...opts,
+  };
+
+  try {
+    // Read file as base64 for upload
+    const reader = new FileReader();
+    const base64 = await new Promise((resolve, reject) => {
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    data.file_data = base64;
+
+    const endpoint = projectName
+      ? `/v1/agents/${encodeURIComponent(agentName)}/projects/${encodeURIComponent(projectName)}/ingest`
+      : `/v1/agents/${encodeURIComponent(agentName)}/ingest`;
+    const res = await API.post(endpoint, data);
+
+    if (res.error) {
+      if (label) label.textContent = `Error: ${res.error}`;
+    } else {
+      if (label) label.textContent = `Done! ${res.chunks || 0} chunks from ${file.name}`;
+      showToast(`Ingested ${file.name}: ${res.chunks || 0} chunks`);
+      // Refresh projects
+      await loadAgentProjects(agentName);
+    }
+  } catch (e) {
+    if (label) label.textContent = `Error: ${e.message}`;
+    showToast(`Ingest error: ${e.message}`, true);
+  }
+}
+
+window.ingestUrl = async function(agentName, projectName) {
+  const url = document.getElementById('ingest-url')?.value?.trim();
+  if (!url) { showToast('Enter a URL'); return; }
+  const progress = document.getElementById('ingest-progress');
+  const label = document.getElementById('ingest-progress-label');
+  if (progress) progress.style.display = '';
+  if (label) label.textContent = `Fetching ${url}...`;
+
+  const opts = getIngestOptions();
+
+  try {
+    const endpoint = projectName
+      ? `/v1/agents/${encodeURIComponent(agentName)}/projects/${encodeURIComponent(projectName)}/ingest`
+      : `/v1/agents/${encodeURIComponent(agentName)}/ingest`;
+    const res = await API.post(endpoint, { url, ...opts });
+
+    if (res.error) {
+      if (label) label.textContent = `Error: ${res.error}`;
+    } else {
+      if (label) label.textContent = `Done! ${res.chunks || 0} chunks from URL`;
+      showToast(`Ingested URL: ${res.chunks || 0} chunks`);
+      await loadAgentProjects(agentName);
+    }
+  } catch (e) {
+    if (label) label.textContent = `Error: ${e.message}`;
+    showToast(`Ingest error: ${e.message}`, true);
   }
 };
 
@@ -5274,6 +5807,12 @@ const slashCommands = [
   { cmd: '/providers', desc: 'Open providers settings',   action: () => { _settingsTab = 'providers'; openSettingsModal(); } },
   { cmd: '/teams',     desc: 'Open teams settings',       action: () => { _settingsTab = 'teams'; openSettingsModal(); } },
   { cmd: '/qmd',       desc: 'Open QMD settings',         action: () => { _settingsTab = 'qmd'; openSettingsModal(); } },
+  { cmd: '/projects',  desc: 'Manage projects for this agent', action: () => {
+    if (state.activeAgentId) { openConfigModal(state.activeAgentId); setTimeout(() => { state.configTab = 'projects'; const tab = document.querySelector('#config-tabs [data-tab="projects"]'); if (tab) tab.click(); }, 100); }
+  }},
+  { cmd: '/ingest',    desc: 'Ingest document into agent/project', action: () => {
+    if (state.activeAgentId) showIngestDialog(state.activeAgentId, state.currentProject || '');
+  }},
   { cmd: '/plan',      desc: 'Toggle plan mode (read-only)', action: () => togglePlanMode() },
   { cmd: '/cache',     desc: 'Show web cache stats',      action: async () => {
     try {
