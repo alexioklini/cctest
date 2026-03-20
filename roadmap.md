@@ -33,8 +33,24 @@ Each item has a detailed feature proposal with mockups, user workflows, and effo
 ### Memory & Search
 - [Knowledge graph memory](features/knowledge-graph-memory.md) — relationships between memories, graph traversal · ~10 days · **P1**
 - [Web result caching](features/web-result-caching.md) — LRU cache for web_fetch/exa_search with TTL · ~2 days · **P1**
+- [Document ingestion (RAG)](features/document-ingestion.md) — upload files/URLs, auto-chunk, watched folders with auto-sync, knowledge graph integration · ~12 days · **P1**
 
-**Total: 18 proposals · ~138 days estimated**
+### Observability & Operations
+- [Cost tracking & budgets](features/cost-tracking.md) — per-agent/session/task API spend tracking, budget limits, alerts · ~6 days · **P1**
+- [Observability & tracing](features/observability-tracing.md) — structured traces for LLM calls, tool execution, latency/error dashboards · ~8 days · **P2**
+- [Rate limiting](features/rate-limiting.md) — per-agent request/token/cost throttling with soft warnings and hard blocks · ~4 days · **P1**
+- [Audit trail](features/audit-trail.md) — append-only log of all agent actions, searchable, exportable · ~5 days · **P2**
+- [Notifications](features/notifications.md) — email/webhook/in-app alerts for task completion, errors, budget, node status · ~7 days · **P2**
+
+### Execution & Sandbox
+- [Streaming tool output](features/streaming-tool-output.md) — real-time stdout/stderr streaming during command execution · ~5 days · **P1**
+- [Code sandbox](features/code-sandbox.md) — isolated run_code tool with restricted filesystem/network access · ~8 days · **P3**
+
+### Multi-modal & Data
+- [Multi-modal support](features/multimodal-support.md) — image upload/display in chat, vision model support · ~7 days · **P2**
+- [Backup / export / import](features/backup-export-import.md) — portable archives for full instance or per-agent migration · ~5 days · **P2**
+
+**Total: 28 proposals · ~232 days estimated**
 
 ## Done (Research)
 
