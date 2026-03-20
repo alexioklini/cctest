@@ -1109,21 +1109,46 @@ tailwind.config = {
 
   /* Team group in sidebar */
   .sb-team-group {
-    margin: 2px 0;
+    margin: 6px 8px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 4px 0;
+    background: color-mix(in srgb, var(--color-surface) 50%, transparent);
   }
   .sb-team-label {
-    font-size: 8px;
+    font-size: 9px;
     font-weight: 700;
     font-family: 'IBM Plex Mono', monospace;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    color: var(--color-text-muted);
-    padding: 4px 12px 0 15px;
+    color: var(--color-accent);
+    padding: 4px 12px 2px 12px;
     display: flex;
     align-items: center;
-    gap: 3px;
+    gap: 4px;
+    opacity: 0.8;
+  }
+  .sb-team-group .sb-agent-item {
+    margin: 0 4px;
+    border-radius: 6px;
+  }
+  /* Standalone separator */
+  .sb-standalone-separator {
+    height: 1px;
+    background: var(--color-border);
+    margin: 6px 12px;
+    opacity: 0.5;
+  }
+  #sidebar.collapsed .sb-team-group {
+    border: none;
+    margin: 2px 0;
+    padding: 0;
+    background: none;
   }
   #sidebar.collapsed .sb-team-label {
+    display: none;
+  }
+  #sidebar.collapsed .sb-standalone-separator {
     display: none;
   }
 
@@ -2234,9 +2259,16 @@ function renderAgentCards() {
   });
 
   // 3. Standalone agents (not in any team, not main)
-  state.agents.forEach(a => {
+  const standalones = state.agents.filter(a => {
     const name = getAgentName(a);
-    if (name === 'main' || inTeam.has(name)) return;
+    return name !== 'main' && !inTeam.has(name);
+  });
+  if (standalones.length > 0 && teamIds.length > 0) {
+    const sep = document.createElement('div');
+    sep.className = 'sb-standalone-separator';
+    container.appendChild(sep);
+  }
+  standalones.forEach(a => {
     container.appendChild(buildSidebarAgentItem(a, idx++));
   });
 }
