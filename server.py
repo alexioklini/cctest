@@ -147,8 +147,12 @@ class ChatDB:
                 q += " AND s.agent_id = ?"
                 params.append(agent_id)
             if status:
-                q += " AND s.status = ?"
-                params.append(status)
+                if status == 'active':
+                    # Include incognito sessions alongside active ones
+                    q += " AND s.status IN ('active', 'incognito')"
+                else:
+                    q += " AND s.status = ?"
+                    params.append(status)
             q += " ORDER BY s.last_active DESC"
             rows = conn.execute(q, params).fetchall()
             return [dict(r) for r in rows]
@@ -396,12 +400,16 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_models_config_get()
         elif path == "/v1/agents/activity":
             self._handle_agents_activity()
+        elif path == "/v1/teams":
+            self._handle_teams_get()
         elif path == "/v1/services":
             self._handle_services_status()
         elif path.startswith("/v1/services/qmd/docs"):
             self._handle_qmd_docs()
         elif path.startswith("/v1/services/log"):
             self._handle_service_log()
+        elif path.startswith("/v1/agents/") and path.endswith("/memory-summary"):
+            self._handle_memory_summary_get(path)
         elif path == "/" or path.startswith("/web/") or path.endswith((".html", ".css", ".js", ".ico")):
             self._serve_static(path)
         else:
@@ -452,8 +460,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_qmd_action()
         elif path.startswith("/v1/services/qmd/docs"):
             self._handle_qmd_doc_save()
+        elif path == "/v1/teams":
+            self._handle_teams_post()
         elif path == "/v1/services/telegram":
             self._handle_telegram_action()
+        elif path == "/v1/services/server":
+            self._handle_server_config()
+        elif path.startswith("/v1/agents/") and path.endswith("/memory-summary"):
+            self._handle_memory_summary_post(path)
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -461,8 +475,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path.startswith("/v1/sessions/"):
             sid = path.split("/")[-1]
+            info = ChatDB.get_session_info(sid)
             if sessions.delete(sid):
                 self._send_json({"status": "deleted"})
+                # Trigger memory summary refresh to purge deleted chat insights
+                if info:
+                    try:
+                        engine.trigger_memory_summary_refresh(info.get("agent_id", "main"))
+                    except Exception:
+                        pass
             else:
                 self._send_json({"error": "Session not found"}, 404)
         elif path.startswith("/v1/services/qmd/docs"):
@@ -490,7 +511,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         })
 
     def _handle_list_agents(self):
-        self._send_json({"agents": engine.get_agent_summaries()})
+        agents = engine.get_agent_summaries()
+        self._send_json({"agents": agents, "team_structure": engine.get_team_structure()})
 
     def _handle_list_models(self):
         qs = self.path.split("?", 1)[1] if "?" in self.path else ""
@@ -560,8 +582,34 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             ChatDB.archive_all(agent)
             self._send_json({"status": "archived_all"})
         elif action == "delete":
+            # Get agent_id before deleting so we can trigger summary refresh
+            info = ChatDB.get_session_info(sid)
             sessions.delete(sid)
             self._send_json({"status": "deleted", "session_id": sid})
+            # Trigger memory summary refresh to purge deleted chat insights
+            if info:
+                try:
+                    engine.trigger_memory_summary_refresh(info.get("agent_id", "main"))
+                except Exception:
+                    pass
+        elif action == "incognito":
+            # Mark session as incognito — excluded from memory summary
+            with _db_conn() as conn:
+                conn.execute("UPDATE sessions SET status = 'incognito' WHERE id = ?", (sid,))
+                conn.commit()
+            s = sessions.get(sid)
+            if s:
+                s.status = "incognito"
+            self._send_json({"status": "incognito", "session_id": sid})
+        elif action == "un_incognito":
+            # Revert incognito session back to active
+            with _db_conn() as conn:
+                conn.execute("UPDATE sessions SET status = 'active' WHERE id = ?", (sid,))
+                conn.commit()
+            s = sessions.get(sid)
+            if s:
+                s.status = "active"
+            self._send_json({"status": "active", "session_id": sid})
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)
 
@@ -1104,6 +1152,166 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
         self._send_json({"activity": activity})
 
+    def _handle_teams_get(self):
+        """GET /v1/teams — return team structure."""
+        self._send_json(engine.get_team_structure())
+
+    def _handle_teams_post(self):
+        """POST /v1/teams — create, update, dissolve, or move teams."""
+        body = self._read_json()
+        action = body.get("action", "")
+
+        if action == "create":
+            members = body.get("members", [])
+            head_id = body.get("head", "")
+            if not members:
+                self._send_json({"error": "members is required (at least one agent)"}, 400)
+                return
+            if not head_id:
+                head_id = members[0]
+            # Ensure head is in members
+            if head_id not in members:
+                members.insert(0, head_id)
+            # Validate members exist
+            available = engine.list_agents()
+            invalid = [m for m in members if m not in available]
+            if invalid:
+                self._send_json({"error": f"Unknown agents: {', '.join(invalid)}"}, 400)
+                return
+            if head_id not in available:
+                self._send_json({"error": f"Head agent '{head_id}' not found"}, 404)
+                return
+            # Store team config on the head agent
+            team_name = body.get("name", "")
+            team_desc = body.get("description", "")
+            team_avatar = body.get("avatar", "")
+            cfg_path = os.path.join(engine.AGENTS_DIR, head_id, "agent.json")
+            try:
+                with open(cfg_path, "r") as f:
+                    cfg = json.load(f)
+                team_data = {"members": members, "head": head_id}
+                if team_name:
+                    team_data["name"] = team_name
+                if team_desc:
+                    team_data["description"] = team_desc
+                if team_avatar:
+                    team_data["avatar"] = team_avatar
+                cfg["team"] = team_data
+                with open(cfg_path, "w") as f:
+                    json.dump(cfg, f, indent=2)
+                self._send_json({"status": "created", "head": head_id, "members": members})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif action == "update":
+            team_id = body.get("team_id", body.get("team_head", ""))
+            if not team_id:
+                self._send_json({"error": "team_id is required"}, 400)
+                return
+            cfg_path = os.path.join(engine.AGENTS_DIR, team_id, "agent.json")
+            try:
+                with open(cfg_path, "r") as f:
+                    cfg = json.load(f)
+                if not isinstance(cfg.get("team"), dict):
+                    self._send_json({"error": f"'{team_id}' does not hold a team config"}, 400)
+                    return
+                # Validate members exist
+                available = engine.list_agents()
+                if "members" in body:
+                    members = body["members"]
+                    invalid = [m for m in members if m not in available]
+                    if invalid:
+                        self._send_json({"error": f"Unknown agents: {', '.join(invalid)}"}, 400)
+                        return
+                    cfg["team"]["members"] = members
+                if "head" in body:
+                    new_head = body["head"]
+                    # Ensure head is in members
+                    if new_head not in cfg["team"].get("members", []):
+                        cfg["team"]["members"].insert(0, new_head)
+                    cfg["team"]["head"] = new_head
+                    # If head changed, need to move team config to new head agent
+                    old_head = cfg["team"].get("head", team_id)
+                    if new_head != team_id:
+                        # Move team config to new head's agent.json
+                        new_cfg_path = os.path.join(engine.AGENTS_DIR, new_head, "agent.json")
+                        with open(new_cfg_path, "r") as f:
+                            new_cfg = json.load(f)
+                        new_cfg["team"] = cfg.pop("team")
+                        with open(new_cfg_path, "w") as f:
+                            json.dump(new_cfg, f, indent=2)
+                        with open(cfg_path, "w") as f:
+                            json.dump(cfg, f, indent=2)
+                        self._send_json({"status": "updated", "team_id": new_head, "head": new_head})
+                        return
+                if "name" in body:
+                    cfg["team"]["name"] = body["name"]
+                if "description" in body:
+                    cfg["team"]["description"] = body["description"]
+                if "avatar" in body:
+                    cfg["team"]["avatar"] = body["avatar"]
+                with open(cfg_path, "w") as f:
+                    json.dump(cfg, f, indent=2)
+                self._send_json({"status": "updated", "team_id": team_id})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif action == "dissolve":
+            team_id = body.get("team_id", body.get("team_head", body.get("agent", "")))
+            if not team_id:
+                self._send_json({"error": "team_id is required"}, 400)
+                return
+            cfg_path = os.path.join(engine.AGENTS_DIR, team_id, "agent.json")
+            try:
+                with open(cfg_path, "r") as f:
+                    cfg = json.load(f)
+                cfg.pop("team", None)
+                with open(cfg_path, "w") as f:
+                    json.dump(cfg, f, indent=2)
+                self._send_json({"status": "dissolved", "team_id": team_id})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif action == "move":
+            agent_id = body.get("agent", "")
+            from_team = body.get("from_team", "")
+            to_team = body.get("to_team", "")
+            if not agent_id:
+                self._send_json({"error": "agent is required"}, 400)
+                return
+            try:
+                # Remove from source team
+                if from_team:
+                    src_path = os.path.join(engine.AGENTS_DIR, from_team, "agent.json")
+                    with open(src_path, "r") as f:
+                        src_cfg = json.load(f)
+                    if isinstance(src_cfg.get("team"), dict):
+                        members = src_cfg["team"].get("members", [])
+                        if agent_id in members:
+                            members.remove(agent_id)
+                            src_cfg["team"]["members"] = members
+                        with open(src_path, "w") as f:
+                            json.dump(src_cfg, f, indent=2)
+
+                # Add to destination team
+                if to_team:
+                    dst_path = os.path.join(engine.AGENTS_DIR, to_team, "agent.json")
+                    with open(dst_path, "r") as f:
+                        dst_cfg = json.load(f)
+                    if isinstance(dst_cfg.get("team"), dict):
+                        members = dst_cfg["team"].get("members", [])
+                        if agent_id not in members:
+                            members.append(agent_id)
+                            dst_cfg["team"]["members"] = members
+                        with open(dst_path, "w") as f:
+                            json.dump(dst_cfg, f, indent=2)
+
+                self._send_json({"status": "moved", "agent": agent_id, "from": from_team, "to": to_team})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+        else:
+            self._send_json({"error": f"Unknown action: {action}"}, 400)
+
     # --- Agent file management ---
 
     def _handle_agent_files(self, path):
@@ -1162,6 +1370,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "saved", "name": filename})
             if filename.endswith(".md"):
                 self._qmd_trigger_update()
+            # Re-sync memory summary schedules when agent.json changes
+            if filename == "agent.json":
+                try:
+                    engine.ensure_memory_summary_schedules()
+                except Exception:
+                    pass
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
@@ -1558,20 +1772,86 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             qmd_env["PATH"] = os.path.dirname(qmd_bin) + ":" + qmd_env.get("PATH", "")
             r = subprocess.run([qmd_bin, "collection", "list"],
                                capture_output=True, text=True, timeout=5, env=qmd_env)
-            if r.returncode == 0:
-                collections = []
-                current = None
-                for line in r.stdout.split("\n"):
-                    line = line.strip()
-                    # Parse lines like: "main (qmd://main/)"
-                    if line and not line.startswith(("Collections", "Pattern", "Files", "Updated", "Ignore")) and "(" in line:
-                        name = line.split("(")[0].strip()
-                        if name:
-                            current = {"name": name}
-                            collections.append(current)
-                    elif current and line.startswith("Files:"):
-                        current["files"] = line.split(":")[1].strip().split()[0]
-                return collections
+            if r.returncode != 0:
+                return []
+            collections = []
+            current = None
+            for line in r.stdout.split("\n"):
+                line = line.strip()
+                if line and not line.startswith(("Collections", "Pattern", "Files", "Updated", "Ignore")) and "(" in line:
+                    name = line.split("(")[0].strip()
+                    if name:
+                        current = {"name": name}
+                        collections.append(current)
+                elif current and line.startswith("Files:"):
+                    current["files"] = line.split(":")[1].strip().split()[0]
+
+            # Enrich with index health stats from QMD SQLite
+            try:
+                import sqlite3 as _sq3, hashlib as _hl
+                idx_path = os.path.expanduser("~/.cache/qmd/index.sqlite")
+                if os.path.isfile(idx_path):
+                    conn = _sq3.connect(idx_path, timeout=2)
+                    conn.row_factory = _sq3.Row
+                    for coll in collections:
+                        name = coll["name"]
+                        agent_dir = os.path.join(engine.AGENTS_DIR, name)
+                        if not os.path.isdir(agent_dir):
+                            continue
+                        # Build index of QMD docs for this collection
+                        rows = conn.execute(
+                            "SELECT d.path, d.hash, "
+                            "  (SELECT cv.embedded_at FROM content_vectors cv WHERE cv.hash = d.hash LIMIT 1) AS embedded_at "
+                            "FROM documents d WHERE d.collection = ? AND d.active = 1",
+                            (name,),
+                        ).fetchall()
+                        qmd_idx = {}
+                        for row in rows:
+                            qmd_idx[row["path"].lower()] = {"hash": row["hash"], "embedded_at": row["embedded_at"]}
+
+                        # Walk filesystem and compute stats
+                        total = 0
+                        indexed = 0
+                        embedded = 0
+                        stale = 0
+                        not_indexed = 0
+                        for dirpath, _, filenames in os.walk(agent_dir):
+                            for fname in filenames:
+                                if not fname.endswith(".md"):
+                                    continue
+                                total += 1
+                                fpath = os.path.join(dirpath, fname)
+                                rel = os.path.relpath(fpath, agent_dir)
+                                # QMD normalizes: lowercase + underscores→hyphens
+                                norm = rel.lower().replace("_", "-")
+                                idx = qmd_idx.get(norm)
+                                if not idx:
+                                    not_indexed += 1
+                                    continue
+                                # Check hash freshness
+                                try:
+                                    with open(fpath, "rb") as fh:
+                                        file_hash = _hl.sha256(fh.read()).hexdigest()
+                                    is_current = (file_hash == idx["hash"])
+                                except OSError:
+                                    is_current = None
+                                if is_current:
+                                    indexed += 1
+                                else:
+                                    stale += 1
+                                if idx["embedded_at"] and is_current:
+                                    embedded += 1
+
+                        coll["total"] = total
+                        coll["indexed"] = indexed
+                        coll["embedded"] = embedded
+                        coll["stale"] = stale
+                        coll["not_indexed"] = not_indexed
+                    conn.close()
+            except Exception:
+                pass
+
+            return collections
         except Exception:
             pass
         return []
@@ -1644,7 +1924,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                                 "size": stat.st_size,
                                 "modified": stat.st_mtime,
                             }
-                            idx = qmd_index.get(rel.lower())
+                            # QMD normalizes paths: lowercase + underscores→hyphens
+                            idx = qmd_index.get(rel.lower().replace("_", "-"))
                             if idx:
                                 # Compute current file hash to compare with indexed hash
                                 try:
@@ -1727,6 +2008,45 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         except OSError as e:
             self._send_json({"error": str(e)}, 500)
 
+    def _handle_memory_summary_get(self, path):
+        """GET /v1/agents/<id>/memory-summary — get memory summary content and config."""
+        parts = path.split("/")
+        agent_id = parts[3]
+        try:
+            summary = engine.get_memory_summary(agent_id)
+            config = engine._get_memory_summary_config(agent_id)
+            self._send_json({
+                "agent": agent_id,
+                "summary": summary or "",
+                "config": config,
+            })
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_memory_summary_post(self, path):
+        """POST /v1/agents/<id>/memory-summary — update, reset, or refresh memory summary."""
+        parts = path.split("/")
+        agent_id = parts[3]
+        body = self._read_json()
+        action = body.get("action", "")
+
+        if action == "update":
+            # Direct edit of the summary content
+            content = body.get("content", "")
+            ms = engine.MemoryStore(agent_id)
+            ms.store("Memory Summary", content,
+                     description="Auto-generated synthesis of recent conversations and task executions, updated periodically",
+                     mem_type="general")
+            self._send_json({"status": "updated", "agent": agent_id})
+        elif action == "reset":
+            result = engine.reset_memory_summary(agent_id)
+            self._send_json(result)
+        elif action == "refresh":
+            engine.trigger_memory_summary_refresh(agent_id)
+            self._send_json({"status": "refresh_scheduled", "agent": agent_id})
+        else:
+            self._send_json({"error": f"Unknown action: {action}"}, 400)
+
     def _handle_services_status(self):
         """GET /v1/services — status of all managed services."""
         uptime = int(time.time() - _server_start_time)
@@ -1745,6 +2065,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "sessions": len(sessions.list_all()),
                 "agents": engine.list_agents(),
                 "scheduler_tasks": len(engine._scheduler.list_all()) if engine._scheduler else 0,
+                "default_provider": next((name for name, p in server_config.get("providers", {}).items() if p.get("default_model") == server_config.get("default_model")), ""),
+                "default_model": server_config.get("default_model", ""),
             },
             "qmd": {
                 "status": "running" if qmd_running else "stopped",
@@ -1889,6 +2211,48 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)
 
+    def _handle_server_config(self):
+        """POST /v1/services/server — update server defaults (default_model)."""
+        body = self._read_json()
+        model = body.get("default_model")
+        if not model:
+            self._send_json({"error": "default_model required"}, 400)
+            return
+        # Find which provider has this model
+        providers = server_config.get("providers", {})
+        provider_name = None
+        # Check models config for provider mapping
+        mcfg = engine._models_config or {}
+        if model in mcfg and mcfg[model].get("provider"):
+            provider_name = mcfg[model]["provider"]
+        else:
+            for pname, p in providers.items():
+                if p.get("default_model") == model:
+                    provider_name = pname
+                    break
+        # Update server_config in memory
+        server_config["default_model"] = model
+        if provider_name:
+            server_config["api_key"] = providers[provider_name].get("api_key", "")
+            server_config["base_url"] = providers[provider_name].get("base_url", "")
+            server_config["api_type"] = providers[provider_name].get("type", "anthropic")
+        # Persist to config.json
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        try:
+            config = {}
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    config = json.load(f)
+            if provider_name:
+                config["default_provider"] = provider_name
+            with open(config_path, "w") as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+            return
+        self._send_json({"status": "saved", "default_model": model,
+                         "default_provider": provider_name or ""})
+
     def _handle_restart(self):
         """POST /v1/restart — restart the server process."""
         self._send_json({"status": "restarting"})
@@ -1949,9 +2313,11 @@ def _start_telegram_service() -> bool:
     allowed = tg.get("allowed_users")
     port = server_config.get("port", 8420)
     server_url = f"http://127.0.0.1:{port}"
+    default_model = tg.get("model") or server_config.get("default_model", "")
     return _telegram_mod.telegram_service.start(
         token=token, server_url=server_url,
         allowed_users=allowed,
+        default_model=default_model,
     )
 
 
@@ -2043,6 +2409,12 @@ def main():
     # Start scheduler
     engine._scheduler = engine.Scheduler()
     engine._scheduler.start()
+
+    # Ensure memory summary schedules for all agents
+    try:
+        engine.ensure_memory_summary_schedules()
+    except Exception as e:
+        print(f"[WARN] Memory summary schedule init: {e}")
 
     # Start task runner
     engine._task_runner = engine.TaskRunner()
@@ -2233,8 +2605,10 @@ def main():
     print("  POST /v1/sessions       — create session")
     print("  POST /v1/chat           — send message (SSE stream)")
     print("  POST /v1/chat/cancel    — cancel request")
-    print("  GET  /v1/agents         — list agents")
+    print("  GET  /v1/agents         — list agents (with team metadata)")
     print("  POST /v1/agents/switch  — switch agent")
+    print("  GET  /v1/teams          — team structure")
+    print("  POST /v1/teams          — manage teams")
     print("  GET  /v1/models         — list models")
     print("  GET  /v1/schedule       — scheduled tasks")
     print("  POST /v1/schedule       — manage schedules")

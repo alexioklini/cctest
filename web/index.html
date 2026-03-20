@@ -297,6 +297,7 @@ tailwind.config = {
     flex-shrink: 0;
   }
   .session-chip:hover { background: var(--color-surface-lighter); }
+  .session-chip.border-dashed { border-style: dashed; opacity: 0.7; }
   .session-chip.active {
     border-color: var(--color-accent);
     background: rgba(255,123,0,0.08);
@@ -445,8 +446,8 @@ tailwind.config = {
     border-radius: 0.75rem;
     transition: all 0.2s ease;
     cursor: pointer;
-    min-width: 180px;
-    max-width: 200px;
+    min-width: 120px;
+    max-width: 140px;
     flex-shrink: 0;
     position: relative;
   }
@@ -528,6 +529,64 @@ tailwind.config = {
     background: rgba(255,123,0,0.03);
   }
 
+  /* Team group wrapper */
+  .team-group {
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+    padding: 10px 6px 4px 6px;
+    margin-top: 4px;
+    border: 1.5px solid var(--color-border);
+    border-radius: 12px;
+    background: rgba(var(--color-surface-light-rgb, 128,128,128), 0.15);
+    position: relative;
+  }
+  .team-group-label {
+    position: absolute;
+    top: -8px;
+    left: 10px;
+    font-size: 8px;
+    font-weight: 700;
+    font-family: 'IBM Plex Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--color-text-muted);
+    background: var(--color-base);
+    padding: 0 4px;
+    line-height: 1.2;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    white-space: nowrap;
+  }
+  .team-group-avatar {
+    font-size: 10px;
+    line-height: 1;
+  }
+  .team-group-desc {
+    font-weight: 400;
+    opacity: 0.7;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+  .team-head-badge {
+    position: absolute;
+    top: -4px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 7px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: var(--color-accent);
+    background: var(--color-surface);
+    border: 1px solid var(--color-accent);
+    padding: 0 3px;
+    border-radius: 3px;
+    line-height: 1.3;
+    z-index: 1;
+  }
+
   /* Config tabs */
   .config-tab {
     transition: all 0.2s ease;
@@ -598,6 +657,197 @@ tailwind.config = {
     border-color: var(--color-accent);
     background: rgba(255,123,0,0.05);
   }
+
+  /* ── Activity Panel (slide-in from right) ── */
+  #activity-panel {
+    position: fixed;
+    top: 0; right: 0; bottom: 0;
+    width: 360px;
+    background: var(--color-modal-bg);
+    border-left: 1px solid var(--color-border);
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 0.25s ease;
+    box-shadow: -4px 0 24px rgba(0,0,0,0.1);
+  }
+  #activity-panel.open { transform: translateX(0); }
+
+  #activity-panel .ap-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0;
+  }
+  #activity-panel .ap-title {
+    font-family: 'Outfit', sans-serif;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--color-text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  #activity-panel .ap-title .ap-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #4ade80;
+    box-shadow: 0 0 4px #4ade80;
+    animation: breathe 2.5s ease-in-out infinite;
+  }
+  #activity-panel .ap-count {
+    font-size: 10px;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--color-text-muted);
+    background: var(--color-surface-light);
+    padding: 2px 8px;
+    border-radius: 10px;
+  }
+  #activity-panel .ap-close {
+    background: none;
+    border: none;
+    color: var(--color-text-muted);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 6px;
+    transition: all 0.15s;
+    line-height: 1;
+  }
+  #activity-panel .ap-close:hover {
+    color: var(--color-text-primary);
+    background: var(--color-surface-light);
+  }
+
+  /* Sections: agents, tasks, services */
+  #activity-panel .ap-section {
+    border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0;
+  }
+  #activity-panel .ap-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 16px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  #activity-panel .ap-section-header .ap-badge {
+    font-size: 10px;
+    color: var(--color-text-secondary);
+    background: var(--color-surface);
+    padding: 1px 7px;
+    border-radius: 8px;
+  }
+
+  /* Agent rows */
+  .ap-agent {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 16px;
+    font-size: 12px;
+  }
+  .ap-agent .ap-av { width: 24px; height: 24px; flex-shrink: 0; }
+  .ap-agent .ap-av svg, .ap-agent .ap-av img { width: 24px; height: 24px; border-radius: 4px; }
+  .ap-agent .ap-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-primary); }
+  .ap-status {
+    font-size: 9px;
+    font-weight: 600;
+    font-family: 'IBM Plex Mono', monospace;
+    letter-spacing: 0.3px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+  .ap-status-idle { color: var(--color-text-muted); }
+  .ap-status-chatting { color: #22d3ee; background: rgba(34,211,238,0.08); }
+  .ap-status-delegating { color: #4ade80; background: rgba(74,222,128,0.08); }
+  .ap-status-running { color: #fbbf24; background: rgba(251,191,36,0.08); }
+  .ap-status-paused { color: var(--color-text-muted); background: var(--color-surface); }
+
+  /* Task rows */
+  .ap-task {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 16px;
+    font-size: 12px;
+  }
+  .ap-task-icon { flex-shrink: 0; font-size: 10px; width: 12px; text-align: center; }
+  .ap-task-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-primary); }
+  .ap-task-agent {
+    font-size: 9px;
+    font-weight: 600;
+    font-family: 'IBM Plex Mono', monospace;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: var(--color-surface);
+    color: var(--color-agent);
+    flex-shrink: 0;
+  }
+
+  /* Service rows */
+  .ap-svc {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 16px;
+    font-size: 12px;
+  }
+  .ap-svc-name { font-weight: 600; font-size: 11px; width: 60px; text-transform: uppercase; font-family: 'IBM Plex Mono', monospace; color: var(--color-text-secondary); }
+  .ap-svc-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .ap-svc-dot.svc-up { background: #4ade80; box-shadow: 0 0 4px #4ade80; }
+  .ap-svc-dot.svc-down { background: #f87171; box-shadow: 0 0 4px #f87171; }
+  .ap-svc-info { color: var(--color-text-muted); font-size: 11px; font-family: 'IBM Plex Mono', monospace; }
+
+  /* Activity log */
+  #ap-log-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+  }
+  .ap-log-entry {
+    display: flex;
+    gap: 8px;
+    padding: 3px 16px;
+    font-size: 11px;
+    font-family: 'IBM Plex Mono', monospace;
+    line-height: 1.5;
+  }
+  .ap-log-time { color: var(--color-text-muted); flex-shrink: 0; width: 58px; font-size: 10px; }
+  .ap-log-badge {
+    font-size: 9px;
+    font-weight: 600;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: var(--color-surface);
+    flex-shrink: 0;
+    text-transform: uppercase;
+    min-width: 28px;
+    text-align: center;
+  }
+  .ap-log-msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ap-log-entry.ap-success .ap-log-msg { color: #4ade80; }
+  .ap-log-entry.ap-error .ap-log-msg { color: #f87171; }
+  .ap-log-entry.ap-chat .ap-log-msg { color: #22d3ee; }
+  .ap-log-entry.ap-delegate .ap-log-msg { color: #4ade80; }
+  .ap-log-entry.ap-schedule .ap-log-msg { color: #fbbf24; }
+  .ap-log-entry.ap-info .ap-log-msg { color: var(--color-text-muted); }
+
+  /* Toggle button active state */
+  #btn-activity-toggle.active {
+    color: var(--color-accent);
+    background: rgba(255,123,0,0.08);
+  }
 </style>
 </head>
 <body class="bg-base">
@@ -621,6 +871,9 @@ tailwind.config = {
         <svg id="theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
         <svg id="theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
       </button>
+      <button id="btn-activity-toggle" class="text-text-muted hover:text-text-primary transition-colors p-1 rounded-lg hover:bg-surface-light" title="Live Activity">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      </button>
       <button id="btn-scheduler-dashboard" class="text-text-muted hover:text-text-primary transition-colors p-1 rounded-lg hover:bg-surface-light" title="Scheduler Dashboard" style="font-size:16px">&#9201;</button>
       <button id="btn-header-settings" class="text-text-muted hover:text-text-primary transition-colors p-1 rounded-lg hover:bg-surface-light" title="Server Settings">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -629,7 +882,7 @@ tailwind.config = {
   </header>
 
   <!-- AGENT CARDS ROW (always visible) -->
-  <div id="agent-cards-row" class="flex items-stretch gap-3 px-5 py-3 bg-surface/50 border-b border-border flex-shrink-0 overflow-x-auto" style="min-height:100px">
+  <div id="agent-cards-row" class="flex items-stretch gap-2 px-4 py-2 bg-surface/50 border-b border-border flex-shrink-0 overflow-x-auto">
   </div>
 
   <!-- CHAT AREA (fills remaining) -->
@@ -675,6 +928,31 @@ tailwind.config = {
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- ACTIVITY PANEL (slide-in from right) -->
+  <div id="activity-panel">
+    <div class="ap-header">
+      <div class="ap-title"><span class="ap-dot"></span> Live Activity</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="ap-count" id="ap-log-count">0</span>
+        <button class="ap-close" id="ap-close">&times;</button>
+      </div>
+    </div>
+    <div class="ap-section" id="ap-agents-section">
+      <div class="ap-section-header">Agents <span class="ap-badge" id="ap-agents-badge">0</span></div>
+      <div id="ap-agents-body"></div>
+    </div>
+    <div class="ap-section" id="ap-tasks-section">
+      <div class="ap-section-header">Tasks <span class="ap-badge" id="ap-tasks-badge">0</span></div>
+      <div id="ap-tasks-body"></div>
+    </div>
+    <div class="ap-section" id="ap-services-section">
+      <div class="ap-section-header">Services</div>
+      <div id="ap-services-body"></div>
+    </div>
+    <div class="ap-section-header">Log <span class="ap-badge" id="ap-log-count2">0</span></div>
+    <div id="ap-log-area"></div>
   </div>
 
   <!-- FOOTER STATUS BAR -->
@@ -1077,6 +1355,7 @@ class AppState {
     this.configTab = 'soul';
     this.modelsConfig = {}; // model_id -> {enabled, shortname, icon, priority, capabilities, provider}
     this.agentActivity = {}; // agent_id -> ["chat", "delegate", "schedule"]
+    this.teamStructure = {}; // {teams: {headId: {head, members}}, standalone: [], main: agent}
   }
 
   get activeChat() {
@@ -1141,7 +1420,9 @@ async function loadInitialData() {
       API.get('/v1/models/config'),
     ]);
     if (agents.status === 'fulfilled') {
-      state.agents = Array.isArray(agents.value) ? agents.value : (agents.value.agents || []);
+      const agentsData = agents.value;
+      state.agents = Array.isArray(agentsData) ? agentsData : (agentsData.agents || []);
+      if (agentsData.team_structure) state.teamStructure = agentsData.team_structure;
     }
     if (models.status === 'fulfilled') {
       state.models = Array.isArray(models.value) ? models.value : (models.value.models || models.value.data || []);
@@ -1238,63 +1519,109 @@ function getAllProviderModels() {
 }
 
 // ─── AGENT CARDS ROW ────────────────────────────────────────
+function buildAgentCard(a, i) {
+  const name = getAgentName(a);
+  const displayName = getAgentDisplayName(a);
+  const isPaused = getAgentPaused(a);
+  const isSelected = name === state.activeAgentId;
+  const hasChat = !!state.agentChats[name];
+  const isMain = name === 'main';
+  const isTeamHead = a.is_team_head || false;
+  const avatarId = getAgentAvatar(a);
+  const agentActivity = (state.agentActivity || {})[name] || [];
+  const isActive = agentActivity.length > 0 || (state.agentChats[name] && state.agentChats[name].streaming);
+  const card = document.createElement('div');
+  card.className = `agent-card-compact flex flex-col items-center p-2 gap-0.5 fade-in ${isSelected ? 'selected' : ''} ${isPaused ? 'opacity-40 grayscale' : ''} ${isActive ? 'agent-active' : ''}`;
+  card.style.animationDelay = `${i * 0.04}s`;
+  card.dataset.agentId = name;
+  const activityLabel = agentActivity.length ? agentActivity.join('/') : '';
+  card.innerHTML = `
+    ${isTeamHead ? '<div class="team-head-badge">Head</div>' : ''}
+    ${isActive ? `<div class="agent-activity-badge"><span class="activity-dot"></span>${activityLabel}</div>` : ''}
+    <div class="relative">
+      ${renderAvatar(avatarId, 32)}
+      ${hasChat && !isActive ? '<span class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-success breathing-dot border border-surface" title="Active chat"></span>' : ''}
+      ${isPaused ? '<span class="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[7px] bg-surface-lighter border border-border rounded px-0.5 text-text-muted font-medium uppercase tracking-wider">Paused</span>' : ''}
+    </div>
+    <span class="font-display font-bold text-agent text-[10px] truncate w-full text-center">${esc(displayName || name)}</span>
+    <div class="flex items-center gap-0.5 mt-auto">
+      ${!isMain ? `<button class="btn-pause-card text-text-muted hover:text-yellow-500 text-[9px] transition-colors p-0.5 rounded hover:bg-surface-light" title="${isPaused ? 'Resume' : 'Pause'}">${isPaused ? '▶️' : '⏸'}</button>` : ''}
+      ${!isMain ? `<button class="btn-delete-card text-text-muted hover:text-error text-[9px] transition-colors p-0.5 rounded hover:bg-surface-light" title="Delete agent">🗑</button>` : ''}
+      <button class="btn-cfg-card text-text-muted hover:text-accent text-[9px] transition-colors p-0.5 rounded hover:bg-surface-light" title="Configure">⚙️</button>
+      <button class="btn-chat-card text-text-muted hover:text-agent text-[9px] transition-colors p-0.5 rounded hover:bg-surface-light ${isPaused ? 'pointer-events-none opacity-30' : ''}" title="Chat">💬</button>
+    </div>
+  `;
+  card.onclick = (e) => {
+    if (e.target.closest('.btn-cfg-card') || e.target.closest('.btn-chat-card') || e.target.closest('.btn-pause-card') || e.target.closest('.btn-delete-card')) return;
+    if (isPaused) return;
+    selectAgent(name);
+  };
+  card.querySelector('.btn-chat-card').onclick = () => { if (!isPaused) selectAgent(name); };
+  card.querySelector('.btn-cfg-card').onclick = () => openConfigModal(name);
+  if (!isMain) {
+    card.querySelector('.btn-pause-card').onclick = () => toggleAgentPaused(name, a);
+    card.querySelector('.btn-delete-card').onclick = () => deleteAgent(name);
+  }
+  return card;
+}
+
 function renderAgentCards() {
   const row = dom.agentCardsRow;
   row.innerHTML = '';
-  state.agents.forEach((a, i) => {
-    const name = getAgentName(a);
-    const desc = getAgentDesc(a);
-    const displayName = getAgentDisplayName(a);
-    const isPaused = getAgentPaused(a);
-    const skillsCount = getAgentSkillsCount(a);
-    const isSelected = name === state.activeAgentId;
-    const hasChat = !!state.agentChats[name];
-    const isMain = name === 'main';
+  const agentMap = {};
+  state.agents.forEach(a => { agentMap[getAgentName(a)] = a; });
 
-    const avatarId = getAgentAvatar(a);
-    const agentActivity = (state.agentActivity || {})[name] || [];
-    const isActive = agentActivity.length > 0 || (state.agentChats[name] && state.agentChats[name].streaming);
-    const card = document.createElement('div');
-    card.className = `agent-card-compact flex flex-col items-center p-3 gap-1 fade-in ${isSelected ? 'selected' : ''} ${isPaused ? 'opacity-40 grayscale' : ''} ${isActive ? 'agent-active' : ''}`;
-    card.style.animationDelay = `${i * 0.04}s`;
-    const activityLabel = agentActivity.length ? agentActivity.join('/') : '';
-    card.innerHTML = `
-      ${isActive ? `<div class="agent-activity-badge"><span class="activity-dot"></span>${activityLabel}</div>` : ''}
-      <div class="relative mb-1">
-        ${renderAvatar(avatarId, 48)}
-        ${hasChat && !isActive ? '<span class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-success breathing-dot border border-surface" title="Active chat"></span>' : ''}
-        ${isPaused ? '<span class="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[8px] bg-surface-lighter border border-border rounded px-1 text-text-muted font-medium uppercase tracking-wider">Paused</span>' : ''}
-      </div>
-      <span class="font-display font-bold text-agent text-xs truncate w-full text-center">${esc(displayName || name)}</span>
-      ${displayName ? `<div class="text-text-muted text-[9px] truncate w-full text-center leading-tight mono">${esc(name)}</div>` : `<div class="text-text-muted text-[9px] truncate w-full text-center leading-tight">${desc ? esc(desc).substring(0, 30) : ''}</div>`}
-      <div class="flex items-center gap-1 mt-auto pt-1">
-        ${!isMain ? `<button class="btn-pause-card text-text-muted hover:text-yellow-500 text-[10px] transition-colors p-1 rounded hover:bg-surface-light" title="${isPaused ? 'Resume' : 'Pause'}">${isPaused ? '▶️' : '⏸'}</button>` : ''}
-        ${!isMain ? `<button class="btn-delete-card text-text-muted hover:text-error text-[10px] transition-colors p-1 rounded hover:bg-surface-light" title="Delete agent">🗑</button>` : ''}
-        <button class="btn-cfg-card text-text-muted hover:text-accent text-[10px] transition-colors p-1 rounded hover:bg-surface-light" title="Configure">⚙️</button>
-        <button class="btn-chat-card text-text-muted hover:text-agent text-[10px] transition-colors p-1 rounded hover:bg-surface-light ${isPaused ? 'pointer-events-none opacity-30' : ''}" title="Chat">💬</button>
-      </div>
-    `;
-    // Click card body = select agent
-    card.onclick = (e) => {
-      if (e.target.closest('.btn-cfg-card') || e.target.closest('.btn-chat-card') || e.target.closest('.btn-pause-card') || e.target.closest('.btn-delete-card')) return;
-      if (isPaused) return;
-      selectAgent(name);
-    };
-    card.querySelector('.btn-chat-card').onclick = () => { if (!isPaused) selectAgent(name); };
-    card.querySelector('.btn-cfg-card').onclick = () => openConfigModal(name);
-    if (!isMain) {
-      card.querySelector('.btn-pause-card').onclick = () => toggleAgentPaused(name, a);
-      card.querySelector('.btn-delete-card').onclick = () => deleteAgent(name);
-    }
-    row.appendChild(card);
+  // Get team structure from state (populated by loadInitialData)
+  const teamStruct = state.teamStructure || {};
+  const teams = teamStruct.teams || {};
+  const teamIds = Object.keys(teams);
+  const inTeam = new Set();
+  teamIds.forEach(tid => {
+    (teams[tid].members || []).forEach(m => inTeam.add(getAgentName(m)));
   });
 
-  // Create Agent "+" card
+  let idx = 0;
+
+  // 1. Render main agent first
+  const mainAgent = agentMap['main'];
+  if (mainAgent) {
+    row.appendChild(buildAgentCard(mainAgent, idx++));
+  }
+
+  // 2. Render teams
+  teamIds.forEach(tid => {
+    const team = teams[tid];
+    const group = document.createElement('div');
+    group.className = 'team-group';
+    const teamName = team.name || tid;
+    const teamDesc = team.description || '';
+    const teamAvatar = team.avatar || '';
+    const headId = team.head || '';
+    group.innerHTML = `<span class="team-group-label">${teamAvatar ? `<span class="team-group-avatar">${esc(teamAvatar)}</span> ` : ''}${esc(teamName)}${teamDesc ? ` <span class="team-group-desc">— ${esc(teamDesc)}</span>` : ''}</span>`;
+
+    // Render head first, then other members
+    const members = (team.members || []).map(m => getAgentName(m));
+    const sorted = [headId, ...members.filter(m => m !== headId)].filter(Boolean);
+    sorted.forEach(mid => {
+      const memberAgent = agentMap[mid];
+      if (memberAgent) group.appendChild(buildAgentCard(memberAgent, idx++));
+    });
+    row.appendChild(group);
+  });
+
+  // 3. Standalone agents (not in any team, not main)
+  state.agents.forEach(a => {
+    const name = getAgentName(a);
+    if (name === 'main' || inTeam.has(name)) return;
+    row.appendChild(buildAgentCard(a, idx++));
+  });
+
+  // 4. Create Agent "+" card
   const createCard = document.createElement('div');
-  createCard.className = 'agent-card-create-compact flex flex-col items-center justify-center gap-1.5 p-3';
+  createCard.className = 'agent-card-create-compact flex flex-col items-center justify-center gap-1 p-2';
   createCard.innerHTML = `
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#555570" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-    <span class="text-text-muted text-[10px] font-display">New</span>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#555570" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    <span class="text-text-muted text-[9px] font-display">New</span>
   `;
   createCard.onclick = () => showCreateAgentModal();
   row.appendChild(createCard);
@@ -1418,10 +1745,16 @@ function renderSessionBar() {
     const date = s.created_at ? new Date(s.created_at).toLocaleDateString(undefined, {month:'short',day:'numeric'}) : '';
     const count = s.message_count || 0;
     const isArchived = s.status === 'archived';
-    html += `<span class="session-chip ${isActive ? 'active' : ''} ${isArchived ? 'opacity-50' : ''}" onclick="loadSession('${esc(s.id)}')" title="${esc(title)} - ${count} messages">
+    const isIncognito = s.status === 'incognito';
+    html += `<span class="session-chip ${isActive ? 'active' : ''} ${isArchived ? 'opacity-50' : ''} ${isIncognito ? 'border-dashed' : ''}" onclick="loadSession('${esc(s.id)}')" title="${esc(title)} - ${count} messages${isIncognito ? ' (incognito)' : ''}">
+      ${isIncognito ? '<span style="font-size:9px;margin-right:2px" title="Incognito — excluded from memory">🕶</span>' : ''}
       <span class="truncate" style="max-width:120px">${esc(title)}</span>
       <span style="font-size:9px;color:var(--color-text-muted)">${date}${count ? ' (' + count + ')' : ''}</span>
       <span class="session-actions">
+        ${isIncognito
+          ? `<button onclick="event.stopPropagation();sessionAction('un_incognito','${esc(s.id)}')" title="Remove incognito">👁</button>`
+          : `<button onclick="event.stopPropagation();sessionAction('incognito','${esc(s.id)}')" title="Incognito — exclude from memory">🕶</button>`
+        }
         ${isArchived
           ? `<button onclick="event.stopPropagation();sessionAction('unarchive','${esc(s.id)}')" title="Unarchive">📂</button>`
           : `<button onclick="event.stopPropagation();sessionAction('archive','${esc(s.id)}')" title="Archive">📦</button>`
@@ -1504,7 +1837,9 @@ window.sessionAction = async function(action, sessionId) {
     }
     // Reload sessions list
     await loadAgentSessions(agentId);
-    showToast(`Session ${action}d`);
+    const labels = { delete: 'Session deleted', archive: 'Session archived', unarchive: 'Session unarchived',
+      incognito: 'Session marked incognito — excluded from memory', un_incognito: 'Session removed from incognito' };
+    showToast(labels[action] || `Session ${action}d`);
   } catch (e) {
     showToast(`Error: ${e.message}`, true);
   }
@@ -1886,15 +2221,18 @@ function openConfigModal(agentName) {
   modal.className = 'modal-overlay';
   modal.id = 'config-modal';
   modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+  const agentData = state.agents.find(a => getAgentName(a) === agentName);
+  const isTeamHead = agentData && agentData.is_team_head;
   modal.innerHTML = `
     <div class="modal-content p-6">
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-      <h2 class="font-display text-lg font-semibold text-agent mb-4">${esc(agentName)}</h2>
+      <h2 class="font-display text-lg font-semibold text-agent mb-4">${esc(agentName)}${isTeamHead ? ' <span class="text-xs text-accent font-normal">(Team Head)</span>' : ''}</h2>
       <div id="config-tabs" class="flex items-center border-b border-border mb-6 gap-0">
         <button class="config-tab active" data-tab="soul">Soul</button>
         <button class="config-tab" data-tab="settings">Settings</button>
         <button class="config-tab" data-tab="skills">Skills</button>
         <button class="config-tab" data-tab="mcp">MCP</button>
+        <button class="config-tab" data-tab="memory">Memory</button>
         <button class="config-tab" data-tab="schedule">Schedule</button>
       </div>
       <div id="config-tab-content"></div>
@@ -1952,8 +2290,20 @@ async function loadConfigTabContent(tab, agentName) {
       let parsed = {};
       try { parsed = typeof res === 'string' ? JSON.parse(res) : (res.content ? JSON.parse(res.content) : res); } catch {}
       const allProviderModels = getAllProviderModels();
+      // Team info (read-only)
+      const agentTeams = (state.agents.find(a => getAgentName(a) === agentName) || {}).teams || [];
+      const isHead = (state.agents.find(a => getAgentName(a) === agentName) || {}).is_team_head || false;
+      let teamInfoHtml = '';
+      if (agentTeams.length) {
+        teamInfoHtml = `<div class="border border-accent/30 rounded-lg px-4 py-3 bg-accent/5 mb-4">
+          <div class="text-[11px] text-text-secondary font-medium uppercase tracking-wider mb-1">Team Membership</div>
+          ${agentTeams.map(t => `<div class="text-sm text-text-primary">${esc(t.team_name || t.team_id)} ${isHead ? '<span class="text-accent font-medium">(Head)</span>' : '<span class="text-text-muted">(Member)</span>'}</div>`).join('')}
+          <div class="text-[10px] text-text-muted mt-1">Manage teams in Settings → Teams tab</div>
+        </div>`;
+      }
       el.innerHTML = `
         <div class="space-y-5">
+          ${teamInfoHtml}
           <h3 class="section-header text-sm">Agent Settings (agent.json)</h3>
           <div>
             <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Agent ID (directory name)</label>
@@ -2007,12 +2357,50 @@ async function loadConfigTabContent(tab, agentName) {
               <option value="creative" ${parsed.model_purpose === 'creative' ? 'selected' : ''}>Creative</option>
             </select>
           </div>
+          <div class="border border-border rounded-xl p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <label class="text-[11px] text-text-secondary font-medium block uppercase tracking-wider">Memory Summary</label>
+                <div class="text-[10px] text-text-muted mt-0.5">Auto-summarize conversations &amp; tasks periodically</div>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="cfg-memsummary-enabled" class="sr-only peer" ${(parsed.memory_summary?.enabled !== false) ? 'checked' : ''}>
+                <div class="w-9 h-5 bg-surface-lighter rounded-full peer peer-checked:bg-accent/70 transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+              </label>
+            </div>
+            <div id="cfg-memsummary-options" class="${(parsed.memory_summary?.enabled !== false) ? '' : 'hidden'}">
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="text-[10px] text-text-muted font-medium block mb-1 uppercase tracking-wider">Frequency</label>
+                  <select id="cfg-memsummary-frequency" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-xs text-text-primary mono focus:border-accent transition-colors">
+                    <option value="every 6h" ${(parsed.memory_summary?.frequency||'') === 'every 6h' ? 'selected' : ''}>Every 6 hours</option>
+                    <option value="every 12h" ${(parsed.memory_summary?.frequency||'') === 'every 12h' ? 'selected' : ''}>Every 12 hours</option>
+                    <option value="every 24h" ${!(parsed.memory_summary?.frequency) || (parsed.memory_summary?.frequency||'') === 'every 24h' ? 'selected' : ''}>Every 24 hours</option>
+                    <option value="every 2d" ${(parsed.memory_summary?.frequency||'') === 'every 2d' ? 'selected' : ''}>Every 2 days</option>
+                    <option value="every 7d" ${(parsed.memory_summary?.frequency||'') === 'every 7d' ? 'selected' : ''}>Every 7 days</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="text-[10px] text-text-muted font-medium block mb-1 uppercase tracking-wider">Start Time</label>
+                  <input type="time" id="cfg-memsummary-start-time" value="${esc(parsed.memory_summary?.start_time || '03:00')}" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-xs text-text-primary mono focus:border-accent transition-colors">
+                </div>
+              </div>
+            </div>
+          </div>
           <div>
             <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Raw JSON</label>
             <textarea id="cfg-raw-json" class="w-full bg-surface-light border border-border rounded-xl px-5 py-4 text-sm text-text-primary mono focus:border-accent transition-colors" rows="10">${esc(typeof content === 'string' ? content : JSON.stringify(content, null, 2))}</textarea>
           </div>
           <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="saveAgentSettings('${esc(agentName)}')">Save Settings</button>
         </div>`;
+      // Wire up memory summary toggle
+      const msToggle = document.getElementById('cfg-memsummary-enabled');
+      if (msToggle) {
+        msToggle.addEventListener('change', () => {
+          const opts = document.getElementById('cfg-memsummary-options');
+          if (opts) opts.classList.toggle('hidden', !msToggle.checked);
+        });
+      }
     } catch (e) {
       el.innerHTML = `<div class="text-error text-sm">Error loading agent.json: ${esc(e.message)}</div>`;
     }
@@ -2210,8 +2598,95 @@ async function loadConfigTabContent(tab, agentName) {
     } catch (e) {
       el.innerHTML = `<div class="text-error text-sm">Error loading schedule: ${esc(e.message)}</div>`;
     }
+  } else if (tab === 'memory') {
+    try {
+      const res = await API.get(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`);
+      const summary = res.summary || '';
+      const cfg = res.config || {};
+      const isEnabled = cfg.enabled !== false;
+      const isPaused = cfg.paused || false;
+
+      el.innerHTML = `
+        <div class="space-y-5">
+          <h3 class="section-header text-sm">Memory Summary</h3>
+          <div class="text-[11px] text-text-muted">
+            Automatic synthesis of conversations and scheduled task results. Updated periodically and injected as context into every new conversation and task.
+          </div>
+
+          <!-- Status & Controls -->
+          <div class="flex items-center gap-3 flex-wrap">
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full ${isEnabled && !isPaused ? 'bg-success' : isPaused ? 'bg-yellow-400' : 'bg-error'}"></span>
+              <span class="text-xs text-text-secondary">${isEnabled ? (isPaused ? 'Paused' : 'Active') : 'Disabled'}</span>
+            </div>
+            <span class="text-[10px] text-text-muted mono">${cfg.frequency || 'every 24h'} at ${cfg.start_time || '03:00'}</span>
+            <div class="flex gap-2 ml-auto">
+              <button class="btn-secondary text-xs px-3 py-1.5 rounded-lg" onclick="memorySummaryAction('${esc(agentName)}','refresh')" title="Trigger an immediate refresh">Refresh Now</button>
+              ${isPaused
+                ? `<button class="btn-secondary text-xs px-3 py-1.5 rounded-lg" onclick="memorySummaryTogglePause('${esc(agentName)}',false)">Resume</button>`
+                : `<button class="btn-secondary text-xs px-3 py-1.5 rounded-lg" onclick="memorySummaryTogglePause('${esc(agentName)}',true)">Pause</button>`
+              }
+              <button class="btn-secondary text-xs px-3 py-1.5 rounded-lg text-error" onclick="memorySummaryAction('${esc(agentName)}','reset')" title="Delete memory summary">Reset</button>
+            </div>
+          </div>
+
+          <!-- Summary Content -->
+          <div>
+            <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Summary Content</label>
+            <textarea id="memory-summary-editor" class="w-full bg-surface-light border border-border rounded-xl px-5 py-4 text-sm text-text-primary mono focus:border-accent transition-colors" rows="16" placeholder="No memory summary generated yet. Click 'Refresh Now' to generate one.">${esc(summary)}</textarea>
+          </div>
+          <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="memorySummarySave('${esc(agentName)}')">Save Changes</button>
+        </div>`;
+    } catch (e) {
+      el.innerHTML = `<div class="text-error text-sm">Error loading memory summary: ${esc(e.message)}</div>`;
+    }
   }
 }
+
+// ─── Memory Summary Helpers ─────────────────────────────────
+window.memorySummaryAction = async function(agentName, action) {
+  if (action === 'reset' && !confirm("Permanently delete this agent's memory summary? This cannot be undone.")) return;
+  try {
+    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`, { action });
+    showToast(action === 'reset' ? 'Memory summary reset' : 'Memory summary refresh scheduled');
+    if (action === 'reset') {
+      const editor = document.getElementById('memory-summary-editor');
+      if (editor) editor.value = '';
+    }
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+window.memorySummarySave = async function(agentName) {
+  const editor = document.getElementById('memory-summary-editor');
+  if (!editor) return;
+  try {
+    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`, {
+      action: 'update',
+      content: editor.value,
+    });
+    showToast('Memory summary saved');
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+window.memorySummaryTogglePause = async function(agentName, pause) {
+  try {
+    // Read current agent.json, update paused state, save
+    const res = await API.getAgentFile(agentName, 'agent.json');
+    const content = typeof res === 'string' ? res : (res.content || JSON.stringify(res, null, 2));
+    const parsed = JSON.parse(typeof res === 'object' && res.content ? res.content : content);
+    if (!parsed.memory_summary) parsed.memory_summary = {};
+    parsed.memory_summary.paused = pause;
+    await API.writeAgentFile(agentName, 'agent.json', JSON.stringify(parsed, null, 2));
+    showToast(pause ? 'Memory paused — existing summary preserved but not used or updated' : 'Memory resumed');
+    loadConfigTabContent('memory', agentName);
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
 
 // ─── Running Tasks Helpers ──────────────────────────────────
 let _runningTasksInterval = null;
@@ -2792,13 +3267,27 @@ window.saveAgentSettings = async function(agentName) {
     // Remove legacy max_context from agent config (now a model-level property)
     delete parsed.max_context;
     if (avatarVal) parsed.avatar = avatarVal;
+    // Sync memory_summary settings
+    const msEnabled = $('#cfg-memsummary-enabled')?.checked;
+    if (msEnabled !== undefined) {
+      const msFreq = $('#cfg-memsummary-frequency')?.value || 'every 24h';
+      const msTime = $('#cfg-memsummary-start-time')?.value || '03:00';
+      const existingPaused = parsed.memory_summary?.paused || false;
+      parsed.memory_summary = {
+        enabled: msEnabled,
+        paused: existingPaused,
+        frequency: msFreq,
+        start_time: msTime,
+      };
+    }
     const finalJson = JSON.stringify(parsed, null, 2);
     await API.writeAgentFile(agentName, 'agent.json', finalJson);
     showToast('Settings saved');
     // Reload agents data and refresh UI
     try {
-      const agents = await API.getAgents();
-      state.agents = Array.isArray(agents) ? agents : (agents.agents || []);
+      const agentsData = await API.getAgents();
+      state.agents = Array.isArray(agentsData) ? agentsData : (agentsData.agents || []);
+      if (agentsData.team_structure) state.teamStructure = agentsData.team_structure;
       renderAgentCards();
       updateChatArea();
     } catch {}
@@ -2829,8 +3318,9 @@ window.renameAgent = async function(oldName) {
     }
     if (state.activeAgentId === oldName) state.activeAgentId = newName;
     // Reload agents list
-    const agents = await API.getAgents();
-    state.agents = Array.isArray(agents) ? agents : (agents.agents || []);
+    const agentsData2 = await API.getAgents();
+    state.agents = Array.isArray(agentsData2) ? agentsData2 : (agentsData2.agents || []);
+    if (agentsData2.team_structure) state.teamStructure = agentsData2.team_structure;
     renderAgentCards();
     updateChatArea();
     // Reopen config modal for new name on settings tab
@@ -2930,6 +3420,7 @@ function openSettingsModal() {
         <button class="config-tab ${_settingsTab === 'server' ? 'active' : ''}" onclick="switchSettingsTab('server')">Server</button>
         <button class="config-tab ${_settingsTab === 'qmd' ? 'active' : ''}" onclick="switchSettingsTab('qmd')">QMD</button>
         <button class="config-tab ${_settingsTab === 'telegram' ? 'active' : ''}" onclick="switchSettingsTab('telegram')">Telegram</button>
+        <button class="config-tab ${_settingsTab === 'teams' ? 'active' : ''}" onclick="switchSettingsTab('teams')">Teams</button>
         <button class="config-tab ${_settingsTab === 'providers' ? 'active' : ''}" onclick="switchSettingsTab('providers')">Providers</button>
         <button class="config-tab ${_settingsTab === 'models' ? 'active' : ''}" onclick="switchSettingsTab('models')">Models</button>
       </div>
@@ -2956,6 +3447,7 @@ async function loadSettingsTab() {
     if (_settingsTab === 'server') await renderServerTab(el);
     else if (_settingsTab === 'qmd') await renderQmdTab(el);
     else if (_settingsTab === 'telegram') await renderTelegramTab(el);
+    else if (_settingsTab === 'teams') await renderTeamsTab(el);
     else if (_settingsTab === 'providers') await renderProvidersTab(el);
     else if (_settingsTab === 'models') await renderModelsTab(el);
   } catch (e) {
@@ -2982,6 +3474,16 @@ async function renderServerTab(el) {
         <div><span class="text-text-muted text-xs uppercase tracking-wider">Agents</span> <span class="text-text-primary mono font-medium ml-2">${(srv.agents || []).join(', ')}</span></div>
         <div><span class="text-text-muted text-xs uppercase tracking-wider">Scheduled</span> <span class="text-text-primary mono font-medium ml-2">${srv.scheduler_tasks || 0}</span></div>
       </div>
+      <div class="flex items-center justify-between mb-4 pt-4 border-t border-border/30">
+        <div>
+          <div class="text-text-primary text-sm font-medium">Default Model</div>
+          <div class="text-text-muted text-xs">Used for new chats when no model is specified</div>
+        </div>
+        <select id="server-default-model" onchange="saveServerDefaultModel(this.value)"
+          class="bg-surface border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary mono">
+          ${getAllProviderModels().map(pm => `<option value="${esc(pm.id)}" ${pm.id === (srv.default_model || '') ? 'selected' : ''}>${esc(pm.label)}</option>`).join('')}
+        </select>
+      </div>
       <div class="flex items-center gap-2">
         <button onclick="restartServer()" class="btn-secondary text-xs px-4 py-2 rounded-lg">Restart Server</button>
         <button onclick="toggleServiceLog('server')" class="btn-secondary text-xs px-4 py-2 rounded-lg">View Log</button>
@@ -2989,6 +3491,13 @@ async function renderServerTab(el) {
     </div>
     <div id="log-server" class="hidden mt-4"></div>`;
 }
+
+window.saveServerDefaultModel = async function(model) {
+  try {
+    const res = await API.post('/v1/services/server', { default_model: model });
+    showToast(`Default model: ${model}`);
+  } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+};
 
 window.restartServer = async function() {
   if (!confirm('Restart the server? Active streams will be interrupted.')) return;
@@ -3001,6 +3510,168 @@ window.restartServer = async function() {
     }
     showToast('Server may still be restarting', 'error');
   }, 1000);
+};
+
+async function renderTeamsTab(el) {
+  const ts = state.teamStructure || {};
+  const teams = ts.teams || {};
+  const teamIds = Object.keys(teams);
+  const allAgents = state.agents.filter(a => getAgentName(a) !== 'main');
+
+  function agentLabel(id) {
+    const a = state.agents.find(a => getAgentName(a) === id);
+    return a ? (getAgentDisplayName(a) || id) : id;
+  }
+
+  el.innerHTML = `
+    <div class="space-y-4">
+      ${teamIds.length === 0 ? '<div class="text-text-muted text-sm py-4">No teams yet. Create one below.</div>' :
+        teamIds.map(tid => {
+          const team = teams[tid];
+          const teamName = team.name || tid;
+          const teamAvatar = team.avatar || '';
+          const teamDesc = team.description || '';
+          const headId = team.head || '';
+          const members = (team.members || []).map(m => typeof m === 'string' ? m : (m.id || m));
+          return `
+          <div class="glass-card p-5" data-team-id="${esc(tid)}">
+            <div class="flex items-start justify-between mb-4">
+              <div>
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="text-lg">${esc(teamAvatar)}</span>
+                  <h3 class="text-text-primary font-display font-semibold">${esc(teamName)}</h3>
+                </div>
+                ${teamDesc ? `<div class="text-text-muted text-xs">${esc(teamDesc)}</div>` : ''}
+              </div>
+              <button class="btn-secondary text-xs px-3 py-1 rounded-lg text-error hover:bg-error/10" onclick="dissolveTeam('${esc(tid)}')">Dissolve</button>
+            </div>
+            <div class="space-y-3">
+              <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 items-center">
+                <label class="text-[11px] text-text-secondary font-medium uppercase tracking-wider">Avatar</label>
+                <input class="team-edit-avatar w-16 bg-surface-light border border-border rounded-lg px-2 py-1.5 text-center text-lg focus:border-accent transition-colors" value="${esc(teamAvatar)}" placeholder="🔬" maxlength="4">
+                <label class="text-[11px] text-text-secondary font-medium uppercase tracking-wider">Name</label>
+                <input class="team-edit-name bg-surface-light border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary focus:border-accent transition-colors" value="${esc(teamName)}">
+                <label class="text-[11px] text-text-secondary font-medium uppercase tracking-wider">Description</label>
+                <input class="team-edit-desc bg-surface-light border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary focus:border-accent transition-colors" value="${esc(teamDesc)}">
+                <label class="text-[11px] text-text-secondary font-medium uppercase tracking-wider">Head</label>
+                <select class="team-edit-head bg-surface-light border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary focus:border-accent transition-colors">
+                  ${members.map(mid => `<option value="${esc(mid)}" ${mid === headId ? 'selected' : ''}>${esc(agentLabel(mid))}</option>`).join('')}
+                </select>
+              </div>
+              <div>
+                <label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">Members</label>
+                <div class="flex flex-wrap gap-1.5 mb-2">
+                  ${members.map(mid => `<span class="inline-flex items-center gap-1 px-2.5 py-1 bg-surface-light border border-border rounded-lg text-xs text-text-primary">
+                    ${esc(agentLabel(mid))} ${mid === headId ? '<span class="text-accent text-[9px] font-bold">HEAD</span>' : `<button class="text-error hover:text-red-400 ml-0.5" onclick="teamRemoveMember('${esc(tid)}','${esc(mid)}')">&times;</button>`}
+                  </span>`).join('')}
+                </div>
+                <div class="flex gap-2">
+                  <select class="team-add-select flex-1 bg-surface-light border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary">
+                    <option value="">-- Add agent --</option>
+                    ${allAgents.filter(a => !members.includes(getAgentName(a))).map(a => {
+                      const n = getAgentName(a);
+                      return `<option value="${esc(n)}">${esc(agentLabel(n))}</option>`;
+                    }).join('')}
+                  </select>
+                  <button class="btn-primary px-3 py-1.5 rounded-lg text-xs" onclick="teamAddMember('${esc(tid)}')">Add</button>
+                </div>
+              </div>
+              <button class="btn-primary px-4 py-2 rounded-lg text-sm" onclick="saveTeamSettings('${esc(tid)}')">Save Team</button>
+            </div>
+          </div>`;
+        }).join('')}
+
+      <div class="glass-card p-5">
+        <h3 class="text-text-primary font-display font-semibold mb-4">Create New Team</h3>
+        <div class="space-y-3">
+          <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 items-center">
+            <label class="text-[11px] text-text-secondary font-medium uppercase tracking-wider">Avatar</label>
+            <input id="new-team-avatar" class="w-16 bg-surface-light border border-border rounded-lg px-2 py-1.5 text-center text-lg focus:border-accent transition-colors" placeholder="🔬" maxlength="4">
+            <label class="text-[11px] text-text-secondary font-medium uppercase tracking-wider">Name</label>
+            <input id="new-team-name" class="bg-surface-light border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary focus:border-accent transition-colors" placeholder="Research Team">
+            <label class="text-[11px] text-text-secondary font-medium uppercase tracking-wider">Description</label>
+            <input id="new-team-desc" class="bg-surface-light border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary focus:border-accent transition-colors" placeholder="Handles research and analysis">
+          </div>
+          <div>
+            <label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">Members (select at least one — first selected becomes head)</label>
+            <select id="new-team-members" class="w-full bg-surface-light border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary" multiple size="5">
+              ${allAgents.map(a => {
+                const n = getAgentName(a);
+                return `<option value="${esc(n)}">${esc(agentLabel(n))}</option>`;
+              }).join('')}
+            </select>
+            <p class="text-text-muted text-[10px] mt-1">Hold Cmd/Ctrl to select multiple</p>
+          </div>
+          <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="createNewTeam()">Create Team</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+window.createNewTeam = async function() {
+  const name = $('#new-team-name')?.value.trim();
+  const desc = $('#new-team-desc')?.value.trim();
+  const avatar = $('#new-team-avatar')?.value.trim();
+  const sel = document.getElementById('new-team-members');
+  const members = sel ? Array.from(sel.selectedOptions).map(o => o.value) : [];
+  if (!members.length) { showToast('Select at least one member', true); return; }
+  if (!name) { showToast('Team name is required', true); return; }
+  try {
+    await API.post('/v1/teams', { action: 'create', members, head: members[0], name, description: desc, avatar });
+    showToast(`Team "${name}" created`);
+    await loadInitialData();
+    loadSettingsTab();
+  } catch (e) { showToast(e.message, true); }
+};
+
+window.saveTeamSettings = async function(teamId) {
+  const card = document.querySelector(`[data-team-id="${CSS.escape(teamId)}"]`);
+  if (!card) return;
+  const name = card.querySelector('.team-edit-name')?.value.trim();
+  const desc = card.querySelector('.team-edit-desc')?.value.trim();
+  const avatar = card.querySelector('.team-edit-avatar')?.value.trim();
+  const head = card.querySelector('.team-edit-head')?.value;
+  try {
+    const payload = { action: 'update', team_id: teamId };
+    if (name !== undefined) payload.name = name;
+    if (desc !== undefined) payload.description = desc;
+    if (avatar !== undefined) payload.avatar = avatar;
+    if (head) payload.head = head;
+    await API.post('/v1/teams', payload);
+    showToast('Team saved');
+    await loadInitialData();
+    loadSettingsTab();
+  } catch (e) { showToast(e.message, true); }
+};
+
+window.teamAddMember = async function(teamId) {
+  const card = document.querySelector(`[data-team-id="${CSS.escape(teamId)}"]`);
+  const sel = card?.querySelector('.team-add-select');
+  const memberId = sel?.value;
+  if (!memberId) { showToast('Select an agent', true); return; }
+  try {
+    const ts = state.teamStructure || {};
+    const team = (ts.teams || {})[teamId];
+    const current = (team?.members || []).map(m => typeof m === 'string' ? m : (m.id || m));
+    await API.post('/v1/teams', { action: 'update', team_id: teamId, members: [...current, memberId] });
+    showToast(`Added ${memberId}`);
+    await loadInitialData();
+    loadSettingsTab();
+  } catch (e) { showToast(e.message, true); }
+};
+
+window.teamRemoveMember = async function(teamId, memberId) {
+  try {
+    const ts = state.teamStructure || {};
+    const team = (ts.teams || {})[teamId];
+    const current = (team?.members || []).map(m => typeof m === 'string' ? m : (m.id || m));
+    const updated = current.filter(m => m !== memberId);
+    if (updated.length === 0) { showToast('Cannot remove last member — dissolve the team instead', true); return; }
+    await API.post('/v1/teams', { action: 'update', team_id: teamId, members: updated });
+    showToast(`Removed ${memberId}`);
+    await loadInitialData();
+    loadSettingsTab();
+  } catch (e) { showToast(e.message, true); }
 };
 
 async function renderQmdTab(el) {
@@ -3032,22 +3703,103 @@ async function renderQmdTab(el) {
     ${collections.length ? `
     <div class="glass-card p-6">
       <h3 class="section-header mb-3 text-sm">Collections</h3>
+      ${(() => {
+        const totFiles = collections.reduce((s,c) => s + (c.total||0), 0);
+        const totIndexed = collections.reduce((s,c) => s + (c.indexed||0), 0);
+        const totEmbedded = collections.reduce((s,c) => s + (c.embedded||0), 0);
+        const totStale = collections.reduce((s,c) => s + (c.stale||0), 0);
+        const totNotIdx = collections.reduce((s,c) => s + (c.not_indexed||0), 0);
+        const allOk = totFiles > 0 && totIndexed === totFiles && totEmbedded === totFiles;
+        if (!totFiles) return '';
+        const dot = allOk ? 'bg-green-400' : 'bg-yellow-400';
+        let issues = '';
+        if (!allOk) {
+          const parts = [];
+          if (totNotIdx > 0) parts.push(totNotIdx + ' not indexed');
+          if (totStale > 0) parts.push(totStale + ' stale');
+          if (totEmbedded < totFiles) parts.push((totFiles - totEmbedded) + ' not embedded');
+          issues = ' · <span class="text-yellow-400">' + parts.join(', ') + '</span>';
+        }
+        return '<div class="flex items-center gap-3 mb-4 px-1 text-xs mono text-text-muted">' +
+          '<span class="inline-block w-2 h-2 rounded-full ' + dot + '"></span>' +
+          '<span>' + totFiles + ' files</span>' +
+          '<span class="text-border">|</span>' +
+          '<span>' + totIndexed + '/' + totFiles + ' indexed</span>' +
+          '<span class="text-border">|</span>' +
+          '<span>' + totEmbedded + '/' + totFiles + ' embedded</span>' +
+          issues +
+        '</div>';
+      })()}
       <div class="space-y-2" id="qmd-collections">
-        ${collections.map(c => {
-          const name = typeof c === 'string' ? c : (c.name || c.id || '?');
-          const docs = typeof c === 'object' ? (c.documents || c.files || '') : '';
-          return `<div class="border border-border/50 rounded-lg overflow-hidden" data-collection="${esc(name)}">
-            <div class="flex items-center justify-between px-4 py-2.5">
-              <div class="flex items-center gap-2">
-                <button class="qmd-expand-btn text-text-muted hover:text-accent transition-colors text-[10px]" onclick="toggleQmdDocs('${esc(name)}')" title="Browse files">▶</button>
-                <span class="text-text-primary font-medium text-sm">${esc(name)}</span>
-                ${docs ? `<span class="text-text-muted text-xs">${docs} docs</span>` : ''}
-              </div>
-              <button onclick="qmdAction('reindex','${esc(name)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg">Reindex</button>
-            </div>
-            <div class="qmd-docs-panel hidden border-t border-border/30 bg-base/40"></div>
-          </div>`;
-        }).join('')}
+        ${(() => {
+          const ts = state.teamStructure || {};
+          const teams = ts.teams || {};
+          const collMap = {};
+          collections.forEach(c => {
+            const n = typeof c === 'string' ? c : (c.name || c.id || '?');
+            collMap[n] = c;
+          });
+          const inTeam = new Set();
+          Object.keys(teams).forEach(h => { inTeam.add(h); (teams[h].members||[]).forEach(m => inTeam.add(m.id || m)); });
+
+          function renderCollRow(c) {
+            const name = typeof c === 'string' ? c : (c.name || c.id || '?');
+            const total = c.total || 0;
+            const indexed = c.indexed || 0;
+            const embedded = c.embedded || 0;
+            const stale = c.stale || 0;
+            const notIndexed = c.not_indexed || 0;
+            const hasIssues = stale > 0 || notIndexed > 0;
+            const allGood = total > 0 && indexed === total && embedded === total;
+            // Build compact stats
+            let statsHtml = '';
+            if (total > 0) {
+              const dot = allGood ? 'bg-green-400' : hasIssues ? 'bg-yellow-400' : 'bg-green-400';
+              statsHtml = '<span class="inline-block w-1.5 h-1.5 rounded-full ' + dot + ' mr-1"></span>';
+              statsHtml += '<span class="text-text-muted text-[10px] mono">' + total + ' files';
+              if (hasIssues) {
+                const parts = [];
+                if (notIndexed > 0) parts.push(notIndexed + ' not indexed');
+                if (stale > 0) parts.push(stale + ' stale');
+                if (embedded < total) parts.push((total - embedded) + ' not embedded');
+                statsHtml += ' · <span class="text-yellow-400">' + parts.join(', ') + '</span>';
+              }
+              statsHtml += '</span>';
+            }
+            return '<div class="border border-border/50 rounded-lg overflow-hidden" data-collection="' + esc(name) + '">' +
+              '<div class="flex items-center justify-between px-4 py-2.5">' +
+                '<div class="flex items-center gap-2">' +
+                  '<button class="qmd-expand-btn text-text-muted hover:text-accent transition-colors text-[10px]" onclick="toggleQmdDocs(\'' + esc(name) + '\')" title="Browse files">▶</button>' +
+                  '<span class="text-text-primary font-medium text-sm">' + esc(name) + '</span>' +
+                  statsHtml +
+                '</div>' +
+                '<button onclick="qmdAction(\'reindex\',\'' + esc(name) + '\')" class="btn-secondary text-xs px-3 py-1 rounded-lg">Reindex</button>' +
+              '</div>' +
+              '<div class="qmd-docs-panel hidden border-t border-border/30 bg-base/40"></div>' +
+            '</div>';
+          }
+
+          let html = '';
+          // Render team groups
+          Object.keys(teams).forEach(headId => {
+            const team = teams[headId];
+            const teamName = team.name || (team.head && (team.head.display_name || team.head.id)) || headId;
+            const teamAvatar = team.avatar || '';
+            const memberIds = (team.members || []).map(m => m.id || m);
+            const teamCollIds = [headId, ...memberIds].filter(id => collMap[id]);
+            if (teamCollIds.length) {
+              html += '<div class="border border-border/30 rounded-lg p-2 mb-2 bg-surface/30">' +
+                '<div class="text-[10px] text-text-muted uppercase tracking-wider font-bold mb-1.5 px-2">' + (teamAvatar ? esc(teamAvatar) + ' ' : '') + esc(teamName) + '</div>' +
+                '<div class="space-y-1">' + teamCollIds.map(id => renderCollRow(collMap[id])).join('') + '</div></div>';
+            }
+          });
+          // Render standalone
+          collections.forEach(c => {
+            const name = typeof c === 'string' ? c : (c.name || c.id || '?');
+            if (!inTeam.has(name)) html += renderCollRow(c);
+          });
+          return html;
+        })()}
       </div>
     </div>` : ''}`;
 }
@@ -3791,8 +4543,9 @@ async function toggleAgentPaused(agentName, agentObj) {
     await API.writeAgentFile(agentName, 'agent.json', JSON.stringify(parsed, null, 2));
     showToast(isPaused ? `${agentName} resumed` : `${agentName} paused`);
     // Refresh agents
-    const agents = await API.getAgents();
-    state.agents = Array.isArray(agents) ? agents : (agents.agents || []);
+    const agentsData3 = await API.getAgents();
+    state.agents = Array.isArray(agentsData3) ? agentsData3 : (agentsData3.agents || []);
+    if (agentsData3.team_structure) state.teamStructure = agentsData3.team_structure;
     renderAgentCards();
     updateChatArea();
   } catch (e) {
@@ -3822,6 +4575,20 @@ async function deleteAgent(agentName) {
 }
 
 // ─── Create Agent Modal ─────────────────────────────────────
+// ─── Team Management (used from global settings) ────────────
+window.dissolveTeam = async function(teamId) {
+  const ts = state.teamStructure || {};
+  const team = (ts.teams || {})[teamId];
+  const teamName = team?.name || teamId;
+  if (!confirm(`Dissolve team "${teamName}"? Members will become standalone agents.`)) return;
+  try {
+    await API.post('/v1/teams', { action: 'dissolve', team_id: teamId });
+    showToast('Team dissolved');
+    await loadInitialData();
+    if (document.getElementById('settings-modal')) loadSettingsTab();
+  } catch (e) { showToast(e.message, true); }
+};
+
 function showCreateAgentModal() {
   const modal = document.createElement('div');
   modal.className = 'modal-overlay';
@@ -4261,6 +5028,221 @@ dom.modelSelector.addEventListener('change', () => {
     updateStatusBar();
   }
 });
+
+// ─── Live Activity Panel ────────────────────────────────────
+const actPanel = {
+  open: false,
+  log: [],
+  maxLog: 200,
+  tasks: [],
+  running: [],
+  services: {},
+  prevActivity: {},
+  prevTasks: [],
+  prevServices: {},
+  seenToolLogs: new Set(),
+  pollTimer: null,
+  pollSlowTimer: null,
+};
+
+function apAbbrev(name) {
+  if (!name) return '???';
+  if (name.length <= 3) return name.toUpperCase();
+  const upper = name.toUpperCase();
+  const c = upper[0] + upper.slice(1).replace(/[AEIOU]/g, '');
+  return (c.length >= 3 ? c : upper).slice(0, 3);
+}
+
+function apAddLog(agent, msg, type) {
+  const d = new Date();
+  const ts = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+  actPanel.log.push({ time: ts, agent: agent || 'SYS', msg, type: type || 'info' });
+  if (actPanel.log.length > actPanel.maxLog) actPanel.log.splice(0, actPanel.log.length - actPanel.maxLog);
+}
+
+function apDiffActivity(prev, next) {
+  for (const [agent, types] of Object.entries(next)) {
+    const pt = prev[agent] || [];
+    for (const t of types) {
+      if (!pt.includes(t)) {
+        const labels = { chat: 'Started chatting', delegate: 'Started delegating', schedule: 'Running scheduled task' };
+        apAddLog(agent, labels[t] || `Activity: ${t}`, t === 'chat' ? 'chat' : t === 'delegate' ? 'delegate' : 'schedule');
+      }
+    }
+  }
+  for (const [agent, types] of Object.entries(prev)) {
+    const nt = next[agent] || [];
+    for (const t of types) {
+      if (!nt.includes(t)) {
+        const labels = { chat: 'Finished chatting', delegate: 'Finished delegating', schedule: 'Scheduled task completed' };
+        apAddLog(agent, labels[t] || `Stopped: ${t}`, t === 'schedule' ? 'success' : 'info');
+      }
+    }
+  }
+}
+
+function apDiffTasks(prev, next) {
+  const pm = {};
+  for (const t of prev) pm[t.id || t.task_id] = t;
+  for (const t of next) {
+    const id = t.id || t.task_id;
+    const old = pm[id];
+    if (!old) {
+      apAddLog(t.agent || 'main', `Task started: ${(t.prompt || t.name || id).slice(0, 80)}`, 'delegate');
+    } else if (old.status !== t.status) {
+      if (t.status === 'completed' || t.status === 'done') apAddLog(t.agent || 'main', `Task completed: ${(t.prompt || t.name || id).slice(0, 80)}`, 'success');
+      else if (t.status === 'error' || t.status === 'failed') apAddLog(t.agent || 'main', `Task failed: ${(t.prompt || t.name || id).slice(0, 80)}`, 'error');
+    }
+  }
+}
+
+function apDiffRunning(running) {
+  for (const r of running) {
+    for (const entry of (r.tool_log || [])) {
+      const key = `${r.name}:${entry}`;
+      if (!actPanel.seenToolLogs.has(key)) {
+        actPanel.seenToolLogs.add(key);
+        apAddLog(r.agent || 'main', `Tool: ${entry}`, 'schedule');
+      }
+    }
+  }
+}
+
+function apDiffServices(prev, next) {
+  if (!prev.server || !next.server) return;
+  for (const [key, label] of [['qmd','QMD'],['telegram','Telegram']]) {
+    const ps = prev[key]?.status, ns = next[key]?.status;
+    if (ps && ns && ps !== ns) apAddLog('SYS', `${label} ${ns}`, ns === 'running' ? 'success' : 'error');
+  }
+}
+
+function apGetStatus(agentId, paused) {
+  if (paused) return ['PAUSED', 'ap-status-paused'];
+  const types = state.agentActivity[agentId] || [];
+  if (types.includes('chat')) return ['CHATTING', 'ap-status-chatting'];
+  if (types.includes('delegate')) return ['DELEGATING', 'ap-status-delegating'];
+  if (types.includes('schedule')) return ['RUNNING', 'ap-status-running'];
+  return ['IDLE', 'ap-status-idle'];
+}
+
+function apRender() {
+  if (!actPanel.open) return;
+  // Agents
+  const ab = document.getElementById('ap-agents-body');
+  document.getElementById('ap-agents-badge').textContent = state.agents.length;
+  ab.innerHTML = state.agents.map(a => {
+    const avId = getAgentAvatar(a);
+    const [label, cls] = apGetStatus(a.id, a.paused);
+    return `<div class="ap-agent">
+      <div class="ap-av">${renderAvatar(avId, 24)}</div>
+      <span class="ap-name">${esc(a.display_name || a.id)}</span>
+      <span class="ap-status ${cls}">${label}</span>
+    </div>`;
+  }).join('');
+
+  // Tasks
+  const tb = document.getElementById('ap-tasks-body');
+  const running = actPanel.tasks.filter(t => t.status === 'running');
+  document.getElementById('ap-tasks-badge').textContent = `${running.length}/${actPanel.tasks.length}`;
+  if (!actPanel.tasks.length) {
+    tb.innerHTML = '<div style="padding:4px 16px;font-size:11px;color:var(--color-text-muted)">No tasks</div>';
+  } else {
+    tb.innerHTML = actPanel.tasks.slice(0, 8).map(t => {
+      let icon, style;
+      if (t.status === 'running') { icon = '&#9679;'; style = 'color:#4ade80'; }
+      else if (t.status === 'completed' || t.status === 'done') { icon = '&#10003;'; style = 'color:var(--color-text-muted)'; }
+      else if (t.status === 'error' || t.status === 'failed') { icon = '&#10007;'; style = 'color:#f87171'; }
+      else { icon = '&#9679;'; style = 'color:var(--color-text-muted)'; }
+      return `<div class="ap-task">
+        <span class="ap-task-icon" style="${style}">${icon}</span>
+        <span class="ap-task-text">${esc((t.prompt || t.name || '').slice(0, 60))}</span>
+        <span class="ap-task-agent">${apAbbrev(t.agent || 'main')}</span>
+      </div>`;
+    }).join('');
+  }
+
+  // Services
+  const sb = document.getElementById('ap-services-body');
+  const svc = actPanel.services;
+  if (!svc.server) {
+    sb.innerHTML = '<div style="padding:4px 16px;font-size:11px;color:var(--color-text-muted)">Loading...</div>';
+  } else {
+    const rows = [];
+    rows.push(`<div class="ap-svc"><span class="ap-svc-name">Server</span><span class="ap-svc-dot svc-up"></span><span class="ap-svc-info">${svc.server.sessions||0} sess</span></div>`);
+    rows.push(`<div class="ap-svc"><span class="ap-svc-name">QMD</span><span class="ap-svc-dot ${svc.qmd?.status==='running'?'svc-up':'svc-down'}"></span><span class="ap-svc-info">${svc.qmd?.status==='running'?(svc.qmd.collections?.length||0)+' coll':'stopped'}</span></div>`);
+    rows.push(`<div class="ap-svc"><span class="ap-svc-name">Telegram</span><span class="ap-svc-dot ${svc.telegram?.status==='running'?'svc-up':'svc-down'}"></span><span class="ap-svc-info">${svc.telegram?.status==='running'?(svc.telegram.bot||'active'):'stopped'}</span></div>`);
+    sb.innerHTML = rows.join('');
+  }
+
+  // Log
+  const la = document.getElementById('ap-log-area');
+  const wasBottom = la.scrollHeight - la.scrollTop - la.clientHeight < 30;
+  document.getElementById('ap-log-count').textContent = actPanel.log.length;
+  document.getElementById('ap-log-count2').textContent = actPanel.log.length;
+  const colors = { chat: '#22d3ee', delegate: '#4ade80', schedule: '#fbbf24', success: '#4ade80', error: '#f87171', info: 'var(--color-text-muted)' };
+  la.innerHTML = actPanel.log.map(e => {
+    return `<div class="ap-log-entry ap-${e.type}">
+      <span class="ap-log-time">${e.time}</span>
+      <span class="ap-log-badge" style="color:${colors[e.type]||colors.info}">${apAbbrev(e.agent)}</span>
+      <span class="ap-log-msg">${esc(e.msg)}</span>
+    </div>`;
+  }).join('');
+  if (wasBottom) la.scrollTop = la.scrollHeight;
+}
+
+async function apPollFast() {
+  const [tasksRes, runningRes] = await Promise.all([
+    API.get('/v1/tasks').catch(() => null),
+    API.get('/v1/schedule/running').catch(() => null),
+  ]);
+  // Activity diff uses state.agentActivity which is already polled by the main loop
+  const curAct = state.agentActivity || {};
+  apDiffActivity(actPanel.prevActivity, curAct);
+  actPanel.prevActivity = JSON.parse(JSON.stringify(curAct));
+
+  if (tasksRes) {
+    const tasks = tasksRes.tasks || [];
+    apDiffTasks(actPanel.prevTasks, tasks);
+    actPanel.prevTasks = actPanel.tasks;
+    actPanel.tasks = tasks;
+  }
+  if (runningRes) {
+    actPanel.running = runningRes.running || [];
+    apDiffRunning(actPanel.running);
+  }
+  apRender();
+}
+
+async function apPollSlow() {
+  const svcRes = await API.get('/v1/services').catch(() => null);
+  if (svcRes) {
+    apDiffServices(actPanel.services, svcRes);
+    actPanel.prevServices = actPanel.services;
+    actPanel.services = svcRes;
+  }
+  apRender();
+}
+
+function apToggle() {
+  actPanel.open = !actPanel.open;
+  document.getElementById('activity-panel').classList.toggle('open', actPanel.open);
+  document.getElementById('btn-activity-toggle').classList.toggle('active', actPanel.open);
+  if (actPanel.open) {
+    apAddLog('SYS', 'Activity panel opened', 'info');
+    apPollFast();
+    apPollSlow();
+    if (!actPanel.pollTimer) {
+      actPanel.pollTimer = setInterval(apPollFast, 3000);
+      actPanel.pollSlowTimer = setInterval(apPollSlow, 10000);
+    }
+  } else {
+    if (actPanel.pollTimer) { clearInterval(actPanel.pollTimer); actPanel.pollTimer = null; }
+    if (actPanel.pollSlowTimer) { clearInterval(actPanel.pollSlowTimer); actPanel.pollSlowTimer = null; }
+  }
+}
+
+document.getElementById('btn-activity-toggle').onclick = apToggle;
+document.getElementById('ap-close').onclick = apToggle;
 
 // ─── Initialization ─────────────────────────────────────────
 (async function init() {

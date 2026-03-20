@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "1.5.1"
-VERSION_DATE = "2026-03-18"
+VERSION = "1.5.2"
+VERSION_DATE = "2026-03-20"
 CHANGELOG = [
+    ("1.5.2", "2026-03-20", "Fix memory summary refresh (direct execution instead of scheduler indirection), fix QMD index path normalization (underscore/hyphen mismatch), QMD collection health stats in settings UI"),
     ("1.5.1", "2026-03-18", "MiniMax provider support, Add Model UI, fix QMD session leak, memory_shared returns full content, in-process Telegram bot, lightweight QMD health check"),
     ("1.5.0", "2026-03-18", "Settings dashboard (Server/QMD/Models/Telegram/Providers), agent activity indicators, QMD document browser with index health, smart model routing, self-healing QMD index keeper"),
     ("1.4.0", "2026-03-17", "QMD hybrid memory search, SSE error handling, server resilience"),
@@ -308,14 +309,16 @@ TOOL_DEFINITIONS = [
     {
         "name": "memory_shared",
         "description": (
-            "Access the main agent's shared memory. This contains global knowledge like "
-            "infrastructure details, user preferences, project-wide decisions, and reference data "
-            "that applies across all agents. Use this when you need context that isn't in your own memory."
+            "Access shared memory at global or team scope. Global scope (default) accesses the main agent's "
+            "memory containing infrastructure, user preferences, and project-wide decisions. "
+            "Team scope accesses the team head's memory for team-level knowledge. "
+            "Use this when you need context that isn't in your own memory."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "action": {"type": "string", "description": "Action to perform", "enum": ["recall", "store"]},
+                "scope": {"type": "string", "description": "Memory scope: 'global' for main agent (default), 'team' for team head's memory", "enum": ["global", "team"], "default": "global"},
                 "query": {"type": "string", "description": "Search query for recall, or empty to list all"},
                 "name": {"type": "string", "description": "Memory name (required for store)"},
                 "content": {"type": "string", "description": "Content to store (required for store)"},
@@ -1569,11 +1572,14 @@ def list_agents() -> list[str]:
 
 
 def get_agent_summaries() -> list[dict]:
-    """Get agent ID + description + soul summary for all agents."""
-    result = []
+    """Get agent ID + description + soul summary for all agents, with team metadata."""
+    # First pass: collect raw summaries and scan for teams
+    raw = []
+    # team_id (the agent whose config holds the team) -> team config
+    teams_cfg: dict[str, dict] = {}
     for agent_id in list_agents():
         cfg = AgentConfig(agent_id)
-        # Extract first meaningful paragraph from soul.md as capability summary
+        config = cfg.config
         soul = cfg.soul.strip()
         summary = ""
         for line in soul.split("\n"):
@@ -1581,30 +1587,203 @@ def get_agent_summaries() -> list[dict]:
             if line and not line.startswith("#") and not line.startswith("---"):
                 summary = line
                 break
-        result.append({
+        entry = {
             "id": agent_id,
-            "display_name": cfg.config.get("display_name", ""),
+            "display_name": config.get("display_name", ""),
             "description": cfg.description,
             "soul_summary": summary,
             "model": cfg.preferred_model,
-            "avatar": cfg.config.get("avatar"),
-            "paused": cfg.config.get("paused", False),
-        })
-    return result
+            "avatar": config.get("avatar"),
+            "paused": config.get("paused", False),
+        }
+        team_cfg = config.get("team")
+        if isinstance(team_cfg, dict) and team_cfg.get("members"):
+            teams_cfg[agent_id] = team_cfg
+        raw.append(entry)
+
+    # Second pass: compute team metadata per agent
+    for entry in raw:
+        aid = entry["id"]
+        # Which teams is this agent a member of?
+        member_of = []
+        is_head_of = None
+        for cfg_holder, tcfg in teams_cfg.items():
+            members = tcfg.get("members", [])
+            head_id = tcfg.get("head", members[0] if members else cfg_holder)
+            if aid in members:
+                team_name = tcfg.get("name", cfg_holder)
+                member_of.append({"team_id": cfg_holder, "team_name": team_name})
+                if aid == head_id:
+                    is_head_of = cfg_holder
+        entry["teams"] = member_of
+        entry["is_team_head"] = is_head_of is not None
+        if is_head_of:
+            tcfg = teams_cfg[is_head_of]
+            entry["team_config_holder"] = is_head_of
+            entry["team_members"] = list(tcfg.get("members", []))
+            entry["team_head"] = tcfg.get("head", entry["team_members"][0] if entry["team_members"] else is_head_of)
+            entry["team_name"] = tcfg.get("name", "")
+            entry["team_description"] = tcfg.get("description", "")
+            entry["team_avatar"] = tcfg.get("avatar", "")
+    return raw
 
 
-def build_agent_registry() -> str:
-    """Build a text block describing all agents for injection into system prompts."""
+def get_team_structure() -> dict:
+    """Return hierarchical team structure for UI and API consumption."""
+    agents = get_agent_summaries()
+    agent_map = {a["id"]: a for a in agents}
+    teams = {}
+    in_team = set()  # agents that appear in at least one team
+
+    # Find all agents that hold team configs
+    for agent_id in list_agents():
+        cfg = AgentConfig(agent_id).config
+        team_cfg = cfg.get("team")
+        if not isinstance(team_cfg, dict) or not team_cfg.get("members"):
+            continue
+        members_ids = team_cfg["members"]
+        head_id = team_cfg.get("head", members_ids[0] if members_ids else agent_id)
+        members = []
+        for mid in members_ids:
+            if mid in agent_map:
+                members.append(agent_map[mid])
+                in_team.add(mid)
+        teams[agent_id] = {
+            "head": head_id,
+            "head_agent": agent_map.get(head_id),
+            "members": members,
+            "name": team_cfg.get("name") or agent_id,
+            "description": team_cfg.get("description", ""),
+            "avatar": team_cfg.get("avatar", ""),
+            "config_holder": agent_id,
+        }
+
+    standalone = [a for a in agents if a["id"] not in in_team and a["id"] != "main"]
+    main_agent = agent_map.get("main")
+    return {"teams": teams, "standalone": standalone, "main": main_agent}
+
+
+def _get_delegation_scope(caller_agent_id: str) -> list[str]:
+    """Return list of agent IDs the caller is allowed to delegate to."""
+    all_agents = list_agents()
+
+    # Collect all team configs
+    team_cfgs = {}  # config_holder_id -> team_cfg
+    for aid in all_agents:
+        cfg = AgentConfig(aid).config
+        team_cfg = cfg.get("team")
+        if isinstance(team_cfg, dict) and team_cfg.get("members"):
+            team_cfgs[aid] = team_cfg
+
+    in_team = set()
+    head_ids = set()
+    for holder, tcfg in team_cfgs.items():
+        head_id = tcfg.get("head", tcfg["members"][0] if tcfg["members"] else holder)
+        head_ids.add(head_id)
+        for m in tcfg["members"]:
+            in_team.add(m)
+
+    if caller_agent_id == "main":
+        # Main can delegate to team heads and standalone agents (not regular members)
+        return [a for a in all_agents if a != "main" and (a in head_ids or a not in in_team)]
+
+    # Check if caller is a team head
+    for holder, tcfg in team_cfgs.items():
+        head_id = tcfg.get("head", tcfg["members"][0] if tcfg["members"] else holder)
+        if caller_agent_id == head_id:
+            # Team head can delegate to its members (excluding self)
+            return [m for m in tcfg["members"] if m != caller_agent_id and m in all_agents]
+
+    # Regular member: can delegate to peers in same team + team head
+    reachable = set()
+    for holder, tcfg in team_cfgs.items():
+        if caller_agent_id in tcfg["members"]:
+            for m in tcfg["members"]:
+                if m != caller_agent_id and m in all_agents:
+                    reachable.add(m)
+    return list(reachable) if reachable else [a for a in all_agents if a != caller_agent_id]
+
+
+def _find_team_head(agent_id: str) -> str | None:
+    """Find the team head for a given agent. Returns None if not in any team."""
+    for aid in list_agents():
+        cfg = AgentConfig(aid).config
+        team_cfg = cfg.get("team")
+        if isinstance(team_cfg, dict) and team_cfg.get("members"):
+            if agent_id in team_cfg["members"]:
+                return team_cfg.get("head", team_cfg["members"][0] if team_cfg["members"] else aid)
+    return None
+
+
+def _get_agent_team_info(agent_id: str) -> dict | None:
+    """Get team info for an agent. Returns dict with name, head, members, is_head, or None."""
+    for aid in list_agents():
+        cfg = AgentConfig(aid).config
+        team_cfg = cfg.get("team")
+        if isinstance(team_cfg, dict) and team_cfg.get("members"):
+            if agent_id in team_cfg["members"]:
+                head = team_cfg.get("head", team_cfg["members"][0])
+                return {
+                    "name": team_cfg.get("name", aid),
+                    "head": head,
+                    "members": team_cfg["members"],
+                    "is_head": agent_id == head,
+                    "config_holder": aid,
+                }
+    return None
+
+
+def build_agent_registry(for_agent_id: str | None = None) -> str:
+    """Build a text block describing available agents for injection into system prompts.
+    Respects team hierarchy: team heads see members, main sees heads + standalone."""
     agents = get_agent_summaries()
     if len(agents) <= 1:
         return ""
-    lines = ["AGENT REGISTRY — use delegate_task to send tasks to specialized agents:"]
-    for a in agents:
-        model_note = f" (model: {a['model']})" if a.get("model") else ""
-        desc = a.get("description", "")
-        soul = a.get("soul_summary", "")
-        detail = soul if soul else desc
-        lines.append(f"  - {a['id']}: {detail}{model_note}")
+
+    caller = for_agent_id or "main"
+    scope = _get_delegation_scope(caller)
+    agent_map = {a["id"]: a for a in agents}
+
+    # Check if caller is a team head
+    caller_team_info = _get_agent_team_info(caller) if caller != "main" else None
+    caller_is_head = caller_team_info and caller_team_info["is_head"]
+
+    lines = ["AGENT REGISTRY — use delegate_task to send tasks to these agents:"]
+
+    if caller == "main":
+        # Group by teams + standalone
+        struct = get_team_structure()
+        if struct["teams"]:
+            lines.append("  TEAMS:")
+            for tid, team in struct["teams"].items():
+                team_name = team.get("name", tid)
+                head_id = team["head"]
+                head_agent = team.get("head_agent", {})
+                detail = head_agent.get("soul_summary") or head_agent.get("description", "")
+                model_note = f" (model: {head_agent.get('model')})" if head_agent.get("model") else ""
+                member_names = ", ".join(m["id"] for m in team["members"])
+                lines.append(f"    - {head_id} (head of '{team_name}'): {detail}{model_note}")
+                lines.append(f"      Members: {member_names}")
+        if struct["standalone"]:
+            lines.append("  STANDALONE AGENTS:")
+            for a in struct["standalone"]:
+                detail = a.get("soul_summary") or a.get("description", "")
+                model_note = f" (model: {a['model']})" if a.get("model") else ""
+                lines.append(f"    - {a['id']}: {detail}{model_note}")
+    elif caller_is_head:
+        lines.append("  YOUR TEAM MEMBERS:")
+        for mid in scope:
+            a = agent_map.get(mid, {})
+            detail = a.get("soul_summary") or a.get("description", mid)
+            model_note = f" (model: {a.get('model')})" if a.get("model") else ""
+            lines.append(f"    - {mid}: {detail}{model_note}")
+    else:
+        for aid in scope:
+            a = agent_map.get(aid, {})
+            detail = a.get("soul_summary") or a.get("description", aid)
+            model_note = f" (model: {a.get('model')})" if a.get("model") else ""
+            lines.append(f"  - {aid}: {detail}{model_note}")
+
     lines.append("")
     lines.append(
         "Before performing a task, consider if another agent is better suited. "
@@ -1999,6 +2178,14 @@ def tool_memory_store(args: dict) -> str:
     if not name or not content:
         return _err("memory_store: name and content are required")
     result = ms.store(name, content, description, mem_type)
+    # Trigger near-term memory summary refresh when user-facing memories are stored
+    # (skip if this IS the memory summary being written)
+    if name != "Memory Summary" and mem_type in ("user", "feedback", "project"):
+        try:
+            agent_id = ms.agent_id if hasattr(ms, 'agent_id') else "main"
+            trigger_memory_summary_refresh(agent_id)
+        except Exception:
+            pass
     return _ok(result)
 
 
@@ -2033,11 +2220,29 @@ def tool_memory_delete(args: dict) -> str:
 
 
 def tool_memory_shared(args: dict) -> str:
-    """Access the main agent's shared memory."""
+    """Access shared memory — global (main) or team (team head) scope."""
     action = args.get("action", "recall")
-    # Always use the main agent's memory store
-    main_agent = AgentConfig("main")
-    shared_store = MemoryStore(agent_id="main", base_dir=main_agent.memory_dir)
+    scope = args.get("scope", "global")
+
+    # Determine which agent's memory to use
+    if scope == "team":
+        # Find the team head for the calling agent
+        caller_id = getattr(_thread_local, "delegate_agent_id", None)
+        if not caller_id and _current_agent:
+            caller_id = _current_agent.agent_id
+        if not caller_id:
+            caller_id = "main"
+        team_info = _get_agent_team_info(caller_id)
+        if not team_info:
+            return _err("memory_shared: agent is not in any team — use scope='global' instead")
+        team_head_id = team_info["head"]
+        target_agent = AgentConfig(team_head_id)
+        source_label = f"{team_info['name']} (team)"
+    else:
+        target_agent = AgentConfig("main")
+        source_label = "main (shared)"
+
+    shared_store = MemoryStore(agent_id=target_agent.agent_id, base_dir=target_agent.memory_dir)
 
     if action == "store":
         name = args.get("name", "")
@@ -2047,7 +2252,7 @@ def tool_memory_shared(args: dict) -> str:
         if not name or not content:
             return _err("memory_shared store: name and content are required")
         result = shared_store.store(name, content, description, mem_type)
-        result["source"] = "main (shared)"
+        result["source"] = source_label
         return _ok(result)
     else:  # recall
         query = args.get("query", "")
@@ -2060,7 +2265,7 @@ def tool_memory_shared(args: dict) -> str:
             for r in results:
                 if r.get("content") and len(r["content"]) > 1000:
                     r["content"] = r["content"][:1000] + "..."
-        return _ok({"query": query, "source": "main (shared)", "results": results, "count": len(results)})
+        return _ok({"query": query, "source": source_label, "results": results, "count": len(results)})
 
 
 def tool_use_skill(args: dict) -> str:
@@ -2078,6 +2283,333 @@ def tool_use_skill(args: dict) -> str:
 
     return _ok({"skill": skill_name, "instructions": body})
 
+
+
+# ─── Memory Summary ────────────────────────────────────────────────
+# Automatic periodic synthesis of chat history and scheduled task results.
+# Configured per-agent in agent.json: { "memory_summary": { "enabled": true, "frequency": "every 24h", "start_time": "03:00" } }
+
+MEMORY_SUMMARY_DEFAULTS = {
+    "enabled": True,
+    "paused": False,
+    "frequency": "every 24h",
+    "start_time": "03:00",
+}
+
+
+def _get_memory_summary_config(agent_id: str) -> dict:
+    """Read memory_summary settings from agent.json, merging with defaults."""
+    cfg = AgentConfig(agent_id).config
+    ms_cfg = cfg.get("memory_summary", {})
+    result = dict(MEMORY_SUMMARY_DEFAULTS)
+    if isinstance(ms_cfg, dict):
+        for k in ("enabled", "paused", "frequency", "start_time"):
+            if k in ms_cfg:
+                result[k] = ms_cfg[k]
+    elif isinstance(ms_cfg, bool):
+        result["enabled"] = ms_cfg
+    return result
+
+
+def _memory_summary_schedule_name(agent_id: str) -> str:
+    return f"_memory_summary_{agent_id}"
+
+
+def _memory_summary_schedule_str(cfg: dict) -> str:
+    """Convert memory_summary config to a scheduler schedule string.
+    e.g. 'daily 03:00' or 'every 24h' depending on whether start_time is set."""
+    freq = cfg.get("frequency", "every 24h").strip().lower()
+    start_time = cfg.get("start_time", "").strip()
+    # If frequency is a simple 'every Xh/Xd' and start_time is provided, use 'daily HH:MM'
+    if start_time and re.match(r'^\d{1,2}:\d{2}$', start_time):
+        # For 24h frequency, use daily at start_time
+        m = re.match(r'every\s+(\d+)\s*(h|hour|d|day)', freq)
+        if m:
+            val, unit = int(m.group(1)), m.group(2)[0]
+            if (unit == 'h' and val == 24) or (unit == 'd' and val == 1):
+                return f"daily {start_time}"
+            elif unit == 'h' and val < 24:
+                return freq  # sub-daily interval, ignore start_time
+            elif unit == 'd' and val > 1:
+                return freq  # multi-day, keep as interval
+    return freq
+
+
+def _gather_recent_chat_history(agent_id: str, hours: int = 48, max_sessions: int = 10,
+                                 max_messages_per_session: int = 20) -> str:
+    """Read recent chat sessions and messages for an agent directly from chats.db.
+    Returns a formatted text digest suitable for inclusion in a prompt."""
+    chat_db_path = os.path.join(AGENTS_DIR, "main", "chats.db")
+    if not os.path.exists(chat_db_path):
+        return ""
+    try:
+        conn = sqlite3.connect(chat_db_path, timeout=5)
+        conn.row_factory = sqlite3.Row
+        cutoff = time.time() - (hours * 3600)
+        sessions = conn.execute(
+            "SELECT id, title, model, status, created_at, last_active FROM sessions "
+            "WHERE agent_id = ? AND last_active > ? "
+            "AND status IN ('active', 'archived') "
+            "ORDER BY last_active DESC LIMIT ?",
+            (agent_id, cutoff, max_sessions)
+        ).fetchall()
+        # Note: 'incognito' status sessions are excluded by the IN clause above
+        if not sessions:
+            conn.close()
+            return ""
+        lines = []
+        for sess in sessions:
+            ts = datetime.datetime.fromtimestamp(sess["last_active"]).strftime("%Y-%m-%d %H:%M") if sess["last_active"] else "?"
+            title = sess["title"] or "(untitled)"
+            status_tag = " [archived]" if sess["status"] == "archived" else ""
+            lines.append(f"\n### Session: {title} ({ts}){status_tag}")
+            msgs = conn.execute(
+                "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id",
+                (sess["id"],)
+            ).fetchall()
+            # Take first + last messages to stay within budget
+            msg_list = list(msgs)
+            if len(msg_list) > max_messages_per_session:
+                selected = msg_list[:max_messages_per_session // 2] + msg_list[-(max_messages_per_session // 2):]
+                lines.append(f"  ({len(msg_list)} messages total, showing first and last {max_messages_per_session // 2})")
+            else:
+                selected = msg_list
+            for msg in selected:
+                role = msg["role"].upper()
+                content = msg["content"]
+                # Parse JSON content (tool calls etc)
+                try:
+                    parsed = json.loads(content)
+                    if isinstance(parsed, list):
+                        # Multi-part message (text + tool_use blocks)
+                        text_parts = [p.get("text", "") for p in parsed if isinstance(p, dict) and p.get("type") == "text"]
+                        content = " ".join(text_parts).strip() or "(tool calls)"
+                    elif isinstance(parsed, dict):
+                        content = parsed.get("text", str(parsed))
+                    elif isinstance(parsed, str):
+                        content = parsed
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                # Truncate long messages
+                if isinstance(content, str) and len(content) > 400:
+                    content = content[:400] + "..."
+                if content and content != "(tool calls)":
+                    lines.append(f"  [{role}] {content}")
+        conn.close()
+        return "\n".join(lines)
+    except Exception as e:
+        return f"(Error reading chat history: {e})"
+
+
+def _gather_recent_schedule_history(agent_id: str, hours: int = 48, limit: int = 15) -> str:
+    """Read recent scheduled task execution results for an agent from scheduler.db.
+    Returns a formatted text digest."""
+    if not _scheduler:
+        return ""
+    try:
+        with _sched_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            cutoff = (datetime.datetime.now() - datetime.timedelta(hours=hours)).isoformat()
+            rows = conn.execute(
+                "SELECT schedule_name, task, status, result, started_at, finished_at "
+                "FROM schedule_history WHERE agent = ? AND finished_at > ? "
+                "AND schedule_name NOT LIKE '_memory_summary_%' "
+                "ORDER BY finished_at DESC LIMIT ?",
+                (agent_id, cutoff, limit)
+            ).fetchall()
+        if not rows:
+            return ""
+        lines = []
+        for r in rows:
+            ts = r["finished_at"][:16] if r["finished_at"] else "?"
+            status = r["status"] or "unknown"
+            name = r["schedule_name"] or "(unnamed)"
+            lines.append(f"\n### Task: {name} [{status}] ({ts})")
+            lines.append(f"  Prompt: {(r['task'] or '')[:200]}")
+            result = r["result"] or ""
+            if len(result) > 1000:
+                result = result[:1000] + "..."
+            if result:
+                lines.append(f"  Result: {result}")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"(Error reading schedule history: {e})"
+
+
+def _build_memory_summary_prompt(agent_id: str) -> str:
+    """Build the task prompt for the memory summary scheduled task.
+    Gathers real chat and schedule history and injects it into the prompt."""
+    now = datetime.datetime.now()
+    # Determine lookback based on frequency config
+    ms_cfg = _get_memory_summary_config(agent_id)
+    freq = ms_cfg.get("frequency", "every 24h")
+    # Parse hours from frequency for lookback window (double it for overlap)
+    lookback_hours = 48  # default
+    m = re.match(r'every\s+(\d+)\s*(h|hour|d|day)', freq.lower())
+    if m:
+        val, unit = int(m.group(1)), m.group(2)[0]
+        if unit == 'h':
+            lookback_hours = val * 2
+        elif unit == 'd':
+            lookback_hours = val * 48
+
+    chat_digest = _gather_recent_chat_history(agent_id, hours=lookback_hours)
+    schedule_digest = _gather_recent_schedule_history(agent_id, hours=lookback_hours)
+
+    # Build the data section
+    data_section = ""
+    if chat_digest:
+        data_section += f"\n## Recent Conversations (last {lookback_hours}h)\n{chat_digest}\n"
+    else:
+        data_section += "\n## Recent Conversations\nNo conversations found in this period.\n"
+
+    if schedule_digest:
+        data_section += f"\n## Recent Scheduled Task Results (last {lookback_hours}h)\n{schedule_digest}\n"
+    else:
+        data_section += "\n## Recent Scheduled Task Results\nNo scheduled task executions found in this period.\n"
+
+    return f"""Perform a Memory Summary update for agent '{agent_id}'.
+
+Your job is to create or update a structured synthesis of recent activity. Below is the actual data from your recent conversations and scheduled task executions.
+
+{data_section}
+
+---
+
+Now do the following:
+
+1. Use memory_recall with query "Memory Summary" to find any existing summary.
+
+2. Analyze the conversation and task data above, then write or update the synthesis using the following structured sections. Keep each section concise — omit a section if there is nothing relevant for it.
+
+   **## User Profile & Context**
+   Who the user is, their role, responsibilities, and domain knowledge. What kind of collaboration they prefer.
+
+   **## Communication & Working Style**
+   Communication preferences, response style, level of detail they expect, what to avoid.
+
+   **## Technical Preferences**
+   Coding style, preferred languages/tools/frameworks, conventions, architecture decisions.
+
+   **## Active Projects & Ongoing Work**
+   Current projects, their status, key decisions made, open questions, deadlines.
+
+   **## Task Execution Insights**
+   Patterns from scheduled task outcomes — what works, what fails, recurring issues.
+
+   **## Key Decisions & Context**
+   Important decisions, user feedback, and context that should inform future interactions.
+
+3. Store the updated synthesis using memory_store with:
+   - name: "Memory Summary"
+   - type: "general"
+   - description: "Auto-generated synthesis of recent conversations and task executions, updated periodically"
+   - content: The structured synthesis (300-800 words)
+
+Focus on actionable insights, not a chronological log. If an existing summary exists, integrate new information — preserve important older context while adding recent developments. Remove information from conversations that no longer appear in the data above (they may have been deleted by the user). Drop stale details that are no longer relevant.
+
+Current date and time: {now.strftime('%Y-%m-%d %H:%M')}"""
+
+
+def ensure_memory_summary_schedules():
+    """Ensure scheduler entries exist for all agents with memory_summary enabled.
+    Called once on server/CLI startup after scheduler is initialized."""
+    if not _scheduler:
+        return
+    agents = list_agents()
+    existing = {s["name"]: s for s in _scheduler.list_all()}
+
+    for agent_id in agents:
+        sched_name = _memory_summary_schedule_name(agent_id)
+        ms_cfg = _get_memory_summary_config(agent_id)
+
+        if ms_cfg["enabled"] and not ms_cfg.get("paused"):
+            schedule_str = _memory_summary_schedule_str(ms_cfg)
+            task_prompt = _build_memory_summary_prompt(agent_id)
+
+            if sched_name in existing:
+                # Update if schedule changed
+                old = existing[sched_name]
+                if old["schedule"] != schedule_str or old.get("enabled") != 1:
+                    _scheduler.remove(sched_name)
+                    _scheduler.add(sched_name, task_prompt, schedule_str,
+                                   agent=agent_id, timeout=600)
+            else:
+                _scheduler.add(sched_name, task_prompt, schedule_str,
+                               agent=agent_id, timeout=600)
+        else:
+            # Disabled or paused — remove schedule if exists
+            if sched_name in existing:
+                _scheduler.remove(sched_name)
+
+
+def get_memory_summary(agent_id: str) -> str | None:
+    """Load the latest memory summary for an agent, if it exists.
+    Returns None if memory summary is paused."""
+    # Check if paused
+    ms_cfg = _get_memory_summary_config(agent_id)
+    if ms_cfg.get("paused"):
+        return None
+    ms = MemoryStore(agent_id)
+    # Try to find the memory summary file
+    for fname in os.listdir(ms.dir):
+        if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
+            continue
+        fpath = os.path.join(ms.dir, fname)
+        try:
+            with open(fpath, "r") as f:
+                raw = f.read()
+            fm, body = _parse_frontmatter(raw)
+            if fm.get("name") == "Memory Summary":
+                return body.strip()
+        except Exception:
+            continue
+    return None
+
+
+def reset_memory_summary(agent_id: str) -> dict:
+    """Delete the memory summary file for an agent (Gap 5: reset)."""
+    ms = MemoryStore(agent_id)
+    deleted = []
+    for fname in os.listdir(ms.dir):
+        if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
+            continue
+        fpath = os.path.join(ms.dir, fname)
+        try:
+            with open(fpath, "r") as f:
+                raw = f.read()
+            fm, _ = _parse_frontmatter(raw)
+            if fm.get("name") == "Memory Summary":
+                os.remove(fpath)
+                deleted.append(fname)
+        except Exception:
+            continue
+    if deleted:
+        _qmd_debounced_embed(agent_id)
+    return {"agent": agent_id, "deleted": deleted, "status": "reset"}
+
+
+def trigger_memory_summary_refresh(agent_id: str):
+    """Trigger an immediate memory summary refresh for an agent.
+    Runs directly in a background thread instead of waiting for the scheduler loop."""
+    if not _scheduler:
+        return
+    ms_cfg = _get_memory_summary_config(agent_id)
+    if not ms_cfg.get("enabled") or ms_cfg.get("paused"):
+        return
+    sched_name = _memory_summary_schedule_name(agent_id)
+    # Check if the schedule exists
+    existing = {s["name"]: s for s in _scheduler.list_all()}
+    if sched_name not in existing:
+        return
+    # Execute immediately in a background thread instead of relying on scheduler loop
+    task_row = existing[sched_name]
+    def _run():
+        try:
+            _scheduler._execute_scheduled(task_row)
+        except Exception:
+            pass
+    threading.Thread(target=_run, daemon=True, name=f"memory_summary_refresh_{agent_id}").start()
 
 
 _thread_local = threading.local()
@@ -2244,14 +2776,42 @@ class TaskRunner:
             f"Operating system: {os_name}\n\n"
             "Complete the task and provide a concise result summary.\n"
         )
+        # Inject team context
+        team_info = _get_agent_team_info(agent_id)
+        if team_info:
+            if team_info["is_head"]:
+                peers = [m for m in team_info["members"] if m != agent_id]
+                system_prompt += (
+                    f"\nTEAM: You are the head of team '{team_info['name']}'. "
+                    f"Your team members: {', '.join(peers)}\n"
+                    "Delegate sub-tasks to your team members when appropriate.\n"
+                    "Use memory_shared(scope='team') for team-level shared knowledge.\n"
+                )
+            else:
+                peers = [m for m in team_info["members"] if m != agent_id and m != team_info["head"]]
+                system_prompt += (
+                    f"\nTEAM: You are a member of team '{team_info['name']}'.\n"
+                    f"Team head: {team_info['head']}\n"
+                )
+                if peers:
+                    system_prompt += f"Team peers: {', '.join(peers)}\n"
+                system_prompt += "Use memory_shared(scope='team') for team-level shared knowledge.\n"
+
         if tools_guide:
             system_prompt += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
+
+        # Build team-aware agent registry for this delegate
+        agent_registry = build_agent_registry(for_agent_id=agent_id)
+        if agent_registry:
+            system_prompt += f"\n\n{agent_registry}\n"
 
         messages = [{"role": "user", "content": task}]
 
         result_text = ""
         status = "completed"
         try:
+            # Store delegate agent ID in thread-local for delegation scoping
+            _thread_local.delegate_agent_id = agent_id
             if cancel_flag.is_set():
                 status = "cancelled"
             else:
@@ -2288,6 +2848,15 @@ def tool_delegate_task(args: dict) -> str:
     available = list_agents()
     if agent_id not in available:
         return _err(f"delegate_task: agent '{agent_id}' not found. Available: {', '.join(available)}")
+
+    # Team-aware delegation scoping
+    caller_id = getattr(_thread_local, "delegate_agent_id", None)
+    if not caller_id and _current_agent:
+        caller_id = _current_agent.agent_id
+    if caller_id:
+        scope = _get_delegation_scope(caller_id)
+        if agent_id not in scope:
+            return _err(f"delegate_task: '{caller_id}' cannot delegate to '{agent_id}'. Allowed: {', '.join(scope)}")
 
     if not _task_runner:
         return _err("Task runner not initialized")
@@ -2652,6 +3221,13 @@ class Scheduler:
         schedule_id = task_row.get("id")
         name = task_row.get("name", "")
 
+        # Memory summary tasks: regenerate prompt fresh with live data
+        if name.startswith("_memory_summary_"):
+            try:
+                task = _build_memory_summary_prompt(agent_id)
+            except Exception:
+                pass
+
         # Track this execution
         cancel_token = CancelToken()
         run_info = {
@@ -2696,6 +3272,17 @@ class Scheduler:
             "- Provide a concise result summary within 3-5 tool calls maximum.\n"
             "- If you can't find what you need in 2 searches, summarize what you have and stop.\n\n"
         )
+        # Inject memory summary for context (skip for the summary task itself)
+        if not name.startswith("_memory_summary_"):
+            try:
+                mem_summary = get_memory_summary(agent_id)
+                if mem_summary:
+                    system_prompt += (
+                        "MEMORY SUMMARY (auto-generated synthesis of recent activity — use as context):\n"
+                        f"{mem_summary}\n\n"
+                    )
+            except Exception:
+                pass
         if tools_guide:
             system_prompt += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
 
@@ -3885,11 +4472,13 @@ def _format_tool_call(name: str, args: dict) -> list[str]:
         lines.append(_box_mid(f"{MAGENTA}{q}{RESET}"))
     elif name == "memory_shared":
         action = args.get("action", "recall")
+        scope = args.get("scope", "global")
+        scope_label = "team" if scope == "team" else "main"
         if action == "store":
-            lines.append(_box_mid(f"{CYAN}store → main:{RESET} {MAGENTA}{args.get('name', '')}{RESET}"))
+            lines.append(_box_mid(f"{CYAN}store → {scope_label}:{RESET} {MAGENTA}{args.get('name', '')}{RESET}"))
         else:
             q = args.get("query", "(list all)")
-            lines.append(_box_mid(f"{CYAN}recall ← main:{RESET} {MAGENTA}{q}{RESET}"))
+            lines.append(_box_mid(f"{CYAN}recall ← {scope_label}:{RESET} {MAGENTA}{q}{RESET}"))
     elif name == "memory_delete":
         lines.append(_box_mid(f"{RED}{args.get('name', '')}{RESET}"))
     elif name == "delegate_task":
@@ -4197,7 +4786,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                 pass
 
         # Build agent registry
-        agent_registry = build_agent_registry()
+        agent_registry = build_agent_registry(for_agent_id=agent_id)
 
         system_instruction = ""
         if soul:
@@ -4215,11 +4804,40 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
             "- Memory types: user, project, feedback, reference, general\n"
             "- When the user says 'remember this', store it immediately\n"
             "- When the user asks 'do you remember', recall and search for it\n\n"
-            "SHARED MEMORY: Use memory_shared to access the main agent's memory.\n"
-            "- Contains global knowledge: infrastructure, user prefs, project-wide decisions\n"
+            "SHARED MEMORY: Use memory_shared to access shared knowledge.\n"
+            "- scope='global' (default): main agent's memory — infrastructure, user prefs, project-wide decisions\n"
+            "- scope='team': team head's memory — team-level knowledge and decisions\n"
             "- All agents can read from shared memory; store shared facts there too\n"
             "- Check shared memory when your own memory doesn't have what you need\n\n"
         )
+        # Inject memory summary (auto-generated synthesis) if available
+        try:
+            mem_summary = get_memory_summary(agent_id)
+            if mem_summary:
+                system_instruction += (
+                    "MEMORY SUMMARY (auto-generated synthesis of recent activity — use as context):\n"
+                    f"{mem_summary}\n\n"
+                )
+        except Exception:
+            pass
+        # Inject team context for interactive sessions
+        team_info = _get_agent_team_info(agent_id)
+        if team_info:
+            if team_info["is_head"]:
+                peers = [m for m in team_info["members"] if m != agent_id]
+                system_instruction += (
+                    f"TEAM: You are the head of team '{team_info['name']}'. "
+                    f"Your team members: {', '.join(peers)}\n"
+                    "Delegate sub-tasks to your team members when appropriate.\n\n"
+                )
+            else:
+                peers = [m for m in team_info["members"] if m != agent_id and m != team_info["head"]]
+                system_instruction += f"TEAM: You are a member of team '{team_info['name']}'.\n"
+                system_instruction += f"Team head: {team_info['head']}\n"
+                if peers:
+                    system_instruction += f"Team peers: {', '.join(peers)}\n"
+                system_instruction += "\n"
+
         if agent_registry:
             system_instruction += f"\n{agent_registry}\n\n"
 
@@ -4238,7 +4856,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
 
         # Scheduler status
         if _scheduler:
-            schedules = _scheduler.list_all()
+            schedules = [s for s in _scheduler.list_all() if not s["name"].startswith("_memory_summary_")]
             if schedules:
                 system_instruction += "\nSCHEDULER — active scheduled tasks:\n"
                 for s in schedules:
@@ -5251,6 +5869,12 @@ def _run_interactive(args):
     global _scheduler
     _scheduler = Scheduler()
     _scheduler.start()
+
+    # Ensure memory summary schedules
+    try:
+        ensure_memory_summary_schedules()
+    except Exception:
+        pass
 
     # Initialize background task runner
     global _task_runner

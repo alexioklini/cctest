@@ -50,8 +50,9 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - Memory uses QMD hybrid search (BM25 + vector + LLM reranking) via HTTP MCP on port 8181
 - Markdown files are source of truth for memory; QMD indexes them with debounced embed after writes
 - If QMD is unreachable, memory recall falls back to file-scan substring matching
-- `_qmd_index_keeper` thread: unified background loop (5s mtime poll, 30s deep integrity check) that auto-registers collections, detects file changes, fixes stale indexes, and ensures embeddings — fully automatic, no manual reindex needed
 - QMD docs endpoint returns index health per file: `indexed`, `embedded_at`, `current` (hash match)
+- QMD path normalization: QMD lowercases paths and converts underscores to hyphens — `/docs` endpoint mirrors this when matching filesystem paths to index entries
+- `/v1/services` returns per-collection health stats: `total`, `indexed`, `embedded`, `stale`, `not_indexed`
 - Smart model routing: `init_models_config()` auto-discovers models from providers, `resolve_model()` picks by purpose
 - Providers without `/models` endpoint: manually-configured models from `_models_config` are included in provider listings
 - QMD session reuse: `_qmd_session_lock` prevents concurrent threads from creating duplicate MCP sessions
@@ -59,6 +60,44 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - `memory_shared` and `list_all` return full content body, not just metadata
 - Telegram runs as an in-process thread, not a separate launchd daemon
 - Agent activity tracking: `/v1/agents/activity` returns active tasks/chats per agent for UI indicators
+- Agent teams: hierarchical team structure with team heads orchestrating members
+
+### Agent Teams
+
+Agents can be organized into teams with a hierarchical delegation model:
+
+- **Team head**: An agent with a `team` field in `agent.json` containing `members` list
+- **Team members**: Agents listed in a team head's `team.members` array
+- **Standalone agents**: Agents not in any team (excluding main)
+- **main**: Global orchestrator, never has a `team` field
+
+```json
+// Example team head agent.json
+{
+  "description": "Research team lead",
+  "display_name": "Research Lead",
+  "model": "claude-sonnet-4-6",
+  "team": {
+    "name": "Research Team",
+    "description": "Handles research and analysis tasks",
+    "avatar": "🔬",
+    "members": ["Researcher", "crow"]
+  }
+}
+```
+
+**Delegation scoping:**
+- `main` → team heads + standalone agents (not members directly)
+- Team heads → their team members
+- Team members → peers in same team + their team head
+
+**Shared memory scoping:**
+- `memory_shared(scope="global")` → main agent's memory (default)
+- `memory_shared(scope="team")` → team head's memory
+
+**API:**
+- `GET /v1/teams` — team structure
+- `POST /v1/teams` — create/update/dissolve/move teams
 
 ### Agent Directory Structure
 
@@ -96,6 +135,8 @@ Server runs on port 8420 (configurable). Key endpoints:
 - `POST /v1/skills/browse` — searches 7000+ skills from ClawHub
 - `GET /v1/services/qmd/docs` — list docs with index health (modified, embedded_at, current)
 - `GET /v1/agents/activity` — active tasks/chats per agent
+- `GET /v1/teams` — team structure (heads, members, standalone)
+- `POST /v1/teams` — manage teams (create, update, dissolve, move)
 - `GET|POST /v1/models/config` — model routing configuration
 - `POST /v1/restart` — re-execs the server process
 

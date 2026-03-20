@@ -145,7 +145,7 @@ Access at `http://127.0.0.1:8420/` after starting the server.
 - **Skill browser** — search 7000+ skills from ClawHub, install from URL or zip
 - **Scheduler** — create/edit/pause/resume/delete tasks with user-friendly time picker
 - **Settings dashboard** — Server, QMD, Models, Telegram, Providers tabs with service controls and log viewer
-- **QMD document browser** — per-collection file list with modification time, embedding status, index health indicators
+- **QMD document browser** — per-collection file list with modification time, embedding status, index health indicators, collection-level and global health stats
 - **Agent activity indicators** — pulsing glow on agent cards during active tasks/chats
 - **Smart model routing** — per-model config with auto-selection by task purpose
 - **Light/dark theme** — toggle with sun/moon icon, saved to localStorage
@@ -298,7 +298,9 @@ Each task runs with a specified agent and model in its own context. Results stor
 
 | Version | Date | Changes |
 |---|---|---|
-| 1.5.0 | 2026-03-18 | Settings dashboard (Server/QMD/Models/Telegram/Providers), agent activity indicators, QMD document browser with index health, smart model routing, self-healing QMD index keeper |
+| 1.5.2 | 2026-03-20 | Fix memory summary refresh (direct execution), fix QMD index path normalization, QMD collection health stats in settings |
+| 1.5.1 | 2026-03-18 | MiniMax provider, Add Model UI, QMD session leak fix, in-process Telegram, lightweight QMD health check |
+| 1.5.0 | 2026-03-18 | Settings dashboard (Server/QMD/Models/Telegram/Providers), agent activity indicators, QMD document browser with index health, smart model routing |
 | 1.4.0 | 2026-03-17 | QMD hybrid memory search (BM25 + vector + LLM reranking), SSE error handling, server resilience |
 | 1.3.0 | 2026-03-16 | oMLX local inference with Crow-4B-Opus-4.6-Distill model, replaces distributed inferencer |
 | 1.2.1 | 2026-03-16 | Local CLIProxyAPI OAuth proxy for Claude models (no API key costs) |
