@@ -5,32 +5,33 @@
 Each item has a detailed feature proposal with mockups, user workflows, and effort estimates.
 
 ### Security & Control
-- [Hooks system](features/hooks-system.md) — pre/post tool execution hooks (deterministic shell scripts) · ~6 days
-- [Permissions model](features/permissions-model.md) — per-tool approval with allow/deny patterns, sandboxing · ~9 days
-- [Plan mode](features/plan-mode.md) — read-only analysis mode that disables write tools · ~5 days
+- [Hooks system](features/hooks-system.md) — pre/post tool execution hooks (deterministic shell scripts) · ~6 days · **P5**
+- [Permissions model](features/permissions-model.md) — per-tool approval with allow/deny patterns, sandboxing · ~9 days · **P5**
+- [Plan mode](features/plan-mode.md) — read-only analysis mode that disables write tools · ~5 days · **P1**
 
 ### Infrastructure & Deployment
-- [Provider fallback chains](features/provider-fallback.md) — ordered fallback with exponential backoff retry · ~8 days
-- [Docker deployment](features/docker-deployment.md) — Dockerfile + docker-compose for cross-platform usage · ~5 days
-- [Discord + Slack adapters](features/discord-slack-adapters.md) — expand beyond Web/TUI/Telegram · ~10 days
-- [Worktrees](features/worktrees.md) — isolated git worktrees for parallel agent work · ~8 days
+- [Provider fallback chains](features/provider-fallback.md) — ordered fallback with exponential backoff retry · ~8 days · **P2**
+- [Docker deployment](features/docker-deployment.md) — Dockerfile + docker-compose for cross-platform usage · ~5 days · **P5**
+- [Multi-messaging frontends](features/multi-messaging-frontends.md) — generic adapter framework for multiple simultaneous messaging channels (Telegram, Discord, Slack, etc.) with per-channel config, agent routing, and lifecycle management · ~15 days · **P2**
+- [Discord + Slack adapters](features/discord-slack-adapters.md) — expand beyond Web/TUI/Telegram · ~10 days · **P4**
+- [Worktrees](features/worktrees.md) — isolated git worktrees for parallel agent work · ~8 days · **P3**
 
 ### User Features
-- [Agent workflows](features/agent-workflows.md) — multi-step blueprints with approval gates and branching · ~15 days
-- [Custom slash commands](features/custom-slash-commands.md) — user-defined commands with prompt templates · ~7 days
-- [LLM-assisted input refinement](features/llm-input-refinement.md) — AI-powered text improvement in all inputs · ~5 days
+- [Agent workflows](features/agent-workflows.md) — multi-step blueprints with approval gates and branching · ~15 days · **P2**
+- [Custom slash commands](features/custom-slash-commands.md) — user-defined commands with prompt templates · ~7 days · **P1**
+- [LLM-assisted input refinement](features/llm-input-refinement.md) — AI-powered text improvement in all inputs · ~5 days · **P1**
 
 ### Platform
-- [Web UI optimization](features/webui-optimization.md) — collapsible left sidebar, remove redundant elements · ~6 days
-- [Self-awareness memory](features/self-awareness-memory.md) — teach agents about their own architecture · ~3 days
-- [MCP client support](features/mcp-client-support.md) — dynamic MCP server connections at runtime · ~8 days
-- [A2A protocol](features/a2a-protocol.md) — Google Agent-to-Agent for cross-system interop · ~12 days
-- [Embeddable SDK](features/embeddable-sdk.md) — standalone Python package for embedding Brain Agent · ~15 days
-- [Hierarchical instructions](features/hierarchical-instructions.md) — per-project .brain/instructions.md auto-loading · ~4 days
+- [Web UI optimization](features/webui-optimization.md) — collapsible left sidebar, remove redundant elements · ~6 days · **P2**
+- [Self-awareness memory](features/self-awareness-memory.md) — teach agents about their own architecture · ~3 days · **P1**
+- [MCP client support](features/mcp-client-support.md) — dynamic MCP server connections at runtime · ~8 days · **P2**
+- [A2A protocol](features/a2a-protocol.md) — Google Agent-to-Agent for cross-system interop · ~12 days · **P3**
+- [Embeddable SDK](features/embeddable-sdk.md) — standalone Python package for embedding Brain Agent · ~15 days · **P3**
+- [Hierarchical instructions](features/hierarchical-instructions.md) — per-project .brain/instructions.md auto-loading · ~4 days · **P3**
 
 ### Memory & Search
-- [Knowledge graph memory](features/knowledge-graph-memory.md) — relationships between memories, graph traversal · ~10 days
-- [Web result caching](features/web-result-caching.md) — LRU cache for web_fetch/exa_search with TTL · ~2 days
+- [Knowledge graph memory](features/knowledge-graph-memory.md) — relationships between memories, graph traversal · ~10 days · **P1**
+- [Web result caching](features/web-result-caching.md) — LRU cache for web_fetch/exa_search with TTL · ~2 days · **P1**
 
 **Total: 18 proposals · ~138 days estimated**
 
