@@ -717,6 +717,64 @@ tailwind.config = {
     overflow-y: auto;
     position: relative;
   }
+  /* Settings vertical nav */
+  .settings-nav {
+    width: 180px;
+    min-width: 180px;
+    background: color-mix(in srgb, var(--color-surface) 80%, var(--color-base));
+    border-right: 1px solid var(--color-border);
+    overflow-y: auto;
+    border-radius: 1rem 0 0 1rem;
+    padding-bottom: 12px;
+  }
+  .settings-nav-group {
+    margin-top: 4px;
+  }
+  .settings-nav-label {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--color-text-muted);
+    padding: 10px 16px 4px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .settings-nav-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 6px 16px;
+    font-size: 13px;
+    font-family: 'Outfit', sans-serif;
+    color: var(--color-text-secondary);
+    background: none;
+    border: none;
+    border-left: 3px solid transparent;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .settings-nav-item:hover {
+    background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+    color: var(--color-text-primary);
+  }
+  .settings-nav-item.active {
+    color: var(--color-accent);
+    border-left-color: var(--color-accent);
+    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+    font-weight: 600;
+  }
+  .settings-main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px;
+    position: relative;
+    max-height: 80vh;
+  }
+  @media (max-width: 767px) {
+    .settings-nav { width: 140px; min-width: 140px; }
+    .settings-main { padding: 16px; }
+  }
+
   .modal-close {
     position: absolute;
     top: 1rem;
@@ -4939,27 +4997,28 @@ function openSettingsModal() {
   modal.className = 'modal-overlay';
   modal.id = 'settings-modal';
   modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+  const stabs = [
+    {group: 'System', items: [{id:'server', label:'Server'}, {id:'qmd', label:'QMD'}, {id:'providers', label:'Providers'}, {id:'models', label:'Models'}]},
+    {group: 'Agents', items: [{id:'teams', label:'Teams'}, {id:'channels', label:'Channels'}, {id:'nodes', label:'Nodes'}, {id:'mcp', label:'MCP'}]},
+    {group: 'Monitoring', items: [{id:'costs', label:'Costs'}, {id:'traces', label:'Traces'}, {id:'audit', label:'Audit'}, {id:'notifications', label:'Notifications'}]},
+    {group: 'Data', items: [{id:'backup', label:'Backup'}]},
+  ];
+  const navHtml = stabs.map(g => `
+    <div class="settings-nav-group">
+      <div class="settings-nav-label">${g.group}</div>
+      ${g.items.map(t => `<button class="settings-nav-item ${_settingsTab === t.id ? 'active' : ''}" onclick="switchSettingsTab('${t.id}')">${t.label}</button>`).join('')}
+    </div>
+  `).join('');
   modal.innerHTML = `
-    <div class="modal-content p-6">
-      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-      <h2 class="font-display text-lg font-semibold text-text-primary mb-4">Settings & Management</h2>
-      <div class="flex items-center border-b border-border mb-6 gap-0">
-        <button class="config-tab ${_settingsTab === 'server' ? 'active' : ''}" onclick="switchSettingsTab('server')">Server</button>
-        <button class="config-tab ${_settingsTab === 'qmd' ? 'active' : ''}" onclick="switchSettingsTab('qmd')">QMD</button>
-        <button class="config-tab ${_settingsTab === 'telegram' ? 'active' : ''}" onclick="switchSettingsTab('telegram')">Telegram</button>
-        <button class="config-tab ${_settingsTab === 'channels' ? 'active' : ''}" onclick="switchSettingsTab('channels')">Channels</button>
-        <button class="config-tab ${_settingsTab === 'nodes' ? 'active' : ''}" onclick="switchSettingsTab('nodes')">Nodes</button>
-        <button class="config-tab ${_settingsTab === 'teams' ? 'active' : ''}" onclick="switchSettingsTab('teams')">Teams</button>
-        <button class="config-tab ${_settingsTab === 'providers' ? 'active' : ''}" onclick="switchSettingsTab('providers')">Providers</button>
-        <button class="config-tab ${_settingsTab === 'models' ? 'active' : ''}" onclick="switchSettingsTab('models')">Models</button>
-        <button class="config-tab ${_settingsTab === 'costs' ? 'active' : ''}" onclick="switchSettingsTab('costs')">Costs</button>
-        <button class="config-tab ${_settingsTab === 'traces' ? 'active' : ''}" onclick="switchSettingsTab('traces')">Traces</button>
-        <button class="config-tab ${_settingsTab === 'audit' ? 'active' : ''}" onclick="switchSettingsTab('audit')">Audit</button>
-        <button class="config-tab ${_settingsTab === 'mcp' ? 'active' : ''}" onclick="switchSettingsTab('mcp')">MCP</button>
-        <button class="config-tab ${_settingsTab === 'backup' ? 'active' : ''}" onclick="switchSettingsTab('backup')">Backup</button>
-        <button class="config-tab ${_settingsTab === 'notifications' ? 'active' : ''}" onclick="switchSettingsTab('notifications')">Notif</button>
+    <div class="modal-content p-0" style="max-width:1100px;display:flex;overflow:hidden">
+      <nav class="settings-nav">
+        <div style="padding:16px 16px 8px;font-family:'Outfit',sans-serif;font-weight:600;font-size:14px;color:var(--color-text-primary)">Settings</div>
+        ${navHtml}
+      </nav>
+      <div class="settings-main">
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()" style="position:absolute;top:12px;right:16px">&times;</button>
+        <div id="settings-content" class="space-y-6"></div>
       </div>
-      <div id="settings-content" class="space-y-6"></div>
     </div>
   `;
   document.body.appendChild(modal);
@@ -4968,8 +5027,8 @@ function openSettingsModal() {
 
 function switchSettingsTab(tab) {
   _settingsTab = tab;
-  document.querySelectorAll('#settings-modal .config-tab').forEach(b => {
-    b.classList.toggle('active', b.textContent.toLowerCase() === tab);
+  document.querySelectorAll('#settings-modal .settings-nav-item').forEach(b => {
+    b.classList.toggle('active', b.textContent.toLowerCase() === tab || b.textContent === tab);
   });
   loadSettingsTab();
 }
