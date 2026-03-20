@@ -518,6 +518,82 @@ def run_bot(args):
             manager.reset_session(chat_id)
 
 
+# --- In-process service wrapper (used by server.py) ---
+
+class TelegramService:
+    """Wraps the Telegram bot for in-process use by the server."""
+
+    def __init__(self):
+        self.running = False
+        self.bot_username = ""
+        self.error = ""
+        self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+
+    def start(self, token: str, server_url: str = "http://127.0.0.1:8420",
+              allowed_users: list[int] | None = None,
+              default_model: str | None = None,
+              default_agent: str = "main") -> bool:
+        if self.running:
+            return True
+        self.error = ""
+        self._stop_event.clear()
+        try:
+            bot = TelegramBot(token)
+            me = bot._call("getMe")
+            self.bot_username = me.get("result", {}).get("username", "")
+        except Exception as e:
+            self.error = str(e)
+            return False
+
+        client = BrainAgentClient(server_url)
+        manager = ChatManager(client, default_agent=default_agent,
+                              default_model=default_model, allowed_users=allowed_users)
+
+        def _loop():
+            self.running = True
+            backoff = 1
+            while not self._stop_event.is_set():
+                try:
+                    updates = bot.get_updates(timeout=30)
+                    backoff = 1
+                    for update in updates:
+                        if self._stop_event.is_set():
+                            break
+                        msg = update.get("message", {})
+                        chat_id = msg.get("chat", {}).get("id")
+                        text = msg.get("text", "").strip()
+                        if not chat_id or not text:
+                            continue
+                        user_id = msg.get("from", {}).get("id")
+                        if manager.allowed_users and user_id not in manager.allowed_users:
+                            continue
+                        if text.startswith("/"):
+                            handle_command(bot, manager, chat_id, text)
+                        else:
+                            handle_message(bot, manager, chat_id, text)
+                except Exception as e:
+                    if not self._stop_event.is_set():
+                        time.sleep(min(backoff, 30))
+                        backoff = min(backoff * 2, 30)
+            self.running = False
+
+        self._thread = threading.Thread(target=_loop, daemon=True, name="telegram-service")
+        self._thread.start()
+        return True
+
+    def stop(self):
+        self._stop_event.set()
+        self.running = False
+        if self._thread:
+            self._thread.join(timeout=5)
+            self._thread = None
+
+
+# Module-level singleton (accessed by server.py as _telegram_mod.telegram_service)
+telegram_service = TelegramService()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Brain Agent Telegram Bot")
     parser.add_argument("--token", required=True, help="Telegram Bot API token")
