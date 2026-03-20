@@ -1,8 +1,8 @@
-# Feature Proposal: Document Ingestion Pipeline
+# Feature Proposal: Projects + Document Ingestion + Knowledge Graph
 
 **Status**: Proposed
-**Effort**: ~12 days
-**Priority**: Medium-High
+**Effort**: ~25 days
+**Priority**: P1
 **Author**: Brain Agent Team
 **Date**: 2026-03-20
 
@@ -11,21 +11,233 @@
 ## Problem Statement
 
 Brain Agent's memory system is built on manually-curated markdown files
-indexed by QMD. This works well for agent-generated memories but creates a
-significant gap: there is no way to ingest external knowledge into an agent's
-memory.
+indexed by QMD. This works well for agent-generated memories but creates
+several gaps:
 
-Current pain points:
+- No way to ingest external documents (PDFs, DOCX, URLs) into agent knowledge
+- No concept of "projects" — all work with an agent shares the same flat context
+- No watched folders that auto-sync external content into agent memory
+- No relationships between memories (flat files, no graph)
+- Users can't scope a conversation to a specific project's documents
 
-- A user has a 200-page company handbook PDF — they cannot feed it to an agent
-- Research papers, technical docs, and reports must be manually copy-pasted
-- Web pages with useful reference material require manual extraction
-- Word documents from colleagues cannot be directly consumed
-- No structured way to manage ingested content (source tracking, updates, deletion)
+Similar to Claude Desktop's Projects feature, users need a way to organize
+work into projects with scoped documents, folders, and conversations.
 
-Users resort to copying text into chat messages (lost after context window
-compaction) or manually creating memory files (tedious, error-prone, no
-chunking for large documents).
+---
+
+## Projects Architecture
+
+### Concept
+
+A **Project** belongs to an agent and defines a scope for conversations:
+
+```
+Agent (e.g., Researcher)
+  ├── Agent-level memories (*.md) — always available
+  ├── Agent-level documents (ingested/) — always available
+  └── Projects/
+      ├── ml-research/
+      │   ├── project.json (config, description, folders)
+      │   ├── ingested/ (project-specific documents)
+      │   └── *.md (project-specific memories)
+      └── company-handbook/
+          ├── project.json
+          ├── ingested/
+          └── *.md
+```
+
+### Chat Scoping
+
+```
++------------------------------------------------------------------+
+|  Chat WITHOUT project (current behavior):                         |
+|    Context = agent memories + main shared memories                 |
++------------------------------------------------------------------+
+|  Chat WITH project selected:                                      |
+|    Context = project docs + project memories                      |
+|             + agent memories + main shared memories               |
++------------------------------------------------------------------+
+```
+
+### project.json
+
+```json
+{
+  "name": "ML Research",
+  "description": "Machine learning papers and experiments",
+  "created_at": "2026-03-20T10:00:00Z",
+  "watch_folders": [
+    {
+      "path": "/Users/alexander/Papers/ml",
+      "pattern": "*.pdf",
+      "recursive": true
+    }
+  ],
+  "documents": [
+    "attention-is-all-you-need.pdf",
+    "scaling-laws.pdf"
+  ],
+  "tags": ["ml", "research"],
+  "model": null
+}
+```
+
+### Directory Structure
+
+```
+agents/Researcher/
+  soul.md
+  agent.json
+  commands.json
+  *.md                          ← agent-level memories
+  ingested/                     ← agent-level ingested docs
+    ingest-a3f8c2-001.md
+    ingest-a3f8c2-002.md
+  projects/
+    ml-research/
+      project.json              ← project config
+      *.md                      ← project-specific memories
+      ingested/                 ← project-specific ingested docs
+        ingest-b7e1d4-001.md
+    company-handbook/
+      project.json
+      ingested/
+        ingest-c9d2e1-001.md
+        ...
+```
+
+### QMD Collections
+
+Each project gets its own QMD collection for scoped search:
+
+```
+Collections:
+  Researcher          → agents/Researcher/*.md + agents/Researcher/ingested/
+  Researcher/ml-research → agents/Researcher/projects/ml-research/
+  Researcher/company-handbook → agents/Researcher/projects/company-handbook/
+```
+
+When chatting with a project, `memory_recall` searches:
+1. Project collection (highest priority)
+2. Agent collection
+3. Main collection (shared memory)
+
+### Web UI: Project Management
+
+```
++-----------------------------------------------------------------------+
+| Researcher                                                            |
++-----------------------------------------------------------------------+
+| [Chat] [Projects] [Config]                                            |
++-----------------------------------------------------------------------+
+|                                                                       |
+|  Projects                                              [+ New Project]|
+|                                                                       |
+|  +---------------------------------------------------------------+   |
+|  | ML Research                                          [Active]  |   |
+|  | Machine learning papers and experiments                        |   |
+|  | 3 documents · 2 watched folders · 45 chunks indexed            |   |
+|  | [Open Chat] [Manage] [Delete]                                  |   |
+|  +---------------------------------------------------------------+   |
+|  | Company Handbook                                               |   |
+|  | Internal policies and procedures                               |   |
+|  | 1 document · 102 chunks indexed                                |   |
+|  | [Open Chat] [Manage] [Delete]                                  |   |
+|  +---------------------------------------------------------------+   |
+|                                                                       |
++-----------------------------------------------------------------------+
+```
+
+### Web UI: Project Detail / Manage
+
+```
++-----------------------------------------------------------------------+
+| Project: ML Research                                             [X]  |
++-----------------------------------------------------------------------+
+| [Documents] [Folders] [Settings]                                      |
++-----------------------------------------------------------------------+
+|                                                                       |
+|  Documents                                      [Upload] [Ingest URL] |
+|                                                                       |
+|  +---------------------------------------------------------------+   |
+|  | attention-is-all-you-need.pdf    PDF  28 chunks  2026-03-18   |   |
+|  | scaling-laws.pdf                 PDF  22 chunks  2026-03-17   |   |
+|  | https://arxiv.org/abs/2301.00    URL   5 chunks  2026-03-16   |   |
+|  +---------------------------------------------------------------+   |
+|                                                                       |
+|  Watched Folders                                            [+ Add]   |
+|  +---------------------------------------------------------------+   |
+|  | /Users/alexander/Papers/ml   *.pdf (recursive)  12 files      |   |
+|  | Last scan: 30s ago                          [Remove] [Rescan]  |   |
+|  +---------------------------------------------------------------+   |
+|                                                                       |
++-----------------------------------------------------------------------+
+```
+
+### Web UI: Chat with Project Selected
+
+```
++-----------------------------------------------------------------------+
+| Researcher · ML Research                              [Execute ▾]     |
++-----------------------------------------------------------------------+
+| [No Project] [ML Research ✓] [Company Handbook]      ← project tabs   |
++-----------------------------------------------------------------------+
+|                                                                       |
+|  User: What does the attention paper say about multi-head attention?   |
+|                                                                       |
+|  Recalling from ML Research project...                                |
+|  ✔ 3 memories (project: 2, agent: 1)                                 |
+|                                                                       |
+|  According to "Attention Is All You Need" (pages 4-5), multi-head     |
+|  attention allows the model to jointly attend to information from      |
+|  different representation subspaces...                                 |
+|                                                                       |
++-----------------------------------------------------------------------+
+```
+
+### TUI: Project Commands
+
+```
+/projects                     List projects for current agent
+/projects new <name>          Create a new project
+/projects open <name>         Switch to project context (scoped chat)
+/projects close               Return to agent-level chat (no project)
+/projects delete <name>       Delete project and all its data
+/projects ingest <file>       Ingest document into current project
+/projects watch <path>        Add watched folder to current project
+```
+
+### API Endpoints
+
+```
+GET    /v1/agents/{id}/projects              List projects
+POST   /v1/agents/{id}/projects              Create project
+GET    /v1/agents/{id}/projects/{name}       Get project details
+PUT    /v1/agents/{id}/projects/{name}       Update project config
+DELETE /v1/agents/{id}/projects/{name}       Delete project
+POST   /v1/agents/{id}/projects/{name}/ingest  Ingest document into project
+GET    /v1/agents/{id}/projects/{name}/docs  List project documents
+```
+
+### Chat Integration
+
+When `/v1/chat` receives `project: "ml-research"` in the request body:
+1. System prompt includes: "You are working in project 'ML Research'. Prioritize project-specific documents."
+2. `memory_recall` searches project collection first, then agent, then main
+3. `memory_store` writes to project directory (not agent root)
+4. Project context is shown in the UI header
+
+---
+
+## Document Ingestion Pipeline
+
+(The ingestion pipeline serves both agent-level and project-level documents)
+
+### Overview
+
+A document ingestion pipeline that accepts files (PDF, DOCX, TXT, MD, HTML)
+or URLs, extracts text, chunks it intelligently, stores chunks as memory
+files, and triggers QMD indexing for hybrid search retrieval.
 
 ---
 

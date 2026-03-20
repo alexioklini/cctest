@@ -7,7 +7,7 @@ Each item has a detailed feature proposal with mockups, user workflows, and effo
 ### Security & Control
 - [Hooks system](features/hooks-system.md) — pre/post tool execution hooks (deterministic shell scripts) · ~6 days · **P5**
 - [Permissions model](features/permissions-model.md) — per-tool approval with allow/deny patterns, sandboxing · ~9 days · **P5**
-- [Plan mode](features/plan-mode.md) — read-only analysis mode that disables write tools · ~5 days · **P1**
+- [Plan mode](features/plan-mode.md) — read-only analysis mode that disables write tools · ~5 days · **P1** ✅ done (v1.7.0)
 
 ### Infrastructure & Deployment
 - [Provider fallback chains](features/provider-fallback.md) — ordered fallback with exponential backoff retry · ~8 days · **P2**
@@ -19,31 +19,29 @@ Each item has a detailed feature proposal with mockups, user workflows, and effo
 
 ### User Features
 - [Agent workflows](features/agent-workflows.md) — multi-step blueprints with approval gates and branching · ~15 days · **P2**
-- [Custom slash commands](features/custom-slash-commands.md) — user-defined commands with prompt templates · ~7 days · **P1**
-- [LLM-assisted input refinement](features/llm-input-refinement.md) — AI-powered text improvement in all inputs · ~5 days · **P1**
+- [Custom slash commands](features/custom-slash-commands.md) — user-defined commands with prompt templates · ~7 days · **P1** ✅ done (v1.7.0)
+- [LLM-assisted input refinement](features/llm-input-refinement.md) — AI-powered text improvement in all inputs · ~5 days · **P1** ✅ done (v1.7.0)
 
 ### Platform
 - [Web UI optimization](features/webui-optimization.md) — collapsible left sidebar, remove redundant elements · ~6 days · **P2**
-- [Self-awareness memory](features/self-awareness-memory.md) — teach agents about their own architecture · ~3 days · **P1**
+- ~~Self-awareness memory~~ — merged into Projects + Knowledge graph + RAG
 - [MCP client support](features/mcp-client-support.md) — dynamic MCP server connections at runtime · ~8 days · **P2**
 - [A2A protocol](features/a2a-protocol.md) — Google Agent-to-Agent for cross-system interop · ~12 days · **P3**
 - [Embeddable SDK](features/embeddable-sdk.md) — standalone Python package for embedding Brain Agent · ~15 days · **P3**
 - [Hierarchical instructions](features/hierarchical-instructions.md) — per-project .brain/instructions.md auto-loading · ~4 days · **P3**
 
 ### Memory & Search
-- [Knowledge graph memory](features/knowledge-graph-memory.md) — relationships between memories, graph traversal · ~10 days · **P1**
-- [Web result caching](features/web-result-caching.md) — LRU cache for web_fetch/exa_search with TTL · ~2 days · **P1**
-- [Document ingestion (RAG)](features/document-ingestion.md) — upload files/URLs, auto-chunk, watched folders with auto-sync, knowledge graph integration · ~12 days · **P1**
+- [Projects + Knowledge graph + RAG](features/document-ingestion.md) — per-agent projects with scoped docs/folders/chats, document ingestion pipeline, watched folders, memory graph traversal, self-awareness · ~25 days · **P1** (combines [knowledge-graph-memory.md](features/knowledge-graph-memory.md) + [document-ingestion.md](features/document-ingestion.md) + [self-awareness-memory.md](features/self-awareness-memory.md))
+- [Web result caching](features/web-result-caching.md) — LRU cache for web_fetch/exa_search with TTL · ~2 days · **P1** ✅ done (v1.7.0)
 
 ### Observability & Operations
-- [Cost tracking & budgets](features/cost-tracking.md) — per-agent/session/task API spend tracking, budget limits, alerts · ~6 days · **P1**
+- [Cost tracking + Rate limiting](features/cost-tracking.md) — per-agent API spend tracking, budgets, alerts, request/token/cost throttling · ~8 days · **P1** ✅ done (v1.7.0)
 - [Observability & tracing](features/observability-tracing.md) — structured traces for LLM calls, tool execution, latency/error dashboards · ~8 days · **P2**
-- [Rate limiting](features/rate-limiting.md) — per-agent request/token/cost throttling with soft warnings and hard blocks · ~4 days · **P1**
 - [Audit trail](features/audit-trail.md) — append-only log of all agent actions, searchable, exportable · ~5 days · **P2**
 - [Notifications](features/notifications.md) — email/webhook/in-app alerts for task completion, errors, budget, node status · ~7 days · **P2**
 
 ### Execution & Sandbox
-- [Streaming tool output](features/streaming-tool-output.md) — real-time stdout/stderr streaming during command execution · ~5 days · **P1**
+- [Streaming tool output](features/streaming-tool-output.md) — real-time stdout/stderr streaming during command execution · ~5 days · **P1** ✅ done (v1.7.0)
 - [Code sandbox](features/code-sandbox.md) — isolated run_code tool with restricted filesystem/network access · ~8 days · **P3**
 
 ### Multi-modal & Data
