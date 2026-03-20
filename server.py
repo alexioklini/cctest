@@ -2263,7 +2263,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _is_telegram_running() -> bool:
-        return _telegram_mod.telegram_service.running
+        try:
+            return _telegram_mod.telegram_service.running
+        except AttributeError:
+            return False
 
     @staticmethod
     def _qmd_collections() -> list[dict]:
