@@ -20,7 +20,7 @@ from rich.table import Table
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
-from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.styles import Style as PTStyle
 
@@ -98,7 +98,7 @@ def print_greeting(status: dict, session_agent: str, session_model: str):
     changelog = status.get("changelog", [])
     if changelog:
         latest = changelog[0]
-        console.print(f"\n  [dim]↑ v{latest['version']}: {latest['changes']}[/]")
+        console.print(f"\n  [dim]^ v{latest['version']}: {latest['changes']}[/]")
     console.print()
 
 
@@ -189,25 +189,160 @@ def display_tool_result(name: str, result_str: str):
         console.print(f"  [#5f87ff]✔[/]")
 
 
+# --- Slash command definitions ---
+
+SLASH_COMMANDS = {
+    # Session management
+    "/help":        "Show this help",
+    "/new":         "Start a new conversation",
+    "/sessions":    "List and switch sessions",
+    "/switch":      "Switch to session by ID",
+    "/archive":     "Archive current session",
+    "/delete":      "Delete current session",
+    "/clear":       "Clear current session messages",
+    "/incognito":   "Toggle incognito mode",
+    "/title":       "Set session title",
+    # Agent management
+    "/agent":       "Switch agent (or: create/delete/pause/resume/config/soul)",
+    "/agent create":  "Create a new agent",
+    "/agent delete":  "Delete an agent",
+    "/agent pause":   "Pause an agent",
+    "/agent resume":  "Resume a paused agent",
+    "/agent config":  "Show current agent config",
+    "/agent soul":    "Show agent soul.md",
+    # Model
+    "/model":       "Switch model",
+    "/models":      "List & select models",
+    # Tools
+    "/tools":       "Toggle tool call display",
+    # Schedule
+    "/schedule":    "Manage scheduled tasks",
+    # Teams
+    "/teams":       "Show team structure",
+    "/teams create":  "Create a new team",
+    "/teams dissolve": "Dissolve a team",
+    # Skills
+    "/skills":      "List installed skills",
+    "/skills browse": "Search ClawHub for skills",
+    "/skills install": "Install skill from URL",
+    "/skills remove":  "Remove an installed skill",
+    # Memory
+    "/memory":      "List memory files for current agent",
+    "/memory summary": "Show memory summary",
+    "/memory refresh": "Refresh memory summary",
+    # Providers
+    "/providers":     "List LLM providers",
+    "/providers test": "Test provider connection",
+    "/providers add":  "Add a new provider",
+    # Status / Tasks
+    "/status":      "Show server & service status",
+    "/tasks":       "Show running background tasks",
+    "/tasks cancel":  "Cancel a running task",
+    # QMD
+    "/qmd":         "Show QMD status and health",
+    "/qmd reindex":   "Trigger QMD reindex",
+}
+
+
+class SlashCommandCompleter(Completer):
+    """Popup completer for slash commands with descriptions."""
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        if not text.startswith("/"):
+            return
+
+        for cmd, desc in SLASH_COMMANDS.items():
+            if cmd.startswith(text):
+                # Calculate how much text to complete (strip already-typed prefix)
+                yield Completion(
+                    cmd,
+                    start_position=-len(text),
+                    display=cmd,
+                    display_meta=desc,
+                )
+
+
 # --- Help ---
 
 def print_help():
     console.print()
-    t = Table(show_header=False, box=None, padding=(0, 2), pad_edge=False)
-    t.add_column(style="#ff8700 bold", min_width=12)
-    t.add_column(style="dim")
-    for cmd, desc in [
-        ("/help", "Show this help"),
+
+    def _section(title, cmds):
+        console.print(f"  [bold #ff8700]{title}[/]")
+        t = Table(show_header=False, box=None, padding=(0, 2), pad_edge=False)
+        t.add_column(style="#ff8700 bold", min_width=22)
+        t.add_column(style="dim")
+        for cmd, desc in cmds:
+            t.add_row(cmd, desc)
+        console.print(t)
+        console.print()
+
+    _section("Session", [
         ("/new", "Start a new conversation"),
+        ("/sessions", "List and switch sessions"),
+        ("/switch <id>", "Switch to session by ID"),
+        ("/archive", "Archive current session"),
+        ("/delete", "Delete current session"),
+        ("/clear", "Clear current session messages"),
+        ("/incognito", "Toggle incognito mode"),
+        ("/title <text>", "Set session title"),
+    ])
+
+    _section("Agent", [
         ("/agent [name]", "Switch agent (arrow-key menu)"),
+        ("/agent create <name>", "Create a new agent"),
+        ("/agent delete <name>", "Delete an agent"),
+        ("/agent pause <name>", "Pause an agent"),
+        ("/agent resume <name>", "Resume a paused agent"),
+        ("/agent config", "Show current agent config"),
+        ("/agent soul", "Show agent soul.md"),
+    ])
+
+    _section("Model", [
         ("/model [name]", "Switch model"),
         ("/models", "List & select models"),
-        ("/tools", "Toggle tool call display"),
+    ])
+
+    _section("Teams", [
+        ("/teams", "Show team structure"),
+        ("/teams create", "Create a new team"),
+        ("/teams dissolve <name>", "Dissolve a team"),
+    ])
+
+    _section("Skills", [
+        ("/skills", "List installed skills"),
+        ("/skills browse <query>", "Search ClawHub for skills"),
+        ("/skills install <url>", "Install skill from URL"),
+        ("/skills remove <slug>", "Remove an installed skill"),
+    ])
+
+    _section("Memory", [
+        ("/memory", "List memory files for current agent"),
+        ("/memory summary", "Show memory summary"),
+        ("/memory refresh", "Refresh memory summary"),
+    ])
+
+    _section("Schedule & Tasks", [
         ("/schedule", "Manage scheduled tasks"),
-    ]:
-        t.add_row(cmd, desc)
-    console.print(t)
-    console.print()
+        ("/tasks", "Show running background tasks"),
+        ("/tasks cancel <id>", "Cancel a running task"),
+    ])
+
+    _section("Providers & Services", [
+        ("/providers", "List LLM providers"),
+        ("/providers test <name>", "Test provider connection"),
+        ("/providers add", "Add a new provider interactively"),
+        ("/status", "Show server & service status"),
+        ("/qmd", "Show QMD status and health"),
+        ("/qmd reindex [coll]", "Trigger QMD reindex"),
+    ])
+
+    _section("Other", [
+        ("/tools", "Toggle tool call display"),
+        ("/help", "Show this help"),
+    ])
+
     t2 = Table(show_header=False, box=None, padding=(0, 2), pad_edge=False)
     t2.add_column(style="yellow", min_width=12)
     t2.add_column(style="dim")
@@ -290,6 +425,721 @@ def select_inline(items: list[str], labels: list[str] | None = None,
             pass
 
 
+# --- Command handlers ---
+
+def _handle_sessions(client: BrainAgentClient, current_agent: str) -> tuple[str | None, int | None]:
+    """Handle /sessions — returns (new_session_id, new_token_count) or (None, None)."""
+    try:
+        sessions = client.list_sessions(agent=current_agent, status="active")
+    except Exception as e:
+        console.print(f"  [error]{e}[/]")
+        return None, None
+
+    if not sessions:
+        console.print("  [dim]No active sessions[/]")
+        return None, None
+
+    ids = [s["session_id"] for s in sessions]
+    labels = []
+    for s in sessions:
+        title = s.get("title", "Untitled")[:40]
+        model = s.get("model", "?")
+        msgs = s.get("message_count", 0)
+        labels.append(f"{title}  [dim]{model} · {msgs} msgs[/]")
+
+    console.print()
+    choice = select_inline(ids, labels=labels, active=client.session_id)
+    if choice and choice != client.session_id:
+        return choice, 0
+    return None, None
+
+
+def _handle_switch(arg: str, client: BrainAgentClient) -> int | None:
+    """Handle /switch <id> — returns new token_count or None."""
+    if not arg:
+        console.print("  [dim]Usage: /switch <session_id>[/]")
+        return None
+    try:
+        messages = client.get_session_messages(arg)
+        client.session_id = arg
+        console.print(f"  [#5f87ff]Switched to session {arg[:8]}...[/] [dim]({len(messages)} messages)[/]")
+        return 0
+    except Exception as e:
+        console.print(f"  [error]{e}[/]")
+        return None
+
+
+def _handle_archive(client: BrainAgentClient):
+    try:
+        r = client.session_action("archive")
+        if r.get("error"):
+            console.print(f"  [error]{r['error']}[/]")
+        else:
+            console.print("  [dim]Session archived[/]")
+    except Exception as e:
+        console.print(f"  [error]{e}[/]")
+
+
+def _handle_delete_session(client: BrainAgentClient, current_agent: str,
+                           current_model: str, max_context: int) -> int:
+    """Delete current session and start new. Returns new token_count."""
+    try:
+        client.session_action("delete")
+    except Exception:
+        pass
+    client.session_id = None
+    client.create_session(agent=current_agent, model=current_model, max_context=max_context)
+    console.print("  [dim]Session deleted. New conversation started.[/]")
+    return 0
+
+
+def _handle_clear(client: BrainAgentClient) -> int:
+    try:
+        r = client.session_action("clear")
+        if r.get("error"):
+            console.print(f"  [error]{r['error']}[/]")
+        else:
+            console.print("  [dim]Session cleared[/]")
+    except Exception as e:
+        console.print(f"  [error]{e}[/]")
+    return 0
+
+
+def _handle_incognito(client: BrainAgentClient):
+    # Toggle — try incognito first, if already incognito, un_incognito
+    try:
+        r = client.session_action("incognito")
+        if r.get("error") and "already" in r["error"].lower():
+            r = client.session_action("un_incognito")
+            console.print("  [dim]Incognito OFF[/]")
+        elif r.get("error"):
+            console.print(f"  [error]{r['error']}[/]")
+        else:
+            status = r.get("incognito", True)
+            label = "ON" if status else "OFF"
+            console.print(f"  [#ff8700]Incognito {label}[/]")
+    except Exception as e:
+        console.print(f"  [error]{e}[/]")
+
+
+def _handle_title(arg: str, client: BrainAgentClient):
+    if not arg:
+        console.print("  [dim]Usage: /title <text>[/]")
+        return
+    try:
+        r = client.session_action("rename", title=arg)
+        if r.get("error"):
+            console.print(f"  [error]{r['error']}[/]")
+        else:
+            console.print(f"  [dim]Title set:[/] [bold]{arg}[/]")
+    except Exception as e:
+        console.print(f"  [error]{e}[/]")
+
+
+def _handle_agent(stripped: str, client: BrainAgentClient, current_agent: str,
+                  current_model: str, session) -> tuple[str, str]:
+    """Handle all /agent subcommands. Returns (new_agent, new_model)."""
+    arg = stripped[6:].strip()
+    low_arg = arg.lower()
+
+    if low_arg.startswith("create "):
+        name = arg[7:].strip()
+        if not name:
+            console.print("  [dim]Usage: /agent create <name>[/]")
+            return current_agent, current_model
+        try:
+            desc = session.prompt(HTML("  <b>Description:</b> "))
+        except (KeyboardInterrupt, EOFError):
+            return current_agent, current_model
+        try:
+            r = client.create_agent(name, desc.strip())
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            else:
+                console.print(f"  [#5f87ff]Created agent:[/] [agent]{name}[/]")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return current_agent, current_model
+
+    if low_arg.startswith("delete "):
+        name = arg[7:].strip()
+        if not name:
+            console.print("  [dim]Usage: /agent delete <name>[/]")
+            return current_agent, current_model
+        try:
+            r = client.delete_agent(name)
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            else:
+                console.print(f"  [dim]Deleted agent:[/] [bold]{name}[/]")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return current_agent, current_model
+
+    if low_arg.startswith("pause "):
+        name = arg[6:].strip()
+        try:
+            r = client.pause_agent(name, paused=True)
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            else:
+                console.print(f"  [dim]Paused:[/] [bold]{name}[/]")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return current_agent, current_model
+
+    if low_arg.startswith("resume "):
+        name = arg[7:].strip()
+        try:
+            r = client.pause_agent(name, paused=False)
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            else:
+                console.print(f"  [dim]Resumed:[/] [bold]{name}[/]")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return current_agent, current_model
+
+    if low_arg == "config":
+        try:
+            agents_data = client.list_agents()
+            agent_info = next((a for a in agents_data if a["id"] == current_agent), None)
+            if agent_info:
+                t = Table(show_header=False, box=None, padding=(0, 2), pad_edge=False)
+                t.add_column(style="#ff8700", min_width=16)
+                t.add_column()
+                for k, v in agent_info.items():
+                    t.add_row(str(k), str(v))
+                console.print()
+                console.print(t)
+                console.print()
+            else:
+                console.print(f"  [dim]Agent {current_agent} not found[/]")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return current_agent, current_model
+
+    if low_arg == "soul":
+        try:
+            docs = client.get_qmd_docs(collection=current_agent)
+            files = docs.get("docs", docs.get("files", []))
+            soul = None
+            for f in files:
+                fname = f.get("file", f.get("name", ""))
+                if fname.endswith("soul.md"):
+                    soul = f
+                    break
+            if soul:
+                content = soul.get("content", soul.get("body", ""))
+                if content:
+                    console.print()
+                    console.print(Markdown(content))
+                    console.print()
+                else:
+                    # Try reading the file directly
+                    console.print(f"  [dim]soul.md found but no content in API response[/]")
+                    console.print(f"  [dim]Path: agents/{current_agent}/soul.md[/]")
+            else:
+                console.print(f"  [dim]No soul.md for {current_agent}[/]")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return current_agent, current_model
+
+    # Default: switch agent (existing behavior)
+    if arg:
+        resp = client.switch_agent(arg)
+        new_agent = resp.get("agent", arg)
+        new_model = resp.get("model", current_model)
+        console.print(f"  [dim]->[/] [agent]{new_agent}[/] [dim]({new_model})[/]")
+        return new_agent, new_model
+    else:
+        agents_data = client.list_agents()
+        agent_ids = [a["id"] for a in agents_data]
+        labels = [f"{a['id']} — {a.get('description', '')}" for a in agents_data]
+        console.print()
+        choice = select_inline(agent_ids, labels=labels, active=current_agent)
+        if choice:
+            resp = client.switch_agent(choice)
+            new_agent = resp.get("agent", choice)
+            new_model = resp.get("model", current_model)
+            console.print(f"  [dim]->[/] [agent]{new_agent}[/] [dim]({new_model})[/]")
+            return new_agent, new_model
+    return current_agent, current_model
+
+
+def _handle_teams(arg: str, client: BrainAgentClient, session):
+    """Handle /teams commands."""
+    low_arg = arg.lower().strip()
+
+    if not low_arg:
+        # Show team structure
+        try:
+            data = client.get_teams()
+            teams = data.get("teams", [])
+            standalone = data.get("standalone", [])
+
+            if not teams and not standalone:
+                console.print("  [dim]No teams configured[/]")
+                return
+
+            console.print()
+            for team in teams:
+                name = team.get("name", "?")
+                head = team.get("head", "?")
+                avatar = team.get("avatar", "")
+                console.print(f"  [bold]{avatar} {name}[/]  [dim]head:[/] [agent]{head}[/]")
+                members = team.get("members", [])
+                for m in members:
+                    console.print(f"    [dim]•[/] {m}")
+
+            if standalone:
+                console.print()
+                console.print(f"  [dim]Standalone:[/] {', '.join(standalone)}")
+            console.print()
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    if low_arg == "create":
+        try:
+            name = session.prompt(HTML("  <b>Team name:</b> "))
+            head = session.prompt(HTML("  <b>Team head agent:</b> "))
+            members_str = session.prompt(HTML("  <b>Members (comma-separated):</b> "))
+            desc = session.prompt(HTML("  <b>Description:</b> ")) or ""
+            avatar = session.prompt(HTML("  <b>Avatar emoji:</b> ")) or ""
+        except (KeyboardInterrupt, EOFError):
+            return
+        members = [m.strip() for m in members_str.split(",") if m.strip()]
+        try:
+            r = client.team_action("create", name=name.strip(), head=head.strip(),
+                                   members=members, description=desc.strip(), avatar=avatar.strip())
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            else:
+                console.print(f"  [#5f87ff]Team created:[/] [bold]{name}[/]")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    if low_arg.startswith("dissolve "):
+        name = arg[9:].strip()
+        if not name:
+            console.print("  [dim]Usage: /teams dissolve <name>[/]")
+            return
+        try:
+            r = client.team_action("dissolve", name=name)
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            else:
+                console.print(f"  [dim]Team dissolved:[/] [bold]{name}[/]")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    console.print("  [dim]/teams [create | dissolve <name>][/]")
+
+
+def _handle_skills(arg: str, client: BrainAgentClient, current_agent: str):
+    """Handle /skills commands."""
+    low_arg = arg.lower().strip()
+
+    if not low_arg:
+        # List installed skills
+        try:
+            data = client.skills_list(agent=current_agent)
+            skills = data.get("skills", [])
+            if not skills:
+                console.print("  [dim]No skills installed[/]")
+                return
+            t = Table(show_header=True, box=None, padding=(0, 1))
+            t.add_column("Skill", style="bold")
+            t.add_column("Description", style="dim")
+            for s in skills:
+                t.add_row(s.get("name", s.get("slug", "?")),
+                          s.get("description", "")[:60])
+            console.print()
+            console.print(t)
+            console.print()
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    if low_arg.startswith("browse "):
+        query = arg[7:].strip()
+        if not query:
+            console.print("  [dim]Usage: /skills browse <query>[/]")
+            return
+        try:
+            data = client.skills_browse(query, agent=current_agent)
+            results = data.get("results", [])
+            if not results:
+                console.print("  [dim]No skills found[/]")
+                return
+            t = Table(show_header=True, box=None, padding=(0, 1))
+            t.add_column("Name", style="bold")
+            t.add_column("Author", style="dim")
+            t.add_column("Description", style="dim")
+            t.add_column("URL", style="#5f87ff")
+            for s in results[:15]:
+                t.add_row(s.get("name", "?"), s.get("author", "?"),
+                          s.get("description", "")[:40], s.get("url", "")[:40])
+            console.print()
+            console.print(t)
+            console.print(f"  [dim]{len(results)} results[/]")
+            console.print()
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    if low_arg.startswith("install "):
+        url = arg[8:].strip()
+        if not url:
+            console.print("  [dim]Usage: /skills install <url>[/]")
+            return
+        try:
+            r = client.skills_install(url, agent=current_agent)
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            else:
+                console.print(f"  [#5f87ff]Skill installed:[/] [bold]{r.get('name', url)}[/]")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    if low_arg.startswith("remove "):
+        slug = arg[7:].strip()
+        if not slug:
+            console.print("  [dim]Usage: /skills remove <slug>[/]")
+            return
+        try:
+            r = client.skills_remove(slug, agent=current_agent)
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            else:
+                console.print(f"  [dim]Skill removed:[/] [bold]{slug}[/]")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    console.print("  [dim]/skills [browse <query> | install <url> | remove <slug>][/]")
+
+
+def _handle_memory(arg: str, client: BrainAgentClient, current_agent: str):
+    """Handle /memory commands."""
+    low_arg = arg.lower().strip()
+
+    if not low_arg:
+        # List memory files via QMD docs
+        try:
+            data = client.get_qmd_docs(collection=current_agent)
+            docs = data.get("docs", data.get("files", []))
+            if not docs:
+                console.print("  [dim]No memory files[/]")
+                return
+            t = Table(show_header=True, box=None, padding=(0, 1))
+            t.add_column("File", style="bold")
+            t.add_column("Indexed", style="dim")
+            t.add_column("Embedded", style="dim")
+            t.add_column("Current", style="dim")
+            for d in docs:
+                fname = d.get("file", d.get("name", "?"))
+                indexed = "yes" if d.get("indexed") else "no"
+                embedded = d.get("embedded_at", "-")
+                if embedded and len(embedded) > 16:
+                    embedded = embedded[:16]
+                current = "[#5f87ff]yes[/]" if d.get("current") else "[warning]stale[/]"
+                t.add_row(fname, indexed, embedded, current)
+            console.print()
+            console.print(t)
+            console.print()
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    if low_arg == "summary":
+        try:
+            data = client.get_memory_summary(agent=current_agent)
+            summary = data.get("summary", data.get("content", ""))
+            if summary:
+                console.print()
+                console.print(Markdown(summary))
+                console.print()
+            else:
+                console.print("  [dim]No memory summary available[/]")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    if low_arg == "refresh":
+        try:
+            r = client.memory_summary_action(current_agent, "refresh")
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            else:
+                console.print("  [#5f87ff]Memory summary refresh triggered[/]")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    console.print("  [dim]/memory [summary | refresh][/]")
+
+
+def _handle_providers(arg: str, client: BrainAgentClient, session):
+    """Handle /providers commands."""
+    low_arg = arg.lower().strip()
+
+    if not low_arg:
+        try:
+            providers = client.list_providers()
+            if not providers:
+                console.print("  [dim]No providers configured[/]")
+                return
+            t = Table(show_header=True, box=None, padding=(0, 1))
+            t.add_column("Name", style="bold")
+            t.add_column("Type", style="#5f87ff")
+            t.add_column("Base URL", style="dim")
+            t.add_column("Models", style="dim")
+            for p in providers:
+                models_count = len(p.get("models", []))
+                t.add_row(p.get("name", "?"), p.get("type", "?"),
+                          p.get("base_url", "?")[:40], str(models_count))
+            console.print()
+            console.print(t)
+            console.print()
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    if low_arg.startswith("test "):
+        name = arg[5:].strip()
+        if not name:
+            console.print("  [dim]Usage: /providers test <name>[/]")
+            return
+        try:
+            r = client.provider_action("test", name=name)
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            elif r.get("ok") or r.get("status") == "ok":
+                console.print(f"  [#5f87ff]Provider {name} is reachable[/]")
+            else:
+                console.print(f"  [warning]Response: {json.dumps(r)[:80]}[/]")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    if low_arg == "add":
+        try:
+            name = session.prompt(HTML("  <b>Provider name:</b> "))
+            ptype = session.prompt(HTML("  <b>Type (openai/anthropic):</b> "))
+            base_url = session.prompt(HTML("  <b>Base URL:</b> "))
+            api_key = session.prompt(HTML("  <b>API Key:</b> "))
+        except (KeyboardInterrupt, EOFError):
+            return
+        try:
+            r = client.provider_action("add", name=name.strip(), type=ptype.strip(),
+                                       base_url=base_url.strip(), api_key=api_key.strip())
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            else:
+                console.print(f"  [#5f87ff]Provider added:[/] [bold]{name}[/]")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    console.print("  [dim]/providers [test <name> | add][/]")
+
+
+def _handle_status(client: BrainAgentClient):
+    """Handle /status command."""
+    try:
+        data = client.get_services()
+        console.print()
+        t = Table(show_header=True, box=None, padding=(0, 2), pad_edge=False)
+        t.add_column("Service", style="bold")
+        t.add_column("Status")
+        t.add_column("Details", style="dim")
+
+        services = data.get("services", data)
+        if isinstance(services, list):
+            for svc in services:
+                name = svc.get("name", "?")
+                status = svc.get("status", "?")
+                sty = "#5f87ff" if status in ("running", "ok", "healthy") else "red"
+                details = svc.get("details", svc.get("url", ""))
+                t.add_row(name, f"[{sty}]{status}[/]", str(details)[:50])
+        elif isinstance(services, dict):
+            for name, info in services.items():
+                if isinstance(info, dict):
+                    status = info.get("status", "?")
+                    sty = "#5f87ff" if status in ("running", "ok", "healthy") else "red"
+                    details = info.get("url", info.get("details", ""))
+                    t.add_row(name, f"[{sty}]{status}[/]", str(details)[:50])
+                else:
+                    t.add_row(name, str(info), "")
+
+        console.print(t)
+        console.print()
+    except Exception as e:
+        console.print(f"  [error]{e}[/]")
+
+
+def _handle_tasks(arg: str, client: BrainAgentClient):
+    """Handle /tasks commands."""
+    low_arg = arg.lower().strip()
+
+    if low_arg.startswith("cancel "):
+        task_id = arg[7:].strip()
+        if not task_id:
+            console.print("  [dim]Usage: /tasks cancel <id>[/]")
+            return
+        try:
+            r = client.cancel_task(task_id)
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            else:
+                console.print(f"  [dim]Task cancelled:[/] {task_id}")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    # Default: list tasks
+    try:
+        tasks = client.list_tasks()
+        if not tasks:
+            console.print("  [dim]No running tasks[/]")
+            return
+        t = Table(show_header=True, box=None, padding=(0, 1))
+        t.add_column("ID", style="dim")
+        t.add_column("Agent", style="#af87ff")
+        t.add_column("Status")
+        t.add_column("Task", style="dim")
+        for task in tasks:
+            tid = str(task.get("id", "?"))[:8]
+            agent = task.get("agent", "?")
+            status = task.get("status", "?")
+            sty = "#5f87ff" if status == "running" else "dim"
+            desc = task.get("task", task.get("description", ""))[:40]
+            t.add_row(tid, agent, f"[{sty}]{status}[/]", desc)
+        console.print()
+        console.print(t)
+        console.print()
+    except Exception as e:
+        console.print(f"  [error]{e}[/]")
+
+
+def _handle_qmd(arg: str, client: BrainAgentClient, current_agent: str):
+    """Handle /qmd commands."""
+    low_arg = arg.lower().strip()
+
+    if low_arg.startswith("reindex"):
+        coll = arg[7:].strip() or None
+        try:
+            r = client.qmd_action("reindex", collection=coll)
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            else:
+                label = coll or "all collections"
+                console.print(f"  [#5f87ff]Reindex triggered:[/] {label}")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    # Default: show QMD status
+    try:
+        data = client.get_services()
+        services = data.get("services", data)
+        qmd_info = None
+        if isinstance(services, dict):
+            qmd_info = services.get("qmd", services.get("QMD"))
+        elif isinstance(services, list):
+            qmd_info = next((s for s in services if s.get("name", "").lower() == "qmd"), None)
+
+        console.print()
+        if qmd_info:
+            if isinstance(qmd_info, dict):
+                status = qmd_info.get("status", "?")
+                sty = "#5f87ff" if status in ("running", "ok", "healthy") else "red"
+                console.print(f"  [bold]QMD[/]  [{sty}]{status}[/]")
+                for k, v in qmd_info.items():
+                    if k != "status":
+                        console.print(f"  [dim]{k}:[/] {v}")
+            else:
+                console.print(f"  [bold]QMD[/]  {qmd_info}")
+        else:
+            console.print("  [dim]QMD status not available[/]")
+
+        # Show collection health
+        docs_data = client.get_qmd_docs(collection=current_agent)
+        docs = docs_data.get("docs", docs_data.get("files", []))
+        if docs:
+            total = len(docs)
+            current_count = sum(1 for d in docs if d.get("current"))
+            stale = total - current_count
+            console.print(f"  [dim]Collection {current_agent}:[/] {total} docs, "
+                          f"[#5f87ff]{current_count} current[/]"
+                          f"{f', [warning]{stale} stale[/]' if stale else ''}")
+        console.print()
+    except Exception as e:
+        console.print(f"  [error]{e}[/]")
+
+
+def _handle_schedule(arg: str, client: BrainAgentClient, session):
+    if not arg or arg == "list":
+        schedules = client.list_schedule()
+        if not schedules:
+            console.print("  [dim]No scheduled tasks[/]"); return
+        t = Table(show_header=True, box=None, padding=(0, 1))
+        t.add_column("Name", style="bold")
+        t.add_column("Status")
+        t.add_column("Schedule", style="dim")
+        t.add_column("Agent", style="#af87ff")
+        t.add_column("Next", style="dim")
+        for s in schedules:
+            st = "[#5f87ff]active[/]" if s["enabled"] else "[dim]paused[/]"
+            nr = s.get("next_run", "")[:16] if s.get("next_run") else "—"
+            t.add_row(s["name"], st, s["schedule"], s["agent"], nr)
+        console.print(); console.print(t); console.print()
+
+    elif arg == "add":
+        try:
+            name = session.prompt(HTML("  <b>Name:</b> "))
+            task = session.prompt(HTML("  <b>Task:</b> "))
+            sched_str = session.prompt(HTML("  <b>Schedule:</b> "))
+            agent = session.prompt(HTML("  <b>Agent</b> (main): ")) or "main"
+            model = session.prompt(HTML("  <b>Model</b> (current): ")) or None
+        except (KeyboardInterrupt, EOFError):
+            return
+        r = client.schedule_action("add", name=name.strip(), task=task.strip(),
+                                    schedule=sched_str.strip(), agent=agent.strip(), model=model)
+        if r.get("error"):
+            console.print(f"  [error]{r['error']}[/]")
+        else:
+            console.print(f"  [#5f87ff]Created:[/] [bold]{name}[/]")
+
+    elif arg.startswith("pause "):
+        r = client.schedule_action("pause", name=arg[6:].strip())
+        msg = "[dim]Paused[/]" if not r.get("error") else f"[error]{r['error']}[/]"
+        console.print(f"  {msg}")
+    elif arg.startswith("resume "):
+        r = client.schedule_action("resume", name=arg[7:].strip())
+        msg = "[dim]Resumed[/]" if not r.get("error") else f"[error]{r['error']}[/]"
+        console.print(f"  {msg}")
+    elif arg.startswith(("delete ", "rm ")):
+        r = client.schedule_action("delete", name=arg.split(" ", 1)[1].strip())
+        msg = "[dim]Deleted[/]" if not r.get("error") else f"[error]{r['error']}[/]"
+        console.print(f"  {msg}")
+    elif arg == "history":
+        r = client.schedule_action("history", limit=10)
+        h = r.get("history", [])
+        if not h:
+            console.print("  [dim]No history[/]"); return
+        for e in h:
+            sty = "#5f87ff" if e["status"] == "success" else "red"
+            console.print(f"  [{sty}]{e['status']}[/] [bold]{e['schedule_name']}[/] [dim]{e['finished_at'][:16]}[/]")
+    else:
+        console.print("  [dim]/schedule [list|add|pause|resume|delete|history][/]")
+
+
 # --- Main loop ---
 
 def run_interactive(args):
@@ -323,10 +1173,7 @@ def run_interactive(args):
 
     # Prompt setup
     pt_history = InMemoryHistory()
-    completer = WordCompleter(
-        ["/help", "/new", "/agent", "/model", "/models", "/tools", "/schedule"],
-        sentence=True,
-    )
+    completer = SlashCommandCompleter()
 
     def bottom_toolbar():
         if token_count >= 1000:
@@ -362,11 +1209,16 @@ def run_interactive(args):
         "tb.model": "bg:default #5f87ff noreverse",
         "tb.sep":   "bg:default #444444 noreverse",
         "tb.ctx":   "bg:default #ff8700 noreverse",
+        "completion-menu":             "bg:#333333 #cccccc",
+        "completion-menu.completion":  "bg:#333333 #cccccc",
+        "completion-menu.completion.current": "bg:#555555 #ffffff bold",
+        "completion-menu.meta":        "bg:#333333 #888888",
+        "completion-menu.meta.current": "bg:#555555 #aaaaaa",
     })
 
     session = PromptSession(
         history=pt_history, completer=completer, style=pt_style,
-        complete_while_typing=False, bottom_toolbar=bottom_toolbar,
+        complete_while_typing=True, bottom_toolbar=bottom_toolbar,
     )
 
     def _sep():
@@ -418,35 +1270,62 @@ def run_interactive(args):
                 console.print(f"  [dim]Tool display:[/] {s}")
                 continue
 
-            if low.startswith("/agent"):
-                arg = stripped[6:].strip()
-                if arg:
-                    resp = client.switch_agent(arg)
-                    current_agent = resp.get("agent", arg)
-                    current_model = resp.get("model", current_model)
-                    token_count = 0
-                    console.print(f"  [dim]→[/] [agent]{current_agent}[/] [dim]({current_model})[/]")
-                else:
-                    agents_data = client.list_agents()
-                    agent_ids = [a["id"] for a in agents_data]
-                    labels = [f"{a['id']} — {a.get('description', '')}" for a in agents_data]
-                    console.print()
-                    choice = select_inline(agent_ids, labels=labels, active=current_agent)
-                    if choice:
-                        resp = client.switch_agent(choice)
-                        current_agent = resp.get("agent", choice)
-                        current_model = resp.get("model", current_model)
-                        token_count = 0
-                        console.print(f"  [dim]→[/] [agent]{current_agent}[/] [dim]({current_model})[/]")
+            # --- Session management ---
+
+            if low == "/sessions":
+                result = _handle_sessions(client, current_agent)
+                new_sid, new_tc = result
+                if new_sid:
+                    client.session_id = new_sid
+                    token_count = new_tc or 0
+                    console.print(f"  [#5f87ff]Switched to session {new_sid[:8]}...[/]")
                 continue
+
+            if low.startswith("/switch"):
+                arg = stripped[7:].strip()
+                new_tc = _handle_switch(arg, client)
+                if new_tc is not None:
+                    token_count = new_tc
+                continue
+
+            if low == "/archive":
+                _handle_archive(client)
+                continue
+
+            if low == "/delete":
+                token_count = _handle_delete_session(client, current_agent, current_model,
+                                                     args.max_context)
+                continue
+
+            if low == "/clear":
+                token_count = _handle_clear(client)
+                continue
+
+            if low == "/incognito":
+                _handle_incognito(client)
+                continue
+
+            if low.startswith("/title"):
+                arg = stripped[6:].strip()
+                _handle_title(arg, client)
+                continue
+
+            # --- Agent management ---
+
+            if low.startswith("/agent"):
+                current_agent, current_model = _handle_agent(
+                    stripped, client, current_agent, current_model, session)
+                token_count = 0
+                continue
+
+            # --- Model ---
 
             if low.startswith("/model") and not low.startswith("/models"):
                 arg = stripped[6:].strip()
                 if arg:
                     current_model = arg
-                    # Switch agent with new model
                     client.switch_agent(current_agent, model=current_model)
-                    console.print(f"  [dim]→[/] [model]{current_model}[/]")
+                    console.print(f"  [dim]->[/] [model]{current_model}[/]")
                 else:
                     models = client.list_models()
                     if models:
@@ -455,7 +1334,7 @@ def run_interactive(args):
                         if choice:
                             current_model = choice
                             client.switch_agent(current_agent, model=current_model)
-                            console.print(f"  [dim]→[/] [model]{current_model}[/]")
+                            console.print(f"  [dim]->[/] [model]{current_model}[/]")
                     else:
                         console.print("  [dim]No models available[/]")
                 continue
@@ -468,10 +1347,60 @@ def run_interactive(args):
                     if choice:
                         current_model = choice
                         client.switch_agent(current_agent, model=current_model)
-                        console.print(f"  [dim]→[/] [model]{current_model}[/]")
+                        console.print(f"  [dim]->[/] [model]{current_model}[/]")
                 else:
                     console.print("  [dim]No models available[/]")
                 continue
+
+            # --- Teams ---
+
+            if low.startswith("/teams"):
+                arg = stripped[6:].strip()
+                _handle_teams(arg, client, session)
+                continue
+
+            # --- Skills ---
+
+            if low.startswith("/skills"):
+                arg = stripped[7:].strip()
+                _handle_skills(arg, client, current_agent)
+                continue
+
+            # --- Memory ---
+
+            if low.startswith("/memory"):
+                arg = stripped[7:].strip()
+                _handle_memory(arg, client, current_agent)
+                continue
+
+            # --- Providers ---
+
+            if low.startswith("/providers"):
+                arg = stripped[10:].strip()
+                _handle_providers(arg, client, session)
+                continue
+
+            # --- Status ---
+
+            if low == "/status":
+                _handle_status(client)
+                continue
+
+            # --- Tasks ---
+
+            if low.startswith("/tasks"):
+                arg = stripped[6:].strip()
+                _handle_tasks(arg, client)
+                continue
+
+            # --- QMD ---
+
+            if low.startswith("/qmd"):
+                arg = stripped[4:].strip()
+                _handle_qmd(arg, client, current_agent)
+                continue
+
+            # --- Schedule ---
 
             if low.startswith("/schedule"):
                 _handle_schedule(low[9:].strip(), client, session)
@@ -532,63 +1461,6 @@ def run_interactive(args):
         traceback.print_exc()
     finally:
         client.delete_session()
-
-
-def _handle_schedule(arg: str, client: BrainAgentClient, session):
-    if not arg or arg == "list":
-        schedules = client.list_schedule()
-        if not schedules:
-            console.print("  [dim]No scheduled tasks[/]"); return
-        t = Table(show_header=True, box=None, padding=(0, 1))
-        t.add_column("Name", style="bold")
-        t.add_column("Status")
-        t.add_column("Schedule", style="dim")
-        t.add_column("Agent", style="#af87ff")
-        t.add_column("Next", style="dim")
-        for s in schedules:
-            st = "[#5f87ff]active[/]" if s["enabled"] else "[dim]paused[/]"
-            nr = s.get("next_run", "")[:16] if s.get("next_run") else "—"
-            t.add_row(s["name"], st, s["schedule"], s["agent"], nr)
-        console.print(); console.print(t); console.print()
-
-    elif arg == "add":
-        try:
-            name = session.prompt(HTML("  <b>Name:</b> "))
-            task = session.prompt(HTML("  <b>Task:</b> "))
-            sched_str = session.prompt(HTML("  <b>Schedule:</b> "))
-            agent = session.prompt(HTML("  <b>Agent</b> (main): ")) or "main"
-            model = session.prompt(HTML("  <b>Model</b> (current): ")) or None
-        except (KeyboardInterrupt, EOFError):
-            return
-        r = client.schedule_action("add", name=name.strip(), task=task.strip(),
-                                    schedule=sched_str.strip(), agent=agent.strip(), model=model)
-        if r.get("error"):
-            console.print(f"  [error]{r['error']}[/]")
-        else:
-            console.print(f"  [#5f87ff]✔ Created:[/] [bold]{name}[/]")
-
-    elif arg.startswith("pause "):
-        r = client.schedule_action("pause", name=arg[6:].strip())
-        msg = "[dim]Paused[/]" if not r.get("error") else f"[error]{r['error']}[/]"
-        console.print(f"  {msg}")
-    elif arg.startswith("resume "):
-        r = client.schedule_action("resume", name=arg[7:].strip())
-        msg = "[dim]Resumed[/]" if not r.get("error") else f"[error]{r['error']}[/]"
-        console.print(f"  {msg}")
-    elif arg.startswith(("delete ", "rm ")):
-        r = client.schedule_action("delete", name=arg.split(" ", 1)[1].strip())
-        msg = "[dim]Deleted[/]" if not r.get("error") else f"[error]{r['error']}[/]"
-        console.print(f"  {msg}")
-    elif arg == "history":
-        r = client.schedule_action("history", limit=10)
-        h = r.get("history", [])
-        if not h:
-            console.print("  [dim]No history[/]"); return
-        for e in h:
-            sty = "#5f87ff" if e["status"] == "success" else "red"
-            console.print(f"  [{sty}]{e['status']}[/] [bold]{e['schedule_name']}[/] [dim]{e['finished_at'][:16]}[/]")
-    else:
-        console.print("  [dim]/schedule [list|add|pause|resume|delete|history][/]")
 
 
 # --- Entry point ---

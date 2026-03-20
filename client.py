@@ -56,6 +56,18 @@ class BrainAgentClient:
                 pass
             self.session_id = None
 
+    def list_sessions(self, agent: str = "main", status: str = "active") -> list[dict]:
+        return self._get(f"/v1/sessions?agent={agent}&status={status}").get("sessions", [])
+
+    def get_session_messages(self, session_id: str) -> list[dict]:
+        return self._get(f"/v1/sessions/{session_id}/messages").get("messages", [])
+
+    def session_action(self, action: str, **kwargs) -> dict:
+        kwargs["action"] = action
+        if self.session_id and "session_id" not in kwargs:
+            kwargs["session_id"] = self.session_id
+        return self._post("/v1/sessions/manage", kwargs)
+
     # --- Chat (SSE streaming) ---
 
     def chat(self, message: str):
@@ -129,6 +141,15 @@ class BrainAgentClient:
     def list_agents(self) -> list[dict]:
         return self._get("/v1/agents").get("agents", [])
 
+    def create_agent(self, agent_id: str, description: str = "") -> dict:
+        return self._post("/v1/agents/create", {"agent_id": agent_id, "description": description})
+
+    def delete_agent(self, agent_id: str) -> dict:
+        return self._post("/v1/agents/delete", {"agent_id": agent_id})
+
+    def pause_agent(self, agent_id: str, paused: bool = True) -> dict:
+        return self._post("/v1/agents/pause", {"agent_id": agent_id, "paused": paused})
+
     def switch_agent(self, agent: str, model: str | None = None) -> dict:
         data = {"session_id": self.session_id, "agent": agent}
         if model:
@@ -158,6 +179,68 @@ class BrainAgentClient:
 
     def list_tasks(self) -> list[dict]:
         return self._get("/v1/tasks").get("tasks", [])
+
+    def cancel_task(self, task_id: str) -> dict:
+        return self._post("/v1/tasks/cancel", {"task_id": task_id})
+
+    # --- Providers ---
+
+    def list_providers(self) -> list[dict]:
+        return self._get("/v1/providers").get("providers", [])
+
+    def provider_action(self, action: str, **kwargs) -> dict:
+        kwargs["action"] = action
+        return self._post("/v1/providers", kwargs)
+
+    # --- Services ---
+
+    def get_services(self) -> dict:
+        return self._get("/v1/services")
+
+    # --- Teams ---
+
+    def get_teams(self) -> dict:
+        return self._get("/v1/teams")
+
+    def team_action(self, action: str, **kwargs) -> dict:
+        kwargs["action"] = action
+        return self._post("/v1/teams", kwargs)
+
+    # --- Skills ---
+
+    def skills_browse(self, query: str, agent: str = "main") -> dict:
+        return self._post("/v1/skills/browse", {"query": query, "agent": agent})
+
+    def skills_install(self, url: str, agent: str = "main") -> dict:
+        return self._post("/v1/skills/install", {"url": url, "agent": agent})
+
+    def skills_remove(self, slug: str, agent: str = "main") -> dict:
+        return self._post("/v1/skills/remove", {"slug": slug, "agent": agent})
+
+    def skills_list(self, agent: str = "main") -> dict:
+        return self._get(f"/v1/skills?agent={agent}")
+
+    # --- Memory ---
+
+    def get_memory_summary(self, agent: str = "main") -> dict:
+        return self._get(f"/v1/agents/{agent}/memory-summary")
+
+    def memory_summary_action(self, agent: str, action: str) -> dict:
+        return self._post(f"/v1/agents/{agent}/memory-summary", {"action": action})
+
+    # --- QMD ---
+
+    def get_qmd_docs(self, collection: str | None = None) -> dict:
+        path = "/v1/services/qmd/docs"
+        if collection:
+            path += f"?collection={collection}"
+        return self._get(path)
+
+    def qmd_action(self, action: str, collection: str | None = None) -> dict:
+        data = {"action": action}
+        if collection:
+            data["collection"] = collection
+        return self._post("/v1/services/qmd", data)
 
     # --- Connection test ---
 
