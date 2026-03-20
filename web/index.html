@@ -5537,6 +5537,14 @@ async function renderModelsTab(el) {
             <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Priority</label>
             <input id="add-model-priority" type="number" class="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" value="50">
           </div>
+          <div>
+            <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Cost Input ($/1M tok)</label>
+            <input id="add-model-cost-input" type="number" step="0.01" class="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" value="0" placeholder="0">
+          </div>
+          <div>
+            <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Cost Output ($/1M tok)</label>
+            <input id="add-model-cost-output" type="number" step="0.01" class="w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" value="0" placeholder="0">
+          </div>
         </div>
         <div class="flex gap-2">
           <button onclick="addModelFromForm()" class="btn-primary text-xs px-3 py-1.5 rounded-lg">Add</button>
@@ -5559,7 +5567,7 @@ async function renderModelsTab(el) {
               <span class="text-text-primary font-display font-semibold text-sm mono">${esc(mid)}</span>
               <span class="text-xs text-text-muted">${esc(cfg.provider || '')}</span>
             </div>
-            <div class="grid grid-cols-4 gap-3 mb-3">
+            <div class="grid grid-cols-6 gap-3 mb-3">
               <div>
                 <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Shortname</label>
                 <input class="mdl-shortname w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" value="${esc(cfg.shortname || '')}">
@@ -5569,12 +5577,20 @@ async function renderModelsTab(el) {
                 <input type="number" class="mdl-priority w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" value="${cfg.priority || 0}">
               </div>
               <div>
-                <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Context Window</label>
+                <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Context</label>
                 <input type="number" class="mdl-max-context w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" value="${cfg.max_context || ''}" placeholder="131072">
               </div>
               <div>
                 <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Provider</label>
                 <span class="text-xs text-text-muted mono block py-1">${esc(cfg.provider || 'unknown')}</span>
+              </div>
+              <div>
+                <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">$/1M In</label>
+                <input type="number" step="0.01" class="mdl-cost-input w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" value="${cfg.cost_input || 0}">
+              </div>
+              <div>
+                <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">$/1M Out</label>
+                <input type="number" step="0.01" class="mdl-cost-output w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" value="${cfg.cost_output || 0}">
               </div>
             </div>
             <div class="mb-3">
@@ -5688,6 +5704,8 @@ window.addModelFromForm = async function() {
   const provider = document.getElementById('add-model-provider')?.value || '';
   const maxCtx = parseInt(document.getElementById('add-model-context')?.value) || 131072;
   const priority = parseInt(document.getElementById('add-model-priority')?.value) || 50;
+  const costInput = parseFloat(document.getElementById('add-model-cost-input')?.value) || 0;
+  const costOutput = parseFloat(document.getElementById('add-model-cost-output')?.value) || 0;
   state.modelsConfig[mid] = {
     enabled: true,
     shortname: mid,
@@ -5696,6 +5714,8 @@ window.addModelFromForm = async function() {
     capabilities: [],
     provider,
     max_context: maxCtx,
+    cost_input: costInput,
+    cost_output: costOutput,
   };
   try {
     const res = await API.post('/v1/models/config', { action: 'save', models: state.modelsConfig });
@@ -5742,6 +5762,11 @@ window.saveModelsConfig = async function() {
     // max_context
     const mcVal = row.querySelector('.mdl-max-context')?.value;
     if (mcVal) entry.max_context = parseInt(mcVal);
+    // Cost rates
+    const ciVal = row.querySelector('.mdl-cost-input')?.value;
+    const coVal = row.querySelector('.mdl-cost-output')?.value;
+    if (ciVal !== undefined) entry.cost_input = parseFloat(ciVal) || 0;
+    if (coVal !== undefined) entry.cost_output = parseFloat(coVal) || 0;
     // Inference defaults
     const inference = {};
     row.querySelectorAll('.mdl-inf').forEach(inp => {
