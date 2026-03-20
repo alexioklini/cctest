@@ -270,6 +270,30 @@ SLASH_COMMANDS = {
     "/workflow status": "Show running workflow executions",
     "/workflow approve": "Approve a workflow approval gate",
     "/workflow cancel":  "Cancel a running workflow",
+    # Notifications
+    "/notifications":    "Show recent notifications",
+    # Backup & Restore
+    "/backup":           "Create full backup",
+    "/backup agent":     "Backup single agent",
+    "/restore":          "Restore from backup file",
+    # Traces & Audit
+    "/traces":          "Show recent traces (last 24h)",
+    "/audit":           "Show recent audit log entries",
+    "/audit export":    "Export audit log as CSV",
+    # MCP
+    "/mcp":             "List MCP server connections",
+    "/mcp connect":     "Connect to an MCP server",
+    "/mcp disconnect":  "Disconnect from an MCP server",
+    # Nodes
+    "/nodes":           "List remote nodes",
+    "/nodes add":       "Add a new remote node",
+    "/nodes remove":    "Remove a remote node",
+    "/nodes pause":     "Pause a remote node",
+    "/nodes resume":    "Resume a paused node",
+    # Channels
+    "/channels":        "List messaging channels",
+    "/channels start":  "Start a messaging channel",
+    "/channels stop":   "Stop a messaging channel",
 }
 
 
@@ -398,6 +422,18 @@ def print_help():
         ("/workflow status", "Show running workflow executions"),
         ("/workflow approve <id>", "Approve a workflow approval gate"),
         ("/workflow cancel <id>", "Cancel a running workflow"),
+    ])
+
+    _section("Traces & Audit", [
+        ("/traces", "Show recent traces (last 24h)"),
+        ("/audit", "Show recent audit log entries"),
+        ("/audit export", "Export audit log as CSV"),
+    ])
+
+    _section("MCP Servers", [
+        ("/mcp", "List MCP connections"),
+        ("/mcp connect <url> <name>", "Connect to MCP server"),
+        ("/mcp disconnect <name>", "Disconnect MCP server"),
     ])
 
     _section("Other", [
@@ -1353,6 +1389,175 @@ def _fmt_tokens(n: int) -> str:
     return str(n)
 
 
+def _handle_traces(client: BrainAgentClient):
+    """Handle /traces command — show recent traces."""
+    try:
+        data = client._get("/v1/traces?hours=24&limit=20")
+        if data.get("error"):
+            console.print(f"  [error]{data['error']}[/]")
+            return
+        traces = data.get("traces", [])
+        if not traces:
+            console.print("  [dim]No traces recorded yet.[/]")
+            return
+        console.print()
+        console.print("  [bold]Recent Traces (last 24h)[/]")
+        console.print()
+        t = Table(show_header=True, box=None, padding=(0, 1))
+        t.add_column("Time", style="dim")
+        t.add_column("Agent", style="#af87ff")
+        t.add_column("Type", style="bold")
+        t.add_column("Name")
+        t.add_column("Duration", justify="right")
+        t.add_column("Status", justify="center")
+        t.add_column("Spans", justify="right", style="dim")
+        for tr in traces:
+            ts = tr.get("started_at", "")
+            if "T" in ts:
+                ts = ts.split("T")[1][:8]
+            dur = tr.get("duration_ms")
+            dur_str = f"{dur/1000:.1f}s" if dur else "?"
+            status = tr.get("status", "ok")
+            status_style = "#5f87ff" if status == "ok" else "red"
+            t.add_row(
+                ts,
+                tr.get("agent", "?"),
+                tr.get("type", "?"),
+                (tr.get("name", "?"))[:40],
+                dur_str,
+                f"[{status_style}]{status}[/]",
+                str(tr.get("span_count", 0)),
+            )
+        console.print(t)
+        console.print()
+    except Exception as e:
+        console.print(f"  [error]{e}[/]")
+
+
+def _handle_audit(arg: str, client: BrainAgentClient):
+    """Handle /audit command — show recent audit log entries."""
+    if arg.startswith("export"):
+        try:
+            console.print("  [dim]Downloading audit CSV...[/]")
+            import urllib.request
+            req = urllib.request.Request(f"{client.server_url}/v1/audit/export?format=csv")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                csv_data = resp.read().decode("utf-8")
+            out_path = "audit_log.csv"
+            with open(out_path, "w") as f:
+                f.write(csv_data)
+            console.print(f"  [#5f87ff]Exported to {out_path}[/] ({len(csv_data)} bytes)")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    try:
+        data = client._get("/v1/audit?limit=20")
+        if data.get("error"):
+            console.print(f"  [error]{data['error']}[/]")
+            return
+        entries = data.get("entries", [])
+        if not entries:
+            console.print("  [dim]No audit entries yet.[/]")
+            return
+        console.print()
+        console.print("  [bold]Recent Audit Log[/]")
+        console.print()
+        t = Table(show_header=True, box=None, padding=(0, 1))
+        t.add_column("Time", style="dim")
+        t.add_column("Agent", style="#af87ff")
+        t.add_column("Action", style="bold")
+        t.add_column("Tool", style="#ff8700")
+        t.add_column("Summary")
+        t.add_column("Status", justify="center")
+        for entry in entries:
+            ts = entry.get("timestamp", "")
+            if "T" in ts:
+                ts = ts.split("T")[1][:8]
+            status = entry.get("result_status", "success")
+            status_style = "#5f87ff" if status == "success" else "red"
+            t.add_row(
+                ts,
+                entry.get("agent", "?"),
+                entry.get("action_type", "?"),
+                entry.get("tool_name", "?"),
+                (entry.get("args_summary", ""))[:40],
+                f"[{status_style}]{status}[/]",
+            )
+        console.print(t)
+        console.print()
+    except Exception as e:
+        console.print(f"  [error]{e}[/]")
+
+
+def _handle_mcp(arg: str, client: BrainAgentClient, session):
+    """Handle /mcp command — manage MCP connections."""
+    if arg.startswith("connect"):
+        parts = arg[7:].strip().split(None, 1)
+        if len(parts) < 2:
+            console.print("  [dim]Usage: /mcp connect <url> <name>[/]")
+            return
+        url, name = parts
+        try:
+            result = client._post("/v1/mcp/connect", {"url": url, "name": name})
+            if result.get("error"):
+                console.print(f"  [error]{result['error']}[/]")
+            else:
+                tools = result.get("tools", [])
+                console.print(f"  [#5f87ff]Connected to {name}[/] ({len(tools)} tools)")
+                for tool in tools[:10]:
+                    console.print(f"    [dim]{tool.get('name', '?')}[/]: {tool.get('description', '')[:60]}")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    if arg.startswith("disconnect"):
+        name = arg[10:].strip()
+        if not name:
+            console.print("  [dim]Usage: /mcp disconnect <name>[/]")
+            return
+        try:
+            result = client._post("/v1/mcp/disconnect", {"name": name})
+            if result.get("error"):
+                console.print(f"  [error]{result['error']}[/]")
+            else:
+                console.print(f"  [dim]Disconnected from {name}[/]")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    # Default: list connections
+    try:
+        data = client._get("/v1/mcp/connections")
+        connections = data.get("connections", [])
+        if not connections:
+            console.print("  [dim]No MCP connections[/]")
+            return
+        console.print()
+        console.print("  [bold]MCP Connections[/]")
+        console.print()
+        t = Table(show_header=True, box=None, padding=(0, 2))
+        t.add_column("Name", style="bold")
+        t.add_column("Transport", style="dim")
+        t.add_column("Tools", justify="right")
+        t.add_column("Tool Names", style="dim")
+        for conn in connections:
+            tools = conn.get("tools", [])
+            tool_names = ", ".join(tools[:5])
+            if len(tools) > 5:
+                tool_names += f" +{len(tools)-5}"
+            t.add_row(
+                conn.get("name", "?"),
+                conn.get("transport", "?"),
+                str(conn.get("tool_count", len(tools))),
+                tool_names,
+            )
+        console.print(t)
+        console.print()
+    except Exception as e:
+        console.print(f"  [error]{e}[/]")
+
+
 def _handle_schedule(arg: str, client: BrainAgentClient, session):
     if not arg or arg == "list":
         schedules = client.list_schedule()
@@ -2038,6 +2243,26 @@ def run_interactive(args):
                 _handle_costs(client)
                 continue
 
+            # --- Traces ---
+
+            if low.startswith("/traces"):
+                _handle_traces(client)
+                continue
+
+            # --- Audit ---
+
+            if low.startswith("/audit"):
+                arg = stripped[6:].strip()
+                _handle_audit(arg, client)
+                continue
+
+            # --- MCP ---
+
+            if low.startswith("/mcp"):
+                arg = stripped[4:].strip()
+                _handle_mcp(arg, client, session)
+                continue
+
             # --- Projects ---
 
             if low.startswith("/projects"):
@@ -2109,6 +2334,162 @@ def run_interactive(args):
                         console.print(f"  [error]{e}[/]")
                 continue
 
+            # --- Notifications ---
+
+            if low == "/notifications":
+                try:
+                    r = client._get("/v1/notifications")
+                    notifs = r.get("notifications", [])
+                    unread = r.get("unread", 0)
+                    if not notifs:
+                        console.print("  [dim]No notifications[/]")
+                    else:
+                        console.print(f"\n  [bold]Notifications[/] ({unread} unread)\n")
+                        for n in notifs[:15]:
+                            sev = n.get("severity", "info")
+                            icon = "[red]!![/]" if sev in ("critical", "error") else "[#ff8700]![/]" if sev == "warning" else "[#5f87ff]i[/]"
+                            agent_str = f"  {n['agent']}" if n.get("agent") else ""
+                            console.print(f"  {icon} {n.get('created_at', '')[:16]}  {n.get('event_type', ''):<18}{agent_str}  {n.get('title', '')}")
+                        console.print()
+                    # Mark all read
+                    try:
+                        client._post("/v1/notifications/read", {})
+                    except Exception:
+                        pass
+                except Exception as e:
+                    console.print(f"  [error]{e}[/]")
+                continue
+
+            # --- Backup ---
+
+            if low.startswith("/backup"):
+                arg = stripped[7:].strip()
+                try:
+                    if arg.startswith("agent "):
+                        agent_name = arg[6:].strip()
+                        r = client._post("/v1/backup", {"type": "agent", "agent": agent_name})
+                    else:
+                        r = client._post("/v1/backup", {"type": "full"})
+                    if r.get("error"):
+                        console.print(f"  [error]{r['error']}[/]")
+                    else:
+                        path = r.get("path", "")
+                        size = r.get("size_bytes", 0)
+                        console.print(f"  [#5f87ff]Backup created: {path}[/]")
+                        console.print(f"  [dim]Size: {size / 1024:.0f} KB[/]")
+                except Exception as e:
+                    console.print(f"  [error]{e}[/]")
+                continue
+
+            if low.startswith("/restore"):
+                fpath = stripped[8:].strip()
+                if not fpath:
+                    console.print("  [dim]Usage: /restore <path-to-backup.tar.gz>[/]")
+                else:
+                    try:
+                        r = client._post("/v1/restore", {"path": fpath, "strategy": "merge"})
+                        if r.get("error"):
+                            console.print(f"  [error]{r['error']}[/]")
+                        else:
+                            console.print(f"  [#5f87ff]Restore complete[/]")
+                            if r.get("imported"):
+                                imp = r["imported"]
+                                console.print(f"  [dim]Agents: {imp.get('agents', [])}, Memories: {imp.get('memories', 0)}[/]")
+                    except Exception as e:
+                        console.print(f"  [error]{e}[/]")
+                continue
+
+            # --- Nodes ---
+
+            if low.startswith("/nodes"):
+                arg = stripped[6:].strip()
+                try:
+                    if not arg or arg == "list":
+                        nodes = client.list_nodes()
+                        if not nodes:
+                            console.print("  [dim]No remote nodes configured.[/]")
+                        else:
+                            table = Table(show_header=True, header_style="bold", box=None)
+                            table.add_column("Name", style="bold")
+                            table.add_column("Status")
+                            table.add_column("OS", style="dim")
+                            table.add_column("CPU")
+                            table.add_column("RAM")
+                            table.add_column("Tags", style="dim")
+                            for n in nodes:
+                                status_style = "#5f87ff" if n["status"] == "connected" else "dim"
+                                dot = "[green]●[/]" if n["status"] == "connected" else "[dim]○[/]"
+                                cpu = f"{n.get('cpu_percent', 0):.0f}%" if n.get("cpu_percent") is not None else "-"
+                                mem = f"{n.get('mem_used_gb', 0):.1f}/{n.get('mem_total_gb', 0):.0f}G" if n.get("mem_total_gb") else "-"
+                                table.add_row(
+                                    n["name"],
+                                    f"{dot} [{status_style}]{n['status']}[/]",
+                                    n.get("os", "")[:20],
+                                    cpu, mem,
+                                    ", ".join(n.get("tags", [])),
+                                )
+                            console.print(table)
+                    elif arg.startswith("add "):
+                        parts = arg[4:].strip().split(None, 1)
+                        name = parts[0]
+                        desc = parts[1] if len(parts) > 1 else ""
+                        r = client.node_action("add", name=name, description=desc)
+                        console.print(f"  [#5f87ff]Node '{name}' created[/]")
+                        console.print(f"  [dim]Token:[/] {r.get('token', '')}")
+                        console.print(f"  [dim]Install:[/] {r.get('install_command', '')}")
+                    elif arg.startswith("remove "):
+                        name = arg[7:].strip()
+                        client.node_action("remove", name=name)
+                        console.print(f"  [#5f87ff]Node '{name}' removed[/]")
+                    elif arg.startswith("pause "):
+                        name = arg[6:].strip()
+                        client.node_action("pause", name=name)
+                        console.print(f"  [#5f87ff]Node '{name}' paused[/]")
+                    elif arg.startswith("resume "):
+                        name = arg[7:].strip()
+                        client.node_action("resume", name=name)
+                        console.print(f"  [#5f87ff]Node '{name}' resumed[/]")
+                    else:
+                        console.print("  [dim]Usage: /nodes [list|add|remove|pause|resume][/]")
+                except Exception as e:
+                    console.print(f"  [error]{e}[/]")
+                continue
+
+            # --- Channels ---
+
+            if low.startswith("/channels"):
+                arg = stripped[9:].strip()
+                try:
+                    if not arg or arg == "list":
+                        channels = client.list_channels()
+                        if not channels:
+                            console.print("  [dim]No messaging channels configured.[/]")
+                        else:
+                            for ch in channels:
+                                dot = "[green]●[/]" if ch.get("running") else "[dim]○[/]"
+                                status = "RUNNING" if ch.get("running") else "STOPPED"
+                                stats = ch.get("stats", {})
+                                console.print(
+                                    f"  {dot} [bold]{ch.get('channel_id', '')}[/] "
+                                    f"[dim]{ch.get('type', '')}[/]  "
+                                    f"[{'#5f87ff' if ch.get('running') else 'dim'}]{status}[/]  "
+                                    f"[dim]{ch.get('identity', '')}[/]  "
+                                    f"[dim]{stats.get('messages_in', 0)} msgs[/]"
+                                )
+                    elif arg.startswith("start "):
+                        ch_id = arg[6:].strip()
+                        client.channel_start(ch_id)
+                        console.print(f"  [#5f87ff]Channel '{ch_id}' started[/]")
+                    elif arg.startswith("stop "):
+                        ch_id = arg[5:].strip()
+                        client.channel_stop(ch_id)
+                        console.print(f"  [#5f87ff]Channel '{ch_id}' stopped[/]")
+                    else:
+                        console.print("  [dim]Usage: /channels [list|start|stop][/]")
+                except Exception as e:
+                    console.print(f"  [error]{e}[/]")
+                continue
+
             # --- Send message via SSE ---
             console.print()
             start_time = time.time()
@@ -2117,6 +2498,7 @@ def run_interactive(args):
             tool_output_lines = 0
             done_model = ""
             done_cost = None
+            fallback_notice = ""
 
             try:
                 with console.status(
@@ -2138,11 +2520,17 @@ def run_interactive(args):
                                     tool_output_lines = 0
                         elif event_type == "tool_output":
                             tool_output_lines += 1
+                        elif event_type == "fallback":
+                            if data.get("status") == "switch":
+                                fallback_notice = f"Fallback: {data.get('from','')} -> {data.get('to','')} ({data.get('reason','unavailable')})"
                         elif event_type == "done":
                             full_text = data.get("text", "")
                             token_count = data.get("tokens", 0)
                             done_model = data.get("model", "")
                             done_cost = data.get("cost")
+                            if data.get("fallback_model"):
+                                fallback_notice = f"Fallback: {data.get('original_model', done_model)} -> {data['fallback_model']}"
+                                done_model = data["fallback_model"]
                         elif event_type == "error":
                             console.print(f"  [error]{data.get('message', 'Unknown error')}[/]")
                             break
@@ -2163,6 +2551,8 @@ def run_interactive(args):
                 pct = min(99, int(token_count / session_max_context * 100))
                 model_tag = f"{model_icon(done_model)} {done_model}  " if done_model else ""
                 cost_tag = f" · ${done_cost:.2f}" if done_cost is not None else ""
+                if fallback_notice:
+                    console.print(f"\n  [warning]{fallback_notice}[/]")
                 console.print(f"\n  [dim]{model_tag}✻ {elapsed:.0f}s · {token_count:,}/{session_max_context//1000}k ({pct}%){cost_tag}[/]")
                 if not show_tools and tool_count > 0:
                     console.print(f"  [dim]{tool_count} tool calls (hidden)[/]")

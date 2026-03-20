@@ -20,9 +20,124 @@ from socketserver import ThreadingMixIn
 _server_start_time = time.time()
 _QMD_PORT = 8181
 import telegram as _telegram_mod
+import adapters as _adapters_mod
 _QMD_PID_FILE = os.path.expanduser("~/.cache/qmd/mcp.pid")
 
 import claude_cli as engine
+import notifications as _notif_mod
+
+# --- Notification Manager (initialized in main()) ---
+_notification_manager: _notif_mod.NotificationManager | None = None
+
+# --- Node Manager (in-memory registry for remote nodes) ---
+
+_node_registry: dict[str, dict] = {}  # token -> node info
+_node_commands: dict[str, dict] = {}  # command_id -> {command, result_event, result}
+_node_lock = threading.Lock()
+
+
+def _load_node_config() -> dict:
+    """Load nodes config from config.json."""
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+    try:
+        with open(config_path) as f:
+            config = json.load(f)
+        return config.get("nodes", {})
+    except Exception:
+        return {}
+
+
+def _save_node_config(nodes: dict):
+    """Save nodes config to config.json."""
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+    try:
+        config = {}
+        if os.path.exists(config_path):
+            with open(config_path) as f:
+                config = json.load(f)
+        config["nodes"] = nodes
+        with open(config_path, "w") as f:
+            json.dump(config, f, indent=2)
+    except Exception as e:
+        print(f"Failed to save node config: {e}", flush=True)
+
+
+def _init_node_registry():
+    """Initialize node registry from config."""
+    global _node_registry
+    nodes_cfg = _load_node_config()
+    with _node_lock:
+        for name, cfg in nodes_cfg.items():
+            token = cfg.get("token", "")
+            if token:
+                _node_registry[token] = {
+                    "name": name,
+                    "config": cfg,
+                    "status": "disconnected",
+                    "last_heartbeat": None,
+                    "hostname": "",
+                    "os": "",
+                    "cpu_percent": None,
+                    "mem_used_gb": None,
+                    "mem_total_gb": None,
+                    "disk_free_gb": None,
+                    "uptime_seconds": None,
+                    "active_commands": 0,
+                    "total_commands": 0,
+                    "connected_since": None,
+                    "pending_commands": [],
+                }
+
+
+def _node_submit_command(node_selector: str, tool: str, params: dict) -> dict:
+    """Submit a command to a remote node. Returns the result."""
+    with _node_lock:
+        target_node = None
+        target_token = None
+
+        if node_selector.startswith("tag:"):
+            tag = node_selector[4:]
+            candidates = []
+            for token, info in _node_registry.items():
+                cfg = info.get("config", {})
+                if tag in cfg.get("tags", []) and info["status"] == "connected" and not cfg.get("paused"):
+                    if tool in cfg.get("allowed_tools", []):
+                        candidates.append((token, info))
+            if candidates:
+                candidates.sort(key=lambda x: x[1].get("active_commands", 0))
+                target_token, target_node = candidates[0]
+        else:
+            for token, info in _node_registry.items():
+                if info["name"] == node_selector:
+                    target_token = token
+                    target_node = info
+                    break
+
+        if not target_node:
+            return {"error": f"Node '{node_selector}' not found"}
+        if target_node["status"] != "connected":
+            return {"error": f"Node '{node_selector}' is not connected"}
+        cfg = target_node.get("config", {})
+        if cfg.get("paused"):
+            return {"error": f"Node '{node_selector}' is paused"}
+        if tool not in cfg.get("allowed_tools", []):
+            return {"error": f"Tool '{tool}' not allowed on node '{node_selector}'"}
+
+        command_id = uuid.uuid4().hex[:12]
+        cmd = {"id": command_id, "tool": tool, "params": params}
+        result_event = threading.Event()
+        _node_commands[command_id] = {"command": cmd, "result_event": result_event, "result": None}
+        target_node["pending_commands"].append(cmd)
+
+    timeout = params.get("timeout", 120)
+    if result_event.wait(timeout=timeout + 5):
+        with _node_lock:
+            entry = _node_commands.pop(command_id, {})
+            return entry.get("result", {"error": "No result"})
+    else:
+        with _node_lock:
+            _node_commands.pop(command_id, None)
+        return {"error": f"Timeout waiting for node '{node_selector}'"}
 
 # --- Session Management with SQLite persistence ---
 
@@ -433,6 +548,18 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_costs_daily()
         elif path == "/v1/cache/stats":
             self._send_json(engine._web_cache.stats())
+        # --- Traces & Audit GET routes ---
+        elif path == "/v1/traces" or path.startswith("/v1/traces?"):
+            self._handle_traces_list()
+        elif path.startswith("/v1/traces/"):
+            self._handle_trace_detail(path)
+        elif path == "/v1/audit" or path.startswith("/v1/audit?"):
+            self._handle_audit_list()
+        elif path.startswith("/v1/audit/export"):
+            self._handle_audit_export()
+        # --- MCP GET routes ---
+        elif path == "/v1/mcp/connections":
+            self._handle_mcp_list()
         # --- Projects & Ingestion GET routes ---
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/docs" in path:
             self._handle_project_docs(path)
@@ -442,6 +569,20 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_list_projects(path)
         elif path.startswith("/v1/agents/") and path.endswith("/ingested"):
             self._handle_list_ingested(path)
+        elif path == "/v1/notifications":
+            self._handle_notifications_list()
+        elif path == "/v1/notifications/unread":
+            self._handle_notifications_unread()
+        elif path == "/v1/backup/info":
+            self._handle_backup_info()
+        # --- Nodes GET routes ---
+        elif path == "/v1/nodes":
+            self._handle_nodes_list()
+        elif path.startswith("/v1/nodes/poll"):
+            self._handle_node_poll()
+        # --- Channels GET routes ---
+        elif path == "/v1/channels":
+            self._handle_channels_list()
         elif path == "/" or path.startswith("/web/") or path.endswith((".html", ".css", ".js", ".ico")):
             self._serve_static(path)
         else:
@@ -511,10 +652,25 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         elif path == "/v1/cache/clear":
             engine._web_cache.clear()
             self._send_json({"status": "cleared"})
+        elif path == "/v1/notifications/settings":
+            self._handle_notifications_settings_post()
+        elif path == "/v1/notifications/dismiss":
+            self._handle_notifications_dismiss()
+        elif path == "/v1/notifications/read":
+            self._handle_notifications_read()
+        elif path == "/v1/backup":
+            self._handle_backup_create()
+        elif path == "/v1/restore":
+            self._handle_restore()
         elif path == "/v1/refine":
             self._handle_refine()
         elif path.startswith("/v1/agents/") and path.endswith("/commands"):
             self._handle_agent_commands_post(path)
+        # --- MCP POST routes ---
+        elif path == "/v1/mcp/connect":
+            self._handle_mcp_connect()
+        elif path == "/v1/mcp/disconnect":
+            self._handle_mcp_disconnect()
         # --- Projects & Ingestion POST routes ---
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/ingest" in path:
             self._handle_project_ingest(path)
@@ -522,6 +678,22 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_create_project(path)
         elif path.startswith("/v1/agents/") and path.endswith("/ingest"):
             self._handle_agent_ingest(path)
+        # --- Nodes POST routes ---
+        elif path == "/v1/nodes":
+            self._handle_nodes_action()
+        elif path == "/v1/nodes/result":
+            self._handle_node_result()
+        elif path == "/v1/nodes/execute":
+            self._handle_node_execute()
+        # --- Channels POST routes ---
+        elif path == "/v1/channels":
+            self._handle_channels_action()
+        elif path.startswith("/v1/channels/") and path.endswith("/start"):
+            self._handle_channel_lifecycle(path, "start")
+        elif path.startswith("/v1/channels/") and path.endswith("/stop"):
+            self._handle_channel_lifecycle(path, "stop")
+        elif path.startswith("/v1/channels/") and path.endswith("/restart"):
+            self._handle_channel_lifecycle(path, "restart")
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -850,8 +1022,32 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         session.cancel_token = engine.CancelToken()
         session._streaming = True
 
+        # --- Multimodal: construct content blocks if images present ---
+        images = body.get("images", [])
+        if images:
+            content_blocks = []
+            for img in images:
+                if session.api_type == "openai":
+                    # OpenAI format: image_url with data URI
+                    data_uri = f"data:{img.get('media_type', 'image/png')};base64,{img['data']}"
+                    content_blocks.append({"type": "image_url", "image_url": {"url": data_uri}})
+                else:
+                    # Anthropic format: image source block
+                    content_blocks.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": img.get("media_type", "image/png"),
+                            "data": img["data"],
+                        },
+                    })
+            content_blocks.append({"type": "text", "text": message})
+            user_content = content_blocks
+        else:
+            user_content = message
+
         # Add user message (persisted to DB)
-        session.add_message("user", message)
+        session.add_message("user", user_content)
 
         # Check context and compact
         session.messages, _ = engine._check_and_compact(
@@ -938,6 +1134,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     }
                     if session_cost is not None:
                         done_data["cost"] = session_cost
+                    # Include fallback model info if a fallback was used
+                    fb_model = getattr(engine._thread_local, '_fallback_model_used', None)
+                    if fb_model:
+                        done_data["fallback_model"] = fb_model
+                        done_data["original_model"] = session.model
                     event_queue.put(("done", done_data))
                 else:
                     event_queue.put(("done", {"text": "", "tokens": 0, "model": session.model}))
@@ -2600,6 +2801,160 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         agent.save_commands(commands)
         self._send_json({"status": "saved", "count": len(commands)})
 
+    # --- Traces & Audit Handlers ---
+
+    def _handle_traces_list(self):
+        """GET /v1/traces?agent=X&hours=24&limit=50 — recent traces."""
+        if not engine._trace_manager:
+            self._send_json({"error": "Tracing not initialized"}, 503)
+            return
+        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+        from urllib.parse import unquote
+        agent = unquote(params.get("agent", "")) or None
+        hours = int(params.get("hours", "24"))
+        limit = int(params.get("limit", "50"))
+        traces = engine._trace_manager.get_traces(agent=agent, hours=hours, limit=limit)
+        self._send_json({"traces": traces, "count": len(traces)})
+
+    def _handle_trace_detail(self, path):
+        """GET /v1/traces/{trace_id} — all spans for a trace."""
+        if not engine._trace_manager:
+            self._send_json({"error": "Tracing not initialized"}, 503)
+            return
+        trace_id = path.split("/")[-1]
+        spans = engine._trace_manager.get_trace(trace_id)
+        if not spans:
+            self._send_json({"error": "Trace not found"}, 404)
+            return
+        total_duration = sum(s.get("duration_ms", 0) for s in spans)
+        total_tokens_in = sum(s.get("tokens_in", 0) for s in spans)
+        total_tokens_out = sum(s.get("tokens_out", 0) for s in spans)
+        self._send_json({
+            "trace_id": trace_id,
+            "spans": spans,
+            "span_count": len(spans),
+            "total_duration_ms": total_duration,
+            "total_tokens_in": total_tokens_in,
+            "total_tokens_out": total_tokens_out,
+        })
+
+    def _handle_audit_list(self):
+        """GET /v1/audit?agent=X&type=Y&from=Z&limit=50 — audit log."""
+        if not engine._audit_log:
+            self._send_json({"error": "Audit log not initialized"}, 503)
+            return
+        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+        from urllib.parse import unquote
+        agent = unquote(params.get("agent", "")) or None
+        action_type = unquote(params.get("type", "")) or None
+        from_ts = unquote(params.get("from", "")) or None
+        limit = int(params.get("limit", "50"))
+        entries = engine._audit_log.query(agent=agent, action_type=action_type,
+                                           from_ts=from_ts, limit=limit)
+        self._send_json({"entries": entries, "count": len(entries)})
+
+    def _handle_audit_export(self):
+        """GET /v1/audit/export?agent=X&format=csv — CSV download."""
+        if not engine._audit_log:
+            self._send_json({"error": "Audit log not initialized"}, 503)
+            return
+        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+        from urllib.parse import unquote
+        agent = unquote(params.get("agent", "")) or None
+        from_ts = unquote(params.get("from", "")) or None
+        to_ts = unquote(params.get("to", "")) or None
+        fmt = params.get("format", "csv")
+        if fmt == "csv":
+            csv_data = engine._audit_log.export_csv(agent=agent, from_ts=from_ts, to_ts=to_ts)
+            body = csv_data.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv")
+            self.send_header("Content-Disposition", "attachment; filename=audit_log.csv")
+            self.send_header("Content-Length", len(body))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            entries = engine._audit_log.query(agent=agent, from_ts=from_ts, limit=10000)
+            self._send_json({"entries": entries, "count": len(entries)})
+
+    # --- MCP Connection Handlers ---
+
+    def _handle_mcp_list(self):
+        """GET /v1/mcp/connections — list all MCP connections."""
+        mcp = engine._mcp_manager
+        if not mcp:
+            self._send_json({"connections": []})
+            return
+        servers = mcp.list_servers()
+        self._send_json({"connections": servers})
+
+    def _handle_mcp_connect(self):
+        """POST /v1/mcp/connect — connect to a new MCP server at runtime."""
+        body = self._read_json()
+        url = body.get("url", "")
+        name = body.get("name", "")
+        transport = body.get("transport", "sse")
+        persist = body.get("persist", False)
+
+        if not url or not name:
+            self._send_json({"error": "Both 'url' and 'name' are required"}, 400)
+            return
+
+        mcp = engine._mcp_manager
+        if not mcp:
+            mcp = engine.MCPManager()
+            engine._mcp_manager = mcp
+
+        result = mcp.connect_runtime(url, name, transport)
+        if result.get("error"):
+            self._send_json({"error": result["error"]}, 400)
+            return
+
+        # Persist to mcp.json if requested
+        if persist:
+            mcp_json_path = os.path.join(engine.AGENTS_DIR, "main", "mcp.json")
+            try:
+                existing = {}
+                if os.path.exists(mcp_json_path):
+                    with open(mcp_json_path, "r") as f:
+                        existing = json.load(f)
+                if transport == "stdio":
+                    parts = url.split()
+                    existing[name] = {"transport": "stdio", "command": parts[0],
+                                      "args": parts[1:] if len(parts) > 1 else []}
+                else:
+                    existing[name] = {"transport": "sse", "url": url}
+                with open(mcp_json_path, "w") as f:
+                    json.dump(existing, f, indent=2)
+                result["persisted"] = True
+            except Exception as e:
+                result["persist_error"] = str(e)
+
+        self._send_json(result)
+
+    def _handle_mcp_disconnect(self):
+        """POST /v1/mcp/disconnect — disconnect a runtime MCP server."""
+        body = self._read_json()
+        name = body.get("name", "")
+        if not name:
+            self._send_json({"error": "'name' is required"}, 400)
+            return
+
+        mcp = engine._mcp_manager
+        if not mcp:
+            self._send_json({"error": "No MCP manager available"}, 400)
+            return
+
+        result = mcp.disconnect_runtime(name)
+        if result.get("error"):
+            self._send_json({"error": result["error"]}, 400)
+            return
+        self._send_json(result)
+
     def _handle_refine(self):
         """POST /v1/refine — refine text with LLM one-shot call."""
         body = self._read_json()
@@ -2676,7 +3031,16 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "bot": _telegram_mod.telegram_service.bot_username if tg_running else "",
                 "enabled": server_config.get("telegram_enabled", True),
             },
+            "channels": _adapters_mod.channel_manager.status() if _adapters_mod.channel_manager else [],
+            "nodes": self._get_nodes_summary(),
         })
+
+    def _get_nodes_summary(self):
+        """Get a summary of node statuses."""
+        with _node_lock:
+            total = len(_node_registry)
+            connected = sum(1 for info in _node_registry.values() if info["status"] == "connected")
+            return {"total": total, "connected": connected}
 
     def _handle_service_log(self):
         """GET /v1/services/log?name=server|qmd&lines=100 — tail a service log."""
@@ -2860,6 +3224,579 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             os.execv(sys.executable, [sys.executable] + sys.argv)
         threading.Thread(target=do_restart, daemon=True).start()
 
+    # --- Notification handlers ---
+
+    def _handle_notifications_list(self):
+        """GET /v1/notifications — list recent notifications."""
+        if not _notification_manager:
+            self._send_json({"notifications": [], "unread": 0})
+            return
+        notifs = _notification_manager.get_notifications(limit=50)
+        unread = _notification_manager.get_unread_count()
+        self._send_json({"notifications": notifs, "unread": unread})
+
+    def _handle_notifications_unread(self):
+        """GET /v1/notifications/unread — get unread count."""
+        count = _notification_manager.get_unread_count() if _notification_manager else 0
+        self._send_json({"unread": count})
+
+    def _handle_notifications_settings_post(self):
+        """POST /v1/notifications/settings — save notification config."""
+        body = self._read_json()
+        if not _notification_manager:
+            self._send_json({"error": "Notification manager not initialized"}, 500)
+            return
+        _notification_manager.update_config(body)
+        # Persist to config.json
+        try:
+            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+            config = {}
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    config = json.load(f)
+            config["notifications"] = body
+            with open(config_path, "w") as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            self._send_json({"error": f"Failed to save: {e}"}, 500)
+            return
+        self._send_json({"status": "saved"})
+
+    def _handle_notifications_dismiss(self):
+        """POST /v1/notifications/dismiss — dismiss notification(s)."""
+        body = self._read_json()
+        nid = body.get("id")
+        if not _notification_manager:
+            self._send_json({"error": "Not initialized"}, 500)
+            return
+        if nid == "all":
+            _notification_manager.clear_all()
+        elif nid:
+            _notification_manager.dismiss(nid)
+        self._send_json({"status": "dismissed"})
+
+    def _handle_notifications_read(self):
+        """POST /v1/notifications/read — mark notification(s) as read."""
+        body = self._read_json()
+        nid = body.get("id")  # None = mark all read
+        if _notification_manager:
+            _notification_manager.mark_read(nid)
+        self._send_json({"status": "read"})
+
+    # --- Backup / Restore handlers ---
+
+    def _handle_backup_info(self):
+        """GET /v1/backup/info — return what would be backed up."""
+        import tarfile as _tarfile
+        base = os.path.dirname(os.path.abspath(__file__))
+        agents_dir = os.path.join(base, "agents")
+        agent_names = engine.list_agents()
+        total_files = 0
+        total_size = 0
+        agent_info = []
+        for aname in agent_names:
+            adir = os.path.join(agents_dir, aname)
+            mems = len([f for f in os.listdir(adir) if f.endswith(".md")]) if os.path.isdir(adir) else 0
+            skills_dir = os.path.join(adir, "skills")
+            skills = len(os.listdir(skills_dir)) if os.path.isdir(skills_dir) else 0
+            agent_info.append({"name": aname, "memories": mems, "skills": skills})
+            if os.path.isdir(adir):
+                for root, dirs, files in os.walk(adir):
+                    dirs[:] = [d for d in dirs if d != "__pycache__"]
+                    for f in files:
+                        if not f.endswith((".pyc", ".DS_Store")):
+                            fp = os.path.join(root, f)
+                            total_files += 1
+                            try:
+                                total_size += os.path.getsize(fp)
+                            except OSError:
+                                pass
+        self._send_json({
+            "agents": agent_info,
+            "agent_count": len(agent_names),
+            "total_files": total_files,
+            "estimated_size_bytes": total_size,
+        })
+
+    def _handle_backup_create(self):
+        """POST /v1/backup — create a tar.gz backup archive."""
+        import tarfile as _tarfile
+        import tempfile
+        body = self._read_json()
+        backup_type = body.get("type", "full")
+        target_agent = body.get("agent")
+        include_keys = body.get("include_keys", False)
+
+        base = os.path.dirname(os.path.abspath(__file__))
+        agents_dir = os.path.join(base, "agents")
+        backup_dir = os.path.join(base, "backups")
+        os.makedirs(backup_dir, exist_ok=True)
+
+        _EXCLUDE = {"__pycache__", ".DS_Store", "node_modules"}
+        _EXCLUDE_EXT = {".pyc", ".db-wal", ".db-shm"}
+
+        def _should_exclude(name):
+            base_name = os.path.basename(name)
+            if base_name in _EXCLUDE:
+                return True
+            _, ext = os.path.splitext(base_name)
+            if ext in _EXCLUDE_EXT:
+                return True
+            return False
+
+        ts = time.strftime("%Y%m%dT%H%M%S")
+        if backup_type == "agent" and target_agent:
+            fname = f"{target_agent.lower()}-{ts}.brain-backup.tar.gz"
+        else:
+            fname = f"backup-{ts}.brain-backup.tar.gz"
+        backup_path = os.path.join(backup_dir, fname)
+
+        try:
+            with _tarfile.open(backup_path, "w:gz") as tar:
+                prefix = f"backup-{ts}"
+
+                # Add config.json (with redacted keys)
+                config_path = os.path.join(base, "config.json")
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                    if not include_keys:
+                        # Redact API keys
+                        for pname, pcfg in config.get("providers", {}).items():
+                            if "api_key" in pcfg:
+                                pcfg["api_key"] = "REDACTED"
+                        if "gmail" in config:
+                            for k in list(config["gmail"].keys()):
+                                if "password" in k.lower() or "secret" in k.lower():
+                                    config["gmail"][k] = "REDACTED"
+                    redacted_json = json.dumps(config, indent=2).encode("utf-8")
+                    import io
+                    info = _tarfile.TarInfo(name=f"{prefix}/config.json")
+                    info.size = len(redacted_json)
+                    tar.addfile(info, io.BytesIO(redacted_json))
+
+                # Add agents
+                agents_to_backup = [target_agent] if (backup_type == "agent" and target_agent) else engine.list_agents()
+                for aname in agents_to_backup:
+                    adir = os.path.join(agents_dir, aname)
+                    if not os.path.isdir(adir):
+                        continue
+                    for root, dirs, files in os.walk(adir):
+                        dirs[:] = [d for d in dirs if d not in _EXCLUDE]
+                        for f in files:
+                            if _should_exclude(f):
+                                continue
+                            fp = os.path.join(root, f)
+                            arcname = f"{prefix}/agents/{aname}/{os.path.relpath(fp, adir)}"
+                            try:
+                                tar.add(fp, arcname=arcname)
+                            except (OSError, PermissionError):
+                                pass
+
+                # Add databases (full backup only)
+                if backup_type != "agent":
+                    for db_name in ("chats.db", "scheduler.db", "costs.db"):
+                        db_path = os.path.join(agents_dir, "main", db_name)
+                        if os.path.exists(db_path):
+                            # Safe SQLite copy using backup API
+                            import sqlite3
+                            tmp_db = os.path.join(backup_dir, f"_tmp_{db_name}")
+                            try:
+                                src = sqlite3.connect(db_path)
+                                dst = sqlite3.connect(tmp_db)
+                                src.backup(dst)
+                                src.close()
+                                dst.close()
+                                tar.add(tmp_db, arcname=f"{prefix}/databases/{db_name}")
+                            except Exception:
+                                # Fallback: direct copy
+                                tar.add(db_path, arcname=f"{prefix}/databases/{db_name}")
+                            finally:
+                                try:
+                                    os.unlink(tmp_db)
+                                except OSError:
+                                    pass
+
+            size = os.path.getsize(backup_path)
+            self._send_json({
+                "status": "created",
+                "path": backup_path,
+                "filename": fname,
+                "size_bytes": size,
+                "type": backup_type,
+                "agents": agents_to_backup,
+            })
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_restore(self):
+        """POST /v1/restore — restore from a backup archive."""
+        import tarfile as _tarfile
+        body = self._read_json()
+        backup_path = body.get("path", "")
+        strategy = body.get("strategy", "merge")
+
+        if not backup_path or not os.path.exists(backup_path):
+            self._send_json({"error": f"Backup file not found: {backup_path}"}, 400)
+            return
+
+        base = os.path.dirname(os.path.abspath(__file__))
+        agents_dir = os.path.join(base, "agents")
+
+        try:
+            imported = {"agents": [], "memories": 0, "files": 0}
+            with _tarfile.open(backup_path, "r:gz") as tar:
+                members = tar.getmembers()
+                # Find the prefix (first directory component)
+                prefix = ""
+                for m in members:
+                    parts = m.name.split("/")
+                    if len(parts) > 1:
+                        prefix = parts[0]
+                        break
+
+                for member in members:
+                    if member.isdir():
+                        continue
+                    parts = member.name.split("/")
+                    if len(parts) < 3:
+                        continue
+                    # Skip config.json on restore (security: may have redacted keys)
+                    if parts[-1] == "config.json" and len(parts) == 2:
+                        continue
+
+                    if parts[1] == "agents" and len(parts) >= 3:
+                        agent_name = parts[2]
+                        rel_path = "/".join(parts[3:])
+                        dest = os.path.join(agents_dir, agent_name, rel_path)
+
+                        if strategy == "merge" and os.path.exists(dest):
+                            continue  # Skip existing files in merge mode
+
+                        os.makedirs(os.path.dirname(dest), exist_ok=True)
+                        f = tar.extractfile(member)
+                        if f:
+                            with open(dest, "wb") as out:
+                                out.write(f.read())
+                            imported["files"] += 1
+                            if rel_path.endswith(".md"):
+                                imported["memories"] += 1
+                            if agent_name not in imported["agents"]:
+                                imported["agents"].append(agent_name)
+
+                    elif parts[1] == "databases" and len(parts) >= 3:
+                        db_name = parts[2]
+                        if strategy == "merge":
+                            continue  # Don't overwrite databases in merge mode
+                        dest = os.path.join(agents_dir, "main", db_name)
+                        f = tar.extractfile(member)
+                        if f:
+                            with open(dest, "wb") as out:
+                                out.write(f.read())
+                            imported["files"] += 1
+
+            self._send_json({
+                "restored": True,
+                "strategy": strategy,
+                "imported": imported,
+            })
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._send_json({"error": str(e)}, 500)
+
+    # --- Nodes API handlers ---
+
+    def _handle_nodes_list(self):
+        """GET /v1/nodes — list all nodes with status."""
+        nodes = []
+        with _node_lock:
+            for token, info in _node_registry.items():
+                cfg = info.get("config", {})
+                nodes.append({
+                    "name": info["name"],
+                    "description": cfg.get("description", ""),
+                    "status": info["status"],
+                    "paused": cfg.get("paused", False),
+                    "hostname": info.get("hostname", ""),
+                    "os": info.get("os", ""),
+                    "tags": cfg.get("tags", []),
+                    "allowed_tools": cfg.get("allowed_tools", []),
+                    "last_heartbeat": info.get("last_heartbeat"),
+                    "cpu_percent": info.get("cpu_percent"),
+                    "mem_used_gb": info.get("mem_used_gb"),
+                    "mem_total_gb": info.get("mem_total_gb"),
+                    "disk_free_gb": info.get("disk_free_gb"),
+                    "uptime_seconds": info.get("uptime_seconds"),
+                    "active_commands": info.get("active_commands", 0),
+                    "total_commands": info.get("total_commands", 0),
+                    "connected_since": info.get("connected_since"),
+                })
+        self._send_json({"nodes": nodes})
+
+    def _handle_node_poll(self):
+        """GET /v1/nodes/poll?token=X — node polls for pending commands."""
+        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+        token = params.get("token", "")
+
+        with _node_lock:
+            info = _node_registry.get(token)
+            if not info:
+                self._send_json({"error": "Invalid token"}, 401)
+                return
+
+            import urllib.parse
+            info["status"] = "connected"
+            info["last_heartbeat"] = time.time()
+            info["hostname"] = urllib.parse.unquote(params.get("hostname", ""))
+            info["os"] = urllib.parse.unquote(params.get("os", ""))
+            try:
+                info["cpu_percent"] = float(params.get("cpu_percent", 0))
+                info["mem_used_gb"] = float(params.get("mem_used_gb", 0))
+                info["mem_total_gb"] = float(params.get("mem_total_gb", 0))
+                info["disk_free_gb"] = float(params.get("disk_free_gb", 0))
+                info["uptime_seconds"] = int(params.get("uptime_seconds", 0))
+                info["active_commands"] = int(params.get("active_commands", 0))
+                info["total_commands"] = int(params.get("total_commands", 0))
+            except (ValueError, TypeError):
+                pass
+            if not info.get("connected_since"):
+                info["connected_since"] = time.time()
+
+            if info.get("config", {}).get("paused"):
+                self._send_json({"error": "Node is paused"}, 403)
+                return
+
+            pending = info.get("pending_commands", [])
+            if pending:
+                cmd = pending.pop(0)
+                self._send_json({"command": cmd})
+                return
+
+        # Long-poll: wait up to 30s for a command
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            time.sleep(2)
+            with _node_lock:
+                info = _node_registry.get(token)
+                if not info:
+                    break
+                pending = info.get("pending_commands", [])
+                if pending:
+                    cmd = pending.pop(0)
+                    self._send_json({"command": cmd})
+                    return
+
+        self._send_json({"command": None})
+
+    def _handle_node_result(self):
+        """POST /v1/nodes/result — receive command result from node."""
+        body = self._read_json()
+        token = body.get("token", "")
+        command_id = body.get("command_id", "")
+        result = body.get("result", {})
+
+        with _node_lock:
+            if token not in _node_registry:
+                self._send_json({"error": "Invalid token"}, 401)
+                return
+            entry = _node_commands.get(command_id)
+            if entry:
+                entry["result"] = result
+                entry["result_event"].set()
+
+        self._send_json({"status": "ok"})
+
+    def _handle_nodes_action(self):
+        """POST /v1/nodes — add/remove/pause/resume/update a node."""
+        body = self._read_json()
+        action = body.get("action", "")
+
+        if action == "add":
+            name = body.get("name", "")
+            if not name:
+                self._send_json({"error": "Missing name"}, 400)
+                return
+            import secrets
+            token = f"nd_{secrets.token_hex(16)}"
+            cfg = {
+                "token": token,
+                "description": body.get("description", ""),
+                "allowed_tools": body.get("allowed_tools", ["execute_command", "read_file", "write_file", "list_directory"]),
+                "tags": body.get("tags", []),
+                "max_concurrent": body.get("max_concurrent", 5),
+                "command_timeout": body.get("command_timeout", 300),
+                "paused": False,
+            }
+            nodes_cfg = _load_node_config()
+            nodes_cfg[name] = cfg
+            _save_node_config(nodes_cfg)
+            with _node_lock:
+                _node_registry[token] = {
+                    "name": name, "config": cfg, "status": "disconnected",
+                    "last_heartbeat": None, "hostname": "", "os": "",
+                    "cpu_percent": None, "mem_used_gb": None, "mem_total_gb": None,
+                    "disk_free_gb": None, "uptime_seconds": None,
+                    "active_commands": 0, "total_commands": 0,
+                    "connected_since": None, "pending_commands": [],
+                }
+            port = server_config.get("port", 8420)
+            install_cmd = f"python3 node.py --server http://SERVER_IP:{port} --token {token} --name {name}"
+            self._send_json({"ok": True, "token": token, "install_command": install_cmd})
+
+        elif action == "remove":
+            name = body.get("name", "")
+            nodes_cfg = _load_node_config()
+            removed_token = None
+            for n, cfg in nodes_cfg.items():
+                if n == name:
+                    removed_token = cfg.get("token")
+                    break
+            if name in nodes_cfg:
+                del nodes_cfg[name]
+                _save_node_config(nodes_cfg)
+            if removed_token:
+                with _node_lock:
+                    _node_registry.pop(removed_token, None)
+            self._send_json({"ok": True})
+
+        elif action in ("pause", "resume"):
+            name = body.get("name", "")
+            paused = action == "pause"
+            nodes_cfg = _load_node_config()
+            if name in nodes_cfg:
+                nodes_cfg[name]["paused"] = paused
+                _save_node_config(nodes_cfg)
+                with _node_lock:
+                    for token, info in _node_registry.items():
+                        if info["name"] == name:
+                            info["config"]["paused"] = paused
+                            break
+            self._send_json({"ok": True, "paused": paused})
+
+        elif action == "update":
+            name = body.get("name", "")
+            nodes_cfg = _load_node_config()
+            if name in nodes_cfg:
+                for key in ("description", "allowed_tools", "tags", "max_concurrent", "command_timeout"):
+                    if key in body:
+                        nodes_cfg[name][key] = body[key]
+                _save_node_config(nodes_cfg)
+                with _node_lock:
+                    for token, info in _node_registry.items():
+                        if info["name"] == name:
+                            info["config"].update(nodes_cfg[name])
+                            break
+            self._send_json({"ok": True})
+        else:
+            self._send_json({"error": f"Unknown action: {action}"}, 400)
+
+    def _handle_node_execute(self):
+        """POST /v1/nodes/execute — submit command to a node (internal)."""
+        body = self._read_json()
+        node = body.get("node", "")
+        tool = body.get("tool", "")
+        params = body.get("params", {})
+        if not node or not tool:
+            self._send_json({"error": "Missing node or tool"}, 400)
+            return
+        result = _node_submit_command(node, tool, params)
+        self._send_json(result)
+
+    # --- Channels API handlers ---
+
+    def _handle_channels_list(self):
+        """GET /v1/channels — list all messaging channels."""
+        mgr = _adapters_mod.channel_manager
+        if not mgr:
+            self._send_json({"channels": []})
+            return
+        self._send_json({"channels": mgr.status()})
+
+    def _handle_channels_action(self):
+        """POST /v1/channels — create/remove/update a channel."""
+        body = self._read_json()
+        action = body.get("action", "create")
+        mgr = _adapters_mod.channel_manager
+        if not mgr:
+            self._send_json({"error": "Channel manager not initialized"}, 500)
+            return
+
+        if action == "create":
+            ch_id = body.get("id", body.get("name", ""))
+            if not ch_id:
+                self._send_json({"error": "Missing channel id"}, 400)
+                return
+            try:
+                channel = mgr.create_channel(ch_id, body)
+                if body.get("enabled", True):
+                    channel.start()
+                self._save_channel_config(mgr)
+                self._send_json({"ok": True, "channel": channel.status()})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 400)
+
+        elif action == "remove":
+            ch_id = body.get("id", "")
+            mgr.remove_channel(ch_id)
+            self._save_channel_config(mgr)
+            self._send_json({"ok": True})
+
+        elif action == "update":
+            ch_id = body.get("id", "")
+            ch = mgr.channels.get(ch_id)
+            if ch:
+                for key in ("name", "agent_routing", "allowed_users", "default_model", "enabled"):
+                    if key in body:
+                        ch.config[key] = body[key]
+                self._save_channel_config(mgr)
+                self._send_json({"ok": True, "channel": ch.status()})
+            else:
+                self._send_json({"error": "Channel not found"}, 404)
+        else:
+            self._send_json({"error": f"Unknown action: {action}"}, 400)
+
+    def _handle_channel_lifecycle(self, path: str, action: str):
+        """POST /v1/channels/:id/start|stop|restart."""
+        parts = path.split("/")
+        ch_id = parts[3] if len(parts) > 3 else ""
+        mgr = _adapters_mod.channel_manager
+        if not mgr:
+            self._send_json({"error": "Channel manager not initialized"}, 500)
+            return
+        ch = mgr.channels.get(ch_id)
+        if not ch:
+            self._send_json({"error": "Channel not found"}, 404)
+            return
+        if action == "stop":
+            ch.stop()
+        elif action == "start":
+            ch.start()
+        elif action == "restart":
+            ch.stop()
+            ch.start()
+        self._send_json({"ok": True, "channel": ch.status()})
+
+    def _save_channel_config(self, mgr):
+        """Persist channel config to config.json."""
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        try:
+            config = {}
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    config = json.load(f)
+            channels = []
+            for ch_id, ch in mgr.channels.items():
+                channels.append({"id": ch_id, **ch.config})
+            config["channels"] = channels
+            with open(config_path, "w") as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            print(f"Failed to save channel config: {e}", flush=True)
+
     def _serve_static(self, path):
         """Serve static files from web/ directory."""
         if path == "/":
@@ -3012,6 +3949,24 @@ def main():
     engine._cost_tracker = engine.CostTracker()
     engine._rate_limiter = engine.RateLimiter()
     print(f"Cost tracking: {engine.COST_DB}")
+
+    # Initialize tracing and audit trail
+    engine._trace_manager = engine.TraceManager()
+    engine._audit_log = engine.AuditLog()
+    print(f"Tracing: {engine.TRACES_DB}")
+    print(f"Audit log: {engine.AUDIT_DB}")
+
+    # Initialize notification manager
+    global _notification_manager
+    notif_config = file_config.get("notifications", {"enabled": True, "channels": {"in_app": {"enabled": True, "min_severity": "info"}}})
+    _notification_manager = _notif_mod.NotificationManager(notif_config)
+    # Wire notification hook into engine (for scheduler events etc.)
+    def _notif_hook(event_type, title, message, severity="info", agent=None, metadata=None):
+        if _notification_manager:
+            _notification_manager.notify(event_type, title, message, severity=severity,
+                                          agent=agent, metadata=metadata)
+    engine._notification_hook = _notif_hook
+    print(f"Notifications: {'enabled' if notif_config.get('enabled', False) else 'disabled'}")
 
     # Ensure memory summary schedules for all agents
     try:
@@ -3239,15 +4194,36 @@ def main():
     print("  POST /v1/agents/{id}/workflows — save workflow")
     print("  POST /v1/agents/{id}/workflows/{name}/run — run workflow")
     print("  GET  /v1/workflows/executions  — list executions")
-    # Auto-start Telegram bot if enabled
+    # Initialize remote nodes registry
+    _init_node_registry()
+    nodes_cfg = _load_node_config()
+    if nodes_cfg:
+        print(f"Remote nodes: {', '.join(nodes_cfg.keys())}")
+
+    # Initialize channel manager (multi-messaging frontends)
+    port = server_config.get("port", 8420)
+    _adapters_mod.channel_manager = _adapters_mod.ChannelManager(f"http://127.0.0.1:{port}")
+    _adapters_mod.channel_manager.load_from_config(file_config)
+
+    # Auto-start Telegram bot if enabled (legacy support)
     if server_config.get("telegram_enabled", True):
-        # Delay start slightly so the HTTP server is ready to accept connections
         def _start_tg():
             time.sleep(1)
             _start_telegram_service()
         threading.Thread(target=_start_tg, daemon=True, name="telegram-start").start()
     else:
         print("Telegram: disabled in config")
+
+    # Start enabled messaging channels
+    def _start_channels():
+        time.sleep(2)
+        if _adapters_mod.channel_manager:
+            _adapters_mod.channel_manager.start_all_enabled()
+            n = len(_adapters_mod.channel_manager.channels)
+            if n:
+                print(f"Messaging channels: {n} loaded")
+    threading.Thread(target=_start_channels, daemon=True, name="channels-start").start()
+
     print()
 
     try:
@@ -3256,6 +4232,8 @@ def main():
         print("\nShutting down...")
     finally:
         _telegram_mod.telegram_service.stop()
+        if _adapters_mod.channel_manager:
+            _adapters_mod.channel_manager.stop_all()
         if engine._scheduler:
             engine._scheduler.stop()
         if engine._mcp_manager:

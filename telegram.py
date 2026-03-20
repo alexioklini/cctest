@@ -165,6 +165,26 @@ class TelegramBot:
         except Exception:
             pass
 
+    def download_photo(self, file_id: str) -> tuple[bytes, str] | None:
+        """Download a photo by file_id. Returns (bytes, media_type) or None."""
+        import base64
+        try:
+            file_info = self._call("getFile", {"file_id": file_id})
+            file_path = file_info.get("result", {}).get("file_path", "")
+            if not file_path:
+                return None
+            url = f"https://api.telegram.org/file/bot{self.token}/{file_path}"
+            with urllib.request.urlopen(url, timeout=30) as resp:
+                data = resp.read()
+            ext = file_path.rsplit(".", 1)[-1].lower() if "." in file_path else "jpg"
+            media_types = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                          "gif": "image/gif", "webp": "image/webp"}
+            media_type = media_types.get(ext, "image/jpeg")
+            return (data, media_type)
+        except Exception as e:
+            print(f"  Photo download error: {e}", flush=True)
+            return None
+
 
 # --- Chat session management ---
 
@@ -325,8 +345,8 @@ def handle_command(bot: TelegramBot, manager: ChatManager,
 
 
 def handle_message(bot: TelegramBot, manager: ChatManager,
-                   chat_id: int, text: str):
-    """Handle a regular chat message."""
+                   chat_id: int, text: str, images: list[dict] | None = None):
+    """Handle a regular chat message, optionally with images."""
     sid = manager.get_session(chat_id)
     chat_client = BrainAgentClient(manager.client.server_url)
     chat_client.session_id = sid
@@ -357,7 +377,7 @@ def handle_message(bot: TelegramBot, manager: ChatManager,
     done_model = ""
 
     try:
-        for event_type, data in chat_client.chat(text):
+        for event_type, data in chat_client.chat(text, images=images):
             if event_type == "text_delta":
                 streaming_text += data.get("text", "")
                 now = time.time()
@@ -495,11 +515,24 @@ def run_bot(args):
                 user_id = msg.get("from", {}).get("id")
                 text = msg.get("text", "")
 
-                if not chat_id or not text:
+                # Handle photo messages (multimodal)
+                images = []
+                if "photo" in msg:
+                    photo = msg["photo"][-1]
+                    result = bot.download_photo(photo["file_id"])
+                    if result:
+                        import base64
+                        photo_bytes, media_type = result
+                        b64 = base64.b64encode(photo_bytes).decode("ascii")
+                        images = [{"data": b64, "media_type": media_type}]
+                    if not text:
+                        text = msg.get("caption", "").strip() or "What can you see in this image?"
+
+                if not chat_id or (not text and not images):
                     continue
 
                 if not manager.is_allowed(user_id):
-                    bot.send_message(chat_id, "⛔ Not authorized.")
+                    bot.send_message(chat_id, "Not authorized.")
                     continue
 
                 user_name = msg.get("from", {}).get("first_name", "?")
@@ -508,7 +541,7 @@ def run_bot(args):
                 if text.startswith("/"):
                     handle_command(bot, manager, chat_id, text)
                 else:
-                    handle_message(bot, manager, chat_id, text)
+                    handle_message(bot, manager, chat_id, text, images=images or None)
 
     except KeyboardInterrupt:
         print("\nStopping...")
@@ -563,15 +596,29 @@ class TelegramService:
                         msg = update.get("message", {})
                         chat_id = msg.get("chat", {}).get("id")
                         text = msg.get("text", "").strip()
-                        if not chat_id or not text:
-                            continue
                         user_id = msg.get("from", {}).get("id")
+
+                        # Handle photo messages (multimodal)
+                        images = []
+                        if "photo" in msg:
+                            photo = msg["photo"][-1]  # largest size
+                            result = bot.download_photo(photo["file_id"])
+                            if result:
+                                import base64
+                                photo_bytes, media_type = result
+                                b64 = base64.b64encode(photo_bytes).decode("ascii")
+                                images = [{"data": b64, "media_type": media_type}]
+                            if not text:
+                                text = msg.get("caption", "").strip() or "What can you see in this image?"
+
+                        if not chat_id or (not text and not images):
+                            continue
                         if manager.allowed_users and user_id not in manager.allowed_users:
                             continue
                         if text.startswith("/"):
                             handle_command(bot, manager, chat_id, text)
                         else:
-                            handle_message(bot, manager, chat_id, text)
+                            handle_message(bot, manager, chat_id, text, images=images or None)
                 except Exception as e:
                     if not self._stop_event.is_set():
                         time.sleep(min(backoff, 30))

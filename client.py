@@ -81,11 +81,13 @@ class BrainAgentClient:
     # --- Chat (SSE streaming) ---
 
     def chat(self, message: str, mode: str | None = None,
-             project: str | None = None):
+             project: str | None = None, images: list[dict] | None = None):
         """Send a message and yield SSE events as (event_type, data) tuples.
 
         Event types: text_delta, tool_call, tool_result, tool_output, done, error
         Uses raw socket for unbuffered SSE streaming.
+
+        images: optional list of {data: base64, media_type: "image/png"} for multimodal.
         """
         import socket
         from urllib.parse import urlparse
@@ -98,6 +100,8 @@ class BrainAgentClient:
             payload["mode"] = mode
         if project:
             payload["project"] = project
+        if images:
+            payload["images"] = images
         body = json.dumps(payload)
 
         parsed = urlparse(self.server_url)
@@ -369,6 +373,112 @@ class BrainAgentClient:
 
     def cancel_workflow(self, execution_id: str) -> dict:
         return self._post(f"/v1/workflows/executions/{execution_id}/cancel")
+
+    # --- Notifications ---
+
+    def get_notifications(self, limit: int = 50) -> dict:
+        return self._get(f"/v1/notifications?limit={limit}")
+
+    def get_unread_count(self) -> int:
+        return self._get("/v1/notifications/unread").get("unread", 0)
+
+    def dismiss_notification(self, notification_id: str) -> dict:
+        return self._post("/v1/notifications/dismiss", {"id": notification_id})
+
+    def mark_notifications_read(self, notification_id: str | None = None) -> dict:
+        return self._post("/v1/notifications/read", {"id": notification_id})
+
+    def save_notification_settings(self, config: dict) -> dict:
+        return self._post("/v1/notifications/settings", config)
+
+    # --- Backup & Restore ---
+
+    def create_backup(self, backup_type: str = "full", agent: str | None = None) -> dict:
+        data: dict = {"type": backup_type}
+        if agent:
+            data["agent"] = agent
+        return self._post("/v1/backup", data)
+
+    def get_backup_info(self) -> dict:
+        return self._get("/v1/backup/info")
+
+    def restore_backup(self, path: str, strategy: str = "merge") -> dict:
+        return self._post("/v1/restore", {"path": path, "strategy": strategy})
+
+    # --- Traces ---
+
+    def get_traces(self, agent: str | None = None, hours: int = 24,
+                   limit: int = 50) -> dict:
+        path = f"/v1/traces?hours={hours}&limit={limit}"
+        if agent:
+            path += f"&agent={agent}"
+        return self._get(path)
+
+    def get_trace(self, trace_id: str) -> dict:
+        return self._get(f"/v1/traces/{trace_id}")
+
+    # --- Audit ---
+
+    def get_audit(self, agent: str | None = None, action_type: str | None = None,
+                  from_ts: str | None = None, limit: int = 50) -> dict:
+        path = f"/v1/audit?limit={limit}"
+        if agent:
+            path += f"&agent={agent}"
+        if action_type:
+            path += f"&type={action_type}"
+        if from_ts:
+            path += f"&from={from_ts}"
+        return self._get(path)
+
+    def export_audit_csv(self, agent: str | None = None) -> str:
+        """Export audit log as CSV string."""
+        path = "/v1/audit/export?format=csv"
+        if agent:
+            path += f"&agent={agent}"
+        req = urllib.request.Request(f"{self.server_url}{path}")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.read().decode("utf-8")
+
+    # --- MCP Connections ---
+
+    def get_mcp_connections(self) -> dict:
+        return self._get("/v1/mcp/connections")
+
+    def mcp_connect(self, url: str, name: str, transport: str = "sse",
+                    persist: bool = False) -> dict:
+        return self._post("/v1/mcp/connect", {
+            "url": url, "name": name, "transport": transport, "persist": persist
+        })
+
+    def mcp_disconnect(self, name: str) -> dict:
+        return self._post("/v1/mcp/disconnect", {"name": name})
+
+    # --- Nodes ---
+
+    def list_nodes(self) -> list[dict]:
+        return self._get("/v1/nodes").get("nodes", [])
+
+    def node_action(self, action: str, **kwargs) -> dict:
+        kwargs["action"] = action
+        return self._post("/v1/nodes", kwargs)
+
+    def node_execute(self, node: str, tool: str, params: dict) -> dict:
+        return self._post("/v1/nodes/execute", {"node": node, "tool": tool, "params": params})
+
+    # --- Channels ---
+
+    def list_channels(self) -> list[dict]:
+        return self._get("/v1/channels").get("channels", [])
+
+    def channel_action(self, action: str, **kwargs) -> dict:
+        kwargs["action"] = action
+        return self._post("/v1/channels", kwargs)
+
+    def channel_start(self, channel_id: str) -> dict:
+        return self._post(f"/v1/channels/{channel_id}/start")
+
+    def channel_stop(self, channel_id: str) -> dict:
+        return self._post(f"/v1/channels/{channel_id}/stop")
 
     # --- Connection test ---
 

@@ -1472,6 +1472,10 @@ tailwind.config = {
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
       </button>
       <button id="btn-scheduler-dashboard" title="Scheduler Dashboard" style="font-size:14px">&#9201;</button>
+      <button id="btn-notifications" title="Notifications" onclick="toggleNotificationDropdown()" style="position:relative">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        <span id="notif-badge" class="hidden" style="position:absolute;top:-4px;right:-4px;background:#f87171;color:#fff;font-size:9px;font-weight:700;min-width:14px;height:14px;border-radius:7px;display:flex;align-items:center;justify-content:center;padding:0 3px">0</span>
+      </button>
       <button id="btn-header-settings" title="Server Settings">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </button>
@@ -1521,7 +1525,10 @@ tailwind.config = {
       <div id="chat-input-area" class="flex-shrink-0 p-4 pt-2">
         <div class="max-w-[800px] mx-auto" style="position:relative">
           <div id="slash-popup" class="slash-popup" style="display:none"></div>
+          <div id="image-preview-area" class="flex gap-2 flex-wrap mb-1" style="display:none"></div>
           <div class="chat-input-wrapper flex items-end gap-2 p-2">
+            <input type="file" id="image-file-input" accept="image/png,image/jpeg,image/gif,image/webp" multiple style="display:none" onchange="handleImageFiles(this.files)">
+            <button id="btn-attach" title="Attach image" style="padding:6px 10px;border-radius:8px;font-size:14px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;align-self:flex-end;" onclick="document.getElementById('image-file-input').click()">&#x1F4CE;</button>
             <textarea id="chat-input" class="flex-1 bg-transparent border-none px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none font-body" rows="2" placeholder="Type a message... (Ctrl+Enter to send)" style="box-shadow:none !important;"></textarea>
             <button id="btn-plan-mode" title="Toggle Plan Mode (read-only)" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="togglePlanMode()">Plan</button>
             <button id="btn-refine" title="Refine message with AI" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="refineMessage()">&#x2728;</button>
@@ -1872,6 +1879,14 @@ class API {
     if (model) body.model = model;
     if (planModeActive) body.mode = 'plan';
     if (state.currentProject) body.project = state.currentProject;
+    // Include images from the latest user message
+    const chat = state.activeChat;
+    if (chat) {
+      const lastUser = [...chat.messages].reverse().find(m => m.role === 'user');
+      if (lastUser?.images) {
+        body.images = lastUser.images.map(img => ({ data: img.data, media_type: img.media_type }));
+      }
+    }
     const res = await fetch(`${BASE_URL}/v1/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2704,7 +2719,10 @@ function renderMessage(msg, idx, container) {
 
   if (msg.role === 'user') {
     div.className += ' flex justify-end';
-    div.innerHTML = `<div class="user-msg max-w-[85%] bg-surface-light rounded-2xl rounded-tr-md px-5 py-3 text-sm text-text-primary msg-content">${marked.parse(msg.content)}</div>`;
+    const imagesHtml = (msg.images || []).map(img =>
+      `<img src="data:${img.media_type};base64,${img.data}" style="max-width:300px;max-height:200px;border-radius:8px;margin-bottom:6px;cursor:pointer" onclick="window.open(this.src,'_blank')">`
+    ).join('');
+    div.innerHTML = `<div class="user-msg max-w-[85%] bg-surface-light rounded-2xl rounded-tr-md px-5 py-3 text-sm text-text-primary msg-content">${imagesHtml}${marked.parse(msg.content)}</div>`;
   } else if (msg.role === 'assistant') {
     div.className += ' flex justify-start';
     const toolsHtml = (msg.tools || []).map(t => renderToolBlock(t)).join('');
@@ -2722,6 +2740,7 @@ function renderMessage(msg, idx, container) {
       ${toolsHtml}
       ${spinnerHtml}
       <div class="msg-content">${content}</div>
+      ${msg.fallbackNotice ? `<div class="text-[10px] text-warning mt-1 flex items-center gap-1"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>${esc(msg.fallbackNotice)}</div>` : ''}
       ${msg.tokens ? `<div class="text-[10px] text-text-muted mt-2 mono flex items-center gap-1.5">${msg.model ? modelIcon(msg.model) + ' ' + esc(msg.model) + '  ·  ' : ''}<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>${msg.tokens} tokens${msg.cost != null ? '  ·  $' + msg.cost.toFixed(2) : ''}</div>` : ''}
     </div>`;
   } else if (msg.role === 'system') {
@@ -2822,11 +2841,18 @@ async function sendMessage() {
   const chat = state.activeChat;
   if (!chat || chat.streaming) return;
   const text = dom.chatInput.value.trim();
-  if (!text) return;
+  if (!text && _pendingImages.length === 0) return;
   dom.chatInput.value = '';
   dom.chatInput.style.height = 'auto';
 
-  chat.messages.push({ role: 'user', content: text, ts: Date.now() });
+  // Capture pending images
+  const images = _pendingImages.length > 0 ? [..._pendingImages] : null;
+  _pendingImages = [];
+  renderImagePreviews();
+
+  const userMsg = { role: 'user', content: text || 'What can you see in this image?', ts: Date.now() };
+  if (images) userMsg.images = images;
+  chat.messages.push(userMsg);
   renderMessages();
 
   try {
@@ -2859,7 +2885,7 @@ async function sendMessage() {
   renderMessages();
 
   try {
-    await API.streamChat(chat.sessionId, text, {
+    await API.streamChat(chat.sessionId, text || 'What can you see in this image?', {
       text_delta: (d) => {
         assistantMsg.content += d.text || '';
         if (spinnerLabel) spinnerLabel.textContent = 'Generating...';
@@ -2887,6 +2913,15 @@ async function sendMessage() {
           updateStreamingMessage(chat);
         }
       },
+      fallback: (d) => {
+        // Show fallback notice in spinner area
+        if (d.status === 'retry') {
+          if (spinnerLabel) spinnerLabel.textContent = `Retrying ${d.model} (${d.attempt}/${d.max_retries})...`;
+        } else if (d.status === 'switch') {
+          if (spinnerLabel) spinnerLabel.textContent = `Falling back to ${d.to}...`;
+          assistantMsg.fallbackNotice = `Using fallback: ${d.to} (primary ${d.from} unavailable)`;
+        }
+      },
       done: (d) => {
         if (d.text && !assistantMsg.content) assistantMsg.content = d.text;
         assistantMsg.tokens = d.tokens;
@@ -2894,6 +2929,10 @@ async function sendMessage() {
         assistantMsg.cost = d.cost || null;
         chat.totalTokens += d.tokens || 0;
         if (d.cost != null) chat.sessionCost = d.cost;
+        if (d.fallback_model) {
+          assistantMsg.fallbackNotice = `Using fallback: ${d.fallback_model} (primary ${d.original_model || d.model} unavailable)`;
+          assistantMsg.model = d.fallback_model;
+        }
       },
       error: (d) => {
         assistantMsg.content += `\n\n**Error:** ${d.message || 'Unknown error'}`;
@@ -4793,6 +4832,105 @@ window.scheduleAction = async function(action, taskId) {
   }
 };
 
+// ─── NOTIFICATION SYSTEM ────────────────────────────────────
+let _notifDropdownOpen = false;
+let _notifPollTimer = null;
+
+async function pollNotifications() {
+  try {
+    const res = await API.get('/v1/notifications/unread');
+    const badge = document.getElementById('notif-badge');
+    if (badge) {
+      const count = res.unread || 0;
+      badge.textContent = count > 9 ? '9+' : String(count);
+      badge.classList.toggle('hidden', count === 0);
+    }
+  } catch {}
+}
+
+function startNotifPolling() {
+  pollNotifications();
+  _notifPollTimer = setInterval(pollNotifications, 30000);
+}
+
+async function toggleNotificationDropdown() {
+  const existing = document.getElementById('notif-dropdown');
+  if (existing) { existing.remove(); _notifDropdownOpen = false; return; }
+  _notifDropdownOpen = true;
+
+  // Mark all as read
+  try { await API.post('/v1/notifications/read', {}); } catch {}
+
+  const res = await API.get('/v1/notifications');
+  const notifs = res.notifications || [];
+
+  const dd = document.createElement('div');
+  dd.id = 'notif-dropdown';
+  dd.style.cssText = 'position:fixed;bottom:50px;left:60px;width:360px;max-height:400px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.3);z-index:9999;padding:8px 0';
+
+  const sevIcon = (s) => s === 'critical' || s === 'error' ? '<span style="color:#f87171">!!</span>' : s === 'warning' ? '<span style="color:#ff8700">!</span>' : '<span style="color:#5f87ff">i</span>';
+  const timeAgo = (ts) => {
+    const diff = (Date.now() - new Date(ts).getTime()) / 1000;
+    if (diff < 60) return 'just now';
+    if (diff < 3600) return Math.floor(diff/60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+    return Math.floor(diff/86400) + 'd ago';
+  };
+
+  if (notifs.length === 0) {
+    dd.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-muted);font-size:12px">No notifications</div>';
+  } else {
+    dd.innerHTML = `
+      <div style="padding:8px 12px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
+        <span style="font-size:12px;font-weight:600;color:var(--text-primary)">Notifications</span>
+        <button onclick="dismissAllNotifications()" style="font-size:10px;color:var(--text-muted);background:none;border:none;cursor:pointer">Clear all</button>
+      </div>
+      ${notifs.slice(0, 20).map(n => `
+        <div class="notif-item" style="padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;gap:8px;align-items:flex-start" onclick="dismissNotification('${esc(n.id)}', this)">
+          <div style="font-size:12px;flex-shrink:0;margin-top:2px">${sevIcon(n.severity)}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:11px;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(n.title)}</div>
+            <div style="font-size:10px;color:var(--text-muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${esc(n.message)}</div>
+            <div style="font-size:9px;color:var(--text-muted);margin-top:3px">${n.agent ? esc(n.agent) + ' · ' : ''}${timeAgo(n.created_at)}</div>
+          </div>
+        </div>
+      `).join('')}
+    `;
+  }
+
+  document.body.appendChild(dd);
+  pollNotifications();
+
+  // Close on outside click
+  setTimeout(() => {
+    const handler = (e) => {
+      if (!dd.contains(e.target) && e.target.id !== 'btn-notifications') {
+        dd.remove(); _notifDropdownOpen = false;
+        document.removeEventListener('click', handler);
+      }
+    };
+    document.addEventListener('click', handler);
+  }, 100);
+}
+
+async function dismissNotification(id, el) {
+  try {
+    await API.post('/v1/notifications/dismiss', { id });
+    if (el) el.style.display = 'none';
+    pollNotifications();
+  } catch {}
+}
+
+async function dismissAllNotifications() {
+  try {
+    await API.post('/v1/notifications/dismiss', { id: 'all' });
+    const dd = document.getElementById('notif-dropdown');
+    if (dd) dd.remove();
+    _notifDropdownOpen = false;
+    pollNotifications();
+  } catch {}
+}
+
 // ─── SETTINGS MODAL ─────────────────────────────────────────
 let _settingsTab = 'server';
 
@@ -4809,10 +4947,17 @@ function openSettingsModal() {
         <button class="config-tab ${_settingsTab === 'server' ? 'active' : ''}" onclick="switchSettingsTab('server')">Server</button>
         <button class="config-tab ${_settingsTab === 'qmd' ? 'active' : ''}" onclick="switchSettingsTab('qmd')">QMD</button>
         <button class="config-tab ${_settingsTab === 'telegram' ? 'active' : ''}" onclick="switchSettingsTab('telegram')">Telegram</button>
+        <button class="config-tab ${_settingsTab === 'channels' ? 'active' : ''}" onclick="switchSettingsTab('channels')">Channels</button>
+        <button class="config-tab ${_settingsTab === 'nodes' ? 'active' : ''}" onclick="switchSettingsTab('nodes')">Nodes</button>
         <button class="config-tab ${_settingsTab === 'teams' ? 'active' : ''}" onclick="switchSettingsTab('teams')">Teams</button>
         <button class="config-tab ${_settingsTab === 'providers' ? 'active' : ''}" onclick="switchSettingsTab('providers')">Providers</button>
         <button class="config-tab ${_settingsTab === 'models' ? 'active' : ''}" onclick="switchSettingsTab('models')">Models</button>
         <button class="config-tab ${_settingsTab === 'costs' ? 'active' : ''}" onclick="switchSettingsTab('costs')">Costs</button>
+        <button class="config-tab ${_settingsTab === 'traces' ? 'active' : ''}" onclick="switchSettingsTab('traces')">Traces</button>
+        <button class="config-tab ${_settingsTab === 'audit' ? 'active' : ''}" onclick="switchSettingsTab('audit')">Audit</button>
+        <button class="config-tab ${_settingsTab === 'mcp' ? 'active' : ''}" onclick="switchSettingsTab('mcp')">MCP</button>
+        <button class="config-tab ${_settingsTab === 'backup' ? 'active' : ''}" onclick="switchSettingsTab('backup')">Backup</button>
+        <button class="config-tab ${_settingsTab === 'notifications' ? 'active' : ''}" onclick="switchSettingsTab('notifications')">Notif</button>
       </div>
       <div id="settings-content" class="space-y-6"></div>
     </div>
@@ -4837,10 +4982,17 @@ async function loadSettingsTab() {
     if (_settingsTab === 'server') await renderServerTab(el);
     else if (_settingsTab === 'qmd') await renderQmdTab(el);
     else if (_settingsTab === 'telegram') await renderTelegramTab(el);
+    else if (_settingsTab === 'channels') await renderChannelsTab(el);
+    else if (_settingsTab === 'nodes') await renderNodesTab(el);
     else if (_settingsTab === 'teams') await renderTeamsTab(el);
     else if (_settingsTab === 'providers') await renderProvidersTab(el);
     else if (_settingsTab === 'models') await renderModelsTab(el);
     else if (_settingsTab === 'costs') await renderCostsTab(el);
+    else if (_settingsTab === 'traces') await renderTracesTab(el);
+    else if (_settingsTab === 'audit') await renderAuditTab(el);
+    else if (_settingsTab === 'mcp') await renderMcpTab(el);
+    else if (_settingsTab === 'backup') await renderBackupTab(el);
+    else if (_settingsTab === 'notifications') await renderNotificationsTab(el);
   } catch (e) {
     el.innerHTML = `<div class="text-error text-sm">Error: ${esc(e.message)}</div>`;
   }
@@ -6018,6 +6170,378 @@ function _fmtTokens(n) {
   return String(n);
 }
 
+// ─── Traces Settings Tab ──────────────────────────────────────
+async function renderTracesTab(el) {
+  try {
+    const data = await API.get('/v1/traces?hours=24&limit=30');
+    if (data.error) { el.innerHTML = `<div class="text-text-muted text-sm">${esc(data.error)}</div>`; return; }
+    const traces = data.traces || [];
+    let html = `<div class="glass-card p-6">
+      <h3 class="section-header text-sm mb-4">Recent Traces (last 24h)</h3>`;
+    if (!traces.length) {
+      html += `<div class="text-text-muted text-sm">No traces recorded yet.</div>`;
+    } else {
+      html += `<table class="w-full text-sm">
+        <thead><tr class="text-text-muted text-[10px] uppercase tracking-wider">
+          <th class="text-left pb-1">Time</th><th class="text-left pb-1">Agent</th>
+          <th class="text-left pb-1">Type</th><th class="text-left pb-1">Name</th>
+          <th class="text-right pb-1">Duration</th><th class="text-center pb-1">Status</th>
+          <th class="text-right pb-1">Spans</th>
+        </tr></thead><tbody>`;
+      for (const tr of traces) {
+        const ts = (tr.started_at || '').includes('T') ? tr.started_at.split('T')[1].slice(0,8) : tr.started_at;
+        const dur = tr.duration_ms != null ? (tr.duration_ms / 1000).toFixed(1) + 's' : '?';
+        const stColor = tr.status === 'ok' ? 'text-accent' : 'text-error';
+        html += `<tr class="border-t border-border/50 cursor-pointer hover:bg-surface/50" onclick="expandTrace('${esc(tr.trace_id)}')">
+          <td class="py-1 text-text-muted">${esc(ts)}</td>
+          <td class="py-1 font-medium">${esc(tr.agent)}</td>
+          <td class="py-1 text-text-muted">${esc(tr.type)}</td>
+          <td class="py-1">${esc((tr.name || '').slice(0, 40))}</td>
+          <td class="py-1 text-right">${dur}</td>
+          <td class="py-1 text-center ${stColor}">${esc(tr.status)}</td>
+          <td class="py-1 text-right text-text-muted">${tr.span_count || 0}</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+    }
+    html += `</div><div id="trace-detail-panel" class="mt-4"></div>`;
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = `<div class="text-error text-sm">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+window.expandTrace = async function(traceId) {
+  const panel = document.getElementById('trace-detail-panel');
+  if (!panel) return;
+  panel.innerHTML = '<div class="text-text-muted text-sm">Loading...</div>';
+  try {
+    const data = await API.get(`/v1/traces/${traceId}`);
+    const spans = data.spans || [];
+    if (!spans.length) { panel.innerHTML = '<div class="text-text-muted text-sm">No spans found</div>'; return; }
+    const totalDur = data.total_duration_ms || 1;
+    let html = `<div class="glass-card p-6">
+      <h4 class="text-sm font-semibold mb-2">Trace: ${esc(traceId.slice(0,12))} (${spans.length} spans, ${(totalDur/1000).toFixed(1)}s)</h4>
+      <div class="text-[10px] text-text-muted mb-4">Tokens: ${_fmtTokens(data.total_tokens_in || 0)} in / ${_fmtTokens(data.total_tokens_out || 0)} out</div>
+      <table class="w-full text-xs">
+        <thead><tr class="text-text-muted text-[10px] uppercase tracking-wider">
+          <th class="text-left pb-1">Type</th><th class="text-left pb-1">Name</th>
+          <th class="text-left pb-1">Model</th><th class="text-right pb-1">Duration</th>
+          <th class="text-right pb-1">Tokens</th><th class="text-center pb-1">Status</th>
+        </tr></thead><tbody>`;
+    for (const sp of spans) {
+      const dur = sp.duration_ms != null ? (sp.duration_ms / 1000).toFixed(2) + 's' : '?';
+      const indent = sp.parent_id ? 'pl-4' : '';
+      const stColor = sp.status === 'ok' ? 'text-accent' : 'text-error';
+      const tokStr = (sp.tokens_in || sp.tokens_out) ? `${_fmtTokens(sp.tokens_in||0)}/${_fmtTokens(sp.tokens_out||0)}` : '';
+      // Waterfall bar
+      const pct = totalDur > 0 ? Math.max(2, Math.round((sp.duration_ms||0) / totalDur * 100)) : 0;
+      html += `<tr class="border-t border-border/30">
+        <td class="py-0.5 ${indent} font-medium">${esc(sp.type)}</td>
+        <td class="py-0.5">${esc((sp.name||'').slice(0,50))}</td>
+        <td class="py-0.5 text-text-muted mono text-[10px]">${esc(sp.model||'')}</td>
+        <td class="py-0.5 text-right"><div class="inline-block bg-accent/20 rounded h-3 align-middle mr-1" style="width:${pct}%"></div>${dur}</td>
+        <td class="py-0.5 text-right text-text-muted">${tokStr}</td>
+        <td class="py-0.5 text-center ${stColor}">${esc(sp.status)}</td>
+      </tr>`;
+    }
+    html += '</tbody></table></div>';
+    panel.innerHTML = html;
+  } catch (e) {
+    panel.innerHTML = `<div class="text-error text-sm">Error: ${esc(e.message)}</div>`;
+  }
+};
+
+// ─── Audit Settings Tab ──────────────────────────────────────
+async function renderAuditTab(el) {
+  try {
+    const data = await API.get('/v1/audit?limit=50');
+    if (data.error) { el.innerHTML = `<div class="text-text-muted text-sm">${esc(data.error)}</div>`; return; }
+    const entries = data.entries || [];
+    let html = `<div class="glass-card p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="section-header text-sm">Audit Log</h3>
+        <button onclick="exportAuditCSV()" class="btn-secondary text-xs px-3 py-1 rounded-lg">Export CSV</button>
+      </div>`;
+    if (!entries.length) {
+      html += `<div class="text-text-muted text-sm">No audit entries yet.</div>`;
+    } else {
+      html += `<table class="w-full text-sm">
+        <thead><tr class="text-text-muted text-[10px] uppercase tracking-wider">
+          <th class="text-left pb-1">Time</th><th class="text-left pb-1">Agent</th>
+          <th class="text-left pb-1">Action</th><th class="text-left pb-1">Tool</th>
+          <th class="text-left pb-1">Summary</th><th class="text-center pb-1">Status</th>
+          <th class="text-right pb-1">Duration</th>
+        </tr></thead><tbody>`;
+      for (const e of entries) {
+        const ts = (e.timestamp || '').includes('T') ? e.timestamp.split('T')[1].slice(0,8) : e.timestamp;
+        const dur = e.duration_ms != null ? (e.duration_ms / 1000).toFixed(1) + 's' : '';
+        const stColor = e.result_status === 'success' ? 'text-accent' : 'text-error';
+        html += `<tr class="border-t border-border/50">
+          <td class="py-1 text-text-muted">${esc(ts)}</td>
+          <td class="py-1 font-medium">${esc(e.agent)}</td>
+          <td class="py-1 text-text-muted">${esc(e.action_type)}</td>
+          <td class="py-1 text-accent">${esc(e.tool_name)}</td>
+          <td class="py-1 text-text-muted text-xs">${esc((e.args_summary || '').slice(0,50))}</td>
+          <td class="py-1 text-center ${stColor}">${esc(e.result_status)}</td>
+          <td class="py-1 text-right text-text-muted">${dur}</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = `<div class="text-error text-sm">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+window.exportAuditCSV = function() {
+  const url = `${BASE_URL}/v1/audit/export?format=csv`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'audit_log.csv';
+  a.click();
+};
+
+// ─── MCP Settings Tab ────────────────────────────────────────
+async function renderMcpTab(el) {
+  try {
+    const data = await API.get('/v1/mcp/connections');
+    const connections = data.connections || [];
+    let html = `<div class="glass-card p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="section-header text-sm">MCP Connections</h3>
+        <button onclick="showMcpConnectDialog()" class="btn-primary text-xs px-3 py-1 rounded-lg">+ Connect</button>
+      </div>`;
+    if (!connections.length) {
+      html += `<div class="text-text-muted text-sm">No MCP servers connected.</div>`;
+    } else {
+      for (const conn of connections) {
+        const tools = conn.tools || [];
+        html += `<div class="border border-border/50 rounded-lg p-4 mb-3">
+          <div class="flex items-center justify-between mb-2">
+            <div>
+              <span class="font-medium text-text-primary">${esc(conn.name)}</span>
+              <span class="text-text-muted text-xs ml-2">(${esc(conn.transport)})</span>
+              <span class="inline-block w-2 h-2 rounded-full bg-green-400 ml-2"></span>
+            </div>
+            <button onclick="mcpDisconnect('${esc(conn.name)}')" class="btn-secondary text-xs px-2 py-1 rounded">Disconnect</button>
+          </div>
+          <div class="text-[10px] text-text-muted">${conn.tool_count || tools.length} tools: ${tools.slice(0,5).join(', ')}${tools.length > 5 ? ' +' + (tools.length-5) : ''}</div>
+        </div>`;
+      }
+    }
+    html += '</div><div id="mcp-connect-dialog"></div>';
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = `<div class="text-error text-sm">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+window.showMcpConnectDialog = function() {
+  const dlg = document.getElementById('mcp-connect-dialog');
+  if (!dlg) return;
+  dlg.innerHTML = `<div class="glass-card p-6 mt-4">
+    <h4 class="text-sm font-semibold mb-3">Connect to MCP Server</h4>
+    <div class="grid grid-cols-2 gap-4 mb-4">
+      <div>
+        <label class="text-[10px] text-text-muted uppercase tracking-wider">Name</label>
+        <input id="mcp-name" type="text" class="w-full bg-surface border border-border rounded px-2 py-1 text-sm mt-1" placeholder="github">
+      </div>
+      <div>
+        <label class="text-[10px] text-text-muted uppercase tracking-wider">Transport</label>
+        <select id="mcp-transport" class="w-full bg-surface border border-border rounded px-2 py-1 text-sm mt-1">
+          <option value="sse">SSE (HTTP)</option>
+          <option value="stdio">stdio (command)</option>
+        </select>
+      </div>
+    </div>
+    <div class="mb-4">
+      <label class="text-[10px] text-text-muted uppercase tracking-wider">URL / Command</label>
+      <input id="mcp-url" type="text" class="w-full bg-surface border border-border rounded px-2 py-1 text-sm mt-1" placeholder="http://localhost:3001/mcp">
+    </div>
+    <div class="flex items-center gap-3 mb-4">
+      <label class="text-xs text-text-muted"><input type="checkbox" id="mcp-persist" class="mr-1"> Save to mcp.json</label>
+    </div>
+    <div class="flex gap-2">
+      <button onclick="doMcpConnect()" class="btn-primary text-xs px-4 py-1.5 rounded-lg">Connect</button>
+      <button onclick="document.getElementById('mcp-connect-dialog').innerHTML=''" class="btn-secondary text-xs px-4 py-1.5 rounded-lg">Cancel</button>
+    </div>
+  </div>`;
+};
+
+window.doMcpConnect = async function() {
+  const name = document.getElementById('mcp-name')?.value;
+  const url = document.getElementById('mcp-url')?.value;
+  const transport = document.getElementById('mcp-transport')?.value || 'sse';
+  const persist = document.getElementById('mcp-persist')?.checked || false;
+  if (!name || !url) { showToast('Name and URL are required', true); return; }
+  try {
+    const res = await API.post('/v1/mcp/connect', { name, url, transport, persist });
+    if (res.error) { showToast(res.error, true); return; }
+    showToast(`Connected to ${name} (${res.tool_count || 0} tools)`);
+    switchSettingsTab('mcp');
+  } catch (e) { showToast(e.message, true); }
+};
+
+window.mcpDisconnect = async function(name) {
+  if (!confirm(`Disconnect from MCP server "${name}"?`)) return;
+  try {
+    const res = await API.post('/v1/mcp/disconnect', { name });
+    if (res.error) { showToast(res.error, true); return; }
+    showToast(`Disconnected from ${name}`);
+    switchSettingsTab('mcp');
+  } catch (e) { showToast(e.message, true); }
+};
+
+// ─── Backup Settings Tab ─────────────────────────────────────
+async function renderBackupTab(el) {
+  try {
+    const info = await API.get('/v1/backup/info');
+    const agents = info.agents || [];
+    const sizeKB = Math.round((info.estimated_size_bytes || 0) / 1024);
+
+    el.innerHTML = `
+      <div class="glass-card p-6">
+        <h3 class="section-header text-sm mb-4">Export</h3>
+        <div class="mb-4">
+          <div class="text-text-primary text-sm font-medium mb-1">Full Instance Backup</div>
+          <div class="text-text-muted text-xs mb-3">${info.agent_count || 0} agents, ${info.total_files || 0} files, ~${sizeKB} KB estimated</div>
+          <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="exportFullBackup()">Export All</button>
+        </div>
+
+        <div class="mt-6">
+          <div class="text-text-primary text-sm font-medium mb-2">Per-Agent Export</div>
+          <div class="space-y-2">
+            ${agents.map(a => `
+              <div class="flex items-center justify-between p-3 rounded-lg bg-surface-light/50 border border-border/30">
+                <div>
+                  <span class="text-sm font-medium text-text-primary">${esc(a.name)}</span>
+                  <span class="text-[10px] text-text-muted ml-2">${a.memories} memories, ${a.skills} skills</span>
+                </div>
+                <button class="btn-secondary text-xs px-3 py-1.5 rounded-lg" onclick="exportAgentBackup('${esc(a.name)}')">Export</button>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+
+      <div class="glass-card p-6 mt-4">
+        <h3 class="section-header text-sm mb-4">Import</h3>
+        <div class="text-text-muted text-xs mb-3">Restore from a .brain-backup.tar.gz file. Use merge strategy to safely add without overwriting.</div>
+        <div class="flex items-center gap-3">
+          <input type="file" id="restore-file-input" accept=".tar.gz,.gz" class="text-xs text-text-primary">
+          <button class="btn-primary px-4 py-2 rounded-xl text-sm font-display" onclick="importBackup()">Import (Merge)</button>
+        </div>
+        <div id="restore-status" class="mt-3 text-xs text-text-muted"></div>
+      </div>`;
+  } catch (e) {
+    el.innerHTML = `<div class="text-error text-sm">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+window.exportFullBackup = async function() {
+  try {
+    showToast('Creating backup...');
+    const res = await API.post('/v1/backup', { type: 'full' });
+    if (res.error) { showToast(res.error, 'error'); return; }
+    showToast(`Backup created: ${res.filename} (${Math.round((res.size_bytes || 0) / 1024)} KB)`);
+    // Trigger download via a temp link
+    if (res.path) {
+      showToast(`Saved to: ${res.path}`);
+    }
+  } catch (e) { showToast(e.message, 'error'); }
+};
+
+window.exportAgentBackup = async function(agentName) {
+  try {
+    showToast(`Backing up ${agentName}...`);
+    const res = await API.post('/v1/backup', { type: 'agent', agent: agentName });
+    if (res.error) { showToast(res.error, 'error'); return; }
+    showToast(`Backup created: ${res.filename} (${Math.round((res.size_bytes || 0) / 1024)} KB)`);
+  } catch (e) { showToast(e.message, 'error'); }
+};
+
+window.importBackup = async function() {
+  const fileInput = document.getElementById('restore-file-input');
+  const statusEl = document.getElementById('restore-status');
+  if (!fileInput?.files?.length) {
+    showToast('Please select a backup file', 'error');
+    return;
+  }
+  // For now, we need the file path on disk — upload isn't supported yet
+  // Show a note about using the server-side path
+  if (statusEl) {
+    statusEl.innerHTML = '<span class="text-warning">Note: Web import requires the backup file to be on the server disk. Use the TUI command /restore &lt;path&gt; or place the file on the server and enter the path below.</span>' +
+      '<div class="flex gap-2 mt-2"><input id="restore-path-input" class="flex-1 bg-surface border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary" placeholder="/path/to/backup.tar.gz">' +
+      '<button class="btn-primary px-3 py-1.5 rounded-lg text-xs" onclick="doRestore()">Restore</button></div>';
+  }
+};
+
+window.doRestore = async function() {
+  const pathInput = document.getElementById('restore-path-input');
+  const statusEl = document.getElementById('restore-status');
+  if (!pathInput?.value) return;
+  try {
+    showToast('Restoring...');
+    const res = await API.post('/v1/restore', { path: pathInput.value, strategy: 'merge' });
+    if (res.error) { showToast(res.error, 'error'); return; }
+    const imp = res.imported || {};
+    showToast(`Restored: ${(imp.agents || []).length} agents, ${imp.memories || 0} memories, ${imp.files || 0} files`);
+    if (statusEl) statusEl.innerHTML = `<span class="text-success">Restore complete. ${(imp.agents || []).join(', ')}</span>`;
+  } catch (e) { showToast(e.message, 'error'); }
+};
+
+// ─── Notifications Settings Tab ──────────────────────────────
+async function renderNotificationsTab(el) {
+  const res = await API.get('/v1/notifications');
+  const notifs = res.notifications || [];
+  const unread = res.unread || 0;
+  const sevIcon = (s) => s === 'critical' || s === 'error' ? '<span style="color:#f87171">!!</span>' : s === 'warning' ? '<span style="color:#ff8700">!</span>' : '<span style="color:#5f87ff">i</span>';
+  const timeAgo = (ts) => {
+    const diff = (Date.now() - new Date(ts).getTime()) / 1000;
+    if (diff < 60) return 'just now';
+    if (diff < 3600) return Math.floor(diff/60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+    return Math.floor(diff/86400) + 'd ago';
+  };
+  el.innerHTML = `
+    <div class="glass-card p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="section-header text-sm">Recent Notifications</h3>
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-text-muted">${unread} unread</span>
+          <button class="btn-secondary text-xs px-3 py-1 rounded-lg" onclick="clearAllNotifs()">Clear All</button>
+        </div>
+      </div>
+      ${notifs.length === 0 ? '<div class="text-text-muted text-sm py-4">No notifications yet.</div>' :
+        `<div class="space-y-2">${notifs.slice(0, 30).map(n => `
+          <div class="flex items-start gap-3 p-3 rounded-lg bg-surface-light/50 border border-border/30">
+            <div class="text-sm flex-shrink-0 mt-0.5">${sevIcon(n.severity)}</div>
+            <div class="flex-1 min-w-0">
+              <div class="text-xs font-semibold text-text-primary">${esc(n.title)}</div>
+              <div class="text-[10px] text-text-muted mt-0.5 line-clamp-2">${esc(n.message)}</div>
+              <div class="text-[9px] text-text-muted mt-1">${n.agent ? esc(n.agent) + ' · ' : ''}${esc(n.event_type)} · ${timeAgo(n.created_at)}</div>
+            </div>
+          </div>
+        `).join('')}</div>`}
+    </div>
+    <div class="glass-card p-6 mt-4">
+      <h3 class="section-header text-sm mb-3">Notification Channels</h3>
+      <div class="text-text-muted text-xs">Configure notification channels (webhook, email) in config.json under the "notifications" key. In-app notifications are always enabled.</div>
+    </div>`;
+}
+
+window.clearAllNotifs = async function() {
+  try {
+    await API.post('/v1/notifications/dismiss', { id: 'all' });
+    showToast('Notifications cleared');
+    loadSettingsTab();
+    pollNotifications();
+  } catch (e) { showToast('Error: ' + e.message, 'error'); }
+};
+
 // ─── Agent Pause / Delete ────────────────────────────────────
 async function toggleAgentPaused(agentName, agentObj) {
   const isPaused = getAgentPaused(agentObj);
@@ -6617,6 +7141,8 @@ const slashCommands = [
   { cmd: '/providers', desc: 'Open providers settings',   action: () => { _settingsTab = 'providers'; openSettingsModal(); } },
   { cmd: '/teams',     desc: 'Open teams settings',       action: () => { _settingsTab = 'teams'; openSettingsModal(); } },
   { cmd: '/qmd',       desc: 'Open QMD settings',         action: () => { _settingsTab = 'qmd'; openSettingsModal(); } },
+  { cmd: '/nodes',     desc: 'Open remote nodes settings', action: () => { _settingsTab = 'nodes'; openSettingsModal(); } },
+  { cmd: '/channels',  desc: 'Open channels settings',     action: () => { _settingsTab = 'channels'; openSettingsModal(); } },
   { cmd: '/projects',  desc: 'Manage projects for this agent', action: () => {
     if (state.activeAgentId) { openConfigModal(state.activeAgentId); setTimeout(() => { state.configTab = 'projects'; const tab = document.querySelector('#config-tabs [data-tab="projects"]'); if (tab) tab.click(); }, 100); }
   }},
@@ -6999,9 +7525,251 @@ function apToggle() {
 document.getElementById('btn-activity-toggle').onclick = apToggle;
 document.getElementById('ap-close').onclick = apToggle;
 
+// ─── Multimodal: Image Attach ─────────────────────────────────
+let _pendingImages = []; // [{data: base64, media_type: string, name: string}]
+
+function handleImageFiles(files) {
+  for (const file of files) {
+    if (!file.type.startsWith('image/')) continue;
+    if (_pendingImages.length >= 5) { showToast('Max 5 images per message'); break; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const b64 = reader.result.split(',')[1];
+      _pendingImages.push({ data: b64, media_type: file.type, name: file.name, size: file.size });
+      renderImagePreviews();
+    };
+    reader.readAsDataURL(file);
+  }
+}
+
+function renderImagePreviews() {
+  const area = document.getElementById('image-preview-area');
+  if (!area) return;
+  if (_pendingImages.length === 0) { area.style.display = 'none'; area.innerHTML = ''; return; }
+  area.style.display = 'flex';
+  area.innerHTML = _pendingImages.map((img, i) => `
+    <div style="position:relative;border:1px solid var(--color-border);border-radius:8px;padding:4px;display:inline-flex;align-items:center;gap:6px;background:var(--color-surface)">
+      <img src="data:${img.media_type};base64,${img.data}" style="height:48px;max-width:80px;border-radius:4px;object-fit:cover">
+      <div style="font-size:10px;color:var(--color-text-muted);max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(img.name)}<br>${(img.size/1024).toFixed(0)} KB</div>
+      <button onclick="_pendingImages.splice(${i},1);renderImagePreviews()" style="position:absolute;top:-6px;right:-6px;width:16px;height:16px;border-radius:50%;background:var(--color-error);color:#fff;border:none;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1">&times;</button>
+    </div>
+  `).join('');
+}
+
+// Drag and drop
+(function() {
+  const inputArea = document.getElementById('chat-input-area');
+  if (!inputArea) return;
+  inputArea.addEventListener('dragover', (e) => { e.preventDefault(); inputArea.style.outline = '2px dashed var(--color-accent)'; });
+  inputArea.addEventListener('dragleave', () => { inputArea.style.outline = ''; });
+  inputArea.addEventListener('drop', (e) => {
+    e.preventDefault(); inputArea.style.outline = '';
+    if (e.dataTransfer.files.length) handleImageFiles(e.dataTransfer.files);
+  });
+  // Paste images
+  document.getElementById('chat-input')?.addEventListener('paste', (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) handleImageFiles([file]);
+        break;
+      }
+    }
+  });
+})();
+
+// ─── Nodes Settings Tab ──────────────────────────────────────
+async function renderNodesTab(el) {
+  const res = await API.get('/v1/nodes');
+  const nodes = res.nodes || [];
+  el.innerHTML = `
+    <div class="glass-card p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="section-header text-sm">Remote Nodes</h3>
+        <button onclick="showAddNodeDialog()" class="btn-primary text-xs px-3 py-1.5 rounded-lg">+ Add Node</button>
+      </div>
+      ${nodes.length === 0 ? '<div class="text-text-muted text-sm">No remote nodes configured. Add a node to execute commands on remote machines.</div>' : ''}
+      <div class="space-y-4">
+        ${nodes.map(n => {
+          const dot = n.status === 'connected' ? 'bg-success breathing-dot' : 'bg-error';
+          const statusText = n.paused ? 'Paused' : n.status;
+          return `<div class="border border-border/50 rounded-lg p-4">
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-3">
+                <span class="w-2.5 h-2.5 rounded-full ${dot}"></span>
+                <span class="text-text-primary font-display font-semibold">${esc(n.name)}</span>
+                <span class="text-xs text-text-muted">${esc(n.description || '')}</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <button onclick="nodeAction('${n.paused ? 'resume' : 'pause'}','${esc(n.name)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg">${n.paused ? 'Resume' : 'Pause'}</button>
+                <button onclick="nodeAction('remove','${esc(n.name)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg text-error">Remove</button>
+              </div>
+            </div>
+            <div class="text-xs text-text-muted mono">${esc(n.os || '')} ${n.hostname ? '(' + esc(n.hostname) + ')' : ''}</div>
+            ${n.status === 'connected' ? `
+              <div class="flex gap-4 mt-2 text-xs text-text-secondary">
+                <span>CPU: ${n.cpu_percent != null ? n.cpu_percent + '%' : '-'}</span>
+                <span>RAM: ${n.mem_used_gb != null ? n.mem_used_gb.toFixed(1) + '/' + (n.mem_total_gb || 0).toFixed(0) + ' GB' : '-'}</span>
+                <span>Disk: ${n.disk_free_gb != null ? n.disk_free_gb.toFixed(0) + ' GB free' : '-'}</span>
+              </div>` : ''}
+            <div class="flex flex-wrap gap-1 mt-2">
+              ${(n.tags || []).map(t => `<span class="px-2 py-0.5 bg-agent/10 rounded text-[10px] text-agent border border-agent/20">${esc(t)}</span>`).join('')}
+            </div>
+            <div class="text-xs text-text-muted mt-1">Tools: ${(n.allowed_tools || []).join(', ')}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
+
+window.showAddNodeDialog = function() {
+  const d = document.createElement('div');
+  d.className = 'modal-overlay'; d.onclick = e => { if(e.target===d)d.remove(); };
+  d.innerHTML = `<div class="modal-content p-6" style="max-width:480px">
+    <h3 class="font-display font-semibold mb-4 text-text-primary">Add Remote Node</h3>
+    <label class="text-xs text-text-secondary block mb-1">Name</label>
+    <input id="add-node-name" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3" placeholder="build-server">
+    <label class="text-xs text-text-secondary block mb-1">Description</label>
+    <input id="add-node-desc" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3" placeholder="CI/CD build server">
+    <label class="text-xs text-text-secondary block mb-1">Tags (comma-separated)</label>
+    <input id="add-node-tags" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3" placeholder="gpu, linux">
+    <div class="flex justify-end gap-2 mt-4">
+      <button onclick="this.closest('.modal-overlay').remove()" class="btn-secondary px-4 py-2 rounded-lg text-sm">Cancel</button>
+      <button onclick="createNode()" class="btn-primary px-4 py-2 rounded-lg text-sm">Create Node</button>
+    </div>
+    <div id="add-node-result" class="mt-3" style="display:none"></div>
+  </div>`;
+  document.body.appendChild(d);
+};
+
+window.createNode = async function() {
+  const name = document.getElementById('add-node-name').value.trim();
+  if (!name) return;
+  const desc = document.getElementById('add-node-desc').value.trim();
+  const tags = document.getElementById('add-node-tags').value.split(',').map(t=>t.trim()).filter(Boolean);
+  try {
+    const r = await API.post('/v1/nodes', {action:'add', name, description:desc, tags});
+    const el = document.getElementById('add-node-result');
+    el.style.display = 'block';
+    el.innerHTML = `<div class="bg-surface-light border border-border rounded-lg p-3 text-xs mono"># Install on remote machine:\n${esc(r.install_command || '')}\n\nToken: ${esc(r.token || '')}</div>`;
+    showToast('Node created');
+    setTimeout(() => loadSettingsTab(), 500);
+  } catch(e) { showToast(e.message, 'error'); }
+};
+
+window.nodeAction = async function(action, name) {
+  try {
+    await API.post('/v1/nodes', {action, name});
+    showToast(`Node ${name}: ${action}`);
+    setTimeout(() => loadSettingsTab(), 500);
+  } catch(e) { showToast(e.message, 'error'); }
+};
+
+// ─── Channels Settings Tab ──────────────────────────────────
+async function renderChannelsTab(el) {
+  const res = await API.get('/v1/channels');
+  const channels = res.channels || [];
+  el.innerHTML = `
+    <div class="glass-card p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="section-header text-sm">Messaging Channels</h3>
+        <button onclick="showAddChannelDialog()" class="btn-primary text-xs px-3 py-1.5 rounded-lg">+ Add Channel</button>
+      </div>
+      ${channels.length === 0 ? '<div class="text-text-muted text-sm">No messaging channels configured. Channels connect Brain Agent to Telegram, Discord, and other platforms.</div>' : ''}
+      <div class="space-y-4">
+        ${channels.map(ch => {
+          const dot = ch.running ? 'bg-success breathing-dot' : 'bg-error';
+          return `<div class="border border-border/50 rounded-lg p-4">
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-3">
+                <span class="w-2.5 h-2.5 rounded-full ${dot}"></span>
+                <span class="text-text-primary font-display font-semibold">${esc(ch.name || ch.channel_id)}</span>
+                <span class="px-2 py-0.5 rounded bg-surface-lighter text-[10px] text-text-muted">${esc(ch.type)}</span>
+                ${ch.identity ? `<span class="text-xs text-text-muted mono">${esc(ch.identity)}</span>` : ''}
+              </div>
+              <div class="flex items-center gap-2">
+                ${ch.running
+                  ? `<button onclick="channelLifecycle('${esc(ch.channel_id)}','stop')" class="btn-secondary text-xs px-3 py-1 rounded-lg">Stop</button>
+                     <button onclick="channelLifecycle('${esc(ch.channel_id)}','restart')" class="btn-secondary text-xs px-3 py-1 rounded-lg">Restart</button>`
+                  : `<button onclick="channelLifecycle('${esc(ch.channel_id)}','start')" class="btn-primary text-xs px-3 py-1 rounded-lg">Start</button>`}
+                <button onclick="channelAction('remove','${esc(ch.channel_id)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg text-error">Remove</button>
+              </div>
+            </div>
+            <div class="flex gap-4 text-xs text-text-muted">
+              <span>Agent: ${esc((ch.agent_routing||{}).default || 'main')}</span>
+              <span>Model: ${esc(ch.default_model || 'default')}</span>
+              ${ch.stats ? `<span>Messages: ${ch.stats.messages_in || 0}</span>` : ''}
+              ${ch.uptime ? `<span>Uptime: ${_fmtUptime(ch.uptime)}</span>` : ''}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
+
+window.showAddChannelDialog = function() {
+  const d = document.createElement('div');
+  d.className = 'modal-overlay'; d.onclick = e => { if(e.target===d)d.remove(); };
+  d.innerHTML = `<div class="modal-content p-6" style="max-width:480px">
+    <h3 class="font-display font-semibold mb-4 text-text-primary">Add Messaging Channel</h3>
+    <label class="text-xs text-text-secondary block mb-1">Channel Name</label>
+    <input id="add-ch-name" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3" placeholder="My Telegram Bot">
+    <label class="text-xs text-text-secondary block mb-1">Type</label>
+    <select id="add-ch-type" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3">
+      <option value="telegram">Telegram</option>
+    </select>
+    <label class="text-xs text-text-secondary block mb-1">Bot Token</label>
+    <input id="add-ch-token" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3 mono" placeholder="123456:ABC-DEF...">
+    <label class="text-xs text-text-secondary block mb-1">Default Agent</label>
+    <input id="add-ch-agent" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3" value="main">
+    <div class="flex justify-end gap-2 mt-4">
+      <button onclick="this.closest('.modal-overlay').remove()" class="btn-secondary px-4 py-2 rounded-lg text-sm">Cancel</button>
+      <button onclick="createChannel()" class="btn-primary px-4 py-2 rounded-lg text-sm">Create Channel</button>
+    </div>
+  </div>`;
+  document.body.appendChild(d);
+};
+
+window.createChannel = async function() {
+  const name = document.getElementById('add-ch-name').value.trim();
+  const type = document.getElementById('add-ch-type').value;
+  const token = document.getElementById('add-ch-token').value.trim();
+  const agent = document.getElementById('add-ch-agent').value.trim() || 'main';
+  if (!name || !token) { showToast('Name and token required'); return; }
+  try {
+    await API.post('/v1/channels', {
+      action: 'create', id: name.toLowerCase().replace(/\s+/g, '-'), name, type,
+      credentials: { bot_token: token }, agent_routing: { default: agent }, enabled: true,
+    });
+    showToast('Channel created');
+    document.querySelector('.modal-overlay')?.remove();
+    setTimeout(() => loadSettingsTab(), 500);
+  } catch(e) { showToast(e.message, 'error'); }
+};
+
+window.channelLifecycle = async function(chId, action) {
+  try {
+    await API.post(`/v1/channels/${encodeURIComponent(chId)}/${action}`);
+    showToast(`Channel ${chId}: ${action}`);
+    setTimeout(() => loadSettingsTab(), 500);
+  } catch(e) { showToast(e.message, 'error'); }
+};
+
+window.channelAction = async function(action, chId) {
+  try {
+    await API.post('/v1/channels', {action, id: chId});
+    showToast(`Channel ${chId}: ${action}`);
+    setTimeout(() => loadSettingsTab(), 500);
+  } catch(e) { showToast(e.message, 'error'); }
+};
+
 // ─── Initialization ─────────────────────────────────────────
 (async function init() {
   await loadInitialData();
+  startNotifPolling();
   setInterval(async () => {
     await checkConnection();
   }, 30000);

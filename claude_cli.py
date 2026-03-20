@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "2.1.0"
+VERSION = "3.0.0"
 VERSION_DATE = "2026-03-20"
 CHANGELOG = [
+    ("3.0.0", "2026-03-20", "All P2 features: provider fallback with retry, backup/export/import, notifications (webhook/email/in-app), observability tracing + audit trail, dynamic MCP client, multi-modal (image upload/vision), remote nodes, multi-messaging adapter framework"),
     ("2.1.0", "2026-03-20", "Agent workflows (YAML stages with approval gates), Web UI left sidebar replacing top agent cards, consolidated status bar, mobile responsive"),
     ("2.0.0", "2026-03-20", "Projects system, document ingestion (PDF/DOCX/HTML/URL), watched folders, knowledge graph memory with relationship traversal, chat scoping per project"),
     ("1.7.0", "2026-03-20", "Plan mode, web result caching, streaming tool output, cost tracking + rate limiting, custom slash commands, LLM input refinement"),
@@ -40,6 +41,7 @@ import re
 import select
 import signal
 import shutil
+import socket
 import subprocess
 import sys
 import termios
@@ -140,6 +142,7 @@ TOOL_DEFINITIONS = [
                 "path": {"type": "string", "description": "Absolute or relative file path to read"},
                 "offset": {"type": "integer", "description": "Line number to start reading from (1-based, default: 1)"},
                 "limit": {"type": "integer", "description": "Maximum number of lines to read (default: all)"},
+                "node": {"type": "string", "description": "Remote node name or 'tag:NAME' to execute on a remote node instead of locally"},
             },
             "required": ["path"],
         },
@@ -155,6 +158,7 @@ TOOL_DEFINITIONS = [
             "properties": {
                 "path": {"type": "string", "description": "File path to write to"},
                 "content": {"type": "string", "description": "The full content to write to the file"},
+                "node": {"type": "string", "description": "Remote node name or 'tag:NAME' to execute on a remote node instead of locally"},
             },
             "required": ["path", "content"],
         },
@@ -190,6 +194,7 @@ TOOL_DEFINITIONS = [
                 "path": {"type": "string", "description": "Directory path to list (default: current directory)"},
                 "pattern": {"type": "string", "description": "Glob pattern to filter results (e.g. '*.py', '**/*.ts')"},
                 "recursive": {"type": "boolean", "description": "List recursively (default: false)"},
+                "node": {"type": "string", "description": "Remote node name or 'tag:NAME' to execute on a remote node instead of locally"},
             },
             "required": [],
         },
@@ -228,6 +233,7 @@ TOOL_DEFINITIONS = [
                 "command": {"type": "string", "description": "The shell command to execute"},
                 "cwd": {"type": "string", "description": "Working directory for the command (default: current directory)"},
                 "timeout": {"type": "integer", "description": "Timeout in seconds (default: 120)"},
+                "node": {"type": "string", "description": "Remote node name or 'tag:NAME' to execute on a remote node instead of locally"},
             },
             "required": ["command"],
         },
@@ -489,6 +495,43 @@ TOOL_DEFINITIONS = [
             "required": [],
         },
     },
+    {
+        "name": "mcp_connect",
+        "description": (
+            "Connect to an MCP server at runtime. Discovers tools from the server and makes them "
+            "available as mcp_<name>_<tool> tools. Use transport='sse' for HTTP servers, 'stdio' for local commands."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "MCP server URL (for SSE) or command (for stdio)"},
+                "name": {"type": "string", "description": "Friendly name for this connection"},
+                "transport": {"type": "string", "description": "Transport type: 'sse' (default) or 'stdio'", "enum": ["sse", "stdio"]},
+                "persist": {"type": "boolean", "description": "Save to mcp.json for reconnect on restart (default: false)"},
+            },
+            "required": ["url", "name"],
+        },
+    },
+    {
+        "name": "mcp_disconnect",
+        "description": "Disconnect from a runtime MCP server. Its tools will no longer be available.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Name of the MCP server to disconnect"},
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "mcp_servers",
+        "description": "List all connected MCP servers with their tools and status.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
 ]
 
 # Build OpenAI-compatible format automatically
@@ -518,7 +561,33 @@ def _err(msg: str) -> str:
     return json.dumps({"error": msg}, ensure_ascii=False)
 
 
+def _route_to_node(tool_name: str, args: dict) -> str | None:
+    """If args contain 'node', route to remote node via server API. Returns result string or None for local."""
+    node = args.pop("node", None)
+    if not node:
+        return None
+    try:
+        import urllib.request
+        body = json.dumps({"node": node, "tool": tool_name, "params": args}).encode("utf-8")
+        req = urllib.request.Request(
+            "http://127.0.0.1:8420/v1/nodes/execute",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        if "error" in result:
+            return _err(f"Node '{node}': {result['error']}")
+        return _ok(result)
+    except Exception as e:
+        return _err(f"Node routing error: {e}")
+
+
 def tool_read_file(args: dict) -> str:
+    node_result = _route_to_node("read_file", args)
+    if node_result is not None:
+        return node_result
     path = args.get("path", "")
     offset = args.get("offset", 1)
     limit = args.get("limit")
@@ -556,6 +625,9 @@ def _maybe_qmd_reindex(path: str) -> None:
 
 
 def tool_write_file(args: dict) -> str:
+    node_result = _route_to_node("write_file", args)
+    if node_result is not None:
+        return node_result
     path = args.get("path", "")
     content = args.get("content", "")
     try:
@@ -601,6 +673,9 @@ def tool_edit_file(args: dict) -> str:
 
 
 def tool_list_directory(args: dict) -> str:
+    node_result = _route_to_node("list_directory", args)
+    if node_result is not None:
+        return node_result
     path = args.get("path", ".")
     pattern = args.get("pattern")
     recursive = args.get("recursive", False)
@@ -776,6 +851,9 @@ def _streaming_execute_command(command: str, timeout: int, cwd: str | None,
 
 
 def tool_execute_command(args: dict) -> str:
+    node_result = _route_to_node("execute_command", args)
+    if node_result is not None:
+        return node_result
     command = args.get("command", "")
     cwd = args.get("cwd")
     timeout = args.get("timeout", 15)
@@ -1526,6 +1604,45 @@ class MCPManager:
                 "tool_count": len(client.tools),
             })
         return result
+
+    def connect_runtime(self, url: str, name: str, transport: str = "sse") -> dict:
+        """Connect to an MCP server at runtime. Returns status dict with discovered tools."""
+        if name in self.clients:
+            return {"error": f"Server '{name}' is already connected"}
+        if transport == "stdio":
+            # url is treated as command, split on spaces for args
+            parts = url.split()
+            client = MCPStdioClient(name=name, command=parts[0], args=parts[1:] if len(parts) > 1 else [])
+        else:
+            client = MCPSSEClient(name=name, url=url)
+
+        if client.start():
+            self.clients[name] = client
+            for tool in client.tools:
+                tool_name = f"mcp_{name}_{tool['name']}"
+                self._tool_to_server[tool_name] = name
+            return {
+                "status": "connected",
+                "name": name,
+                "transport": transport,
+                "url": url,
+                "tools": [{"name": t["name"], "description": t.get("description", "")} for t in client.tools],
+                "tool_count": len(client.tools),
+            }
+        return {"error": f"Failed to connect to MCP server '{name}' at {url}"}
+
+    def disconnect_runtime(self, name: str) -> dict:
+        """Disconnect a runtime MCP server."""
+        if name not in self.clients:
+            return {"error": f"Server '{name}' is not connected"}
+        client = self.clients[name]
+        client.stop()
+        # Remove tool mappings
+        to_remove = [k for k, v in self._tool_to_server.items() if v == name]
+        for k in to_remove:
+            del self._tool_to_server[k]
+        del self.clients[name]
+        return {"status": "disconnected", "name": name}
 
     def stop_all(self):
         """Stop all MCP server connections."""
@@ -4832,9 +4949,31 @@ class Scheduler:
                            started_at=run_info.get("started_at"),
                            tool_calls=run_info.get("tool_calls", 0))
 
+        # Fire notification hook for task completion/failure
+        if _notification_hook:
+            try:
+                if status in ("error", "timeout"):
+                    evt = "task_timeout" if status == "timeout" else "task_failed"
+                    sev = "warning" if status == "timeout" else "error"
+                    _notification_hook(evt, f"Scheduled task: {name}",
+                                       result_text[:300], severity=sev,
+                                       agent=agent_id,
+                                       metadata={"task_name": name, "status": status,
+                                                  "tool_calls": run_info.get("tool_calls", 0)})
+                elif status == "success" and not name.startswith("_memory_summary_"):
+                    _notification_hook("task_complete", f"Task completed: {name}",
+                                       f"Agent {agent_id} completed '{name}' with {run_info.get('tool_calls', 0)} tool calls.",
+                                       severity="info", agent=agent_id,
+                                       metadata={"task_name": name})
+            except Exception:
+                pass
+
 
 # Global scheduler instance
 _scheduler: Scheduler | None = None
+
+# Notification hook — set by server.py to dispatch notifications
+_notification_hook = None
 
 
 # --- Cost Tracking ---
@@ -5029,6 +5168,394 @@ class CostTracker:
 _cost_tracker: CostTracker | None = None
 
 
+# --- Observability: Trace Manager ---
+
+TRACES_DB = os.path.join(AGENTS_DIR, "main", "traces.db")
+
+_traces_db_lock = threading.Lock()
+_traces_db_pool: dict[int, sqlite3.Connection] = {}
+
+
+def _traces_conn():
+    """Get a thread-safe reusable SQLite connection for the traces DB."""
+    tid = threading.current_thread().ident
+    with _traces_db_lock:
+        conn = _traces_db_pool.get(tid)
+        if conn is None:
+            conn = sqlite3.connect(TRACES_DB, timeout=10, check_same_thread=False)
+            conn.execute("PRAGMA busy_timeout = 5000")
+            conn.execute("PRAGMA journal_mode = WAL")
+            _traces_db_pool[tid] = conn
+    return conn
+
+
+class TraceManager:
+    """Thread-safe span-based tracing with SQLite persistence."""
+
+    def __init__(self):
+        os.makedirs(os.path.dirname(TRACES_DB), exist_ok=True)
+        self._init_db()
+
+    def _init_db(self):
+        with _traces_conn() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS traces (
+                    id TEXT PRIMARY KEY,
+                    trace_id TEXT NOT NULL,
+                    parent_id TEXT,
+                    agent TEXT NOT NULL,
+                    session_id TEXT,
+                    type TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'ok',
+                    started_at TEXT NOT NULL,
+                    ended_at TEXT,
+                    duration_ms INTEGER,
+                    tokens_in INTEGER DEFAULT 0,
+                    tokens_out INTEGER DEFAULT 0,
+                    model TEXT,
+                    metadata TEXT
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_traces_trace ON traces(trace_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_traces_parent ON traces(parent_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_traces_agent ON traces(agent)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_traces_type ON traces(type)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_traces_started ON traces(started_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_traces_session ON traces(session_id)")
+            conn.commit()
+
+    def start_span(self, span_type: str, name: str, agent: str = "main",
+                   model: str = "", parent_id: str | None = None,
+                   trace_id: str | None = None,
+                   session_id: str | None = None) -> dict:
+        """Start a new span. Returns span dict with id, start time, etc."""
+        import uuid as _uuid
+        span_id = _uuid.uuid4().hex[:16]
+        if not trace_id:
+            trace_id = _uuid.uuid4().hex[:16]
+        now = datetime.datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
+        return {
+            "id": span_id,
+            "trace_id": trace_id,
+            "parent_id": parent_id,
+            "agent": agent,
+            "session_id": session_id,
+            "type": span_type,
+            "name": name,
+            "model": model,
+            "status": "ok",
+            "started_at": now,
+            "_start_time": time.time(),
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "metadata": {},
+        }
+
+    def end_span(self, span: dict, status: str = "ok",
+                 result_summary: str = "", tokens_in: int = 0, tokens_out: int = 0):
+        """End a span: compute duration and persist to DB."""
+        now = datetime.datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
+        duration_ms = int((time.time() - span.get("_start_time", time.time())) * 1000)
+        span["ended_at"] = now
+        span["duration_ms"] = duration_ms
+        span["status"] = status
+        if tokens_in:
+            span["tokens_in"] = tokens_in
+        if tokens_out:
+            span["tokens_out"] = tokens_out
+        if result_summary:
+            span["metadata"]["result_summary"] = result_summary[:500]
+        try:
+            with _traces_conn() as conn:
+                conn.execute("""
+                    INSERT INTO traces (id, trace_id, parent_id, agent, session_id,
+                        type, name, status, started_at, ended_at, duration_ms,
+                        tokens_in, tokens_out, model, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    span["id"], span["trace_id"], span.get("parent_id"),
+                    span["agent"], span.get("session_id"),
+                    span["type"], span["name"], span["status"],
+                    span["started_at"], span["ended_at"], duration_ms,
+                    span.get("tokens_in", 0), span.get("tokens_out", 0),
+                    span.get("model", ""),
+                    json.dumps(span.get("metadata", {})),
+                ))
+                conn.commit()
+        except (sqlite3.Error, OSError) as e:
+            logging.warning(f"Trace write error: {e}")
+
+    def get_traces(self, agent: str | None = None, hours: int = 24,
+                   limit: int = 50) -> list[dict]:
+        """Get recent root-level traces (parent_id IS NULL)."""
+        try:
+            with _traces_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                where = "WHERE started_at >= datetime('now', ?) AND parent_id IS NULL"
+                params: list = [f"-{hours} hours"]
+                if agent:
+                    where += " AND agent = ?"
+                    params.append(agent)
+                params.append(limit)
+                rows = conn.execute(f"""
+                    SELECT t.*, (SELECT COUNT(*) FROM traces c WHERE c.trace_id = t.trace_id) as span_count
+                    FROM traces t {where}
+                    ORDER BY started_at DESC LIMIT ?
+                """, params).fetchall()
+                return [dict(r) for r in rows]
+        except (sqlite3.Error, OSError) as e:
+            logging.warning(f"Trace read error: {e}")
+            return []
+
+    def get_trace(self, trace_id: str) -> list[dict]:
+        """Get all spans for a trace, ordered by start time."""
+        try:
+            with _traces_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    "SELECT * FROM traces WHERE trace_id = ? ORDER BY started_at",
+                    (trace_id,)
+                ).fetchall()
+                return [dict(r) for r in rows]
+        except (sqlite3.Error, OSError) as e:
+            logging.warning(f"Trace read error: {e}")
+            return []
+
+    def cleanup(self, retention_days: int = 30):
+        """Delete traces older than retention period."""
+        try:
+            with _traces_conn() as conn:
+                conn.execute(
+                    "DELETE FROM traces WHERE started_at < datetime('now', ?)",
+                    (f"-{retention_days} days",)
+                )
+                conn.commit()
+        except (sqlite3.Error, OSError) as e:
+            logging.warning(f"Trace cleanup error: {e}")
+
+
+_trace_manager: TraceManager | None = None
+
+
+# --- Audit Trail ---
+
+AUDIT_DB = os.path.join(AGENTS_DIR, "main", "audit.db")
+
+_audit_db_lock = threading.Lock()
+_audit_db_pool: dict[int, sqlite3.Connection] = {}
+
+
+def _audit_conn():
+    """Get a thread-safe reusable SQLite connection for the audit DB."""
+    tid = threading.current_thread().ident
+    with _audit_db_lock:
+        conn = _audit_db_pool.get(tid)
+        if conn is None:
+            conn = sqlite3.connect(AUDIT_DB, timeout=10, check_same_thread=False)
+            conn.execute("PRAGMA busy_timeout = 5000")
+            conn.execute("PRAGMA journal_mode = WAL")
+            _audit_db_pool[tid] = conn
+    return conn
+
+
+_AUDIT_ACTION_MAP = {
+    "read_file": "file_read",
+    "write_file": "file_write",
+    "edit_file": "file_write",
+    "execute_command": "command_execute",
+    "gmail_send": "email_send",
+    "gmail_reply": "email_reply",
+    "gmail_inbox": "email_read",
+    "gmail_read": "email_read",
+    "gmail_search": "email_read",
+    "web_fetch": "web_fetch",
+    "exa_search": "web_search",
+    "memory_store": "memory_store",
+    "memory_delete": "memory_delete",
+    "memory_recall": "memory_recall",
+    "memory_shared": "memory_shared",
+    "delegate_task": "delegation",
+    "task_cancel": "task_cancel",
+    "use_skill": "skill_use",
+    "list_directory": "file_read",
+    "search_files": "file_read",
+    "mcp_connect": "mcp_tool_call",
+    "mcp_disconnect": "mcp_tool_call",
+    "mcp_servers": "mcp_tool_call",
+}
+
+
+def _audit_summarize_args(tool_name: str, args: dict) -> str:
+    """Generate human-readable summary of tool arguments, max 200 chars."""
+    if tool_name == "execute_command":
+        return args.get("command", "")[:200]
+    elif tool_name in ("gmail_send", "gmail_reply"):
+        return f"To: {args.get('to', '?')}, Subject: {args.get('subject', '?')}"[:200]
+    elif tool_name in ("write_file", "edit_file"):
+        content = args.get("content", "")
+        return f"{args.get('path', '?')} ({len(content)} bytes)"[:200]
+    elif tool_name == "read_file":
+        return f"{args.get('path', '?')}"[:200]
+    elif tool_name == "delegate_task":
+        return f"-> {args.get('agent', '?')}: {args.get('task', '')[:100]}"[:200]
+    elif tool_name in ("memory_store", "memory_delete"):
+        return f"{args.get('name', '?')}"[:200]
+    elif tool_name in ("memory_recall", "memory_shared"):
+        return f"query={args.get('query', '?')}"[:200]
+    elif tool_name == "exa_search":
+        return f"query={args.get('query', '')}"[:200]
+    elif tool_name == "web_fetch":
+        return f"{args.get('url', '?')}"[:200]
+    elif tool_name == "use_skill":
+        return f"skill={args.get('skill', '?')}"[:200]
+    elif tool_name == "list_directory":
+        return f"{args.get('path', '.')}"[:200]
+    elif tool_name == "search_files":
+        return f"pattern={args.get('pattern', '?')} in {args.get('path', '.')}"[:200]
+    else:
+        return str(args)[:200]
+
+
+def _audit_summarize_result(tool_name: str, result_str: str) -> str:
+    """Generate human-readable result summary, max 200 chars."""
+    try:
+        rdata = json.loads(result_str)
+    except (json.JSONDecodeError, TypeError):
+        return str(result_str)[:200]
+    if isinstance(rdata, str):
+        return rdata[:200]
+    if rdata.get("error"):
+        return f"ERROR: {rdata['error']}"[:200]
+    if tool_name == "execute_command":
+        ec = rdata.get("exit_code", -1)
+        return f"exit_code={ec}"[:200]
+    if tool_name == "exa_search":
+        return f"{rdata.get('result_count', 0)} results"[:200]
+    if tool_name in ("memory_recall", "memory_shared"):
+        return f"{rdata.get('count', 0)} memories"[:200]
+    if tool_name == "delegate_task":
+        return f"{rdata.get('agent', '')} responded"[:200]
+    return str(rdata)[:200]
+
+
+class AuditLog:
+    """Append-only audit log with SQLite persistence. No UPDATE or DELETE."""
+
+    def __init__(self):
+        os.makedirs(os.path.dirname(AUDIT_DB), exist_ok=True)
+        self._init_db()
+
+    def _init_db(self):
+        with _audit_conn() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now')),
+                    agent TEXT NOT NULL,
+                    session_id TEXT,
+                    action_type TEXT NOT NULL,
+                    tool_name TEXT NOT NULL,
+                    args_summary TEXT,
+                    result_summary TEXT,
+                    result_status TEXT NOT NULL DEFAULT 'success',
+                    duration_ms INTEGER,
+                    source TEXT NOT NULL DEFAULT 'chat'
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_agent ON audit_log(agent)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action_type)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_session ON audit_log(session_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_agent_time ON audit_log(agent, timestamp)")
+            conn.commit()
+
+    def log_action(self, agent: str, action_type: str, tool_name: str,
+                   args_summary: str = "", result_summary: str = "",
+                   result_status: str = "success", duration_ms: int | None = None,
+                   session_id: str | None = None, source: str = "chat"):
+        """Insert an audit log entry. Append-only."""
+        try:
+            with _audit_conn() as conn:
+                conn.execute("""
+                    INSERT INTO audit_log (agent, session_id, action_type, tool_name,
+                        args_summary, result_summary, result_status, duration_ms, source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (agent, session_id or "", action_type, tool_name,
+                      args_summary[:200], result_summary[:200], result_status,
+                      duration_ms, source))
+                conn.commit()
+        except (sqlite3.Error, OSError) as e:
+            logging.warning(f"Audit log error: {e}")
+
+    def query(self, agent: str | None = None, action_type: str | None = None,
+              from_ts: str | None = None, limit: int = 50) -> list[dict]:
+        """Query audit log entries."""
+        try:
+            with _audit_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                where_parts = ["1=1"]
+                params: list = []
+                if agent:
+                    where_parts.append("agent = ?")
+                    params.append(agent)
+                if action_type:
+                    where_parts.append("action_type = ?")
+                    params.append(action_type)
+                if from_ts:
+                    where_parts.append("timestamp >= ?")
+                    params.append(from_ts)
+                where = " AND ".join(where_parts)
+                params.append(limit)
+                rows = conn.execute(f"""
+                    SELECT * FROM audit_log WHERE {where}
+                    ORDER BY timestamp DESC LIMIT ?
+                """, params).fetchall()
+                return [dict(r) for r in rows]
+        except (sqlite3.Error, OSError) as e:
+            logging.warning(f"Audit query error: {e}")
+            return []
+
+    def export_csv(self, agent: str | None = None,
+                   from_ts: str | None = None,
+                   to_ts: str | None = None) -> str:
+        """Export audit log as CSV string."""
+        try:
+            with _audit_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                where_parts = ["1=1"]
+                params: list = []
+                if agent:
+                    where_parts.append("agent = ?")
+                    params.append(agent)
+                if from_ts:
+                    where_parts.append("timestamp >= ?")
+                    params.append(from_ts)
+                if to_ts:
+                    where_parts.append("timestamp <= ?")
+                    params.append(to_ts)
+                where = " AND ".join(where_parts)
+                rows = conn.execute(f"""
+                    SELECT * FROM audit_log WHERE {where}
+                    ORDER BY timestamp DESC
+                """, params).fetchall()
+                import csv
+                import io
+                output = io.StringIO()
+                if rows:
+                    writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+                    writer.writeheader()
+                    for row in rows:
+                        writer.writerow(dict(row))
+                return output.getvalue()
+        except (sqlite3.Error, OSError) as e:
+            logging.warning(f"Audit export error: {e}")
+            return ""
+
+
+_audit_log: AuditLog | None = None
+
+
 # --- Rate Limiting ---
 
 class RateLimiter:
@@ -5170,6 +5697,77 @@ def tool_schedule_history(args: dict) -> str:
         if h.get("result") and len(h["result"]) > 500:
             h["result"] = h["result"][:500] + "..."
     return _ok({"history": history, "count": len(history)})
+
+
+# --- MCP Client Tools ---
+
+def tool_mcp_connect(args: dict) -> str:
+    """Connect to an MCP server at runtime."""
+    url = args.get("url", "")
+    name = args.get("name", "")
+    transport = args.get("transport", "sse")
+    persist = args.get("persist", False)
+
+    if not url or not name:
+        return _err("Both 'url' and 'name' are required")
+
+    # Use thread-local MCP manager if available, otherwise global
+    mcp = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
+    if not mcp:
+        mcp = MCPManager()
+        _thread_local.mcp_manager = mcp
+
+    result = mcp.connect_runtime(url, name, transport)
+    if result.get("error"):
+        return _err(result["error"])
+
+    # Persist to mcp.json if requested
+    if persist:
+        agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+        agent_id = agent.agent_id if agent else "main"
+        mcp_json_path = os.path.join(AGENTS_DIR, agent_id, "mcp.json")
+        try:
+            existing = {}
+            if os.path.exists(mcp_json_path):
+                with open(mcp_json_path, "r") as f:
+                    existing = json.load(f)
+            if transport == "stdio":
+                parts = url.split()
+                existing[name] = {"transport": "stdio", "command": parts[0], "args": parts[1:] if len(parts) > 1 else []}
+            else:
+                existing[name] = {"transport": "sse", "url": url}
+            with open(mcp_json_path, "w") as f:
+                json.dump(existing, f, indent=2)
+            result["persisted"] = True
+        except Exception as e:
+            result["persist_error"] = str(e)
+
+    return _ok(result)
+
+
+def tool_mcp_disconnect(args: dict) -> str:
+    """Disconnect from an MCP server."""
+    name = args.get("name", "")
+    if not name:
+        return _err("'name' is required")
+
+    mcp = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
+    if not mcp:
+        return _err("No MCP manager available")
+
+    result = mcp.disconnect_runtime(name)
+    if result.get("error"):
+        return _err(result["error"])
+    return _ok(result)
+
+
+def tool_mcp_servers(args: dict) -> str:
+    """List all connected MCP servers."""
+    mcp = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
+    if not mcp:
+        return _ok({"servers": [], "count": 0})
+    servers = mcp.list_servers()
+    return _ok({"servers": servers, "count": len(servers)})
 
 
 # --- Context Window Management ---
@@ -6467,6 +7065,9 @@ TOOL_DISPATCH = {
     "use_skill": tool_use_skill,
     "schedule_list": tool_schedule_list,
     "schedule_history": tool_schedule_history,
+    "mcp_connect": tool_mcp_connect,
+    "mcp_disconnect": tool_mcp_disconnect,
+    "mcp_servers": tool_mcp_servers,
 }
 
 
@@ -6514,14 +7115,75 @@ def _execute_tool(name: str, args: dict) -> str:
     dedup = _check_tool_dedup(name, args)
     if dedup:
         return dedup
-    # Check MCP tools first (prefer thread-local for concurrent requests)
-    mcp = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
-    if mcp and mcp.is_mcp_tool(name):
-        return mcp.call_tool(name, args)
-    fn = TOOL_DISPATCH.get(name)
-    if fn:
-        return fn(args)
-    return _err(f"Unknown tool: {name}")
+
+    # --- Tracing & Audit instrumentation ---
+    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    agent_id = agent.agent_id if agent else "main"
+    session_id = getattr(_thread_local, 'session_id', None)
+
+    # Start trace span for tool call
+    tool_span = None
+    if _trace_manager:
+        parent_span = getattr(_thread_local, 'current_trace_span', None)
+        trace_id = parent_span["trace_id"] if parent_span else getattr(_thread_local, 'trace_id', None)
+        parent_id = parent_span["id"] if parent_span else None
+        tool_span = _trace_manager.start_span(
+            "tool_call", name, agent=agent_id, model="",
+            parent_id=parent_id, trace_id=trace_id, session_id=session_id,
+        )
+
+    tool_start = time.time()
+    result_status = "success"
+    result = None
+    try:
+        # Check MCP tools first (prefer thread-local for concurrent requests)
+        mcp = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
+        if mcp and mcp.is_mcp_tool(name):
+            result = mcp.call_tool(name, args)
+        else:
+            fn = TOOL_DISPATCH.get(name)
+            if fn:
+                result = fn(args)
+            else:
+                result = _err(f"Unknown tool: {name}")
+    except Exception as e:
+        result_status = "error"
+        result = _err(str(e))
+    finally:
+        duration_ms = int((time.time() - tool_start) * 1000)
+        # Determine audit status from result
+        if result and result_status == "success":
+            try:
+                rdata = json.loads(result) if result else {}
+                if isinstance(rdata, dict) and rdata.get("error"):
+                    result_status = "error"
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # End trace span
+        if _trace_manager and tool_span:
+            _trace_manager.end_span(tool_span, status=result_status,
+                                     result_summary=(result or "")[:200])
+
+        # Audit log
+        if _audit_log and result is not None:
+            action_type = _AUDIT_ACTION_MAP.get(name, "mcp_tool_call" if name.startswith("mcp_") else "unknown")
+            try:
+                _audit_log.log_action(
+                    agent=agent_id,
+                    action_type=action_type,
+                    tool_name=name,
+                    args_summary=_audit_summarize_args(name, args),
+                    result_summary=_audit_summarize_result(name, result),
+                    result_status=result_status,
+                    duration_ms=duration_ms,
+                    session_id=session_id,
+                    source=getattr(_thread_local, 'audit_source', 'chat'),
+                )
+            except Exception:
+                pass  # Never let audit logging crash tool execution
+
+    return result
 
 
 MAX_TOOL_ROUNDS = 15  # Maximum number of tool-use round trips before forcing a text response
@@ -6572,6 +7234,45 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     # Reset dedup tracker at the start of each conversation turn
     if _tool_round == 0:
         reset_tool_dedup()
+        # Start a request-level trace span for the full conversation turn
+        if _trace_manager:
+            agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+            agent_id = agent.agent_id if agent else "main"
+            # Extract message preview for trace name
+            msg_preview = ""
+            if messages:
+                last_msg = messages[-1]
+                content = last_msg.get("content", "")
+                if isinstance(content, str):
+                    msg_preview = content[:60]
+                elif isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            msg_preview = block.get("text", "")[:60]
+                            break
+            request_span = _trace_manager.start_span(
+                "request", msg_preview or "user message",
+                agent=agent_id, model=model, session_id=session_id,
+            )
+            _thread_local.trace_id = request_span["trace_id"]
+            _thread_local.request_trace_span = request_span
+            _thread_local.session_id = session_id
+
+    # Start an LLM call span
+    llm_span = None
+    if _trace_manager:
+        agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+        agent_id = agent.agent_id if agent else "main"
+        parent_span = getattr(_thread_local, 'request_trace_span', None)
+        trace_id = parent_span["trace_id"] if parent_span else getattr(_thread_local, 'trace_id', None)
+        parent_id = parent_span["id"] if parent_span else None
+        llm_span = _trace_manager.start_span(
+            "llm_call", f"{model} call (round {_tool_round})",
+            agent=agent_id, model=model,
+            parent_id=parent_id, trace_id=trace_id, session_id=session_id,
+        )
+        _thread_local.current_trace_span = llm_span
+
     # Soft stop after max tool rounds — use thread-local override if set (delegation)
     effective_max_rounds = getattr(_thread_local, 'max_tool_rounds', None) or MAX_TOOL_ROUNDS
     if _tool_round >= effective_max_rounds:
@@ -6790,20 +7491,22 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         except:
             pass
         print(error_msg, file=sys.stderr)
-        if e.code == 529 or e.code == 503 or e.code == 429:
-            # Overloaded / unavailable / rate limited — return None to trigger fallback
-            if event_callback:
-                event_callback("error", {"message": error_msg})
+        # Transient errors: return None to trigger retry/fallback
+        _TRANSIENT_CODES = {429, 500, 502, 503, 504, 529}
+        if e.code in _TRANSIENT_CODES:
+            # Store error info for fallback logic
+            _thread_local._last_send_error = {"code": e.code, "message": error_msg}
             return None
+        # Permanent errors (401, 403, 404, etc.)
+        _thread_local._last_send_error = {"code": e.code, "message": error_msg, "permanent": True}
         if event_callback:
             raise RuntimeError(error_msg)
         sys.exit(1)
-    except urllib.error.URLError as e:
-        error_msg = f"Connection error: {e.reason}"
+    except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError, OSError) as e:
+        error_msg = f"Connection error: {e}"
         print(error_msg, file=sys.stderr)
-        if event_callback:
-            raise RuntimeError(error_msg)
-        sys.exit(1)
+        _thread_local._last_send_error = {"code": 0, "message": error_msg}
+        return None
 
 
 def _handle_anthropic_response(response, payload, messages, model, api_key,
@@ -6901,10 +7604,22 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
     # Log cost for this API call
     _log_call_cost(model, _usage_in, _usage_out, session_id, _tool_round)
 
+    # End LLM trace span
+    _llm_span = getattr(_thread_local, 'current_trace_span', None)
+    if _trace_manager and _llm_span and _llm_span.get("type") == "llm_call":
+        _trace_manager.end_span(_llm_span, status="ok",
+                                 tokens_in=_usage_in, tokens_out=_usage_out)
+
     # If no tool calls, just return the text
     if not tool_uses:
         if not silent and full_text:
             print()
+        # End request trace span if this is the final response
+        _req_span = getattr(_thread_local, 'request_trace_span', None)
+        if _trace_manager and _req_span:
+            _trace_manager.end_span(_req_span, status="ok",
+                                     tokens_in=_usage_in, tokens_out=_usage_out)
+            _thread_local.request_trace_span = None
         return full_text
 
     # Tool use detected — execute tools and loop
@@ -7025,9 +7740,21 @@ def _handle_openai_response(response, payload, messages, model, api_key,
     # Log cost for this API call
     _log_call_cost(model, _usage_in, _usage_out, session_id, _tool_round)
 
+    # End LLM trace span (OpenAI handler)
+    _llm_span_oai = getattr(_thread_local, 'current_trace_span', None)
+    if _trace_manager and _llm_span_oai and _llm_span_oai.get("type") == "llm_call":
+        _trace_manager.end_span(_llm_span_oai, status="ok",
+                                 tokens_in=_usage_in, tokens_out=_usage_out)
+
     if not tool_calls_map:
         if not silent and full_text:
             print()
+        # End request trace span for final response
+        _req_span_oai = getattr(_thread_local, 'request_trace_span', None)
+        if _trace_manager and _req_span_oai:
+            _trace_manager.end_span(_req_span_oai, status="ok",
+                                     tokens_in=_usage_in, tokens_out=_usage_out)
+            _thread_local.request_trace_span = None
         return full_text
 
     if full_text:
@@ -7081,6 +7808,75 @@ def _handle_openai_response(response, payload, messages, model, api_key,
                         inference_params=inference_params, session_id=session_id)
 
 
+def _classify_error_transient(error_info: dict | None) -> bool:
+    """Check if the last send error is transient (retryable) vs permanent."""
+    if not error_info:
+        return True  # Unknown error, assume transient
+    if error_info.get("permanent"):
+        return False
+    code = error_info.get("code", 0)
+    # Transient: 429, 500, 502, 503, 504, 529, connection errors (code=0)
+    return code in {0, 429, 500, 502, 503, 504, 529}
+
+
+def _retry_with_backoff(messages, model, api_key, base_url, api_type,
+                        silent, tools, escape_watcher, event_callback,
+                        inference_params, session_id, max_retries=2):
+    """Try sending a message with exponential backoff retries for transient errors.
+
+    Returns (result, last_error_info). result is None if all retries failed.
+    """
+    _thread_local._last_send_error = None
+    result = send_message(messages, model, api_key, base_url, api_type,
+                          silent=silent, tools=tools, escape_watcher=escape_watcher,
+                          event_callback=event_callback,
+                          inference_params=inference_params,
+                          session_id=session_id)
+    if result is not None:
+        return result, None
+
+    error_info = getattr(_thread_local, '_last_send_error', None)
+    # If permanent error, don't retry
+    if not _classify_error_transient(error_info):
+        return None, error_info
+
+    # Retry with exponential backoff
+    for attempt in range(1, max_retries + 1):
+        delay = min(1.0 * (2 ** (attempt - 1)), 30.0) + random.uniform(0, 0.5)
+        error_msg = (error_info or {}).get("message", "unknown error")
+        print(f"  Retrying {model} in {delay:.1f}s (attempt {attempt}/{max_retries}, error: {error_msg})", flush=True)
+        if event_callback:
+            event_callback("fallback", {
+                "status": "retry",
+                "model": model,
+                "attempt": attempt,
+                "max_retries": max_retries,
+                "delay": round(delay, 1),
+                "reason": error_msg,
+            })
+        time.sleep(delay)
+
+        # Check for cancellation
+        if escape_watcher and escape_watcher.cancelled:
+            from claude_cli import TaskCancelled
+            raise TaskCancelled()
+
+        _thread_local._last_send_error = None
+        result = send_message(messages, model, api_key, base_url, api_type,
+                              silent=silent, tools=tools, escape_watcher=escape_watcher,
+                              event_callback=event_callback,
+                              inference_params=inference_params,
+                              session_id=session_id)
+        if result is not None:
+            return result, None
+
+        error_info = getattr(_thread_local, '_last_send_error', None)
+        if not _classify_error_transient(error_info):
+            break  # Permanent error, stop retrying
+
+    return None, error_info
+
+
 def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
                                base_url: str, api_type: str,
                                silent: bool = False,
@@ -7091,31 +7887,45 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
                                inference_params: dict | None = None,
                                purpose: str | None = None,
                                session_id: str | None = None) -> str | None:
-    """Send messages, falling back to available models if the requested one fails.
+    """Send messages with retry + fallback chain.
 
-    If provider_resolver is provided, it's called with (model) -> {api_key, base_url, api_type}
-    to re-resolve credentials for each fallback model.
+    Retry logic: transient errors (502, 503, 429, timeout) retry 2x with exponential backoff.
+    Permanent errors (400, 401, 404) skip retries and go straight to fallback.
+    Fallbacks field in _models_config: ordered list of fallback model IDs.
+    If provider_resolver is provided, it's called with (model) -> {api_key, base_url, api_type}.
+    Emits ("fallback", {...}) events via event_callback for UI display.
     """
-    result = send_message(messages, model, api_key, base_url, api_type,
-                          silent=silent, tools=tools, escape_watcher=escape_watcher,
-                          event_callback=event_callback,
-                          inference_params=inference_params,
-                          session_id=session_id)
+    # Track which model actually responded (for done event)
+    _thread_local._fallback_model_used = None
+
+    # Try primary model with retries
+    result, error_info = _retry_with_backoff(
+        messages, model, api_key, base_url, api_type,
+        silent, tools, escape_watcher, event_callback,
+        inference_params, session_id, max_retries=2)
     if result is not None:
         return result
 
-    # Build fallback list — capability-aware if models config exists
+    primary_error = (error_info or {}).get("message", "unknown error")
+
+    # Build fallback list — use explicit fallbacks from config, then capability-aware auto-fallback
+    fallback_models = []
     if _models_config:
-        failed_cfg = _models_config.get(model, {})
-        failed_caps = set(failed_cfg.get("capabilities", []))
-        candidates = []
-        for mid, cfg in _models_config.items():
-            if mid == model or not cfg.get("enabled", True):
-                continue
-            matching_caps = len(failed_caps & set(cfg.get("capabilities", [])))
-            candidates.append((mid, matching_caps, cfg.get("priority", 0)))
-        candidates.sort(key=lambda x: (x[1], x[2]), reverse=True)
-        fallback_models = [mid for mid, _, _ in candidates]
+        model_cfg = _models_config.get(model, {})
+        explicit_fallbacks = model_cfg.get("fallbacks", [])
+        if explicit_fallbacks:
+            fallback_models = list(explicit_fallbacks)
+        else:
+            # Auto-build from capabilities
+            failed_caps = set(model_cfg.get("capabilities", []))
+            candidates = []
+            for mid, cfg in _models_config.items():
+                if mid == model or not cfg.get("enabled", True):
+                    continue
+                matching_caps = len(failed_caps & set(cfg.get("capabilities", [])))
+                candidates.append((mid, matching_caps, cfg.get("priority", 0)))
+            candidates.sort(key=lambda x: (x[1], x[2]), reverse=True)
+            fallback_models = [mid for mid, _, _ in candidates]
     else:
         fallback_models = get_available_models(api_key, base_url, api_type)
 
@@ -7131,6 +7941,7 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
         if fallback_model in tried_models:
             continue
         tried_models.add(fallback_model)
+
         # Re-resolve provider for fallback model
         fb_api_key, fb_base_url, fb_api_type = api_key, base_url, api_type
         if provider_resolver:
@@ -7140,15 +7951,32 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
                 fb_base_url = prov.get("base_url", base_url)
                 fb_api_type = prov.get("api_type", api_type)
             except Exception:
-                pass
-        print(f"Note: Model '{model}' not available, using '{fallback_model}'.", flush=True)
+                continue
+
+        print(f"Note: Model '{model}' failed, trying fallback '{fallback_model}'.", flush=True)
+        if event_callback:
+            event_callback("fallback", {
+                "status": "switch",
+                "from": model,
+                "to": fallback_model,
+                "reason": primary_error,
+            })
+
         fb_params = get_inference_params(fallback_model, purpose)
-        result = send_message(messages, fallback_model, fb_api_key, fb_base_url, fb_api_type,
-                              silent=silent, tools=tools, escape_watcher=escape_watcher,
-                              event_callback=event_callback,
-                              inference_params=fb_params,
-                              session_id=session_id)
+        result, fb_error = _retry_with_backoff(
+            messages, fallback_model, fb_api_key, fb_base_url, fb_api_type,
+            silent, tools, escape_watcher, event_callback,
+            fb_params, session_id, max_retries=1)
         if result is not None:
+            _thread_local._fallback_model_used = fallback_model
+            # Log fallback event to cost tracker
+            if _cost_tracker:
+                try:
+                    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+                    agent_id = agent.agent_id if agent else "main"
+                    logging.info(f"Fallback: {model} -> {fallback_model} for agent {agent_id} (reason: {primary_error})")
+                except Exception:
+                    pass
             return result
 
     msg = f"Error: No working models found. Tried: {', '.join(tried_models)}"
