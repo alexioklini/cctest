@@ -5177,7 +5177,7 @@ async function renderQmdTab(el) {
             const teamName = team.name || (team.head && (team.head.display_name || team.head.id)) || headId;
             const teamAvatar = team.avatar || '';
             const memberIds = (team.members || []).map(m => m.id || m);
-            const teamCollIds = [headId, ...memberIds].filter(id => collMap[id]);
+            const teamCollIds = [...new Set([headId, ...memberIds])].filter(id => collMap[id]);
             if (teamCollIds.length) {
               html += '<div class="border border-border/30 rounded-lg p-2 mb-2 bg-surface/30">' +
                 '<div class="text-[10px] text-text-muted uppercase tracking-wider font-bold mb-1.5 px-2">' + (teamAvatar ? esc(teamAvatar) + ' ' : '') + esc(teamName) + '</div>' +
