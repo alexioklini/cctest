@@ -26,19 +26,36 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
 
 ## Features
 
-- **Multi-agent system** — agents with individual personalities (`soul.md`), avatars, memory, model preferences
-- **20+ built-in tools** — file ops, shell, search, web fetch, Gmail, memory, delegation, scheduling
-- **Web UI** — professional dark/light theme, agent cards, chat history, skill browser, scheduler management
-- **Telegram bot** — streaming responses, HTML formatting, per-chat sessions
-- **TUI** — Rich + prompt_toolkit, Claude Code-style interface
-- **Skills system** — on-demand SKILL.md loading, browse/install from ClawHub (7000+ skills), URL/zip install
-- **MCP support** — connect to MCP servers (stdio + SSE) for external tool integrations
-- **Persistent chat history** — SQLite-backed, survives restarts, archive/restore sessions
-- **Task scheduler** — timed/recurring execution with history, per-agent
-- **Context window management** — auto-compaction at 75%, token tracking
-- **Background processing** — async agent delegation, task status/cancel
-- **Shared memory** — all agents can read/write main agent's memory
-- **Provider management** — multiple LLM providers, live model discovery, test connections
+### Core
+- **Multi-agent system** — agents with personalities (`soul.md`), avatars, teams, memory, model preferences
+- **30+ built-in tools** — file ops, shell, search, web, Gmail, memory, delegation, scheduling, MCP
+- **Projects** — per-agent scoped workspaces with documents, watched folders, and chat scoping
+- **Agent workflows** — YAML-defined multi-step pipelines with approval gates and variable substitution
+- **Custom slash commands** — user-defined prompt templates with `{{variable}}` interpolation
+
+### Frontends
+- **Web UI** — collapsible sidebar, project tabs, slash command popup, plan mode, image upload
+- **TUI** — Rich + prompt_toolkit, 50+ slash commands, autocomplete
+- **Multi-messaging** — adapter framework for Telegram + future Discord/Slack channels
+- **Remote nodes** — lightweight agents on remote machines with centralized management
+
+### Intelligence
+- **Knowledge graph memory** — QMD hybrid search (BM25 + vector + LLM reranking) with relationship traversal
+- **Document ingestion (RAG)** — PDF, DOCX, HTML, URL parsing with auto-chunking and watched folders
+- **Plan mode** — read-only analysis that disables write tools
+- **LLM input refinement** — AI-powered text improvement before sending
+- **Multi-modal** — image upload with vision model support
+
+### Infrastructure
+- **Multi-provider routing** — auto-routing across Anthropic, OpenAI-compatible, MiniMax, local oMLX
+- **Provider fallback** — exponential backoff retry with ordered fallback chains
+- **Cost tracking + Rate limiting** — per-agent spend monitoring, budgets, throttling
+- **Observability** — span-based tracing for LLM calls and tool execution
+- **Audit trail** — append-only log of all agent actions, searchable, CSV export
+- **Notifications** — webhook, email (SMTP), in-app alerts for task events
+- **Backup / export / import** — portable archives for migration
+- **Web result caching** — LRU cache for web_fetch/exa_search with TTL
+- **Streaming tool output** — real-time stdout/stderr during command execution
 
 ## Quick Start
 
@@ -81,6 +98,9 @@ brain-agent/
   client.py             # Shared HTTP/SSE client library
   tui.py                # Terminal frontend (Rich + prompt_toolkit)
   telegram.py           # Telegram bot frontend
+  adapters.py           # Multi-messaging adapter framework (Telegram, Discord, Slack)
+  notifications.py      # Notification manager (webhook, email, in-app)
+  node.py               # Remote node agent (runs on remote machines)
   claude_cli.py         # Core engine: tools, agents, memory, MCP, scheduler
   config.json           # Provider config (not in git)
   config.example.json   # Config template
@@ -90,16 +110,20 @@ brain-agent/
   agents/
     main/               # Default orchestrator agent
       soul.md           # Personality, role, instructions
-      agent.json        # Config: description, model, avatar, max_context
+      agent.json        # Config: description, model, avatar, max_context, rate_limits
+      commands.json     # Custom slash commands
       mcp.json          # MCP server connections (global)
       gmail.json        # Gmail credentials (not in git)
       skills/           # Installed skills
-        github/SKILL.md
-        word-docx/SKILL.md
+      workflows/        # YAML workflow definitions
+      projects/         # Per-project scoped workspaces
       *.md              # Memory files (indexed by QMD)
-      chats.db          # Chat history (sessions + messages)
-      scheduler.db      # Scheduled tasks + history
-    research/           # Example specialized agent
+      chats.db          # Chat history
+      scheduler.db      # Scheduled tasks
+      costs.db          # Cost tracking
+      traces.db         # Observability traces
+      audit.db          # Audit trail
+    Researcher/         # Example specialized agent
       soul.md
       agent.json
       skills/
@@ -133,23 +157,26 @@ brain-agent/
 | `schedule_list` | List scheduled tasks |
 | `schedule_history` | View execution history |
 | `mcp_*` | Any tool from connected MCP servers |
+| `mcp_connect` | Connect to MCP server at runtime |
+| `mcp_disconnect` | Disconnect runtime MCP server |
+| `mcp_servers` | List all MCP connections and tools |
 
 ## Web UI
 
 Access at `http://127.0.0.1:8420/` after starting the server.
 
-- **Agent cards** — always visible on top, click to chat or configure
-- **Chat** — streaming responses, markdown rendering, syntax highlighting, thinking spinner
-- **Chat history** — session bar with previous chats, archive/restore/delete
-- **Agent config** — modal with tabs: Soul, Settings (avatar, model, display name), Skills, MCP, Schedule
-- **Skill browser** — search 7000+ skills from ClawHub, install from URL or zip
-- **Scheduler** — create/edit/pause/resume/delete tasks with user-friendly time picker
-- **Settings dashboard** — Server, QMD, Models, Telegram, Providers tabs with service controls and log viewer
-- **QMD document browser** — per-collection file list with modification time, embedding status, index health indicators, collection-level and global health stats
-- **Agent activity indicators** — pulsing glow on agent cards during active tasks/chats
-- **Smart model routing** — per-model config with auto-selection by task purpose
+- **Collapsible sidebar** — agent list, sessions, quick actions; expand/collapse with Ctrl+B
+- **Chat** — streaming responses, markdown, image upload (drag-and-drop, paste), plan mode toggle
+- **Slash command popup** — type `/` for autocomplete menu with built-in + custom commands
+- **Project tabs** — switch between project-scoped contexts per agent
+- **Agent config** — modal with tabs: Soul, Settings, Skills, MCP, Schedule, Projects, Workflows, Commands, Memory
+- **Settings dashboard** — vertical nav with grouped sections: System, Agents, Monitoring, Data
+- **Workflow runner** — stage pipeline visualization with approval gates
+- **Notifications** — bell icon with badge, dropdown for recent alerts
+- **Streaming tool output** — live terminal panel for command execution
+- **Cost display** — per-session and per-message cost in status bar
 - **Light/dark theme** — toggle with sun/moon icon, saved to localStorage
-- **Pixel art avatars** — retro adventure game style, 10 presets + custom upload
+- **Mobile responsive** — sidebar as overlay drawer on small screens
 
 ## Multi-Agent System
 
@@ -293,12 +320,33 @@ Each task runs with a specified agent and model in its own context. Results stor
 | DELETE | `/v1/services/qmd/docs` | Delete document |
 | POST | `/v1/agents/rename` | Rename agent |
 | POST | `/v1/restart` | Restart server |
+| GET/POST | `/v1/agents/{id}/projects` | Project CRUD |
+| POST | `/v1/agents/{id}/ingest` | Document ingestion |
+| GET/POST | `/v1/agents/{id}/workflows` | Workflow definitions |
+| POST | `/v1/agents/{id}/workflows/{name}/run` | Run workflow |
+| GET | `/v1/workflows/executions` | Workflow execution status |
+| GET/POST | `/v1/agents/{id}/commands` | Custom slash commands |
+| GET | `/v1/costs` | Cost tracking stats |
+| GET | `/v1/traces` | Observability traces |
+| GET | `/v1/audit` | Audit trail |
+| GET | `/v1/notifications` | In-app notifications |
+| GET | `/v1/cache/stats` | Web result cache stats |
+| POST | `/v1/refine` | LLM input refinement |
+| POST | `/v1/backup` | Create backup archive |
+| POST | `/v1/restore` | Restore from backup |
+| GET/POST | `/v1/channels` | Multi-messaging channels |
+| GET/POST | `/v1/nodes` | Remote node management |
+| GET/POST | `/v1/mcp/connections` | Dynamic MCP connections |
 
 ## Changelog
 
 | Version | Date | Changes |
 |---|---|---|
-| 1.6.0 | 2026-03-20 | TUI feature parity (30+ slash commands: sessions, agents, teams, skills, memory, providers, QMD, tasks), slash command popup menus in TUI and Web UI |
+| 3.0.0 | 2026-03-20 | Provider fallback, backup/export, notifications, observability + audit trail, dynamic MCP client, multi-modal (vision), remote nodes, multi-messaging adapter framework |
+| 2.1.0 | 2026-03-20 | Agent workflows (YAML stages + approval gates), Web UI sidebar layout, mobile responsive |
+| 2.0.0 | 2026-03-20 | Projects, document ingestion (RAG), watched folders, knowledge graph memory, chat scoping |
+| 1.7.0 | 2026-03-20 | Plan mode, web caching, streaming tool output, cost tracking + rate limiting, custom slash commands, LLM refinement |
+| 1.6.0 | 2026-03-20 | TUI feature parity (50+ slash commands), slash command popup menus in TUI and Web UI |
 | 1.5.3 | 2026-03-20 | Thread-safe agent context, fix old chat provider resolution, per-collection QMD debounce, YAML-safe frontmatter, concurrent scheduler |
 | 1.5.2 | 2026-03-20 | Fix memory summary refresh (direct execution), fix QMD index path normalization, QMD collection health stats in settings |
 | 1.5.1 | 2026-03-18 | MiniMax provider, Add Model UI, QMD session leak fix, in-process Telegram, lightweight QMD health check |
