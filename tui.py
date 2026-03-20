@@ -264,6 +264,12 @@ SLASH_COMMANDS = {
     "/ingest watch add": "Add watched folder",
     "/ingest watch remove": "Remove watched folder",
     "/ingest watch list": "List watched folders",
+    # Workflows
+    "/workflow":        "List workflows for current agent",
+    "/workflow run":    "Run a workflow",
+    "/workflow status": "Show running workflow executions",
+    "/workflow approve": "Approve a workflow approval gate",
+    "/workflow cancel":  "Cancel a running workflow",
 }
 
 
@@ -384,6 +390,14 @@ def print_help():
         ("/ingest watch add <path>", "Add watched folder"),
         ("/ingest watch remove <path>", "Remove watched folder"),
         ("/ingest watch list", "List watched folders"),
+    ])
+
+    _section("Workflows", [
+        ("/workflow", "List workflows for current agent"),
+        ("/workflow run <name>", "Run a workflow"),
+        ("/workflow status", "Show running workflow executions"),
+        ("/workflow approve <id>", "Approve a workflow approval gate"),
+        ("/workflow cancel <id>", "Cancel a running workflow"),
     ])
 
     _section("Other", [
@@ -1071,6 +1085,153 @@ def _handle_tasks(arg: str, client: BrainAgentClient):
         console.print()
         console.print(t)
         console.print()
+    except Exception as e:
+        console.print(f"  [error]{e}[/]")
+
+
+def _handle_workflow(arg: str, client: BrainAgentClient, current_agent: str):
+    """Handle /workflow commands."""
+    low_arg = arg.lower().strip()
+
+    if low_arg.startswith("run "):
+        wf_name = arg[4:].strip()
+        if not wf_name:
+            console.print("  [dim]Usage: /workflow run <name>[/]")
+            return
+        # Get workflow to check for required variables
+        try:
+            workflows = client.list_workflows(current_agent)
+            wf = next((w for w in workflows if w.get("file", "").replace(".yaml", "").replace(".yml", "") == wf_name
+                        or w.get("name", "").lower() == wf_name.lower()), None)
+            variables = {}
+            if wf and wf.get("variables"):
+                console.print(f"  [bold]Workflow variables:[/]")
+                for vname in wf["variables"]:
+                    if vname:
+                        val = console.input(f"    {vname}: ")
+                        variables[vname] = val
+            r = client.run_workflow(current_agent, wf_name, variables)
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            else:
+                eid = r.get("execution_id", "?")
+                console.print(f"  [#5f87ff]Workflow started:[/] {wf_name}")
+                console.print(f"  [dim]Execution ID:[/] {eid}")
+                console.print(f"  [dim]Use /workflow status to monitor progress[/]")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    if low_arg.startswith("status"):
+        try:
+            execs = client.get_executions()
+            if not execs:
+                console.print("  [dim]No workflow executions[/]")
+                return
+            for ex in execs:
+                eid = ex.get("execution_id", "?")
+                wname = ex.get("workflow_name", "?")
+                status = ex.get("status", "?")
+                current = ex.get("current_stage", "")
+                total = ex.get("total_stages", 0)
+                cidx = ex.get("current_stage_idx", -1) + 1
+
+                sty_map = {
+                    "running": "#5f87ff", "waiting_approval": "#ff8700",
+                    "completed": "#5faf5f", "failed": "#ff5f5f",
+                    "cancelled": "dim",
+                }
+                sty = sty_map.get(status, "dim")
+                console.print(f"\n  [bold]{wname}[/] [{sty}]{status}[/]  (id: {eid})")
+
+                # Show stage pipeline
+                stages = ex.get("stages", [])
+                for s in stages:
+                    sn = s.get("name", "?")
+                    ss = s.get("status", "pending")
+                    elapsed = s.get("elapsed", 0)
+                    icon = {"completed": "[#5faf5f]OK[/]", "running": "[#5f87ff]>>[/]",
+                            "waiting_approval": "[#ff8700]??[/]", "error": "[#ff5f5f]ERR[/]",
+                            "rejected": "[#ff5f5f]REJ[/]", "cancelled": "[dim]--[/]",
+                            }.get(ss, "[dim]..[/]")
+                    elapsed_str = f" {elapsed:.0f}s" if elapsed else ""
+                    console.print(f"    {icon} {sn}{elapsed_str}")
+
+                if status == "waiting_approval":
+                    console.print(f"  [#ff8700]Use /workflow approve {eid} to approve[/]")
+                console.print()
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    if low_arg.startswith("approve "):
+        eid = arg[8:].strip()
+        if not eid:
+            console.print("  [dim]Usage: /workflow approve <execution_id>[/]")
+            return
+        try:
+            r = client.approve_workflow(eid, "approve")
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            else:
+                console.print(f"  [#5faf5f]Approved:[/] {eid}")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    if low_arg.startswith("reject "):
+        eid = arg[7:].strip()
+        if not eid:
+            console.print("  [dim]Usage: /workflow reject <execution_id>[/]")
+            return
+        try:
+            r = client.approve_workflow(eid, "reject")
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            else:
+                console.print(f"  [#ff5f5f]Rejected:[/] {eid}")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    if low_arg.startswith("cancel "):
+        eid = arg[7:].strip()
+        if not eid:
+            console.print("  [dim]Usage: /workflow cancel <execution_id>[/]")
+            return
+        try:
+            r = client.cancel_workflow(eid)
+            if r.get("error"):
+                console.print(f"  [error]{r['error']}[/]")
+            else:
+                console.print(f"  [dim]Workflow cancelled:[/] {eid}")
+        except Exception as e:
+            console.print(f"  [error]{e}[/]")
+        return
+
+    # Default: list workflows
+    try:
+        workflows = client.list_workflows(current_agent)
+        if not workflows:
+            console.print(f"  [dim]No workflows for agent '{current_agent}'[/]")
+            console.print(f"  [dim]Workflows are stored in agents/{current_agent}/workflows/*.yaml[/]")
+            return
+        t = Table(show_header=True, box=None, padding=(0, 1))
+        t.add_column("Name", style="#af87ff")
+        t.add_column("File", style="dim")
+        t.add_column("Stages")
+        t.add_column("Description", style="dim")
+        for wf in workflows:
+            t.add_row(
+                wf.get("name", "?"),
+                wf.get("file", "?"),
+                str(wf.get("stages", 0)),
+                (wf.get("description", "") or "")[:50],
+            )
+        console.print()
+        console.print(t)
+        console.print()
+        console.print("  [dim]/workflow run <name> | status | approve <id> | cancel <id>[/]")
     except Exception as e:
         console.print(f"  [error]{e}[/]")
 
@@ -1855,6 +2016,13 @@ def run_interactive(args):
             if low.startswith("/tasks"):
                 arg = stripped[6:].strip()
                 _handle_tasks(arg, client)
+                continue
+
+            # --- Workflows ---
+
+            if low.startswith("/workflow"):
+                arg = stripped[9:].strip()
+                _handle_workflow(arg, client, current_agent)
                 continue
 
             # --- QMD ---

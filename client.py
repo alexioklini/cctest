@@ -340,6 +340,36 @@ class BrainAgentClient:
         api_path = f"/v1/agents/{agent}/projects/{project}/watch" if project else f"/v1/agents/{agent}/watch"
         return self._post(api_path, {"action": "remove", "path": path_str})
 
+    # --- Workflows ---
+
+    def list_workflows(self, agent: str) -> list[dict]:
+        return self._get(f"/v1/agents/{agent}/workflows").get("workflows", [])
+
+    def save_workflow(self, agent: str, name: str, definition: str) -> dict:
+        return self._post(f"/v1/agents/{agent}/workflows", {"name": name, "definition": definition})
+
+    def delete_workflow(self, agent: str, name: str) -> dict:
+        return self._delete(f"/v1/agents/{agent}/workflows/{name}")
+
+    def run_workflow(self, agent: str, name: str, variables: dict,
+                     model: str | None = None) -> dict:
+        data: dict = {"variables": variables}
+        if model:
+            data["model"] = model
+        return self._post(f"/v1/agents/{agent}/workflows/{name}/run", data)
+
+    def get_executions(self) -> list[dict]:
+        return self._get("/v1/workflows/executions").get("executions", [])
+
+    def get_execution(self, execution_id: str) -> dict:
+        return self._get(f"/v1/workflows/executions/{execution_id}")
+
+    def approve_workflow(self, execution_id: str, action: str = "approve") -> dict:
+        return self._post(f"/v1/workflows/executions/{execution_id}/approve", {"action": action})
+
+    def cancel_workflow(self, execution_id: str) -> dict:
+        return self._post(f"/v1/workflows/executions/{execution_id}/cancel")
+
     # --- Connection test ---
 
     def ping(self) -> bool:

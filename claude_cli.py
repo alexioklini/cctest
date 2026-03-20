@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 VERSION_DATE = "2026-03-20"
 CHANGELOG = [
+    ("2.1.0", "2026-03-20", "Agent workflows (YAML stages with approval gates), Web UI left sidebar replacing top agent cards, consolidated status bar, mobile responsive"),
     ("2.0.0", "2026-03-20", "Projects system, document ingestion (PDF/DOCX/HTML/URL), watched folders, knowledge graph memory with relationship traversal, chat scoping per project"),
     ("1.7.0", "2026-03-20", "Plan mode, web result caching, streaming tool output, cost tracking + rate limiting, custom slash commands, LLM input refinement"),
     ("1.6.0", "2026-03-20", "TUI feature parity (30+ slash commands), slash command popup menus in both TUI and Web UI, roadmap"),
@@ -3925,6 +3926,386 @@ class TaskRunner:
 
 # Global task runner
 _task_runner: TaskRunner | None = None
+
+
+# --- Workflow Engine ---
+
+try:
+    import yaml as _yaml
+except ImportError:
+    _yaml = None  # Graceful fallback — suggest pip3 install pyyaml
+
+
+class WorkflowEngine:
+    """Manages workflow definitions stored as YAML files per agent."""
+
+    @staticmethod
+    def _workflows_dir(agent_id: str) -> str:
+        return os.path.join(AGENTS_DIR, agent_id, "workflows")
+
+    @staticmethod
+    def list_workflows(agent_id: str) -> list[dict]:
+        """Scan agents/<name>/workflows/*.yaml and return summaries."""
+        wdir = WorkflowEngine._workflows_dir(agent_id)
+        if not os.path.isdir(wdir):
+            return []
+        results = []
+        for fname in sorted(os.listdir(wdir)):
+            if not fname.endswith((".yaml", ".yml")):
+                continue
+            wf = WorkflowEngine.get_workflow(agent_id, fname.rsplit(".", 1)[0])
+            if wf:
+                results.append({
+                    "name": wf.get("name", fname),
+                    "file": fname,
+                    "description": wf.get("description", ""),
+                    "stages": len(wf.get("stages", [])),
+                    "variables": [v.get("name", "") for v in wf.get("variables", [])],
+                })
+        return results
+
+    @staticmethod
+    def get_workflow(agent_id: str, name: str) -> dict | None:
+        """Parse a workflow YAML file. Returns dict or None."""
+        if not _yaml:
+            return None
+        wdir = WorkflowEngine._workflows_dir(agent_id)
+        for ext in (".yaml", ".yml"):
+            fpath = os.path.join(wdir, name + ext)
+            if os.path.exists(fpath):
+                try:
+                    with open(fpath, "r") as f:
+                        return _yaml.safe_load(f)
+                except Exception:
+                    return None
+        return None
+
+    @staticmethod
+    def save_workflow(agent_id: str, name: str, definition: dict | str) -> str:
+        """Write a workflow YAML file. Returns the file path."""
+        if not _yaml:
+            raise RuntimeError("PyYAML is not installed. Run: pip3 install pyyaml")
+        wdir = WorkflowEngine._workflows_dir(agent_id)
+        os.makedirs(wdir, exist_ok=True)
+        fpath = os.path.join(wdir, name + ".yaml")
+        with open(fpath, "w") as f:
+            if isinstance(definition, str):
+                f.write(definition)
+            else:
+                _yaml.dump(definition, f, default_flow_style=False, sort_keys=False)
+        return fpath
+
+    @staticmethod
+    def delete_workflow(agent_id: str, name: str) -> bool:
+        """Remove a workflow file. Returns True if deleted."""
+        wdir = WorkflowEngine._workflows_dir(agent_id)
+        for ext in (".yaml", ".yml"):
+            fpath = os.path.join(wdir, name + ext)
+            if os.path.exists(fpath):
+                os.remove(fpath)
+                return True
+        return False
+
+
+class WorkflowExecution:
+    """Runs a workflow: sequential stage execution with approval gates."""
+
+    def __init__(self, workflow: dict, variables: dict, agent_id: str,
+                 model: str | None = None, execution_id: str | None = None):
+        self.workflow = workflow
+        self.variables = variables or {}
+        self.agent_id = agent_id
+        self.model = model
+        self.execution_id = execution_id or _uuid.uuid4().hex[:10]
+        self.status = "pending"  # pending / running / waiting_approval / completed / failed / cancelled
+        self.current_stage_idx = -1
+        self.current_stage_name = ""
+        self.stage_results: dict[str, dict] = {}  # stage_name -> {status, output, elapsed}
+        self.started_at: str | None = None
+        self.finished_at: str | None = None
+        self.error: str | None = None
+        self._cancel = threading.Event()
+        self._approval_event = threading.Event()
+        self._approval_result: str | None = None  # "approved" or "rejected"
+        self._thread: threading.Thread | None = None
+
+    @property
+    def stages(self) -> list[dict]:
+        return self.workflow.get("stages", [])
+
+    def _substitute(self, text: str) -> str:
+        """Replace {{variable}} and {{stages.X.output}} placeholders."""
+        if not text:
+            return text
+        import re
+        # Replace user variables: {{var_name}}
+        for k, v in self.variables.items():
+            text = text.replace("{{" + k + "}}", str(v))
+        # Replace stage references: {{stages.X.output}}, {{stages.X.status}}
+        def _stage_ref(m):
+            stage_name = m.group(1)
+            field = m.group(2)
+            sr = self.stage_results.get(stage_name, {})
+            return str(sr.get(field, f"[{stage_name}.{field} not available]"))
+        text = re.sub(r"\{\{stages\.(\w+)\.(\w+)\}\}", _stage_ref, text)
+        return text
+
+    def _build_context(self) -> str:
+        """Build accumulated context string from all completed stages."""
+        parts = []
+        for stage in self.stages:
+            sname = stage.get("name", "")
+            sr = self.stage_results.get(sname)
+            if sr and sr.get("status") == "completed" and sr.get("output"):
+                parts.append(f"=== Stage '{sname}' result ===\n{sr['output']}")
+        return "\n\n".join(parts)
+
+    def run(self):
+        """Start the workflow in a background thread."""
+        self.status = "running"
+        self.started_at = datetime.datetime.now().isoformat()
+        self._thread = threading.Thread(
+            target=self._execute, daemon=True,
+            name=f"workflow-{self.execution_id}")
+        self._thread.start()
+
+    def _execute(self):
+        """Sequential stage execution."""
+        try:
+            for idx, stage in enumerate(self.stages):
+                if self._cancel.is_set():
+                    self.status = "cancelled"
+                    self.finished_at = datetime.datetime.now().isoformat()
+                    return
+
+                sname = stage.get("name", f"stage_{idx}")
+                stype = stage.get("type", "prompt")
+                self.current_stage_idx = idx
+                self.current_stage_name = sname
+
+                if stype == "approval":
+                    self._run_approval_stage(sname, stage)
+                    if self._cancel.is_set() or self._approval_result == "rejected":
+                        if self._approval_result == "rejected":
+                            self.stage_results[sname] = {
+                                "status": "rejected", "output": "Approval rejected by user.",
+                                "elapsed": 0,
+                            }
+                            self.status = "failed"
+                            self.error = f"Approval rejected at stage '{sname}'"
+                        else:
+                            self.status = "cancelled"
+                        self.finished_at = datetime.datetime.now().isoformat()
+                        return
+                else:
+                    self._run_prompt_stage(sname, stage)
+
+                # Check if stage failed
+                sr = self.stage_results.get(sname, {})
+                if sr.get("status") == "error":
+                    self.status = "failed"
+                    self.error = f"Stage '{sname}' failed: {sr.get('output', 'unknown error')}"
+                    self.finished_at = datetime.datetime.now().isoformat()
+                    return
+
+            self.status = "completed"
+            self.finished_at = datetime.datetime.now().isoformat()
+
+        except Exception as e:
+            self.status = "failed"
+            self.error = str(e)
+            self.finished_at = datetime.datetime.now().isoformat()
+
+    def _run_prompt_stage(self, sname: str, stage: dict):
+        """Execute a prompt stage using _run_delegate."""
+        start = datetime.datetime.now()
+        prompt_template = stage.get("prompt", "")
+        prompt = self._substitute(prompt_template)
+
+        # Build context from previous stages
+        context = self._build_context()
+        full_prompt = prompt
+        if context:
+            full_prompt = f"Previous workflow results:\n{context}\n\n---\n\nCurrent task:\n{prompt}"
+
+        # Resolve agent and model
+        target_agent_id = stage.get("agent", self.agent_id)
+        target = AgentConfig(target_agent_id)
+        target_memory = MemoryStore(target_agent_id, base_dir=target.memory_dir)
+
+        stage_model = self.model or target.preferred_model or _delegate_fallback_model or "claude-sonnet-4-6"
+
+        import platform
+        cwd = os.getcwd()
+        os_name = platform.system()
+        soul = target.soul
+        tools_guide = target.tools_guide
+
+        system_prompt = (
+            f"{soul}\n\n"
+            f"You are agent '{target_agent_id}' executing workflow stage '{sname}'.\n"
+            f"Current working directory: {cwd}\n"
+            f"Operating system: {os_name}\n\n"
+            "Complete the task and provide a concise result summary.\n"
+        )
+        if tools_guide:
+            system_prompt += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
+
+        # Tool restriction (set via thread-local if stage specifies allowed tools)
+        restricted_tools = stage.get("tools")
+
+        self.stage_results[sname] = {"status": "running", "output": "", "elapsed": 0}
+
+        messages = [{"role": "user", "content": full_prompt}]
+
+        try:
+            _thread_local.delegate_agent_id = target_agent_id
+            if restricted_tools:
+                _thread_local.workflow_allowed_tools = set(restricted_tools)
+
+            cancel_token = CancelToken()
+            # Link our cancel event to the cancel token
+            def _watch_cancel():
+                self._cancel.wait()
+                cancel_token.cancel()
+            watcher = threading.Thread(target=_watch_cancel, daemon=True)
+            watcher.start()
+
+            delegate_inf = get_inference_params(stage_model, target.config.get("model_purpose"))
+            result_text = _run_delegate(
+                messages, stage_model, system_prompt,
+                memory_store=target_memory,
+                cancel_token=cancel_token,
+                inference_params=delegate_inf,
+            ) or ""
+
+            elapsed = (datetime.datetime.now() - start).total_seconds()
+            if self._cancel.is_set():
+                self.stage_results[sname] = {"status": "cancelled", "output": result_text, "elapsed": elapsed}
+            else:
+                self.stage_results[sname] = {"status": "completed", "output": result_text, "elapsed": elapsed}
+
+        except Exception as e:
+            elapsed = (datetime.datetime.now() - start).total_seconds()
+            self.stage_results[sname] = {"status": "error", "output": str(e), "elapsed": elapsed}
+        finally:
+            _thread_local.delegate_agent_id = None
+            _thread_local.memory_store = None
+            _thread_local.workflow_allowed_tools = None
+
+    def _run_approval_stage(self, sname: str, stage: dict):
+        """Pause for human approval."""
+        message = self._substitute(stage.get("message", "Approval required."))
+        self.stage_results[sname] = {
+            "status": "waiting_approval", "output": message, "elapsed": 0,
+        }
+        self.status = "waiting_approval"
+        self._approval_event.clear()
+        self._approval_result = None
+
+        # Wait until approved, rejected, or cancelled
+        while not self._approval_event.is_set() and not self._cancel.is_set():
+            self._approval_event.wait(timeout=1.0)
+
+        if self._cancel.is_set():
+            self.stage_results[sname] = {"status": "cancelled", "output": message, "elapsed": 0}
+            return
+
+        if self._approval_result == "approved":
+            self.stage_results[sname] = {"status": "completed", "output": "Approved.", "elapsed": 0}
+            self.status = "running"
+        # "rejected" handled by caller
+
+    def approve(self):
+        """Approve the current approval gate."""
+        self._approval_result = "approved"
+        self._approval_event.set()
+
+    def reject(self):
+        """Reject the current approval gate."""
+        self._approval_result = "rejected"
+        self._approval_event.set()
+
+    def cancel(self):
+        """Cancel the workflow execution."""
+        self._cancel.set()
+        self._approval_event.set()  # Unblock approval wait
+
+    def to_dict(self) -> dict:
+        """Serialize execution state."""
+        stages_info = []
+        for idx, stage in enumerate(self.stages):
+            sname = stage.get("name", f"stage_{idx}")
+            sr = self.stage_results.get(sname, {})
+            stages_info.append({
+                "name": sname,
+                "type": stage.get("type", "prompt"),
+                "status": sr.get("status", "pending"),
+                "output": sr.get("output", ""),
+                "elapsed": sr.get("elapsed", 0),
+            })
+        return {
+            "execution_id": self.execution_id,
+            "workflow_name": self.workflow.get("name", ""),
+            "agent": self.agent_id,
+            "model": self.model,
+            "status": self.status,
+            "current_stage": self.current_stage_name,
+            "current_stage_idx": self.current_stage_idx,
+            "total_stages": len(self.stages),
+            "stages": stages_info,
+            "variables": self.variables,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "error": self.error,
+        }
+
+
+# Global workflow execution registry
+_workflow_executions: dict[str, WorkflowExecution] = {}
+_workflow_lock = threading.Lock()
+
+
+def workflow_start(agent_id: str, workflow_name: str, variables: dict,
+                   model: str | None = None) -> WorkflowExecution:
+    """Start a workflow execution. Returns the execution object."""
+    if not _yaml:
+        raise RuntimeError("PyYAML is not installed. Run: pip3 install pyyaml")
+    wf = WorkflowEngine.get_workflow(agent_id, workflow_name)
+    if not wf:
+        raise ValueError(f"Workflow '{workflow_name}' not found for agent '{agent_id}'")
+    execution = WorkflowExecution(wf, variables, agent_id, model)
+    with _workflow_lock:
+        _workflow_executions[execution.execution_id] = execution
+    execution.run()
+    return execution
+
+
+def workflow_get_execution(execution_id: str) -> WorkflowExecution | None:
+    with _workflow_lock:
+        return _workflow_executions.get(execution_id)
+
+
+def workflow_list_executions() -> list[dict]:
+    with _workflow_lock:
+        return [ex.to_dict() for ex in _workflow_executions.values()]
+
+
+def workflow_cleanup_old(max_age_hours: int = 24):
+    """Remove completed/failed executions older than max_age_hours."""
+    cutoff = datetime.datetime.now() - datetime.timedelta(hours=max_age_hours)
+    with _workflow_lock:
+        to_remove = []
+        for eid, ex in _workflow_executions.items():
+            if ex.status in ("completed", "failed", "cancelled") and ex.finished_at:
+                try:
+                    finished = datetime.datetime.fromisoformat(ex.finished_at)
+                    if finished < cutoff:
+                        to_remove.append(eid)
+                except (ValueError, TypeError):
+                    pass
+        for eid in to_remove:
+            del _workflow_executions[eid]
 
 
 def tool_delegate_task(args: dict) -> str:

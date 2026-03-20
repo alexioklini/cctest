@@ -940,92 +940,573 @@ tailwind.config = {
     color: var(--color-accent);
     background: rgba(255,123,0,0.08);
   }
+
+  /* ── Sidebar ── */
+  #sidebar {
+    width: 240px;
+    min-width: 240px;
+    height: 100vh;
+    background: var(--color-surface);
+    border-right: 1px solid var(--color-border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: width 0.2s ease, min-width 0.2s ease;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 20;
+  }
+  #sidebar.collapsed {
+    width: 52px;
+    min-width: 52px;
+  }
+  #sidebar .sidebar-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0;
+    min-height: 48px;
+  }
+  #sidebar .sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+  }
+  #sidebar.collapsed .sidebar-brand-text,
+  #sidebar.collapsed .sidebar-conn {
+    display: none;
+  }
+  #sidebar .sidebar-toggle {
+    background: none;
+    border: none;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 6px;
+    transition: all 0.15s;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #sidebar .sidebar-toggle:hover {
+    color: var(--color-text-primary);
+    background: var(--color-surface-light);
+  }
+
+  /* Sidebar section headers */
+  .sb-section-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-text-muted);
+    padding: 8px 12px 4px;
+  }
+  #sidebar.collapsed .sb-section-label {
+    display: none;
+  }
+
+  /* Sidebar agent list */
+  #sidebar-agents {
+    overflow-y: auto;
+    flex-shrink: 0;
+    max-height: 40vh;
+    padding: 4px 0;
+  }
+  .sb-agent-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+    transition: background 0.15s;
+    position: relative;
+    border-left: 3px solid transparent;
+  }
+  .sb-agent-item:hover {
+    background: var(--color-surface-light);
+  }
+  .sb-agent-item.active {
+    background: rgba(255,123,0,0.06);
+    border-left-color: var(--color-accent);
+  }
+  .sb-agent-item .sb-agent-avatar {
+    flex-shrink: 0;
+    position: relative;
+  }
+  .sb-agent-item .sb-agent-info {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .sb-agent-item .sb-agent-name {
+    font-family: 'Outfit', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--color-text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sb-agent-item .sb-agent-meta {
+    font-size: 10px;
+    color: var(--color-text-muted);
+    font-family: 'IBM Plex Mono', monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sb-agent-item .sb-agent-status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .sb-agent-item .sb-agent-actions {
+    display: none;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+  .sb-agent-item:hover .sb-agent-actions {
+    display: flex;
+  }
+  .sb-agent-item .sb-agent-actions button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 10px;
+    padding: 2px;
+    opacity: 0.5;
+    transition: opacity 0.15s;
+    border-radius: 4px;
+  }
+  .sb-agent-item .sb-agent-actions button:hover {
+    opacity: 1;
+    background: var(--color-surface-lighter);
+  }
+  /* Collapsed sidebar: hide text, center avatar */
+  #sidebar.collapsed .sb-agent-item {
+    justify-content: center;
+    padding: 6px 0;
+    border-left: 3px solid transparent;
+  }
+  #sidebar.collapsed .sb-agent-item.active {
+    border-left-color: var(--color-accent);
+  }
+  #sidebar.collapsed .sb-agent-info,
+  #sidebar.collapsed .sb-agent-actions,
+  #sidebar.collapsed .sb-agent-status-dot {
+    display: none !important;
+  }
+
+  /* Team group in sidebar */
+  .sb-team-group {
+    margin: 2px 0;
+  }
+  .sb-team-label {
+    font-size: 8px;
+    font-weight: 700;
+    font-family: 'IBM Plex Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--color-text-muted);
+    padding: 4px 12px 0 15px;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+  }
+  #sidebar.collapsed .sb-team-label {
+    display: none;
+  }
+
+  /* Sidebar activity badge */
+  .sb-activity-badge {
+    font-size: 8px;
+    font-weight: 700;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--color-accent);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .sb-activity-badge .activity-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    animation: breathe 1.5s ease-in-out infinite;
+  }
+
+  /* Sidebar divider */
+  .sb-divider {
+    height: 1px;
+    background: var(--color-border);
+    margin: 4px 12px;
+  }
+  #sidebar.collapsed .sb-divider {
+    margin: 4px 6px;
+  }
+
+  /* Sidebar new chat + session list */
+  .sb-new-chat-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    margin: 2px 8px;
+    border-radius: 8px;
+    border: 1px dashed var(--color-border);
+    background: transparent;
+    color: var(--color-accent);
+    font-size: 11px;
+    font-weight: 600;
+    font-family: 'Outfit', sans-serif;
+    cursor: pointer;
+    transition: all 0.15s;
+    width: calc(100% - 16px);
+  }
+  .sb-new-chat-btn:hover {
+    border-color: var(--color-accent);
+    background: rgba(255,123,0,0.04);
+  }
+  #sidebar.collapsed .sb-new-chat-btn {
+    padding: 6px;
+    margin: 2px 6px;
+    width: calc(100% - 12px);
+    justify-content: center;
+  }
+  #sidebar.collapsed .sb-new-chat-btn .sb-btn-text {
+    display: none;
+  }
+
+  /* Session list in sidebar */
+  #sidebar-sessions {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+    min-height: 0;
+  }
+  #sidebar.collapsed #sidebar-sessions {
+    display: none;
+  }
+  .sb-session-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    cursor: pointer;
+    transition: background 0.15s;
+    border-left: 3px solid transparent;
+    font-size: 11px;
+  }
+  .sb-session-item:hover {
+    background: var(--color-surface-light);
+  }
+  .sb-session-item.active {
+    background: rgba(255,123,0,0.06);
+    border-left-color: var(--color-accent);
+    font-weight: 500;
+  }
+  .sb-session-item .sb-sess-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--color-text-primary);
+  }
+  .sb-session-item .sb-sess-date {
+    font-size: 9px;
+    color: var(--color-text-muted);
+    font-family: 'IBM Plex Mono', monospace;
+    flex-shrink: 0;
+  }
+  .sb-session-item .sb-sess-actions {
+    display: none;
+    align-items: center;
+    gap: 1px;
+    flex-shrink: 0;
+  }
+  .sb-session-item:hover .sb-sess-actions {
+    display: flex;
+  }
+  .sb-session-item .sb-sess-actions button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 10px;
+    padding: 1px 2px;
+    opacity: 0.5;
+    transition: opacity 0.15s;
+  }
+  .sb-session-item .sb-sess-actions button:hover {
+    opacity: 1;
+  }
+
+  /* Sidebar footer quick-links */
+  .sb-footer {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 8px;
+    border-top: 1px solid var(--color-border);
+    flex-shrink: 0;
+  }
+  .sb-footer button {
+    background: none;
+    border: none;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    padding: 5px;
+    border-radius: 6px;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+  }
+  .sb-footer button:hover {
+    color: var(--color-text-primary);
+    background: var(--color-surface-light);
+  }
+  #sidebar.collapsed .sb-footer {
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px;
+  }
+  #sidebar.collapsed .sb-footer .sb-footer-label {
+    display: none;
+  }
+
+  /* New agent button in sidebar */
+  .sb-create-agent-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    cursor: pointer;
+    color: var(--color-text-muted);
+    font-size: 11px;
+    transition: all 0.15s;
+  }
+  .sb-create-agent-btn:hover {
+    color: var(--color-accent);
+    background: var(--color-surface-light);
+  }
+  #sidebar.collapsed .sb-create-agent-btn .sb-btn-text {
+    display: none;
+  }
+  #sidebar.collapsed .sb-create-agent-btn {
+    justify-content: center;
+    padding: 6px 0;
+  }
+
+  /* Mobile sidebar overlay */
+  #sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 19;
+  }
+  #sidebar-backdrop.visible {
+    display: block;
+  }
+
+  /* Mobile hamburger */
+  #mobile-hamburger {
+    display: none;
+    background: none;
+    border: none;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 6px;
+    transition: all 0.15s;
+  }
+  #mobile-hamburger:hover {
+    color: var(--color-text-primary);
+    background: var(--color-surface-light);
+  }
+
+  @media (max-width: 767px) {
+    #sidebar {
+      position: fixed;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateX(-100%);
+      transition: transform 0.25s ease;
+      box-shadow: 4px 0 24px rgba(0,0,0,0.15);
+    }
+    #sidebar.mobile-open {
+      transform: translateX(0);
+    }
+    #sidebar.collapsed {
+      width: 240px;
+      min-width: 240px;
+    }
+    #sidebar.collapsed .sidebar-brand-text,
+    #sidebar.collapsed .sidebar-conn,
+    #sidebar.collapsed .sb-section-label,
+    #sidebar.collapsed .sb-agent-info,
+    #sidebar.collapsed .sb-agent-actions,
+    #sidebar.collapsed .sb-agent-status-dot,
+    #sidebar.collapsed .sb-team-label,
+    #sidebar.collapsed #sidebar-sessions,
+    #sidebar.collapsed .sb-new-chat-btn .sb-btn-text,
+    #sidebar.collapsed .sb-footer .sb-footer-label,
+    #sidebar.collapsed .sb-create-agent-btn .sb-btn-text {
+      display: revert;
+    }
+    #sidebar.collapsed .sb-agent-item {
+      justify-content: flex-start;
+      padding: 6px 12px;
+    }
+    #sidebar.collapsed .sb-new-chat-btn {
+      padding: 6px 12px;
+      margin: 2px 8px;
+      width: calc(100% - 16px);
+      justify-content: flex-start;
+    }
+    #sidebar.collapsed .sb-create-agent-btn {
+      justify-content: flex-start;
+      padding: 5px 12px;
+    }
+    #sidebar.collapsed .sb-footer {
+      flex-direction: row;
+      padding: 6px 8px;
+    }
+    #sidebar.collapsed .sb-divider {
+      margin: 4px 12px;
+    }
+    #mobile-hamburger {
+      display: flex;
+    }
+  }
 </style>
 </head>
 <body class="bg-base">
 
-<div id="app" class="flex flex-col h-screen">
-  <!-- HEADER (48px) -->
-  <header class="header-mesh flex items-center justify-between px-5 bg-surface border-b border-border flex-shrink-0" style="height:48px">
-    <div class="flex items-center gap-3">
-      <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-accent to-orange-400 flex items-center justify-center">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0f0f1a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a8 8 0 0 0-8 8c0 3 1.5 5 3 6.5V20h10v-3.5c1.5-1.5 3-3.5 3-6.5a8 8 0 0 0-8-8z"/><path d="M10 20v2h4v-2"/><path d="M9 10h.01M15 10h.01"/></svg>
+<div id="sidebar-backdrop" onclick="closeMobileSidebar()"></div>
+
+<div id="app" class="flex h-screen">
+  <!-- SIDEBAR -->
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-brand">
+        <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-accent to-orange-400 flex items-center justify-center flex-shrink-0">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0f0f1a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a8 8 0 0 0-8 8c0 3 1.5 5 3 6.5V20h10v-3.5c1.5-1.5 3-3.5 3-6.5a8 8 0 0 0-8-8z"/><path d="M10 20v2h4v-2"/><path d="M9 10h.01M15 10h.01"/></svg>
+        </div>
+        <span class="sidebar-brand-text font-display text-sm font-semibold text-text-primary tracking-tight" style="white-space:nowrap">Brain Agent</span>
+        <span class="sidebar-conn flex items-center gap-1.5 ml-auto" style="flex-shrink:0">
+          <span id="conn-dot" class="w-2 h-2 rounded-full bg-error breathing-dot"></span>
+          <span id="conn-label" class="text-text-secondary font-body text-[10px]">Disconnected</span>
+        </span>
       </div>
-      <h1 class="font-display text-base font-semibold text-text-primary tracking-tight">Brain Agent</h1>
-    </div>
-    <div class="flex items-center gap-4 text-xs">
-      <span id="conn-status" class="flex items-center gap-2">
-        <span id="conn-dot" class="w-2 h-2 rounded-full bg-error breathing-dot"></span>
-        <span id="conn-label" class="text-text-secondary font-body">Disconnected</span>
-      </span>
-      <span class="text-text-muted mono text-[10px]" id="server-url"></span>
-      <button id="btn-theme-toggle" class="theme-toggle" title="Toggle light/dark mode">
-        <svg id="theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-        <svg id="theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-      </button>
-      <button id="btn-activity-toggle" class="text-text-muted hover:text-text-primary transition-colors p-1 rounded-lg hover:bg-surface-light" title="Live Activity">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-      </button>
-      <button id="btn-scheduler-dashboard" class="text-text-muted hover:text-text-primary transition-colors p-1 rounded-lg hover:bg-surface-light" title="Scheduler Dashboard" style="font-size:16px">&#9201;</button>
-      <button id="btn-header-settings" class="text-text-muted hover:text-text-primary transition-colors p-1 rounded-lg hover:bg-surface-light" title="Server Settings">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      <button class="sidebar-toggle" id="sidebar-toggle-btn" title="Toggle sidebar (Ctrl+B)" onclick="toggleSidebar()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
     </div>
-  </header>
 
-  <!-- AGENT CARDS ROW (always visible) -->
-  <div id="agent-cards-row" class="flex items-stretch gap-2 px-4 py-2 bg-surface/50 border-b border-border flex-shrink-0 overflow-x-auto">
-  </div>
+    <div class="sb-section-label">Agents</div>
+    <div id="sidebar-agents"></div>
+    <div class="sb-create-agent-btn" onclick="showCreateAgentModal()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      <span class="sb-btn-text" style="font-family:'Outfit',sans-serif">New Agent</span>
+    </div>
 
-  <!-- CHAT AREA (fills remaining) -->
-  <div id="chat-area" class="flex-1 flex flex-col overflow-hidden bg-base">
-    <!-- Chat top bar -->
-    <div id="chat-top-bar" class="flex items-center bg-surface/50 border-b border-border flex-shrink-0 px-4 gap-3" style="min-height:44px">
-      <span id="chat-agent-name" class="text-agent font-display font-semibold text-sm flex items-center gap-2">
-        <span class="w-2 h-2 rounded-full bg-agent breathing-dot"></span>
-        <span></span>
-      </span>
-      <div class="flex-1"></div>
-      <select id="model-selector" class="bg-surface-light border border-border rounded-lg px-3 py-1.5 text-xs text-model mono focus:border-model transition-colors"></select>
-      <button id="btn-new-session" class="btn-secondary text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all" title="New session for this agent">
-        /new
+    <div class="sb-divider"></div>
+
+    <button class="sb-new-chat-btn" onclick="newChatSession()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      <span class="sb-btn-text">New Chat</span>
+    </button>
+
+    <div class="sb-section-label">Sessions</div>
+    <div id="sidebar-sessions"></div>
+
+    <div class="sb-footer">
+      <button id="btn-theme-toggle" title="Toggle light/dark mode">
+        <svg id="theme-icon-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        <svg id="theme-icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
       </button>
-      <button id="btn-stop" class="hidden btn-secondary text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all">
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="#f87171"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-        <span class="text-error">Stop</span>
+      <button id="btn-activity-toggle" title="Live Activity">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
       </button>
+      <button id="btn-scheduler-dashboard" title="Scheduler Dashboard" style="font-size:14px">&#9201;</button>
+      <button id="btn-header-settings" title="Server Settings">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+      <span id="server-url" class="sb-footer-label text-text-muted mono text-[9px]" style="margin-left:auto"></span>
     </div>
-    <!-- Project tabs (visible when agent has projects) -->
-    <div id="project-tabs" class="flex items-center gap-1 px-4 py-1.5 bg-surface/30 border-b border-border/50 flex-shrink-0 overflow-x-auto" style="display:none"></div>
-    <!-- Spinner bar (visible during streaming) -->
-    <div id="chat-spinner-bar" class="hidden flex items-center gap-3 px-5 py-2 border-b border-border/50 bg-surface/30" style="min-height:36px">
-      <div class="dot-pulse"><span></span><span></span><span></span></div>
-      <span id="spinner-label" class="text-xs text-text-muted font-display">Thinking...</span>
-      <span id="spinner-elapsed" class="text-[10px] text-text-muted mono ml-auto"></span>
-    </div>
-    <!-- Session History Bar -->
-    <div id="session-bar" class="session-bar" style="display:none">
-    </div>
-    <!-- Messages -->
-    <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-6">
-      <div class="flex items-center justify-center h-full text-text-muted text-sm font-body">Select an agent above to start chatting</div>
-    </div>
-    <!-- Input area -->
-    <div id="chat-input-area" class="flex-shrink-0 p-4 pt-2">
-      <div class="max-w-[800px] mx-auto" style="position:relative">
-        <div id="slash-popup" class="slash-popup" style="display:none"></div>
-        <div class="chat-input-wrapper flex items-end gap-2 p-2">
-          <textarea id="chat-input" class="flex-1 bg-transparent border-none px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none font-body" rows="2" placeholder="Type a message... (Ctrl+Enter to send)" style="box-shadow:none !important;"></textarea>
-          <button id="btn-plan-mode" title="Toggle Plan Mode (read-only)" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="togglePlanMode()">Plan</button>
-          <button id="btn-refine" title="Refine message with AI" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="refineMessage()">&#x2728;</button>
-          <button id="btn-send" class="btn-primary px-5 py-2 rounded-xl text-sm flex items-center gap-2 self-end font-display font-semibold">
-            Send
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-          </button>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <div class="flex-1 flex flex-col overflow-hidden">
+    <!-- CHAT AREA (fills remaining) -->
+    <div id="chat-area" class="flex-1 flex flex-col overflow-hidden bg-base">
+      <!-- Chat top bar -->
+      <div id="chat-top-bar" class="flex items-center bg-surface/50 border-b border-border flex-shrink-0 px-4 gap-3" style="min-height:44px">
+        <button id="mobile-hamburger" onclick="openMobileSidebar()" title="Open sidebar">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <span id="chat-agent-name" class="text-agent font-display font-semibold text-sm flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-agent breathing-dot"></span>
+          <span></span>
+        </span>
+        <div class="flex-1"></div>
+        <select id="model-selector" class="bg-surface-light border border-border rounded-lg px-3 py-1.5 text-xs text-model mono focus:border-model transition-colors"></select>
+        <button id="btn-new-session" class="btn-secondary text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all" title="New session for this agent" style="display:none">
+          /new
+        </button>
+        <button id="btn-stop" class="hidden btn-secondary text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="#f87171"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+          <span class="text-error">Stop</span>
+        </button>
+      </div>
+      <!-- Project tabs (visible when agent has projects) -->
+      <div id="project-tabs" class="flex items-center gap-1 px-4 py-1.5 bg-surface/30 border-b border-border/50 flex-shrink-0 overflow-x-auto" style="display:none"></div>
+      <!-- Spinner bar (visible during streaming) -->
+      <div id="chat-spinner-bar" class="hidden flex items-center gap-3 px-5 py-2 border-b border-border/50 bg-surface/30" style="min-height:36px">
+        <div class="dot-pulse"><span></span><span></span><span></span></div>
+        <span id="spinner-label" class="text-xs text-text-muted font-display">Thinking...</span>
+        <span id="spinner-elapsed" class="text-[10px] text-text-muted mono ml-auto"></span>
+      </div>
+      <!-- Session History Bar (hidden - now in sidebar) -->
+      <div id="session-bar" class="session-bar" style="display:none">
+      </div>
+      <!-- Messages -->
+      <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-6">
+        <div class="flex items-center justify-center h-full text-text-muted text-sm font-body">Select an agent to start chatting</div>
+      </div>
+      <!-- Input area -->
+      <div id="chat-input-area" class="flex-shrink-0 p-4 pt-2">
+        <div class="max-w-[800px] mx-auto" style="position:relative">
+          <div id="slash-popup" class="slash-popup" style="display:none"></div>
+          <div class="chat-input-wrapper flex items-end gap-2 p-2">
+            <textarea id="chat-input" class="flex-1 bg-transparent border-none px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none font-body" rows="2" placeholder="Type a message... (Ctrl+Enter to send)" style="box-shadow:none !important;"></textarea>
+            <button id="btn-plan-mode" title="Toggle Plan Mode (read-only)" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="togglePlanMode()">Plan</button>
+            <button id="btn-refine" title="Refine message with AI" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="refineMessage()">&#x2728;</button>
+            <button id="btn-send" class="btn-primary px-5 py-2 rounded-xl text-sm flex items-center gap-2 self-end font-display font-semibold">
+              Send
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
         </div>
       </div>
     </div>
-  </div>
 
   <!-- ACTIVITY PANEL (slide-in from right) -->
   <div id="activity-panel">
@@ -1052,17 +1533,16 @@ tailwind.config = {
     <div id="ap-log-area"></div>
   </div>
 
-  <!-- FOOTER STATUS BAR -->
-  <footer class="flex items-center justify-between px-5 bg-surface/70 border-t border-border text-[11px] text-text-muted flex-shrink-0 backdrop-blur-sm" style="height:28px">
-    <div class="flex items-center gap-5">
+    <!-- FOOTER STATUS BAR (consolidated) -->
+    <footer class="flex items-center px-5 bg-surface/70 border-t border-border text-[11px] text-text-muted flex-shrink-0 backdrop-blur-sm gap-3" style="height:28px">
+      <span id="status-agent" class="text-agent font-medium"></span>
+      <span class="text-text-muted">|</span>
       <span id="status-model" class="text-model mono font-medium"></span>
-      <span id="status-agent" class="text-agent"></span>
-    </div>
-    <div class="flex items-center gap-5">
+      <span class="text-text-muted">|</span>
       <span id="status-tokens" class="mono"></span>
-      <span id="status-session" class="mono"></span>
-    </div>
-  </footer>
+      <span id="status-session" class="mono" style="margin-left:auto"></span>
+    </footer>
+  </div>
 </div>
 
 <script>
@@ -1506,7 +1986,10 @@ const dom = {
   connDot: $('#conn-dot'),
   connLabel: $('#conn-label'),
   serverUrl: $('#server-url'),
-  agentCardsRow: $('#agent-cards-row'),
+  agentCardsRow: $('#sidebar-agents'),  // now renders into sidebar
+  sidebar: $('#sidebar'),
+  sidebarAgents: $('#sidebar-agents'),
+  sidebarSessions: $('#sidebar-sessions'),
   sessionBar: $('#session-bar'),
   chatMessages: $('#chat-messages'),
   chatInput: $('#chat-input'),
@@ -1651,8 +2134,8 @@ function getAllProviderModels() {
   return result;
 }
 
-// ─── AGENT CARDS ROW ────────────────────────────────────────
-function buildAgentCard(a, i) {
+// ─── SIDEBAR AGENT LIST ─────────────────────────────────────
+function buildSidebarAgentItem(a, i) {
   const name = getAgentName(a);
   const displayName = getAgentDisplayName(a);
   const isPaused = getAgentPaused(a);
@@ -1661,50 +2144,60 @@ function buildAgentCard(a, i) {
   const isMain = name === 'main';
   const isTeamHead = a.is_team_head || false;
   const avatarId = getAgentAvatar(a);
+  const agentModel = getAgentModel(a);
   const agentActivity = (state.agentActivity || {})[name] || [];
   const isActive = agentActivity.length > 0 || (state.agentChats[name] && state.agentChats[name].streaming);
-  const card = document.createElement('div');
-  card.className = `agent-card-compact flex flex-col items-center p-2 gap-0.5 fade-in ${isSelected ? 'selected' : ''} ${isPaused ? 'opacity-40 grayscale' : ''} ${isActive ? 'agent-active' : ''}`;
-  card.style.animationDelay = `${i * 0.04}s`;
-  card.dataset.agentId = name;
-  const activityLabel = agentActivity.length ? agentActivity.join('/') : '';
-  card.innerHTML = `
-    ${isTeamHead ? '<div class="team-head-badge">Head</div>' : ''}
-    ${isActive ? `<div class="agent-activity-badge"><span class="activity-dot"></span>${activityLabel}</div>` : ''}
-    <div class="relative">
-      ${renderAvatar(avatarId, 32)}
-      ${hasChat && !isActive ? '<span class="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-success breathing-dot border border-surface" title="Active chat"></span>' : ''}
-      ${isPaused ? '<span class="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[7px] bg-surface-lighter border border-border rounded px-0.5 text-text-muted font-medium uppercase tracking-wider">Paused</span>' : ''}
+  const item = document.createElement('div');
+  item.className = `sb-agent-item ${isSelected ? 'active' : ''} ${isPaused ? 'opacity-40 grayscale' : ''}`;
+  item.dataset.agentId = name;
+  item.title = getAgentDesc(a) || name;
+  const activityLabel = agentActivity.length ? agentActivity.join('/') : (isActive ? 'chat' : '');
+  let dotColor = 'var(--color-text-muted)';
+  let dotStyle = '';
+  if (isActive) {
+    dotColor = 'var(--color-accent)';
+    dotStyle = 'animation:breathe 1.5s ease-in-out infinite;box-shadow:0 0 4px var(--color-accent);';
+  } else if (hasChat) {
+    dotColor = '#4ade80';
+  } else if (isPaused) {
+    dotColor = 'var(--color-text-muted)';
+  }
+  item.innerHTML = `
+    <div class="sb-agent-avatar relative">
+      ${renderAvatar(avatarId, 28)}
+      ${isPaused ? '<span class="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[6px] bg-surface-lighter border border-border rounded px-0.5 text-text-muted font-medium uppercase tracking-wider" style="line-height:1.2">Paused</span>' : ''}
     </div>
-    <span class="font-display font-bold text-agent text-[10px] truncate w-full text-center">${esc(displayName || name)}</span>
-    <div class="flex items-center gap-0.5 mt-auto">
-      ${!isMain ? `<button class="btn-pause-card text-text-muted hover:text-yellow-500 text-[9px] transition-colors p-0.5 rounded hover:bg-surface-light" title="${isPaused ? 'Resume' : 'Pause'}">${isPaused ? '▶️' : '⏸'}</button>` : ''}
-      ${!isMain ? `<button class="btn-delete-card text-text-muted hover:text-error text-[9px] transition-colors p-0.5 rounded hover:bg-surface-light" title="Delete agent">🗑</button>` : ''}
-      <button class="btn-cfg-card text-text-muted hover:text-accent text-[9px] transition-colors p-0.5 rounded hover:bg-surface-light" title="Configure">⚙️</button>
-      <button class="btn-chat-card text-text-muted hover:text-agent text-[9px] transition-colors p-0.5 rounded hover:bg-surface-light ${isPaused ? 'pointer-events-none opacity-30' : ''}" title="Chat">💬</button>
+    <div class="sb-agent-info">
+      <div class="sb-agent-name">${esc(displayName || name)}${isTeamHead ? ' <span style="font-size:8px;color:var(--color-accent);font-weight:700">HEAD</span>' : ''}</div>
+      <div class="sb-agent-meta">${isActive ? `<span class="sb-activity-badge"><span class="activity-dot"></span>${activityLabel}</span>` : (agentModel ? esc(agentModel.split('/').pop().substring(0, 20)) : '')}</div>
     </div>
+    <span class="sb-agent-status-dot" style="background:${dotColor};${dotStyle}"></span>
+    <span class="sb-agent-actions">
+      <button class="btn-cfg-card" title="Configure">&#9881;</button>
+      ${!isMain ? `<button class="btn-pause-card" title="${isPaused ? 'Resume' : 'Pause'}">${isPaused ? '&#9654;' : '&#9208;'}</button>` : ''}
+      ${!isMain ? `<button class="btn-delete-card" title="Delete">&#128465;</button>` : ''}
+    </span>
   `;
-  card.onclick = (e) => {
-    if (e.target.closest('.btn-cfg-card') || e.target.closest('.btn-chat-card') || e.target.closest('.btn-pause-card') || e.target.closest('.btn-delete-card')) return;
+  item.onclick = (e) => {
+    if (e.target.closest('.btn-cfg-card') || e.target.closest('.btn-pause-card') || e.target.closest('.btn-delete-card')) return;
     if (isPaused) return;
     selectAgent(name);
+    closeMobileSidebar();
   };
-  card.querySelector('.btn-chat-card').onclick = () => { if (!isPaused) selectAgent(name); };
-  card.querySelector('.btn-cfg-card').onclick = () => openConfigModal(name);
+  item.querySelector('.btn-cfg-card').onclick = () => openConfigModal(name);
   if (!isMain) {
-    card.querySelector('.btn-pause-card').onclick = () => toggleAgentPaused(name, a);
-    card.querySelector('.btn-delete-card').onclick = () => deleteAgent(name);
+    item.querySelector('.btn-pause-card').onclick = () => toggleAgentPaused(name, a);
+    item.querySelector('.btn-delete-card').onclick = () => deleteAgent(name);
   }
-  return card;
+  return item;
 }
 
 function renderAgentCards() {
-  const row = dom.agentCardsRow;
-  row.innerHTML = '';
+  const container = dom.sidebarAgents;
+  container.innerHTML = '';
   const agentMap = {};
   state.agents.forEach(a => { agentMap[getAgentName(a)] = a; });
 
-  // Get team structure from state (populated by loadInitialData)
   const teamStruct = state.teamStructure || {};
   const teams = teamStruct.teams || {};
   const teamIds = Object.keys(teams);
@@ -1718,84 +2211,74 @@ function renderAgentCards() {
   // 1. Render main agent first
   const mainAgent = agentMap['main'];
   if (mainAgent) {
-    row.appendChild(buildAgentCard(mainAgent, idx++));
+    container.appendChild(buildSidebarAgentItem(mainAgent, idx++));
   }
 
   // 2. Render teams
   teamIds.forEach(tid => {
     const team = teams[tid];
     const group = document.createElement('div');
-    group.className = 'team-group';
+    group.className = 'sb-team-group';
     const teamName = team.name || tid;
-    const teamDesc = team.description || '';
     const teamAvatar = team.avatar || '';
-    const headId = team.head || '';
-    group.innerHTML = `<span class="team-group-label">${teamAvatar ? `<span class="team-group-avatar">${esc(teamAvatar)}</span> ` : ''}${esc(teamName)}${teamDesc ? ` <span class="team-group-desc">— ${esc(teamDesc)}</span>` : ''}</span>`;
+    group.innerHTML = `<div class="sb-team-label">${teamAvatar ? `<span>${esc(teamAvatar)}</span> ` : ''}${esc(teamName)}</div>`;
 
-    // Render head first, then other members
     const members = (team.members || []).map(m => getAgentName(m));
+    const headId = team.head || '';
     const sorted = [headId, ...members.filter(m => m !== headId)].filter(Boolean);
     sorted.forEach(mid => {
       const memberAgent = agentMap[mid];
-      if (memberAgent) group.appendChild(buildAgentCard(memberAgent, idx++));
+      if (memberAgent) group.appendChild(buildSidebarAgentItem(memberAgent, idx++));
     });
-    row.appendChild(group);
+    container.appendChild(group);
   });
 
   // 3. Standalone agents (not in any team, not main)
   state.agents.forEach(a => {
     const name = getAgentName(a);
     if (name === 'main' || inTeam.has(name)) return;
-    row.appendChild(buildAgentCard(a, idx++));
+    container.appendChild(buildSidebarAgentItem(a, idx++));
   });
-
-  // 4. Create Agent "+" card
-  const createCard = document.createElement('div');
-  createCard.className = 'agent-card-create-compact flex flex-col items-center justify-center gap-1 p-2';
-  createCard.innerHTML = `
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#555570" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-    <span class="text-text-muted text-[9px] font-display">New</span>
-  `;
-  createCard.onclick = () => showCreateAgentModal();
-  row.appendChild(createCard);
 }
 
 function updateAgentActivityVisuals() {
-  // Update agent cards in-place without full re-render
-  const row = dom.agentCardsRow;
-  if (!row) return;
-  row.querySelectorAll('.agent-card-compact').forEach(card => {
-    // Find agent name from card text (the font-bold span)
-    const nameEl = card.querySelector('.font-bold');
-    if (!nameEl) return;
-    // Match agent by display name or name
-    const displayText = nameEl.textContent.trim();
-    const agent = state.agents.find(a => {
-      const n = getAgentName(a);
-      const dn = getAgentDisplayName(a);
-      return n === displayText || dn === displayText;
-    });
-    if (!agent) return;
-    const name = getAgentName(agent);
+  const container = dom.sidebarAgents;
+  if (!container) return;
+  container.querySelectorAll('.sb-agent-item').forEach(item => {
+    const name = item.dataset.agentId;
+    if (!name) return;
     const agentActivity = (state.agentActivity || {})[name] || [];
     const isStreaming = state.agentChats[name] && state.agentChats[name].streaming;
     const isActive = agentActivity.length > 0 || isStreaming;
+    const hasChat = !!state.agentChats[name];
 
-    // Toggle active class
-    card.classList.toggle('agent-active', isActive);
-
-    // Update or insert/remove badge
-    let badge = card.querySelector('.agent-activity-badge');
-    if (isActive) {
-      const label = agentActivity.length ? agentActivity.join('/') : (isStreaming ? 'chat' : '');
-      if (!badge) {
-        badge = document.createElement('div');
-        badge.className = 'agent-activity-badge';
-        card.insertBefore(badge, card.firstChild);
+    const dot = item.querySelector('.sb-agent-status-dot');
+    if (dot) {
+      if (isActive) {
+        dot.style.background = 'var(--color-accent)';
+        dot.style.animation = 'breathe 1.5s ease-in-out infinite';
+        dot.style.boxShadow = '0 0 4px var(--color-accent)';
+      } else if (hasChat) {
+        dot.style.background = '#4ade80';
+        dot.style.animation = '';
+        dot.style.boxShadow = '';
+      } else {
+        dot.style.background = 'var(--color-text-muted)';
+        dot.style.animation = '';
+        dot.style.boxShadow = '';
       }
-      badge.innerHTML = `<span class="activity-dot"></span>${label}`;
-    } else if (badge) {
-      badge.remove();
+    }
+
+    const meta = item.querySelector('.sb-agent-meta');
+    if (meta) {
+      const activityLabel = agentActivity.length ? agentActivity.join('/') : (isStreaming ? 'chat' : '');
+      if (isActive && activityLabel) {
+        meta.innerHTML = `<span class="sb-activity-badge"><span class="activity-dot"></span>${activityLabel}</span>`;
+      } else if (!isActive) {
+        const agent = state.agents.find(a => getAgentName(a) === name);
+        const agentModel = agent ? getAgentModel(agent) : '';
+        meta.textContent = agentModel ? agentModel.split('/').pop().substring(0, 20) : '';
+      }
     }
   });
 }
@@ -1903,10 +2386,12 @@ async function loadAgentSessions(agentName) {
 
 function renderSessionBar() {
   const agentId = state.activeAgentId;
-  if (!agentId) { dom.sessionBar.style.display = 'none'; return; }
-  dom.sessionBar.style.display = '';
+  // Keep the old session bar hidden — sessions are now in sidebar
+  dom.sessionBar.style.display = 'none';
+  const container = dom.sidebarSessions;
+  if (!agentId) { container.innerHTML = ''; return; }
   const entry = state.agentSessions[agentId];
-  if (!entry) { dom.sessionBar.innerHTML = ''; return; }
+  if (!entry) { container.innerHTML = ''; return; }
   const chat = state.agentChats[agentId];
   const currentSessionId = chat?.sessionId;
   const showArchived = entry.showArchived;
@@ -1914,12 +2399,9 @@ function renderSessionBar() {
 
   let html = '';
 
-  // + New Chat button
-  html += `<button class="session-chip" style="border-style:dashed;color:var(--color-accent)" onclick="newChatSession()" title="Start new chat">+ New</button>`;
-
-  // Current unsaved session (no session id yet or session not in list)
+  // Current unsaved session
   if (chat && !currentSessionId && chat.messages.length === 0) {
-    html += `<span class="session-chip active" style="font-style:italic">New chat</span>`;
+    html += `<div class="sb-session-item active" style="font-style:italic"><span class="sb-sess-title" style="color:var(--color-text-muted)">New chat</span></div>`;
   }
 
   // Sessions from history
@@ -1930,31 +2412,32 @@ function renderSessionBar() {
     const count = s.message_count || 0;
     const isArchived = s.status === 'archived';
     const isIncognito = s.status === 'incognito';
-    html += `<span class="session-chip ${isActive ? 'active' : ''} ${isArchived ? 'opacity-50' : ''} ${isIncognito ? 'border-dashed' : ''}" onclick="loadSession('${esc(s.id)}')" title="${esc(title)} - ${count} messages${isIncognito ? ' (incognito)' : ''}">
-      ${isIncognito ? '<span style="font-size:9px;margin-right:2px" title="Incognito — excluded from memory">🕶</span>' : ''}
-      <span class="truncate" style="max-width:120px">${esc(title)}</span>
-      <span style="font-size:9px;color:var(--color-text-muted)">${date}${count ? ' (' + count + ')' : ''}</span>
-      <span class="session-actions">
+    html += `<div class="sb-session-item ${isActive ? 'active' : ''} ${isArchived ? 'opacity-50' : ''}" onclick="loadSession('${esc(s.id)}')" title="${esc(title)} - ${count} messages${isIncognito ? ' (incognito)' : ''}">
+      ${isIncognito ? '<span style="font-size:9px;flex-shrink:0" title="Incognito">&#128374;</span>' : ''}
+      <span class="sb-sess-title">${esc(title)}</span>
+      <span class="sb-sess-date">${date}</span>
+      <span class="sb-sess-actions">
         ${isIncognito
-          ? `<button onclick="event.stopPropagation();sessionAction('un_incognito','${esc(s.id)}')" title="Remove incognito">👁</button>`
-          : `<button onclick="event.stopPropagation();sessionAction('incognito','${esc(s.id)}')" title="Incognito — exclude from memory">🕶</button>`
+          ? `<button onclick="event.stopPropagation();sessionAction('un_incognito','${esc(s.id)}')" title="Remove incognito">&#128065;</button>`
+          : `<button onclick="event.stopPropagation();sessionAction('incognito','${esc(s.id)}')" title="Incognito">&#128374;</button>`
         }
         ${isArchived
-          ? `<button onclick="event.stopPropagation();sessionAction('unarchive','${esc(s.id)}')" title="Unarchive">📂</button>`
-          : `<button onclick="event.stopPropagation();sessionAction('archive','${esc(s.id)}')" title="Archive">📦</button>`
+          ? `<button onclick="event.stopPropagation();sessionAction('unarchive','${esc(s.id)}')" title="Unarchive">&#128194;</button>`
+          : `<button onclick="event.stopPropagation();sessionAction('archive','${esc(s.id)}')" title="Archive">&#128230;</button>`
         }
-        <button onclick="event.stopPropagation();sessionAction('delete','${esc(s.id)}')" title="Delete">🗑</button>
+        <button onclick="event.stopPropagation();sessionAction('delete','${esc(s.id)}')" title="Delete">&#128465;</button>
       </span>
-    </span>`;
+    </div>`;
   });
 
   // Show/Hide archived toggle
-  html += `<button class="session-bar-toggle" onclick="toggleShowArchived()">${showArchived ? 'Hide Archived' : 'Show Archived'}</button>`;
+  html += `<div style="padding:4px 12px"><button class="session-bar-toggle" onclick="toggleShowArchived()" style="font-size:10px;color:var(--color-text-muted);cursor:pointer;background:none;border:none;padding:2px 0">${showArchived ? 'Hide Archived' : 'Show Archived'}</button></div>`;
 
-  dom.sessionBar.innerHTML = html;
+  container.innerHTML = html;
 }
 
 window.newChatSession = function() {
+  closeMobileSidebar();
   const agentId = state.activeAgentId;
   if (!agentId) return;
   const chat = state.agentChats[agentId];
@@ -1977,6 +2460,7 @@ window.newChatSession = function() {
 };
 
 window.loadSession = async function(sessionId) {
+  closeMobileSidebar();
   const agentId = state.activeAgentId;
   if (!agentId) return;
   const chat = state.agentChats[agentId];
@@ -2047,7 +2531,7 @@ function updateChatArea() {
     dom.chatTopBar.style.display = 'none';
     dom.sessionBar.style.display = 'none';
     dom.chatInputArea.style.display = 'none';
-    dom.chatMessages.innerHTML = '<div class="flex items-center justify-center h-full text-text-muted text-sm font-body">Select an agent above to start chatting</div>';
+    dom.chatMessages.innerHTML = '<div class="flex items-center justify-center h-full text-text-muted text-sm font-body">Select an agent to start chatting</div>';
     updateStatusBar();
     return;
   }
@@ -2055,14 +2539,14 @@ function updateChatArea() {
   dom.chatInputArea.style.display = '';
   renderSessionBar();
 
-  // Update top bar with avatar and display name
+  // Update top bar — compact agent display (full info is in sidebar)
   const agentObj = state.agents.find(a => getAgentName(a) === chat.agent);
   const avatarId = getAgentAvatar(agentObj || {id: chat.agent});
   const chatDisplayName = agentObj ? getAgentDisplayName(agentObj) : '';
   const projectBadge = state.currentProject
-    ? `<span class="text-[11px] font-medium px-2 py-0.5 rounded-md ml-2" style="background:rgba(255,123,0,0.1);color:var(--color-accent);border:1px solid rgba(255,123,0,0.2)">${esc(state.currentProject)}</span>`
+    ? `<span class="text-[11px] font-medium px-2 py-0.5 rounded-md ml-1" style="background:rgba(255,123,0,0.1);color:var(--color-accent);border:1px solid rgba(255,123,0,0.2)">${esc(state.currentProject)}</span>`
     : '';
-  dom.chatAgentName.innerHTML = `${renderAvatar(avatarId, 24)} <span>${esc(chatDisplayName || chat.agent)}</span>${chatDisplayName ? `<span class="text-text-muted text-[10px] mono ml-1">(${esc(chat.agent)})</span>` : ''}${projectBadge}`;
+  dom.chatAgentName.innerHTML = `${renderAvatar(avatarId, 22)} <span>${esc(chatDisplayName || chat.agent)}</span>${projectBadge}`;
 
   // Render project tabs
   renderProjectTabs();
@@ -2418,11 +2902,21 @@ async function stopGeneration() {
 // ─── Status Bar ─────────────────────────────────────────────
 function updateStatusBar() {
   const chat = state.activeChat;
+  const agentLabel = chat?.agent ? `${chat.agent}${state.currentProject ? ' / ' + state.currentProject : ''}` : '';
+  dom.statusAgent.textContent = agentLabel;
   dom.statusModel.textContent = chat?.model || '';
-  dom.statusAgent.textContent = chat?.agent ? `Agent: ${chat.agent}${state.currentProject ? ' / ' + state.currentProject : ''}` : '';
-  const costStr = chat?.sessionCost != null ? `  ·  $${chat.sessionCost.toFixed(2)}` : '';
+  const costStr = chat?.sessionCost != null ? ` · $${chat.sessionCost.toFixed(2)}` : '';
   dom.statusTokens.textContent = chat?.totalTokens ? `${chat.totalTokens} tokens${costStr}` : '';
-  dom.statusSession.textContent = chat?.sessionId ? `Session: ${chat.sessionId.substring(0, 8)}` : '';
+  dom.statusSession.textContent = chat?.sessionId ? `${chat.sessionId.substring(0, 8)}` : '';
+  // Hide separators when no data
+  const footer = dom.statusAgent.closest('footer');
+  if (footer) {
+    const seps = footer.querySelectorAll('.text-text-muted');
+    seps.forEach((sep, i) => {
+      if (i === 0) sep.style.display = agentLabel && chat?.model ? '' : 'none';
+      if (i === 1) sep.style.display = chat?.model && chat?.totalTokens ? '' : 'none';
+    });
+  }
 }
 
 // ─── CONFIG MODAL ───────────────────────────────────────────
@@ -2445,6 +2939,7 @@ function openConfigModal(agentName) {
         <button class="config-tab" data-tab="skills">Skills</button>
         <button class="config-tab" data-tab="mcp">MCP</button>
         <button class="config-tab" data-tab="projects">Projects</button>
+        <button class="config-tab" data-tab="workflows">Workflows</button>
         <button class="config-tab" data-tab="memory">Memory</button>
         <button class="config-tab" data-tab="schedule">Schedule</button>
       </div>
@@ -2810,6 +3305,120 @@ async function loadConfigTabContent(tab, agentName) {
       startRunningTasksRefresh(agentName);
     } catch (e) {
       el.innerHTML = `<div class="text-error text-sm">Error loading schedule: ${esc(e.message)}</div>`;
+    }
+  } else if (tab === 'workflows') {
+    try {
+      const wfRes = await API.get(`/v1/agents/${agentName}/workflows`);
+      const workflows = wfRes.workflows || [];
+      // Also fetch running executions
+      let executions = [];
+      try {
+        const exRes = await API.get('/v1/workflows/executions');
+        executions = (exRes.executions || []).filter(e => e.agent === agentName || !agentName);
+      } catch(e) {}
+
+      el.innerHTML = `
+        <div class="space-y-6">
+          <!-- Running Executions -->
+          ${executions.length ? `
+          <div>
+            <h3 class="section-header text-sm mb-3">Running Executions</h3>
+            <div id="wf-executions" class="space-y-3">
+              ${executions.map(ex => {
+                const statusColors = { running: '#5f87ff', waiting_approval: '#ff8700', completed: '#5faf5f', failed: '#ff5f5f', cancelled: 'var(--color-text-muted)' };
+                const statusColor = statusColors[ex.status] || 'var(--color-text-muted)';
+                return `
+                <div class="glass-card p-4">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                      <span class="text-sm font-display font-semibold text-text-primary">${esc(ex.workflow_name)}</span>
+                      <span class="text-[10px] px-1.5 py-0.5 rounded" style="background:${statusColor}20;color:${statusColor}">${esc(ex.status)}</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      ${ex.status === 'waiting_approval' ? `
+                        <button class="text-[11px] text-green-400 hover:text-green-300 font-medium px-2 py-1 rounded hover:bg-green-500/10" onclick="workflowApprove('${esc(ex.execution_id)}','approve')">Approve</button>
+                        <button class="text-[11px] text-error hover:text-red-300 font-medium px-2 py-1 rounded hover:bg-error/10" onclick="workflowApprove('${esc(ex.execution_id)}','reject')">Reject</button>
+                      ` : ''}
+                      ${ex.status === 'running' || ex.status === 'waiting_approval' ? `
+                        <button class="text-[11px] text-text-muted hover:text-error font-medium px-2 py-1 rounded hover:bg-error/10" onclick="workflowCancel('${esc(ex.execution_id)}')">Cancel</button>
+                      ` : ''}
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-1 flex-wrap">
+                    ${(ex.stages || []).map((s, i) => {
+                      const icons = { completed: '<span style="color:#5faf5f">&#10003;</span>', running: '<span style="color:#5f87ff">&#9679;</span>', waiting_approval: '<span style="color:#ff8700">&#9679;</span>', error: '<span style="color:#ff5f5f">&#10007;</span>', rejected: '<span style="color:#ff5f5f">&#10007;</span>' };
+                      const icon = icons[s.status] || '<span style="color:var(--color-text-muted)">&#9675;</span>';
+                      const elapsed = s.elapsed ? ' ' + Math.round(s.elapsed) + 's' : '';
+                      return \`<span class="text-xs px-1.5 py-0.5 rounded" style="background:var(--color-surface-lighter)" title="\${esc(s.output?.substring(0,200) || '')}">\${icon} \${esc(s.name)}\${elapsed}</span>\${i < ex.stages.length - 1 ? '<span class="text-text-muted text-xs">&#8594;</span>' : ''}\`;
+                    }).join('')}
+                  </div>
+                  ${ex.error ? `<div class="text-error text-xs mt-2">${esc(ex.error)}</div>` : ''}
+                </div>`;
+              }).join('')}
+            </div>
+          </div>` : ''}
+
+          <!-- Workflow List -->
+          <div>
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="section-header text-sm">Workflow Definitions</h3>
+              <button class="btn-primary px-4 py-1.5 rounded-lg text-xs font-display" onclick="showNewWorkflowForm('${esc(agentName)}')">+ New Workflow</button>
+            </div>
+
+            <!-- New Workflow Form (hidden) -->
+            <div id="new-wf-form" style="display:none" class="glass-card p-4 space-y-3 mb-4">
+              <div>
+                <label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">Workflow Name</label>
+                <input id="new-wf-name" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono focus:border-accent transition-colors" placeholder="code-review">
+              </div>
+              <div>
+                <label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">YAML Definition</label>
+                <textarea id="new-wf-yaml" class="w-full bg-surface-light border border-border rounded-xl px-5 py-4 text-sm text-text-primary mono focus:border-accent transition-colors" rows="16" placeholder="name: My Workflow
+description: What this workflow does
+stages:
+  - name: step1
+    prompt: Do something with {{task}}
+  - name: approve
+    type: approval
+    message: Review results above.
+  - name: apply
+    prompt: Apply the changes.
+    depends_on: [approve]
+variables:
+  - name: task
+    description: What to work on
+    required: true"></textarea>
+              </div>
+              <div class="flex gap-2">
+                <button class="btn-primary px-4 py-1.5 rounded-lg text-xs font-display" onclick="saveNewWorkflow('${esc(agentName)}')">Save Workflow</button>
+                <button class="btn-secondary px-4 py-1.5 rounded-lg text-xs font-display" onclick="document.getElementById('new-wf-form').style.display='none'">Cancel</button>
+              </div>
+            </div>
+
+            <div id="wf-list" class="space-y-2">
+              ${workflows.length === 0 ? '<div class="text-text-muted text-sm py-3">No workflows defined. Create one above or place .yaml files in agents/' + esc(agentName) + '/workflows/</div>' :
+                workflows.map(wf => `
+                  <div class="glass-card flex items-center gap-3 px-4 py-3 text-sm">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M4 10h16"/><path d="M10 4v16"/></svg>
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-2">
+                        <span class="text-text-primary font-display font-semibold">${esc(wf.name)}</span>
+                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-lighter text-text-muted">${wf.stages} stages</span>
+                      </div>
+                      ${wf.description ? `<div class="text-text-muted text-xs mt-1">${esc(wf.description)}</div>` : ''}
+                      ${wf.variables?.length ? `<div class="text-text-muted text-[10px] mt-1">Variables: ${wf.variables.filter(v=>v).join(', ')}</div>` : ''}
+                    </div>
+                    <div class="flex items-center gap-2 flex-shrink-0">
+                      <button class="text-[11px] text-accent hover:text-blue-300 font-medium transition-colors px-2 py-1 rounded hover:bg-surface-lighter" onclick="runWorkflowDialog('${esc(agentName)}','${esc(wf.file.replace('.yaml','').replace('.yml',''))}',${JSON.stringify(wf.variables||[]).replace(/"/g,'&quot;')})">Run</button>
+                      <button class="text-[11px] text-model hover:text-blue-300 font-medium transition-colors px-2 py-1 rounded hover:bg-surface-lighter" onclick="editWorkflow('${esc(agentName)}','${esc(wf.file.replace('.yaml','').replace('.yml',''))}')">Edit</button>
+                      <button class="text-[11px] text-error hover:text-red-300 font-medium transition-colors px-2 py-1 rounded hover:bg-error/10" onclick="deleteWorkflow('${esc(agentName)}','${esc(wf.file.replace('.yaml','').replace('.yml',''))}')">Delete</button>
+                    </div>
+                  </div>`).join('')}
+            </div>
+          </div>
+        </div>`;
+    } catch (e) {
+      el.innerHTML = `<div class="text-error text-sm">Error loading workflows: ${esc(e.message)}</div>`;
     }
   } else if (tab === 'projects') {
     try {
@@ -3805,6 +4414,118 @@ window.viewSkillContent = async function(agentName, skillName) {
   } catch (e) {
     showToast(`Error viewing skill: ${e.message}`, 'error');
   }
+};
+
+// --- Workflow functions ---
+
+window.showNewWorkflowForm = function(agentName) {
+  const form = document.getElementById('new-wf-form');
+  if (form) form.style.display = form.style.display === 'none' ? 'block' : 'none';
+};
+
+window.saveNewWorkflow = async function(agentName) {
+  const name = document.getElementById('new-wf-name')?.value.trim();
+  const yamlContent = document.getElementById('new-wf-yaml')?.value.trim();
+  if (!name || !yamlContent) { showToast('Name and YAML are required', 'error'); return; }
+  try {
+    const res = await API.post(`/v1/agents/${agentName}/workflows`, { name, definition: yamlContent });
+    if (res.error) { showToast(res.error, 'error'); return; }
+    showToast(`Workflow "${name}" saved`);
+    loadConfigTabContent('workflows', agentName);
+  } catch (e) { showToast(e.message, 'error'); }
+};
+
+window.editWorkflow = async function(agentName, wfName) {
+  try {
+    const res = await API.getAgentFile(agentName, `workflows/${wfName}.yaml`);
+    const content = typeof res === 'string' ? res : (res.content || '');
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+    modal.innerHTML = `
+      <div class="modal-content p-6" style="max-width:700px">
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+        <h3 class="font-display font-semibold text-accent mb-4">Edit: ${esc(wfName)}</h3>
+        <textarea id="edit-wf-yaml" class="w-full bg-surface-light border border-border rounded-xl px-5 py-4 text-sm text-text-primary mono focus:border-accent transition-colors" rows="20">${esc(content)}</textarea>
+        <div class="flex gap-2 mt-4">
+          <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="saveEditedWorkflow('${esc(agentName)}','${esc(wfName)}')">Save</button>
+          <button class="btn-secondary px-5 py-2 rounded-xl text-sm font-display" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+  } catch (e) { showToast(`Error loading workflow: ${e.message}`, 'error'); }
+};
+
+window.saveEditedWorkflow = async function(agentName, wfName) {
+  const yamlContent = document.getElementById('edit-wf-yaml')?.value.trim();
+  if (!yamlContent) { showToast('YAML content is required', 'error'); return; }
+  try {
+    const res = await API.post(`/v1/agents/${agentName}/workflows`, { name: wfName, definition: yamlContent });
+    if (res.error) { showToast(res.error, 'error'); return; }
+    showToast(`Workflow "${wfName}" saved`);
+    document.querySelector('.modal-overlay:last-child')?.remove();
+    if (state.configTab === 'workflows') loadConfigTabContent('workflows', agentName);
+  } catch (e) { showToast(e.message, 'error'); }
+};
+
+window.deleteWorkflow = async function(agentName, wfName) {
+  if (!confirm(`Delete workflow "${wfName}"?`)) return;
+  try {
+    const res = await API.del(`/v1/agents/${agentName}/workflows/${wfName}`);
+    if (res.error) { showToast(res.error, 'error'); return; }
+    showToast(`Workflow "${wfName}" deleted`);
+    if (state.configTab === 'workflows') loadConfigTabContent('workflows', agentName);
+  } catch (e) { showToast(e.message, 'error'); }
+};
+
+window.runWorkflowDialog = function(agentName, wfName, variables) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+  const varInputs = (variables || []).filter(v => v).map(v => {
+    const escaped = esc(v);
+    return `<div><label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">${escaped}</label><input class="wf-var-input w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono focus:border-accent transition-colors" data-var="${escaped}" placeholder="Enter ${escaped}..."></div>`;
+  }).join('');
+  modal.innerHTML = `
+    <div class="modal-content p-6" style="max-width:460px">
+      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+      <h3 class="font-display font-semibold text-accent mb-4">Run: ${esc(wfName)}</h3>
+      ${varInputs ? `<div class="space-y-3 mb-4">${varInputs}</div>` : '<div class="text-text-muted text-sm mb-4">No variables required.</div>'}
+      <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display w-full" onclick="startWorkflow('${esc(agentName)}','${esc(wfName)}')">Start Workflow</button>
+    </div>`;
+  document.body.appendChild(modal);
+};
+
+window.startWorkflow = async function(agentName, wfName) {
+  const vars = {};
+  document.querySelectorAll('.wf-var-input').forEach(el => {
+    vars[el.dataset.var] = el.value;
+  });
+  try {
+    const res = await API.post(`/v1/agents/${agentName}/workflows/${wfName}/run`, { variables: vars });
+    if (res.error) { showToast(res.error, 'error'); return; }
+    showToast(`Workflow "${wfName}" started (${res.execution_id})`);
+    document.querySelector('.modal-overlay:last-child')?.remove();
+    if (state.configTab === 'workflows') loadConfigTabContent('workflows', agentName);
+  } catch (e) { showToast(e.message, 'error'); }
+};
+
+window.workflowApprove = async function(execId, action) {
+  try {
+    const res = await API.post(`/v1/workflows/executions/${execId}/approve`, { action });
+    if (res.error) { showToast(res.error, 'error'); return; }
+    showToast(`Workflow ${action}d`);
+    if (state.configTab === 'workflows') loadConfigTabContent('workflows', state.configAgent);
+  } catch (e) { showToast(e.message, 'error'); }
+};
+
+window.workflowCancel = async function(execId) {
+  try {
+    const res = await API.post(`/v1/workflows/executions/${execId}/cancel`);
+    if (res.error) { showToast(res.error, 'error'); return; }
+    showToast('Workflow cancelled');
+    if (state.configTab === 'workflows') loadConfigTabContent('workflows', state.configAgent);
+  } catch (e) { showToast(e.message, 'error'); }
 };
 
 window.pickAvatar = function(avatarId) {
@@ -5769,6 +6490,37 @@ dom.btnNewSession.onclick = () => {
   }
 };
 
+// ─── Sidebar Toggle ─────────────────────────────────────────
+function toggleSidebar() {
+  const sb = dom.sidebar;
+  sb.classList.toggle('collapsed');
+  localStorage.setItem('sidebar-collapsed', sb.classList.contains('collapsed') ? '1' : '0');
+}
+function openMobileSidebar() {
+  dom.sidebar.classList.add('mobile-open');
+  document.getElementById('sidebar-backdrop').classList.add('visible');
+}
+function closeMobileSidebar() {
+  dom.sidebar.classList.remove('mobile-open');
+  document.getElementById('sidebar-backdrop').classList.remove('visible');
+}
+// Restore sidebar state
+if (localStorage.getItem('sidebar-collapsed') === '1') {
+  dom.sidebar.classList.add('collapsed');
+}
+// Ctrl+B to toggle sidebar
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.key === 'b') {
+    e.preventDefault();
+    if (window.innerWidth < 768) {
+      if (dom.sidebar.classList.contains('mobile-open')) closeMobileSidebar();
+      else openMobileSidebar();
+    } else {
+      toggleSidebar();
+    }
+  }
+});
+
 $('#btn-theme-toggle').onclick = toggleTheme;
 $('#btn-scheduler-dashboard').onclick = () => openSchedulerDashboard();
 $('#btn-header-settings').onclick = () => openSettingsModal();
@@ -5791,7 +6543,7 @@ const slashCommands = [
     sessionAction(act, c.sessionId);
   }},
   { cmd: '/model',     desc: 'Switch model (focus selector)', action: () => { dom.modelSelector.focus(); dom.modelSelector.showPicker?.(); } },
-  { cmd: '/agent',     desc: 'Switch agent',              action: () => { document.getElementById('agent-cards-row')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } },
+  { cmd: '/agent',     desc: 'Switch agent',              action: () => { if (window.innerWidth < 768) openMobileSidebar(); else if (dom.sidebar.classList.contains('collapsed')) toggleSidebar(); } },
   { cmd: '/schedule',  desc: 'Open scheduler dashboard',  action: () => openSchedulerDashboard() },
   { cmd: '/settings',  desc: 'Open settings panel',       action: () => openSettingsModal() },
   { cmd: '/skills',    desc: 'Open skills browser',       action: () => {
@@ -5814,6 +6566,9 @@ const slashCommands = [
     if (state.activeAgentId) showIngestDialog(state.activeAgentId, state.currentProject || '');
   }},
   { cmd: '/plan',      desc: 'Toggle plan mode (read-only)', action: () => togglePlanMode() },
+  { cmd: '/workflow',  desc: 'Open workflows for this agent', action: () => {
+    if (state.activeAgentId) { openConfigModal(state.activeAgentId); setTimeout(() => { state.configTab = 'workflows'; const tab = document.querySelector('#config-tabs [data-tab="workflows"]'); if (tab) tab.click(); }, 100); }
+  }},
   { cmd: '/cache',     desc: 'Show web cache stats',      action: async () => {
     try {
       const data = await API.get('/v1/cache/stats');
@@ -5823,6 +6578,7 @@ const slashCommands = [
   { cmd: '/help',      desc: 'Show keyboard shortcuts',   action: () => {
     const helpHtml = [
       ['Ctrl+Enter', 'Send message'],
+      ['Ctrl+B', 'Toggle sidebar'],
       ['/ (at start)', 'Open command menu'],
       ['\u2191 \u2193', 'Navigate commands'],
       ['Enter / Tab', 'Select command'],

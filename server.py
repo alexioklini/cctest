@@ -409,6 +409,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_models_config_get()
         elif path == "/v1/agents/activity":
             self._handle_agents_activity()
+        elif path == "/v1/workflows/executions":
+            self._handle_workflow_list_executions()
+        elif path.startswith("/v1/workflows/executions/"):
+            self._handle_workflow_get_execution(path)
+        elif path.startswith("/v1/agents/") and "/workflows" in path:
+            self._handle_workflow_list(path)
         elif path == "/v1/teams":
             self._handle_teams_get()
         elif path == "/v1/services":
@@ -488,6 +494,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_qmd_doc_save()
         elif path == "/v1/teams":
             self._handle_teams_post()
+        elif path.startswith("/v1/workflows/executions/") and path.endswith("/approve"):
+            self._handle_workflow_approve(path)
+        elif path.startswith("/v1/workflows/executions/") and path.endswith("/cancel"):
+            self._handle_workflow_cancel(path)
+        elif path.startswith("/v1/agents/") and "/workflows/" in path and "/run" in path:
+            self._handle_workflow_run(path)
+        elif path.startswith("/v1/agents/") and "/workflows" in path:
+            self._handle_workflow_save(path)
         elif path == "/v1/services/telegram":
             self._handle_telegram_action()
         elif path == "/v1/services/server":
@@ -542,6 +556,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_project_delete(path)
         elif path.startswith("/v1/agents/") and "/ingested/" in path:
             self._handle_agent_ingested_delete(path)
+        elif path.startswith("/v1/agents/") and "/workflows/" in path:
+            self._handle_workflow_delete(path)
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -1680,6 +1696,124 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 500)
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)
+
+    # --- Workflow Handlers ---
+
+    def _handle_workflow_list(self, path):
+        """GET /v1/agents/{id}/workflows — list workflows for an agent."""
+        agent_id = self._parse_agent_from_path(path)
+        if not agent_id:
+            self._send_json({"error": "Missing agent ID"}, 400)
+            return
+        workflows = engine.WorkflowEngine.list_workflows(agent_id)
+        self._send_json({"agent": agent_id, "workflows": workflows})
+
+    def _handle_workflow_save(self, path):
+        """POST /v1/agents/{id}/workflows — save a workflow definition."""
+        agent_id = self._parse_agent_from_path(path)
+        if not agent_id:
+            self._send_json({"error": "Missing agent ID"}, 400)
+            return
+        body = self._read_json()
+        name = body.get("name", "")
+        definition = body.get("definition", "")
+        if not name:
+            self._send_json({"error": "name is required"}, 400)
+            return
+        if not definition:
+            self._send_json({"error": "definition is required"}, 400)
+            return
+        try:
+            fpath = engine.WorkflowEngine.save_workflow(agent_id, name, definition)
+            self._send_json({"status": "saved", "path": fpath})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_workflow_delete(self, path):
+        """DELETE /v1/agents/{id}/workflows/{name} — delete a workflow."""
+        parts = path.split("/")
+        # /v1/agents/{id}/workflows/{name}
+        if len(parts) < 6:
+            self._send_json({"error": "Invalid path"}, 400)
+            return
+        agent_id = parts[3]
+        wf_name = parts[5]
+        if engine.WorkflowEngine.delete_workflow(agent_id, wf_name):
+            self._send_json({"status": "deleted", "name": wf_name})
+        else:
+            self._send_json({"error": "Workflow not found"}, 404)
+
+    def _handle_workflow_run(self, path):
+        """POST /v1/agents/{id}/workflows/{name}/run — start a workflow execution."""
+        parts = path.split("/")
+        if len(parts) < 7:
+            self._send_json({"error": "Invalid path"}, 400)
+            return
+        agent_id = parts[3]
+        wf_name = parts[5]
+        body = self._read_json()
+        variables = body.get("variables", {})
+        model = body.get("model")
+        try:
+            execution = engine.workflow_start(agent_id, wf_name, variables, model)
+            self._send_json({"execution_id": execution.execution_id, "status": execution.status})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 400)
+
+    def _handle_workflow_list_executions(self):
+        """GET /v1/workflows/executions — list running/recent executions."""
+        executions = engine.workflow_list_executions()
+        self._send_json({"executions": executions})
+
+    def _handle_workflow_get_execution(self, path):
+        """GET /v1/workflows/executions/{id} — execution status with stage results."""
+        parts = path.split("/")
+        if len(parts) < 5:
+            self._send_json({"error": "Invalid path"}, 400)
+            return
+        exec_id = parts[4]
+        ex = engine.workflow_get_execution(exec_id)
+        if not ex:
+            self._send_json({"error": "Execution not found"}, 404)
+            return
+        self._send_json(ex.to_dict())
+
+    def _handle_workflow_approve(self, path):
+        """POST /v1/workflows/executions/{id}/approve — approve an approval gate."""
+        parts = path.split("/")
+        if len(parts) < 5:
+            self._send_json({"error": "Invalid path"}, 400)
+            return
+        exec_id = parts[4]
+        ex = engine.workflow_get_execution(exec_id)
+        if not ex:
+            self._send_json({"error": "Execution not found"}, 404)
+            return
+        if ex.status != "waiting_approval":
+            self._send_json({"error": f"Execution is not waiting for approval (status: {ex.status})"}, 400)
+            return
+        body = self._read_json()
+        action = body.get("action", "approve")
+        if action == "reject":
+            ex.reject()
+            self._send_json({"status": "rejected", "execution_id": exec_id})
+        else:
+            ex.approve()
+            self._send_json({"status": "approved", "execution_id": exec_id})
+
+    def _handle_workflow_cancel(self, path):
+        """POST /v1/workflows/executions/{id}/cancel — cancel execution."""
+        parts = path.split("/")
+        if len(parts) < 5:
+            self._send_json({"error": "Invalid path"}, 400)
+            return
+        exec_id = parts[4]
+        ex = engine.workflow_get_execution(exec_id)
+        if not ex:
+            self._send_json({"error": "Execution not found"}, 404)
+            return
+        ex.cancel()
+        self._send_json({"status": "cancelled", "execution_id": exec_id})
 
     # --- Agent file management ---
 
@@ -3098,6 +3232,10 @@ def main():
     print("  GET  /v1/costs          — cost stats")
     print("  GET  /v1/costs/daily    — daily cost breakdown")
     print("  GET  /v1/tasks          — background tasks")
+    print("  GET  /v1/agents/{id}/workflows — list workflows")
+    print("  POST /v1/agents/{id}/workflows — save workflow")
+    print("  POST /v1/agents/{id}/workflows/{name}/run — run workflow")
+    print("  GET  /v1/workflows/executions  — list executions")
     # Auto-start Telegram bot if enabled
     if server_config.get("telegram_enabled", True):
         # Delay start slightly so the HTTP server is ready to accept connections
