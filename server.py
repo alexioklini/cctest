@@ -569,6 +569,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_list_projects(path)
         elif path.startswith("/v1/agents/") and path.endswith("/ingested"):
             self._handle_list_ingested(path)
+        elif path.startswith("/v1/agents/") and path.endswith("/graph"):
+            self._handle_agent_graph(path)
         elif path == "/v1/notifications":
             self._handle_notifications_list()
         elif path == "/v1/notifications/unread":
@@ -1701,6 +1703,153 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json(result, 404)
         else:
             self._send_json(result)
+
+    def _handle_agent_graph(self, path: str):
+        """GET /v1/agents/{id}/graph?project=<optional> — knowledge graph of agent memories."""
+        from urllib.parse import urlparse, parse_qs
+        agent_id = self._parse_agent_from_path(path)
+        if not agent_id:
+            self._send_json({"error": "Missing agent ID"}, 400)
+            return
+
+        qs = parse_qs(urlparse(self.path).query)
+        project = (qs.get("project") or [""])[0]
+
+        agent_dir = os.path.join(engine.AGENTS_DIR, agent_id)
+        if not os.path.isdir(agent_dir):
+            self._send_json({"error": f"Agent not found: {agent_id}"}, 404)
+            return
+
+        # Determine directories to scan
+        scan_dirs = []  # (dir_path, source_label)
+        scan_dirs.append((agent_dir, "agent"))
+        if project:
+            proj_dir = os.path.join(agent_dir, "projects", project)
+            if os.path.isdir(proj_dir):
+                scan_dirs.append((proj_dir, f"project:{project}"))
+            proj_ingest = os.path.join(proj_dir, "ingested")
+            if os.path.isdir(proj_ingest):
+                scan_dirs.append((proj_ingest, f"project:{project}"))
+        # Also scan agent-level ingested dir
+        agent_ingest = os.path.join(agent_dir, "ingested")
+        if os.path.isdir(agent_ingest):
+            scan_dirs.append((agent_ingest, "agent"))
+
+        nodes = []
+        edges = []
+        seen_ids = set()
+        ignore_files = {"soul.md", "tools.md"}
+
+        for scan_dir, source_label in scan_dirs:
+            for dirpath, _, filenames in os.walk(scan_dir):
+                # Skip nested agent subdirs that aren't ingested/projects
+                rel_to_agent = os.path.relpath(dirpath, agent_dir)
+                if rel_to_agent not in (".", "ingested") and not rel_to_agent.startswith("projects"):
+                    if rel_to_agent not in ("skills",):
+                        continue
+
+                for fname in sorted(filenames):
+                    if not fname.endswith(".md") or fname in ignore_files:
+                        continue
+                    fpath = os.path.join(dirpath, fname)
+                    rel = os.path.relpath(fpath, agent_dir)
+
+                    if rel in seen_ids:
+                        continue
+                    seen_ids.add(rel)
+
+                    try:
+                        stat = os.stat(fpath)
+                        with open(fpath, "r", errors="replace") as f:
+                            raw = f.read(2000)  # frontmatter + start of body
+                        fm, body = engine._parse_frontmatter(raw)
+                    except Exception:
+                        continue
+
+                    # Determine type and name
+                    mem_type = fm.get("type", "general")
+                    is_ingested = fname.startswith("ingest-") or fm.get("source", "")
+                    if is_ingested:
+                        mem_type = "ingested"
+                    name = fm.get("name") or fm.get("title") or fname.replace(".md", "").replace("_", " ").replace("-", " ")
+
+                    # Source info
+                    node_source = source_label
+                    if is_ingested and fm.get("source"):
+                        node_source = fm["source"]
+
+                    # Chunk info
+                    chunk_index = None
+                    total_chunks = None
+                    try:
+                        ci = fm.get("chunk_index", "")
+                        if ci != "":
+                            chunk_index = int(ci)
+                        tc = fm.get("total_chunks", "")
+                        if tc != "":
+                            total_chunks = int(tc)
+                    except (ValueError, TypeError):
+                        pass
+
+                    nodes.append({
+                        "id": rel,
+                        "name": name.strip('"').strip("'"),
+                        "type": mem_type,
+                        "source": node_source,
+                        "size": stat.st_size,
+                        "modified": stat.st_mtime,
+                        "chunk_index": chunk_index,
+                        "total_chunks": total_chunks,
+                    })
+
+                    # Extract edges from 'related' frontmatter
+                    import re as _re
+                    related_files = _re.findall(r'file:\s*(\S+\.md)', raw)
+                    related_types = _re.findall(r'type:\s*(prev_chunk|next_chunk|same_source|references|same_topic)', raw)
+                    for i, ref_file in enumerate(related_files):
+                        edge_type = related_types[i] if i < len(related_types) else "references"
+                        # Resolve ref_file relative to the same directory
+                        if os.path.dirname(rel):
+                            ref_rel = os.path.join(os.path.dirname(rel), ref_file)
+                        else:
+                            ref_rel = ref_file
+                        edges.append({
+                            "from": rel,
+                            "to": ref_rel,
+                            "type": edge_type,
+                        })
+
+        # Detect sequential ingested chunks that might lack explicit related links
+        # Group by source hash prefix
+        ingest_groups = {}
+        for node in nodes:
+            if node["type"] == "ingested" and node["chunk_index"] is not None:
+                # Extract source hash from filename pattern: ingest-{hash}-{idx}.md
+                base = os.path.basename(node["id"])
+                parts = base.split("-")
+                if len(parts) >= 3:
+                    src_hash = parts[1]
+                    ingest_groups.setdefault(src_hash, []).append(node)
+
+        existing_edges = {(e["from"], e["to"]) for e in edges}
+        for src_hash, group in ingest_groups.items():
+            group.sort(key=lambda n: n["chunk_index"] or 0)
+            for i in range(len(group) - 1):
+                edge_key = (group[i]["id"], group[i + 1]["id"])
+                if edge_key not in existing_edges:
+                    edges.append({
+                        "from": group[i]["id"],
+                        "to": group[i + 1]["id"],
+                        "type": "next_chunk",
+                    })
+                    existing_edges.add(edge_key)
+
+        self._send_json({
+            "agent": agent_id,
+            "project": project or None,
+            "nodes": nodes,
+            "edges": edges,
+        })
 
     def _handle_agents_activity(self):
         """GET /v1/agents/activity — which agents are currently doing something."""
@@ -4190,6 +4339,7 @@ def main():
     print("  GET  /v1/costs          — cost stats")
     print("  GET  /v1/costs/daily    — daily cost breakdown")
     print("  GET  /v1/tasks          — background tasks")
+    print("  GET  /v1/agents/{id}/graph    — knowledge graph of agent memories")
     print("  GET  /v1/agents/{id}/workflows — list workflows")
     print("  POST /v1/agents/{id}/workflows — save workflow")
     print("  POST /v1/agents/{id}/workflows/{name}/run — run workflow")

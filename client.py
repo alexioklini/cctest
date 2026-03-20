@@ -262,6 +262,14 @@ class BrainAgentClient:
             data["collection"] = collection
         return self._post("/v1/services/qmd", data)
 
+    # --- Knowledge Graph ---
+
+    def get_knowledge_graph(self, agent: str, project: str | None = None) -> dict:
+        path = f"/v1/agents/{agent}/graph"
+        if project:
+            path += f"?project={project}"
+        return self._get(path)
+
     # --- Projects ---
 
     def list_projects(self, agent: str) -> list[dict]:

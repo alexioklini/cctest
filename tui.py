@@ -226,6 +226,8 @@ SLASH_COMMANDS = {
     "/skills browse": "Search ClawHub for skills",
     "/skills install": "Install skill from URL",
     "/skills remove":  "Remove an installed skill",
+    # Knowledge Graph
+    "/graph":       "Show knowledge graph summary",
     # Memory
     "/memory":      "List memory files for current agent",
     "/memory summary": "Show memory summary",
@@ -374,6 +376,7 @@ def print_help():
         ("/memory", "List memory files for current agent"),
         ("/memory summary", "Show memory summary"),
         ("/memory refresh", "Refresh memory summary"),
+        ("/graph", "Show knowledge graph summary"),
     ])
 
     _section("Schedule & Tasks", [
@@ -920,6 +923,73 @@ def _handle_skills(arg: str, client: BrainAgentClient, current_agent: str):
         return
 
     console.print("  [dim]/skills [browse <query> | install <url> | remove <slug>][/]")
+
+
+def _handle_graph(client: BrainAgentClient, current_agent: str):
+    """Handle /graph command — show text-based knowledge graph summary."""
+    try:
+        data = client.get_knowledge_graph(current_agent)
+        nodes = data.get("nodes", [])
+        edges = data.get("edges", [])
+
+        if not nodes:
+            console.print("  [dim]No memories yet[/]")
+            return
+
+        # Count by type
+        type_counts = {}
+        ingested_count = 0
+        memory_count = 0
+        for n in nodes:
+            t = n.get("type", "general")
+            type_counts[t] = type_counts.get(t, 0) + 1
+            if t == "ingested":
+                ingested_count += 1
+            else:
+                memory_count += 1
+
+        # Group ingested by source
+        sources = {}
+        for n in nodes:
+            if n.get("type") == "ingested" and n.get("source") and n["source"] != "agent":
+                src = n["source"]
+                sources[src] = sources.get(src, 0) + 1
+
+        # Find top connected nodes
+        conn_count = {}
+        for e in edges:
+            conn_count[e["from"]] = conn_count.get(e["from"], 0) + 1
+            conn_count[e["to"]] = conn_count.get(e["to"], 0) + 1
+
+        top_connected = sorted(conn_count.items(), key=lambda x: x[1], reverse=True)[:5]
+
+        console.print()
+        console.print(f"  [bold]Knowledge Graph: {current_agent}[/]")
+        console.print(f"    Nodes: [#5f87ff]{len(nodes)}[/] ({memory_count} memories, {ingested_count} ingested)")
+        console.print(f"    Edges: [#5f87ff]{len(edges)}[/]")
+
+        if sources:
+            src_parts = []
+            for src, cnt in sorted(sources.items(), key=lambda x: x[1], reverse=True):
+                src_parts.append(f"{src} ({cnt} chunks)")
+            console.print(f"    Sources: {', '.join(src_parts)}")
+
+        if top_connected:
+            console.print()
+            console.print("    [bold]Top connected:[/]")
+            # Build name lookup
+            name_map = {n["id"]: n for n in nodes}
+            for nid, cnt in top_connected:
+                node = name_map.get(nid, {})
+                name = node.get("name", nid)
+                suffix = ""
+                if node.get("type") == "ingested" and node.get("source") and node["source"] != "agent":
+                    suffix = f" ({node['source']})"
+                console.print(f"      {name} [dim]— {cnt} connections{suffix}[/]")
+
+        console.print()
+    except Exception as e:
+        console.print(f"  [error]{e}[/]")
 
 
 def _handle_memory(arg: str, client: BrainAgentClient, current_agent: str):
@@ -2194,6 +2264,12 @@ def run_interactive(args):
             if low.startswith("/skills"):
                 arg = stripped[7:].strip()
                 _handle_skills(arg, client, current_agent)
+                continue
+
+            # --- Knowledge Graph ---
+
+            if low == "/graph":
+                _handle_graph(client, current_agent)
                 continue
 
             # --- Memory ---

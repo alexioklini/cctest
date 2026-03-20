@@ -1478,9 +1478,218 @@ tailwind.config = {
       display: flex;
     }
   }
+
+  /* ── Knowledge Map Overlay ── */
+  #knowledge-map-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    background: var(--color-base);
+    display: none;
+    flex-direction: column;
+  }
+  #knowledge-map-overlay.visible { display: flex; }
+  .kg-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface);
+    flex-shrink: 0;
+  }
+  .kg-header h2 {
+    font-family: 'Outfit', sans-serif;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--color-text-primary);
+    margin: 0;
+  }
+  .kg-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 20px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+  .kg-filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-family: 'IBM Plex Sans', sans-serif;
+    cursor: pointer;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-light);
+    color: var(--color-text-secondary);
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .kg-filter-chip.active {
+    border-color: var(--color-accent);
+    color: var(--color-text-primary);
+    background: var(--color-surface-lighter);
+  }
+  .kg-filter-chip .kg-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .kg-search {
+    padding: 4px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-light);
+    color: var(--color-text-primary);
+    font-size: 11px;
+    font-family: 'IBM Plex Mono', monospace;
+    outline: none;
+    width: 180px;
+  }
+  .kg-search:focus { border-color: var(--color-accent); }
+  .kg-btn {
+    padding: 4px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-light);
+    color: var(--color-text-secondary);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .kg-btn:hover { background: var(--color-surface-lighter); color: var(--color-text-primary); }
+  .kg-canvas-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+  .kg-canvas-wrap canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .kg-statusbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 6px 20px;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-surface);
+    font-size: 10px;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--color-text-muted);
+    flex-shrink: 0;
+  }
+  .kg-tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: var(--color-modal-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 11px;
+    color: var(--color-text-primary);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    max-width: 300px;
+    z-index: 10001;
+    display: none;
+  }
+  .kg-tooltip.visible { display: block; }
+  .kg-detail {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 320px;
+    background: var(--color-surface);
+    border-left: 1px solid var(--color-border);
+    padding: 16px;
+    overflow-y: auto;
+    display: none;
+    z-index: 2;
+  }
+  .kg-detail.visible { display: block; }
+  .kg-detail h3 {
+    font-family: 'Outfit', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--color-text-primary);
+    margin: 0 0 8px;
+    word-break: break-word;
+  }
+  .kg-detail .kg-meta {
+    font-size: 10px;
+    color: var(--color-text-muted);
+    margin-bottom: 12px;
+  }
+  .kg-detail .kg-preview {
+    font-size: 11px;
+    color: var(--color-text-secondary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.5;
+    background: var(--color-surface-light);
+    border-radius: 6px;
+    padding: 10px;
+    max-height: 300px;
+    overflow-y: auto;
+    margin-bottom: 12px;
+  }
+  .kg-detail .kg-connections {
+    font-size: 11px;
+    color: var(--color-text-secondary);
+  }
+  .kg-detail .kg-connections div {
+    padding: 3px 0;
+    cursor: pointer;
+  }
+  .kg-detail .kg-connections div:hover { color: var(--color-accent); }
+  .kg-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    font-size: 14px;
+    color: var(--color-text-muted);
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
 </style>
 </head>
 <body class="bg-base">
+
+<!-- Knowledge Map Overlay -->
+<div id="knowledge-map-overlay">
+  <div class="kg-header">
+    <h2 id="kg-title">Knowledge Map</h2>
+    <div style="flex:1"></div>
+    <select id="kg-agent-select" class="kg-btn" style="min-width:120px"></select>
+    <button class="kg-btn" onclick="closeKnowledgeMap()" title="Close (Escape)">&times; Close</button>
+  </div>
+  <div class="kg-controls">
+    <div id="kg-type-filters"></div>
+    <input type="text" id="kg-search" class="kg-search" placeholder="Search nodes...">
+    <button class="kg-btn" onclick="kgFitToScreen()">Fit</button>
+    <button class="kg-btn" onclick="kgResetLayout()">Re-layout</button>
+  </div>
+  <div class="kg-canvas-wrap" id="kg-canvas-wrap">
+    <canvas id="kg-canvas"></canvas>
+    <div class="kg-tooltip" id="kg-tooltip"></div>
+    <div class="kg-detail" id="kg-detail"></div>
+  </div>
+  <div class="kg-statusbar" id="kg-statusbar">
+    <span id="kg-stat-nodes">Nodes: 0</span>
+    <span id="kg-stat-edges">Edges: 0</span>
+    <span id="kg-stat-sources">Sources: 0</span>
+    <span id="kg-stat-zoom">Zoom: 100%</span>
+  </div>
+</div>
 
 <div id="sidebar-backdrop" onclick="closeMobileSidebar()"></div>
 
@@ -1532,6 +1741,9 @@ tailwind.config = {
       <button id="btn-notifications" title="Notifications" onclick="toggleNotificationDropdown()" style="position:relative">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
         <span id="notif-badge" class="hidden" style="position:absolute;top:-4px;right:-4px;background:#f87171;color:#fff;font-size:9px;font-weight:700;min-width:14px;height:14px;border-radius:7px;display:flex;align-items:center;justify-content:center;padding:0 3px">0</span>
+      </button>
+      <button id="btn-knowledge-map" title="Knowledge Map" onclick="openKnowledgeMap()">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><circle cx="6" cy="18" r="3"/><line x1="8.5" y1="7.5" x2="15.5" y2="16.5"/><line x1="15.5" y1="7.5" x2="8.5" y2="16.5"/></svg>
       </button>
       <button id="btn-header-settings" title="Server Settings">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -1588,6 +1800,7 @@ tailwind.config = {
             <button id="btn-attach" title="Attach image" style="padding:6px 10px;border-radius:8px;font-size:14px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;align-self:flex-end;" onclick="document.getElementById('image-file-input').click()">&#x1F4CE;</button>
             <textarea id="chat-input" class="flex-1 bg-transparent border-none px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none font-body" rows="2" placeholder="Type a message... (Ctrl+Enter to send)" style="box-shadow:none !important;"></textarea>
             <button id="btn-plan-mode" title="Toggle Plan Mode (read-only)" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="togglePlanMode()">Plan</button>
+            <button id="btn-toggle-tools" title="Toggle tool call visibility" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="toggleToolCalls()">🔧</button>
             <button id="btn-refine" title="Refine message with AI" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="refineMessage()">&#x2728;</button>
             <button id="btn-send" class="btn-primary px-5 py-2 rounded-xl text-sm flex items-center gap-2 self-end font-display font-semibold">
               Send
@@ -2074,6 +2287,7 @@ class AppState {
 
 const state = new AppState();
 let planModeActive = false;
+let showToolCalls = localStorage.getItem('showToolCalls') !== 'false'; // default true
 let customCommands = {}; // agentId -> [{name, template, description}]
 
 // ─── DOM Refs ───────────────────────────────────────────────
@@ -2782,7 +2996,10 @@ function renderMessage(msg, idx, container) {
     div.innerHTML = `<div class="user-msg max-w-[85%] bg-surface-light rounded-2xl rounded-tr-md px-5 py-3 text-sm text-text-primary msg-content">${imagesHtml}${marked.parse(msg.content)}</div>`;
   } else if (msg.role === 'assistant') {
     div.className += ' flex justify-start';
-    const toolsHtml = (msg.tools || []).map(t => renderToolBlock(t)).join('');
+    const toolCount = (msg.tools || []).length;
+    const toolsHtml = showToolCalls
+      ? (msg.tools || []).map(t => renderToolBlock(t)).join('')
+      : (toolCount > 0 ? renderToolsSummary(msg.tools) : '');
     const content = msg.content ? marked.parse(msg.content) : '';
     const isStreaming = !msg.content && !msg.tokens && (msg.tools || []).length === 0;
     const spinnerHtml = isStreaming ? `<div class="thinking-indicator" id="inline-thinking">
@@ -2839,6 +3056,22 @@ function renderToolBlock(tool) {
   </div>`;
 }
 
+function renderToolsSummary(tools) {
+  if (!tools || tools.length === 0) return '';
+  const completed = tools.filter(t => t.result !== undefined).length;
+  const running = tools.length - completed;
+  const names = [...new Set(tools.map(t => t.name))].join(', ');
+  const statusText = running > 0 ? `${completed}/${tools.length} done` : `${tools.length} tool${tools.length > 1 ? 's' : ''}`;
+  const statusIcon = running > 0
+    ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#ff7b00" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>'
+    : '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
+  return `<div class="tools-summary flex items-center gap-2 px-3 py-1.5 mb-2 text-[11px] text-text-muted mono" style="border-left:3px solid var(--color-accent);border-radius:0 0.5rem 0.5rem 0;background:var(--color-tool-bg);opacity:0.7;">
+    ${statusIcon}
+    <span>${statusText}</span>
+    <span class="text-text-muted truncate" style="max-width:300px;">${esc(names)}</span>
+  </div>`;
+}
+
 function updateStreamingMessage(chat) {
   const msg = chat.messages[chat.messages.length - 1];
   if (!msg || msg.role !== 'assistant') return;
@@ -2869,18 +3102,38 @@ function updateStreamingMessage(chat) {
   }
   const parent = lastDiv.querySelector('.assistant-msg') || lastDiv.querySelector('.max-w-\\[90\\%\\]');
   if (parent) {
-    const existingTools = parent.querySelectorAll('.tool-block');
-    const toolsNeeded = msg.tools?.length || 0;
-    if (toolsNeeded > existingTools.length) {
-      const newTool = msg.tools[toolsNeeded - 1];
-      const toolDiv = document.createElement('div');
-      toolDiv.innerHTML = renderToolBlock(newTool);
-      parent.insertBefore(toolDiv.firstElementChild, contentDiv);
-    } else if (toolsNeeded > 0) {
-      const lastToolEl = parent.querySelectorAll('.tool-block')[toolsNeeded - 1];
-      if (lastToolEl) {
-        const t = msg.tools[toolsNeeded - 1];
-        lastToolEl.outerHTML = renderToolBlock(t);
+    if (!showToolCalls) {
+      // Hidden mode: show compact summary instead of individual blocks
+      const existingSummary = parent.querySelector('.tools-summary');
+      parent.querySelectorAll('.tool-block').forEach(el => el.remove());
+      const toolsNeeded = msg.tools?.length || 0;
+      if (toolsNeeded > 0) {
+        const summaryHtml = renderToolsSummary(msg.tools);
+        if (existingSummary) {
+          existingSummary.outerHTML = summaryHtml;
+        } else {
+          const tmp = document.createElement('div');
+          tmp.innerHTML = summaryHtml;
+          parent.insertBefore(tmp.firstElementChild, contentDiv);
+        }
+      }
+    } else {
+      // Visible mode: show individual tool blocks
+      const existingSummary = parent.querySelector('.tools-summary');
+      if (existingSummary) existingSummary.remove();
+      const existingTools = parent.querySelectorAll('.tool-block');
+      const toolsNeeded = msg.tools?.length || 0;
+      if (toolsNeeded > existingTools.length) {
+        const newTool = msg.tools[toolsNeeded - 1];
+        const toolDiv = document.createElement('div');
+        toolDiv.innerHTML = renderToolBlock(newTool);
+        parent.insertBefore(toolDiv.firstElementChild, contentDiv);
+      } else if (toolsNeeded > 0) {
+        const lastToolEl = parent.querySelectorAll('.tool-block')[toolsNeeded - 1];
+        if (lastToolEl) {
+          const t = msg.tools[toolsNeeded - 1];
+          lastToolEl.outerHTML = renderToolBlock(t);
+        }
       }
     }
   }
@@ -3070,6 +3323,7 @@ function openConfigModal(agentName) {
         <button class="config-tab" data-tab="projects">Projects</button>
         <button class="config-tab" data-tab="workflows">Workflows</button>
         <button class="config-tab" data-tab="memory">Memory</button>
+        <button class="config-tab" data-tab="graph">Graph</button>
         <button class="config-tab" data-tab="schedule">Schedule</button>
       </div>
       <div id="config-tab-content"></div>
@@ -3638,6 +3892,10 @@ variables:
     } catch (e) {
       el.innerHTML = `<div class="text-error text-sm">Error loading memory summary: ${esc(e.message)}</div>`;
     }
+  } else if (tab === 'graph') {
+    // Close config modal and open full-screen knowledge map
+    document.getElementById('config-modal')?.remove();
+    openKnowledgeMap(agentName);
   }
 }
 
@@ -7064,6 +7322,31 @@ function schedDashSetHistoryFilter(filter) {
   loadSchedDashTab();
 }
 
+// ─── Tool Calls Toggle ──────────────────────────────────────
+function toggleToolCalls() {
+  showToolCalls = !showToolCalls;
+  localStorage.setItem('showToolCalls', showToolCalls);
+  updateToolToggleButton();
+  renderMessages();
+  showToast(showToolCalls ? 'Tool calls visible' : 'Tool calls hidden');
+}
+
+function updateToolToggleButton() {
+  const btn = document.getElementById('btn-toggle-tools');
+  if (!btn) return;
+  if (showToolCalls) {
+    btn.style.background = 'transparent';
+    btn.style.color = 'var(--text-secondary)';
+    btn.style.borderColor = 'var(--border)';
+    btn.title = 'Hide tool calls';
+  } else {
+    btn.style.background = 'var(--color-accent)';
+    btn.style.color = '#fff';
+    btn.style.borderColor = 'var(--color-accent)';
+    btn.title = 'Show tool calls';
+  }
+}
+
 // ─── Plan Mode ──────────────────────────────────────────────
 function togglePlanMode() {
   planModeActive = !planModeActive;
@@ -7208,6 +7491,7 @@ const slashCommands = [
     if (state.activeAgentId) showIngestDialog(state.activeAgentId, state.currentProject || '');
   }},
   { cmd: '/plan',      desc: 'Toggle plan mode (read-only)', action: () => togglePlanMode() },
+  { cmd: '/tools',     desc: 'Toggle tool call visibility',  action: () => toggleToolCalls() },
   { cmd: '/workflow',  desc: 'Open workflows for this agent', action: () => {
     if (state.activeAgentId) { openConfigModal(state.activeAgentId); setTimeout(() => { state.configTab = 'workflows'; const tab = document.querySelector('#config-tabs [data-tab="workflows"]'); if (tab) tab.click(); }, 100); }
   }},
@@ -7217,6 +7501,7 @@ const slashCommands = [
       showToast(`Cache: ${data.entries} entries, ${data.hit_rate}% hit rate (${data.hits} hits / ${data.misses} misses)`);
     } catch(e) { showToast('Cache stats error: ' + e.message); }
   }},
+  { cmd: '/graph',     desc: 'Open knowledge map',         action: () => openKnowledgeMap() },
   { cmd: '/help',      desc: 'Show keyboard shortcuts',   action: () => {
     const helpHtml = [
       ['Ctrl+Enter', 'Send message'],
@@ -7827,6 +8112,7 @@ window.channelAction = async function(action, chId) {
 // ─── Initialization ─────────────────────────────────────────
 (async function init() {
   await loadInitialData();
+  updateToolToggleButton();
   startNotifPolling();
   setInterval(async () => {
     await checkConnection();
@@ -7851,6 +8137,687 @@ window.channelAction = async function(action, chId) {
     } catch {}
   }, 3000);
 })();
+
+// ─── KNOWLEDGE MAP ─────────────────────────────────────────
+const KG_COLORS = {
+  general:   { light: '#ff7b00', dark: '#ff9b40' },
+  user:      { light: '#4ade80', dark: '#4ade80' },
+  project:   { light: '#f59e0b', dark: '#fbbf24' },
+  feedback:  { light: '#ec4899', dark: '#f472b6' },
+  ingested:  { light: '#8b5cf6', dark: '#a78bfa' },
+  reference: { light: '#06b6d4', dark: '#22d3ee' },
+};
+
+const KG_EDGE_COLORS = {
+  next_chunk: { color: '#888', dash: [], width: 1 },
+  prev_chunk: { color: '#888', dash: [], width: 1 },
+  same_source: { color: '#888', dash: [4, 4], width: 1 },
+  references: { color: null, dash: [], width: 1.5 },  // null = use accent
+  same_topic: { color: null, dash: [2, 4], width: 1 },
+};
+
+let kgInstance = null;
+
+class KnowledgeGraph {
+  constructor(canvas, data) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.allNodes = data.nodes.map(n => ({
+      ...n,
+      x: (Math.random() - 0.5) * 600,
+      y: (Math.random() - 0.5) * 400,
+      vx: 0, vy: 0,
+      radius: Math.max(8, Math.min(30, 8 + Math.sqrt(n.size || 100) * 0.3)),
+    }));
+    this.allEdges = data.edges;
+    this.nodes = [...this.allNodes];
+    this.edges = [...this.allEdges];
+    this.zoom = 1;
+    this.panX = 0;
+    this.panY = 0;
+    this.selectedNode = null;
+    this.hoveredNode = null;
+    this.dragging = null;
+    this.dragStart = null;
+    this.isPanning = false;
+    this.panStart = null;
+    this.searchQuery = '';
+    this.activeTypes = new Set(Object.keys(KG_COLORS));
+    this._animFrame = null;
+    this._resizeObs = null;
+    this._boundMouseDown = this._onMouseDown.bind(this);
+    this._boundMouseMove = this._onMouseMove.bind(this);
+    this._boundMouseUp = this._onMouseUp.bind(this);
+    this._boundWheel = this._onWheel.bind(this);
+    this._setupEvents();
+    this._resize();
+    this._setupResizeObserver();
+  }
+
+  _setupEvents() {
+    this.canvas.addEventListener('mousedown', this._boundMouseDown);
+    this.canvas.addEventListener('mousemove', this._boundMouseMove);
+    this.canvas.addEventListener('mouseup', this._boundMouseUp);
+    this.canvas.addEventListener('mouseleave', this._boundMouseUp);
+    this.canvas.addEventListener('wheel', this._boundWheel, { passive: false });
+    // Touch support
+    this.canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const t = e.touches[0];
+      this._onMouseDown({ clientX: t.clientX, clientY: t.clientY, button: 0, preventDefault: ()=>{} });
+    }, { passive: false });
+    this.canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      const t = e.touches[0];
+      this._onMouseMove({ clientX: t.clientX, clientY: t.clientY });
+    }, { passive: false });
+    this.canvas.addEventListener('touchend', (e) => {
+      this._onMouseUp({});
+    });
+  }
+
+  _setupResizeObserver() {
+    this._resizeObs = new ResizeObserver(() => { this._resize(); this.render(); });
+    this._resizeObs.observe(this.canvas.parentElement);
+  }
+
+  _resize() {
+    const wrap = this.canvas.parentElement;
+    const dpr = window.devicePixelRatio || 1;
+    this.canvas.width = wrap.clientWidth * dpr;
+    this.canvas.height = wrap.clientHeight * dpr;
+    this.canvas.style.width = wrap.clientWidth + 'px';
+    this.canvas.style.height = wrap.clientHeight + 'px';
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.W = wrap.clientWidth;
+    this.H = wrap.clientHeight;
+  }
+
+  destroy() {
+    if (this._animFrame) cancelAnimationFrame(this._animFrame);
+    if (this._resizeObs) this._resizeObs.disconnect();
+    this.canvas.removeEventListener('mousedown', this._boundMouseDown);
+    this.canvas.removeEventListener('mousemove', this._boundMouseMove);
+    this.canvas.removeEventListener('mouseup', this._boundMouseUp);
+    this.canvas.removeEventListener('mouseleave', this._boundMouseUp);
+    this.canvas.removeEventListener('wheel', this._boundWheel);
+  }
+
+  layout(iterations = 300) {
+    const nodes = this.nodes;
+    const edges = this.edges;
+    if (nodes.length === 0) return;
+
+    // Build adjacency index
+    const nodeIdx = {};
+    nodes.forEach((n, i) => nodeIdx[n.id] = i);
+
+    for (let iter = 0; iter < iterations; iter++) {
+      const damping = 0.9 - (iter / iterations) * 0.4;
+
+      // Repulsion between all nodes
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          let dx = nodes[j].x - nodes[i].x;
+          let dy = nodes[j].y - nodes[i].y;
+          let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          let force = 5000 / (dist * dist);
+          let fx = (dx / dist) * force;
+          let fy = (dy / dist) * force;
+          nodes[i].vx -= fx;
+          nodes[i].vy -= fy;
+          nodes[j].vx += fx;
+          nodes[j].vy += fy;
+        }
+      }
+
+      // Attraction between connected nodes
+      for (const e of edges) {
+        const ai = nodeIdx[e.from];
+        const bi = nodeIdx[e.to];
+        if (ai === undefined || bi === undefined) continue;
+        let dx = nodes[bi].x - nodes[ai].x;
+        let dy = nodes[bi].y - nodes[ai].y;
+        let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        // Stronger spring for chunk sequences
+        let k = e.type === 'next_chunk' || e.type === 'prev_chunk' ? 0.03 : 0.01;
+        let force = dist * k;
+        let fx = (dx / dist) * force;
+        let fy = (dy / dist) * force;
+        nodes[ai].vx += fx;
+        nodes[ai].vy += fy;
+        nodes[bi].vx -= fx;
+        nodes[bi].vy -= fy;
+      }
+
+      // Gravity toward center
+      for (const n of nodes) {
+        n.vx -= n.x * 0.02;
+        n.vy -= n.y * 0.02;
+      }
+
+      // Apply velocity with damping
+      for (const n of nodes) {
+        n.vx *= damping;
+        n.vy *= damping;
+        n.x += n.vx;
+        n.y += n.vy;
+      }
+    }
+  }
+
+  applyFilter() {
+    const q = this.searchQuery.toLowerCase();
+    this.nodes = this.allNodes.filter(n => {
+      if (!this.activeTypes.has(n.type || 'general')) return false;
+      if (q && !n.name.toLowerCase().includes(q) && !n.id.toLowerCase().includes(q)) return false;
+      return true;
+    });
+    const nodeIds = new Set(this.nodes.map(n => n.id));
+    this.edges = this.allEdges.filter(e => nodeIds.has(e.from) && nodeIds.has(e.to));
+    this._updateStatus();
+    this.render();
+  }
+
+  _getTheme() {
+    return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  }
+
+  _getAccentColor() {
+    return getComputedStyle(document.documentElement).getPropertyValue('--color-accent').trim() || '#ff7b00';
+  }
+
+  _nodeColor(node) {
+    const theme = this._getTheme();
+    const colors = KG_COLORS[node.type] || KG_COLORS.general;
+    return colors[theme] || colors.light;
+  }
+
+  _screenToWorld(sx, sy) {
+    return {
+      x: (sx - this.W / 2 - this.panX) / this.zoom,
+      y: (sy - this.H / 2 - this.panY) / this.zoom,
+    };
+  }
+
+  _worldToScreen(wx, wy) {
+    return {
+      x: wx * this.zoom + this.W / 2 + this.panX,
+      y: wy * this.zoom + this.H / 2 + this.panY,
+    };
+  }
+
+  hitTest(sx, sy) {
+    const { x, y } = this._screenToWorld(sx, sy);
+    for (let i = this.nodes.length - 1; i >= 0; i--) {
+      const n = this.nodes[i];
+      const dx = n.x - x, dy = n.y - y;
+      const r = n.radius / this.zoom;
+      if (dx * dx + dy * dy <= r * r * 1.5) return n;
+    }
+    return null;
+  }
+
+  _onMouseDown(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+    const node = this.hitTest(sx, sy);
+    if (node) {
+      this.dragging = node;
+      this.dragStart = { x: sx, y: sy, ox: node.x, oy: node.y, moved: false };
+    } else {
+      this.isPanning = true;
+      this.panStart = { x: sx, y: sy, px: this.panX, py: this.panY };
+    }
+    e.preventDefault?.();
+  }
+
+  _onMouseMove(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+
+    if (this.dragging && this.dragStart) {
+      const dx = (sx - this.dragStart.x) / this.zoom;
+      const dy = (sy - this.dragStart.y) / this.zoom;
+      this.dragging.x = this.dragStart.ox + dx;
+      this.dragging.y = this.dragStart.oy + dy;
+      if (Math.abs(sx - this.dragStart.x) + Math.abs(sy - this.dragStart.y) > 5) {
+        this.dragStart.moved = true;
+      }
+      this.render();
+      return;
+    }
+
+    if (this.isPanning && this.panStart) {
+      this.panX = this.panStart.px + (sx - this.panStart.x);
+      this.panY = this.panStart.py + (sy - this.panStart.y);
+      this.render();
+      this._updateStatus();
+      return;
+    }
+
+    // Hover
+    const node = this.hitTest(sx, sy);
+    if (node !== this.hoveredNode) {
+      this.hoveredNode = node;
+      this.canvas.style.cursor = node ? 'pointer' : 'grab';
+      this._updateTooltip(node, e.clientX, e.clientY);
+      this.render();
+    }
+  }
+
+  _onMouseUp(e) {
+    if (this.dragging && this.dragStart && !this.dragStart.moved) {
+      // Click on node
+      this.selectedNode = this.dragging;
+      this._showDetail(this.dragging);
+      this.render();
+    }
+    this.dragging = null;
+    this.dragStart = null;
+    this.isPanning = false;
+    this.panStart = null;
+  }
+
+  _onWheel(e) {
+    e.preventDefault();
+    const rect = this.canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+    const { x: wx, y: wy } = this._screenToWorld(sx, sy);
+
+    const factor = e.deltaY < 0 ? 1.1 : 0.9;
+    const newZoom = Math.max(0.1, Math.min(10, this.zoom * factor));
+
+    // Adjust pan to zoom toward cursor
+    this.panX = sx - this.W / 2 - wx * newZoom;
+    this.panY = sy - this.H / 2 - wy * newZoom;
+    this.zoom = newZoom;
+
+    this._updateStatus();
+    this.render();
+  }
+
+  _updateTooltip(node, cx, cy) {
+    const tip = document.getElementById('kg-tooltip');
+    if (!node) {
+      tip.classList.remove('visible');
+      return;
+    }
+    const dateStr = node.modified ? new Date(node.modified * 1000).toLocaleString() : 'unknown';
+    const sizeStr = node.size > 1024 ? (node.size / 1024).toFixed(1) + ' KB' : node.size + ' B';
+    let html = `<div style="font-weight:600;margin-bottom:4px">${esc(node.name)}</div>`;
+    html += `<div style="color:var(--color-text-muted);font-size:10px">`;
+    html += `Type: ${node.type} &middot; Size: ${sizeStr}<br>`;
+    html += `Source: ${esc(node.source || 'agent')}<br>`;
+    html += `Modified: ${dateStr}`;
+    if (node.chunk_index !== null && node.chunk_index !== undefined) {
+      html += `<br>Chunk: ${node.chunk_index + 1}/${node.total_chunks || '?'}`;
+    }
+    html += '</div>';
+    tip.innerHTML = html;
+    tip.classList.add('visible');
+    // Position near cursor
+    const wrap = document.getElementById('kg-canvas-wrap');
+    const wr = wrap.getBoundingClientRect();
+    let tx = cx - wr.left + 15, ty = cy - wr.top + 15;
+    if (tx + 300 > wr.width) tx = cx - wr.left - 310;
+    if (ty + 100 > wr.height) ty = cy - wr.top - 110;
+    tip.style.left = Math.max(0, tx) + 'px';
+    tip.style.top = Math.max(0, ty) + 'px';
+  }
+
+  _showDetail(node) {
+    const detail = document.getElementById('kg-detail');
+    if (!node) {
+      detail.classList.remove('visible');
+      return;
+    }
+    const dateStr = node.modified ? new Date(node.modified * 1000).toLocaleString() : 'unknown';
+    const sizeStr = node.size > 1024 ? (node.size / 1024).toFixed(1) + ' KB' : node.size + ' B';
+
+    // Find connections
+    const connections = [];
+    for (const e of this.edges) {
+      if (e.from === node.id) connections.push({ id: e.to, type: e.type, dir: 'out' });
+      if (e.to === node.id) connections.push({ id: e.from, type: e.type, dir: 'in' });
+    }
+
+    let connHtml = '';
+    if (connections.length > 0) {
+      const nameMap = {};
+      this.nodes.forEach(n => nameMap[n.id] = n.name);
+      connHtml = '<div class="kg-connections"><div style="font-weight:600;margin-bottom:4px;color:var(--color-text-primary)">Connections (' + connections.length + ')</div>';
+      for (const c of connections) {
+        const arrow = c.dir === 'out' ? '&rarr;' : '&larr;';
+        connHtml += `<div onclick="kgSelectNodeById('${esc(c.id)}')">${arrow} ${esc(nameMap[c.id] || c.id)} <span style="color:var(--color-text-muted)">(${c.type})</span></div>`;
+      }
+      connHtml += '</div>';
+    }
+
+    detail.innerHTML = `
+      <button onclick="document.getElementById('kg-detail').classList.remove('visible')" style="float:right;background:none;border:none;color:var(--color-text-muted);cursor:pointer;font-size:16px">&times;</button>
+      <h3>${esc(node.name)}</h3>
+      <div class="kg-meta">
+        <div>Type: <strong>${node.type}</strong></div>
+        <div>File: ${esc(node.id)}</div>
+        <div>Source: ${esc(node.source || 'agent')}</div>
+        <div>Size: ${sizeStr}</div>
+        <div>Modified: ${dateStr}</div>
+        ${node.chunk_index !== null && node.chunk_index !== undefined ? `<div>Chunk: ${node.chunk_index + 1} / ${node.total_chunks || '?'}</div>` : ''}
+      </div>
+      <div id="kg-detail-preview" class="kg-preview" style="color:var(--color-text-muted);font-style:italic">Loading preview...</div>
+      ${connHtml}
+    `;
+    detail.classList.add('visible');
+
+    // Load file content for preview
+    this._loadPreview(node);
+  }
+
+  async _loadPreview(node) {
+    const previewEl = document.getElementById('kg-detail-preview');
+    if (!previewEl) return;
+    try {
+      const agent = document.getElementById('kg-agent-select').value;
+      const data = await API.get(`/v1/services/qmd/docs?collection=${encodeURIComponent(agent)}&file=${encodeURIComponent(node.id)}`);
+      if (data.content) {
+        // Strip frontmatter
+        let content = data.content;
+        const fmMatch = content.match(/^---\s*\n[\s\S]*?\n---\s*\n/);
+        if (fmMatch) content = content.slice(fmMatch[0].length);
+        previewEl.textContent = content.slice(0, 500) + (content.length > 500 ? '...' : '');
+        previewEl.style.color = '';
+        previewEl.style.fontStyle = '';
+      } else {
+        previewEl.textContent = '(empty)';
+      }
+    } catch {
+      previewEl.textContent = '(could not load preview)';
+    }
+  }
+
+  render() {
+    const ctx = this.ctx;
+    ctx.clearRect(0, 0, this.W, this.H);
+
+    if (this.nodes.length === 0) {
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--color-text-muted').trim() || '#999';
+      ctx.font = '14px "IBM Plex Sans", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('No memories yet', this.W / 2, this.H / 2);
+      return;
+    }
+
+    ctx.save();
+    ctx.translate(this.W / 2 + this.panX, this.H / 2 + this.panY);
+    ctx.scale(this.zoom, this.zoom);
+
+    const accent = this._getAccentColor();
+    const nodeIdx = {};
+    this.nodes.forEach(n => nodeIdx[n.id] = n);
+
+    // Draw edges
+    for (const e of this.edges) {
+      const a = nodeIdx[e.from], b = nodeIdx[e.to];
+      if (!a || !b) continue;
+      const style = KG_EDGE_COLORS[e.type] || KG_EDGE_COLORS.references;
+      ctx.strokeStyle = style.color || accent;
+      ctx.lineWidth = style.width / this.zoom;
+      ctx.setLineDash(style.dash.map(d => d / this.zoom));
+      ctx.globalAlpha = 0.4;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+
+      // Draw arrowhead
+      if (e.type !== 'same_source') {
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const ux = dx / dist, uy = dy / dist;
+        const arrowSize = 5 / this.zoom;
+        const tipX = b.x - ux * (b.radius / this.zoom);
+        const tipY = b.y - uy * (b.radius / this.zoom);
+        ctx.beginPath();
+        ctx.moveTo(tipX, tipY);
+        ctx.lineTo(tipX - ux * arrowSize - uy * arrowSize * 0.5, tipY - uy * arrowSize + ux * arrowSize * 0.5);
+        ctx.lineTo(tipX - ux * arrowSize + uy * arrowSize * 0.5, tipY - uy * arrowSize - ux * arrowSize * 0.5);
+        ctx.closePath();
+        ctx.fillStyle = style.color || accent;
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+    ctx.setLineDash([]);
+
+    // Draw nodes
+    const searchQ = this.searchQuery.toLowerCase();
+    for (const n of this.nodes) {
+      const r = n.radius / this.zoom;
+      const color = this._nodeColor(n);
+      const isSelected = n === this.selectedNode;
+      const isHovered = n === this.hoveredNode;
+      const isSearchMatch = searchQ && (n.name.toLowerCase().includes(searchQ) || n.id.toLowerCase().includes(searchQ));
+
+      // Glow for selected/hovered
+      if (isSelected || isHovered) {
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r + 4 / this.zoom, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.2;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+
+      // Search highlight ring
+      if (isSearchMatch) {
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r + 3 / this.zoom, 0, Math.PI * 2);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2 / this.zoom;
+        ctx.stroke();
+      }
+
+      // Node circle
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.globalAlpha = (searchQ && !isSearchMatch) ? 0.2 : 0.85;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // Border
+      ctx.strokeStyle = isSelected ? '#fff' : color;
+      ctx.lineWidth = (isSelected ? 2 : 1) / this.zoom;
+      ctx.stroke();
+
+      // Label
+      if (this.zoom > 0.3) {
+        const label = n.name.length > 22 ? n.name.slice(0, 20) + '..' : n.name;
+        const fontSize = Math.max(8, Math.min(11, 10 / this.zoom));
+        ctx.font = `${fontSize}px "IBM Plex Sans", sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--color-text-secondary').trim() || '#888';
+        ctx.globalAlpha = (searchQ && !isSearchMatch) ? 0.15 : 0.8;
+        ctx.fillText(label, n.x, n.y + r + fontSize + 2 / this.zoom);
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    ctx.restore();
+  }
+
+  fitToScreen() {
+    if (this.nodes.length === 0) return;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const n of this.nodes) {
+      minX = Math.min(minX, n.x - n.radius);
+      maxX = Math.max(maxX, n.x + n.radius);
+      minY = Math.min(minY, n.y - n.radius);
+      maxY = Math.max(maxY, n.y + n.radius);
+    }
+    const padding = 80;
+    const gw = maxX - minX + padding * 2;
+    const gh = maxY - minY + padding * 2;
+    this.zoom = Math.min(this.W / gw, this.H / gh, 2);
+    this.panX = -(minX + maxX) / 2 * this.zoom;
+    this.panY = -(minY + maxY) / 2 * this.zoom;
+    this._updateStatus();
+    this.render();
+  }
+
+  _updateStatus() {
+    const sources = new Set(this.nodes.filter(n => n.type === 'ingested' && n.source && n.source !== 'agent').map(n => n.source));
+    document.getElementById('kg-stat-nodes').textContent = `Nodes: ${this.nodes.length}`;
+    document.getElementById('kg-stat-edges').textContent = `Edges: ${this.edges.length}`;
+    document.getElementById('kg-stat-sources').textContent = `Sources: ${sources.size}`;
+    document.getElementById('kg-stat-zoom').textContent = `Zoom: ${Math.round(this.zoom * 100)}%`;
+  }
+}
+
+function kgSelectNodeById(id) {
+  if (!kgInstance) return;
+  const node = kgInstance.nodes.find(n => n.id === id);
+  if (node) {
+    kgInstance.selectedNode = node;
+    kgInstance._showDetail(node);
+    // Pan to node
+    const s = kgInstance._worldToScreen(node.x, node.y);
+    kgInstance.panX += kgInstance.W / 2 - s.x;
+    kgInstance.panY += kgInstance.H / 2 - s.y;
+    kgInstance.render();
+    kgInstance._updateStatus();
+  }
+}
+
+function kgFitToScreen() {
+  if (kgInstance) kgInstance.fitToScreen();
+}
+
+function kgResetLayout() {
+  if (!kgInstance) return;
+  // Re-randomize positions
+  kgInstance.nodes.forEach(n => {
+    n.x = (Math.random() - 0.5) * 600;
+    n.y = (Math.random() - 0.5) * 400;
+    n.vx = 0;
+    n.vy = 0;
+  });
+  kgInstance.layout(300);
+  kgInstance.fitToScreen();
+}
+
+async function openKnowledgeMap(agentId) {
+  const overlay = document.getElementById('knowledge-map-overlay');
+  overlay.classList.add('visible');
+
+  // Populate agent selector
+  const agentSelect = document.getElementById('kg-agent-select');
+  agentSelect.innerHTML = '';
+  for (const a of (state.agents || [])) {
+    const name = getAgentName(a);
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    if (name === (agentId || state.activeAgentId)) opt.selected = true;
+    agentSelect.appendChild(opt);
+  }
+
+  agentSelect.onchange = () => _kgLoadAgent(agentSelect.value);
+
+  // Setup search
+  const searchInput = document.getElementById('kg-search');
+  searchInput.value = '';
+  searchInput.oninput = () => {
+    if (kgInstance) {
+      kgInstance.searchQuery = searchInput.value;
+      kgInstance.applyFilter();
+    }
+  };
+
+  // Escape key to close
+  overlay._keyHandler = (e) => {
+    if (e.key === 'Escape') closeKnowledgeMap();
+  };
+  document.addEventListener('keydown', overlay._keyHandler);
+
+  await _kgLoadAgent(agentSelect.value);
+}
+
+async function _kgLoadAgent(agentId) {
+  const title = document.getElementById('kg-title');
+  title.textContent = `Knowledge Map: ${agentId}`;
+
+  // Destroy old instance
+  if (kgInstance) { kgInstance.destroy(); kgInstance = null; }
+
+  // Hide detail panel
+  document.getElementById('kg-detail').classList.remove('visible');
+  document.getElementById('kg-tooltip').classList.remove('visible');
+
+  try {
+    const data = await API.get(`/v1/agents/${encodeURIComponent(agentId)}/graph`);
+
+    // Build type filter chips
+    const typeSet = new Set(data.nodes.map(n => n.type || 'general'));
+    const filtersEl = document.getElementById('kg-type-filters');
+    filtersEl.innerHTML = '';
+    const allTypes = Object.keys(KG_COLORS);
+    for (const t of allTypes) {
+      if (!typeSet.has(t)) continue;
+      const chip = document.createElement('span');
+      const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+      const color = KG_COLORS[t][theme];
+      chip.className = 'kg-filter-chip active';
+      chip.dataset.type = t;
+      chip.innerHTML = `<span class="kg-dot" style="background:${color}"></span>${t}`;
+      chip.onclick = () => {
+        chip.classList.toggle('active');
+        if (kgInstance) {
+          if (chip.classList.contains('active')) {
+            kgInstance.activeTypes.add(t);
+          } else {
+            kgInstance.activeTypes.delete(t);
+          }
+          kgInstance.applyFilter();
+        }
+      };
+      filtersEl.appendChild(chip);
+    }
+
+    // Create graph
+    const canvas = document.getElementById('kg-canvas');
+    kgInstance = new KnowledgeGraph(canvas, data);
+    kgInstance.layout(300);
+    kgInstance.fitToScreen();
+    kgInstance._updateStatus();
+  } catch (err) {
+    console.error('Knowledge map error:', err);
+    const canvas = document.getElementById('kg-canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--color-text-muted').trim() || '#999';
+    ctx.font = '14px "IBM Plex Sans", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Error loading graph: ' + err.message, canvas.width / 4, canvas.height / 4);
+    document.getElementById('kg-stat-nodes').textContent = 'Nodes: 0';
+    document.getElementById('kg-stat-edges').textContent = 'Edges: 0';
+    document.getElementById('kg-stat-sources').textContent = 'Sources: 0';
+    document.getElementById('kg-stat-zoom').textContent = 'Zoom: 100%';
+  }
+}
+
+function closeKnowledgeMap() {
+  const overlay = document.getElementById('knowledge-map-overlay');
+  overlay.classList.remove('visible');
+  if (overlay._keyHandler) {
+    document.removeEventListener('keydown', overlay._keyHandler);
+    overlay._keyHandler = null;
+  }
+  if (kgInstance) { kgInstance.destroy(); kgInstance = null; }
+  document.getElementById('kg-detail').classList.remove('visible');
+  document.getElementById('kg-tooltip').classList.remove('visible');
+}
 </script>
 </body>
 </html>
