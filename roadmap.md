@@ -14,6 +14,7 @@ Each item has a detailed feature proposal with mockups, user workflows, and effo
 - [Docker deployment](features/docker-deployment.md) — Dockerfile + docker-compose for cross-platform usage · ~5 days · **P5**
 - [Multi-messaging frontends](features/multi-messaging-frontends.md) — generic adapter framework for multiple simultaneous messaging channels (Telegram, Discord, Slack, etc.) with per-channel config, agent routing, and lifecycle management · ~15 days · **P2**
 - [Discord + Slack adapters](features/discord-slack-adapters.md) — expand beyond Web/TUI/Telegram · ~10 days · **P4**
+- [Remote nodes](features/remote-nodes.md) — lightweight node agents on remote machines with centralized management, tool routing, live activity tracking · ~12 days · **P2**
 - [Worktrees](features/worktrees.md) — isolated git worktrees for parallel agent work · ~8 days · **P3**
 
 ### User Features
