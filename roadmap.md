@@ -13,6 +13,7 @@ Each item has a detailed feature proposal with mockups, user workflows, and effo
 - [Provider fallback chains](features/provider-fallback.md) — ordered fallback with exponential backoff retry · ~8 days
 - [Docker deployment](features/docker-deployment.md) — Dockerfile + docker-compose for cross-platform usage · ~5 days
 - [Discord + Slack adapters](features/discord-slack-adapters.md) — expand beyond Web/TUI/Telegram · ~10 days
+- [Worktrees](features/worktrees.md) — isolated git worktrees for parallel agent work · ~8 days
 
 ### User Features
 - [Agent workflows](features/agent-workflows.md) — multi-step blueprints with approval gates and branching · ~15 days
@@ -24,6 +25,14 @@ Each item has a detailed feature proposal with mockups, user workflows, and effo
 - [Self-awareness memory](features/self-awareness-memory.md) — teach agents about their own architecture · ~3 days
 - [MCP client support](features/mcp-client-support.md) — dynamic MCP server connections at runtime · ~8 days
 - [A2A protocol](features/a2a-protocol.md) — Google Agent-to-Agent for cross-system interop · ~12 days
+- [Embeddable SDK](features/embeddable-sdk.md) — standalone Python package for embedding Brain Agent · ~15 days
+- [Hierarchical instructions](features/hierarchical-instructions.md) — per-project .brain/instructions.md auto-loading · ~4 days
+
+### Memory & Search
+- [Knowledge graph memory](features/knowledge-graph-memory.md) — relationships between memories, graph traversal · ~10 days
+- [Web result caching](features/web-result-caching.md) — LRU cache for web_fetch/exa_search with TTL · ~2 days
+
+**Total: 18 proposals · ~138 days estimated**
 
 ## Done (Research)
 
