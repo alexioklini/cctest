@@ -6656,6 +6656,10 @@ async function renderModelsTab(el) {
                 }).join('')}
               </div>
             </div>
+            <div class="mb-3">
+              <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Fallback Order <span class="normal-case font-normal">(comma-separated model IDs, tried in order if this model fails)</span></label>
+              <input class="mdl-fallbacks w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" value="${(cfg.fallbacks || []).join(', ')}" placeholder="auto (same provider → capabilities → priority)">
+            </div>
             <details class="mb-2">
               <summary class="text-[10px] text-text-muted uppercase tracking-wider cursor-pointer select-none">Inference Defaults</summary>
               <div class="grid grid-cols-4 gap-2 mt-2">
@@ -6816,6 +6820,9 @@ window.saveModelsConfig = async function() {
     // max_context
     const mcVal = row.querySelector('.mdl-max-context')?.value;
     if (mcVal) entry.max_context = parseInt(mcVal);
+    // Fallbacks
+    const fbVal = (row.querySelector('.mdl-fallbacks')?.value || '').trim();
+    if (fbVal) entry.fallbacks = fbVal.split(',').map(s => s.trim()).filter(Boolean);
     // Cost rates
     const ciVal = row.querySelector('.mdl-cost-input')?.value;
     const coVal = row.querySelector('.mdl-cost-output')?.value;
