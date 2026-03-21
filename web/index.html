@@ -8483,7 +8483,7 @@ class KnowledgeGraph {
     const q = this.searchQuery.toLowerCase();
     this.nodes = this.allNodes.filter(n => {
       if (!this.activeTypes.has(n.type || 'general')) return false;
-      if (q && !n.name.toLowerCase().includes(q) && !n.id.toLowerCase().includes(q)) return false;
+      if (q && !n.name.toLowerCase().includes(q) && !n.id.toLowerCase().includes(q) && !(n.description||'').toLowerCase().includes(q) && !(n.snippet||'').toLowerCase().includes(q)) return false;
       return true;
     });
     const nodeIds = new Set(this.nodes.map(n => n.id));
@@ -8967,6 +8967,18 @@ async function _kgLoadAgent(agentId) {
     kgInstance.layout(300);
     kgInstance.fitToScreen();
     kgInstance._updateStatus();
+
+    // Wire up search input
+    const searchInput = document.getElementById('kg-search');
+    if (searchInput) {
+      searchInput.value = '';
+      searchInput.oninput = () => {
+        kgInstance.searchQuery = searchInput.value;
+        kgInstance._applyFilters();
+        kgInstance.render();
+        kgInstance._updateStatus();
+      };
+    }
   } catch (err) {
     console.error('Knowledge map error:', err);
     const canvas = document.getElementById('kg-canvas');

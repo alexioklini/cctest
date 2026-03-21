@@ -1809,10 +1809,16 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     except (ValueError, TypeError):
                         pass
 
+                    description = fm.get("description", "").strip('"').strip("'")
+                    # Content snippet for search (first 300 chars of body)
+                    snippet = body[:300].replace("\n", " ").strip() if body else ""
+
                     nodes.append({
                         "id": rel,
                         "name": name.strip('"').strip("'"),
                         "type": mem_type,
+                        "description": description,
+                        "snippet": snippet,
                         "source": node_source,
                         "size": stat.st_size,
                         "modified": stat.st_mtime,
