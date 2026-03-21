@@ -4285,7 +4285,7 @@ def trigger_relationship_discovery(agent_id: str):
                 model=model,
                 system_prompt="You are a relationship analysis assistant. Analyze the given memories and output ONLY a valid JSON array of relationships. No explanations, no markdown, just the JSON array.",
                 memory_store=ms,
-                inference_params={"max_tokens": 4096, "temperature": 0.2},
+                inference_params={"max_tokens": 16384, "temperature": 0.2},
             )
             if not result_text:
                 logging.warning(f"Relationship discovery for {agent_id}: empty response")
@@ -4458,7 +4458,7 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
 
     payload = {
         "model": model,
-        "max_tokens": 4096,
+        "max_tokens": 16384,
         "messages": aug_messages,
         "stream": True,
         "tools": TOOL_DEFINITIONS if api_type != "openai" else TOOL_DEFINITIONS_OPENAI,
@@ -8050,7 +8050,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
 
     payload = {
         "model": model,
-        "max_tokens": 4096,
+        "max_tokens": 16384,
         "messages": augmented_messages,
         "stream": True,
     }
