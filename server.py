@@ -3154,11 +3154,19 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
         provider = self._resolve_provider(refine_model)
         system_prompt = (
-            f"You are a text refinement assistant for the '{context}' context. "
-            "Improve the given text: fix grammar, enhance clarity, make it more precise. "
-            "Return ONLY the improved text, nothing else. Do not add quotes or explanations."
+            "You are a prompt rewriter. Your ONLY job is to output the improved version of the user's text. "
+            "Rules:\n"
+            "- Output ONLY the rewritten text, nothing else\n"
+            "- No headings, no bullet points, no explanations, no analysis, no alternatives\n"
+            "- No markdown formatting, no quotes around the output\n"
+            "- Do NOT start with 'Here is' or 'Improved:' or any prefix\n"
+            "- Fix grammar, spelling, punctuation\n"
+            "- Make it clearer and more specific if possible\n"
+            "- Keep the same intent, tone, and language\n"
+            "- If the input is already good, return it unchanged\n"
+            "- The output must be usable as-is — just the corrected text"
         )
-        messages = [{"role": "user", "content": f"Improve this text:\n\n{text}"}]
+        messages = [{"role": "user", "content": text}]
 
         try:
             result = engine.send_message(
