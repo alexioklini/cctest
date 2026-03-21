@@ -3970,9 +3970,11 @@ class TaskRunner:
         soul = target.soul
         tools_guide = target.tools_guide
 
+        from datetime import datetime as _dt
         system_prompt = (
             f"{soul}\n\n"
             f"You are agent '{agent_id}' running a background task.\n"
+            f"Current date and time: {_dt.now().strftime('%Y-%m-%d %H:%M %Z').strip()}\n"
             f"Current working directory: {cwd}\n"
             f"Operating system: {os_name}\n\n"
             "Complete the task and provide a concise result summary.\n"
@@ -4261,6 +4263,7 @@ class WorkflowExecution:
         system_prompt = (
             f"{soul}\n\n"
             f"You are agent '{target_agent_id}' executing workflow stage '{sname}'.\n"
+            f"Current date and time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
             f"Current working directory: {cwd}\n"
             f"Operating system: {os_name}\n\n"
             "Complete the task and provide a concise result summary.\n"
@@ -4856,6 +4859,7 @@ class Scheduler:
         system_prompt = (
             f"{soul}\n\n"
             f"You are agent '{agent_id}' executing a scheduled task: '{name}'.\n"
+            f"Current date and time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
             f"Current working directory: {cwd}\n"
             f"Operating system: {os_name}\n\n"
             "IMPORTANT RULES FOR SCHEDULED TASKS:\n"
@@ -7312,8 +7316,10 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         system_instruction = ""
         if soul:
             system_instruction += f"{soul}\n\n"
+        from datetime import datetime as _dt
         system_instruction += (
             f"You are agent '{agent_id}' in the Brain Agent system. "
+            f"Current date and time: {_dt.now().strftime('%Y-%m-%d %H:%M %Z').strip()}\n"
             f"Current working directory: {cwd}\n"
             f"Operating system: {os_name}\n\n"
             "Use tools proactively to accomplish tasks. You can chain multiple tool calls. "
