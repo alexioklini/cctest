@@ -370,6 +370,7 @@ class Session:
         self.lock = threading.Lock()
 
         self.project: str | None = None  # Active project name (for scoped chat)
+        self._last_summary_at = 0  # Token count at last continuous summary
 
         self.agent = engine.AgentConfig(agent_id)
         self.memory = engine.MemoryStore(agent_id, base_dir=self.agent.memory_dir)
@@ -1199,6 +1200,31 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     if created_files:
                         done_data["files"] = created_files
                     event_queue.put(("done", done_data))
+
+                    # Continuous session summarization: refresh memory summary at token thresholds
+                    try:
+                        token_count = engine._estimate_conversation_tokens(session.messages)
+                        last_summary_tokens = getattr(session, '_last_summary_at', 0)
+                        threshold = 10000 if last_summary_tokens == 0 else last_summary_tokens + 5000
+                        if token_count >= threshold:
+                            session._last_summary_at = token_count
+                            engine.trigger_memory_summary_refresh(session.agent_id)
+                    except Exception:
+                        pass
+
+                    # Auto-memory extraction: check if response contains memorable info
+                    try:
+                        am_cfg = engine._get_auto_memory_config(session.agent_id)
+                        min_msg_len = am_cfg.get("min_message_length", 20)
+                        if am_cfg.get("enabled", True) and reply and message and len(message) > min_msg_len:
+                            threading.Thread(
+                                target=engine._auto_memory_extract,
+                                args=(session.agent_id, message, reply[:1000]),
+                                daemon=True,
+                                name=f"auto_memory_{session.agent_id}"
+                            ).start()
+                    except Exception:
+                        pass
                 else:
                     event_queue.put(("done", {"text": "", "tokens": 0, "model": session.model}))
             except engine.TaskCancelled:
@@ -2964,10 +2990,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             config = engine._get_memory_summary_config(agent_id)
             rd_config = engine._get_relationship_discovery_config(agent_id)
             rd_stats = engine.get_graph_stats(agent_id) if hasattr(engine, 'get_graph_stats') else {}
+            am_config = engine._get_auto_memory_config(agent_id)
             self._send_json({
                 "agent": agent_id,
                 "summary": summary or "",
                 "config": config,
+                "auto_memory": am_config,
                 "relationship_discovery": {
                     "config": rd_config,
                     "stats": rd_stats,
@@ -3014,6 +3042,20 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             with open(cfg_path, "w") as f:
                 json.dump(cfg, f, indent=2)
             engine.ensure_relationship_discovery_schedules()
+            self._send_json({"status": "updated", "enabled": bool(enabled), "agent": agent_id})
+        elif action == "toggle_auto_memory":
+            enabled = body.get("enabled", True)
+            # Update agent.json
+            agent_cfg = engine.AgentConfig(agent_id)
+            cfg = agent_cfg.config
+            am = cfg.get("auto_memory", {})
+            if not isinstance(am, dict):
+                am = {}
+            am["enabled"] = bool(enabled)
+            cfg["auto_memory"] = am
+            cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
+            with open(cfg_path, "w") as f:
+                json.dump(cfg, f, indent=2)
             self._send_json({"status": "updated", "enabled": bool(enabled), "agent": agent_id})
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)

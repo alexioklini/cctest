@@ -4478,6 +4478,8 @@ variables:
       const rdCfg = rd.config || {};
       const rdEnabled = rdCfg.enabled !== false;
       const rdStats = rd.stats || {};
+      const amCfg = res.auto_memory || {};
+      const amEnabled = amCfg.enabled !== false;
 
       el.innerHTML = `
         <div class="space-y-5">
@@ -4528,6 +4530,24 @@ variables:
               </div>
             </div>
           </div>
+
+          <!-- Auto Memory -->
+          <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--color-border)">
+            <h3 class="section-header text-sm mb-2">Auto Memory</h3>
+            <div class="text-[11px] text-text-muted mb-3">
+              Automatically extracts and stores memorable information from conversations — user preferences, decisions, corrections, and references. Runs in background after each response.
+            </div>
+            <div class="flex items-center gap-3 flex-wrap">
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full ${amEnabled ? 'bg-success' : 'bg-error'}"></span>
+                <span class="text-xs text-text-secondary">${amEnabled ? 'Enabled' : 'Disabled'}</span>
+              </div>
+              <span class="text-[10px] text-text-muted mono">min message length: ${amCfg.min_message_length || 20} chars</span>
+              <div class="flex gap-2 ml-auto">
+                <button class="btn-secondary text-xs px-3 py-1.5 rounded-lg" onclick="toggleAutoMemory('${esc(agentName)}',${!amEnabled})">${amEnabled ? 'Disable' : 'Enable'}</button>
+              </div>
+            </div>
+          </div>
         </div>`;
     } catch (e) {
       el.innerHTML = `<div class="text-error text-sm">Error loading memory summary: ${esc(e.message)}</div>`;
@@ -4559,6 +4579,16 @@ window.toggleRelationshipDiscovery = async function(agentName, enabled) {
   try {
     await API.post(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`, { action: 'toggle_discovery', enabled });
     showToast(`Relationship discovery ${enabled ? 'enabled' : 'disabled'}`);
+    loadConfigTabContent(agentName, 'memory');
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+window.toggleAutoMemory = async function(agentName, enabled) {
+  try {
+    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`, { action: 'toggle_auto_memory', enabled });
+    showToast(`Auto memory ${enabled ? 'enabled' : 'disabled'}`);
     loadConfigTabContent(agentName, 'memory');
   } catch (e) {
     showToast(`Error: ${e.message}`, true);

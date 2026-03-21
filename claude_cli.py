@@ -4189,6 +4189,150 @@ def _get_relationship_discovery_config(agent_id: str) -> dict:
     return result
 
 
+def _get_auto_memory_config(agent_id: str) -> dict:
+    """Read auto_memory settings from agent.json, merging with defaults."""
+    cfg = AgentConfig(agent_id).config
+    am = cfg.get("auto_memory", {})
+    return {
+        "enabled": am.get("enabled", True),
+        "min_message_length": am.get("min_message_length", 20),
+    }
+
+
+def _auto_memory_extract(agent_id: str, user_message: str, assistant_response: str):
+    """Background: check if the conversation exchange contains info worth auto-storing.
+    Uses lightweight heuristics first, then optional LLM for borderline cases."""
+
+    # Check config
+    am_cfg = _get_auto_memory_config(agent_id)
+    if not am_cfg.get("enabled", True):
+        return
+
+    min_len = am_cfg.get("min_message_length", 20)
+
+    # Skip if messages are too short (small talk, acknowledgments)
+    if len(user_message) < min_len or len(assistant_response) < 50:
+        return
+
+    # Skip if this looks like a tool-heavy response (already captured by tool actions)
+    if assistant_response.count('tool_use') > 3:
+        return
+
+    # Heuristic detection of memorable content
+    memorable_patterns = []
+
+    # 1. User corrections / feedback
+    correction_words = ['don\'t', 'stop', 'no,', 'actually', 'instead', 'wrong', 'not like that',
+                        'prefer', 'always', 'never', 'remember that', 'keep in mind']
+    user_lower = user_message.lower()
+    for word in correction_words:
+        if word in user_lower:
+            memorable_patterns.append(('feedback', f'User correction/preference detected: "{word}"'))
+            break
+
+    # 2. User shares personal/role info
+    identity_patterns = ['i am ', 'i\'m a', 'my role', 'i work ', 'my name', 'my team',
+                         'my company', 'we use', 'our team', 'our project']
+    for pat in identity_patterns:
+        if pat in user_lower:
+            memorable_patterns.append(('user', f'User identity/role info detected: "{pat}"'))
+            break
+
+    # 3. Decisions / commitments
+    decision_patterns = ['let\'s go with', 'we decided', 'the plan is', 'going forward',
+                         'from now on', 'the approach', 'we\'ll use', 'agreed']
+    for pat in decision_patterns:
+        if pat in user_lower:
+            memorable_patterns.append(('project', f'Decision detected: "{pat}"'))
+            break
+
+    # 4. References to external resources
+    if any(p in user_lower for p in ['http://', 'https://', 'the repo', 'the doc', 'the wiki',
+                                      'slack channel', 'linear', 'jira', 'confluence']):
+        memorable_patterns.append(('reference', 'External resource reference detected'))
+
+    if not memorable_patterns:
+        return  # Nothing worth storing
+
+    # Use a quick LLM call to extract and format the memory
+    mem_type, trigger = memorable_patterns[0]
+
+    # Build a focused extraction prompt
+    prompt = (
+        f"Extract a concise, actionable memory from this conversation exchange.\n\n"
+        f"USER: {user_message[:500]}\n\n"
+        f"A: {assistant_response[:500]}\n\n"
+        f"Trigger: {trigger}\n"
+        f"Memory type: {mem_type}\n\n"
+        f"Rules:\n"
+        f'- Output ONLY a JSON object: {{"name": "short-title", "content": "the key fact/preference/decision", "type": "{mem_type}", "description": "one-line summary"}}\n'
+        f"- Content should be 1-3 sentences, factual, no fluff\n"
+        f'- If the exchange doesn\'t actually contain memorable info, output: {{"skip": true}}\n'
+        f"- Do NOT output anything except the JSON object"
+    )
+
+    try:
+        # Use cheapest model
+        model = None
+        if _models_config:
+            for mid, cfg in sorted(_models_config.items(), key=lambda x: x[1].get('cost_input', 999)):
+                if cfg.get('enabled', True):
+                    ml = mid.lower()
+                    if 'haiku' in ml:
+                        model = mid
+                        break
+            if not model:
+                for mid, cfg in sorted(_models_config.items(), key=lambda x: x[1].get('priority', 0)):
+                    if cfg.get('enabled', True):
+                        model = mid
+                        break
+
+        if not model or not _delegate_api_key:
+            return
+
+        ms = MemoryStore(agent_id)
+        result = _run_delegate(
+            messages=[{"role": "user", "content": prompt}],
+            model=model,
+            system_prompt="You are a memory extraction assistant. Output only valid JSON.",
+            memory_store=ms,
+            inference_params={"max_tokens": 256, "temperature": 0.1},
+        )
+
+        if not result or 'skip' in result.lower():
+            return
+
+        # Parse JSON
+        json_match = re.search(r'\{[^}]+\}', result, re.DOTALL)
+        if not json_match:
+            return
+
+        data = json.loads(json_match.group())
+        if data.get('skip'):
+            return
+
+        name = data.get('name', '').strip()
+        content = data.get('content', '').strip()
+        mem_type_extracted = data.get('type', mem_type)
+        description = data.get('description', '').strip()
+
+        if not name or not content:
+            return
+
+        # Check if similar memory already exists
+        existing = ms.recall(name, limit=3)
+        for e in existing:
+            if e.get('score', 0) > 0.8 and e.get('name', '').lower() == name.lower():
+                return  # Already stored
+
+        # Store it
+        ms.store(name, content, description, mem_type_extracted)
+        logging.info(f"Auto-memory stored for {agent_id}: {name} ({mem_type_extracted})")
+
+    except Exception as e:
+        logging.debug(f"Auto-memory extraction failed for {agent_id}: {e}")
+
+
 def _build_relationship_discovery_prompt(agent_id: str) -> str:
     """Build a prompt listing agent memories for LLM-based relationship discovery.
     Loads up to 30 non-ingested memory files."""
