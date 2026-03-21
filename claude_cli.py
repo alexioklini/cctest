@@ -4458,7 +4458,7 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
 
     payload = {
         "model": model,
-        "max_tokens": 16384,
+        "max_tokens": get_model_max_output(model),
         "messages": aug_messages,
         "stream": True,
         "tools": TOOL_DEFINITIONS if api_type != "openai" else TOOL_DEFINITIONS_OPENAI,
@@ -7216,6 +7216,27 @@ def get_model_max_context(model: str) -> int:
     return _models_config.get(model, {}).get("max_context", DEFAULT_MAX_CONTEXT_TOKENS)
 
 
+# Default max output tokens per model family
+_MAX_OUTPUT_DEFAULTS = {
+    "opus": 32768,
+    "sonnet": 16384,
+    "haiku": 8192,
+}
+
+
+def get_model_max_output(model: str) -> int:
+    """Return the model's max output tokens. Checks models_config first, then family defaults."""
+    cfg = _models_config.get(model, {})
+    if cfg.get("max_output"):
+        return int(cfg["max_output"])
+    ml = model.lower()
+    for family, limit in _MAX_OUTPUT_DEFAULTS.items():
+        if family in ml:
+            return limit
+    # Non-Anthropic models: use a generous default
+    return 16384
+
+
 def get_inference_params(model: str, purpose: str | None = None) -> dict:
     """Resolve inference parameters for a model, optionally overlaying a purpose preset.
 
@@ -8050,7 +8071,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
 
     payload = {
         "model": model,
-        "max_tokens": 16384,
+        "max_tokens": get_model_max_output(model),
         "messages": augmented_messages,
         "stream": True,
     }
