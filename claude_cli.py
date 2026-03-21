@@ -4142,30 +4142,48 @@ def _apply_discovered_relationships(agent_id: str, relationships: list[dict]):
 
 def trigger_relationship_discovery(agent_id: str):
     """Run LLM-based relationship discovery immediately in a background thread."""
+    if not _delegate_api_key:
+        logging.warning("Relationship discovery skipped: delegate API not configured")
+        return
     prompt = _build_relationship_discovery_prompt(agent_id)
     if not prompt:
         return
 
     def _run():
         try:
+            # Use the delegate model (same as scheduled tasks)
+            target = AgentConfig(agent_id)
+            model = target.preferred_model or _delegate_fallback_model or "claude-sonnet-4-6"
             ms = MemoryStore(agent_id)
+            logging.info(f"Relationship discovery starting for {agent_id} using {model}")
             result_text = _run_delegate(
                 messages=[{"role": "user", "content": prompt}],
-                model=resolve_model("background") if callable(globals().get('resolve_model')) else "claude-sonnet-4-6",
-                system_prompt="You are a relationship analysis assistant. Output only valid JSON.",
+                model=model,
+                system_prompt="You are a relationship analysis assistant. Analyze the given memories and output ONLY a valid JSON array of relationships. No explanations, no markdown, just the JSON array.",
                 memory_store=ms,
                 inference_params={"max_tokens": 4096, "temperature": 0.2},
             )
             if not result_text:
+                logging.warning(f"Relationship discovery for {agent_id}: empty response")
+                return
+            if result_text.startswith("Delegation error:"):
+                logging.warning(f"Relationship discovery for {agent_id}: {result_text}")
                 return
             # Extract JSON from response (may have markdown code fences)
-            json_match = re.search(r'\[.*\]', result_text, re.DOTALL)
+            json_match = re.search(r'\[.*?\]', result_text, re.DOTALL)
             if json_match:
                 relationships = json.loads(json_match.group())
-                if isinstance(relationships, list):
+                if isinstance(relationships, list) and relationships:
                     _apply_discovered_relationships(agent_id, relationships)
+                    logging.info(f"Relationship discovery for {agent_id}: found {len(relationships)} relationships")
+                else:
+                    logging.info(f"Relationship discovery for {agent_id}: no relationships found")
+            else:
+                logging.warning(f"Relationship discovery for {agent_id}: no JSON in response: {result_text[:200]}")
         except Exception as e:
             logging.warning(f"Relationship discovery failed for {agent_id}: {e}")
+            import traceback
+            traceback.print_exc()
 
     threading.Thread(target=_run, daemon=True, name=f"rel_discovery_{agent_id}").start()
 
