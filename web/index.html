@@ -6657,8 +6657,19 @@ async function renderModelsTab(el) {
               </div>
             </div>
             <div class="mb-3">
-              <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Fallback Order <span class="normal-case font-normal">(comma-separated model IDs, tried in order if this model fails)</span></label>
-              <input class="mdl-fallbacks w-full bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary mono" value="${(cfg.fallbacks || []).join(', ')}" placeholder="auto (same provider → capabilities → priority)">
+              <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Fallback Order <span class="normal-case font-normal">(tried in order if this model fails. Empty = auto)</span></label>
+              <div class="mdl-fallbacks-list flex flex-wrap gap-1.5 mb-2 min-h-[24px] p-1.5 bg-surface border border-border rounded-lg" data-model="${esc(mid)}">
+                ${(cfg.fallbacks || []).map(fb => `<span class="inline-flex items-center gap-1 px-2 py-0.5 bg-accent/10 text-accent border border-accent/30 rounded text-[10px] mono">
+                  ${esc(fb)} <button class="hover:text-error" onclick="removeFallback(this,'${esc(mid)}')">&times;</button>
+                </span>`).join('')}
+              </div>
+              <select class="mdl-fallback-add bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary" onchange="addFallback(this,'${esc(mid)}')">
+                <option value="">+ Add fallback...</option>
+                ${modelIds.filter(m => m !== mid && !(cfg.fallbacks || []).includes(m)).map(m => {
+                  const mcfg = models[m] || {};
+                  return `<option value="${esc(m)}">${esc(mcfg.icon || '🤖')} ${esc(mcfg.shortname || m)}</option>`;
+                }).join('')}
+              </select>
             </div>
             <details class="mb-2">
               <summary class="text-[10px] text-text-muted uppercase tracking-wider cursor-pointer select-none">Inference Defaults</summary>
@@ -6799,6 +6810,36 @@ window.syncModelsFromProviders = async function() {
   }
 };
 
+window.addFallback = function(selectEl, modelId) {
+  const val = selectEl.value;
+  if (!val) return;
+  selectEl.value = '';
+  const list = selectEl.parentNode.querySelector('.mdl-fallbacks-list');
+  if (!list) return;
+  // Add pill
+  const pill = document.createElement('span');
+  pill.className = 'inline-flex items-center gap-1 px-2 py-0.5 bg-accent/10 text-accent border border-accent/30 rounded text-[10px] mono';
+  pill.innerHTML = `${val} <button class="hover:text-error" onclick="removeFallback(this,'${modelId}')">&times;</button>`;
+  list.appendChild(pill);
+  // Remove from dropdown
+  const opt = selectEl.querySelector(`option[value="${CSS.escape(val)}"]`);
+  if (opt) opt.remove();
+};
+
+window.removeFallback = function(btn, modelId) {
+  const pill = btn.parentNode;
+  const fbName = pill.textContent.replace('×', '').trim();
+  pill.remove();
+  // Re-add to dropdown
+  const select = pill.closest('.mb-3')?.querySelector('.mdl-fallback-add');
+  if (select) {
+    const opt = document.createElement('option');
+    opt.value = fbName;
+    opt.textContent = fbName;
+    select.appendChild(opt);
+  }
+};
+
 window.saveModelsConfig = async function() {
   const list = document.getElementById('models-config-list');
   if (!list) return;
@@ -6820,9 +6861,12 @@ window.saveModelsConfig = async function() {
     // max_context
     const mcVal = row.querySelector('.mdl-max-context')?.value;
     if (mcVal) entry.max_context = parseInt(mcVal);
-    // Fallbacks
-    const fbVal = (row.querySelector('.mdl-fallbacks')?.value || '').trim();
-    if (fbVal) entry.fallbacks = fbVal.split(',').map(s => s.trim()).filter(Boolean);
+    // Fallbacks (from pill list)
+    const fbList = row.querySelector('.mdl-fallbacks-list');
+    if (fbList) {
+      const fallbacks = Array.from(fbList.querySelectorAll('span')).map(s => s.textContent.replace('×', '').trim()).filter(Boolean);
+      if (fallbacks.length) entry.fallbacks = fallbacks;
+    }
     // Cost rates
     const ciVal = row.querySelector('.mdl-cost-input')?.value;
     const coVal = row.querySelector('.mdl-cost-output')?.value;
