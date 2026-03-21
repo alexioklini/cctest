@@ -213,16 +213,21 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN status TEXT DEFAULT 'active'")
             except sqlite3.OperationalError:
                 pass
+            # Add project column if missing (migration)
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN project TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             conn.commit()
 
     @staticmethod
     @_db_safe(default=None)
-    def save_session(sid, agent_id, model, title, status, created_at, last_active):
+    def save_session(sid, agent_id, model, title, status, created_at, last_active, project=""):
         with _db_conn() as conn:
             conn.execute("""
-                INSERT OR REPLACE INTO sessions (id, agent_id, model, title, status, created_at, last_active)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (sid, agent_id, model, title, status, created_at, last_active))
+                INSERT OR REPLACE INTO sessions (id, agent_id, model, title, status, created_at, last_active, project)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (sid, agent_id, model, title, status, created_at, last_active, project or ""))
             conn.commit()
 
     @staticmethod
@@ -362,7 +367,7 @@ class Session:
             self.title = text[:60].strip()
         ChatDB.save_message(self.id, role, content)
         ChatDB.save_session(self.id, self.agent_id, self.model, self.title,
-                           self.status, self.created_at, self.last_active)
+                           self.status, self.created_at, self.last_active, self.project or "")
 
     def switch_agent(self, agent_id: str, model: str | None = None):
         """Switch this session to a different agent (and optionally model)."""
@@ -382,6 +387,7 @@ class Session:
             self.status = info.get("status", "active")
             self.created_at = info.get("created_at", self.created_at)
             self.last_active = info.get("last_active", self.last_active)
+            self.project = info.get("project", "") or None
 
 
 class SessionManager:
@@ -395,7 +401,8 @@ class SessionManager:
     def create(self, **kwargs) -> Session:
         session = Session(**kwargs)
         ChatDB.save_session(session.id, session.agent_id, session.model,
-                           session.title, session.status, session.created_at, session.last_active)
+                           session.title, session.status, session.created_at, session.last_active,
+                           session.project or "")
         with self._lock:
             self._sessions[session.id] = session
         return session
@@ -932,11 +939,18 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             api_type=provider["api_type"],
             max_context=body.get("max_context") or engine.get_model_max_context(model),
         )
+        project = body.get("project", "")
+        if project:
+            session.project = project
+            ChatDB.save_session(session.id, session.agent_id, session.model,
+                               session.title, session.status, session.created_at,
+                               session.last_active, project)
         self._send_json({
             "session_id": session.id,
             "agent": session.agent_id,
             "model": session.model,
             "max_context": session.max_context,
+            "project": session.project or "",
         })
 
     def _handle_switch_agent(self):
