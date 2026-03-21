@@ -7506,7 +7506,13 @@ async function refineMessage() {
   btn.disabled = true;
   btn.style.opacity = '0.6';
   try {
-    const res = await API.post('/v1/refine', { text, context: state.activeChat?.agent || 'general' });
+    const chat = state.agentChats[state.activeAgentId];
+    const res = await API.post('/v1/refine', {
+      text,
+      session_id: chat?.sessionId || '',
+      agent: state.activeAgentId || 'main',
+      project: state.currentProject || '',
+    });
     if (res.error) { showToast('Refine error: ' + res.error); return; }
     const refined = res.refined || text;
     // Auto-replace input — no approval needed

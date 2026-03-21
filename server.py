@@ -3153,6 +3153,48 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             return
 
         provider = self._resolve_provider(refine_model)
+
+        # Build context from current session
+        session_id = body.get("session_id", "")
+        agent_id = body.get("agent", "main")
+        project = body.get("project", "")
+        chat_context = ""
+
+        # Get agent info
+        try:
+            agent_cfg = engine.AgentConfig(agent_id)
+            soul_summary = (agent_cfg.soul or "")[:200]
+            if soul_summary:
+                chat_context += f"Agent: {agent_id} — {soul_summary}\n"
+        except Exception:
+            pass
+
+        # Get recent conversation for context (last 5 messages)
+        if session_id:
+            try:
+                s = sessions.get(session_id)
+                if s and s.messages:
+                    recent = s.messages[-5:]
+                    chat_context += "Recent conversation:\n"
+                    for m in recent:
+                        role = m.get("role", "?")
+                        content = m.get("content", "")
+                        if isinstance(content, str):
+                            chat_context += f"  [{role}] {content[:150]}\n"
+                    chat_context += "\n"
+            except Exception:
+                pass
+
+        if project:
+            chat_context += f"Active project: {project}\n"
+
+        context_block = ""
+        if chat_context:
+            context_block = (
+                f"\nCONTEXT (use this to make the rewrite more specific and relevant):\n"
+                f"{chat_context}\n"
+            )
+
         system_prompt = (
             "You are a PROMPT REWRITER for an AI chat system. "
             "The user will give you a draft prompt/message they want to send to an AI assistant. "
@@ -3164,9 +3206,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             "- Do NOT use markdown headings, bullet points, or formatting\n"
             "- The output replaces the user's input in a chat box — it must be a clean prompt\n"
             "- Fix grammar, spelling, punctuation\n"
-            "- Make the request clearer and more specific\n"
+            "- Make the request clearer and more specific using the context provided\n"
             "- Keep the same intent and language\n"
             "Example: Input: 'whats weather vienna' → Output: 'What is the weather like in Vienna today?'"
+            + context_block
         )
         messages = [{"role": "user", "content": f"Rewrite this prompt (output ONLY the rewritten version):\n\n{text}"}]
 
