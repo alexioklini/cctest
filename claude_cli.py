@@ -7221,6 +7221,9 @@ _MAX_OUTPUT_DEFAULTS = {
     "opus": 32768,
     "sonnet": 16384,
     "haiku": 8192,
+    "minimax": 32768,
+    "m2.7": 32768,
+    "m2.5": 32768,
 }
 
 
