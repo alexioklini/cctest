@@ -8210,10 +8210,11 @@ async function renderChannelsTab(el) {
                 <button onclick="channelAction('remove','${esc(ch.channel_id)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg text-error">Remove</button>
               </div>
             </div>
-            <div class="flex gap-4 text-xs text-text-muted">
-              <span>Agent: ${esc((ch.agent_routing||{}).default || 'main')}</span>
-              <span>Model: ${esc(ch.default_model || 'default')}</span>
-              ${ch.stats ? `<span>Messages: ${ch.stats.messages_in || 0}</span>` : ''}
+            <div class="flex gap-4 text-xs text-text-muted flex-wrap">
+              <span>Bound to: <span class="text-accent font-semibold">${esc((ch.agent_routing||{}).default || 'main')}</span></span>
+              <span>Model: ${esc(ch.default_model || 'agent default')}</span>
+              ${ch.credentials?.allowed_users ? `<span>Users: ${ch.credentials.allowed_users.length} allowed</span>` : '<span>Users: all</span>'}
+              ${ch.stats ? `<span>Messages: ${ch.stats.messages_in || 0} in / ${ch.stats.messages_out || 0} out</span>` : ''}
               ${ch.uptime ? `<span>Uptime: ${_fmtUptime(ch.uptime)}</span>` : ''}
             </div>
           </div>`;
@@ -8223,23 +8224,32 @@ async function renderChannelsTab(el) {
 }
 
 window.showAddChannelDialog = function() {
+  const agents = state.agents || [];
   const d = document.createElement('div');
   d.className = 'modal-overlay'; d.onclick = e => { if(e.target===d)d.remove(); };
   d.innerHTML = `<div class="modal-content p-6" style="max-width:480px">
-    <h3 class="font-display font-semibold mb-4 text-text-primary">Add Messaging Channel</h3>
-    <label class="text-xs text-text-secondary block mb-1">Channel Name</label>
-    <input id="add-ch-name" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3" placeholder="My Telegram Bot">
-    <label class="text-xs text-text-secondary block mb-1">Type</label>
-    <select id="add-ch-type" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3">
-      <option value="telegram">Telegram</option>
-    </select>
+    <h3 class="font-display font-semibold mb-4 text-text-primary">Add Telegram Bot</h3>
+    <div class="text-[11px] text-text-muted mb-4">Each Telegram bot is bound to one agent and uses that agent's default model. Multiple bots can run in parallel for different agents.</div>
+    <label class="text-xs text-text-secondary block mb-1">Bot Name</label>
+    <input id="add-ch-name" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3" placeholder="e.g. Researcher Bot">
     <label class="text-xs text-text-secondary block mb-1">Bot Token</label>
-    <input id="add-ch-token" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3 mono" placeholder="123456:ABC-DEF...">
-    <label class="text-xs text-text-secondary block mb-1">Default Agent</label>
-    <input id="add-ch-agent" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3" value="main">
+    <input id="add-ch-token" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3 mono" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11">
+    <label class="text-xs text-text-secondary block mb-1">Bound Agent</label>
+    <select id="add-ch-agent" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3">
+      ${agents.map(a => {
+        const name = typeof a === 'string' ? a : (a.id || a.name || '');
+        const display = typeof a === 'object' ? (a.display_name || name) : name;
+        const model = typeof a === 'object' ? (a.model || 'default') : 'default';
+        return '<option value="' + esc(name) + '">' + esc(display) + ' (' + esc(name) + ') — model: ' + esc(model) + '</option>';
+      }).join('')}
+    </select>
+    <div class="text-[10px] text-text-muted mb-3">The bot will use this agent's personality, skills, and default model for all conversations.</div>
+    <label class="text-xs text-text-secondary block mb-1">Allowed User IDs <span class="text-text-muted">(optional, comma-separated)</span></label>
+    <input id="add-ch-users" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3 mono" placeholder="123456789, 987654321">
+    <div class="text-[10px] text-text-muted mb-3">Leave empty to allow all users. Find your Telegram user ID by messaging @userinfobot.</div>
     <div class="flex justify-end gap-2 mt-4">
       <button onclick="this.closest('.modal-overlay').remove()" class="btn-secondary px-4 py-2 rounded-lg text-sm">Cancel</button>
-      <button onclick="createChannel()" class="btn-primary px-4 py-2 rounded-lg text-sm">Create Channel</button>
+      <button onclick="createChannel()" class="btn-primary px-4 py-2 rounded-lg text-sm">Create</button>
     </div>
   </div>`;
   document.body.appendChild(d);
@@ -8247,16 +8257,18 @@ window.showAddChannelDialog = function() {
 
 window.createChannel = async function() {
   const name = document.getElementById('add-ch-name').value.trim();
-  const type = document.getElementById('add-ch-type').value;
   const token = document.getElementById('add-ch-token').value.trim();
-  const agent = document.getElementById('add-ch-agent').value.trim() || 'main';
-  if (!name || !token) { showToast('Name and token required'); return; }
+  const agent = document.getElementById('add-ch-agent').value || 'main';
+  const usersStr = (document.getElementById('add-ch-users')?.value || '').trim();
+  if (!name || !token) { showToast('Name and bot token required'); return; }
+  const allowed_users = usersStr ? usersStr.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n)) : null;
   try {
     await API.post('/v1/channels', {
-      action: 'create', id: name.toLowerCase().replace(/\s+/g, '-'), name, type,
-      credentials: { bot_token: token }, agent_routing: { default: agent }, enabled: true,
+      action: 'create', id: name.toLowerCase().replace(/\s+/g, '-'), name, type: 'telegram',
+      credentials: { bot_token: token, allowed_users },
+      agent_routing: { default: agent }, enabled: true,
     });
-    showToast('Channel created');
+    showToast('Telegram bot created — click Start to activate');
     document.querySelector('.modal-overlay')?.remove();
     setTimeout(() => loadSettingsTab(), 500);
   } catch(e) { showToast(e.message, 'error'); }

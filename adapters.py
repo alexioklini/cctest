@@ -442,7 +442,15 @@ class Channel:
         state = self.chat_state.get(msg.platform_chat_id, {})
         if state.get("agent"):
             agent = state["agent"]
+        # Use agent's default model if no explicit model set
         model = state.get("model") or self.config.get("default_model")
+        if not model:
+            try:
+                from claude_cli import AgentConfig
+                agent_cfg = AgentConfig(agent)
+                model = agent_cfg.preferred_model or agent_cfg.config.get("model", "")
+            except Exception:
+                pass
 
         sid = self._get_session(msg.platform_chat_id, agent, model)
         client = BrainAgentClient(self.server_url)
