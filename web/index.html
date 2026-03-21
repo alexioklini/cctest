@@ -2669,8 +2669,9 @@ function renderSessionBar() {
 
     html += `<div class="sb-project-group${isCollapsed ? ' collapsed' : ''}" data-project="${esc(pName)}">`;
     html += `<div class="sb-project-header" onclick="toggleProjectCollapse('${esc(pName)}')">`;
+    const pIcon = p.icon || '📁';
     html += `<span class="sb-team-chevron">&#9660;</span>`;
-    html += `<span style="font-size:12px">&#128193;</span> ${esc(pName)}`;
+    html += `<span style="font-size:12px">${esc(pIcon)}</span> ${esc(pName)}`;
     if (isCurrentProject) html += ` <span style="font-size:8px;color:var(--color-accent);font-weight:700">ACTIVE</span>`;
     html += `</div>`;
     html += `<div class="sb-project-sessions">`;
@@ -3799,9 +3800,15 @@ variables:
             <button class="btn-primary px-4 py-1.5 rounded-lg text-xs font-display" onclick="showNewProjectForm('${esc(agentName)}')">+ New Project</button>
           </div>
           <div id="new-project-form" style="display:none" class="glass-card p-4 space-y-3">
-            <div>
-              <label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">Name</label>
-              <input id="new-project-name" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono focus:border-accent transition-colors" placeholder="ml-research">
+            <div class="flex gap-3">
+              <div style="flex-shrink:0">
+                <label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">Icon</label>
+                <input id="new-project-icon" class="w-16 bg-surface-light border border-border rounded-lg px-2 py-2 text-center text-lg focus:border-accent transition-colors" value="📁" maxlength="4">
+              </div>
+              <div class="flex-1">
+                <label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">Name</label>
+                <input id="new-project-name" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono focus:border-accent transition-colors" placeholder="ml-research">
+              </div>
             </div>
             <div>
               <label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">Description</label>
@@ -3817,7 +3824,7 @@ variables:
               projects.map(p => `
                 <div class="glass-card p-4">
                   <div class="flex items-center justify-between mb-1">
-                    <h4 class="font-display font-semibold text-text-primary text-sm">${esc(p.name)}</h4>
+                    <h4 class="font-display font-semibold text-text-primary text-sm"><span style="margin-right:4px">${esc(p.icon || '📁')}</span>${esc(p.name)}</h4>
                     ${state.currentProject === p.name ? '<span class="text-[10px] font-medium px-2 py-0.5 rounded bg-accent/10 text-accent border border-accent/20">Active</span>' : ''}
                   </div>
                   <div class="text-text-secondary text-xs mb-2">${esc(p.description || '')}</div>
@@ -3971,10 +3978,11 @@ window.showNewProjectForm = function(agentName) {
 
 window.createProject = async function(agentName) {
   const name = document.getElementById('new-project-name')?.value?.trim();
+  const icon = document.getElementById('new-project-icon')?.value?.trim() || '📁';
   const desc = document.getElementById('new-project-desc')?.value?.trim();
   if (!name) { showToast('Project name is required'); return; }
   try {
-    await API.createProject(agentName, name, desc || '');
+    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/projects`, { name, icon, description: desc || '' });
     showToast(`Project "${name}" created`);
     await loadAgentProjects(agentName);
     loadConfigTabContent('projects', agentName);
@@ -4094,9 +4102,15 @@ window.openProjectDetail = async function(agentName, projectName) {
         <!-- Settings sub-tab -->
         <div id="ptab-psettings" class="space-y-4" style="display:none">
           <h4 class="section-header">Project Settings</h4>
-          <div>
-            <label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">Name</label>
-            <input id="proj-name" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono focus:border-accent transition-colors" value="${esc(p.name || '')}">
+          <div class="flex gap-3">
+            <div style="flex-shrink:0">
+              <label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">Icon</label>
+              <input id="proj-icon" class="w-16 bg-surface-light border border-border rounded-lg px-2 py-2 text-center text-lg focus:border-accent transition-colors" value="${esc(p.icon || '📁')}" maxlength="4">
+            </div>
+            <div class="flex-1">
+              <label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">Name</label>
+              <input id="proj-name" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono focus:border-accent transition-colors" value="${esc(p.name || '')}">
+            </div>
           </div>
           <div>
             <label class="text-[11px] text-text-secondary font-medium block mb-1 uppercase tracking-wider">Description</label>
@@ -4125,11 +4139,12 @@ window.showProjectSubTab = function(btn, tabName) {
 
 window.saveProjectSettings = async function(agentName, projectName) {
   const name = document.getElementById('proj-name')?.value?.trim();
+  const icon = document.getElementById('proj-icon')?.value?.trim() || '📁';
   const desc = document.getElementById('proj-desc')?.value?.trim();
   const tagsStr = document.getElementById('proj-tags')?.value?.trim();
   const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(Boolean) : [];
   try {
-    await API.updateProject(agentName, projectName, { name, description: desc, tags });
+    await API.updateProject(agentName, projectName, { name, icon, description: desc, tags });
     showToast('Project settings saved');
     await loadAgentProjects(agentName);
   } catch (e) {

@@ -2703,6 +2703,7 @@ class ProjectManager:
         cfg = {
             "name": config.get("name", name) if config else name,
             "description": description,
+            "icon": (config or {}).get("icon", "📁"),
             "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "watch_folders": (config or {}).get("watch_folders", []),
             "tags": (config or {}).get("tags", []),
