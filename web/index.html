@@ -1724,6 +1724,7 @@ tailwind.config = {
     <h2 id="kg-title">Knowledge Map</h2>
     <div style="flex:1"></div>
     <select id="kg-agent-select" class="kg-btn" style="min-width:120px"></select>
+    <button class="kg-btn" id="kg-discover-btn" onclick="kgDiscoverRelationships()" title="Discover relationships using AI">Discover Relationships</button>
     <button class="kg-btn" onclick="closeKnowledgeMap()" title="Close (Escape)">&times; Close</button>
   </div>
   <div class="kg-controls">
@@ -1740,6 +1741,7 @@ tailwind.config = {
   <div class="kg-statusbar" id="kg-statusbar">
     <span id="kg-stat-nodes">Nodes: 0</span>
     <span id="kg-stat-edges">Edges: 0</span>
+    <span id="kg-stat-auto">Auto: 0</span>
     <span id="kg-stat-sources">Sources: 0</span>
     <span id="kg-stat-zoom">Zoom: 100%</span>
   </div>
@@ -8286,7 +8288,11 @@ const KG_EDGE_COLORS = {
   prev_chunk: { color: '#888', dash: [], width: 1 },
   same_source: { color: '#888', dash: [4, 4], width: 1 },
   references: { color: null, dash: [], width: 1.5 },  // null = use accent
-  same_topic: { color: null, dash: [2, 4], width: 1 },
+  same_topic: { color: null, dash: [6, 3], width: 1.2 },  // dashed accent (entity-based)
+  depends_on: { color: '#f59e0b', dash: [], width: 1.5 },  // solid orange
+  contradicts: { color: '#ef4444', dash: [], width: 1.5 },  // solid red
+  extends: { color: '#22c55e', dash: [], width: 1.5 },  // solid green
+  co_recalled: { color: '#a855f7', dash: [2, 3], width: 1.2 },  // dotted purple
 };
 
 let kgInstance = null;
@@ -8801,8 +8807,11 @@ class KnowledgeGraph {
 
   _updateStatus() {
     const sources = new Set(this.nodes.filter(n => n.type === 'ingested' && n.source && n.source !== 'agent').map(n => n.source));
+    const autoTypes = new Set(['same_topic', 'co_recalled', 'depends_on', 'contradicts', 'extends']);
+    const autoCount = this.edges.filter(e => autoTypes.has(e.type)).length;
     document.getElementById('kg-stat-nodes').textContent = `Nodes: ${this.nodes.length}`;
     document.getElementById('kg-stat-edges').textContent = `Edges: ${this.edges.length}`;
+    document.getElementById('kg-stat-auto').textContent = `Auto: ${autoCount}`;
     document.getElementById('kg-stat-sources').textContent = `Sources: ${sources.size}`;
     document.getElementById('kg-stat-zoom').textContent = `Zoom: ${Math.round(this.zoom * 100)}%`;
   }
@@ -8937,6 +8946,38 @@ async function _kgLoadAgent(agentId) {
     document.getElementById('kg-stat-edges').textContent = 'Edges: 0';
     document.getElementById('kg-stat-sources').textContent = 'Sources: 0';
     document.getElementById('kg-stat-zoom').textContent = 'Zoom: 100%';
+  }
+}
+
+async function kgDiscoverRelationships() {
+  const agentSelect = document.getElementById('kg-agent-select');
+  const agentId = agentSelect ? agentSelect.value : state.activeAgentId;
+  const btn = document.getElementById('kg-discover-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Discovering...'; }
+  showToast('Discovering relationships... this may take a minute');
+  try {
+    await API.post(`/v1/agents/${encodeURIComponent(agentId)}/graph/discover`, {});
+    // Poll for completion by refreshing graph after a delay
+    let attempts = 0;
+    const poll = setInterval(async () => {
+      attempts++;
+      try {
+        await _kgLoadAgent(agentId);
+        if (attempts >= 6) {
+          clearInterval(poll);
+          if (btn) { btn.disabled = false; btn.textContent = 'Discover Relationships'; }
+          showToast('Relationship discovery complete');
+        }
+      } catch { /* ignore poll errors */ }
+    }, 10000);
+    // Stop polling after 60s regardless
+    setTimeout(() => {
+      clearInterval(poll);
+      if (btn) { btn.disabled = false; btn.textContent = 'Discover Relationships'; }
+    }, 60000);
+  } catch (err) {
+    showToast('Discovery failed: ' + err.message, true);
+    if (btn) { btn.disabled = false; btn.textContent = 'Discover Relationships'; }
   }
 }
 

@@ -2320,6 +2320,24 @@ agent: {self.agent_id}
         # Trigger debounced QMD update+embed
         _qmd_debounced_embed(self._collection)
 
+        # --- Entity extraction auto-linking (Mechanism 2) ---
+        try:
+            entities = _extract_entities(content)
+            if entities:
+                # Find other files sharing entities
+                matches = _find_entity_matches(self.agent_id, filename, entities)
+                for other_fname in matches[:10]:  # limit to avoid excessive linking
+                    other_path = os.path.join(self.dir, other_fname)
+                    if os.path.exists(other_path):
+                        _add_related_to_file(file_path, other_fname, "same_topic")
+                        _add_related_to_file(other_path, filename, "same_topic")
+                # Update entity index with new file
+                _update_entity_index(self.agent_id, filename, entities)
+                if matches:
+                    _qmd_debounced_embed(self._collection)
+        except Exception:
+            pass  # Entity linking is best-effort, never block store
+
         return {"id": mem_id, "name": name, "file": filename, "status": "stored"}
 
     def recall(self, query: str, limit: int = 10, mem_type: str | None = None) -> list[dict]:
@@ -3399,6 +3417,21 @@ def tool_memory_recall(args: dict) -> str:
     for r in results:
         if r.get("content") and len(r["content"]) > 4000:
             r["content"] = r["content"][:4000] + "..."
+
+    # --- Co-recall tracking (Mechanism 3) ---
+    if query and len(results) >= 2:
+        try:
+            result_files = [os.path.basename(r.get("file_path", "")) for r in results if r.get("file_path")]
+            agent_id = ms.agent_id
+            agent_dir = os.path.join(AGENTS_DIR, agent_id)
+            threading.Thread(
+                target=_record_recall_cooccurrence,
+                args=(result_files, agent_id, agent_dir),
+                daemon=True,
+            ).start()
+        except Exception:
+            pass  # Co-recall tracking is best-effort
+
     return _ok({"query": query, "results": results, "count": len(results)})
 
 
@@ -3812,6 +3845,443 @@ def trigger_memory_summary_refresh(agent_id: str):
         except Exception:
             pass
     threading.Thread(target=_run, daemon=True, name=f"memory_summary_refresh_{agent_id}").start()
+
+
+# ─── Relationship Discovery System ────────────────────────────────────
+
+# --- Mechanism 2: Entity Extraction + Auto-linking ---
+
+_RE_CAPITALIZED = re.compile(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b')
+_RE_MENTIONS = re.compile(r'@\w+')
+_RE_URLS = re.compile(r'https?://\S+')
+_RE_FILEPATHS = re.compile(r'(?:/[\w.-]+)+\.\w+')
+_RE_HASHTAGS = re.compile(r'#\w+')
+
+
+def _extract_entities(text: str) -> set[str]:
+    """Extract entities from text using fast regex heuristics (no LLM).
+    Returns set of entity strings."""
+    entities = set()
+    for m in _RE_CAPITALIZED.finditer(text):
+        entities.add(m.group())
+    for m in _RE_MENTIONS.finditer(text):
+        entities.add(m.group())
+    for m in _RE_URLS.finditer(text):
+        entities.add(m.group().rstrip('.,;)'))
+    for m in _RE_FILEPATHS.finditer(text):
+        entities.add(m.group())
+    for m in _RE_HASHTAGS.finditer(text):
+        entities.add(m.group())
+    return entities
+
+
+# Entity index: maps entity string -> set of filenames mentioning it
+# Keyed per agent: _entity_indices[agent_id] = {entity: {filename, ...}}
+_entity_indices: dict[str, dict[str, set[str]]] = {}
+_entity_index_lock = threading.Lock()
+_entity_index_initialized: set[str] = set()
+
+
+def _rebuild_entity_index(agent_id: str):
+    """Full rescan of memory files to build entity index for an agent."""
+    agent_dir = os.path.join(AGENTS_DIR, agent_id)
+    if not os.path.isdir(agent_dir):
+        return
+    index: dict[str, set[str]] = {}
+    for fname in os.listdir(agent_dir):
+        if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
+            continue
+        # Skip ingested chunks — only agent-created memories
+        if fname.startswith("ingest-"):
+            continue
+        fpath = os.path.join(agent_dir, fname)
+        try:
+            with open(fpath, "r") as f:
+                raw = f.read()
+            _, body = _parse_frontmatter(raw)
+            entities = _extract_entities(body)
+            for ent in entities:
+                index.setdefault(ent, set()).add(fname)
+        except Exception:
+            continue
+    with _entity_index_lock:
+        _entity_indices[agent_id] = index
+        _entity_index_initialized.add(agent_id)
+
+
+def _ensure_entity_index(agent_id: str):
+    """Lazy-initialize entity index on first access."""
+    if agent_id not in _entity_index_initialized:
+        _rebuild_entity_index(agent_id)
+
+
+def _update_entity_index(agent_id: str, filename: str, entities: set[str]):
+    """Incrementally update entity index when a memory is stored."""
+    _ensure_entity_index(agent_id)
+    with _entity_index_lock:
+        idx = _entity_indices.get(agent_id, {})
+        # Remove old entries for this filename
+        for ent in list(idx.keys()):
+            idx[ent].discard(filename)
+            if not idx[ent]:
+                del idx[ent]
+        # Add new entries
+        for ent in entities:
+            idx.setdefault(ent, set()).add(filename)
+        _entity_indices[agent_id] = idx
+
+
+def _find_entity_matches(agent_id: str, filename: str, entities: set[str]) -> list[str]:
+    """Find other files sharing entities with the given file. Returns list of filenames."""
+    _ensure_entity_index(agent_id)
+    matches = set()
+    with _entity_index_lock:
+        idx = _entity_indices.get(agent_id, {})
+        for ent in entities:
+            for other_file in idx.get(ent, set()):
+                if other_file != filename:
+                    matches.add(other_file)
+    return list(matches)
+
+
+def _add_related_to_file(file_path: str, rel_file: str, rel_type: str) -> bool:
+    """Add a related entry to a memory file's frontmatter if not already present.
+    Returns True if file was modified."""
+    try:
+        with open(file_path, "r") as f:
+            raw = f.read()
+    except Exception:
+        return False
+
+    # Check if relationship already exists
+    existing_rels = re.findall(r'file:\s*(\S+\.md)', raw)
+    if rel_file in existing_rels:
+        return False
+
+    # Find the end of frontmatter to insert before the closing ---
+    fm_match = re.match(r'^(---\s*\n)(.*?)(\n---\s*\n)(.*)$', raw, re.DOTALL)
+    if not fm_match:
+        return False
+
+    opener, fm_text, closer, body = fm_match.groups()
+
+    # Check if related: section already exists
+    new_entry = f"  - file: {rel_file}\n    type: {rel_type}"
+    if "related:" in fm_text:
+        # Append to existing related section
+        fm_text = fm_text.rstrip() + "\n" + new_entry
+    else:
+        # Add new related section
+        fm_text = fm_text.rstrip() + "\nrelated:\n" + new_entry
+
+    new_raw = opener + fm_text + closer + body
+    try:
+        with open(file_path, "w") as f:
+            f.write(new_raw)
+        return True
+    except Exception:
+        return False
+
+
+# --- Mechanism 3: Co-recall Linking ---
+
+# Tracks co-occurrence of files recalled together
+# Key: frozenset({file1, file2}), Value: count
+_recall_cooccurrence: dict[frozenset, int] = {}
+_recall_cooccurrence_lock = threading.Lock()
+_CO_RECALL_THRESHOLD = 3  # Auto-link after this many co-recalls
+
+
+def _record_recall_cooccurrence(result_files: list[str], agent_id: str, base_dir: str):
+    """Record which files appeared together in a recall result.
+    When threshold is reached, auto-add co_recalled relationship."""
+    if len(result_files) < 2:
+        return
+    # Only consider first 10 results to limit combinatorial explosion
+    files = result_files[:10]
+    pairs_to_link = []
+    with _recall_cooccurrence_lock:
+        for i in range(len(files)):
+            for j in range(i + 1, len(files)):
+                pair = frozenset({files[i], files[j]})
+                _recall_cooccurrence[pair] = _recall_cooccurrence.get(pair, 0) + 1
+                if _recall_cooccurrence[pair] == _CO_RECALL_THRESHOLD:
+                    pairs_to_link.append((files[i], files[j]))
+
+    # Auto-link pairs that reached threshold (outside lock)
+    for f1, f2 in pairs_to_link:
+        f1_path = os.path.join(base_dir, f1) if not os.path.isabs(f1) else f1
+        f2_path = os.path.join(base_dir, f2) if not os.path.isabs(f2) else f2
+        modified = False
+        if os.path.exists(f1_path) and os.path.exists(f2_path):
+            f1_name = os.path.basename(f1)
+            f2_name = os.path.basename(f2)
+            if _add_related_to_file(f1_path, f2_name, "co_recalled"):
+                modified = True
+            if _add_related_to_file(f2_path, f1_name, "co_recalled"):
+                modified = True
+        if modified:
+            _qmd_debounced_embed(agent_id)
+
+
+# --- Mechanism 1: LLM-based Relationship Discovery ---
+
+RELATIONSHIP_DISCOVERY_DEFAULTS = {
+    "enabled": False,
+    "frequency": "every 24h",
+    "start_time": "04:00",
+}
+
+
+def _get_relationship_discovery_config(agent_id: str) -> dict:
+    """Read relationship_discovery settings from agent.json, merging with defaults."""
+    cfg = AgentConfig(agent_id).config
+    rd_cfg = cfg.get("relationship_discovery", {})
+    result = dict(RELATIONSHIP_DISCOVERY_DEFAULTS)
+    if isinstance(rd_cfg, dict):
+        for k in ("enabled", "frequency", "start_time"):
+            if k in rd_cfg:
+                result[k] = rd_cfg[k]
+    elif isinstance(rd_cfg, bool):
+        result["enabled"] = rd_cfg
+    return result
+
+
+def _build_relationship_discovery_prompt(agent_id: str) -> str:
+    """Build a prompt listing agent memories for LLM-based relationship discovery.
+    Loads up to 30 non-ingested memory files."""
+    agent_dir = os.path.join(AGENTS_DIR, agent_id)
+    if not os.path.isdir(agent_dir):
+        return ""
+
+    memories = []
+    for fname in sorted(os.listdir(agent_dir)):
+        if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
+            continue
+        if fname.startswith("ingest-"):
+            continue
+        fpath = os.path.join(agent_dir, fname)
+        try:
+            with open(fpath, "r") as f:
+                raw = f.read()
+            fm, body = _parse_frontmatter(raw)
+            memories.append({
+                "file": fname,
+                "name": fm.get("name", fname.replace(".md", "")),
+                "type": fm.get("type", "general"),
+                "preview": body[:200].replace("\n", " "),
+            })
+        except Exception:
+            continue
+        if len(memories) >= 30:
+            break
+
+    if len(memories) < 2:
+        return ""
+
+    listing = "\n".join(
+        f"- **{m['file']}** (name: {m['name']}, type: {m['type']}): {m['preview']}"
+        for m in memories
+    )
+
+    return f"""Analyze the following memories for agent '{agent_id}' and identify relationships between them.
+
+## Memories
+
+{listing}
+
+## Task
+
+Given these memories, identify pairs that are related. For each pair, specify:
+- from_file: the source memory filename
+- to_file: the target memory filename
+- type: one of (references, same_topic, depends_on, contradicts, extends)
+- reason: brief explanation (under 20 words)
+
+Output ONLY a JSON array of objects with those fields. If no relationships found, output [].
+
+Example:
+[{{"from_file": "foo_abc123.md", "to_file": "bar_def456.md", "type": "same_topic", "reason": "Both discuss authentication patterns"}}]
+
+Be selective — only report meaningful relationships, not superficial ones. Aim for precision over recall."""
+
+
+def _apply_discovered_relationships(agent_id: str, relationships: list[dict]):
+    """Apply discovered relationships to memory files.
+    Updates frontmatter of both files for each relationship."""
+    if not relationships:
+        return
+    agent_dir = os.path.join(AGENTS_DIR, agent_id)
+    modified = False
+    for rel in relationships:
+        from_file = rel.get("from_file", "")
+        to_file = rel.get("to_file", "")
+        rel_type = rel.get("type", "references")
+        # Validate type
+        if rel_type not in ("references", "same_topic", "depends_on", "contradicts", "extends"):
+            rel_type = "references"
+        if not from_file or not to_file:
+            continue
+        from_path = os.path.join(agent_dir, from_file)
+        to_path = os.path.join(agent_dir, to_file)
+        if not os.path.exists(from_path) or not os.path.exists(to_path):
+            continue
+        if _add_related_to_file(from_path, to_file, rel_type):
+            modified = True
+        # Add reverse link (bidirectional)
+        reverse_type = rel_type
+        if rel_type == "depends_on":
+            reverse_type = "extends"  # reverse of depends_on
+        elif rel_type == "extends":
+            reverse_type = "depends_on"
+        if _add_related_to_file(to_path, from_file, reverse_type):
+            modified = True
+    if modified:
+        _qmd_debounced_embed(agent_id)
+
+
+def trigger_relationship_discovery(agent_id: str):
+    """Run LLM-based relationship discovery immediately in a background thread."""
+    prompt = _build_relationship_discovery_prompt(agent_id)
+    if not prompt:
+        return
+
+    def _run():
+        try:
+            ms = MemoryStore(agent_id)
+            result_text = _run_delegate(
+                messages=[{"role": "user", "content": prompt}],
+                model=resolve_model("background") if callable(globals().get('resolve_model')) else "claude-sonnet-4-6",
+                system_prompt="You are a relationship analysis assistant. Output only valid JSON.",
+                memory_store=ms,
+                inference_params={"max_tokens": 4096, "temperature": 0.2},
+            )
+            if not result_text:
+                return
+            # Extract JSON from response (may have markdown code fences)
+            json_match = re.search(r'\[.*\]', result_text, re.DOTALL)
+            if json_match:
+                relationships = json.loads(json_match.group())
+                if isinstance(relationships, list):
+                    _apply_discovered_relationships(agent_id, relationships)
+        except Exception as e:
+            logging.warning(f"Relationship discovery failed for {agent_id}: {e}")
+
+    threading.Thread(target=_run, daemon=True, name=f"rel_discovery_{agent_id}").start()
+
+
+def _relationship_discovery_schedule_name(agent_id: str) -> str:
+    return f"_relationship_discovery_{agent_id}"
+
+
+def _relationship_discovery_schedule_str(cfg: dict) -> str:
+    """Convert relationship_discovery config to a scheduler schedule string."""
+    freq = cfg.get("frequency", "every 24h").strip().lower()
+    start_time = cfg.get("start_time", "").strip()
+    if start_time and re.match(r'^\d{1,2}:\d{2}$', start_time):
+        m = re.match(r'every\s+(\d+)\s*(h|hour|d|day)', freq)
+        if m:
+            val, unit = int(m.group(1)), m.group(2)[0]
+            if (unit == 'h' and val == 24) or (unit == 'd' and val == 1):
+                return f"daily {start_time}"
+            elif unit == 'h' and val < 24:
+                return freq
+            elif unit == 'd' and val > 1:
+                return freq
+    return freq
+
+
+def _build_relationship_discovery_task_prompt(agent_id: str) -> str:
+    """Build the scheduled task prompt for relationship discovery."""
+    return f"""Perform relationship discovery for agent '{agent_id}'.
+
+Use memory_recall with an empty query to list all memories, then analyze them for relationships.
+
+For each pair of related memories, use memory_store to update the related frontmatter.
+Focus on meaningful relationships: references, same_topic, depends_on, contradicts, extends.
+
+Be selective — only report meaningful relationships, not superficial ones."""
+
+
+def ensure_relationship_discovery_schedules():
+    """Ensure scheduler entries exist for all agents with relationship_discovery enabled."""
+    if not _scheduler:
+        return
+    agents = list_agents()
+    existing = {s["name"]: s for s in _scheduler.list_all()}
+
+    for agent_id in agents:
+        sched_name = _relationship_discovery_schedule_name(agent_id)
+        rd_cfg = _get_relationship_discovery_config(agent_id)
+
+        if rd_cfg["enabled"]:
+            schedule_str = _relationship_discovery_schedule_str(rd_cfg)
+            task_prompt = _build_relationship_discovery_task_prompt(agent_id)
+
+            if sched_name in existing:
+                old = existing[sched_name]
+                if old["schedule"] != schedule_str or old.get("enabled") != 1:
+                    _scheduler.remove(sched_name)
+                    _scheduler.add(sched_name, task_prompt, schedule_str,
+                                   agent=agent_id, timeout=600)
+            else:
+                _scheduler.add(sched_name, task_prompt, schedule_str,
+                               agent=agent_id, timeout=600)
+        else:
+            if sched_name in existing:
+                _scheduler.remove(sched_name)
+
+
+def get_graph_stats(agent_id: str) -> dict:
+    """Return knowledge graph statistics for an agent."""
+    agent_dir = os.path.join(AGENTS_DIR, agent_id)
+    if not os.path.isdir(agent_dir):
+        return {"error": f"Agent not found: {agent_id}"}
+
+    total_nodes = 0
+    total_edges = 0
+    auto_discovered_edges = 0
+    edge_type_counts: dict[str, int] = {}
+    entity_count = 0
+
+    auto_edge_types = {"same_topic", "co_recalled", "depends_on", "contradicts", "extends"}
+
+    for fname in os.listdir(agent_dir):
+        if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
+            continue
+        if fname.startswith("ingest-"):
+            continue
+        total_nodes += 1
+        fpath = os.path.join(agent_dir, fname)
+        try:
+            with open(fpath, "r") as f:
+                raw = f.read(2000)
+            # Count edges (related entries)
+            rel_files = re.findall(r'file:\s*(\S+\.md)', raw)
+            rel_types = re.findall(r'type:\s*(\w+)', raw)
+            for i, _ in enumerate(rel_files):
+                total_edges += 1
+                rtype = rel_types[i] if i < len(rel_types) else "references"
+                edge_type_counts[rtype] = edge_type_counts.get(rtype, 0) + 1
+                if rtype in auto_edge_types:
+                    auto_discovered_edges += 1
+        except Exception:
+            continue
+
+    # Count entities from entity index
+    _ensure_entity_index(agent_id)
+    with _entity_index_lock:
+        idx = _entity_indices.get(agent_id, {})
+        entity_count = len(idx)
+
+    return {
+        "agent": agent_id,
+        "total_nodes": total_nodes,
+        "total_edges": total_edges,
+        "auto_discovered_edges": auto_discovered_edges,
+        "entity_count": entity_count,
+        "edge_types": edge_type_counts,
+    }
 
 
 _thread_local = threading.local()

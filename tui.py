@@ -228,6 +228,8 @@ SLASH_COMMANDS = {
     "/skills remove":  "Remove an installed skill",
     # Knowledge Graph
     "/graph":       "Show knowledge graph summary",
+    "/graph discover": "Discover relationships using AI",
+    "/graph stats": "Show graph statistics",
     # Memory
     "/memory":      "List memory files for current agent",
     "/memory summary": "Show memory summary",
@@ -377,6 +379,8 @@ def print_help():
         ("/memory summary", "Show memory summary"),
         ("/memory refresh", "Refresh memory summary"),
         ("/graph", "Show knowledge graph summary"),
+        ("/graph discover", "Discover relationships using AI"),
+        ("/graph stats", "Show graph statistics"),
     ])
 
     _section("Schedule & Tasks", [
@@ -987,6 +991,36 @@ def _handle_graph(client: BrainAgentClient, current_agent: str):
                     suffix = f" ({node['source']})"
                 console.print(f"      {name} [dim]— {cnt} connections{suffix}[/]")
 
+        console.print()
+    except Exception as e:
+        console.print(f"  [error]{e}[/]")
+
+
+def _handle_graph_discover(client: BrainAgentClient, current_agent: str):
+    """Handle /graph discover — trigger AI relationship discovery."""
+    try:
+        console.print(f"  [dim]Discovering relationships for {current_agent}... this may take a minute[/]")
+        result = client._post(f"/v1/agents/{current_agent}/graph/discover", {})
+        console.print(f"  [#5f87ff]Discovery started.[/] Run [bold]/graph stats[/] later to see results.")
+    except Exception as e:
+        console.print(f"  [error]{e}[/]")
+
+
+def _handle_graph_stats(client: BrainAgentClient, current_agent: str):
+    """Handle /graph stats — show graph statistics."""
+    try:
+        stats = client._get(f"/v1/agents/{current_agent}/graph/stats")
+        console.print()
+        console.print(f"  [bold]Graph Stats: {current_agent}[/]")
+        console.print(f"    Nodes: [#5f87ff]{stats.get('total_nodes', 0)}[/]")
+        console.print(f"    Edges: [#5f87ff]{stats.get('total_edges', 0)}[/]")
+        console.print(f"    Auto-discovered: [#5f87ff]{stats.get('auto_discovered_edges', 0)}[/]")
+        console.print(f"    Entities tracked: [#5f87ff]{stats.get('entity_count', 0)}[/]")
+        edge_types = stats.get("edge_types", {})
+        if edge_types:
+            console.print("    Edge types:")
+            for etype, count in sorted(edge_types.items()):
+                console.print(f"      {etype}: {count}")
         console.print()
     except Exception as e:
         console.print(f"  [error]{e}[/]")
@@ -2268,8 +2302,14 @@ def run_interactive(args):
 
             # --- Knowledge Graph ---
 
-            if low == "/graph":
-                _handle_graph(client, current_agent)
+            if low.startswith("/graph"):
+                graph_arg = stripped[6:].strip().lower()
+                if graph_arg == "discover":
+                    _handle_graph_discover(client, current_agent)
+                elif graph_arg == "stats":
+                    _handle_graph_stats(client, current_agent)
+                else:
+                    _handle_graph(client, current_agent)
                 continue
 
             # --- Memory ---

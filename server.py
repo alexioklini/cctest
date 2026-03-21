@@ -576,6 +576,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_list_projects(path)
         elif path.startswith("/v1/agents/") and path.endswith("/ingested"):
             self._handle_list_ingested(path)
+        elif path.startswith("/v1/agents/") and path.endswith("/graph/stats"):
+            self._handle_agent_graph_stats(path)
         elif path.startswith("/v1/agents/") and path.endswith("/graph"):
             self._handle_agent_graph(path)
         elif path == "/v1/notifications":
@@ -685,6 +687,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_project_ingest(path)
         elif path.startswith("/v1/agents/") and path.endswith("/projects"):
             self._handle_create_project(path)
+        elif path.startswith("/v1/agents/") and path.endswith("/graph/discover"):
+            self._handle_agent_graph_discover(path)
         elif path.startswith("/v1/agents/") and path.endswith("/ingest"):
             self._handle_agent_ingest(path)
         # --- Nodes POST routes ---
@@ -1819,7 +1823,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     # Extract edges from 'related' frontmatter
                     import re as _re
                     related_files = _re.findall(r'file:\s*(\S+\.md)', raw)
-                    related_types = _re.findall(r'type:\s*(prev_chunk|next_chunk|same_source|references|same_topic)', raw)
+                    related_types = _re.findall(r'type:\s*(prev_chunk|next_chunk|same_source|references|same_topic|depends_on|contradicts|extends|co_recalled)', raw)
                     for i, ref_file in enumerate(related_files):
                         edge_type = related_types[i] if i < len(related_types) else "references"
                         # Resolve ref_file relative to the same directory
@@ -1864,6 +1868,34 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             "nodes": nodes,
             "edges": edges,
         })
+
+    def _handle_agent_graph_stats(self, path: str):
+        """GET /v1/agents/{id}/graph/stats — knowledge graph statistics."""
+        agent_id = self._parse_agent_from_path(path)
+        if not agent_id:
+            self._send_json({"error": "Missing agent ID"}, 400)
+            return
+        try:
+            stats = engine.get_graph_stats(agent_id)
+            self._send_json(stats)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_agent_graph_discover(self, path: str):
+        """POST /v1/agents/{id}/graph/discover — trigger relationship discovery."""
+        agent_id = self._parse_agent_from_path(path)
+        if not agent_id:
+            self._send_json({"error": "Missing agent ID"}, 400)
+            return
+        agent_dir = os.path.join(engine.AGENTS_DIR, agent_id)
+        if not os.path.isdir(agent_dir):
+            self._send_json({"error": f"Agent not found: {agent_id}"}, 404)
+            return
+        try:
+            engine.trigger_relationship_discovery(agent_id)
+            self._send_json({"status": "discovery_started", "agent": agent_id})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
 
     def _handle_agents_activity(self):
         """GET /v1/agents/activity — which agents are currently doing something."""
@@ -4196,6 +4228,12 @@ def main():
         engine.ensure_memory_summary_schedules()
     except Exception as e:
         print(f"[WARN] Memory summary schedule init: {e}")
+
+    # Ensure relationship discovery schedules for all agents
+    try:
+        engine.ensure_relationship_discovery_schedules()
+    except Exception as e:
+        print(f"[WARN] Relationship discovery schedule init: {e}")
 
     # Start task runner
     engine._task_runner = engine.TaskRunner()
