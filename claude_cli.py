@@ -2679,9 +2679,11 @@ class ProjectManager:
             projects.append({
                 "name": name,
                 "description": cfg.get("description", ""),
+                "icon": cfg.get("icon", "folder"),
                 "created_at": cfg.get("created_at", ""),
                 "tags": cfg.get("tags", []),
                 "watch_folders": cfg.get("watch_folders", []),
+                "status": cfg.get("status", "active"),
                 "chunks": chunk_count,
                 "memories": mem_count,
             })
@@ -2752,7 +2754,7 @@ class ProjectManager:
         try:
             with open(cfg_path, "r") as f:
                 cfg = json.load(f)
-            for k in ("description", "watch_folders", "tags", "model", "name"):
+            for k in ("description", "watch_folders", "tags", "model", "name", "icon", "status"):
                 if k in updates:
                     cfg[k] = updates[k]
             with open(cfg_path, "w") as f:

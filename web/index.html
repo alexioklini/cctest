@@ -1239,6 +1239,9 @@ tailwind.config = {
   .sb-project-group.collapsed .sb-project-sessions {
     max-height: 0;
   }
+  .sb-project-group.collapsed .sb-team-chevron {
+    transform: rotate(-90deg);
+  }
   .sb-project-new-chat {
     font-size: 10px;
     padding: 2px 8px;
@@ -1390,6 +1393,182 @@ tailwind.config = {
     opacity: 1;
   }
 
+  /* Sidebar section headers (Projects / Chats) */
+  .sb-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    user-select: none;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .sb-section-header:hover { color: var(--color-text-secondary); }
+  .sb-section-header .sb-section-left {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .sb-section-header .sb-section-add {
+    background: none;
+    border: none;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 2px;
+    line-height: 1;
+    transition: color 0.15s;
+  }
+  .sb-section-header .sb-section-add:hover {
+    color: var(--color-accent);
+  }
+  .sb-section-content {
+    max-height: 2000px;
+    overflow: hidden;
+    transition: max-height 0.25s ease;
+  }
+  .sb-section.collapsed .sb-section-content {
+    max-height: 0;
+    overflow: hidden;
+  }
+  .sb-section.collapsed .sb-section-chevron {
+    transform: rotate(-90deg);
+  }
+  .sb-section-chevron {
+    transition: transform 0.2s ease;
+    font-size: 8px;
+    opacity: 0.5;
+  }
+
+  /* Archived sub-section */
+  .sb-archived-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 9px;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--color-text-muted);
+    padding: 6px 12px 2px;
+    cursor: pointer;
+    opacity: 0.6;
+    user-select: none;
+    transition: opacity 0.15s;
+  }
+  .sb-archived-header:hover { opacity: 1; }
+  .sb-archived-content {
+    max-height: 2000px;
+    overflow: hidden;
+    transition: max-height 0.25s ease;
+  }
+  .sb-archived-section.collapsed .sb-archived-content {
+    max-height: 0;
+    overflow: hidden;
+  }
+  .sb-archived-section.collapsed .sb-section-chevron {
+    transform: rotate(-90deg);
+  }
+
+  /* Project gear button */
+  .sb-project-gear {
+    opacity: 0;
+    transition: opacity 0.15s;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 2px 4px;
+    color: var(--color-text-muted);
+    border-radius: 4px;
+    margin-left: auto;
+  }
+  .sb-project-header:hover .sb-project-gear { opacity: 1; }
+  .sb-project-gear:hover {
+    color: var(--color-accent);
+    background: var(--color-surface-light);
+  }
+
+  /* Session time display */
+  .sb-session-item .sb-sess-time {
+    font-size: 9px;
+    color: var(--color-text-muted);
+    font-family: 'IBM Plex Mono', monospace;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  /* Project context bar in chat area */
+  .sb-project-context-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 16px;
+    background: color-mix(in srgb, var(--color-accent) 4%, var(--color-surface));
+    border-bottom: 1px solid color-mix(in srgb, var(--color-accent) 15%, var(--color-border));
+    font-size: 11px;
+    color: var(--color-text-secondary);
+  }
+  .sb-project-context-bar .project-ctx-icon {
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+  .sb-project-context-bar .project-ctx-name {
+    font-weight: 600;
+    color: var(--color-text-primary);
+    font-family: 'Outfit', sans-serif;
+  }
+  .sb-project-context-bar .project-ctx-desc {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.7;
+  }
+  .sb-project-context-bar .project-ctx-stats {
+    font-size: 9px;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--color-text-muted);
+    flex-shrink: 0;
+  }
+  .sb-project-context-bar .project-ctx-settings {
+    background: none;
+    border: none;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  .sb-project-context-bar .project-ctx-settings:hover {
+    color: var(--color-accent);
+    background: var(--color-surface-light);
+  }
+
+  /* Unarchive button for archived items */
+  .sb-unarchive-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 10px;
+    padding: 1px 2px;
+    opacity: 0.5;
+    transition: opacity 0.15s;
+  }
+  .sb-unarchive-btn:hover { opacity: 1; }
+
+  /* Hide new sections in collapsed sidebar */
+  #sidebar.collapsed .sb-section-header,
+  #sidebar.collapsed .sb-section-content {
+    display: none;
+  }
+
   /* Sidebar footer quick-links */
   .sb-footer {
     display: flex;
@@ -1504,7 +1683,9 @@ tailwind.config = {
     #sidebar.collapsed #sidebar-sessions,
     #sidebar.collapsed .sb-new-chat-btn .sb-btn-text,
     #sidebar.collapsed .sb-footer .sb-footer-label,
-    #sidebar.collapsed .sb-create-agent-btn .sb-btn-text {
+    #sidebar.collapsed .sb-create-agent-btn .sb-btn-text,
+    #sidebar.collapsed .sb-section-header,
+    #sidebar.collapsed .sb-section-content {
       display: revert;
     }
     #sidebar.collapsed .sb-agent-item {
@@ -1777,12 +1958,6 @@ tailwind.config = {
 
     <div class="sb-divider"></div>
 
-    <button class="sb-new-chat-btn" onclick="newChatSession()">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      <span class="sb-btn-text">New Chat</span>
-    </button>
-
-    <div class="sb-section-label">Sessions</div>
     <div id="sidebar-sessions"></div>
 
     <div class="sb-footer">
@@ -1841,6 +2016,8 @@ tailwind.config = {
       <!-- Session History Bar (hidden - now in sidebar) -->
       <div id="session-bar" class="session-bar" style="display:none">
       </div>
+      <!-- Project context bar -->
+      <div id="project-context-bar" class="sb-project-context-bar" style="display:none"></div>
       <!-- Messages -->
       <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-6">
         <div class="flex items-center justify-center h-full text-text-muted text-sm font-body">Select an agent to start chatting</div>
@@ -2073,6 +2250,16 @@ class API {
     return res.json();
   }
 
+  static async put(path, body) {
+    const res = await fetch(`${BASE_URL}${path}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`PUT ${path}: ${res.status}`);
+    return res.json();
+  }
+
   static _abortController = null;
 
   static async streamChat(sessionId, message, callbacks, model) {
@@ -2244,6 +2431,7 @@ const dom = {
   chatInput: $('#chat-input'),
   chatInputArea: $('#chat-input-area'),
   chatTopBar: $('#chat-top-bar'),
+  projectContextBar: $('#project-context-bar'),
   modelSelector: $('#model-selector'),
   btnSend: $('#btn-send'),
   btnStop: $('#btn-stop'),
@@ -2634,17 +2822,29 @@ async function loadAgentSessions(agentName) {
   }
 }
 
-function renderSessionItemHtml(s, currentSessionId) {
+function relativeTime(timestamp) {
+  if (!timestamp) return '';
+  const now = Date.now() / 1000;
+  const diff = now - timestamp;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  if (diff < 604800) return Math.floor(diff / 86400) + 'd ago';
+  return Math.floor(diff / 604800) + 'w ago';
+}
+
+function renderSidebarSession(s, currentSessionId) {
   const isActive = currentSessionId === s.id;
   const title = s.title || 'Untitled';
-  const date = s.created_at ? new Date(s.created_at).toLocaleDateString(undefined, {month:'short',day:'numeric'}) : '';
+  const truncTitle = title.length > 30 ? title.substring(0, 30) + '...' : title;
   const count = s.message_count || 0;
   const isArchived = s.status === 'archived';
   const isIncognito = s.status === 'incognito';
+  const timeStr = relativeTime(s.last_active);
   return `<div class="sb-session-item ${isActive ? 'active' : ''} ${isArchived ? 'opacity-50' : ''}" onclick="loadSession('${esc(s.id)}')" title="${esc(title)} - ${count} messages${isIncognito ? ' (incognito)' : ''}">
     ${isIncognito ? '<span style="font-size:9px;flex-shrink:0" title="Incognito">&#128374;</span>' : ''}
-    <span class="sb-sess-title">${esc(title)}</span>
-    <span class="sb-sess-date">${date}</span>
+    <span class="sb-sess-title">${esc(truncTitle)}</span>
+    <span class="sb-sess-time">${timeStr}</span>
     <span class="sb-sess-actions">
       ${isIncognito
         ? `<button onclick="event.stopPropagation();sessionAction('un_incognito','${esc(s.id)}')" title="Remove incognito">&#128065;</button>`
@@ -2669,69 +2869,144 @@ function renderSessionBar() {
   if (!entry) { container.innerHTML = ''; return; }
   const chat = state.agentChats[agentId];
   const currentSessionId = chat?.sessionId;
-  const showArchived = entry.showArchived;
   const allSessions = entry.sessions || [];
   const projects = state.agentProjects[agentId] || [];
+  const sectionsCollapsed = JSON.parse(localStorage.getItem('sb-sections-collapsed') || '{}');
   const collapsedProjects = JSON.parse(localStorage.getItem('sb-collapsed-projects') || '{}');
+  const archivedSections = JSON.parse(localStorage.getItem('sb-archived-collapsed') || '{"projects":true,"chats":true}');
 
-  // Group sessions by project
+  // Separate active vs archived projects
+  const activeProjects = projects.filter(p => (p.status || 'active') !== 'archived');
+  const archivedProjects = projects.filter(p => (p.status || 'active') === 'archived');
+
+  // Group sessions by project, separate active vs archived
   const projectSessions = {}; // projectName -> [session]
-  const generalSessions = [];
+  const generalActive = [];
+  const generalArchived = [];
   allSessions.forEach(s => {
     const proj = s.project || '';
     if (proj) {
       if (!projectSessions[proj]) projectSessions[proj] = [];
       projectSessions[proj].push(s);
+    } else if (s.status === 'archived') {
+      generalArchived.push(s);
     } else {
-      generalSessions.push(s);
+      generalActive.push(s);
     }
   });
 
   let html = '';
 
-  // Current unsaved session (only if general / no project)
-  if (chat && !currentSessionId && chat.messages.length === 0 && !state.currentProject) {
-    html += `<div class="sb-session-item active" style="font-style:italic"><span class="sb-sess-title" style="color:var(--color-text-muted)">New chat</span></div>`;
-  }
+  // ─── Projects Section ──────────────────────────
+  const projectsCollapsed = !!sectionsCollapsed['projects'];
+  html += `<div class="sb-section${projectsCollapsed ? ' collapsed' : ''}" data-section="projects">`;
+  html += `<div class="sb-section-header" onclick="toggleSidebarSection('projects')">`;
+  html += `<span class="sb-section-left"><span class="sb-section-chevron">&#9660;</span> Projects</span>`;
+  html += `<button class="sb-section-add" onclick="event.stopPropagation();sidebarNewProject()" title="New Project">+</button>`;
+  html += `</div>`;
+  html += `<div class="sb-section-content">`;
 
-  // Render project groups
-  projects.forEach(p => {
+  // Render active projects
+  activeProjects.forEach(p => {
     const pName = p.name;
-    const pSessions = projectSessions[pName] || [];
+    const pSessions = (projectSessions[pName] || []).filter(s => s.status !== 'archived');
+    const pArchivedSessions = (projectSessions[pName] || []).filter(s => s.status === 'archived');
     const isCollapsed = !!collapsedProjects[pName];
     const isCurrentProject = state.currentProject === pName;
-    // Show "new chat" indicator for unsaved session in this project
     const showNewInProject = chat && !currentSessionId && chat.messages.length === 0 && isCurrentProject;
+    const pIcon = p.icon || 'folder';
 
     html += `<div class="sb-project-group${isCollapsed ? ' collapsed' : ''}" data-project="${esc(pName)}">`;
     html += `<div class="sb-project-header" onclick="toggleProjectCollapse('${esc(pName)}')">`;
-    const pIcon = p.icon || 'folder';
     html += `<span class="sb-team-chevron">&#9660;</span>`;
-    html += `<span style="display:inline-flex;vertical-align:middle;margin-right:4px">${renderProjectIcon(pIcon, 14)}</span>${esc(pName)}`;
-    if (isCurrentProject) html += ` <span style="font-size:8px;color:var(--color-accent);font-weight:700">ACTIVE</span>`;
+    html += `<span style="display:inline-flex;vertical-align:middle;margin-right:4px">${renderProjectIcon(pIcon, 14)}</span>`;
+    html += `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pName)}</span>`;
+    if (isCurrentProject) html += `<span style="font-size:8px;color:var(--color-accent);font-weight:700;flex-shrink:0">ACTIVE</span>`;
+    html += `<button class="sb-project-gear" onclick="event.stopPropagation();sidebarOpenProjectSettings('${esc(agentId)}','${esc(pName)}')" title="Project settings">&#9881;</button>`;
     html += `</div>`;
     html += `<div class="sb-project-sessions">`;
+
+    // + New Chat button first
+    html += `<button class="sb-project-new-chat" onclick="event.stopPropagation();newProjectChat('${esc(pName)}')">+ New Chat</button>`;
 
     if (showNewInProject) {
       html += `<div class="sb-session-item active" style="font-style:italic"><span class="sb-sess-title" style="color:var(--color-text-muted)">New chat</span></div>`;
     }
 
-    pSessions.forEach(s => { html += renderSessionItemHtml(s, currentSessionId); });
+    pSessions.forEach(s => { html += renderSidebarSession(s, currentSessionId); });
 
-    html += `<button class="sb-project-new-chat" onclick="event.stopPropagation();newProjectChat('${esc(pName)}')">+ New Chat</button>`;
+    // Archived sessions within project
+    if (pArchivedSessions.length > 0) {
+      const projArchKey = 'proj-arch-' + pName;
+      const projArchCollapsed = archivedSections[projArchKey] !== false;
+      html += `<div class="sb-archived-section${projArchCollapsed ? ' collapsed' : ''}">`;
+      html += `<div class="sb-archived-header" onclick="event.stopPropagation();toggleArchivedSection('${esc(projArchKey)}')"><span class="sb-section-chevron">&#9660;</span> Archived</div>`;
+      html += `<div class="sb-archived-content">`;
+      pArchivedSessions.forEach(s => { html += renderSidebarSession(s, currentSessionId); });
+      html += `</div></div>`;
+    }
+
     html += `</div></div>`;
   });
 
-  // General divider (only if there are projects)
-  if (projects.length > 0 && (generalSessions.length > 0 || (!state.currentProject && chat && !currentSessionId && chat.messages.length === 0))) {
-    html += `<div class="sb-general-divider">General</div>`;
+  // Archived projects sub-section
+  if (archivedProjects.length > 0) {
+    const archProjCollapsed = archivedSections['projects'] !== false;
+    html += `<div class="sb-archived-section${archProjCollapsed ? ' collapsed' : ''}">`;
+    html += `<div class="sb-archived-header" onclick="toggleArchivedSection('projects')"><span class="sb-section-chevron">&#9660;</span> Archived</div>`;
+    html += `<div class="sb-archived-content">`;
+    archivedProjects.forEach(p => {
+      const pIcon = p.icon || 'folder';
+      html += `<div class="sb-project-group" data-project="${esc(p.name)}">`;
+      html += `<div class="sb-project-header" style="opacity:0.6" onclick="toggleProjectCollapse('${esc(p.name)}')">`;
+      html += `<span style="display:inline-flex;vertical-align:middle;margin-right:4px">${renderProjectIcon(pIcon, 14)}</span>`;
+      html += `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name)}</span>`;
+      html += `<button class="sb-unarchive-btn" onclick="event.stopPropagation();archiveProject('${esc(agentId)}','${esc(p.name)}','unarchive')" title="Unarchive">&#128194;</button>`;
+      html += `</div></div>`;
+    });
+    html += `</div></div>`;
   }
 
-  // General sessions (no project)
-  generalSessions.forEach(s => { html += renderSessionItemHtml(s, currentSessionId); });
+  // Empty state for projects
+  if (activeProjects.length === 0 && archivedProjects.length === 0) {
+    html += `<div style="padding:4px 12px;font-size:10px;color:var(--color-text-muted);font-style:italic">No projects yet</div>`;
+  }
 
-  // Show/Hide archived toggle
-  html += `<div style="padding:4px 12px"><button class="session-bar-toggle" onclick="toggleShowArchived()" style="font-size:10px;color:var(--color-text-muted);cursor:pointer;background:none;border:none;padding:2px 0">${showArchived ? 'Hide Archived' : 'Show Archived'}</button></div>`;
+  html += `</div></div>`; // close sb-section-content + sb-section
+
+  // ─── Chats Section ─────────────────────────────
+  const chatsCollapsed = !!sectionsCollapsed['chats'];
+  html += `<div class="sb-section${chatsCollapsed ? ' collapsed' : ''}" data-section="chats">`;
+  html += `<div class="sb-section-header" onclick="toggleSidebarSection('chats')">`;
+  html += `<span class="sb-section-left"><span class="sb-section-chevron">&#9660;</span> Chats</span>`;
+  html += `<button class="sb-section-add" onclick="event.stopPropagation();newChatSession()" title="New Chat">+</button>`;
+  html += `</div>`;
+  html += `<div class="sb-section-content">`;
+
+  // Current unsaved session (general / no project)
+  if (chat && !currentSessionId && chat.messages.length === 0 && !state.currentProject) {
+    html += `<div class="sb-session-item active" style="font-style:italic"><span class="sb-sess-title" style="color:var(--color-text-muted)">New chat</span></div>`;
+  }
+
+  // General active sessions (no project)
+  generalActive.forEach(s => { html += renderSidebarSession(s, currentSessionId); });
+
+  // Archived general sessions
+  if (generalArchived.length > 0) {
+    const chatArchCollapsed = archivedSections['chats'] !== false;
+    html += `<div class="sb-archived-section${chatArchCollapsed ? ' collapsed' : ''}">`;
+    html += `<div class="sb-archived-header" onclick="toggleArchivedSection('chats')"><span class="sb-section-chevron">&#9660;</span> Archived</div>`;
+    html += `<div class="sb-archived-content">`;
+    generalArchived.forEach(s => { html += renderSidebarSession(s, currentSessionId); });
+    html += `</div></div>`;
+  }
+
+  // Empty state for chats
+  if (generalActive.length === 0 && generalArchived.length === 0 && !(chat && !currentSessionId && chat.messages.length === 0 && !state.currentProject)) {
+    html += `<div style="padding:4px 12px;font-size:10px;color:var(--color-text-muted);font-style:italic">No chats yet</div>`;
+  }
+
+  html += `</div></div>`; // close sb-section-content + sb-section
 
   container.innerHTML = html;
 }
@@ -2741,6 +3016,73 @@ window.toggleProjectCollapse = function(projectName) {
   if (stored[projectName]) { delete stored[projectName]; } else { stored[projectName] = true; }
   localStorage.setItem('sb-collapsed-projects', JSON.stringify(stored));
   renderSessionBar();
+};
+
+window.toggleSidebarSection = function(section) {
+  const stored = JSON.parse(localStorage.getItem('sb-sections-collapsed') || '{}');
+  if (stored[section]) { delete stored[section]; } else { stored[section] = true; }
+  localStorage.setItem('sb-sections-collapsed', JSON.stringify(stored));
+  renderSessionBar();
+};
+
+window.toggleArchivedSection = function(key) {
+  const stored = JSON.parse(localStorage.getItem('sb-archived-collapsed') || '{"projects":true,"chats":true}');
+  if (stored[key] === false) { stored[key] = true; } else { stored[key] = false; }
+  localStorage.setItem('sb-archived-collapsed', JSON.stringify(stored));
+  // When expanding archived sections, ensure we have archived sessions loaded
+  if (stored[key] === false) {
+    const agentId = state.activeAgentId;
+    if (agentId) {
+      const entry = state.agentSessions[agentId];
+      if (entry && !entry.showArchived) {
+        entry.showArchived = true;
+        entry.loaded = false;
+        loadAgentSessions(agentId);
+        return; // loadAgentSessions will re-render
+      }
+    }
+  }
+  renderSessionBar();
+};
+
+window.sidebarNewProject = function() {
+  const agentId = state.activeAgentId;
+  if (!agentId) return;
+  // Open config modal on the projects tab to use existing create form
+  if (typeof openConfigModal === 'function') {
+    openConfigModal(agentId);
+    setTimeout(() => { const tab = document.querySelector('#config-tabs [data-tab="projects"]'); if (tab) tab.click(); }, 100);
+  }
+};
+
+window.sidebarOpenProjectSettings = function(agentId, projectName) {
+  if (typeof openConfigModal === 'function') {
+    openConfigModal(agentId);
+    // After modal opens, navigate to projects tab then project detail
+    setTimeout(() => {
+      const tab = document.querySelector('#config-tabs [data-tab="projects"]');
+      if (tab) tab.click();
+      setTimeout(() => {
+        if (typeof openProjectDetail === 'function') {
+          openProjectDetail(agentId, projectName);
+        }
+      }, 200);
+    }, 100);
+  }
+};
+
+window.archiveProject = async function(agentId, projectName, action) {
+  try {
+    const newStatus = action === 'archive' ? 'archived' : 'active';
+    await API.put(`/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(projectName)}`, { status: newStatus });
+    if (action === 'archive' && state.currentProject === projectName) {
+      state.currentProject = null;
+    }
+    showToast(`Project "${projectName}" ${action === 'archive' ? 'archived' : 'unarchived'}`);
+    await loadAgentProjects(agentId);
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
 };
 
 window.newProjectChat = function(projectName) {
@@ -2864,6 +3206,7 @@ function updateChatArea() {
     // No agent selected
     dom.chatTopBar.style.display = 'none';
     dom.sessionBar.style.display = 'none';
+    dom.projectContextBar.style.display = 'none';
     dom.chatInputArea.style.display = 'none';
     dom.chatMessages.innerHTML = '<div class="flex items-center justify-center h-full text-text-muted text-sm font-body">Select an agent to start chatting</div>';
     updateStatusBar();
@@ -2877,10 +3220,27 @@ function updateChatArea() {
   const agentObj = state.agents.find(a => getAgentName(a) === chat.agent);
   const avatarId = getAgentAvatar(agentObj || {id: chat.agent});
   const chatDisplayName = agentObj ? getAgentDisplayName(agentObj) : '';
-  const projectBadge = state.currentProject
-    ? `<span class="text-[11px] font-medium px-2 py-0.5 rounded-md ml-1" style="background:rgba(255,123,0,0.1);color:var(--color-accent);border:1px solid rgba(255,123,0,0.2)">${esc(state.currentProject)}</span>`
-    : '';
-  dom.chatAgentName.innerHTML = `${renderAvatar(avatarId, 22)} <span>${esc(chatDisplayName || chat.agent)}</span>${projectBadge}`;
+  dom.chatAgentName.innerHTML = `${renderAvatar(avatarId, 22)} <span>${esc(chatDisplayName || chat.agent)}</span>`;
+
+  // Project context bar
+  if (state.currentProject) {
+    const agentId = state.activeAgentId;
+    const projects = state.agentProjects[agentId] || [];
+    const proj = projects.find(p => p.name === state.currentProject);
+    const pIcon = proj?.icon || 'folder';
+    const pDesc = proj?.description || '';
+    const docCount = (proj?.chunks || 0) + (proj?.memories || 0);
+    dom.projectContextBar.style.display = '';
+    dom.projectContextBar.innerHTML = `
+      <span class="project-ctx-icon">${renderProjectIcon(pIcon, 16)}</span>
+      <span class="project-ctx-name">${esc(state.currentProject)}</span>
+      ${pDesc ? `<span class="project-ctx-desc">${esc(pDesc)}</span>` : ''}
+      <span class="project-ctx-stats">${docCount} docs</span>
+      <button class="project-ctx-settings" onclick="sidebarOpenProjectSettings('${esc(agentId)}','${esc(state.currentProject)}')" title="Project Settings">&#9881;</button>
+    `;
+  } else {
+    dom.projectContextBar.style.display = 'none';
+  }
 
   // Set model selector
   if (chat.model) {

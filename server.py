@@ -267,7 +267,9 @@ class ChatDB:
                 q += " AND s.agent_id = ?"
                 params.append(agent_id)
             if status:
-                if status == 'active':
+                if status == 'all':
+                    pass  # No filter — return all statuses
+                elif status == 'active':
                     # Include incognito sessions alongside active ones
                     q += " AND s.status IN ('active', 'incognito')"
                 else:
