@@ -2911,16 +2911,22 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"error": str(e)}, 500)
 
     def _handle_memory_summary_get(self, path):
-        """GET /v1/agents/<id>/memory-summary — get memory summary content and config."""
+        """GET /v1/agents/<id>/memory-summary — get memory summary content, config, and relationship discovery status."""
         parts = path.split("/")
         agent_id = parts[3]
         try:
             summary = engine.get_memory_summary(agent_id)
             config = engine._get_memory_summary_config(agent_id)
+            rd_config = engine._get_relationship_discovery_config(agent_id)
+            rd_stats = engine.get_graph_stats(agent_id) if hasattr(engine, 'get_graph_stats') else {}
             self._send_json({
                 "agent": agent_id,
                 "summary": summary or "",
                 "config": config,
+                "relationship_discovery": {
+                    "config": rd_config,
+                    "stats": rd_stats,
+                },
             })
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
@@ -2946,6 +2952,24 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         elif action == "refresh":
             engine.trigger_memory_summary_refresh(agent_id)
             self._send_json({"status": "refresh_scheduled", "agent": agent_id})
+        elif action == "discover":
+            engine.trigger_relationship_discovery(agent_id)
+            self._send_json({"status": "discovery_scheduled", "agent": agent_id})
+        elif action == "toggle_discovery":
+            enabled = body.get("enabled", True)
+            # Update agent.json
+            agent_cfg = engine.AgentConfig(agent_id)
+            cfg = agent_cfg.config
+            rd = cfg.get("relationship_discovery", {})
+            if not isinstance(rd, dict):
+                rd = {}
+            rd["enabled"] = bool(enabled)
+            cfg["relationship_discovery"] = rd
+            cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
+            with open(cfg_path, "w") as f:
+                json.dump(cfg, f, indent=2)
+            engine.ensure_relationship_discovery_schedules()
+            self._send_json({"status": "updated", "enabled": bool(enabled), "agent": agent_id})
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)
 

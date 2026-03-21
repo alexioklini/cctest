@@ -4027,9 +4027,9 @@ def _record_recall_cooccurrence(result_files: list[str], agent_id: str, base_dir
 # --- Mechanism 1: LLM-based Relationship Discovery ---
 
 RELATIONSHIP_DISCOVERY_DEFAULTS = {
-    "enabled": False,
+    "enabled": True,
     "frequency": "every 24h",
-    "start_time": "04:00",
+    "start_time": "04:15",  # 15 min after memory summary default (03:00)
 }
 
 
@@ -5422,6 +5422,15 @@ class Scheduler:
         self.mark_executed(schedule_id, name, agent_id, task, status, result_text,
                            started_at=run_info.get("started_at"),
                            tool_calls=run_info.get("tool_calls", 0))
+
+        # Chain relationship discovery after memory summary completes
+        if name.startswith("_memory_summary_") and status == "success":
+            rd_cfg = _get_relationship_discovery_config(agent_id)
+            if rd_cfg.get("enabled"):
+                try:
+                    trigger_relationship_discovery(agent_id)
+                except Exception:
+                    pass
 
         # Fire notification hook for task completion/failure
         if _notification_hook:

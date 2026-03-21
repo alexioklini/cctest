@@ -3988,6 +3988,10 @@ variables:
       const cfg = res.config || {};
       const isEnabled = cfg.enabled !== false;
       const isPaused = cfg.paused || false;
+      const rd = res.relationship_discovery || {};
+      const rdCfg = rd.config || {};
+      const rdEnabled = rdCfg.enabled !== false;
+      const rdStats = rd.stats || {};
 
       el.innerHTML = `
         <div class="space-y-5">
@@ -4019,6 +4023,25 @@ variables:
             <textarea id="memory-summary-editor" class="w-full bg-surface-light border border-border rounded-xl px-5 py-4 text-sm text-text-primary mono focus:border-accent transition-colors" rows="16" placeholder="No memory summary generated yet. Click 'Refresh Now' to generate one.">${esc(summary)}</textarea>
           </div>
           <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="memorySummarySave('${esc(agentName)}')">Save Changes</button>
+
+          <!-- Relationship Discovery -->
+          <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--color-border)">
+            <h3 class="section-header text-sm mb-2">Relationship Discovery</h3>
+            <div class="text-[11px] text-text-muted mb-3">
+              Automatically discovers connections between memories using LLM analysis, entity extraction, and co-recall tracking. Runs after each memory summary update.
+            </div>
+            <div class="flex items-center gap-3 flex-wrap">
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full ${rdEnabled ? 'bg-success' : 'bg-error'}"></span>
+                <span class="text-xs text-text-secondary">${rdEnabled ? 'Enabled' : 'Disabled'}</span>
+              </div>
+              <span class="text-[10px] text-text-muted mono">${rdStats.total_nodes || 0} nodes · ${rdStats.total_edges || 0} edges · ${rdStats.auto_discovered_edges || 0} auto-discovered · ${rdStats.entity_count || 0} entities</span>
+              <div class="flex gap-2 ml-auto">
+                <button class="btn-secondary text-xs px-3 py-1.5 rounded-lg" onclick="memorySummaryAction('${esc(agentName)}','discover')" title="Run relationship discovery now">Discover Now</button>
+                <button class="btn-secondary text-xs px-3 py-1.5 rounded-lg" onclick="toggleRelationshipDiscovery('${esc(agentName)}',${!rdEnabled})">${rdEnabled ? 'Disable' : 'Enable'}</button>
+              </div>
+            </div>
+          </div>
         </div>`;
     } catch (e) {
       el.innerHTML = `<div class="text-error text-sm">Error loading memory summary: ${esc(e.message)}</div>`;
@@ -4035,11 +4058,22 @@ window.memorySummaryAction = async function(agentName, action) {
   if (action === 'reset' && !confirm("Permanently delete this agent's memory summary? This cannot be undone.")) return;
   try {
     await API.post(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`, { action });
-    showToast(action === 'reset' ? 'Memory summary reset' : 'Memory summary refresh scheduled');
+    const msgs = {reset: 'Memory summary reset', refresh: 'Memory summary refresh scheduled', discover: 'Relationship discovery started'};
+    showToast(msgs[action] || action);
     if (action === 'reset') {
       const editor = document.getElementById('memory-summary-editor');
       if (editor) editor.value = '';
     }
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+window.toggleRelationshipDiscovery = async function(agentName, enabled) {
+  try {
+    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`, { action: 'toggle_discovery', enabled });
+    showToast(`Relationship discovery ${enabled ? 'enabled' : 'disabled'}`);
+    loadConfigTabContent(agentName, 'memory');
   } catch (e) {
     showToast(`Error: ${e.message}`, true);
   }
