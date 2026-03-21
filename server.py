@@ -594,6 +594,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         # --- Channels GET routes ---
         elif path == "/v1/channels":
             self._handle_channels_list()
+        # --- Tools config GET routes ---
+        elif path == "/v1/tools/config":
+            self._handle_tools_config_get()
+        elif path == "/v1/tools/status":
+            self._handle_tools_status()
         elif path == "/" or path.startswith("/web/") or path.endswith((".html", ".css", ".js", ".ico")):
             self._serve_static(path)
         else:
@@ -698,6 +703,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_node_result()
         elif path == "/v1/nodes/execute":
             self._handle_node_execute()
+        # --- Tools config POST routes ---
+        elif path == "/v1/tools/config":
+            self._handle_tools_config_save()
         # --- Channels POST routes ---
         elif path == "/v1/channels":
             self._handle_channels_action()
@@ -3499,6 +3507,45 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             return
         self._send_json({"status": "saved", "default_model": model,
                          "default_provider": provider_name or ""})
+
+    # --- Tools config handlers ---
+
+    def _handle_tools_config_get(self):
+        """GET /v1/tools/config — return tool config with sensitive values masked."""
+        cfg = engine.get_tool_config()
+        # Mask sensitive values
+        masked = {}
+        for tool_name, tool_cfg in cfg.items():
+            masked[tool_name] = dict(tool_cfg)
+            for key in ("api_key", "app_password"):
+                val = masked[tool_name].get(key, "")
+                if val and len(val) > 4:
+                    masked[tool_name][key] = "*" * (len(val) - 4) + val[-4:]
+        self._send_json(masked)
+
+    def _handle_tools_status(self):
+        """GET /v1/tools/status — return tool availability and status."""
+        self._send_json(engine.get_tool_status())
+
+    def _handle_tools_config_save(self):
+        """POST /v1/tools/config — save tool configuration."""
+        body = self._read_json()
+        if not body:
+            self._send_json({"error": "No configuration provided"}, 400)
+            return
+        # Don't overwrite sensitive fields if masked value is sent
+        existing = engine.get_tool_config()
+        for tool_name, tool_cfg in body.items():
+            for key in ("api_key", "app_password"):
+                val = tool_cfg.get(key, "")
+                if val and val.startswith("*"):
+                    # Masked value — keep existing
+                    tool_cfg[key] = existing.get(tool_name, {}).get(key, "")
+        result = engine.save_tool_config(body)
+        if "error" in result:
+            self._send_json(result, 500)
+        else:
+            self._send_json({"status": "saved", "config": result})
 
     def _handle_restart(self):
         """POST /v1/restart — restart the server process."""

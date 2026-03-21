@@ -5420,7 +5420,7 @@ function openSettingsModal() {
   modal.id = 'settings-modal';
   modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
   const stabs = [
-    {group: 'System', items: [{id:'server', label:'Server'}, {id:'qmd', label:'QMD'}, {id:'providers', label:'Providers'}, {id:'models', label:'Models'}]},
+    {group: 'System', items: [{id:'server', label:'Server'}, {id:'qmd', label:'QMD'}, {id:'tools', label:'Tools'}, {id:'providers', label:'Providers'}, {id:'models', label:'Models'}]},
     {group: 'Agents', items: [{id:'teams', label:'Teams'}, {id:'channels', label:'Channels'}, {id:'nodes', label:'Nodes'}, {id:'mcp', label:'MCP'}]},
     {group: 'Monitoring', items: [{id:'costs', label:'Costs'}, {id:'traces', label:'Traces'}, {id:'audit', label:'Audit'}, {id:'notifications', label:'Notifications'}]},
     {group: 'Data', items: [{id:'backup', label:'Backup'}]},
@@ -5466,6 +5466,7 @@ async function loadSettingsTab() {
     else if (_settingsTab === 'channels') await renderChannelsTab(el);
     else if (_settingsTab === 'nodes') await renderNodesTab(el);
     else if (_settingsTab === 'teams') await renderTeamsTab(el);
+    else if (_settingsTab === 'tools') await renderToolsTab(el);
     else if (_settingsTab === 'providers') await renderProvidersTab(el);
     else if (_settingsTab === 'models') await renderModelsTab(el);
     else if (_settingsTab === 'costs') await renderCostsTab(el);
@@ -6040,6 +6041,163 @@ window.telegramAction = async function(action) {
     setTimeout(() => loadSettingsTab(), 500);
   } catch (e) { showToast(e.message, 'error'); }
 };
+
+async function renderToolsTab(el) {
+  const cfg = await API.get('/v1/tools/config');
+  const status = await API.get('/v1/tools/status');
+
+  function maskField(id, fullKey) {
+    return `<div class="flex items-center gap-2">
+      <input id="${id}" type="password" value="${esc(cfg[fullKey.split('.')[0]]?.[fullKey.split('.')[1]] || '')}"
+        class="bg-surface border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary mono flex-1" autocomplete="off">
+      <button class="btn-secondary text-xs px-2 py-1 rounded-lg" onclick="const i=document.getElementById('${id}');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'Show':'Hide'">Show</button>
+    </div>`;
+  }
+
+  function statusBadge(toolName) {
+    const s = status[toolName]?.status || 'not configured';
+    const color = s === 'configured' ? 'success' : s === 'disabled' ? 'text-muted' : 'error';
+    const icon = s === 'configured' ? '\u2713' : s === 'disabled' ? '\u2013' : '\u2717';
+    return `<span class="text-${color} text-xs font-medium">${icon} ${s.charAt(0).toUpperCase() + s.slice(1)}</span>`;
+  }
+
+  function toggleHtml(toolName, label, emoji) {
+    const checked = cfg[toolName]?.enabled !== false ? 'checked' : '';
+    return `<div class="flex items-center justify-between mb-4">
+      <div class="flex items-center gap-2">
+        <span class="text-lg">${emoji}</span>
+        <span class="text-text-primary text-sm font-medium font-display">${label}</span>
+      </div>
+      <label class="relative inline-flex items-center cursor-pointer">
+        <input type="checkbox" id="tool-${toolName}-enabled" ${checked} class="sr-only peer">
+        <div class="w-9 h-5 bg-surface-lighter peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-text-muted after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent peer-checked:after:bg-white"></div>
+      </label>
+    </div>`;
+  }
+
+  const exaCfg = cfg.exa_search || {};
+  const gmailCfg = cfg.gmail || {};
+  const execCfg = cfg.execute_command || {};
+  const wfCfg = cfg.web_fetch || {};
+
+  el.innerHTML = `
+    <!-- Exa Search -->
+    <div class="glass-card p-6">
+      ${toggleHtml('exa_search', 'Exa Search', '\uD83D\uDD0D')}
+      <div class="space-y-3">
+        <div>
+          <label class="text-text-muted text-xs block mb-1">API Key</label>
+          ${maskField('tool-exa-key', 'exa_search.api_key')}
+        </div>
+        <div>
+          <label class="text-text-muted text-xs block mb-1">Default Results Per Query</label>
+          <input id="tool-exa-num" type="number" min="1" max="50" value="${exaCfg.default_num_results || 5}"
+            class="bg-surface border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary mono w-20">
+        </div>
+        <div>${statusBadge('exa_search')}</div>
+      </div>
+    </div>
+
+    <!-- Gmail -->
+    <div class="glass-card p-6">
+      ${toggleHtml('gmail', 'Gmail', '\uD83D\uDCE7')}
+      <div class="space-y-3">
+        <div>
+          <label class="text-text-muted text-xs block mb-1">Email</label>
+          <input id="tool-gmail-email" type="email" value="${esc(gmailCfg.email || '')}"
+            class="bg-surface border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary mono w-full">
+        </div>
+        <div>
+          <label class="text-text-muted text-xs block mb-1">App Password</label>
+          ${maskField('tool-gmail-pass', 'gmail.app_password')}
+        </div>
+        <div class="flex items-center justify-between">
+          ${statusBadge('gmail')}
+          <a href="https://myaccount.google.com/apppasswords" target="_blank" class="text-accent text-xs hover:underline">Create app password</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Execute Command -->
+    <div class="glass-card p-6">
+      ${toggleHtml('execute_command', 'Execute Command', '\u26A1')}
+      <div class="space-y-3">
+        <div>
+          <label class="text-text-muted text-xs block mb-1">Default Timeout (seconds)</label>
+          <input id="tool-exec-timeout" type="number" min="1" max="600" value="${execCfg.timeout || 120}"
+            class="bg-surface border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary mono w-24">
+        </div>
+        <div>
+          <label class="text-text-muted text-xs block mb-1">Banned Commands (comma-separated)</label>
+          <input id="tool-exec-banned" type="text" value="${esc((execCfg.banned_commands || []).join(', '))}"
+            class="bg-surface border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary mono w-full">
+        </div>
+        <div>${statusBadge('execute_command')}</div>
+      </div>
+    </div>
+
+    <!-- Web Fetch -->
+    <div class="glass-card p-6">
+      ${toggleHtml('web_fetch', 'Web Fetch', '\uD83C\uDF10')}
+      <div class="space-y-3">
+        <div class="flex items-center gap-4">
+          <div>
+            <label class="text-text-muted text-xs block mb-1">Timeout (seconds)</label>
+            <input id="tool-wf-timeout" type="number" min="1" max="120" value="${wfCfg.timeout || 30}"
+              class="bg-surface border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary mono w-24">
+          </div>
+          <div>
+            <label class="text-text-muted text-xs block mb-1">Max Size (MB)</label>
+            <input id="tool-wf-maxsize" type="number" min="1" max="100" value="${wfCfg.max_size_mb || 10}"
+              class="bg-surface border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary mono w-24">
+          </div>
+        </div>
+        <div>${statusBadge('web_fetch')}</div>
+      </div>
+    </div>
+
+    <!-- Save Button -->
+    <div class="flex justify-end mt-2">
+      <button onclick="saveToolsConfig()" class="btn-primary px-6 py-2.5 rounded-xl text-sm font-display font-medium">Save Tools Config</button>
+    </div>
+  `;
+}
+
+async function saveToolsConfig() {
+  const bannedRaw = document.getElementById('tool-exec-banned')?.value || '';
+  const banned = bannedRaw.split(',').map(s => s.trim()).filter(Boolean);
+
+  const cfg = {
+    exa_search: {
+      enabled: document.getElementById('tool-exa_search-enabled')?.checked ?? true,
+      api_key: document.getElementById('tool-exa-key')?.value || '',
+      default_num_results: parseInt(document.getElementById('tool-exa-num')?.value) || 5,
+    },
+    gmail: {
+      enabled: document.getElementById('tool-gmail-enabled')?.checked ?? true,
+      email: document.getElementById('tool-gmail-email')?.value || '',
+      app_password: document.getElementById('tool-gmail-pass')?.value || '',
+    },
+    execute_command: {
+      enabled: document.getElementById('tool-execute_command-enabled')?.checked ?? true,
+      timeout: parseInt(document.getElementById('tool-exec-timeout')?.value) || 120,
+      banned_commands: banned,
+    },
+    web_fetch: {
+      enabled: document.getElementById('tool-web_fetch-enabled')?.checked ?? true,
+      timeout: parseInt(document.getElementById('tool-wf-timeout')?.value) || 30,
+      max_size_mb: parseInt(document.getElementById('tool-wf-maxsize')?.value) || 10,
+    },
+  };
+
+  try {
+    await API.post('/v1/tools/config', cfg);
+    showToast('Tools configuration saved');
+    switchSettingsTab('tools');
+  } catch (e) {
+    showToast('Failed to save: ' + e.message, 'error');
+  }
+}
 
 async function renderProvidersTab(el) {
   const providersRes = await API.getProviders();

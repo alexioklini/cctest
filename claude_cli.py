@@ -857,7 +857,15 @@ def tool_execute_command(args: dict) -> str:
         return node_result
     command = args.get("command", "")
     cwd = args.get("cwd")
-    timeout = args.get("timeout", 15)
+    # Read default timeout from tools_config (per-call timeout still overrides)
+    _exec_cfg = get_tool_config().get("execute_command", {})
+    default_timeout = _exec_cfg.get("timeout", 15)
+    timeout = args.get("timeout", default_timeout)
+    # Check banned commands
+    banned = _exec_cfg.get("banned_commands", [])
+    for b in banned:
+        if b and b in command:
+            return _err(f"execute_command: command contains banned pattern '{b}'")
     try:
         if cwd:
             cwd = os.path.expanduser(cwd)
@@ -920,7 +928,12 @@ from email.header import decode_header as _decode_header
 
 
 def _gmail_config():
-    """Load Gmail credentials from gmail.json in main agent dir."""
+    """Load Gmail credentials from tools_config, falling back to gmail.json."""
+    # Check tools_config first
+    tcfg = get_tool_config().get("gmail", {})
+    if tcfg.get("email") and tcfg.get("app_password"):
+        return {"email": tcfg["email"], "app_password": tcfg["app_password"]}
+    # Fall back to gmail.json
     config_path = os.path.join(AGENTS_DIR, "main", "gmail.json")
     if not os.path.exists(config_path):
         return None
@@ -1165,6 +1178,10 @@ def tool_web_fetch(args: dict) -> str:
     body = args.get("body")
     max_length = args.get("max_length", 50000)
     force_fresh = args.get("force_fresh", False)
+    # Read timeout and max_size from tools_config
+    _wf_cfg = get_tool_config().get("web_fetch", {})
+    _wf_timeout = _wf_cfg.get("timeout", 30)
+    _wf_max_size_mb = _wf_cfg.get("max_size_mb", 10)
 
     # Check cache for GET requests without body
     cache_key = url if method == "GET" and not body else None
@@ -1182,8 +1199,8 @@ def tool_web_fetch(args: dict) -> str:
         req_headers.update(headers)
         data = body.encode("utf-8") if body else None
         req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            raw = resp.read()
+        with urllib.request.urlopen(req, timeout=_wf_timeout) as resp:
+            raw = resp.read(_wf_max_size_mb * 1024 * 1024)
             encoding = resp.headers.get("Content-Encoding", "")
             if encoding == "gzip":
                 import gzip
@@ -1218,7 +1235,9 @@ def exa_search(query: str, num_results: int = 5, category: str | None = None,
             cached["cached"] = True
             return json.dumps(cached, indent=1)
 
-    api_key = os.environ.get("EXA_API_KEY", "97dbd594-f7b4-4866-9a8e-6a297e3df576")
+    # Read API key from tools_config, fall back to env var, then hardcoded default
+    _tcfg = get_tool_config().get("exa_search", {})
+    api_key = _tcfg.get("api_key") or os.environ.get("EXA_API_KEY", "97dbd594-f7b4-4866-9a8e-6a297e3df576")
 
     body = {
         "query": query,
@@ -1660,6 +1679,85 @@ _mcp_manager: MCPManager | None = None
 # --- Agent System ---
 
 AGENTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agents")
+
+# --- Tool Configuration ---
+
+_TOOLS_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools_config.json")
+
+_TOOLS_CONFIG_DEFAULTS = {
+    "exa_search": {
+        "enabled": True,
+        "api_key": "",
+        "default_num_results": 5,
+    },
+    "gmail": {
+        "enabled": True,
+        "email": "",
+        "app_password": "",
+    },
+    "execute_command": {
+        "enabled": True,
+        "timeout": 120,
+        "banned_commands": ["rm -rf /", "mkfs", "dd if="],
+    },
+    "web_fetch": {
+        "enabled": True,
+        "timeout": 30,
+        "max_size_mb": 10,
+    },
+}
+
+
+def get_tool_config() -> dict:
+    """Load tool configuration from tools_config.json, falling back to defaults."""
+    cfg = {}
+    if os.path.exists(_TOOLS_CONFIG_PATH):
+        try:
+            with open(_TOOLS_CONFIG_PATH) as f:
+                cfg = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            cfg = {}
+    # Merge with defaults (defaults provide missing keys)
+    merged = {}
+    for tool_name, defaults in _TOOLS_CONFIG_DEFAULTS.items():
+        tool_cfg = cfg.get(tool_name, {})
+        merged[tool_name] = {**defaults, **tool_cfg}
+    return merged
+
+
+def save_tool_config(cfg: dict) -> dict:
+    """Save tool configuration to tools_config.json. Returns saved config."""
+    # Merge with existing to preserve fields not in the incoming payload
+    existing = get_tool_config()
+    for tool_name, tool_cfg in cfg.items():
+        if tool_name in existing:
+            existing[tool_name].update(tool_cfg)
+        else:
+            existing[tool_name] = tool_cfg
+    try:
+        with open(_TOOLS_CONFIG_PATH, "w") as f:
+            json.dump(existing, f, indent=2)
+    except OSError as e:
+        return {"error": str(e)}
+    return existing
+
+
+def get_tool_status() -> dict:
+    """Return status of each configurable tool."""
+    cfg = get_tool_config()
+    status = {}
+    for tool_name, tool_cfg in cfg.items():
+        enabled = tool_cfg.get("enabled", True)
+        if not enabled:
+            s = "disabled"
+        elif tool_name == "exa_search":
+            s = "configured" if tool_cfg.get("api_key") else "not configured"
+        elif tool_name == "gmail":
+            s = "configured" if (tool_cfg.get("email") and tool_cfg.get("app_password")) else "not configured"
+        else:
+            s = "configured"
+        status[tool_name] = {"enabled": enabled, "status": s, "config": tool_cfg}
+    return status
 
 
 class AgentConfig:

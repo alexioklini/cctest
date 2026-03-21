@@ -215,6 +215,7 @@ SLASH_COMMANDS = {
     "/models":      "List & select models",
     # Tools
     "/tools":       "Toggle tool call display",
+    "/tools config": "Show tool configuration status",
     # Schedule
     "/schedule":    "Manage scheduled tasks",
     # Teams
@@ -445,6 +446,7 @@ def print_help():
 
     _section("Other", [
         ("/tools", "Toggle tool call display"),
+        ("/tools config", "Show tool configuration status"),
         ("/help", "Show this help"),
     ])
 
@@ -531,6 +533,56 @@ def select_inline(items: list[str], labels: list[str] | None = None,
 
 
 # --- Command handlers ---
+
+def _handle_tools_config(client: BrainAgentClient):
+    """Handle /tools config — show tool configuration status."""
+    try:
+        status = client._get("/v1/tools/status")
+    except Exception as e:
+        console.print(f"  [error]{e}[/]")
+        return
+
+    t = Table(title="Tool Configuration", show_header=True, header_style="bold cyan",
+              border_style="dim", pad_edge=False)
+    t.add_column("Tool", style="bold")
+    t.add_column("Enabled", justify="center")
+    t.add_column("Status")
+    t.add_column("Details", style="dim")
+
+    tool_labels = {
+        "exa_search": "Exa Search",
+        "gmail": "Gmail",
+        "execute_command": "Execute Command",
+        "web_fetch": "Web Fetch",
+    }
+
+    for tool_name, info in status.items():
+        enabled = "[green]Yes[/]" if info.get("enabled") else "[red]No[/]"
+        s = info.get("status", "unknown")
+        status_str = f"[green]{s}[/]" if s == "configured" else f"[yellow]{s}[/]" if s == "not configured" else f"[dim]{s}[/]"
+        cfg = info.get("config", {})
+        details = []
+        if tool_name == "exa_search":
+            details.append(f"results={cfg.get('default_num_results', 5)}")
+            if cfg.get("api_key"):
+                details.append("key=****" + cfg["api_key"][-4:] if len(cfg["api_key"]) > 4 else "key=set")
+        elif tool_name == "gmail":
+            if cfg.get("email"):
+                details.append(f"email={cfg['email']}")
+        elif tool_name == "execute_command":
+            details.append(f"timeout={cfg.get('timeout', 120)}s")
+            banned = cfg.get("banned_commands", [])
+            if banned:
+                details.append(f"banned={len(banned)}")
+        elif tool_name == "web_fetch":
+            details.append(f"timeout={cfg.get('timeout', 30)}s")
+            details.append(f"max={cfg.get('max_size_mb', 10)}MB")
+        label = tool_labels.get(tool_name, tool_name)
+        t.add_row(label, enabled, status_str, ", ".join(details))
+
+    console.print(t)
+    console.print("  [dim]Edit via Web UI Settings > Tools, or edit tools_config.json directly[/]")
+
 
 def _handle_sessions(client: BrainAgentClient, current_agent: str) -> tuple[str | None, int | None]:
     """Handle /sessions — returns (new_session_id, new_token_count) or (None, None)."""
@@ -2193,6 +2245,10 @@ def run_interactive(args):
                 console.rule(style="dim")
                 console.print("  [dim]New conversation[/]")
                 console.rule(style="dim")
+                continue
+
+            if low == "/tools config":
+                _handle_tools_config(client)
                 continue
 
             if low == "/tools":
