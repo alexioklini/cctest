@@ -3154,19 +3154,21 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
         provider = self._resolve_provider(refine_model)
         system_prompt = (
-            "You are a prompt rewriter. Your ONLY job is to output the improved version of the user's text. "
-            "Rules:\n"
-            "- Output ONLY the rewritten text, nothing else\n"
-            "- No headings, no bullet points, no explanations, no analysis, no alternatives\n"
-            "- No markdown formatting, no quotes around the output\n"
-            "- Do NOT start with 'Here is' or 'Improved:' or any prefix\n"
+            "You are a PROMPT REWRITER for an AI chat system. "
+            "The user will give you a draft prompt/message they want to send to an AI assistant. "
+            "Your job is to rewrite it into a better, clearer version of the SAME request. "
+            "CRITICAL RULES:\n"
+            "- Output ONLY the rewritten prompt, nothing else\n"
+            "- Do NOT answer the question or fulfill the request — REWRITE it\n"
+            "- Do NOT add explanations, analysis, alternatives, or commentary\n"
+            "- Do NOT use markdown headings, bullet points, or formatting\n"
+            "- The output replaces the user's input in a chat box — it must be a clean prompt\n"
             "- Fix grammar, spelling, punctuation\n"
-            "- Make it clearer and more specific if possible\n"
-            "- Keep the same intent, tone, and language\n"
-            "- If the input is already good, return it unchanged\n"
-            "- The output must be usable as-is — just the corrected text"
+            "- Make the request clearer and more specific\n"
+            "- Keep the same intent and language\n"
+            "Example: Input: 'whats weather vienna' → Output: 'What is the weather like in Vienna today?'"
         )
-        messages = [{"role": "user", "content": text}]
+        messages = [{"role": "user", "content": f"Rewrite this prompt (output ONLY the rewritten version):\n\n{text}"}]
 
         try:
             result = engine.send_message(
