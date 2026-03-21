@@ -1743,17 +1743,32 @@ def save_tool_config(cfg: dict) -> dict:
 
 
 def get_tool_status() -> dict:
-    """Return status of each configurable tool."""
+    """Return status of each configurable tool, checking all fallback sources."""
     cfg = get_tool_config()
     status = {}
     for tool_name, tool_cfg in cfg.items():
+        tool_cfg = dict(tool_cfg)  # copy to avoid mutating defaults
         enabled = tool_cfg.get("enabled", True)
         if not enabled:
             s = "disabled"
         elif tool_name == "exa_search":
-            s = "configured" if tool_cfg.get("api_key") else "not configured"
+            exa_key = tool_cfg.get("api_key") or os.environ.get("EXA_API_KEY", "")
+            # Check hardcoded fallback in tool function
+            if not exa_key:
+                exa_key = "97dbd594-f7b4-4866-9a8e-6a297e3df576"  # built-in default
+                tool_cfg["_source"] = "built-in default"
+            elif not tool_cfg.get("api_key") and os.environ.get("EXA_API_KEY"):
+                tool_cfg["_source"] = "environment variable"
+            s = "configured" if exa_key else "not configured"
         elif tool_name == "gmail":
-            s = "configured" if (tool_cfg.get("email") and tool_cfg.get("app_password")) else "not configured"
+            has_gmail = bool(tool_cfg.get("email") and tool_cfg.get("app_password"))
+            if not has_gmail:
+                gmail_fb = _gmail_config()
+                if gmail_fb and gmail_fb.get("email") and gmail_fb.get("app_password"):
+                    has_gmail = True
+                    tool_cfg["email"] = gmail_fb["email"]
+                    tool_cfg["_source"] = "gmail.json"
+            s = "configured" if has_gmail else "not configured"
         else:
             s = "configured"
         status[tool_name] = {"enabled": enabled, "status": s, "config": tool_cfg}
