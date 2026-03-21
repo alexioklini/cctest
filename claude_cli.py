@@ -370,7 +370,8 @@ TOOL_DEFINITIONS = [
         "description": (
             "Search and recall stored memories. Use this when you need context from previous "
             "conversations, user preferences, project decisions, or any previously stored information. "
-            "Returns matching memories ranked by relevance."
+            "Returns matching memories ranked by relevance, plus related memories discovered via "
+            "the knowledge graph (automatically follows relationship links for richer context)."
         ),
         "input_schema": {
             "type": "object",
@@ -3394,9 +3395,10 @@ def tool_memory_recall(args: dict) -> str:
             for r in agent_results:
                 r["source_scope"] = "agent"
             results = proj_results + agent_results
-            # Graph mode: follow related links for 1-2 hops
-            if mode == "graph":
-                results = _graph_expand_results(results, proj_dir, ingest_dir)
+            # Always expand via graph relationships (follow related links 1 hop)
+            if results:
+                results = _graph_expand_results(results, proj_dir, ingest_dir,
+                                                max_hops=2 if mode == "graph" else 1)
             for r in results:
                 if r.get("content") and len(r["content"]) > 4000:
                     r["content"] = r["content"][:4000] + "..."
@@ -3407,12 +3409,13 @@ def tool_memory_recall(args: dict) -> str:
         return _ok({"query": "", "results": results, "count": len(results)})
     results = ms.recall(query, limit, mem_type)
 
-    # Graph mode: follow related links
-    if mode == "graph" and results:
+    # Always expand via graph relationships (1 hop default, 2 hops for explicit graph mode)
+    if results:
         agent_id = ms.agent_id
         agent_dir = os.path.join(AGENTS_DIR, agent_id)
         ingest_dir = os.path.join(agent_dir, "ingested")
-        results = _graph_expand_results(results, agent_dir, ingest_dir)
+        results = _graph_expand_results(results, agent_dir, ingest_dir,
+                                        max_hops=2 if mode == "graph" else 1)
 
     for r in results:
         if r.get("content") and len(r["content"]) > 4000:
@@ -3489,10 +3492,15 @@ def tool_memory_shared(args: dict) -> str:
             results = shared_store.list_all(mem_type)
         else:
             results = shared_store.recall(query, limit, mem_type)
+            # Graph expansion on shared memory too
+            if results:
+                shared_dir = os.path.join(AGENTS_DIR, target_agent.agent_id)
+                shared_ingest = os.path.join(shared_dir, "ingested")
+                results = _graph_expand_results(results, shared_dir, shared_ingest, max_hops=1)
             for r in results:
-                if r.get("content") and len(r["content"]) > 1000:
-                    r["content"] = r["content"][:1000] + "..."
-        return _ok({"query": query, "source": source_label, "results": results, "count": len(results)})
+                if r.get("content") and len(r["content"]) > 4000:
+                    r["content"] = r["content"][:4000] + "..."
+        return _ok({"query": query, "source": source_label, "results": results[:limit], "count": len(results[:limit])})
 
 
 def tool_use_skill(args: dict) -> str:
