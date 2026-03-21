@@ -8567,16 +8567,20 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
         if explicit_fallbacks:
             fallback_models = list(explicit_fallbacks)
         else:
-            # Auto-build from capabilities
+            # Auto-build fallback order: same provider first, then by priority
+            failed_provider = model_cfg.get("provider", "")
             failed_caps = set(model_cfg.get("capabilities", []))
             candidates = []
             for mid, cfg in _models_config.items():
                 if mid == model or not cfg.get("enabled", True):
                     continue
+                same_provider = 1 if cfg.get("provider") == failed_provider else 0
                 matching_caps = len(failed_caps & set(cfg.get("capabilities", [])))
-                candidates.append((mid, matching_caps, cfg.get("priority", 0)))
-            candidates.sort(key=lambda x: (x[1], x[2]), reverse=True)
-            fallback_models = [mid for mid, _, _ in candidates]
+                priority = cfg.get("priority", 0)
+                # Sort key: same provider first, then capability match, then priority
+                candidates.append((mid, same_provider, matching_caps, priority))
+            candidates.sort(key=lambda x: (x[1], x[2], x[3]), reverse=True)
+            fallback_models = [mid for mid, _, _, _ in candidates]
     else:
         fallback_models = get_available_models(api_key, base_url, api_type)
 
