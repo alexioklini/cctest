@@ -8207,6 +8207,7 @@ async function renderChannelsTab(el) {
                   ? `<button onclick="channelLifecycle('${esc(ch.channel_id)}','stop')" class="btn-secondary text-xs px-3 py-1 rounded-lg">Stop</button>
                      <button onclick="channelLifecycle('${esc(ch.channel_id)}','restart')" class="btn-secondary text-xs px-3 py-1 rounded-lg">Restart</button>`
                   : `<button onclick="channelLifecycle('${esc(ch.channel_id)}','start')" class="btn-primary text-xs px-3 py-1 rounded-lg">Start</button>`}
+                <button onclick="editChannel('${esc(ch.channel_id)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg">Edit</button>
                 <button onclick="channelAction('remove','${esc(ch.channel_id)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg text-error">Remove</button>
               </div>
             </div>
@@ -8269,6 +8270,73 @@ window.createChannel = async function() {
       agent_routing: { default: agent }, enabled: true,
     });
     showToast('Telegram bot created — click Start to activate');
+    document.querySelector('.modal-overlay')?.remove();
+    setTimeout(() => loadSettingsTab(), 500);
+  } catch(e) { showToast(e.message, 'error'); }
+};
+
+window.editChannel = async function(chId) {
+  // Get current channel config from the channels list
+  try {
+    const res = await API.get('/v1/channels');
+    const ch = (res.channels || []).find(c => c.channel_id === chId);
+    if (!ch) { showToast('Channel not found'); return; }
+    const agents = state.agents || [];
+    const currentAgent = (ch.agent_routing || {}).default || 'main';
+    const currentToken = (ch.credentials || {}).bot_token || '';
+    const currentUsers = (ch.credentials || {}).allowed_users || [];
+    const currentName = ch.name || chId;
+    const wasRunning = ch.running;
+
+    const d = document.createElement('div');
+    d.className = 'modal-overlay'; d.onclick = e => { if(e.target===d)d.remove(); };
+    d.innerHTML = `<div class="modal-content p-6" style="max-width:480px">
+      <h3 class="font-display font-semibold mb-4 text-text-primary">Edit: ${esc(currentName)}</h3>
+      ${wasRunning ? '<div class="text-xs text-yellow-400 mb-3">⚠ Bot is running — changes will take effect after restart.</div>' : ''}
+      <label class="text-xs text-text-secondary block mb-1">Bot Name</label>
+      <input id="edit-ch-name" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3" value="${esc(currentName)}">
+      <label class="text-xs text-text-secondary block mb-1">Bot Token</label>
+      <input id="edit-ch-token" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3 mono" value="${esc(currentToken)}">
+      <label class="text-xs text-text-secondary block mb-1">Bound Agent</label>
+      <select id="edit-ch-agent" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3">
+        ${agents.map(a => {
+          const name = typeof a === 'string' ? a : (a.id || a.name || '');
+          const display = typeof a === 'object' ? (a.display_name || name) : name;
+          const model = typeof a === 'object' ? (a.model || 'default') : 'default';
+          return '<option value="' + esc(name) + '" ' + (name === currentAgent ? 'selected' : '') + '>' + esc(display) + ' (' + esc(name) + ') — model: ' + esc(model) + '</option>';
+        }).join('')}
+      </select>
+      <label class="text-xs text-text-secondary block mb-1">Allowed User IDs <span class="text-text-muted">(comma-separated, empty = all)</span></label>
+      <input id="edit-ch-users" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3 mono" value="${currentUsers.join(', ')}">
+      <div class="flex justify-end gap-2 mt-4">
+        <button onclick="this.closest('.modal-overlay').remove()" class="btn-secondary px-4 py-2 rounded-lg text-sm">Cancel</button>
+        <button onclick="saveChannelEdit('${esc(chId)}',${wasRunning})" class="btn-primary px-4 py-2 rounded-lg text-sm">Save</button>
+      </div>
+    </div>`;
+    document.body.appendChild(d);
+  } catch(e) { showToast(e.message, 'error'); }
+};
+
+window.saveChannelEdit = async function(chId, wasRunning) {
+  const name = document.getElementById('edit-ch-name').value.trim();
+  const token = document.getElementById('edit-ch-token').value.trim();
+  const agent = document.getElementById('edit-ch-agent').value;
+  const usersStr = (document.getElementById('edit-ch-users')?.value || '').trim();
+  if (!token) { showToast('Bot token required'); return; }
+  const allowed_users = usersStr ? usersStr.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n)) : null;
+  try {
+    await API.post('/v1/channels', {
+      action: 'update', id: chId, name,
+      credentials: { bot_token: token, allowed_users },
+      agent_routing: { default: agent },
+    });
+    // Auto-restart if was running
+    if (wasRunning) {
+      await API.post(`/v1/channels/${encodeURIComponent(chId)}/restart`);
+      showToast('Channel updated and restarted');
+    } else {
+      showToast('Channel updated');
+    }
     document.querySelector('.modal-overlay')?.remove();
     setTimeout(() => loadSettingsTab(), 500);
   } catch(e) { showToast(e.message, 'error'); }
