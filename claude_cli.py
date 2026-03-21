@@ -640,6 +640,15 @@ def tool_write_file(args: dict) -> str:
             f.write(content)
         size = os.path.getsize(path)
         _maybe_qmd_reindex(path)
+        # Emit file_created event for attachment tracking
+        ecb = getattr(_thread_local, 'event_callback', None)
+        if ecb:
+            ecb("file_created", {
+                "path": path,
+                "name": os.path.basename(path),
+                "size": size,
+                "action": "created",
+            })
         return _ok({"path": path, "size": size, "status": "written"})
     except Exception as e:
         return _err(f"write_file: {e}")
@@ -668,6 +677,15 @@ def tool_edit_file(args: dict) -> str:
         with open(path, "w") as f:
             f.write(new_content)
         _maybe_qmd_reindex(path)
+        # Emit file_created event for attachment tracking
+        ecb = getattr(_thread_local, 'event_callback', None)
+        if ecb:
+            ecb("file_created", {
+                "path": path,
+                "name": os.path.basename(path),
+                "size": os.path.getsize(path),
+                "action": "modified",
+            })
         return _ok({"path": path, "replacements": count if replace_all else 1, "status": "edited"})
     except Exception as e:
         return _err(f"edit_file: {e}")

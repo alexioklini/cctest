@@ -240,6 +240,113 @@ tailwind.config = {
   .tool-chevron { transition: transform 0.2s ease; display: inline-block; }
   .tool-block.open .tool-chevron { transform: rotate(90deg); }
 
+  /* File Attachments */
+  .file-attachments-container {
+    margin-top: 12px;
+    padding: 10px 14px;
+    background: var(--color-surface-light);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    backdrop-filter: blur(8px);
+  }
+  .file-attachments-header {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    margin-bottom: 8px;
+    letter-spacing: 0.02em;
+  }
+  .file-attachments-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 8px;
+  }
+  .file-attachment-card {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: var(--color-base);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .file-attachment-card:hover {
+    border-color: var(--color-accent);
+    background: var(--color-tool-bg);
+  }
+  .file-icon { font-size: 20px; flex-shrink: 0; }
+  .file-info { flex: 1; min-width: 0; }
+  .file-name {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--color-text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .file-size {
+    font-size: 10px;
+    color: var(--color-text-muted);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .file-action-badge {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+  .file-action-badge.created { background: #22c55e22; color: #4ade80; }
+  .file-action-badge.modified { background: #3b82f622; color: #60a5fa; }
+  .file-actions { display: flex; gap: 4px; flex-shrink: 0; }
+  .file-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-light);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+    text-decoration: none;
+  }
+  .file-btn:hover {
+    background: var(--color-accent);
+    color: #fff;
+    border-color: var(--color-accent);
+  }
+  .file-preview-code {
+    margin: 0;
+    padding: 16px;
+    font-size: 12px;
+    line-height: 1.5;
+    overflow: auto;
+    background: var(--color-base) !important;
+  }
+  .file-preview-rendered {
+    padding: 16px;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .file-preview-rendered h1, .file-preview-rendered h2, .file-preview-rendered h3 { margin-top: 1em; }
+  .file-preview-rendered p { margin: 0.5em 0; }
+  .file-preview-rendered code { background: var(--color-surface-light); padding: 2px 5px; border-radius: 3px; font-size: 12px; }
+  .file-preview-truncated {
+    padding: 6px 12px;
+    font-size: 11px;
+    color: var(--color-text-muted);
+    background: var(--color-surface-light);
+    border-bottom: 1px solid var(--color-border);
+    text-align: center;
+  }
+
   /* Buttons */
   .btn-primary {
     background: linear-gradient(135deg, #ff7b00, #ff9a3d);
@@ -3140,11 +3247,14 @@ window.loadSession = async function(sessionId) {
   if (chat && chat.sessionId === sessionId) return;
   try {
     const res = await API.getSessionMessages(sessionId);
-    const messages = (res.messages || []).map(m => ({
-      role: m.role,
-      content: m.content,
-      id: m.id,
-    }));
+    const messages = (res.messages || []).map(m => {
+      const msg = { role: m.role, content: m.content, id: m.id };
+      // Restore file attachments from metadata
+      if (m.metadata && m.metadata.files && m.metadata.files.length > 0) {
+        msg.files = m.metadata.files;
+      }
+      return msg;
+    });
     const entry = state.agentSessions[agentId];
     const sessionInfo = entry?.sessions?.find(s => s.id === sessionId);
     const model = sessionInfo?.model || getDefaultModel(agentId);
@@ -3384,10 +3494,12 @@ function renderMessage(msg, idx, container) {
       </div>
       <div class="response-pulse-bar mt-2"></div>
     </div>` : '';
+    const filesHtml = (msg.files && msg.files.length > 0) ? renderFileAttachments(msg.files) : '';
     div.innerHTML = `<div class="assistant-msg max-w-[90%] pl-4 text-sm text-text-primary">
       ${toolsHtml}
       ${spinnerHtml}
       <div class="msg-content">${content}</div>
+      ${filesHtml}
       ${msg.fallbackNotice ? `<div class="text-[10px] text-warning mt-1 flex items-center gap-1"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>${esc(msg.fallbackNotice)}</div>` : ''}
       ${msg.tokens ? `<div class="text-[10px] text-text-muted mt-2 mono flex items-center gap-1.5">${msg.model ? modelIcon(msg.model) + ' ' + esc(msg.model) + '  ·  ' : ''}<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>${msg.tokens} tokens${msg.cost != null ? '  ·  $' + msg.cost.toFixed(2) : ''}</div>` : ''}
     </div>`;
@@ -3400,6 +3512,96 @@ function renderMessage(msg, idx, container) {
     hljs.highlightElement(block);
   });
 }
+
+function fileTypeIcon(name) {
+  const ext = (name || '').split('.').pop().toLowerCase();
+  const icons = {
+    md: '\u{1F4DD}', py: '\u{1F4BB}', js: '\u{1F4BB}', ts: '\u{1F4BB}', jsx: '\u{1F4BB}', tsx: '\u{1F4BB}',
+    json: '\u{1F4CB}', csv: '\u{1F4CA}', xlsx: '\u{1F4CA}', xls: '\u{1F4CA}',
+    pdf: '\u{1F4D5}', html: '\u{1F310}', htm: '\u{1F310}', txt: '\u{1F4C4}',
+    png: '\u{1F5BC}', jpg: '\u{1F5BC}', jpeg: '\u{1F5BC}', gif: '\u{1F5BC}', svg: '\u{1F5BC}',
+    docx: '\u{1F4C3}', doc: '\u{1F4C3}',
+  };
+  return icons[ext] || '\u{1F4CE}';
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function renderFileAttachments(files) {
+  if (!files || files.length === 0) return '';
+  const cards = files.map(f => {
+    const icon = fileTypeIcon(f.name);
+    const size = formatFileSize(f.size || 0);
+    const actionBadge = f.action === 'modified' ? '<span class="file-action-badge modified">modified</span>' : '<span class="file-action-badge created">new</span>';
+    const pathEnc = encodeURIComponent(f.path);
+    return `<div class="file-attachment-card">
+      <div class="file-icon">${icon}</div>
+      <div class="file-info">
+        <div class="file-name" title="${esc(f.path)}">${esc(f.name)}${actionBadge}</div>
+        <div class="file-size">${size}</div>
+      </div>
+      <div class="file-actions">
+        <button class="file-btn" onclick="previewFile('${pathEnc}')" title="Preview">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+        <a class="file-btn" href="${BASE_URL}/v1/files/download?path=${pathEnc}" download title="Download">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </a>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="file-attachments-container">
+    <div class="file-attachments-header">\u{1F4CE} Attachments</div>
+    <div class="file-attachments-grid">${cards}</div>
+  </div>`;
+}
+
+window.previewFile = async function(encodedPath) {
+  const path = decodeURIComponent(encodedPath);
+  const name = path.split('/').pop();
+  try {
+    const res = await fetch(`${BASE_URL}/v1/files/preview?path=${encodedPath}&lines=100`);
+    const data = await res.json();
+    if (data.error) { showToast(data.error, true); return; }
+    const ext = (name || '').split('.').pop().toLowerCase();
+    let contentHtml;
+    if (ext === 'md') {
+      contentHtml = `<div class="file-preview-rendered">${marked.parse(data.content || '')}</div>`;
+    } else {
+      const codeClass = ['py','js','ts','json','html','css','jsx','tsx','sh','bash','yaml','yml','xml','sql','go','rs','java','c','cpp','h','rb'].includes(ext) ? ` class="language-${ext}"` : '';
+      contentHtml = `<pre class="file-preview-code"><code${codeClass}>${esc(data.content || '')}</code></pre>`;
+    }
+    const truncatedNote = data.truncated ? '<div class="file-preview-truncated">File truncated (showing first 100 lines / 50KB)</div>' : '';
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `<div class="modal-content" style="max-width:750px;max-height:85vh;display:flex;flex-direction:column;">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h3 class="text-base font-display font-semibold text-text-primary">${fileTypeIcon(name)} ${esc(name)}</h3>
+          <div class="text-xs text-text-muted mt-0.5">${esc(data.path)} &middot; ${formatFileSize(data.size)}</div>
+        </div>
+        <div class="flex gap-2">
+          <a class="btn btn-sm" href="${BASE_URL}/v1/files/download?path=${encodedPath}" download>Download</a>
+          <button class="btn btn-sm" onclick="this.closest('.modal-overlay').remove()">Close</button>
+        </div>
+      </div>
+      ${truncatedNote}
+      <div style="overflow:auto;flex:1;border-radius:8px;background:var(--color-base);border:1px solid var(--color-border);">
+        ${contentHtml}
+      </div>
+    </div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    // Syntax highlight code blocks
+    overlay.querySelectorAll('pre code').forEach(block => hljs.highlightElement(block));
+  } catch (e) {
+    showToast(`Preview failed: ${e.message}`, true);
+  }
+};
 
 function renderToolBlock(tool) {
   const statusIcon = tool.result !== undefined
@@ -3510,6 +3712,21 @@ function updateStreamingMessage(chat) {
         }
       }
     }
+    // Update file attachments during streaming
+    if (msg.files && msg.files.length > 0) {
+      let filesContainer = parent.querySelector('.file-attachments-container');
+      const newFilesHtml = renderFileAttachments(msg.files);
+      if (filesContainer) {
+        filesContainer.outerHTML = newFilesHtml;
+      } else {
+        const tmp = document.createElement('div');
+        tmp.innerHTML = newFilesHtml;
+        // Insert before the tokens/metadata line
+        const metaLine = parent.querySelector('.text-\\[10px\\]');
+        if (metaLine) parent.insertBefore(tmp.firstElementChild, metaLine);
+        else parent.appendChild(tmp.firstElementChild);
+      }
+    }
   }
   scrollToBottom();
 }
@@ -3564,7 +3781,7 @@ async function sendMessage() {
     if (inlineTime) inlineTime.textContent = `${s}s`;
   }, 1000);
 
-  const assistantMsg = { role: 'assistant', content: '', tools: [], ts: Date.now() };
+  const assistantMsg = { role: 'assistant', content: '', tools: [], files: [], ts: Date.now() };
   chat.messages.push(assistantMsg);
   renderMessages();
 
@@ -3597,6 +3814,15 @@ async function sendMessage() {
           updateStreamingMessage(chat);
         }
       },
+      file_created: (d) => {
+        // Track files created/modified during this message
+        if (!assistantMsg.files) assistantMsg.files = [];
+        // Deduplicate by path (keep latest action)
+        const existing = assistantMsg.files.findIndex(f => f.path === d.path);
+        if (existing >= 0) assistantMsg.files[existing] = d;
+        else assistantMsg.files.push(d);
+        updateStreamingMessage(chat);
+      },
       fallback: (d) => {
         // Show fallback notice in spinner area
         if (d.status === 'retry') {
@@ -3616,6 +3842,10 @@ async function sendMessage() {
         if (d.fallback_model) {
           assistantMsg.fallbackNotice = `Using fallback: ${d.fallback_model} (primary ${d.original_model || d.model} unavailable)`;
           assistantMsg.model = d.fallback_model;
+        }
+        // Capture file attachments from done event
+        if (d.files && d.files.length > 0) {
+          assistantMsg.files = d.files;
         }
       },
       error: (d) => {

@@ -218,6 +218,11 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN project TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
+            # Add metadata column for file attachments etc (migration)
+            try:
+                conn.execute("ALTER TABLE messages ADD COLUMN metadata TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             conn.commit()
 
     @staticmethod
@@ -232,11 +237,12 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=None)
-    def save_message(session_id, role, content):
+    def save_message(session_id, role, content, metadata=None):
         c = json.dumps(content) if not isinstance(content, str) else content
+        meta = json.dumps(metadata) if metadata else ""
         with _db_conn() as conn:
-            conn.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
-                         (session_id, role, c))
+            conn.execute("INSERT INTO messages (session_id, role, content, metadata) VALUES (?, ?, ?, ?)",
+                         (session_id, role, c, meta))
             conn.commit()
 
     @staticmethod
@@ -244,16 +250,24 @@ class ChatDB:
     def load_messages(session_id):
         with _db_conn() as conn:
             rows = conn.execute(
-                "SELECT id, role, content FROM messages WHERE session_id = ? ORDER BY id",
+                "SELECT id, role, content, metadata FROM messages WHERE session_id = ? ORDER BY id",
                 (session_id,)
             ).fetchall()
             messages = []
-            for mid, role, content in rows:
+            for mid, role, content, metadata in rows:
                 try:
                     parsed = json.loads(content)
                 except (json.JSONDecodeError, TypeError):
                     parsed = content
-                messages.append({"id": mid, "role": role, "content": parsed})
+                msg = {"id": mid, "role": role, "content": parsed}
+                if metadata:
+                    try:
+                        meta = json.loads(metadata)
+                        if meta:
+                            msg["metadata"] = meta
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                messages.append(msg)
             return messages
 
     @staticmethod
@@ -360,14 +374,17 @@ class Session:
         self.agent = engine.AgentConfig(agent_id)
         self.memory = engine.MemoryStore(agent_id, base_dir=self.agent.memory_dir)
 
-    def add_message(self, role: str, content):
-        self.messages.append({"role": role, "content": content})
+    def add_message(self, role: str, content, metadata=None):
+        msg = {"role": role, "content": content}
+        if metadata:
+            msg["metadata"] = metadata
+        self.messages.append(msg)
         self.last_active = time.time()
         # Auto-title from first user message
         if not self.title and role == "user":
             text = content if isinstance(content, str) else str(content)
             self.title = text[:60].strip()
-        ChatDB.save_message(self.id, role, content)
+        ChatDB.save_message(self.id, role, content, metadata=metadata)
         ChatDB.save_session(self.id, self.agent_id, self.model, self.title,
                            self.status, self.created_at, self.last_active, self.project or "")
 
@@ -601,6 +618,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_tools_config_get()
         elif path == "/v1/tools/status":
             self._handle_tools_status()
+        elif path == "/v1/files/download":
+            self._handle_file_download()
+        elif path == "/v1/files/preview":
+            self._handle_file_preview()
         elif path == "/" or path.startswith("/web/") or path.endswith((".html", ".css", ".js", ".ico")):
             self._serve_static(path)
         else:
@@ -1095,8 +1116,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
         event_queue = queue.Queue()
+        created_files = []
 
         def event_callback(event_type, data):
+            if event_type == "file_created":
+                created_files.append(data)
             event_queue.put((event_type, data))
 
         handler_self = self  # capture for closure
@@ -1148,7 +1172,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     session_id=sid,
                 )
                 if reply:
-                    session.add_message("assistant", reply)
+                    # Build metadata for file attachments
+                    msg_metadata = {"files": created_files} if created_files else None
+                    session.add_message("assistant", reply, metadata=msg_metadata)
                     # Include session cost in done event
                     session_cost = None
                     if engine._cost_tracker:
@@ -1169,6 +1195,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     if fb_model:
                         done_data["fallback_model"] = fb_model
                         done_data["original_model"] = session.model
+                    # Include file attachments
+                    if created_files:
+                        done_data["files"] = created_files
                     event_queue.put(("done", done_data))
                 else:
                     event_queue.put(("done", {"text": "", "tokens": 0, "model": session.model}))
@@ -4130,6 +4159,95 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 json.dump(config, f, indent=2)
         except Exception as e:
             print(f"Failed to save channel config: {e}", flush=True)
+
+    def _validate_file_path(self, file_path):
+        """Validate that a file path is within allowed directories. Returns resolved path or None."""
+        if not file_path:
+            return None
+        file_path = os.path.expanduser(file_path)
+        resolved = os.path.realpath(file_path)
+        base = os.path.dirname(os.path.abspath(__file__))
+        agents_dir = os.path.join(base, "agents")
+        cwd = os.getcwd()
+        allowed = [base, agents_dir, cwd]
+        if any(resolved.startswith(d) for d in allowed):
+            return resolved
+        return None
+
+    def _handle_file_download(self):
+        """GET /v1/files/download?path=<absolute_path> — serve a file for download."""
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        file_path = qs.get("path", [""])[0]
+        resolved = self._validate_file_path(file_path)
+        if not resolved:
+            self._send_json({"error": "Invalid or disallowed file path"}, 403)
+            return
+        if not os.path.isfile(resolved):
+            self._send_json({"error": "File not found"}, 404)
+            return
+        ext = resolved.rsplit(".", 1)[-1].lower() if "." in resolved else ""
+        content_types = {
+            "md": "text/markdown", "txt": "text/plain", "py": "text/x-python",
+            "json": "application/json", "pdf": "application/pdf",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "html": "text/html", "csv": "text/csv",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "js": "application/javascript", "ts": "text/typescript",
+            "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "gif": "image/gif", "svg": "image/svg+xml",
+        }
+        ct = content_types.get(ext, "application/octet-stream")
+        filename = os.path.basename(resolved)
+        try:
+            with open(resolved, "rb") as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", ct)
+            self.send_header("Content-Length", len(data))
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(data)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_file_preview(self):
+        """GET /v1/files/preview?path=<absolute_path>&lines=100 — return file content as text."""
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        file_path = qs.get("path", [""])[0]
+        max_lines = int(qs.get("lines", ["100"])[0])
+        resolved = self._validate_file_path(file_path)
+        if not resolved:
+            self._send_json({"error": "Invalid or disallowed file path"}, 403)
+            return
+        if not os.path.isfile(resolved):
+            self._send_json({"error": "File not found"}, 404)
+            return
+        try:
+            size = os.path.getsize(resolved)
+            max_bytes = 50 * 1024  # 50KB limit
+            with open(resolved, "r", errors="replace") as f:
+                lines = []
+                total_bytes = 0
+                for i, line in enumerate(f):
+                    if i >= max_lines or total_bytes >= max_bytes:
+                        truncated = True
+                        break
+                    lines.append(line)
+                    total_bytes += len(line.encode("utf-8"))
+                else:
+                    truncated = False
+            self._send_json({
+                "path": resolved,
+                "name": os.path.basename(resolved),
+                "size": size,
+                "content": "".join(lines),
+                "truncated": truncated,
+            })
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
 
     def _serve_static(self, path):
         """Serve static files from web/ directory."""
