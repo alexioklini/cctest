@@ -1910,11 +1910,59 @@ const BASE_URL = window.location.origin;
 // ─── Pixel Art Avatars (Sierra-style 16x16) ─────────────────
 // Each avatar is a 16x16 grid encoded as a compact string.
 // Palette per avatar, pixels reference palette index.
+// Symbolic icon avatars (Bootstrap Icons SVG paths)
 const AVATARS = {
   captain: {
     label: 'Captain', desc: 'General purpose leader',
-    palette: ['transparent','#000','#553300','#aa7744','#deb887','#f5d4a3','#fff','#3355bb','#5577dd','#99aadd','#cc0000'],
-    pixels: `
+    icon: 'M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16m.93-9.412-1 4.705c-.07.34.029.533.304.533.194 0 .487-.07.686-.246l-.088.416c-.287.346-.92.598-1.465.598-.703 0-1.002-.422-.808-1.319l.738-3.468c.064-.293.006-.399-.287-.399l-.502-.032.07-.332zM8 5.5a1 1 0 1 1 0-2 1 1 0 0 1 0 2',
+    color: '#5f87ff', bg: '#1a2744',
+  },
+  professor: {
+    label: 'Professor', desc: 'Research & analysis',
+    icon: 'M1 2.828c.885-.37 2.154-.769 3.388-.893 1.33-.134 2.458.063 3.112.752v9.746c-.935-.53-2.12-.603-3.213-.493-1.18.12-2.37.461-3.287.811zm7.5-.141c.654-.689 1.782-.886 3.112-.752 1.234.124 2.503.523 3.388.893v9.923c-.918-.35-2.107-.692-3.287-.81-1.094-.111-2.278-.039-3.213.492zM8 1.783C7.015.936 5.587.81 4.287.94c-1.514.153-3.042.672-3.994 1.105A.5.5 0 0 0 0 2.5v11a.5.5 0 0 0 .707.455c.882-.4 2.303-.881 3.68-1.02 1.409-.142 2.59.087 3.223.877a.5.5 0 0 0 .78 0c.633-.79 1.814-1.019 3.222-.877 1.378.139 2.8.62 3.681 1.02A.5.5 0 0 0 16 13.5v-11a.5.5 0 0 0-.293-.455c-.952-.433-2.48-.952-3.994-1.105C10.413.809 8.985.936 8 1.783',
+    color: '#f59e0b', bg: '#2a2010',
+  },
+  doctor: {
+    label: 'Doctor', desc: 'Health & wellness',
+    icon: 'M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16m5.274-11.274L8.91 10.09l-.884.884-3.09-3.09.884-.884 2.206 2.206 3.364-3.364z',
+    color: '#4ade80', bg: '#0f2918',
+  },
+  knight: {
+    label: 'Knight', desc: 'Security & protection',
+    icon: 'M5.338 1.59a61 61 0 0 0-2.837.856.48.48 0 0 0-.328.39c-.554 4.157.726 7.19 2.253 9.188a10.7 10.7 0 0 0 2.287 2.233c.346.244.652.42.893.533q.18.085.293.118a1 1 0 0 0 .101.025 1 1 0 0 0 .1-.025q.114-.034.294-.118c.24-.113.547-.29.893-.533a10.7 10.7 0 0 0 2.287-2.233c1.527-1.997 2.807-5.031 2.253-9.188a.48.48 0 0 0-.328-.39c-.651-.213-1.75-.56-2.837-.855C9.552 1.29 8.531 1.067 8 1.067c-.53 0-1.552.223-2.662.524zM5.072.56C6.157.265 7.31 0 8 0s1.843.265 2.928.56c1.11.3 2.229.655 2.887.87a1.54 1.54 0 0 1 1.044 1.262c.596 4.477-.787 7.795-2.465 9.99a11.8 11.8 0 0 1-2.517 2.453 7 7 0 0 1-1.048.625c-.28.132-.581.24-.829.24s-.548-.108-.829-.24a7 7 0 0 1-1.048-.625 11.8 11.8 0 0 1-2.517-2.453C1.928 10.487.545 7.169 1.141 2.692A1.54 1.54 0 0 1 2.185 1.43 63 63 0 0 1 5.072.56',
+    color: '#8b5cf6', bg: '#1a1530',
+  },
+  wizard: {
+    label: 'Wizard', desc: 'Data & analytics',
+    icon: 'M7 14s-1 0-1-1 1-4 5-4 5 3 5 4-1 1-1 1zm4-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6m-5.784 6A2.24 2.24 0 0 1 5 12c0-1.7.85-2.907 1.86-3.666A6 6 0 0 0 2 9c-4 0-5 3-5 4s1 1 1 1zM4.5 8a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5',
+    color: '#a78bfa', bg: '#1e1535',
+  },
+  bard: {
+    label: 'Bard', desc: 'Creative & design',
+    icon: 'M8 3a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 3m4 8a4 4 0 0 1-8 0V5a4 4 0 1 1 8 0zM8 0a5 5 0 0 0-5 5v6a5 5 0 0 0 10 0V5a5 5 0 0 0-5-5',
+    color: '#ec4899', bg: '#2a1025',
+  },
+  android: {
+    label: 'Android', desc: 'Automation & bots',
+    icon: 'M6 12.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3a.5.5 0 0 1-.5-.5M3 8.062C3 6.76 4.235 5.765 5.53 5.886a26.6 26.6 0 0 0 4.94 0C11.765 5.765 13 6.76 13 8.062v1.157a.93.93 0 0 1-.765.935c-.845.147-2.34.346-4.235.346s-3.39-.2-4.235-.346A.93.93 0 0 1 3 9.219zm4.542-.827a.25.25 0 0 0-.217.068l-.92.9a25 25 0 0 1-1.871-.183.25.25 0 0 0-.068.495c.55.076 1.232.149 2.02.193a.25.25 0 0 0 .189-.071l.754-.736.847 1.71a.25.25 0 0 0 .404.062l.932-.97a25 25 0 0 0 1.922-.188.25.25 0 0 0-.068-.495c-.538.074-1.207.145-1.98.189a.25.25 0 0 0-.166.076l-.754.785-.842-1.7a.25.25 0 0 0-.182-.135M8.5 1.866a1 1 0 1 0-1 0V3h-2A4.5 4.5 0 0 0 1 7.5V8a1 1 0 0 0 1 1h1v2.5A1.5 1.5 0 0 0 4.5 13h7a1.5 1.5 0 0 0 1.5-1.5V9h1a1 1 0 0 0 1-1v-.5A4.5 4.5 0 0 0 10.5 3h-2z',
+    color: '#06b6d4', bg: '#0a2530',
+  },
+  ranger: {
+    label: 'Ranger', desc: 'Web & exploration',
+    icon: 'M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8m7.5-6.923c-.67.204-1.335.82-1.887 1.855A8 8 0 0 0 5.145 4H7.5zM4.09 4a9.3 9.3 0 0 1 .64-1.539 7 7 0 0 1 .597-.933A7.03 7.03 0 0 0 2.255 4zm-.582 3.5c.03-.877.138-1.718.312-2.5H1.674a7 7 0 0 0-.656 2.5zM4.847 5a12.5 12.5 0 0 0-.338 2.5H7.5V5zM8.5 5v2.5h2.99a12.5 12.5 0 0 0-.337-2.5zM4.51 8.5a12.5 12.5 0 0 0 .337 2.5H7.5V8.5zm3.99 0V11h2.653c.187-.765.306-1.608.338-2.5zM5.145 12q.208.58.468 1.068c.552 1.035 1.218 1.65 1.887 1.855V12zm.182 2.472a7 7 0 0 1-.597-.933A9.3 9.3 0 0 1 4.09 12H2.255a7.02 7.02 0 0 0 3.072 2.472M3.82 11a13.7 13.7 0 0 1-.312-2.5h-2.49a7 7 0 0 0 .656 2.5zM8.5 12v2.923c.67-.204 1.335-.82 1.887-1.855q.26-.487.468-1.068zm3.68-1h2.146c.365-.767.594-1.61.656-2.5h-2.49a13.7 13.7 0 0 1-.312 2.5m2.802-3.5a7 7 0 0 0-.656-2.5H12.18c.174.782.282 1.623.312 2.5zM11.27 2.461c.247.464.462.98.64 1.539h1.835a7.02 7.02 0 0 0-3.072-2.472c.218.284.418.598.597.933M10.855 4a8 8 0 0 0-.468-1.068C9.835 1.897 9.17 1.282 8.5 1.077V4z',
+    color: '#34d399', bg: '#0f2920',
+  },
+  monk: {
+    label: 'Monk', desc: 'Writing & documentation',
+    icon: 'M14.5 3a.5.5 0 0 1 .5.5v9a.5.5 0 0 1-.5.5h-13a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5zm-13-1A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h13a1.5 1.5 0 0 0 1.5-1.5v-9A1.5 1.5 0 0 0 14.5 2zM3 5.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5M3 8a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9A.5.5 0 0 1 3 8m0 2.5a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1h-6a.5.5 0 0 1-.5-.5',
+    color: '#fbbf24', bg: '#2a2510',
+  },
+  chef: {
+    label: 'Chef', desc: 'Nutrition & food',
+    icon: 'M2.5.5A.5.5 0 0 1 3 0h10a.5.5 0 0 1 .5.5q0 .807-.034 1.536a3 3 0 1 1-2.003 5.6A4 4 0 0 1 8 9a4 4 0 0 1-3.464-1.364 3 3 0 1 1-2.002-5.6A51 51 0 0 1 2.5.5M8 4.083a3.5 3.5 0 0 0 4.308 2.88 3 3 0 1 0-1.593-4.574A4 4 0 0 1 8 4.083m-2.715-1.69A3 3 0 0 0 3.692 6.962 3.5 3.5 0 0 0 8 4.084a4 4 0 0 1-2.715-1.69M1 11.5a.5.5 0 0 1 .5-.5h13a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-13a.5.5 0 0 1-.5-.5zm.5 2.5a.5.5 0 0 0 0 1h13a.5.5 0 0 0 0-1z',
+    color: '#fb923c', bg: '#2a1a0a',
+  },
+};
       00022220000
       00233332000
       02333333200
@@ -2116,25 +2164,15 @@ const AVATARS = {
 function renderAvatar(avatarId, size = 48) {
   // Custom uploaded image (data: URI)
   if (avatarId && avatarId.startsWith('data:')) {
-    return `<img src="${avatarId}" style="width:${size}px;height:${size}px;object-fit:cover;border-radius:8px;image-rendering:pixelated">`;
+    return `<img src="${avatarId}" style="width:${size}px;height:${size}px;object-fit:cover;border-radius:8px">`;
   }
   const av = AVATARS[avatarId];
-  if (!av) return `<div style="width:${size}px;height:${size}px;background:var(--surface-lighter);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:${size/2}px">🤖</div>`;
-  const rows = av.pixels.trim().split('\n').map(r => r.trim()).filter(r => r.length > 0);
-  const gridW = Math.max(...rows.map(r => r.length));
-  const gridH = rows.length;
-  const cellW = size / gridW;
-  const cellH = size / gridH;
-  let rects = '';
-  for (let y = 0; y < gridH; y++) {
-    for (let x = 0; x < rows[y].length; x++) {
-      const idx = parseInt(rows[y][x]);
-      if (idx > 0 && av.palette[idx]) {
-        rects += `<rect x="${(x * cellW).toFixed(1)}" y="${(y * cellH).toFixed(1)}" width="${(cellW + 0.3).toFixed(1)}" height="${(cellH + 0.3).toFixed(1)}" fill="${av.palette[idx]}"/>`;
-      }
-    }
-  }
-  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="image-rendering:pixelated;border-radius:8px;background:var(--surface-lighter);overflow:hidden">${rects}</svg>`;
+  if (!av) return `<div style="width:${size}px;height:${size}px;background:var(--color-surface-lighter);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:${Math.round(size*0.45)}px">🤖</div>`;
+  const iconSize = Math.round(size * 0.5);
+  const pad = Math.round((size - iconSize) / 2);
+  return `<div style="width:${size}px;height:${size}px;background:${av.bg};border-radius:8px;display:flex;align-items:center;justify-content:center">
+    <svg width="${iconSize}" height="${iconSize}" viewBox="0 0 16 16" fill="${av.color}"><path d="${av.icon}"/></svg>
+  </div>`;
 }
 
 function getAgentAvatar(agentData) {
