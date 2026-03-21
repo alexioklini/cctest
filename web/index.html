@@ -3442,32 +3442,40 @@ function openConfigModal(agentName) {
   modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
   const agentData = state.agents.find(a => getAgentName(a) === agentName);
   const isTeamHead = agentData && agentData.is_team_head;
+  const displayName = agentData ? (agentData.display_name || agentName) : agentName;
+  const cfgTabs = [
+    {group: 'Agent', items: [{id:'soul', label:'Soul'}, {id:'settings', label:'Settings'}, {id:'commands', label:'Commands'}]},
+    {group: 'Tools', items: [{id:'skills', label:'Skills'}, {id:'mcp', label:'MCP'}]},
+    {group: 'Work', items: [{id:'projects', label:'Projects'}, {id:'workflows', label:'Workflows'}, {id:'schedule', label:'Schedule'}]},
+    {group: 'Memory', items: [{id:'memory', label:'Memory'}, {id:'graph', label:'Graph'}]},
+  ];
+  const cfgNavHtml = cfgTabs.map(g => `
+    <div class="settings-nav-group">
+      <div class="settings-nav-label">${g.group}</div>
+      ${g.items.map(t => `<button class="settings-nav-item config-tab ${t.id === 'soul' ? 'active' : ''}" data-tab="${t.id}">${t.label}</button>`).join('')}
+    </div>
+  `).join('');
   modal.innerHTML = `
-    <div class="modal-content p-6">
-      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-      <h2 class="font-display text-lg font-semibold text-agent mb-4">${esc(agentName)}${isTeamHead ? ' <span class="text-xs text-accent font-normal">(Team Head)</span>' : ''}</h2>
-      <div id="config-tabs" class="flex items-center border-b border-border mb-6 gap-0">
-        <button class="config-tab active" data-tab="soul">Soul</button>
-        <button class="config-tab" data-tab="settings">Settings</button>
-        <button class="config-tab" data-tab="skills">Skills</button>
-        <button class="config-tab" data-tab="mcp">MCP</button>
-        <button class="config-tab" data-tab="projects">Projects</button>
-        <button class="config-tab" data-tab="workflows">Workflows</button>
-        <button class="config-tab" data-tab="memory">Memory</button>
-        <button class="config-tab" data-tab="graph">Graph</button>
-        <button class="config-tab" data-tab="schedule">Schedule</button>
+    <div class="modal-content p-0" style="max-width:1100px;height:80vh;display:flex;overflow:hidden">
+      <nav class="settings-nav" id="config-tabs">
+        <div style="padding:16px 16px 4px;font-family:'Outfit',sans-serif;font-weight:600;font-size:14px;color:var(--color-text-primary)">${esc(displayName)}</div>
+        <div style="padding:0 16px 8px;font-size:10px;color:var(--color-text-muted);font-family:'IBM Plex Mono',monospace">${esc(agentName)}${isTeamHead ? ' · HEAD' : ''}</div>
+        ${cfgNavHtml}
+      </nav>
+      <div class="settings-main">
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()" style="position:absolute;top:12px;right:16px">&times;</button>
+        <div id="config-tab-content"></div>
       </div>
-      <div id="config-tab-content"></div>
     </div>
   `;
   document.body.appendChild(modal);
 
   // Bind tab clicks
-  modal.querySelectorAll('#config-tabs .config-tab').forEach(tab => {
+  modal.querySelectorAll('#config-tabs .settings-nav-item').forEach(tab => {
     tab.onclick = () => {
       stopRunningTasksRefresh();
       state.configTab = tab.dataset.tab;
-      modal.querySelectorAll('#config-tabs .config-tab').forEach(t => t.classList.toggle('active', t === tab));
+      modal.querySelectorAll('#config-tabs .settings-nav-item').forEach(t => t.classList.toggle('active', t === tab));
       loadConfigTabContent(state.configTab, state.configAgent);
     };
   });
