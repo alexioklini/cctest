@@ -34,17 +34,21 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
 - **Custom slash commands** — user-defined prompt templates with `{{variable}}` interpolation
 
 ### Frontends
-- **Web UI** — collapsible sidebar, project tabs, slash command popup, plan mode, image upload
+- **Web UI** — sidebar with Projects + Chats sections, slash command popup, plan mode, image upload, knowledge map
 - **TUI** — Rich + prompt_toolkit, 50+ slash commands, autocomplete
 - **Multi-messaging** — adapter framework for Telegram + future Discord/Slack channels
 - **Remote nodes** — lightweight agents on remote machines with centralized management
 
 ### Intelligence
-- **Knowledge graph memory** — QMD hybrid search (BM25 + vector + LLM reranking) with relationship traversal
+- **Knowledge graph memory** — QMD hybrid search (BM25 + vector + LLM reranking) with relationship traversal and auto-discovery
+- **Auto memory** — automatic memory creation from conversations (corrections, decisions, preferences) via background LLM extraction
+- **Continuous summarization** — memory summary refreshes at token thresholds during active conversations
+- **Knowledge graph visualization** — interactive force-directed canvas with search, filtering, relationship discovery
 - **Document ingestion (RAG)** — PDF, DOCX, HTML, URL parsing with auto-chunking and watched folders
 - **Plan mode** — read-only analysis that disables write tools
-- **LLM input refinement** — AI-powered text improvement before sending
+- **LLM input refinement** — context-aware prompt improvement before sending
 - **Multi-modal** — image upload with vision model support
+- **Chat file attachments** — files created by agents appear as viewable/downloadable attachments
 
 ### Infrastructure
 - **Multi-provider routing** — auto-routing across Anthropic, OpenAI-compatible, MiniMax, local oMLX
@@ -342,6 +346,7 @@ Each task runs with a specified agent and model in its own context. Results stor
 
 | Version | Date | Changes |
 |---|---|---|
+| 3.1.0 | 2026-03-21 | Auto memory creation, continuous session summarization, knowledge graph visualization + auto-discovery, chat file attachments, model-aware max_tokens, sidebar redesign (Projects + Chats), Tools settings, improved fallback ordering |
 | 3.0.0 | 2026-03-20 | Provider fallback, backup/export, notifications, observability + audit trail, dynamic MCP client, multi-modal (vision), remote nodes, multi-messaging adapter framework |
 | 2.1.0 | 2026-03-20 | Agent workflows (YAML stages + approval gates), Web UI sidebar layout, mobile responsive |
 | 2.0.0 | 2026-03-20 | Projects, document ingestion (RAG), watched folders, knowledge graph memory, chat scoping |

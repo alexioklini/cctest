@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "3.0.0"
-VERSION_DATE = "2026-03-20"
+VERSION = "3.1.0"
+VERSION_DATE = "2026-03-21"
 CHANGELOG = [
+    ("3.1.0", "2026-03-21", "Auto memory creation, continuous session summarization, knowledge graph visualization + auto-discovery, chat file attachments, model-aware max_tokens, Bootstrap Icons avatars, sidebar redesign (Projects + Chats), Tools settings, improved fallback ordering, prompt refinement improvements"),
     ("3.0.0", "2026-03-20", "All P2 features: provider fallback with retry, backup/export/import, notifications (webhook/email/in-app), observability tracing + audit trail, dynamic MCP client, multi-modal (image upload/vision), remote nodes, multi-messaging adapter framework"),
     ("2.1.0", "2026-03-20", "Agent workflows (YAML stages with approval gates), Web UI left sidebar replacing top agent cards, consolidated status bar, mobile responsive"),
     ("2.0.0", "2026-03-20", "Projects system, document ingestion (PDF/DOCX/HTML/URL), watched folders, knowledge graph memory with relationship traversal, chat scoping per project"),

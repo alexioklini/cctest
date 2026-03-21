@@ -66,6 +66,13 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - Memory filenames include hash suffix to prevent collisions between similar names
 - Scheduler executes due tasks in parallel threads instead of sequentially
 - Agent activity tracking: `/v1/agents/activity` returns active tasks/chats per agent for UI indicators
+- Auto memory creation: heuristic detection (corrections, identity, decisions, references) + LLM extraction via Haiku, runs in background after each response
+- Continuous session summarization: memory summary refreshes at 10K tokens, then every 5K during active conversations
+- Knowledge graph: auto-discovery (LLM-based, entity extraction, co-recall), graph-aware recall default (1 hop), visualization via Canvas 2D
+- Model-aware max_tokens: Opus 32K, Sonnet 16K, Haiku 8K, MiniMax 32K, configurable via `max_output` in models config
+- Provider fallback ordering: same provider first, then capabilities, then priority
+- Chat file attachments: files created by agents (write_file/edit_file) appear as viewable/downloadable attachments
+- `get_model_max_output(model)` returns max output tokens based on model family or config
 - Agent teams: hierarchical team structure with team heads orchestrating members
 - Cost tracking: `CostTracker` logs every LLM call to `costs.db` (tokens, model, provider, estimated cost)
 - Rate limiting: `RateLimiter` with sliding-window per agent (requests/min, tokens/hr, cost/day) from `rate_limits` in agent.json
