@@ -142,6 +142,7 @@ tailwind.config = {
   .stagger-4 { animation: staggerIn 0.3s ease-out 0.2s both; }
 
   @keyframes breathe { 0%, 100% { opacity: 1; box-shadow: 0 0 4px currentColor; } 50% { opacity: 0.4; box-shadow: 0 0 2px currentColor; } }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
   /* Thinking spinner */
   @keyframes thinking-dots {
@@ -7498,29 +7499,27 @@ function togglePlanMode() {
 async function refineMessage() {
   const text = dom.chatInput.value.trim();
   if (!text) { showToast('Type something to refine'); return; }
+  const btn = document.getElementById('btn-refine');
+  const originalHtml = btn.innerHTML;
+  // Show loading indicator
+  btn.innerHTML = '<span style="animation:spin 1s linear infinite;display:inline-block">&#10227;</span>';
+  btn.disabled = true;
+  btn.style.opacity = '0.6';
   try {
     const res = await API.post('/v1/refine', { text, context: state.activeChat?.agent || 'general' });
     if (res.error) { showToast('Refine error: ' + res.error); return; }
     const refined = res.refined || text;
-    // Show preview popup
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `<div class="modal-content p-6" style="max-width:560px">
-      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-      <h2 class="font-display text-lg font-semibold text-text-primary mb-4">Refined Message</h2>
-      <div class="text-sm text-text-secondary mb-2">Original:</div>
-      <div class="text-xs mono bg-surface-light rounded-lg p-3 mb-4 text-text-muted">${esc(text)}</div>
-      <div class="text-sm text-text-secondary mb-2">Refined:</div>
-      <textarea id="refine-result" class="w-full text-sm mono bg-surface-light rounded-lg p-3 mb-4 text-text-primary border border-border" rows="5" style="box-shadow:none !important;">${esc(refined)}</textarea>
-      <div class="flex gap-2 justify-end">
-        <button class="btn-secondary px-4 py-2 rounded-lg text-sm" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-        <button class="btn-primary px-4 py-2 rounded-lg text-sm" onclick="dom.chatInput.value=document.getElementById('refine-result').value;this.closest('.modal-overlay').remove();">Accept</button>
-      </div>
-    </div>`;
-    document.body.appendChild(modal);
+    // Auto-replace input — no approval needed
+    dom.chatInput.value = refined;
+    dom.chatInput.style.height = 'auto';
+    dom.chatInput.style.height = dom.chatInput.scrollHeight + 'px';
+    dom.chatInput.focus();
   } catch (e) {
     showToast('Refine failed: ' + e.message);
+  } finally {
+    btn.innerHTML = originalHtml;
+    btn.disabled = false;
+    btn.style.opacity = '';
   }
 }
 

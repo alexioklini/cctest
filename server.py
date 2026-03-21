@@ -3127,15 +3127,22 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "No text provided"}, 400)
             return
 
-        # Find cheapest available model
-        refine_model = None
-        if engine._models_config:
+        # Find fastest/cheapest model — prefer Haiku > Sonnet > cheapest
+        refine_model = body.get("model")
+        if not refine_model and engine._models_config:
             candidates = []
             for mid, cfg in engine._models_config.items():
                 if not cfg.get("enabled", True):
                     continue
-                candidates.append((mid, cfg.get("priority", 0)))
-            candidates.sort(key=lambda x: x[1])  # lowest priority = cheapest
+                ml = mid.lower()
+                if "haiku" in ml:
+                    score = 0
+                elif "sonnet" in ml:
+                    score = 1
+                else:
+                    score = 2 + (cfg.get("cost_input", 0) or 0)
+                candidates.append((mid, score))
+            candidates.sort(key=lambda x: x[1])
             if candidates:
                 refine_model = candidates[0][0]
         if not refine_model:
