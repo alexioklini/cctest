@@ -2135,11 +2135,14 @@ tailwind.config = {
       </button>
     </div>
 
-    <div class="sb-section-label">Agents</div>
-    <div id="sidebar-agents"></div>
-    <div class="sb-create-agent-btn" onclick="showCreateAgentModal()">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      <span class="sb-btn-text" style="font-family:'Outfit',sans-serif">New Agent</span>
+    <div class="sb-section" data-section="agents" id="sb-agents-section">
+      <div class="sb-section-header" onclick="toggleSidebarSection('agents')">
+        <span class="sb-section-left"><span class="sb-section-chevron">&#9660;</span> Agents</span>
+        <button class="sb-section-add" onclick="event.stopPropagation();showCreateAgentModal()" title="New Agent">+</button>
+      </div>
+      <div class="sb-section-content">
+        <div id="sidebar-agents"></div>
+      </div>
     </div>
 
     <div class="sb-divider"></div>
@@ -2777,6 +2780,12 @@ async function loadInitialData() {
   } catch {}
   renderModelSelector();
   renderAgentCards();
+  // Apply agents section collapsed state from localStorage
+  const _agSectState = JSON.parse(localStorage.getItem('sb-sections-collapsed') || '{}');
+  if (_agSectState['agents']) {
+    const agentsSect = document.getElementById('sb-agents-section');
+    if (agentsSect) agentsSect.classList.add('collapsed');
+  }
   updateChatArea();
 }
 
@@ -3233,7 +3242,13 @@ window.toggleSidebarSection = function(section) {
   const stored = JSON.parse(localStorage.getItem('sb-sections-collapsed') || '{}');
   if (stored[section]) { delete stored[section]; } else { stored[section] = true; }
   localStorage.setItem('sb-sections-collapsed', JSON.stringify(stored));
+  // Toggle the DOM element directly for agents (not rendered by renderSessionBar)
+  if (section === 'agents') {
+    const el = document.getElementById('sb-agents-section');
+    if (el) el.classList.toggle('collapsed', !!stored[section]);
+  }
   renderSessionBar();
+  renderProjectSelector();
 };
 
 window.toggleArchivedSection = function(key) {
