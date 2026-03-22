@@ -1726,6 +1726,10 @@ _TOOLS_CONFIG_DEFAULTS = {
         "timeout": 30,
         "max_size_mb": 10,
     },
+    "refinement": {
+        "enabled": True,
+        "model": "",  # empty = auto-select (Haiku > Sonnet > cheapest)
+    },
 }
 
 
@@ -1790,6 +1794,8 @@ def get_tool_status() -> dict:
                     tool_cfg["email"] = gmail_fb["email"]
                     tool_cfg["_source"] = "gmail.json"
             s = "configured" if has_gmail else "not configured"
+        elif tool_name == "refinement":
+            s = "configured" if tool_cfg.get("model") else "auto (Haiku > cheapest)"
         else:
             s = "configured"
         status[tool_name] = {"enabled": enabled, "status": s, "config": tool_cfg}

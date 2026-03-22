@@ -3509,8 +3509,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "No text provided"}, 400)
             return
 
-        # Find fastest/cheapest model — prefer Haiku > Sonnet > cheapest
+        # Find model: request body > tools_config setting > auto-select
         refine_model = body.get("model")
+        if not refine_model:
+            tc = engine.get_tool_config()
+            refine_model = tc.get("refinement", {}).get("model", "")
         if not refine_model and engine._models_config:
             candidates = []
             for mid, cfg in engine._models_config.items():

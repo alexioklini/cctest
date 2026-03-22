@@ -7870,6 +7870,30 @@ async function renderToolsTab(el) {
       </div>
     </div>
 
+    <!-- Refinement -->
+    <div class="glass-card p-5">
+      <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2">
+          <span style="font-size:16px">&#10024;</span>
+          <span class="font-display font-semibold text-text-primary">Prompt Refinement</span>
+        </div>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" id="tool-refinement-enabled" class="accent-[var(--accent)]" ${(cfg.refinement||{}).enabled !== false ? 'checked' : ''}>
+          <span class="text-xs text-text-secondary">Enabled</span>
+        </label>
+      </div>
+      <div>
+        <label class="text-[10px] text-text-muted uppercase tracking-wider block mb-1">Model</label>
+        <select id="tool-refine-model" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mono focus:border-accent transition-colors">
+          <option value="">Auto (Haiku &gt; Sonnet &gt; cheapest)</option>
+          ${Object.entries(state.modelsConfig || {}).filter(([_,c]) => c.enabled !== false).map(([mid, c]) =>
+            '<option value="' + esc(mid) + '"' + ((cfg.refinement||{}).model === mid ? ' selected' : '') + '>' + esc((c.icon||'🤖') + ' ' + (c.shortname||mid)) + '</option>'
+          ).join('')}
+        </select>
+      </div>
+      <div class="text-[10px] text-text-muted mt-2">Model used by the ✨ refine button in chat and note AI inputs.</div>
+    </div>
+
     <!-- Save Button -->
     <div class="flex justify-end mt-2">
       <button onclick="saveToolsConfig()" class="btn-primary px-6 py-2.5 rounded-xl text-sm font-display font-medium">Save Tools Config</button>
@@ -7901,6 +7925,10 @@ async function saveToolsConfig() {
       enabled: document.getElementById('tool-web_fetch-enabled')?.checked ?? true,
       timeout: parseInt(document.getElementById('tool-wf-timeout')?.value) || 30,
       max_size_mb: parseInt(document.getElementById('tool-wf-maxsize')?.value) || 10,
+    },
+    refinement: {
+      enabled: document.getElementById('tool-refinement-enabled')?.checked ?? true,
+      model: document.getElementById('tool-refine-model')?.value || '',
     },
   };
 
