@@ -3356,27 +3356,34 @@ function renderProjectSelector() {
   if (!agentId) { container.innerHTML = ''; return; }
   const projects = state.agentProjects[agentId] || [];
   const activeProjects = projects.filter(p => (p.status || 'active') !== 'archived');
-  if (activeProjects.length === 0) {
-    container.innerHTML = `<div class="sb-project-selector-btn" onclick="sidebarNewProject()" title="Create a project">
-      <svg width="12" height="12" viewBox="0 0 16 16" fill="var(--color-text-muted)"><path d="M.54 3.87.5 3a2 2 0 0 1 2-2h3.672a2 2 0 0 1 1.414.586l.828.828A2 2 0 0 0 9.828 3H14.5a2 2 0 0 1 2 2v1.5H.54zM.5 7v6a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7z"/></svg>
-      <span class="sb-btn-text" style="font-family:'Outfit',sans-serif">New Project</span>
-    </div>`;
-    return;
-  }
+  const sectionsCollapsed = JSON.parse(localStorage.getItem('sb-sections-collapsed') || '{}');
+  const isCollapsed = !!sectionsCollapsed['projects'];
+
   let html = '';
-  activeProjects.forEach(p => {
-    const pIcon = p.icon || 'folder';
-    const isActive = state.currentProject === p.name;
-    html += `<div class="sb-project-selector-btn${isActive ? ' active' : ''}" onclick="selectProject('${esc(p.name)}')" title="${esc(p.description || p.name)}">
-      <span style="display:inline-flex;flex-shrink:0">${renderProjectIcon(pIcon, 12)}</span>
-      <span class="sb-btn-text" style="font-family:'Outfit',sans-serif;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name)}</span>
-      ${isActive ? '<span style="font-size:7px;color:var(--color-accent);font-weight:700;flex-shrink:0">&#9679;</span>' : ''}
+  html += `<div class="sb-section${isCollapsed ? ' collapsed' : ''}" data-section="projects">`;
+  html += `<div class="sb-section-header" onclick="toggleSidebarSection('projects')">`;
+  html += `<span class="sb-section-left"><span class="sb-section-chevron">&#9660;</span> Projects</span>`;
+  html += `<button class="sb-section-add" onclick="event.stopPropagation();sidebarNewProject()" title="New Project">+</button>`;
+  html += `</div>`;
+  html += `<div class="sb-section-content">`;
+
+  if (activeProjects.length === 0) {
+    html += `<div class="sb-project-selector-btn" onclick="sidebarNewProject()" title="Create a project" style="justify-content:center;opacity:0.5">
+      <span class="sb-btn-text" style="font-family:'Outfit',sans-serif;font-size:10px">No projects yet</span>
     </div>`;
-  });
-  html += `<div class="sb-project-selector-btn" onclick="sidebarNewProject()" title="New Project">
-    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-    <span class="sb-btn-text" style="font-family:'Outfit',sans-serif;font-size:10px">New Project</span>
-  </div>`;
+  } else {
+    activeProjects.forEach(p => {
+      const pIcon = p.icon || 'folder';
+      const isActive = state.currentProject === p.name;
+      html += `<div class="sb-project-selector-btn${isActive ? ' active' : ''}" onclick="selectProject('${esc(p.name)}')" title="${esc(p.description || p.name)}">
+        <span style="display:inline-flex;flex-shrink:0">${renderProjectIcon(pIcon, 12)}</span>
+        <span class="sb-btn-text" style="font-family:'Outfit',sans-serif;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name)}</span>
+        ${isActive ? '<span style="font-size:7px;color:var(--color-accent);font-weight:700;flex-shrink:0">&#9679;</span>' : ''}
+      </div>`;
+    });
+  }
+
+  html += `</div></div>`;
   container.innerHTML = html;
 }
 
