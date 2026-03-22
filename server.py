@@ -299,7 +299,37 @@ class ChatDB:
                     params.append(status)
             q += " ORDER BY s.last_active DESC"
             rows = conn.execute(q, params).fetchall()
-            return [dict(r) for r in rows]
+            results = []
+            # Build index status cache per agent
+            _idx_cache = {}
+            for r in rows:
+                d = dict(r)
+                aid = d.get("agent_id", "")
+                sid = d["id"]
+                msg_count = d.get("message_count", 0)
+                # Determine index status
+                if msg_count < 4 or d.get("status") == "incognito":
+                    d["indexed"] = None  # not eligible
+                else:
+                    # Check chats-indexed dir (cache per agent)
+                    if aid not in _idx_cache:
+                        idx_dir = os.path.join(engine.AGENTS_DIR, aid, "chats-indexed")
+                        try:
+                            _idx_cache[aid] = {f: os.path.getmtime(os.path.join(idx_dir, f))
+                                               for f in os.listdir(idx_dir) if f.endswith(".md")}
+                        except (OSError, FileNotFoundError):
+                            _idx_cache[aid] = {}
+                    idx_files = _idx_cache[aid]
+                    prefix = f"chat-{sid}-"
+                    chunk_mtimes = [mt for fn, mt in idx_files.items() if fn.startswith(prefix)]
+                    if not chunk_mtimes:
+                        d["indexed"] = False
+                    else:
+                        last_indexed = max(chunk_mtimes)
+                        last_active = d.get("last_active", 0)
+                        d["indexed"] = last_indexed >= (last_active - 5)  # 5s tolerance
+                results.append(d)
+            return results
 
     @staticmethod
     @_db_safe(default=None)
@@ -928,6 +958,45 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
+        # 3. SQLite search on message content (catches chats not indexed in QMD)
+        try:
+            with _db_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                q = ("SELECT DISTINCT m.session_id, m.content FROM messages m "
+                     "JOIN sessions s ON s.id = m.session_id "
+                     "WHERE m.content LIKE ?")
+                params = [f"%{query}%"]
+                if agent_id:
+                    q += " AND s.agent_id = ?"
+                    params.append(agent_id)
+                q += " ORDER BY m.created_at DESC LIMIT ?"
+                params.append(limit * 3)  # over-fetch since multiple messages per session
+                rows = conn.execute(q, params).fetchall()
+                for r in rows:
+                    sid = r["session_id"]
+                    if sid in seen_sessions:
+                        continue
+                    seen_sessions.add(sid)
+                    info = ChatDB.get_session_info(sid)
+                    if info:
+                        # Extract a preview snippet around the match
+                        content = r["content"] if isinstance(r["content"], str) else ""
+                        idx = content.lower().find(query.lower())
+                        if idx >= 0:
+                            start = max(0, idx - 40)
+                            end = min(len(content), idx + len(query) + 80)
+                            preview = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
+                        else:
+                            preview = content[:120]
+                        info["match_type"] = "content"
+                        info["match_preview"] = preview
+                        info["score"] = 0
+                        results.append(info)
+                        if len(results) >= limit:
+                            break
+        except Exception:
+            pass
+
         # Sort by score (QMD results) then recency
         results.sort(key=lambda x: (x.get("score", 0), x.get("last_active", 0)), reverse=True)
         self._send_json({"results": results[:limit], "query": query})
@@ -1349,25 +1418,20 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     # Generate chat summary (background, for sidebar display)
                     try:
                         if len(session.messages) >= 2 and not session.summary:
-                            def _gen_summary():
-                                try:
-                                    _generate_chat_summary(session)
-                                except Exception:
-                                    pass
-                                # Chain: index transcript after summary is ready
-                                try:
-                                    if len(session.messages) >= 4:
-                                        _index_chat_transcript(session)
-                                except Exception:
-                                    pass
-                            threading.Thread(target=_gen_summary, daemon=True, name=f"chat_summary_{sid}").start()
+                            threading.Thread(
+                                target=_generate_chat_summary,
+                                args=(session,),
+                                daemon=True,
+                                name=f"chat_summary_{sid}"
+                            ).start()
                     except Exception:
                         pass
 
-                    # Re-index chat transcript on every 4th message (background)
+                    # Index chat transcript for content search (4+ messages, every 4th message or first time)
                     try:
                         msg_count = len(session.messages)
-                        if msg_count >= 4 and msg_count % 4 == 0 and session.summary:
+                        if msg_count >= 4 and (msg_count % 4 == 0 or not os.path.isdir(
+                                os.path.join(engine.AGENTS_DIR, session.agent_id, "chats-indexed"))):
                             threading.Thread(
                                 target=_index_chat_transcript,
                                 args=(session,),
@@ -4920,6 +4984,62 @@ def main():
     # Initialize main agent
     engine._current_agent = engine.AgentConfig("main")
     engine._memory_store = engine.MemoryStore("main", base_dir=engine._current_agent.memory_dir)
+
+    # Backfill: index any unindexed chat transcripts (runs once at startup)
+    def _backfill_chat_index():
+        """Find sessions with 4+ messages that have no indexed transcript files and index them."""
+        time.sleep(10)  # let server fully start
+        try:
+            with _db_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    "SELECT s.id, s.agent_id, "
+                    "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) as msg_count "
+                    "FROM sessions s WHERE s.status != 'incognito'"
+                ).fetchall()
+            indexed = 0
+            for r in rows:
+                if r["msg_count"] < 4:
+                    continue
+                sid = r["id"]
+                agent_id = r["agent_id"]
+                chats_dir = os.path.join(engine.AGENTS_DIR, agent_id, "chats-indexed")
+                prefix = f"chat-{sid}"
+                # Skip if already indexed
+                if os.path.isdir(chats_dir):
+                    if any(f.startswith(prefix) for f in os.listdir(chats_dir)):
+                        continue
+                # Load session into memory to index
+                session = sessions.get(sid)
+                if not session:
+                    # Load from DB
+                    info = ChatDB.get_session_info(sid)
+                    if not info:
+                        continue
+                    session = ChatSession(info["agent_id"], info.get("model", ""), info.get("project", ""))
+                    session.id = sid
+                    session.title = info.get("title", "")
+                    session.summary = info.get("summary", "")
+                    session.status = info.get("status", "active")
+                    # Load messages
+                    with _db_conn() as conn2:
+                        conn2.row_factory = sqlite3.Row
+                        msgs = conn2.execute(
+                            "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id",
+                            (sid,)
+                        ).fetchall()
+                    session.messages = [{"role": m["role"], "content": m["content"]} for m in msgs]
+                try:
+                    _index_chat_transcript(session)
+                    indexed += 1
+                except Exception:
+                    pass
+            if indexed:
+                print(f"Chat index backfill: indexed {indexed} sessions", flush=True)
+        except Exception as e:
+            print(f"[WARN] Chat index backfill: {e}", flush=True)
+
+    threading.Thread(target=_backfill_chat_index, daemon=True, name="chat_index_backfill").start()
 
     # Unified QMD index keeper: collection registration, file watching, and embedding health
     def _qmd_index_keeper():

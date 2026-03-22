@@ -3162,6 +3162,12 @@ function relativeTime(timestamp) {
   return Math.floor(diff / 604800) + 'w ago';
 }
 
+function _indexBadge(s) {
+  if (s.indexed === null || s.indexed === undefined) return '';
+  if (s.indexed === true) return ' <span title="Indexed" style="font-size:8px;color:#4ade80;vertical-align:middle">\u25cf</span>';
+  return ' <span title="Not indexed" style="font-size:8px;color:var(--color-text-muted);opacity:0.4;vertical-align:middle">\u25cb</span>';
+}
+
 function renderSidebarSession(s, currentSessionId) {
   const isActive = currentSessionId === s.id;
   const title = s.title || 'Untitled';
@@ -3173,13 +3179,14 @@ function renderSidebarSession(s, currentSessionId) {
   const isIncognito = s.status === 'incognito';
   const hasAttach = s.has_attachments > 0;
   const timeStr = relativeTime(s.last_active);
-  let html = `<div class="sb-agent-item ${isActive ? 'active' : ''} ${isArchived ? 'opacity-50' : ''}" onclick="loadSession('${esc(s.id)}')" title="${esc(title)} \u2014 ${count} messages${isIncognito ? ' (incognito)' : ''}${summary ? '\n' + summary : ''}">
+  const idxBadge = _indexBadge(s);
+  let html = `<div class="sb-agent-item ${isActive ? 'active' : ''} ${isArchived ? 'opacity-50' : ''}" onclick="loadSession('${esc(s.id)}')" title="${esc(title)} \u2014 ${count} messages${isIncognito ? ' (incognito)' : ''}${s.indexed === true ? ' \u2022 indexed' : s.indexed === false ? ' \u2022 not indexed' : ''}${summary ? '\n' + summary : ''}">
     <div class="sb-agent-avatar" style="display:flex;align-items:center;justify-content:center;width:28px;height:28px">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="var(--color-text-muted)"><path d="M2.678 11.894a1 1 0 0 1 .287.801 11 11 0 0 1-.398 2c1.395-.323 2.247-.697 2.634-.893a1 1 0 0 1 .71-.074A8 8 0 0 0 8 14c3.996 0 7-2.807 7-6s-3.004-6-7-6-7 2.808-7 6c0 1.468.617 2.83 1.678 3.894"/></svg>
     </div>
     <div class="sb-agent-info">
       <div class="sb-agent-name">${isIncognito ? '\ud83d\udd76 ' : ''}${esc(truncTitle)}${hasAttach ? ' <span style="font-size:9px;opacity:0.6">\ud83d\udcce</span>' : ''}</div>
-      <div class="sb-agent-meta">${truncSummary ? esc(truncSummary) : `${count} messages \u00b7 ${timeStr}`}</div>
+      <div class="sb-agent-meta">${truncSummary ? esc(truncSummary) : `${count} messages \u00b7 ${timeStr}`}${idxBadge}</div>
     </div>
     <span class="sb-agent-actions">
       ${isArchived
@@ -3247,13 +3254,12 @@ function renderSessionBar() {
       oninput="
         state._chatSearchQuery=this.value;
         state._chatSearchResults=null;
-        state._chatSearchLoading=false;
+        clearTimeout(state._chatSearchTimer);
+        state._chatSearchLoading=this.value.length>=2;
         renderSessionBar();
         const _si=document.querySelector('.sb-chat-search');
         if(_si){_si.focus();_si.selectionStart=_si.selectionEnd=_si.value.length}
-        clearTimeout(state._chatSearchTimer);
         if(this.value.length>=2){
-          state._chatSearchLoading=true;
           state._chatSearchTimer=setTimeout(async()=>{
             try{
               const res=await API.get('/v1/sessions/search?q='+encodeURIComponent(state._chatSearchQuery)+'&agent='+encodeURIComponent(state.activeAgentId));
@@ -3693,17 +3699,32 @@ async function renderProjectPanelChats(agentId, projectName) {
 
   // Apply filter
   const query = (state._ppSearchQuery || '').toLowerCase();
-  const filtered = query.length >= 2
-    ? projectSessions.filter(s => (s.title || '').toLowerCase().includes(query) || (s.summary || '').toLowerCase().includes(query))
-    : projectSessions;
+  let filtered;
+  let deepMatches = [];
+  if (query.length >= 2) {
+    // Local title/summary filter
+    filtered = projectSessions.filter(s => (s.title || '').toLowerCase().includes(query) || (s.summary || '').toLowerCase().includes(query));
+    // Deep content search results (populated async)
+    if (state._ppDeepSearchResults) {
+      const localIds = new Set(filtered.map(s => s.id));
+      for (const r of state._ppDeepSearchResults) {
+        if (!localIds.has(r.id) && r.project === projectName) {
+          deepMatches.push(r);
+        }
+      }
+    }
+  } else {
+    filtered = projectSessions;
+  }
 
   // Update count
+  const totalCount = filtered.length + deepMatches.length;
   const countEl = document.getElementById('pp-count-chats');
-  if (countEl) countEl.textContent = `(${filtered.length})`;
+  if (countEl) countEl.textContent = `(${totalCount})`;
 
   let html = '';
-  if (filtered.length === 0) {
-    html = '<div class="pp-empty">No chats yet</div>';
+  if (totalCount === 0 && !state._ppDeepSearchLoading) {
+    html = query ? '<div class="pp-empty">No matching chats</div>' : '<div class="pp-empty">No chats yet</div>';
   }
   filtered.forEach(s => {
     const isActive = currentSessionId === s.id;
@@ -3713,13 +3734,14 @@ async function renderProjectPanelChats(agentId, projectName) {
     const truncSummary = summary ? (summary.length > 40 ? summary.substring(0, 40) + '\u2026' : summary) : '';
     const count = s.message_count || 0;
     const timeStr = relativeTime(s.last_active);
-    html += `<div class="sb-agent-item ${isActive ? 'active' : ''}" onclick="loadSession('${esc(s.id)}');switchCenterView('chat');" title="${esc(title)} \u2014 ${count} messages${summary ? '\n' + summary : ''}" style="margin:2px 0">
+    const idxBadge = _indexBadge(s);
+    html += `<div class="sb-agent-item ${isActive ? 'active' : ''}" onclick="loadSession('${esc(s.id)}');switchCenterView('chat');" title="${esc(title)} \u2014 ${count} messages${s.indexed === true ? ' \u2022 indexed' : s.indexed === false ? ' \u2022 not indexed' : ''}${summary ? '\n' + summary : ''}" style="margin:2px 0">
       <div class="sb-agent-avatar" style="display:flex;align-items:center;justify-content:center;width:28px;height:28px">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="var(--color-text-muted)"><path d="M2.678 11.894a1 1 0 0 1 .287.801 11 11 0 0 1-.398 2c1.395-.323 2.247-.697 2.634-.893a1 1 0 0 1 .71-.074A8 8 0 0 0 8 14c3.996 0 7-2.807 7-6s-3.004-6-7-6-7 2.808-7 6c0 1.468.617 2.83 1.678 3.894"/></svg>
       </div>
       <div class="sb-agent-info">
         <div class="sb-agent-name">${esc(truncTitle)}</div>
-        <div class="sb-agent-meta">${truncSummary ? esc(truncSummary) : `${count} messages \u00b7 ${timeStr}`}</div>
+        <div class="sb-agent-meta">${truncSummary ? esc(truncSummary) : `${count} messages \u00b7 ${timeStr}`}${idxBadge}</div>
       </div>
       <span class="sb-agent-actions">
         <button onclick="event.stopPropagation();sessionAction('archive','${esc(s.id)}')" title="Archive">&#128230;</button>
@@ -3727,6 +3749,27 @@ async function renderProjectPanelChats(agentId, projectName) {
       </span>
     </div>`;
   });
+  // Deep content matches
+  if (deepMatches.length > 0) {
+    html += `<div style="padding:4px 8px 2px;font-size:10px;color:var(--color-text-muted);font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Content matches</div>`;
+    deepMatches.forEach(s => {
+      const title = s.title || 'Untitled';
+      const truncTitle = title.length > 30 ? title.substring(0, 30) + '\u2026' : title;
+      const preview = s.match_preview ? (s.match_preview.length > 60 ? s.match_preview.substring(0, 60) + '\u2026' : s.match_preview) : '';
+      html += `<div class="sb-agent-item" onclick="loadSession('${esc(s.id)}');switchCenterView('chat');" title="${esc(title)}${preview ? '\n' + preview : ''}" style="margin:2px 0">
+        <div class="sb-agent-avatar" style="display:flex;align-items:center;justify-content:center;width:28px;height:28px">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="var(--color-accent)"><path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001q.044.06.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1 1 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0"/></svg>
+        </div>
+        <div class="sb-agent-info">
+          <div class="sb-agent-name">${esc(truncTitle)} <span style="font-size:9px;color:var(--color-accent);font-weight:normal">\u2022 content</span></div>
+          <div class="sb-agent-meta">${preview ? esc(preview) : ''}</div>
+        </div>
+      </div>`;
+    });
+  }
+  if (query && state._ppDeepSearchLoading) {
+    html += `<div style="padding:6px 8px;font-size:10px;color:var(--color-text-muted);font-style:italic">Searching transcripts\u2026</div>`;
+  }
   dom.ppChats.innerHTML = html;
 
   // Hide section if all filtered out
@@ -3905,6 +3948,8 @@ async function renderProjectPanelFolders(agentId, projectName) {
 
 window.filterProjectPanel = function(query) {
   state._ppSearchQuery = query;
+  state._ppDeepSearchResults = null;
+  state._ppDeepSearchLoading = false;
   // Re-render all sections with current filter
   const agentId = state.activeAgentId;
   const projectName = state.currentProject;
@@ -3915,6 +3960,22 @@ window.filterProjectPanel = function(query) {
   renderProjectPanelDocs(agentId, projectName);
   renderProjectPanelAttachments(agentId, projectName);
   renderProjectPanelFolders(agentId, projectName);
+
+  // Debounced deep content search for chats
+  clearTimeout(state._ppDeepSearchTimer);
+  if (query.length >= 2) {
+    state._ppDeepSearchLoading = true;
+    state._ppDeepSearchTimer = setTimeout(async () => {
+      try {
+        const res = await API.get('/v1/sessions/search?q=' + encodeURIComponent(query) + '&agent=' + encodeURIComponent(agentId));
+        state._ppDeepSearchResults = res.results || [];
+      } catch(e) { state._ppDeepSearchResults = null; }
+      state._ppDeepSearchLoading = false;
+      renderProjectPanelChats(agentId, projectName);
+      const si2 = document.getElementById('pp-search-input');
+      if (si2) { si2.focus(); si2.selectionStart = si2.selectionEnd = si2.value.length; }
+    }, 500);
+  }
 
   // Refocus search input after re-render
   const si = document.getElementById('pp-search-input');
