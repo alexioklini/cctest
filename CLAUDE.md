@@ -82,6 +82,11 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - Cost tracking: `CostTracker` logs every LLM call to `costs.db` (tokens, model, provider, estimated cost)
 - Rate limiting: `RateLimiter` with sliding-window per agent (requests/min, tokens/hr, cost/day) from `rate_limits` in agent.json
 - Cost rates from `_cost_rates` defaults + `cost_input`/`cost_output` fields in `_models_config`
+- `list_nodes` tool queries `GET /v1/nodes` to let agents discover available remote nodes
+- `node.py` supports `--install` (launchd plist), `--uninstall`, `--status` for macOS daemon management
+- Node plist: `~/Library/LaunchAgents/com.brain-agent.node.{name}.plist`, logs to `~/.brain-agent/node-{name}.log`
+- Node connectivity: quick `GET /v1/nodes` check before entering long-poll loop for instant "Connected" feedback
+- Sidebar session list polls after stream end until async LLM summary appears (2s interval, 30s max)
 
 ### Agent Teams
 
@@ -144,6 +149,7 @@ Gmail: gmail_inbox, gmail_read, gmail_search, gmail_send, gmail_reply
 Memory: memory_store, memory_recall, memory_shared, memory_delete
 Agents: delegate_task, task_status, task_cancel
 Skills: use_skill
+Nodes: list_nodes (remote node status and info)
 Schedule: schedule_list, schedule_history
 MCP: mcp_* (dynamic, from connected MCP servers)
 

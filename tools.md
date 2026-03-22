@@ -94,6 +94,21 @@ Update this file to teach the agent new patterns and fix recurring mistakes.
 
 ---
 
+## list_nodes
+
+- Lists all registered remote nodes with status, hostname, OS, tags, and resource usage
+- Use this to discover available nodes before routing commands with the `node` parameter
+- Nodes with status "connected" are available; "disconnected" nodes are offline
+
+### Remote Nodes
+
+The `read_file`, `write_file`, `list_directory`, and `execute_command` tools accept an optional `node` parameter:
+- Pass a node name (e.g., `node="my-server"`) to execute on that specific node
+- Pass `node="tag:compute"` to route to any connected node with that tag (least-busy selected)
+- Omit `node` to execute locally (default)
+
+---
+
 ## web_fetch
 
 - Respects redirects automatically

@@ -4185,12 +4185,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 nodes.append({
                     "name": info["name"],
                     "description": cfg.get("description", ""),
+                    "token": token,
                     "status": info["status"],
                     "paused": cfg.get("paused", False),
                     "hostname": info.get("hostname", ""),
                     "os": info.get("os", ""),
                     "tags": cfg.get("tags", []),
                     "allowed_tools": cfg.get("allowed_tools", []),
+                    "max_concurrent": cfg.get("max_concurrent", 5),
+                    "command_timeout": cfg.get("command_timeout", 300),
                     "last_heartbeat": info.get("last_heartbeat"),
                     "cpu_percent": info.get("cpu_percent"),
                     "mem_used_gb": info.get("mem_used_gb"),
@@ -4311,7 +4314,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     "connected_since": None, "pending_commands": [],
                 }
             port = server_config.get("port", 8420)
-            install_cmd = f"python3 node.py --server http://SERVER_IP:{port} --token {token} --name {name}"
+            install_cmd = f"python3 node.py --install --server http://SERVER_IP:{port} --token {token} --name {name}"
             self._send_json({"ok": True, "token": token, "install_command": install_cmd})
 
         elif action == "remove":

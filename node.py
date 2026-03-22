@@ -24,7 +24,7 @@ import uuid
 import hashlib
 import secrets
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 
 # --- System Info ---
@@ -317,8 +317,6 @@ class NodeClient:
                 f"&total_commands={self._total_commands}"
             )
             result = self._get(f"/v1/nodes/poll?{params}", timeout=35)
-            self._connected = True
-            self._backoff = 1
             if result.get("command"):
                 return result["command"]
             return None
@@ -332,10 +330,7 @@ class NodeClient:
                 time.sleep(10)
                 return None
             raise
-        except Exception as e:
-            if self._connected:
-                print(f"Connection lost: {e}", flush=True)
-                self._connected = False
+        except Exception:
             raise
 
     def send_result(self, command_id: str, result: dict):
@@ -383,22 +378,42 @@ class NodeClient:
             print(f"Allowed paths: {', '.join(self.allowed_paths)}", flush=True)
         print(f"Connecting...", flush=True)
 
+        # Quick reachability check (GET /v1/nodes returns fast, no long-poll)
+        while not self._stop_event.is_set():
+            try:
+                self._get("/v1/nodes", timeout=10)
+                self._connected = True
+                self._backoff = 1
+                print(f"Connected to {self.server_url}", flush=True)
+                break
+            except Exception as e:
+                wait = min(self._backoff, 60)
+                print(f"  Connection failed: {e}. Retrying in {wait}s...", flush=True)
+                self._stop_event.wait(wait)
+                self._backoff = min(self._backoff * 2, 60)
+
         while not self._stop_event.is_set():
             try:
                 command = self.poll()
+                if not self._connected:
+                    # Reconnected after a disconnect
+                    self._connected = True
+                    self._backoff = 1
+                    print(f"Reconnected to {self.server_url}", flush=True)
                 if command:
                     tool = command.get("tool", "?")
                     print(f"  [{time.strftime('%H:%M:%S')}] {tool}: {str(command.get('params', {}))[:100]}", flush=True)
-                    # Execute in a thread to allow concurrent commands
                     threading.Thread(
                         target=self.execute_command, args=(command,),
                         daemon=True,
                     ).start()
                 else:
-                    # No command, poll again after short delay
                     self._stop_event.wait(2)
             except Exception as e:
                 if not self._stop_event.is_set():
+                    if self._connected:
+                        print(f"Connection lost: {e}", flush=True)
+                        self._connected = False
                     wait = min(self._backoff, 60)
                     print(f"  Reconnecting in {wait}s...", flush=True)
                     self._stop_event.wait(wait)
@@ -418,6 +433,173 @@ def generate_token() -> str:
     return f"nd_{secrets.token_hex(16)}"
 
 
+# --- launchd Management ---
+
+PLIST_LABEL_PREFIX = "com.brain-agent.node"
+
+def _plist_label(name: str) -> str:
+    """Generate launchd label for a node name."""
+    safe = name.replace(" ", "-").replace("/", "-").lower()
+    return f"{PLIST_LABEL_PREFIX}.{safe}"
+
+def _plist_path(name: str) -> str:
+    """Path to the launchd plist file."""
+    return os.path.expanduser(f"~/Library/LaunchAgents/{_plist_label(name)}.plist")
+
+def _log_dir() -> str:
+    d = os.path.expanduser("~/.brain-agent")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def _find_python() -> str:
+    """Find the best python3 binary."""
+    for p in ("/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"):
+        if os.path.exists(p):
+            return p
+    return sys.executable
+
+def _generate_plist(name: str, server: str, token: str, allowed_paths: list[str] | None = None) -> str:
+    """Generate launchd plist XML."""
+    label = _plist_label(name)
+    python = _find_python()
+    node_py = os.path.abspath(__file__)
+    log_dir = _log_dir()
+    safe = name.replace(" ", "-").replace("/", "-").lower()
+
+    args_xml = f"""        <string>{python}</string>
+        <string>{node_py}</string>
+        <string>--server</string>
+        <string>{server}</string>
+        <string>--token</string>
+        <string>{token}</string>
+        <string>--name</string>
+        <string>{name}</string>"""
+
+    if allowed_paths:
+        args_xml += f"""
+        <string>--allowed-paths</string>
+        <string>{','.join(allowed_paths)}</string>"""
+
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{label}</string>
+    <key>ProgramArguments</key>
+    <array>
+{args_xml}
+    </array>
+    <key>WorkingDirectory</key>
+    <string>{os.path.expanduser("~")}</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{log_dir}/node-{safe}.log</string>
+    <key>StandardErrorPath</key>
+    <string>{log_dir}/node-{safe}.error.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
+"""
+
+def cmd_install(args):
+    """Install node as a launchd service."""
+    if platform.system() != "Darwin":
+        print("Error: launchd is macOS only. Use systemd on Linux.", flush=True)
+        sys.exit(1)
+
+    if not args.server or not args.token:
+        print("Error: --server and --token are required for install", flush=True)
+        sys.exit(1)
+
+    name = args.name or platform.node()
+    allowed_paths = None
+    if args.allowed_paths:
+        allowed_paths = [p.strip() for p in args.allowed_paths.split(",") if p.strip()]
+
+    plist_file = _plist_path(name)
+    label = _plist_label(name)
+
+    # Unload existing if present
+    if os.path.exists(plist_file):
+        subprocess.run(["launchctl", "unload", plist_file], capture_output=True)
+
+    plist_content = _generate_plist(name, args.server, args.token, allowed_paths)
+    with open(plist_file, "w") as f:
+        f.write(plist_content)
+
+    result = subprocess.run(["launchctl", "load", plist_file], capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"Error loading plist: {result.stderr.strip()}", flush=True)
+        sys.exit(1)
+
+    safe = name.replace(" ", "-").replace("/", "-").lower()
+    log_dir = _log_dir()
+    print(f"Installed and started: {label}", flush=True)
+    print(f"  Plist:  {plist_file}", flush=True)
+    print(f"  Log:    {log_dir}/node-{safe}.log", flush=True)
+    print(f"  Errors: {log_dir}/node-{safe}.error.log", flush=True)
+    print(f"  Stop:   python3 node.py --uninstall --name {name}", flush=True)
+
+def cmd_uninstall(args):
+    """Uninstall node launchd service."""
+    name = args.name or platform.node()
+    plist_file = _plist_path(name)
+    label = _plist_label(name)
+
+    if not os.path.exists(plist_file):
+        print(f"No plist found at {plist_file}", flush=True)
+        sys.exit(1)
+
+    subprocess.run(["launchctl", "unload", plist_file], capture_output=True)
+    os.remove(plist_file)
+    print(f"Uninstalled: {label}", flush=True)
+    print(f"  Removed: {plist_file}", flush=True)
+
+def cmd_status(args):
+    """Show status of installed node services."""
+    agents_dir = os.path.expanduser("~/Library/LaunchAgents")
+    if not os.path.isdir(agents_dir):
+        print("No LaunchAgents directory found.", flush=True)
+        return
+
+    found = False
+    for f in sorted(os.listdir(agents_dir)):
+        if f.startswith(PLIST_LABEL_PREFIX) and f.endswith(".plist"):
+            label = f[:-6]  # strip .plist
+            plist_file = os.path.join(agents_dir, f)
+            # Check if loaded
+            result = subprocess.run(
+                ["launchctl", "list", label],
+                capture_output=True, text=True,
+            )
+            if result.returncode == 0:
+                # Parse PID from output
+                lines = result.stdout.strip().split("\n")
+                pid = "-"
+                for line in lines:
+                    if '"PID"' in line:
+                        pid = line.split("=")[-1].strip().rstrip(";")
+                status = f"running (PID {pid})" if pid != "-" and pid != "0" else "loaded"
+            else:
+                status = "stopped"
+
+            name = label.replace(PLIST_LABEL_PREFIX + ".", "")
+            print(f"  {name}: {status}", flush=True)
+            print(f"    Plist: {plist_file}", flush=True)
+            found = True
+
+    if not found:
+        print("No Brain Agent node services installed.", flush=True)
+
+
 # --- Main ---
 
 def main():
@@ -425,8 +607,19 @@ def main():
         description=f"Brain Agent Remote Node v{__version__}",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
+  # Run directly (foreground):
   python3 node.py --server http://192.168.4.65:8420 --token nd_abc123...
-  python3 node.py --server http://brain.alexklinsky.dev --token nd_abc123... --name build-server
+
+  # Install as launchd service (auto-start on boot):
+  python3 node.py --install --server http://192.168.4.65:8420 --token nd_abc123... --name build-server
+
+  # Check installed services:
+  python3 node.py --status
+
+  # Uninstall launchd service:
+  python3 node.py --uninstall --name build-server
+
+  # Generate a token:
   python3 node.py --generate-token
 """,
     )
@@ -435,11 +628,26 @@ def main():
     parser.add_argument("--name", help="Node name (default: hostname)")
     parser.add_argument("--allowed-paths", help="Comma-separated allowed path prefixes")
     parser.add_argument("--generate-token", action="store_true", help="Generate a new token and exit")
+    parser.add_argument("--install", action="store_true", help="Install as launchd service (macOS)")
+    parser.add_argument("--uninstall", action="store_true", help="Uninstall launchd service")
+    parser.add_argument("--status", action="store_true", help="Show status of installed node services")
     parser.add_argument("--version", action="version", version=f"Brain Agent Node v{__version__}")
     args = parser.parse_args()
 
     if args.generate_token:
         print(generate_token())
+        sys.exit(0)
+
+    if args.status:
+        cmd_status(args)
+        sys.exit(0)
+
+    if args.install:
+        cmd_install(args)
+        sys.exit(0)
+
+    if args.uninstall:
+        cmd_uninstall(args)
         sys.exit(0)
 
     if not args.server or not args.token:

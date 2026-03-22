@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "3.3.0"
+VERSION = "3.4.0"
 VERSION_DATE = "2026-03-22"
 CHANGELOG = [
+    ("3.4.0", "2026-03-22", "Remote nodes: list_nodes tool, node settings UI (token, allowed tools, max concurrent, timeout), node.py launchd install/uninstall/status, node connection logging, dynamic sidebar refresh on async LLM summary"),
     ("3.3.0", "2026-03-22", "Enhanced projects: AI note editing via tools, chat transcript indexing in QMD, LLM chat summaries, deep chat search, project panel search + counts + delete, chat attachments in sidebar, auto-refresh polling, prompt refinement in notes"),
     ("3.2.0", "2026-03-22", "Project Notes system with AI-assisted editing, 3-column layout (sidebar + center + project panel), notes as first-class knowledge graph citizens, note editor with formatting toolbar and AI chat sidebar"),
     ("3.1.0", "2026-03-21", "Auto memory creation, continuous session summarization, knowledge graph visualization + auto-discovery, chat file attachments, model-aware max_tokens, Bootstrap Icons avatars, sidebar redesign (Projects + Chats), Tools settings, improved fallback ordering, prompt refinement improvements"),
@@ -116,7 +117,7 @@ _web_cache = WebCache()
 
 READONLY_TOOLS = frozenset({
     "read_file", "list_directory", "search_files", "web_fetch", "exa_search",
-    "memory_recall", "memory_shared", "task_status", "schedule_list",
+    "memory_recall", "memory_shared", "task_status", "list_nodes", "schedule_list",
     "schedule_history", "use_skill", "gmail_inbox", "gmail_read", "gmail_search",
 })
 
@@ -481,6 +482,19 @@ TOOL_DEFINITIONS = [
     {
         "name": "schedule_list",
         "description": "List all scheduled tasks with their status, next run time, and configuration.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "list_nodes",
+        "description": (
+            "List all registered remote nodes with their status, hostname, OS, tags, "
+            "allowed tools, and resource usage. Use this to check what remote nodes are "
+            "available before routing commands to them."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {},
@@ -6744,6 +6758,21 @@ class RateLimiter:
 _rate_limiter: RateLimiter | None = None
 
 
+def tool_list_nodes(args: dict) -> str:
+    """List all registered remote nodes."""
+    try:
+        import urllib.request
+        req = urllib.request.Request("http://127.0.0.1:8420/v1/nodes", method="GET")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        nodes = data.get("nodes", [])
+        if not nodes:
+            return _ok({"nodes": [], "count": 0, "message": "No nodes registered"})
+        return _ok({"nodes": nodes, "count": len(nodes)})
+    except Exception as e:
+        return _err(f"Failed to list nodes: {e}")
+
+
 def tool_schedule_list(args: dict) -> str:
     """List all scheduled tasks."""
     if not _scheduler:
@@ -7850,7 +7879,7 @@ TOOL_ICONS = {
     "gmail_inbox": "@", "gmail_read": "@", "gmail_search": "@",
     "gmail_send": "@", "gmail_reply": "@",
     "task_status": "?", "task_cancel": "x",
-    "schedule_list": "t", "schedule_history": "h",
+    "list_nodes": "n", "schedule_list": "t", "schedule_history": "h",
 }
 
 TOOL_VERBS = {
@@ -7862,7 +7891,7 @@ TOOL_VERBS = {
     "gmail_inbox": "Inbox", "gmail_read": "Reading Email", "gmail_search": "Searching Email",
     "gmail_send": "Sending Email", "gmail_reply": "Replying",
     "task_status": "Task Status", "task_cancel": "Cancelling",
-    "schedule_list": "Schedules", "schedule_history": "History",
+    "list_nodes": "Listing Nodes", "schedule_list": "Schedules", "schedule_history": "History",
 }
 
 
@@ -8154,6 +8183,7 @@ TOOL_DISPATCH = {
     "task_status": tool_task_status,
     "task_cancel": tool_task_cancel,
     "use_skill": tool_use_skill,
+    "list_nodes": tool_list_nodes,
     "schedule_list": tool_schedule_list,
     "schedule_history": tool_schedule_history,
     "mcp_connect": tool_mcp_connect,

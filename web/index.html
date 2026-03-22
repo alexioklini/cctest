@@ -5064,6 +5064,29 @@ async function sendMessage() {
     if (chat.agent && state.agentSessions[chat.agent]) {
       state.agentSessions[chat.agent].loaded = false;
       loadAgentSessions(chat.agent);
+      // Poll for async updates (LLM summary, title) — stop once summary appears or timeout
+      const _sid = chat.sessionId;
+      const _agentName = chat.agent;
+      if (_sid) {
+        let _pollCount = 0;
+        const _pollTimer = setInterval(async () => {
+          _pollCount++;
+          if (_pollCount > 15) { clearInterval(_pollTimer); return; } // 30s max
+          try {
+            const entry = state.agentSessions[_agentName];
+            if (!entry) { clearInterval(_pollTimer); return; }
+            entry.loaded = false;
+            await loadAgentSessions(_agentName);
+            if (state.projectPanelOpen && state.currentProject) {
+              renderProjectPanelChats(state.activeAgentId, state.currentProject);
+            }
+            // Check if summary landed
+            const sessions = entry.sessions || [];
+            const s = sessions.find(x => x.id === _sid);
+            if (s && s.summary) clearInterval(_pollTimer);
+          } catch(e) { clearInterval(_pollTimer); }
+        }, 2000);
+      }
     }
   }
 }
@@ -10064,9 +10087,13 @@ function renderImagePreviews() {
 })();
 
 // ─── Nodes Settings Tab ──────────────────────────────────────
+const NODE_TOOLS = ['execute_command','read_file','write_file','edit_file','list_directory','search_files'];
+let _nodeExpanded = {};  // track which node settings panels are open
+
 async function renderNodesTab(el) {
   const res = await API.get('/v1/nodes');
   const nodes = res.nodes || [];
+  const port = location.port || (location.protocol === 'https:' ? 443 : 80);
   el.innerHTML = `
     <div class="glass-card p-6">
       <div class="flex items-center justify-between mb-4">
@@ -10076,18 +10103,32 @@ async function renderNodesTab(el) {
       ${nodes.length === 0 ? '<div class="text-text-muted text-sm">No remote nodes configured. Add a node to execute commands on remote machines.</div>' : ''}
       <div class="space-y-4">
         ${nodes.map(n => {
-          const dot = n.status === 'connected' ? 'bg-success breathing-dot' : 'bg-error';
+          const dot = n.status === 'connected' ? 'bg-success breathing-dot' : (n.paused ? 'bg-warning' : 'bg-error');
           const statusText = n.paused ? 'Paused' : n.status;
-          return `<div class="border border-border/50 rounded-lg p-4">
+          const expanded = _nodeExpanded[n.name] || false;
+          const maskedToken = n.token ? n.token.slice(0, 6) + '...' + n.token.slice(-4) : '';
+          const toolChecks = NODE_TOOLS.map(t => {
+            const checked = (n.allowed_tools || []).includes(t) ? 'checked' : '';
+            return `<label class="flex items-center gap-1.5 text-xs text-text-secondary cursor-pointer">
+              <input type="checkbox" ${checked} onchange="nodeToggleTool('${esc(n.name)}','${t}',this.checked)"
+                class="accent-accent w-3.5 h-3.5 rounded"> ${t}
+            </label>`;
+          }).join('');
+          return `<div class="border border-border/50 rounded-lg p-4" id="node-card-${esc(n.name)}">
             <div class="flex items-center justify-between mb-2">
               <div class="flex items-center gap-3">
                 <span class="w-2.5 h-2.5 rounded-full ${dot}"></span>
                 <span class="text-text-primary font-display font-semibold">${esc(n.name)}</span>
                 <span class="text-xs text-text-muted">${esc(n.description || '')}</span>
+                <span class="px-1.5 py-0.5 rounded text-[10px] mono ${n.status === 'connected' ? 'bg-success/10 text-success' : 'bg-error/10 text-error'}">${statusText}</span>
               </div>
               <div class="flex items-center gap-2">
-                <button onclick="nodeAction('${n.paused ? 'resume' : 'pause'}','${esc(n.name)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg">${n.paused ? 'Resume' : 'Pause'}</button>
-                <button onclick="nodeAction('remove','${esc(n.name)}')" class="btn-secondary text-xs px-3 py-1 rounded-lg text-error">Remove</button>
+                <button onclick="_nodeExpanded['${esc(n.name)}']=!_nodeExpanded['${esc(n.name)}'];loadSettingsTab()"
+                  class="btn-secondary text-xs px-3 py-1 rounded-lg"><i class="bi bi-gear"></i> Settings</button>
+                <button onclick="nodeAction('${n.paused ? 'resume' : 'pause'}','${esc(n.name)}')"
+                  class="btn-secondary text-xs px-3 py-1 rounded-lg">${n.paused ? 'Resume' : 'Pause'}</button>
+                <button onclick="if(confirm('Remove node ${esc(n.name)}?'))nodeAction('remove','${esc(n.name)}')"
+                  class="btn-secondary text-xs px-3 py-1 rounded-lg text-error">Remove</button>
               </div>
             </div>
             <div class="text-xs text-text-muted mono">${esc(n.os || '')} ${n.hostname ? '(' + esc(n.hostname) + ')' : ''}</div>
@@ -10096,16 +10137,85 @@ async function renderNodesTab(el) {
                 <span>CPU: ${n.cpu_percent != null ? n.cpu_percent + '%' : '-'}</span>
                 <span>RAM: ${n.mem_used_gb != null ? n.mem_used_gb.toFixed(1) + '/' + (n.mem_total_gb || 0).toFixed(0) + ' GB' : '-'}</span>
                 <span>Disk: ${n.disk_free_gb != null ? n.disk_free_gb.toFixed(0) + ' GB free' : '-'}</span>
+                <span>Commands: ${n.active_commands} active / ${n.total_commands} total</span>
               </div>` : ''}
             <div class="flex flex-wrap gap-1 mt-2">
               ${(n.tags || []).map(t => `<span class="px-2 py-0.5 bg-agent/10 rounded text-[10px] text-agent border border-agent/20">${esc(t)}</span>`).join('')}
             </div>
-            <div class="text-xs text-text-muted mt-1">Tools: ${(n.allowed_tools || []).join(', ')}</div>
+            ${expanded ? `
+            <div class="mt-4 pt-4 border-t border-border/50 space-y-3">
+              <div>
+                <label class="text-xs text-text-secondary block mb-1">Token</label>
+                <div class="flex items-center gap-2">
+                  <code id="node-token-${esc(n.name)}" class="flex-1 bg-surface-light border border-border rounded-lg px-3 py-1.5 text-xs mono text-text-primary select-all">${maskedToken}</code>
+                  <button onclick="nodeRevealToken('${esc(n.name)}','${esc(n.token)}')" class="btn-secondary text-xs px-2 py-1 rounded-lg"><i class="bi bi-eye"></i></button>
+                  <button onclick="navigator.clipboard.writeText('${esc(n.token)}');showToast('Token copied')" class="btn-secondary text-xs px-2 py-1 rounded-lg"><i class="bi bi-clipboard"></i></button>
+                </div>
+              </div>
+              <div>
+                <label class="text-xs text-text-secondary block mb-1">Install Command</label>
+                <div class="flex items-center gap-2">
+                  <code class="flex-1 bg-surface-light border border-border rounded-lg px-3 py-1.5 text-xs mono text-text-primary break-all">python3 node.py --install --server http://SERVER_IP:${port} --token ${esc(n.token)} --name ${esc(n.name)}</code>
+                  <button onclick="navigator.clipboard.writeText('python3 node.py --install --server http://SERVER_IP:${port} --token ${esc(n.token)} --name ${esc(n.name)}');showToast('Copied')" class="btn-secondary text-xs px-2 py-1 rounded-lg"><i class="bi bi-clipboard"></i></button>
+                </div>
+              </div>
+              <div>
+                <label class="text-xs text-text-secondary block mb-1">Description</label>
+                <input id="node-desc-${esc(n.name)}" class="w-full bg-surface-light border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary"
+                  value="${esc(n.description || '')}" onchange="nodeUpdate('${esc(n.name)}',{description:this.value})">
+              </div>
+              <div>
+                <label class="text-xs text-text-secondary block mb-1">Tags (comma-separated)</label>
+                <input id="node-tags-${esc(n.name)}" class="w-full bg-surface-light border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary"
+                  value="${esc((n.tags || []).join(', '))}" onchange="nodeUpdate('${esc(n.name)}',{tags:this.value.split(',').map(t=>t.trim()).filter(Boolean)})">
+              </div>
+              <div>
+                <label class="text-xs text-text-secondary block mb-1">Allowed Tools</label>
+                <div class="flex flex-wrap gap-x-4 gap-y-2 mt-1">${toolChecks}</div>
+              </div>
+              <div class="flex gap-4">
+                <div class="flex-1">
+                  <label class="text-xs text-text-secondary block mb-1">Max Concurrent</label>
+                  <input type="number" min="1" max="50" class="w-full bg-surface-light border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary"
+                    value="${n.max_concurrent || 5}" onchange="nodeUpdate('${esc(n.name)}',{max_concurrent:parseInt(this.value)||5})">
+                </div>
+                <div class="flex-1">
+                  <label class="text-xs text-text-secondary block mb-1">Command Timeout (seconds)</label>
+                  <input type="number" min="10" max="3600" class="w-full bg-surface-light border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary"
+                    value="${n.command_timeout || 300}" onchange="nodeUpdate('${esc(n.name)}',{command_timeout:parseInt(this.value)||300})">
+                </div>
+              </div>
+            </div>` : ''}
           </div>`;
         }).join('')}
       </div>
     </div>`;
 }
+
+window.nodeRevealToken = function(name, token) {
+  const el = document.getElementById('node-token-' + name);
+  if (el) { el.textContent = el.textContent.includes('...') ? token : token.slice(0, 6) + '...' + token.slice(-4); }
+};
+
+window.nodeToggleTool = async function(name, tool, enabled) {
+  try {
+    const res = await API.get('/v1/nodes');
+    const node = (res.nodes || []).find(n => n.name === name);
+    if (!node) return;
+    let tools = [...(node.allowed_tools || [])];
+    if (enabled && !tools.includes(tool)) tools.push(tool);
+    if (!enabled) tools = tools.filter(t => t !== tool);
+    await API.post('/v1/nodes', {action:'update', name, allowed_tools: tools});
+    showToast('Tools updated');
+  } catch(e) { showToast(e.message, 'error'); }
+};
+
+window.nodeUpdate = async function(name, updates) {
+  try {
+    await API.post('/v1/nodes', {action:'update', name, ...updates});
+    showToast('Node updated');
+  } catch(e) { showToast(e.message, 'error'); }
+};
 
 window.showAddNodeDialog = function() {
   const d = document.createElement('div');
@@ -10136,7 +10246,7 @@ window.createNode = async function() {
     const r = await API.post('/v1/nodes', {action:'add', name, description:desc, tags});
     const el = document.getElementById('add-node-result');
     el.style.display = 'block';
-    el.innerHTML = `<div class="bg-surface-light border border-border rounded-lg p-3 text-xs mono"># Install on remote machine:\n${esc(r.install_command || '')}\n\nToken: ${esc(r.token || '')}</div>`;
+    el.innerHTML = `<div class="bg-surface-light border border-border rounded-lg p-3 text-xs mono break-all"># Install on remote machine:\n${esc(r.install_command || '')}\n\nToken: ${esc(r.token || '')}</div>`;
     showToast('Node created');
     setTimeout(() => loadSettingsTab(), 500);
   } catch(e) { showToast(e.message, 'error'); }

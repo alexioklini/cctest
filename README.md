@@ -37,7 +37,7 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
 - **Web UI** — sidebar with Projects + Chats sections, slash command popup, plan mode, image upload, knowledge map
 - **TUI** — Rich + prompt_toolkit, 50+ slash commands, autocomplete
 - **Multi-messaging** — adapter framework for Telegram + future Discord/Slack channels
-- **Remote nodes** — lightweight agents on remote machines with centralized management
+- **Remote nodes** — lightweight agents on remote machines with centralized management, launchd install, settings UI
 
 ### Intelligence
 - **Knowledge graph memory** — QMD hybrid search (BM25 + vector + LLM reranking) with relationship traversal and auto-discovery
@@ -161,6 +161,7 @@ brain-agent/
 | `task_status` | Check background task status |
 | `task_cancel` | Cancel running background task |
 | `use_skill` | Load skill instructions on demand |
+| `list_nodes` | List registered remote nodes with status and resource usage |
 | `schedule_list` | List scheduled tasks |
 | `schedule_history` | View execution history |
 | `mcp_*` | Any tool from connected MCP servers |
@@ -349,6 +350,7 @@ Each task runs with a specified agent and model in its own context. Results stor
 
 | Version | Date | Changes |
 |---|---|---|
+| 3.4.0 | 2026-03-22 | Remote nodes: list_nodes tool, node settings UI (token, tools, concurrency, timeout), node.py launchd install/uninstall/status, connection logging, dynamic sidebar refresh on async summary |
 | 3.3.0 | 2026-03-22 | Project notes with AI editing via tools, chat transcript QMD indexing, LLM chat summaries, deep search in sidebar, project panel search + counts + auto-refresh, chat attachments in sidebar, prompt refinement in notes |
 | 3.2.0 | 2026-03-22 | Project Notes system, 3-column layout (sidebar + center + project panel), note editor with formatting toolbar and AI chat, notes in knowledge graph |
 | 3.1.0 | 2026-03-21 | Auto memory creation, continuous session summarization, knowledge graph visualization + auto-discovery, chat file attachments, model-aware max_tokens, sidebar redesign (Projects + Chats), Tools settings, improved fallback ordering |
