@@ -3208,7 +3208,7 @@ function renderSessionBar() {
   const searchVal = state._chatSearchQuery || '';
   html += `<div style="padding:2px 8px 6px">
     <input type="text" class="sb-chat-search" placeholder="Search chats..." value="${esc(searchVal)}"
-      oninput="state._chatSearchQuery=this.value;renderSessionBar()"
+      oninput="state._chatSearchQuery=this.value;renderSessionBar();const _si=document.querySelector('.sb-chat-search');if(_si){_si.focus();_si.selectionStart=_si.selectionEnd=_si.value.length}"
       onclick="event.stopPropagation()"
       style="width:100%;padding:4px 8px;border-radius:6px;border:1px solid var(--color-border);background:var(--color-surface-light);color:var(--color-text-primary);font-size:11px;outline:none;font-family:'IBM Plex Mono',monospace">
   </div>`;
