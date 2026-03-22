@@ -370,6 +370,7 @@ class Session:
         self.lock = threading.Lock()
 
         self.project: str | None = None  # Active project name (for scoped chat)
+        self.note_context: str | None = None  # Note content for AI-assisted editing
         self._last_summary_at = 0  # Token count at last continuous summary
 
         self.agent = engine.AgentConfig(agent_id)
@@ -588,6 +589,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         elif path == "/v1/mcp/connections":
             self._handle_mcp_list()
         # --- Projects & Ingestion GET routes ---
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/notes" in path:
+            self._handle_notes(path, "GET")
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/docs" in path:
             self._handle_project_docs(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path:
@@ -712,6 +715,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         elif path == "/v1/mcp/disconnect":
             self._handle_mcp_disconnect()
         # --- Projects & Ingestion POST routes ---
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/notes" in path:
+            self._handle_notes(path, "POST")
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/ingest" in path:
             self._handle_project_ingest(path)
         elif path.startswith("/v1/agents/") and path.endswith("/projects"):
@@ -744,7 +749,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         path = self.path.split("?")[0]
-        if path.startswith("/v1/agents/") and "/projects/" in path:
+        if path.startswith("/v1/agents/") and "/projects/" in path and "/notes/" in path:
+            self._handle_notes(path, "PUT")
+        elif path.startswith("/v1/agents/") and "/projects/" in path:
             self._handle_project_update(path)
         else:
             self._send_json({"error": "Not found"}, 404)
@@ -767,6 +774,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         elif path.startswith("/v1/services/qmd/docs"):
             self._handle_qmd_doc_delete()
         # --- Projects & Ingestion DELETE routes ---
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/notes/" in path:
+            self._handle_notes(path, "DELETE")
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/docs/" in path:
             self._handle_project_doc_delete(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path:
@@ -981,6 +990,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             ChatDB.save_session(session.id, session.agent_id, session.model,
                                session.title, session.status, session.created_at,
                                session.last_active, project)
+        note_context = body.get("note_context", "")
+        if note_context:
+            session.note_context = note_context
         self._send_json({
             "session_id": session.id,
             "agent": session.agent_id,
@@ -1149,6 +1161,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 engine._thread_local.project = project_name
             else:
                 engine._thread_local.project = session.project  # Use session's existing project
+
+            # Set note context for AI-assisted note editing
+            if session.note_context:
+                engine._thread_local.note_context = session.note_context
+            else:
+                engine._thread_local.note_context = None
 
             # Set globals as fallback for code that hasn't been migrated yet
             old_agent = engine._current_agent
@@ -1613,6 +1631,94 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         else:
             self._send_json(result)
 
+    def _handle_notes(self, path: str, method: str):
+        """Handle notes CRUD: /v1/agents/{id}/projects/{name}/notes[/{path...}]"""
+        from urllib.parse import unquote
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+
+        # Extract note path: everything after /notes/ (or empty for list)
+        # URL pattern: /v1/agents/{id}/projects/{name}/notes[/{path...}]
+        parts = path.split("/notes", 1)
+        note_path = ""
+        if len(parts) > 1:
+            note_path = unquote(parts[1].lstrip("/"))
+
+        if method == "GET":
+            if not note_path:
+                # List all notes
+                notes = engine.NoteManager.list_notes(agent_id, proj_name)
+                self._send_json({"agent": agent_id, "project": proj_name, "notes": notes})
+            else:
+                # Get single note
+                note = engine.NoteManager.get_note(agent_id, proj_name, note_path)
+                if not note:
+                    self._send_json({"error": f"Note '{note_path}' not found"}, 404)
+                else:
+                    self._send_json(note)
+
+        elif method == "POST":
+            body = self._read_json()
+            note_path = body.get("path", note_path)
+            if not note_path:
+                self._send_json({"error": "Note path is required"}, 400)
+                return
+            # Ensure .md extension
+            if not note_path.endswith(".md"):
+                note_path += ".md"
+            content = body.get("content", "")
+            action = body.get("action", "")
+            if action == "create_folder":
+                folder_path = body.get("folder_path", "")
+                if not folder_path:
+                    self._send_json({"error": "folder_path is required"}, 400)
+                    return
+                result = engine.NoteManager.create_folder(agent_id, proj_name, folder_path)
+                self._send_json(result)
+            elif action == "rename":
+                new_path = body.get("new_path", "")
+                if not new_path:
+                    self._send_json({"error": "new_path is required"}, 400)
+                    return
+                if not new_path.endswith(".md"):
+                    new_path += ".md"
+                result = engine.NoteManager.rename_note(agent_id, proj_name, note_path, new_path)
+                if "error" in result:
+                    self._send_json(result, 400)
+                else:
+                    self._send_json(result)
+            else:
+                result = engine.NoteManager.create_note(agent_id, proj_name, note_path, content)
+                if "error" in result:
+                    self._send_json(result, 409)
+                else:
+                    self._send_json(result, 201)
+
+        elif method == "PUT":
+            if not note_path:
+                self._send_json({"error": "Note path is required"}, 400)
+                return
+            body = self._read_json()
+            content = body.get("content", "")
+            result = engine.NoteManager.update_note(agent_id, proj_name, note_path, content)
+            if "error" in result:
+                self._send_json(result, 404)
+            else:
+                self._send_json(result)
+
+        elif method == "DELETE":
+            if not note_path:
+                self._send_json({"error": "Note path is required"}, 400)
+                return
+            result = engine.NoteManager.delete_note(agent_id, proj_name, note_path)
+            if "error" in result:
+                self._send_json(result, 404)
+            else:
+                self._send_json(result)
+
     def _handle_agent_ingest(self, path: str):
         """POST /v1/agents/{id}/ingest — ingest file or URL into agent memory."""
         agent_id = self._parse_agent_from_path(path)
@@ -1894,7 +2000,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     # Extract edges from 'related' frontmatter
                     import re as _re
                     related_files = _re.findall(r'file:\s*(\S+\.md)', raw)
-                    related_types = _re.findall(r'type:\s*(prev_chunk|next_chunk|same_source|references|same_topic|depends_on|contradicts|extends|co_recalled)', raw)
+                    related_types = _re.findall(r'type:\s*(prev_chunk|next_chunk|same_source|references|same_topic|depends_on|contradicts|extends|co_recalled|same_folder)', raw)
                     for i, ref_file in enumerate(related_files):
                         edge_type = related_types[i] if i < len(related_types) else "references"
                         # Resolve ref_file relative to the same directory

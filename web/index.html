@@ -2002,6 +2002,85 @@ tailwind.config = {
     color: var(--color-text-muted);
     font-family: 'IBM Plex Sans', sans-serif;
   }
+
+  /* ── Project Panel (right sidebar) ── */
+  #project-panel {
+    width: 320px; min-width: 320px; height: 100vh;
+    background: var(--color-surface);
+    border-left: 1px solid var(--color-border);
+    display: flex; flex-direction: column;
+    overflow-y: auto; overflow-x: hidden;
+    transition: width 0.2s ease, min-width 0.2s ease;
+    flex-shrink: 0;
+  }
+  #project-panel.collapsed { width: 0; min-width: 0; border-left: none; overflow: hidden; }
+  .pp-header { padding: 12px; border-bottom: 1px solid var(--color-border); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .pp-header select { flex: 1; background: var(--color-surface-light); border: 1px solid var(--color-border); border-radius: 8px; padding: 6px 10px; font-size: 13px; color: var(--color-text-primary); font-family: 'Outfit', sans-serif; }
+  .pp-body { flex: 1; overflow-y: auto; }
+  .pp-section-header { display: flex; align-items: center; gap: 6px; padding: 8px 12px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-text-muted); cursor: pointer; user-select: none; }
+  .pp-section-header:hover { color: var(--color-text-secondary); }
+  .pp-section-content { padding: 0 8px 8px; }
+  .pp-section.collapsed .pp-section-content { display: none; }
+  .pp-section.collapsed .pp-chevron { transform: rotate(-90deg); }
+  .pp-chevron { font-size: 8px; transition: transform 0.15s; display: inline-block; }
+  .pp-add-btn { margin-left: auto; font-size: 14px; background: none; border: none; color: var(--color-text-muted); cursor: pointer; padding: 0 4px; }
+  .pp-add-btn:hover { color: var(--color-accent); }
+  .pp-toggle { background: none; border: none; color: var(--color-text-muted); cursor: pointer; font-size: 18px; padding: 0 4px; flex-shrink: 0; }
+  .pp-toggle:hover { color: var(--color-text-primary); }
+
+  /* Note / chat / doc items in project panel tree */
+  .pp-note-item { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 6px; cursor: pointer; font-size: 12px; color: var(--color-text-secondary); }
+  .pp-note-item:hover { background: color-mix(in srgb, var(--color-accent) 8%, transparent); }
+  .pp-note-item.active { background: color-mix(in srgb, var(--color-accent) 15%, transparent); color: var(--color-accent); }
+  .pp-note-folder { font-size: 10px; font-weight: 700; color: var(--color-text-muted); padding: 6px 8px 2px; text-transform: uppercase; }
+  .pp-chat-item { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 6px; cursor: pointer; font-size: 12px; color: var(--color-text-secondary); }
+  .pp-chat-item:hover { background: color-mix(in srgb, var(--color-accent) 8%, transparent); }
+  .pp-chat-item.active { background: color-mix(in srgb, var(--color-accent) 15%, transparent); color: var(--color-accent); }
+  .pp-doc-item { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 6px; font-size: 11px; color: var(--color-text-muted); cursor: default; }
+  .pp-info-block { padding: 8px 12px; }
+  .pp-info-name { font-family: 'Outfit', sans-serif; font-weight: 600; font-size: 14px; color: var(--color-text-primary); display: flex; align-items: center; gap: 6px; }
+  .pp-info-desc { font-size: 11px; color: var(--color-text-muted); margin-top: 4px; }
+  .pp-info-actions { display: flex; gap: 6px; margin-top: 8px; }
+  .pp-info-btn { font-size: 10px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-surface-light); color: var(--color-text-secondary); cursor: pointer; }
+  .pp-info-btn:hover { border-color: var(--color-accent); color: var(--color-accent); }
+  .pp-empty { font-size: 10px; color: var(--color-text-muted); font-style: italic; padding: 4px 8px; }
+
+  /* Sidebar project selector button */
+  .sb-project-selector-btn { display: flex; align-items: center; gap: 6px; padding: 5px 12px; cursor: pointer; color: var(--color-text-muted); font-size: 11px; transition: all 0.15s; border-radius: 4px; margin: 2px 6px; }
+  .sb-project-selector-btn:hover { color: var(--color-accent); background: var(--color-surface-light); }
+  .sb-project-selector-btn.active { color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 8%, transparent); }
+  #sidebar.collapsed .sb-project-selector-btn .sb-btn-text { display: none; }
+  #sidebar.collapsed .sb-project-selector-btn { justify-content: center; padding: 6px 0; }
+
+  /* ── Note Editor ── */
+  #note-editor-area { display: none; }
+  #note-editor-main { min-width: 0; }
+  #note-toolbar { display: flex; align-items: center; gap: 4px; padding: 6px 12px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); flex-shrink: 0; }
+  .note-tool-btn { padding: 4px 8px; border-radius: 4px; border: 1px solid transparent; background: none; color: var(--color-text-secondary); cursor: pointer; font-size: 12px; font-family: 'IBM Plex Mono', monospace; }
+  .note-tool-btn:hover { background: var(--color-surface-lighter); border-color: var(--color-border); }
+  .note-back-btn { padding: 4px 8px; border-radius: 4px; border: 1px solid var(--color-border); background: var(--color-surface-light); color: var(--color-text-secondary); cursor: pointer; font-size: 11px; font-family: 'Outfit', sans-serif; margin-right: 8px; }
+  .note-back-btn:hover { color: var(--color-accent); border-color: var(--color-accent); }
+  .note-title-display { font-family: 'Outfit', sans-serif; font-size: 13px; font-weight: 600; color: var(--color-text-primary); margin-right: auto; }
+  .note-save-status { margin-left: auto; font-size: 10px; color: var(--color-text-muted); font-family: 'IBM Plex Mono', monospace; }
+  #note-editor-textarea { flex: 1; resize: none; border: none; outline: none; padding: 20px 24px; font-family: 'IBM Plex Mono', monospace; font-size: 14px; line-height: 1.6; color: var(--color-text-primary); background: var(--color-base); width: 100%; }
+
+  /* Note AI Sidebar */
+  #note-ai-sidebar { width: 320px; min-width: 320px; border-left: 1px solid var(--color-border); display: flex; flex-direction: column; background: var(--color-surface); }
+  #note-ai-header { padding: 10px 12px; border-bottom: 1px solid var(--color-border); font-size: 12px; font-weight: 600; color: var(--color-text-secondary); font-family: 'Outfit', sans-serif; }
+  #note-ai-messages { flex: 1; overflow-y: auto; padding: 12px; }
+  .note-ai-msg { margin-bottom: 8px; padding: 6px 10px; border-radius: 8px; font-size: 12px; line-height: 1.5; }
+  .note-ai-msg.user { background: color-mix(in srgb, var(--color-accent) 10%, transparent); color: var(--color-text-primary); text-align: right; }
+  .note-ai-msg.assistant { background: var(--color-surface-light); color: var(--color-text-secondary); }
+  #note-ai-input-area { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--color-border); }
+  #note-ai-input { flex: 1; resize: none; border: 1px solid var(--color-border); border-radius: 8px; padding: 6px 10px; font-size: 12px; background: var(--color-surface-light); color: var(--color-text-primary); font-family: 'IBM Plex Sans', sans-serif; outline: none; }
+  #note-ai-input:focus { border-color: var(--color-accent); }
+  .note-ai-send-btn { padding: 6px 12px; border-radius: 8px; border: none; background: var(--color-accent); color: #fff; cursor: pointer; font-size: 11px; font-weight: 600; font-family: 'Outfit', sans-serif; }
+  .note-ai-send-btn:hover { opacity: 0.9; }
+
+  @media (max-width: 768px) {
+    #project-panel { display: none !important; }
+    #note-ai-sidebar { display: none !important; }
+  }
 </style>
 </head>
 <body class="bg-base">
@@ -2065,6 +2144,10 @@ tailwind.config = {
 
     <div class="sb-divider"></div>
 
+    <div id="sidebar-project-selector"></div>
+
+    <div class="sb-divider"></div>
+
     <div id="sidebar-sessions"></div>
 
     <div class="sb-footer">
@@ -2091,7 +2174,7 @@ tailwind.config = {
   </aside>
 
   <!-- MAIN CONTENT -->
-  <div class="flex-1 flex flex-col overflow-hidden">
+  <div id="center-content" class="flex-1 flex flex-col overflow-hidden min-w-0">
     <!-- CHAT AREA (fills remaining) -->
     <div id="chat-area" class="flex-1 flex flex-col overflow-hidden bg-base">
       <!-- Chat top bar -->
@@ -2150,6 +2233,35 @@ tailwind.config = {
       </div>
     </div>
 
+    <!-- NOTE EDITOR VIEW (hidden by default, replaces chat when active) -->
+    <div id="note-editor-area" style="display:none" class="flex-1 flex overflow-hidden bg-base">
+      <div id="note-editor-main" class="flex-1 flex flex-col overflow-hidden">
+        <div id="note-toolbar">
+          <button class="note-back-btn" onclick="closeNote()" title="Back to chat (Escape)">&larr; Back</button>
+          <span class="note-title-display" id="note-title-display">Untitled</span>
+          <button class="note-tool-btn" onclick="insertNoteFormatting('bold')" title="Bold"><b>B</b></button>
+          <button class="note-tool-btn" onclick="insertNoteFormatting('italic')" title="Italic"><i>I</i></button>
+          <button class="note-tool-btn" onclick="insertNoteFormatting('h1')" title="Heading 1">H1</button>
+          <button class="note-tool-btn" onclick="insertNoteFormatting('h2')" title="Heading 2">H2</button>
+          <button class="note-tool-btn" onclick="insertNoteFormatting('h3')" title="Heading 3">H3</button>
+          <button class="note-tool-btn" onclick="insertNoteFormatting('code')" title="Code">`</button>
+          <button class="note-tool-btn" onclick="insertNoteFormatting('codeblock')" title="Code Block">```</button>
+          <button class="note-tool-btn" onclick="insertNoteFormatting('link')" title="Link">[&middot;]</button>
+          <button class="note-tool-btn" onclick="insertNoteFormatting('list')" title="List">-</button>
+          <span class="note-save-status" id="note-save-status">Saved</span>
+        </div>
+        <textarea id="note-editor-textarea" placeholder="Start writing..."></textarea>
+      </div>
+      <div id="note-ai-sidebar">
+        <div id="note-ai-header">AI Assistant</div>
+        <div id="note-ai-messages"></div>
+        <div id="note-ai-input-area">
+          <textarea id="note-ai-input" placeholder="Ask about this note..." rows="2"></textarea>
+          <button class="note-ai-send-btn" onclick="sendNoteAiMessage()">Send</button>
+        </div>
+      </div>
+    </div>
+
   <!-- ACTIVITY PANEL (slide-in from right) -->
   <div id="activity-panel">
     <div class="ap-header">
@@ -2184,6 +2296,52 @@ tailwind.config = {
       <span id="status-tokens" class="mono"></span>
       <span id="status-session" class="mono" style="margin-left:auto"></span>
     </footer>
+  </div>
+
+  <!-- PROJECT PANEL (right sidebar, collapsible) -->
+  <div id="project-panel" class="collapsed">
+    <div class="pp-header">
+      <select id="pp-project-select" onchange="switchProjectPanel(this.value)"></select>
+      <button class="pp-toggle" onclick="toggleProjectPanel()" title="Close">&times;</button>
+    </div>
+    <div class="pp-body">
+      <div class="pp-section" data-section="info">
+        <div class="pp-section-header" onclick="togglePpSection('info')">
+          <span class="pp-chevron">&#9660;</span> Info
+        </div>
+        <div class="pp-section-content" id="pp-info"></div>
+      </div>
+      <div class="pp-section" data-section="chats">
+        <div class="pp-section-header" onclick="togglePpSection('chats')">
+          <span class="pp-chevron">&#9660;</span> Chats <button class="pp-add-btn" onclick="event.stopPropagation();newProjectChat(state.currentProject)">+</button>
+        </div>
+        <div class="pp-section-content" id="pp-chats"></div>
+      </div>
+      <div class="pp-section" data-section="notes">
+        <div class="pp-section-header" onclick="togglePpSection('notes')">
+          <span class="pp-chevron">&#9660;</span> Notes <button class="pp-add-btn" onclick="event.stopPropagation();createNewNote()">+</button>
+        </div>
+        <div class="pp-section-content" id="pp-notes"></div>
+      </div>
+      <div class="pp-section" data-section="documents">
+        <div class="pp-section-header" onclick="togglePpSection('documents')">
+          <span class="pp-chevron">&#9660;</span> Documents
+        </div>
+        <div class="pp-section-content" id="pp-documents"></div>
+      </div>
+      <div class="pp-section" data-section="attachments">
+        <div class="pp-section-header" onclick="togglePpSection('attachments')">
+          <span class="pp-chevron">&#9660;</span> Attachments
+        </div>
+        <div class="pp-section-content" id="pp-attachments"></div>
+      </div>
+      <div class="pp-section" data-section="folders">
+        <div class="pp-section-header" onclick="togglePpSection('folders')">
+          <span class="pp-chevron">&#9660;</span> Folders
+        </div>
+        <div class="pp-section-content" id="pp-folders"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -2509,6 +2667,12 @@ class AppState {
     this.teamStructure = {}; // {teams: {headId: {head, members}}, standalone: [], main: agent}
     this.currentProject = null; // active project name for current agent (null = agent-level)
     this.agentProjects = {}; // agentId -> [{name, description, document_count, chunk_count, watch_folders}]
+    this.centerView = 'chat'; // 'chat' | 'note'
+    this.projectPanelOpen = false;
+    this.currentNote = null; // {agentId, project, path, content, dirty}
+    this.projectNotes = [];
+    this.noteAiSessionId = null;
+    this.noteSaveTimer = null;
   }
 
   get activeChat() {
@@ -2548,6 +2712,23 @@ const dom = {
   statusAgent: $('#status-agent'),
   statusTokens: $('#status-tokens'),
   statusSession: $('#status-session'),
+  // Project panel & note editor
+  projectPanel: $('#project-panel'),
+  ppProjectSelect: $('#pp-project-select'),
+  ppInfo: $('#pp-info'),
+  ppChats: $('#pp-chats'),
+  ppNotes: $('#pp-notes'),
+  ppDocuments: $('#pp-documents'),
+  ppAttachments: $('#pp-attachments'),
+  ppFolders: $('#pp-folders'),
+  noteEditorArea: $('#note-editor-area'),
+  noteEditorTextarea: $('#note-editor-textarea'),
+  noteTitleDisplay: $('#note-title-display'),
+  noteSaveStatus: $('#note-save-status'),
+  noteAiMessages: $('#note-ai-messages'),
+  noteAiInput: $('#note-ai-input'),
+  chatArea: $('#chat-area'),
+  centerContent: $('#center-content'),
 };
 
 // ─── Connection ─────────────────────────────────────────────
@@ -2861,6 +3042,8 @@ function getDefaultModel(agentName) {
 function selectAgent(agentName) {
   state.activeAgentId = agentName;
   state.currentProject = null; // reset project on agent switch
+  closeProjectPanel();
+  if (state.centerView === 'note') switchCenterView('chat');
   // Create chat entry if not exists
   if (!state.agentChats[agentName]) {
     const model = getDefaultModel(agentName);
@@ -2902,6 +3085,11 @@ async function loadAgentProjects(agentName) {
 
 function selectProject(name) {
   state.currentProject = name || null;
+  if (name) {
+    openProjectPanel();
+  } else {
+    closeProjectPanel();
+  }
   updateStatusBar();
   renderSessionBar();
   updateChatArea();
@@ -2971,117 +3159,32 @@ function renderSessionBar() {
   // Keep the old session bar hidden — sessions are now in sidebar
   dom.sessionBar.style.display = 'none';
   const container = dom.sidebarSessions;
-  if (!agentId) { container.innerHTML = ''; return; }
+  if (!agentId) { container.innerHTML = ''; renderProjectSelector(); return; }
   const entry = state.agentSessions[agentId];
-  if (!entry) { container.innerHTML = ''; return; }
+  if (!entry) { container.innerHTML = ''; renderProjectSelector(); return; }
   const chat = state.agentChats[agentId];
   const currentSessionId = chat?.sessionId;
   const allSessions = entry.sessions || [];
-  const projects = state.agentProjects[agentId] || [];
   const sectionsCollapsed = JSON.parse(localStorage.getItem('sb-sections-collapsed') || '{}');
-  const collapsedProjects = JSON.parse(localStorage.getItem('sb-collapsed-projects') || '{}');
   const archivedSections = JSON.parse(localStorage.getItem('sb-archived-collapsed') || '{"projects":true,"chats":true}');
 
-  // Separate active vs archived projects
-  const activeProjects = projects.filter(p => (p.status || 'active') !== 'archived');
-  const archivedProjects = projects.filter(p => (p.status || 'active') === 'archived');
-
-  // Group sessions by project, separate active vs archived
-  const projectSessions = {}; // projectName -> [session]
+  // Only show general (non-project) sessions in left sidebar
   const generalActive = [];
   const generalArchived = [];
   allSessions.forEach(s => {
     const proj = s.project || '';
-    if (proj) {
-      if (!projectSessions[proj]) projectSessions[proj] = [];
-      projectSessions[proj].push(s);
-    } else if (s.status === 'archived') {
-      generalArchived.push(s);
-    } else {
-      generalActive.push(s);
+    if (!proj) {
+      if (s.status === 'archived') {
+        generalArchived.push(s);
+      } else {
+        generalActive.push(s);
+      }
     }
   });
 
   let html = '';
 
-  // ─── Projects Section ──────────────────────────
-  const projectsCollapsed = !!sectionsCollapsed['projects'];
-  html += `<div class="sb-section${projectsCollapsed ? ' collapsed' : ''}" data-section="projects">`;
-  html += `<div class="sb-section-header" onclick="toggleSidebarSection('projects')">`;
-  html += `<span class="sb-section-left"><span class="sb-section-chevron">&#9660;</span> Projects</span>`;
-  html += `<button class="sb-section-add" onclick="event.stopPropagation();sidebarNewProject()" title="New Project">+</button>`;
-  html += `</div>`;
-  html += `<div class="sb-section-content">`;
-
-  // Render active projects
-  activeProjects.forEach(p => {
-    const pName = p.name;
-    const pSessions = (projectSessions[pName] || []).filter(s => s.status !== 'archived');
-    const pArchivedSessions = (projectSessions[pName] || []).filter(s => s.status === 'archived');
-    const isCollapsed = !!collapsedProjects[pName];
-    const isCurrentProject = state.currentProject === pName;
-    const showNewInProject = chat && !currentSessionId && chat.messages.length === 0 && isCurrentProject;
-    const pIcon = p.icon || 'folder';
-
-    html += `<div class="sb-project-group${isCollapsed ? ' collapsed' : ''}" data-project="${esc(pName)}">`;
-    html += `<div class="sb-project-header" onclick="toggleProjectCollapse('${esc(pName)}')">`;
-    html += `<span class="sb-team-chevron">&#9660;</span>`;
-    html += `<span style="display:inline-flex;vertical-align:middle;margin-right:4px">${renderProjectIcon(pIcon, 14)}</span>`;
-    html += `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pName)}</span>`;
-    if (isCurrentProject) html += `<span style="font-size:8px;color:var(--color-accent);font-weight:700;flex-shrink:0">ACTIVE</span>`;
-    html += `<button class="sb-project-gear" onclick="event.stopPropagation();sidebarOpenProjectSettings('${esc(agentId)}','${esc(pName)}')" title="Project settings">&#9881;</button>`;
-    html += `</div>`;
-    html += `<div class="sb-project-sessions">`;
-
-    // + New Chat button first
-    html += `<button class="sb-project-new-chat" onclick="event.stopPropagation();newProjectChat('${esc(pName)}')">+ New Chat</button>`;
-
-    if (showNewInProject) {
-      html += `<div class="sb-session-item active" style="font-style:italic"><span class="sb-sess-title" style="color:var(--color-text-muted)">New chat</span></div>`;
-    }
-
-    pSessions.forEach(s => { html += renderSidebarSession(s, currentSessionId); });
-
-    // Archived sessions within project
-    if (pArchivedSessions.length > 0) {
-      const projArchKey = 'proj-arch-' + pName;
-      const projArchCollapsed = archivedSections[projArchKey] !== false;
-      html += `<div class="sb-archived-section${projArchCollapsed ? ' collapsed' : ''}">`;
-      html += `<div class="sb-archived-header" onclick="event.stopPropagation();toggleArchivedSection('${esc(projArchKey)}')"><span class="sb-section-chevron">&#9660;</span> Archived</div>`;
-      html += `<div class="sb-archived-content">`;
-      pArchivedSessions.forEach(s => { html += renderSidebarSession(s, currentSessionId); });
-      html += `</div></div>`;
-    }
-
-    html += `</div></div>`;
-  });
-
-  // Archived projects sub-section
-  if (archivedProjects.length > 0) {
-    const archProjCollapsed = archivedSections['projects'] !== false;
-    html += `<div class="sb-archived-section${archProjCollapsed ? ' collapsed' : ''}">`;
-    html += `<div class="sb-archived-header" onclick="toggleArchivedSection('projects')"><span class="sb-section-chevron">&#9660;</span> Archived</div>`;
-    html += `<div class="sb-archived-content">`;
-    archivedProjects.forEach(p => {
-      const pIcon = p.icon || 'folder';
-      html += `<div class="sb-project-group" data-project="${esc(p.name)}">`;
-      html += `<div class="sb-project-header" style="opacity:0.6" onclick="toggleProjectCollapse('${esc(p.name)}')">`;
-      html += `<span style="display:inline-flex;vertical-align:middle;margin-right:4px">${renderProjectIcon(pIcon, 14)}</span>`;
-      html += `<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name)}</span>`;
-      html += `<button class="sb-unarchive-btn" onclick="event.stopPropagation();archiveProject('${esc(agentId)}','${esc(p.name)}','unarchive')" title="Unarchive">&#128194;</button>`;
-      html += `</div></div>`;
-    });
-    html += `</div></div>`;
-  }
-
-  // Empty state for projects
-  if (activeProjects.length === 0 && archivedProjects.length === 0) {
-    html += `<div style="padding:4px 12px;font-size:10px;color:var(--color-text-muted);font-style:italic">No projects yet</div>`;
-  }
-
-  html += `</div></div>`; // close sb-section-content + sb-section
-
-  // ─── Chats Section ─────────────────────────────
+  // ─── Chats Section (general / non-project only) ─────────────────────────────
   const chatsCollapsed = !!sectionsCollapsed['chats'];
   html += `<div class="sb-section${chatsCollapsed ? ' collapsed' : ''}" data-section="chats">`;
   html += `<div class="sb-section-header" onclick="toggleSidebarSection('chats')">`;
@@ -3116,6 +3219,7 @@ function renderSessionBar() {
   html += `</div></div>`; // close sb-section-content + sb-section
 
   container.innerHTML = html;
+  renderProjectSelector();
 }
 
 window.toggleProjectCollapse = function(projectName) {
@@ -3184,6 +3288,7 @@ window.archiveProject = async function(agentId, projectName, action) {
     await API.put(`/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(projectName)}`, { status: newStatus });
     if (action === 'archive' && state.currentProject === projectName) {
       state.currentProject = null;
+      closeProjectPanel();
     }
     showToast(`Project "${projectName}" ${action === 'archive' ? 'archived' : 'unarchived'}`);
     await loadAgentProjects(agentId);
@@ -3197,6 +3302,8 @@ window.newProjectChat = function(projectName) {
   const agentId = state.activeAgentId;
   if (!agentId) return;
   state.currentProject = projectName;
+  if (state.centerView === 'note') switchCenterView('chat');
+  openProjectPanel();
   const model = getDefaultModel(agentId);
   state.agentChats[agentId] = {
     sessionId: null,
@@ -3223,6 +3330,8 @@ window.newChatSession = function() {
   if (chat && !chat.sessionId && chat.messages.length === 0 && !state.currentProject) return;
   // Create a fresh chat entry without deleting the old session
   state.currentProject = null;
+  closeProjectPanel();
+  if (state.centerView === 'note') switchCenterView('chat');
   const model = getDefaultModel(agentId);
   state.agentChats[agentId] = {
     sessionId: null,
@@ -3237,6 +3346,503 @@ window.newChatSession = function() {
   updateStatusBar();
   showToast('New chat started');
 };
+
+// ─── PROJECT PANEL & NOTE EDITOR ─────────────────────────────
+
+function renderProjectSelector() {
+  const container = document.getElementById('sidebar-project-selector');
+  if (!container) return;
+  const agentId = state.activeAgentId;
+  if (!agentId) { container.innerHTML = ''; return; }
+  const projects = state.agentProjects[agentId] || [];
+  const activeProjects = projects.filter(p => (p.status || 'active') !== 'archived');
+  if (activeProjects.length === 0) {
+    container.innerHTML = `<div class="sb-project-selector-btn" onclick="sidebarNewProject()" title="Create a project">
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="var(--color-text-muted)"><path d="M.54 3.87.5 3a2 2 0 0 1 2-2h3.672a2 2 0 0 1 1.414.586l.828.828A2 2 0 0 0 9.828 3H14.5a2 2 0 0 1 2 2v1.5H.54zM.5 7v6a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7z"/></svg>
+      <span class="sb-btn-text" style="font-family:'Outfit',sans-serif">New Project</span>
+    </div>`;
+    return;
+  }
+  let html = '';
+  activeProjects.forEach(p => {
+    const pIcon = p.icon || 'folder';
+    const isActive = state.currentProject === p.name;
+    html += `<div class="sb-project-selector-btn${isActive ? ' active' : ''}" onclick="selectProject('${esc(p.name)}')" title="${esc(p.description || p.name)}">
+      <span style="display:inline-flex;flex-shrink:0">${renderProjectIcon(pIcon, 12)}</span>
+      <span class="sb-btn-text" style="font-family:'Outfit',sans-serif;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name)}</span>
+      ${isActive ? '<span style="font-size:7px;color:var(--color-accent);font-weight:700;flex-shrink:0">&#9679;</span>' : ''}
+    </div>`;
+  });
+  html += `<div class="sb-project-selector-btn" onclick="sidebarNewProject()" title="New Project">
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    <span class="sb-btn-text" style="font-family:'Outfit',sans-serif;font-size:10px">New Project</span>
+  </div>`;
+  container.innerHTML = html;
+}
+
+function switchCenterView(mode) {
+  state.centerView = mode;
+  if (mode === 'chat') {
+    dom.chatArea.style.display = '';
+    dom.noteEditorArea.style.display = 'none';
+  } else if (mode === 'note') {
+    dom.chatArea.style.display = 'none';
+    dom.noteEditorArea.style.display = 'flex';
+  }
+}
+
+function openProjectPanel() {
+  state.projectPanelOpen = true;
+  dom.projectPanel.classList.remove('collapsed');
+  localStorage.setItem('project-panel-open', '1');
+  renderProjectPanel();
+}
+
+function closeProjectPanel() {
+  state.projectPanelOpen = false;
+  dom.projectPanel.classList.add('collapsed');
+  localStorage.setItem('project-panel-open', '0');
+}
+
+window.toggleProjectPanel = function() {
+  if (state.projectPanelOpen) {
+    closeProjectPanel();
+  } else {
+    if (state.currentProject) {
+      openProjectPanel();
+    }
+  }
+};
+
+window.switchProjectPanel = function(projectName) {
+  if (!projectName) return;
+  state.currentProject = projectName;
+  renderProjectPanel();
+  renderProjectSelector();
+  updateChatArea();
+};
+
+window.togglePpSection = function(section) {
+  const el = document.querySelector(`#project-panel .pp-section[data-section="${section}"]`);
+  if (el) el.classList.toggle('collapsed');
+};
+
+async function renderProjectPanel() {
+  const agentId = state.activeAgentId;
+  const projectName = state.currentProject;
+  if (!agentId || !projectName) return;
+
+  // Populate project selector dropdown
+  const projects = state.agentProjects[agentId] || [];
+  const activeProjects = projects.filter(p => (p.status || 'active') !== 'archived');
+  dom.ppProjectSelect.innerHTML = activeProjects.map(p =>
+    `<option value="${esc(p.name)}"${p.name === projectName ? ' selected' : ''}>${esc(p.name)}</option>`
+  ).join('');
+
+  const proj = projects.find(p => p.name === projectName);
+  const pIcon = proj?.icon || 'folder';
+  const pDesc = proj?.description || '';
+
+  // Info section
+  dom.ppInfo.innerHTML = `<div class="pp-info-block">
+    <div class="pp-info-name">${renderProjectIcon(pIcon, 18)} ${esc(projectName)}</div>
+    ${pDesc ? `<div class="pp-info-desc">${esc(pDesc)}</div>` : ''}
+    <div class="pp-info-actions">
+      <button class="pp-info-btn" onclick="sidebarOpenProjectSettings('${esc(agentId)}','${esc(projectName)}')">Settings</button>
+      <button class="pp-info-btn" onclick="showIngestDialog('${esc(agentId)}','${esc(projectName)}')">Ingest</button>
+    </div>
+  </div>`;
+
+  // Chats section — project-scoped sessions
+  await renderProjectPanelChats(agentId, projectName);
+
+  // Notes section
+  await renderProjectPanelNotes(agentId, projectName);
+
+  // Documents section
+  await renderProjectPanelDocs(agentId, projectName);
+
+  // Attachments section
+  renderProjectPanelAttachments(agentId, projectName);
+
+  // Folders section
+  await renderProjectPanelFolders(agentId, projectName);
+}
+
+async function renderProjectPanelChats(agentId, projectName) {
+  const entry = state.agentSessions[agentId];
+  const allSessions = entry?.sessions || [];
+  const projectSessions = allSessions.filter(s => s.project === projectName && s.status !== 'archived');
+  const chat = state.agentChats[agentId];
+  const currentSessionId = chat?.sessionId;
+
+  let html = '';
+  if (projectSessions.length === 0) {
+    html = '<div class="pp-empty">No chats yet</div>';
+  }
+  projectSessions.forEach(s => {
+    const isActive = currentSessionId === s.id;
+    const title = s.title || 'Untitled';
+    const truncTitle = title.length > 35 ? title.substring(0, 35) + '...' : title;
+    const timeStr = relativeTime(s.last_active);
+    html += `<div class="pp-chat-item${isActive ? ' active' : ''}" onclick="loadSession('${esc(s.id)}');switchCenterView('chat');" title="${esc(title)}">
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(truncTitle)}</span>
+      <span style="font-size:9px;color:var(--color-text-muted);flex-shrink:0">${timeStr}</span>
+    </div>`;
+  });
+  dom.ppChats.innerHTML = html;
+}
+
+async function renderProjectPanelNotes(agentId, projectName) {
+  try {
+    const res = await API.get(`/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(projectName)}/notes`);
+    state.projectNotes = res.notes || [];
+  } catch {
+    state.projectNotes = [];
+  }
+
+  let html = '';
+  if (state.projectNotes.length === 0) {
+    html = '<div class="pp-empty">No notes yet</div>';
+  } else {
+    // Group by folder
+    const folders = {};
+    const rootNotes = [];
+    state.projectNotes.forEach(n => {
+      const parts = n.path.split('/');
+      if (parts.length > 1) {
+        const folder = parts.slice(0, -1).join('/');
+        if (!folders[folder]) folders[folder] = [];
+        folders[folder].push(n);
+      } else {
+        rootNotes.push(n);
+      }
+    });
+
+    rootNotes.forEach(n => {
+      const isActive = state.currentNote && state.currentNote.path === n.path;
+      html += `<div class="pp-note-item${isActive ? ' active' : ''}" onclick="openNote('${esc(agentId)}','${esc(state.currentProject)}','${esc(n.path)}')">
+        <span style="font-size:10px">&#128196;</span>
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(n.name || n.path)}</span>
+      </div>`;
+    });
+
+    Object.entries(folders).forEach(([folder, notes]) => {
+      html += `<div class="pp-note-folder">${esc(folder)}</div>`;
+      notes.forEach(n => {
+        const isActive = state.currentNote && state.currentNote.path === n.path;
+        html += `<div class="pp-note-item${isActive ? ' active' : ''}" onclick="openNote('${esc(agentId)}','${esc(state.currentProject)}','${esc(n.path)}')" style="padding-left:16px">
+          <span style="font-size:10px">&#128196;</span>
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(n.name || n.path)}</span>
+        </div>`;
+      });
+    });
+  }
+  dom.ppNotes.innerHTML = html;
+}
+
+async function renderProjectPanelDocs(agentId, projectName) {
+  try {
+    const res = await API.getProjectDocs(agentId, projectName);
+    const docs = res.documents || res.docs || [];
+    if (docs.length === 0) {
+      dom.ppDocuments.innerHTML = '<div class="pp-empty">No documents</div>';
+    } else {
+      dom.ppDocuments.innerHTML = docs.map(d => {
+        const name = d.name || d.source || d.hash || 'Document';
+        return `<div class="pp-doc-item"><span style="font-size:10px">&#128209;</span> <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span></div>`;
+      }).join('');
+    }
+  } catch {
+    dom.ppDocuments.innerHTML = '<div class="pp-empty">No documents</div>';
+  }
+}
+
+function renderProjectPanelAttachments(agentId, projectName) {
+  // Collect file attachments from project chat messages
+  const entry = state.agentSessions[agentId];
+  const allSessions = entry?.sessions || [];
+  const projectSessions = allSessions.filter(s => s.project === projectName);
+  const chat = state.agentChats[agentId];
+
+  // Aggregate files from the currently loaded chat if it's a project chat
+  const files = [];
+  if (chat && chat.project === projectName && chat.messages) {
+    chat.messages.forEach(m => {
+      if (m.files && m.files.length > 0) {
+        m.files.forEach(f => files.push(f));
+      }
+    });
+  }
+
+  if (files.length === 0) {
+    dom.ppAttachments.innerHTML = '<div class="pp-empty">No attachments</div>';
+  } else {
+    dom.ppAttachments.innerHTML = files.map(f => {
+      const name = f.name || f.path || 'file';
+      return `<div class="pp-doc-item"><span style="font-size:10px">&#128206;</span> <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span></div>`;
+    }).join('');
+  }
+}
+
+async function renderProjectPanelFolders(agentId, projectName) {
+  try {
+    const res = await API.getWatchFolders(agentId, projectName);
+    const folders = res.folders || [];
+    if (folders.length === 0) {
+      dom.ppFolders.innerHTML = '<div class="pp-empty">No watched folders</div>';
+    } else {
+      dom.ppFolders.innerHTML = folders.map(f => {
+        const path = f.path || f;
+        return `<div class="pp-doc-item"><span style="font-size:10px">&#128193;</span> <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(path)}</span></div>`;
+      }).join('');
+    }
+  } catch {
+    dom.ppFolders.innerHTML = '<div class="pp-empty">No watched folders</div>';
+  }
+}
+
+// ─── Note Editor Functions ───────────────────────────────────
+
+window.openNote = async function(agentId, project, path) {
+  try {
+    const res = await API.get(`/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(project)}/notes/${encodeURIComponent(path)}`);
+    const content = res.content || '';
+    const name = res.name || path;
+
+    state.currentNote = { agentId, project, path, content, dirty: false };
+    dom.noteEditorTextarea.value = content;
+    dom.noteTitleDisplay.textContent = name;
+    dom.noteSaveStatus.textContent = 'Saved';
+
+    switchCenterView('note');
+
+    // Set up auto-save
+    dom.noteEditorTextarea.oninput = () => {
+      if (state.currentNote) {
+        state.currentNote.dirty = true;
+        state.currentNote.content = dom.noteEditorTextarea.value;
+        dom.noteSaveStatus.textContent = 'Unsaved';
+        clearTimeout(state.noteSaveTimer);
+        state.noteSaveTimer = setTimeout(() => saveNote(), 2000);
+      }
+    };
+
+    // Clear AI messages
+    dom.noteAiMessages.innerHTML = '';
+    state.noteAiSessionId = null;
+
+    // Update project panel to highlight active note
+    if (dom.ppNotes) renderProjectPanelNotes(agentId, project);
+
+    showToast(`Opened note: ${name}`);
+  } catch (e) {
+    showToast(`Error opening note: ${e.message}`, true);
+  }
+};
+
+window.closeNote = function() {
+  if (state.currentNote && state.currentNote.dirty) {
+    saveNote();
+  }
+  state.currentNote = null;
+  state.noteAiSessionId = null;
+  switchCenterView('chat');
+  // Re-render project panel to un-highlight note
+  if (state.projectPanelOpen && state.currentProject) {
+    renderProjectPanelNotes(state.activeAgentId, state.currentProject);
+  }
+};
+
+async function saveNote() {
+  const note = state.currentNote;
+  if (!note || !note.dirty) return;
+  try {
+    dom.noteSaveStatus.textContent = 'Saving...';
+    await API.put(`/v1/agents/${encodeURIComponent(note.agentId)}/projects/${encodeURIComponent(note.project)}/notes/${encodeURIComponent(note.path)}`, { content: note.content });
+    note.dirty = false;
+    dom.noteSaveStatus.textContent = 'Saved';
+  } catch (e) {
+    dom.noteSaveStatus.textContent = 'Save failed';
+    showToast(`Error saving note: ${e.message}`, true);
+  }
+}
+
+window.createNewNote = async function() {
+  const agentId = state.activeAgentId;
+  const project = state.currentProject;
+  if (!agentId || !project) {
+    showToast('Select a project first', true);
+    return;
+  }
+  const name = prompt('Note name:');
+  if (!name || !name.trim()) return;
+  const fileName = name.trim().replace(/[^a-zA-Z0-9_\-\s.]/g, '').replace(/\s+/g, '-');
+  const path = fileName.endsWith('.md') ? fileName : fileName + '.md';
+  try {
+    await API.post(`/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(project)}/notes`, { path, content: `# ${name.trim()}\n\n` });
+    showToast(`Note "${name.trim()}" created`);
+    await renderProjectPanelNotes(agentId, project);
+    openNote(agentId, project, path);
+  } catch (e) {
+    showToast(`Error creating note: ${e.message}`, true);
+  }
+};
+
+window.sendNoteAiMessage = async function() {
+  const text = dom.noteAiInput.value.trim();
+  if (!text) return;
+  dom.noteAiInput.value = '';
+
+  const note = state.currentNote;
+  if (!note) return;
+
+  // Add user message to display
+  dom.noteAiMessages.innerHTML += `<div class="note-ai-msg user">${esc(text)}</div>`;
+  dom.noteAiMessages.scrollTop = dom.noteAiMessages.scrollHeight;
+
+  try {
+    // Create ephemeral session if needed
+    if (!state.noteAiSessionId) {
+      const sessionRes = await API.createSession(note.agentId, undefined, note.project);
+      state.noteAiSessionId = sessionRes.session_id;
+    }
+
+    // Build message with note context
+    const noteContext = `[Note: ${note.path}]\n\`\`\`markdown\n${note.content}\n\`\`\`\n\nUser question: ${text}\n\nIf you want to suggest edits to the note, wrap the new full content in [EDIT_NOTE]...[/EDIT_NOTE] tags.`;
+
+    const controller = new AbortController();
+    const res = await fetch(`${BASE_URL}/v1/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: state.noteAiSessionId, message: noteContext }),
+      signal: controller.signal,
+    });
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let aiMsg = '';
+    const msgEl = document.createElement('div');
+    msgEl.className = 'note-ai-msg assistant';
+    dom.noteAiMessages.appendChild(msgEl);
+
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const data = line.slice(6);
+        if (data === '[DONE]') continue;
+        try {
+          const evt = JSON.parse(data);
+          if (evt.type === 'text' && evt.content) {
+            aiMsg += evt.content;
+            msgEl.innerHTML = typeof marked !== 'undefined' ? marked.parse(aiMsg) : esc(aiMsg);
+            dom.noteAiMessages.scrollTop = dom.noteAiMessages.scrollHeight;
+          }
+        } catch {}
+      }
+    }
+
+    // Check for [EDIT_NOTE] blocks
+    const editMatch = aiMsg.match(/\[EDIT_NOTE\]([\s\S]*?)\[\/EDIT_NOTE\]/);
+    if (editMatch) {
+      const newContent = editMatch[1].trim();
+      dom.noteEditorTextarea.value = newContent;
+      if (state.currentNote) {
+        state.currentNote.content = newContent;
+        state.currentNote.dirty = true;
+        dom.noteSaveStatus.textContent = 'Unsaved';
+        clearTimeout(state.noteSaveTimer);
+        state.noteSaveTimer = setTimeout(() => saveNote(), 2000);
+      }
+      showToast('Note updated by AI');
+    }
+  } catch (e) {
+    dom.noteAiMessages.innerHTML += `<div class="note-ai-msg assistant" style="color:var(--color-error)">Error: ${esc(e.message)}</div>`;
+  }
+};
+
+window.insertNoteFormatting = function(type) {
+  const ta = dom.noteEditorTextarea;
+  if (!ta) return;
+  const start = ta.selectionStart;
+  const end = ta.selectionEnd;
+  const text = ta.value;
+  const selected = text.substring(start, end);
+  let replacement = '';
+  let cursorOffset = 0;
+
+  switch (type) {
+    case 'bold':
+      replacement = `**${selected || 'bold text'}**`;
+      cursorOffset = selected ? replacement.length : 2;
+      break;
+    case 'italic':
+      replacement = `*${selected || 'italic text'}*`;
+      cursorOffset = selected ? replacement.length : 1;
+      break;
+    case 'h1':
+      replacement = `# ${selected || 'Heading'}`;
+      cursorOffset = replacement.length;
+      break;
+    case 'h2':
+      replacement = `## ${selected || 'Heading'}`;
+      cursorOffset = replacement.length;
+      break;
+    case 'h3':
+      replacement = `### ${selected || 'Heading'}`;
+      cursorOffset = replacement.length;
+      break;
+    case 'code':
+      replacement = `\`${selected || 'code'}\``;
+      cursorOffset = selected ? replacement.length : 1;
+      break;
+    case 'codeblock':
+      replacement = `\`\`\`\n${selected || 'code'}\n\`\`\``;
+      cursorOffset = selected ? replacement.length : 4;
+      break;
+    case 'link':
+      replacement = `[${selected || 'text'}](url)`;
+      cursorOffset = selected ? replacement.length - 4 : 1;
+      break;
+    case 'list':
+      replacement = `- ${selected || 'item'}`;
+      cursorOffset = replacement.length;
+      break;
+    default:
+      return;
+  }
+
+  ta.value = text.substring(0, start) + replacement + text.substring(end);
+  ta.selectionStart = ta.selectionEnd = start + cursorOffset;
+  ta.focus();
+
+  if (state.currentNote) {
+    state.currentNote.content = ta.value;
+    state.currentNote.dirty = true;
+    dom.noteSaveStatus.textContent = 'Unsaved';
+    clearTimeout(state.noteSaveTimer);
+    state.noteSaveTimer = setTimeout(() => saveNote(), 2000);
+  }
+};
+
+// Handle Enter in note AI input
+document.addEventListener('DOMContentLoaded', () => {
+  const noteAiInput = document.getElementById('note-ai-input');
+  if (noteAiInput) {
+    noteAiInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendNoteAiMessage();
+      }
+    });
+  }
+});
 
 window.loadSession = async function(sessionId) {
   closeMobileSidebar();
@@ -3270,6 +3876,10 @@ window.loadSession = async function(sessionId) {
     };
     // Set currentProject from the loaded session's project
     state.currentProject = sessionProject || null;
+    // Switch to chat view if we were in note editor
+    if (state.centerView === 'note') switchCenterView('chat');
+    // Open/close project panel based on session's project
+    if (sessionProject) { openProjectPanel(); } else { closeProjectPanel(); }
     renderSessionBar();
     updateChatArea();
     showToast(`Loaded session: ${sessionInfo?.title || sessionId.substring(0, 8)}`);
@@ -3332,24 +3942,12 @@ function updateChatArea() {
   const chatDisplayName = agentObj ? getAgentDisplayName(agentObj) : '';
   dom.chatAgentName.innerHTML = `${renderAvatar(avatarId, 22)} <span>${esc(chatDisplayName || chat.agent)}</span>`;
 
-  // Project context bar
-  if (state.currentProject) {
-    const agentId = state.activeAgentId;
-    const projects = state.agentProjects[agentId] || [];
-    const proj = projects.find(p => p.name === state.currentProject);
-    const pIcon = proj?.icon || 'folder';
-    const pDesc = proj?.description || '';
-    const docCount = (proj?.chunks || 0) + (proj?.memories || 0);
-    dom.projectContextBar.style.display = '';
-    dom.projectContextBar.innerHTML = `
-      <span class="project-ctx-icon">${renderProjectIcon(pIcon, 16)}</span>
-      <span class="project-ctx-name">${esc(state.currentProject)}</span>
-      ${pDesc ? `<span class="project-ctx-desc">${esc(pDesc)}</span>` : ''}
-      <span class="project-ctx-stats">${docCount} docs</span>
-      <button class="project-ctx-settings" onclick="sidebarOpenProjectSettings('${esc(agentId)}','${esc(state.currentProject)}')" title="Project Settings">&#9881;</button>
-    `;
-  } else {
-    dom.projectContextBar.style.display = 'none';
+  // Project context bar — hidden now, replaced by project panel
+  dom.projectContextBar.style.display = 'none';
+
+  // Update project panel if open
+  if (state.currentProject && state.projectPanelOpen) {
+    renderProjectPanel();
   }
 
   // Set model selector
@@ -4650,7 +5248,7 @@ window.deleteProjectConfirm = async function(agentName, projectName) {
   if (!confirm(`Delete project "${projectName}" and all its data? This cannot be undone.`)) return;
   try {
     await API.deleteProject(agentName, projectName);
-    if (state.currentProject === projectName) state.currentProject = null;
+    if (state.currentProject === projectName) { state.currentProject = null; closeProjectPanel(); }
     showToast(`Project "${projectName}" deleted`);
     await loadAgentProjects(agentName);
     loadConfigTabContent('projects', agentName);
@@ -8332,7 +8930,7 @@ function closeMobileSidebar() {
 if (localStorage.getItem('sidebar-collapsed') === '1') {
   dom.sidebar.classList.add('collapsed');
 }
-// Ctrl+B to toggle sidebar
+// Ctrl+B to toggle sidebar, Ctrl+Shift+N new note, Ctrl+] toggle project panel, Escape close note
 document.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.key === 'b') {
     e.preventDefault();
@@ -8342,6 +8940,21 @@ document.addEventListener('keydown', (e) => {
     } else {
       toggleSidebar();
     }
+  }
+  // Ctrl+Shift+N → new note
+  if (e.ctrlKey && e.shiftKey && e.key === 'N') {
+    e.preventDefault();
+    if (state.currentProject) createNewNote();
+  }
+  // Ctrl+] → toggle project panel
+  if (e.ctrlKey && e.key === ']') {
+    e.preventDefault();
+    toggleProjectPanel();
+  }
+  // Escape → close note editor
+  if (e.key === 'Escape' && state.centerView === 'note') {
+    e.preventDefault();
+    closeNote();
   }
 });
 
@@ -8403,14 +9016,18 @@ const slashCommands = [
     } catch(e) { showToast('Cache stats error: ' + e.message); }
   }},
   { cmd: '/graph',     desc: 'Open knowledge map',         action: () => openKnowledgeMap() },
+  { cmd: '/note',      desc: 'Create new note (Ctrl+Shift+N)', action: () => { if (state.currentProject) createNewNote(); else showToast('Select a project first'); } },
+  { cmd: '/project',   desc: 'Toggle project panel (Ctrl+])', action: () => toggleProjectPanel() },
   { cmd: '/help',      desc: 'Show keyboard shortcuts',   action: () => {
     const helpHtml = [
       ['Ctrl+Enter', 'Send message'],
       ['Ctrl+B', 'Toggle sidebar'],
+      ['Ctrl+]', 'Toggle project panel'],
+      ['Ctrl+Shift+N', 'New note'],
+      ['Escape', 'Close note editor'],
       ['/ (at start)', 'Open command menu'],
       ['\u2191 \u2193', 'Navigate commands'],
       ['Enter / Tab', 'Select command'],
-      ['Escape', 'Close menu'],
     ].map(([k, d]) => `<div class="flex justify-between py-1"><span class="mono text-xs text-accent">${k}</span><span class="text-xs text-text-secondary">${d}</span></div>`).join('');
     showToast('Keyboard shortcuts displayed');
     const modal = document.createElement('div');
@@ -9127,6 +9744,7 @@ const KG_COLORS = {
   feedback:  { light: '#ec4899', dark: '#f472b6' },
   ingested:  { light: '#8b5cf6', dark: '#a78bfa' },
   reference: { light: '#06b6d4', dark: '#22d3ee' },
+  note:      { light: '#06b6d4', dark: '#22d3ee' },
 };
 
 const KG_EDGE_COLORS = {
@@ -9139,6 +9757,7 @@ const KG_EDGE_COLORS = {
   contradicts: { color: '#ef4444', dash: [], width: 1.5 },  // solid red
   extends: { color: '#22c55e', dash: [], width: 1.5 },  // solid green
   co_recalled: { color: '#a855f7', dash: [2, 3], width: 1.2 },  // dotted purple
+  same_folder: { color: '#06b6d4', dash: [4, 4], width: 1 },  // dashed teal
 };
 
 let kgInstance = null;

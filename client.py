@@ -291,6 +291,31 @@ class BrainAgentClient:
     def delete_project(self, agent: str, name: str) -> dict:
         return self._delete(f"/v1/agents/{agent}/projects/{name}")
 
+    # --- Notes ---
+
+    def list_notes(self, agent: str, project: str) -> list[dict]:
+        return self._get(f"/v1/agents/{agent}/projects/{project}/notes").get("notes", [])
+
+    def get_note(self, agent: str, project: str, path: str) -> dict:
+        from urllib.parse import quote
+        encoded = quote(path, safe="")
+        return self._get(f"/v1/agents/{agent}/projects/{project}/notes/{encoded}")
+
+    def create_note(self, agent: str, project: str, path: str, content: str = "") -> dict:
+        return self._post(f"/v1/agents/{agent}/projects/{project}/notes",
+                          {"path": path, "content": content})
+
+    def update_note(self, agent: str, project: str, path: str, content: str) -> dict:
+        from urllib.parse import quote
+        encoded = quote(path, safe="")
+        return self._put(f"/v1/agents/{agent}/projects/{project}/notes/{encoded}",
+                         {"content": content})
+
+    def delete_note(self, agent: str, project: str, path: str) -> dict:
+        from urllib.parse import quote
+        encoded = quote(path, safe="")
+        return self._delete(f"/v1/agents/{agent}/projects/{project}/notes/{encoded}")
+
     # --- Ingest ---
 
     def ingest_file(self, agent: str, file_path: str,

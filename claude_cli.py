@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "3.1.0"
-VERSION_DATE = "2026-03-21"
+VERSION = "3.2.0"
+VERSION_DATE = "2026-03-22"
 CHANGELOG = [
+    ("3.2.0", "2026-03-22", "Project Notes system with AI-assisted editing, 3-column layout (sidebar + center + project panel), notes as first-class knowledge graph citizens, note editor with formatting toolbar and AI chat sidebar"),
     ("3.1.0", "2026-03-21", "Auto memory creation, continuous session summarization, knowledge graph visualization + auto-discovery, chat file attachments, model-aware max_tokens, Bootstrap Icons avatars, sidebar redesign (Projects + Chats), Tools settings, improved fallback ordering, prompt refinement improvements"),
     ("3.0.0", "2026-03-20", "All P2 features: provider fallback with retry, backup/export/import, notifications (webhook/email/in-app), observability tracing + audit trail, dynamic MCP client, multi-modal (image upload/vision), remote nodes, multi-messaging adapter framework"),
     ("2.1.0", "2026-03-20", "Agent workflows (YAML stages with approval gates), Web UI left sidebar replacing top agent cards, consolidated status bar, mobile responsive"),
@@ -2721,6 +2722,7 @@ class ProjectManager:
             return {"error": f"Project '{safe_name}' already exists"}
         os.makedirs(pdir, exist_ok=True)
         os.makedirs(os.path.join(pdir, "ingested"), exist_ok=True)
+        os.makedirs(os.path.join(pdir, "notes"), exist_ok=True)
         cfg = {
             "name": config.get("name", name) if config else name,
             "description": description,
@@ -2802,6 +2804,253 @@ class ProjectManager:
         except Exception:
             pass
         return {"name": name, "status": "deleted", "moved_to": dest}
+
+
+class NoteManager:
+    """CRUD operations for project notes (markdown files in notes/ subdirectory)."""
+
+    @staticmethod
+    def _notes_dir(agent_id: str, project_name: str) -> str:
+        return os.path.join(AGENTS_DIR, agent_id, "projects", project_name, "notes")
+
+    @staticmethod
+    def list_notes(agent_id: str, project_name: str) -> list[dict]:
+        """Walk notes/ tree recursively, return metadata for each .md file."""
+        notes_dir = NoteManager._notes_dir(agent_id, project_name)
+        if not os.path.isdir(notes_dir):
+            return []
+        results = []
+        for dirpath, _, filenames in os.walk(notes_dir):
+            for fname in sorted(filenames):
+                if not fname.endswith(".md"):
+                    continue
+                fpath = os.path.join(dirpath, fname)
+                rel_path = os.path.relpath(fpath, notes_dir)
+                try:
+                    stat = os.stat(fpath)
+                    with open(fpath, "r", errors="replace") as f:
+                        raw = f.read(2000)
+                    fm, _ = _parse_frontmatter(raw)
+                    results.append({
+                        "path": rel_path,
+                        "name": fm.get("name", fname.replace(".md", "")),
+                        "type": fm.get("type", "note"),
+                        "size": stat.st_size,
+                        "created_at": fm.get("created_at", ""),
+                        "updated_at": fm.get("updated_at", ""),
+                    })
+                except Exception:
+                    continue
+        return results
+
+    @staticmethod
+    def get_note(agent_id: str, project_name: str, path: str) -> dict | None:
+        """Read a note file and return its content with metadata."""
+        notes_dir = NoteManager._notes_dir(agent_id, project_name)
+        fpath = os.path.join(notes_dir, path)
+        if not os.path.isfile(fpath):
+            return None
+        try:
+            stat = os.stat(fpath)
+            with open(fpath, "r", errors="replace") as f:
+                raw = f.read()
+            fm, body = _parse_frontmatter(raw)
+            return {
+                "path": path,
+                "name": fm.get("name", os.path.basename(path).replace(".md", "")),
+                "content": body,
+                "frontmatter": fm,
+                "size": stat.st_size,
+                "created_at": fm.get("created_at", ""),
+                "updated_at": fm.get("updated_at", ""),
+            }
+        except Exception:
+            return None
+
+    @staticmethod
+    def create_note(agent_id: str, project_name: str, path: str, content: str = "") -> dict:
+        """Create a note with YAML frontmatter, entity extraction, and QMD reindex."""
+        notes_dir = NoteManager._notes_dir(agent_id, project_name)
+        fpath = os.path.join(notes_dir, path)
+        # Create parent dirs if needed
+        os.makedirs(os.path.dirname(fpath), exist_ok=True)
+        if os.path.exists(fpath):
+            return {"error": f"Note '{path}' already exists"}
+
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        name = os.path.basename(path).replace(".md", "")
+        md_content = f"""---
+name: {_yaml_escape(name)}
+type: note
+created_at: {now}
+updated_at: {now}
+agent: {agent_id}
+project: {project_name}
+---
+
+{content}
+"""
+        with open(fpath, "w") as f:
+            f.write(md_content)
+
+        # Entity extraction + auto-link
+        try:
+            entities = _extract_entities(content)
+            if entities:
+                filename = os.path.basename(fpath)
+                matches = _find_entity_matches(agent_id, filename, entities)
+                for other_fname in matches[:10]:
+                    other_path = os.path.join(os.path.dirname(fpath), other_fname)
+                    if not os.path.exists(other_path):
+                        # Try agent dir
+                        other_path = os.path.join(AGENTS_DIR, agent_id, other_fname)
+                    if os.path.exists(other_path):
+                        _add_related_to_file(fpath, other_fname, "same_topic")
+                        _add_related_to_file(other_path, filename, "same_topic")
+                _update_entity_index(agent_id, filename, entities)
+        except Exception:
+            pass
+
+        # Add same_folder relationships with sibling notes
+        try:
+            folder = os.path.dirname(fpath)
+            fname = os.path.basename(fpath)
+            for sibling in os.listdir(folder):
+                if sibling.endswith(".md") and sibling != fname:
+                    sibling_path = os.path.join(folder, sibling)
+                    _add_related_to_file(fpath, sibling, "same_folder")
+                    _add_related_to_file(sibling_path, fname, "same_folder")
+        except Exception:
+            pass
+
+        # Trigger QMD reindex
+        collection = f"{agent_id}/{project_name}"
+        _qmd_debounced_embed(collection)
+
+        return {"path": path, "status": "created"}
+
+    @staticmethod
+    def update_note(agent_id: str, project_name: str, path: str, content: str) -> dict:
+        """Update a note's content, preserving frontmatter and updating timestamp."""
+        notes_dir = NoteManager._notes_dir(agent_id, project_name)
+        fpath = os.path.join(notes_dir, path)
+        if not os.path.isfile(fpath):
+            return {"error": f"Note '{path}' not found"}
+
+        try:
+            with open(fpath, "r") as f:
+                raw = f.read()
+            fm, _ = _parse_frontmatter(raw)
+        except Exception:
+            fm = {}
+
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        fm["updated_at"] = now
+
+        # Rebuild frontmatter
+        fm_lines = []
+        for k, v in fm.items():
+            if k == "related":
+                continue  # related is multi-line, handle separately
+            fm_lines.append(f"{k}: {v}")
+
+        # Preserve related section if it exists
+        related_section = ""
+        fm_match = re.match(r'^---\s*\n(.*?)\n---\s*\n', raw, re.DOTALL)
+        if fm_match:
+            fm_text = fm_match.group(1)
+            rel_match = re.search(r'(related:.*)', fm_text, re.DOTALL)
+            if rel_match:
+                related_section = "\n" + rel_match.group(1)
+
+        md_content = f"---\n" + "\n".join(fm_lines) + related_section + f"\n---\n\n{content}\n"
+        with open(fpath, "w") as f:
+            f.write(md_content)
+
+        # Re-run entity extraction
+        try:
+            entities = _extract_entities(content)
+            if entities:
+                filename = os.path.basename(fpath)
+                _update_entity_index(agent_id, filename, entities)
+        except Exception:
+            pass
+
+        # Trigger QMD reindex
+        collection = f"{agent_id}/{project_name}"
+        _qmd_debounced_embed(collection)
+
+        return {"path": path, "status": "updated"}
+
+    @staticmethod
+    def delete_note(agent_id: str, project_name: str, path: str) -> dict:
+        """Remove a note file and trigger QMD reindex."""
+        notes_dir = NoteManager._notes_dir(agent_id, project_name)
+        fpath = os.path.join(notes_dir, path)
+        if not os.path.isfile(fpath):
+            return {"error": f"Note '{path}' not found"}
+
+        os.remove(fpath)
+
+        # Clean up empty parent directories
+        parent = os.path.dirname(fpath)
+        while parent != notes_dir:
+            try:
+                if not os.listdir(parent):
+                    os.rmdir(parent)
+                    parent = os.path.dirname(parent)
+                else:
+                    break
+            except Exception:
+                break
+
+        # Trigger QMD reindex
+        collection = f"{agent_id}/{project_name}"
+        _qmd_debounced_embed(collection)
+
+        return {"path": path, "status": "deleted"}
+
+    @staticmethod
+    def rename_note(agent_id: str, project_name: str, old_path: str, new_path: str) -> dict:
+        """Rename/move a note file and update its frontmatter name."""
+        notes_dir = NoteManager._notes_dir(agent_id, project_name)
+        old_fpath = os.path.join(notes_dir, old_path)
+        new_fpath = os.path.join(notes_dir, new_path)
+        if not os.path.isfile(old_fpath):
+            return {"error": f"Note '{old_path}' not found"}
+        if os.path.exists(new_fpath):
+            return {"error": f"Note '{new_path}' already exists"}
+
+        # Create parent dirs for new path if needed
+        os.makedirs(os.path.dirname(new_fpath), exist_ok=True)
+        os.rename(old_fpath, new_fpath)
+
+        # Update frontmatter name field
+        try:
+            with open(new_fpath, "r") as f:
+                raw = f.read()
+            new_name = os.path.basename(new_path).replace(".md", "")
+            raw = re.sub(r'^(name:\s*).*$', rf'\g<1>{_yaml_escape(new_name)}', raw, count=1, flags=re.MULTILINE)
+            now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            raw = re.sub(r'^(updated_at:\s*).*$', rf'\g<1>{now}', raw, count=1, flags=re.MULTILINE)
+            with open(new_fpath, "w") as f:
+                f.write(raw)
+        except Exception:
+            pass
+
+        # Trigger QMD reindex
+        collection = f"{agent_id}/{project_name}"
+        _qmd_debounced_embed(collection)
+
+        return {"old_path": old_path, "new_path": new_path, "status": "renamed"}
+
+    @staticmethod
+    def create_folder(agent_id: str, project_name: str, folder_path: str) -> dict:
+        """Create a folder within the notes directory."""
+        notes_dir = NoteManager._notes_dir(agent_id, project_name)
+        fpath = os.path.join(notes_dir, folder_path)
+        os.makedirs(fpath, exist_ok=True)
+        return {"path": folder_path, "status": "created"}
 
 
 # ─── Document Ingestion Engine ────────────────────────────────────────
@@ -8170,6 +8419,17 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                     "\nPrioritize project-specific documents when answering. "
                     "Memory operations (store/recall) are scoped to this project.\n\n"
                 )
+        # Inject note context for AI-assisted note editing
+        note_context = getattr(_thread_local, 'note_context', None)
+        if note_context:
+            system_instruction += (
+                "NOTE EDITING MODE: You are helping edit a project note. "
+                "The current note content is:\n"
+                f"{note_context}\n\n"
+                "When you want to suggest edits to the note, wrap your changes in "
+                "[EDIT_NOTE]...[/EDIT_NOTE] tags. The content inside these tags will "
+                "replace the entire note content in the editor.\n\n"
+            )
         # Inject team context for interactive sessions
         team_info = _get_agent_team_info(agent_id)
         if team_info:
