@@ -280,7 +280,10 @@ class ChatDB:
     def list_sessions(agent_id=None, status=None):
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
-            q = "SELECT s.*, (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) as message_count FROM sessions s WHERE 1=1"
+            q = ("SELECT s.*, "
+                 "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) as message_count, "
+                 "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.metadata LIKE '%\"files\"%') as has_attachments "
+                 "FROM sessions s WHERE 1=1")
             params = []
             if agent_id:
                 q += " AND s.agent_id = ?"

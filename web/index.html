@@ -2043,6 +2043,21 @@ tailwind.config = {
   .pp-info-btn { font-size: 10px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-surface-light); color: var(--color-text-secondary); cursor: pointer; }
   .pp-info-btn:hover { border-color: var(--color-accent); color: var(--color-accent); }
   .pp-empty { font-size: 10px; color: var(--color-text-muted); font-style: italic; padding: 4px 8px; }
+  .pp-section-count { font-weight: 400; opacity: 0.7; }
+  .pp-add-folder-form { padding: 4px 8px 8px; display: flex; flex-direction: column; gap: 4px; }
+  .pp-add-folder-form input[type="text"] { width: 100%; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-surface-light); color: var(--color-text-primary); font-size: 11px; outline: none; font-family: 'IBM Plex Mono', monospace; }
+  .pp-add-folder-form label { font-size: 10px; color: var(--color-text-muted); display: flex; align-items: center; gap: 4px; }
+  .pp-add-folder-form button { font-size: 10px; padding: 3px 10px; border-radius: 6px; border: 1px solid var(--color-accent); background: var(--color-accent); color: #fff; cursor: pointer; align-self: flex-start; font-family: 'IBM Plex Mono', monospace; }
+  .pp-add-folder-form button:hover { opacity: 0.9; }
+
+  /* Sidebar chat attachments */
+  .sb-chat-attachments { padding: 0 8px 4px 40px; }
+  .sb-chat-attachments.collapsed .sb-attach-list { display: none; }
+  .sb-attach-toggle { font-size: 10px; color: var(--color-text-muted); cursor: pointer; padding: 2px 0; user-select: none; }
+  .sb-attach-toggle:hover { color: var(--color-text-secondary); }
+  .sb-attach-item { display: flex; align-items: center; justify-content: space-between; font-size: 10px; color: var(--color-text-muted); padding: 1px 0; }
+  .sb-attach-item a { color: var(--color-accent); text-decoration: none; font-size: 10px; }
+  .sb-attach-item a:hover { text-decoration: underline; }
 
   /* Sidebar project selector button */
   .sb-project-selector-btn { display: flex; align-items: center; gap: 6px; padding: 5px 12px; cursor: pointer; color: var(--color-text-muted); font-size: 11px; transition: all 0.15s; border-radius: 4px; margin: 2px 6px; }
@@ -2303,34 +2318,39 @@ tailwind.config = {
   <!-- PROJECT PANEL (right sidebar, collapsible) -->
   <div id="project-panel" class="collapsed">
     <div class="pp-header" id="pp-project-header"></div>
+    <div class="pp-search" style="padding:4px 8px 8px">
+      <input type="text" id="pp-search-input" placeholder="Search project..."
+        oninput="filterProjectPanel(this.value)"
+        style="width:100%;padding:5px 8px;border-radius:6px;border:1px solid var(--color-border);background:var(--color-surface-light);color:var(--color-text-primary);font-size:11px;outline:none;font-family:'IBM Plex Mono',monospace">
+    </div>
     <div class="pp-body">
       <div class="pp-section" data-section="chats">
         <div class="pp-section-header" onclick="togglePpSection('chats')">
-          <span class="pp-chevron">&#9660;</span> Chats <button class="pp-add-btn" onclick="event.stopPropagation();newProjectChat(state.currentProject)">+</button>
+          <span class="pp-chevron">&#9660;</span> Chats <span class="pp-section-count" id="pp-count-chats"></span> <button class="pp-add-btn" onclick="event.stopPropagation();newProjectChat(state.currentProject)">+</button>
         </div>
         <div class="pp-section-content" id="pp-chats"></div>
       </div>
       <div class="pp-section" data-section="notes">
         <div class="pp-section-header" onclick="togglePpSection('notes')">
-          <span class="pp-chevron">&#9660;</span> Notes <button class="pp-add-btn" onclick="event.stopPropagation();createNewNote()">+</button>
+          <span class="pp-chevron">&#9660;</span> Notes <span class="pp-section-count" id="pp-count-notes"></span> <button class="pp-add-btn" onclick="event.stopPropagation();createNewNote()">+</button>
         </div>
         <div class="pp-section-content" id="pp-notes"></div>
       </div>
       <div class="pp-section" data-section="documents">
         <div class="pp-section-header" onclick="togglePpSection('documents')">
-          <span class="pp-chevron">&#9660;</span> Documents <button class="pp-add-btn" onclick="event.stopPropagation();showIngestDialog(state.activeAgentId,state.currentProject)" title="Ingest document">+</button>
+          <span class="pp-chevron">&#9660;</span> Documents <span class="pp-section-count" id="pp-count-documents"></span> <button class="pp-add-btn" onclick="event.stopPropagation();showIngestDialog(state.activeAgentId,state.currentProject)" title="Ingest document">+</button>
         </div>
         <div class="pp-section-content" id="pp-documents"></div>
       </div>
       <div class="pp-section" data-section="attachments">
         <div class="pp-section-header" onclick="togglePpSection('attachments')">
-          <span class="pp-chevron">&#9660;</span> Attachments
+          <span class="pp-chevron">&#9660;</span> Attachments <span class="pp-section-count" id="pp-count-attachments"></span>
         </div>
         <div class="pp-section-content" id="pp-attachments"></div>
       </div>
       <div class="pp-section" data-section="folders">
         <div class="pp-section-header" onclick="togglePpSection('folders')">
-          <span class="pp-chevron">&#9660;</span> Folders <button class="pp-add-btn" onclick="event.stopPropagation();ppAddWatchFolder()" title="Add watched folder">+</button>
+          <span class="pp-chevron">&#9660;</span> Folders <span class="pp-section-count" id="pp-count-folders"></span> <button class="pp-add-btn" onclick="event.stopPropagation();ppAddWatchFolder()" title="Add watched folder">+</button>
         </div>
         <div class="pp-section-content" id="pp-folders"></div>
       </div>
@@ -3130,19 +3150,20 @@ function renderSidebarSession(s, currentSessionId) {
   const isActive = currentSessionId === s.id;
   const title = s.title || 'Untitled';
   const summary = s.summary || '';
-  const truncTitle = title.length > 35 ? title.substring(0, 35) + '…' : title;
-  const truncSummary = summary ? (summary.length > 40 ? summary.substring(0, 40) + '…' : summary) : '';
+  const truncTitle = title.length > 35 ? title.substring(0, 35) + '\u2026' : title;
+  const truncSummary = summary ? (summary.length > 40 ? summary.substring(0, 40) + '\u2026' : summary) : '';
   const count = s.message_count || 0;
   const isArchived = s.status === 'archived';
   const isIncognito = s.status === 'incognito';
+  const hasAttach = s.has_attachments > 0;
   const timeStr = relativeTime(s.last_active);
-  return `<div class="sb-agent-item ${isActive ? 'active' : ''} ${isArchived ? 'opacity-50' : ''}" onclick="loadSession('${esc(s.id)}')" title="${esc(title)} — ${count} messages${isIncognito ? ' (incognito)' : ''}${summary ? '\n' + summary : ''}">
+  let html = `<div class="sb-agent-item ${isActive ? 'active' : ''} ${isArchived ? 'opacity-50' : ''}" onclick="loadSession('${esc(s.id)}')" title="${esc(title)} \u2014 ${count} messages${isIncognito ? ' (incognito)' : ''}${summary ? '\n' + summary : ''}">
     <div class="sb-agent-avatar" style="display:flex;align-items:center;justify-content:center;width:28px;height:28px">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="var(--color-text-muted)"><path d="M2.678 11.894a1 1 0 0 1 .287.801 11 11 0 0 1-.398 2c1.395-.323 2.247-.697 2.634-.893a1 1 0 0 1 .71-.074A8 8 0 0 0 8 14c3.996 0 7-2.807 7-6s-3.004-6-7-6-7 2.808-7 6c0 1.468.617 2.83 1.678 3.894"/></svg>
     </div>
     <div class="sb-agent-info">
-      <div class="sb-agent-name">${isIncognito ? '🕶 ' : ''}${esc(truncTitle)}</div>
-      <div class="sb-agent-meta">${truncSummary ? esc(truncSummary) : `${count} messages · ${timeStr}`}</div>
+      <div class="sb-agent-name">${isIncognito ? '\ud83d\udd76 ' : ''}${esc(truncTitle)}${hasAttach ? ' <span style="font-size:9px;opacity:0.6">\ud83d\udcce</span>' : ''}</div>
+      <div class="sb-agent-meta">${truncSummary ? esc(truncSummary) : `${count} messages \u00b7 ${timeStr}`}</div>
     </div>
     <span class="sb-agent-actions">
       ${isArchived
@@ -3152,6 +3173,16 @@ function renderSidebarSession(s, currentSessionId) {
       <button onclick="event.stopPropagation();sessionAction('delete','${esc(s.id)}')" title="Delete">&#128465;</button>
     </span>
   </div>`;
+  // Attachment collapsible section
+  if (hasAttach) {
+    html += `<div class="sb-chat-attachments collapsed" data-session="${esc(s.id)}">
+      <div class="sb-attach-toggle" onclick="event.stopPropagation();toggleChatAttachments('${esc(s.id)}')">\ud83d\udcce ${s.has_attachments} file${s.has_attachments !== 1 ? 's' : ''} \u25b6</div>
+      <div class="sb-attach-list">
+        <div style="font-size:10px;color:var(--color-text-muted);font-style:italic">Loading\u2026</div>
+      </div>
+    </div>`;
+  }
+  return html;
 }
 
 function renderSessionBar() {
@@ -3535,6 +3566,14 @@ async function renderProjectPanel() {
   const projectName = state.currentProject;
   if (!agentId || !projectName) return;
 
+  // Reset search when panel re-renders fresh
+  if (!state._ppSearchQuery) {
+    const searchInput = document.getElementById('pp-search-input');
+    if (searchInput) searchInput.value = '';
+    // Restore all section visibility
+    document.querySelectorAll('#project-panel .pp-section').forEach(s => s.style.display = '');
+  }
+
   const projects = state.agentProjects[agentId] || [];
   const proj = projects.find(p => p.name === projectName);
   const pIcon = proj?.icon || 'folder';
@@ -3583,21 +3622,50 @@ async function renderProjectPanelChats(agentId, projectName) {
   const chat = state.agentChats[agentId];
   const currentSessionId = chat?.sessionId;
 
+  // Store for filtering
+  state._ppChatsData = projectSessions;
+
+  // Apply filter
+  const query = (state._ppSearchQuery || '').toLowerCase();
+  const filtered = query.length >= 2
+    ? projectSessions.filter(s => (s.title || '').toLowerCase().includes(query) || (s.summary || '').toLowerCase().includes(query))
+    : projectSessions;
+
+  // Update count
+  const countEl = document.getElementById('pp-count-chats');
+  if (countEl) countEl.textContent = `(${filtered.length})`;
+
   let html = '';
-  if (projectSessions.length === 0) {
+  if (filtered.length === 0) {
     html = '<div class="pp-empty">No chats yet</div>';
   }
-  projectSessions.forEach(s => {
+  filtered.forEach(s => {
     const isActive = currentSessionId === s.id;
     const title = s.title || 'Untitled';
-    const truncTitle = title.length > 35 ? title.substring(0, 35) + '...' : title;
+    const truncTitle = title.length > 35 ? title.substring(0, 35) + '\u2026' : title;
+    const summary = s.summary || '';
+    const truncSummary = summary ? (summary.length > 40 ? summary.substring(0, 40) + '\u2026' : summary) : '';
+    const count = s.message_count || 0;
     const timeStr = relativeTime(s.last_active);
-    html += `<div class="pp-chat-item${isActive ? ' active' : ''}" onclick="loadSession('${esc(s.id)}');switchCenterView('chat');" title="${esc(title)}">
-      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(truncTitle)}</span>
-      <span style="font-size:9px;color:var(--color-text-muted);flex-shrink:0">${timeStr}</span>
+    html += `<div class="sb-agent-item ${isActive ? 'active' : ''}" onclick="loadSession('${esc(s.id)}');switchCenterView('chat');" title="${esc(title)} \u2014 ${count} messages${summary ? '\n' + summary : ''}" style="margin:2px 0">
+      <div class="sb-agent-avatar" style="display:flex;align-items:center;justify-content:center;width:28px;height:28px">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="var(--color-text-muted)"><path d="M2.678 11.894a1 1 0 0 1 .287.801 11 11 0 0 1-.398 2c1.395-.323 2.247-.697 2.634-.893a1 1 0 0 1 .71-.074A8 8 0 0 0 8 14c3.996 0 7-2.807 7-6s-3.004-6-7-6-7 2.808-7 6c0 1.468.617 2.83 1.678 3.894"/></svg>
+      </div>
+      <div class="sb-agent-info">
+        <div class="sb-agent-name">${esc(truncTitle)}</div>
+        <div class="sb-agent-meta">${truncSummary ? esc(truncSummary) : `${count} messages \u00b7 ${timeStr}`}</div>
+      </div>
+      <span class="sb-agent-actions">
+        <button onclick="event.stopPropagation();sessionAction('archive','${esc(s.id)}')" title="Archive">&#128230;</button>
+        <button onclick="event.stopPropagation();sessionAction('delete','${esc(s.id)}')" title="Delete">&#128465;</button>
+      </span>
     </div>`;
   });
   dom.ppChats.innerHTML = html;
+
+  // Hide section if all filtered out
+  const section = document.querySelector('#project-panel .pp-section[data-section="chats"]');
+  if (section) section.style.display = (query.length >= 2 && filtered.length === 0) ? 'none' : '';
 }
 
 async function renderProjectPanelNotes(agentId, projectName) {
@@ -3608,14 +3676,24 @@ async function renderProjectPanelNotes(agentId, projectName) {
     state.projectNotes = [];
   }
 
+  const query = (state._ppSearchQuery || '').toLowerCase();
+  const allNotes = state.projectNotes;
+  const filtered = query.length >= 2
+    ? allNotes.filter(n => (n.name || '').toLowerCase().includes(query) || (n.path || '').toLowerCase().includes(query))
+    : allNotes;
+
+  // Update count
+  const countEl = document.getElementById('pp-count-notes');
+  if (countEl) countEl.textContent = `(${filtered.length})`;
+
   let html = '';
-  if (state.projectNotes.length === 0) {
+  if (filtered.length === 0) {
     html = '<div class="pp-empty">No notes yet</div>';
   } else {
     // Group by folder
     const folders = {};
     const rootNotes = [];
-    state.projectNotes.forEach(n => {
+    filtered.forEach(n => {
       const parts = n.path.split('/');
       if (parts.length > 1) {
         const folder = parts.slice(0, -1).join('/');
@@ -3646,22 +3724,41 @@ async function renderProjectPanelNotes(agentId, projectName) {
     });
   }
   dom.ppNotes.innerHTML = html;
+
+  // Hide section if all filtered out
+  const section = document.querySelector('#project-panel .pp-section[data-section="notes"]');
+  if (section) section.style.display = (query.length >= 2 && filtered.length === 0) ? 'none' : '';
 }
 
 async function renderProjectPanelDocs(agentId, projectName) {
   try {
     const res = await API.getProjectDocs(agentId, projectName);
     const docs = res.documents || res.docs || [];
-    if (docs.length === 0) {
+    state._ppDocsData = docs;
+
+    const query = (state._ppSearchQuery || '').toLowerCase();
+    const filtered = query.length >= 2
+      ? docs.filter(d => ((d.name || d.source || d.hash || '').toLowerCase().includes(query)))
+      : docs;
+
+    const countEl = document.getElementById('pp-count-documents');
+    if (countEl) countEl.textContent = `(${filtered.length})`;
+
+    if (filtered.length === 0) {
       dom.ppDocuments.innerHTML = '<div class="pp-empty">No documents</div>';
     } else {
-      dom.ppDocuments.innerHTML = docs.map(d => {
+      dom.ppDocuments.innerHTML = filtered.map(d => {
         const name = d.name || d.source || d.hash || 'Document';
         return `<div class="pp-doc-item"><span style="font-size:10px">&#128209;</span> <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span></div>`;
       }).join('');
     }
+
+    const section = document.querySelector('#project-panel .pp-section[data-section="documents"]');
+    if (section) section.style.display = (query.length >= 2 && filtered.length === 0) ? 'none' : '';
   } catch {
     dom.ppDocuments.innerHTML = '<div class="pp-empty">No documents</div>';
+    const countEl = document.getElementById('pp-count-documents');
+    if (countEl) countEl.textContent = '(0)';
   }
 }
 
@@ -3682,30 +3779,166 @@ function renderProjectPanelAttachments(agentId, projectName) {
     });
   }
 
-  if (files.length === 0) {
+  const query = (state._ppSearchQuery || '').toLowerCase();
+  const filtered = query.length >= 2
+    ? files.filter(f => ((f.name || f.path || '').toLowerCase().includes(query)))
+    : files;
+
+  const countEl = document.getElementById('pp-count-attachments');
+  if (countEl) countEl.textContent = `(${filtered.length})`;
+
+  if (filtered.length === 0) {
     dom.ppAttachments.innerHTML = '<div class="pp-empty">No attachments</div>';
   } else {
-    dom.ppAttachments.innerHTML = files.map(f => {
+    dom.ppAttachments.innerHTML = filtered.map(f => {
       const name = f.name || f.path || 'file';
       return `<div class="pp-doc-item"><span style="font-size:10px">&#128206;</span> <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span></div>`;
     }).join('');
   }
+
+  const section = document.querySelector('#project-panel .pp-section[data-section="attachments"]');
+  if (section) section.style.display = (query.length >= 2 && filtered.length === 0) ? 'none' : '';
 }
 
 async function renderProjectPanelFolders(agentId, projectName) {
   try {
     const res = await API.getWatchFolders(agentId, projectName);
     const folders = res.folders || [];
-    if (folders.length === 0) {
+    state._ppFoldersData = folders;
+
+    const query = (state._ppSearchQuery || '').toLowerCase();
+    const filtered = query.length >= 2
+      ? folders.filter(f => ((f.path || f || '').toString().toLowerCase().includes(query)))
+      : folders;
+
+    const countEl = document.getElementById('pp-count-folders');
+    if (countEl) countEl.textContent = `(${filtered.length})`;
+
+    if (filtered.length === 0) {
       dom.ppFolders.innerHTML = '<div class="pp-empty">No watched folders</div>';
     } else {
-      dom.ppFolders.innerHTML = folders.map(f => {
+      dom.ppFolders.innerHTML = filtered.map(f => {
         const path = f.path || f;
         return `<div class="pp-doc-item"><span style="font-size:10px">&#128193;</span> <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(path)}</span></div>`;
       }).join('');
     }
+
+    const section = document.querySelector('#project-panel .pp-section[data-section="folders"]');
+    if (section) section.style.display = (query.length >= 2 && filtered.length === 0) ? 'none' : '';
   } catch {
     dom.ppFolders.innerHTML = '<div class="pp-empty">No watched folders</div>';
+    const countEl = document.getElementById('pp-count-folders');
+    if (countEl) countEl.textContent = '(0)';
+  }
+}
+
+// ─── Project Panel Search & Watch Folders ────────────────────
+
+window.filterProjectPanel = function(query) {
+  state._ppSearchQuery = query;
+  // Re-render all sections with current filter
+  const agentId = state.activeAgentId;
+  const projectName = state.currentProject;
+  if (!agentId || !projectName) return;
+
+  renderProjectPanelChats(agentId, projectName);
+  renderProjectPanelNotes(agentId, projectName);
+  renderProjectPanelDocs(agentId, projectName);
+  renderProjectPanelAttachments(agentId, projectName);
+  renderProjectPanelFolders(agentId, projectName);
+
+  // Refocus search input after re-render
+  const si = document.getElementById('pp-search-input');
+  if (si) { si.focus(); si.selectionStart = si.selectionEnd = si.value.length; }
+};
+
+window.ppAddWatchFolder = function() {
+  const agentId = state.activeAgentId;
+  const project = state.currentProject;
+  if (!agentId || !project) return;
+  const el = document.getElementById('pp-folders');
+  if (!el) return;
+  const existing = el.querySelector('.pp-add-folder-form');
+  if (existing) { existing.remove(); return; }
+  const form = document.createElement('div');
+  form.className = 'pp-add-folder-form';
+  form.innerHTML = `
+    <input type="text" placeholder="/path/to/folder" class="pp-folder-path">
+    <input type="text" placeholder="*.pdf" value="*" class="pp-folder-pattern">
+    <label><input type="checkbox" class="pp-folder-recursive"> Recursive</label>
+    <button onclick="ppSubmitWatchFolder()">Add</button>
+  `;
+  el.prepend(form);
+  form.querySelector('.pp-folder-path').focus();
+};
+
+window.ppSubmitWatchFolder = async function() {
+  const agentId = state.activeAgentId;
+  const project = state.currentProject;
+  if (!agentId || !project) return;
+  const el = document.getElementById('pp-folders');
+  if (!el) return;
+  const form = el.querySelector('.pp-add-folder-form');
+  if (!form) return;
+  const path = form.querySelector('.pp-folder-path')?.value?.trim();
+  const pattern = form.querySelector('.pp-folder-pattern')?.value?.trim() || '*';
+  const recursive = form.querySelector('.pp-folder-recursive')?.checked || false;
+  if (!path) { showToast('Path is required'); return; }
+  try {
+    await API.manageWatchFolder(agentId, { path, pattern, recursive }, project);
+    showToast('Watch folder added');
+    form.remove();
+    renderProjectPanelFolders(agentId, project);
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+// ─── Sidebar Chat Attachments ────────────────────────────────
+
+window.toggleChatAttachments = function(sessionId) {
+  const el = document.querySelector(`.sb-chat-attachments[data-session="${sessionId}"]`);
+  if (!el) return;
+  el.classList.toggle('collapsed');
+  const toggle = el.querySelector('.sb-attach-toggle');
+  if (toggle) {
+    const isCollapsed = el.classList.contains('collapsed');
+    const count = el.querySelectorAll('.sb-attach-item').length;
+    toggle.innerHTML = `\ud83d\udcce ${count} file${count !== 1 ? 's' : ''} ${isCollapsed ? '\u25b6' : '\u25bc'}`;
+  }
+  // Lazy-load attachment details if expanding and not yet loaded
+  if (!el.classList.contains('collapsed') && !el.dataset.loaded) {
+    loadSessionAttachments(sessionId, el);
+  }
+};
+
+async function loadSessionAttachments(sessionId, container) {
+  try {
+    const res = await API.get(`/v1/sessions/${encodeURIComponent(sessionId)}/messages`);
+    const msgs = res.messages || [];
+    const files = [];
+    msgs.forEach(m => {
+      if (m.files && m.files.length > 0) {
+        m.files.forEach(f => files.push(f));
+      }
+    });
+    const listEl = container.querySelector('.sb-attach-list');
+    if (listEl && files.length > 0) {
+      listEl.innerHTML = files.map(f => {
+        const name = f.name || f.path || 'file';
+        const size = f.size ? `(${formatFileSize(f.size)})` : '';
+        const downloadUrl = f.path ? `/v1/files/download?path=${encodeURIComponent(f.path)}` : '#';
+        return `<div class="sb-attach-item">
+          <span>\ud83d\udcc4 ${esc(name)} ${size}</span>
+          <a href="${downloadUrl}" download title="Download">\u2b07</a>
+        </div>`;
+      }).join('');
+    } else if (listEl) {
+      listEl.innerHTML = '<div style="font-size:10px;color:var(--color-text-muted);font-style:italic">No files</div>';
+    }
+    container.dataset.loaded = '1';
+  } catch (e) {
+    // silently fail
   }
 }
 
