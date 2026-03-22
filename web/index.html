@@ -4068,8 +4068,38 @@ window.openNote = async function(agentId, project, path) {
       }
     };
 
-    // Clear AI messages
+    // Restore AI chat history for this note
     dom.noteAiMessages.innerHTML = '';
+    state.noteAiSessionId = null;
+    const noteKey = `note-session:${agentId}:${project}:${path}`;
+    const storedSid = localStorage.getItem(noteKey);
+    if (storedSid) {
+      state.noteAiSessionId = storedSid;
+      try {
+        const msgs = await API.get(`/v1/sessions/${storedSid}/messages`);
+        const messages = (msgs.messages || []).filter(m => m.role === 'user' || m.role === 'assistant');
+        if (messages.length > 0) {
+          dom.noteAiMessages.innerHTML = messages.map(m => {
+            let content = m.content || '';
+            // For user messages, strip the note content prefix to show only the user's question
+            if (m.role === 'user' && content.includes('```markdown\n')) {
+              const parts = content.split('```\n\n');
+              content = parts.length > 1 ? parts[parts.length - 1] : content;
+            }
+            // For assistant messages, strip EDIT_NOTE tags
+            if (m.role === 'assistant') content = content.replace(/\[EDIT_NOTE\][\s\S]*?\[\/EDIT_NOTE\]/g, '').trim();
+            if (!content) return '';
+            return `<div class="note-ai-msg ${m.role}">${m.role === 'assistant' && typeof marked !== 'undefined' ? marked.parse(content) : esc(content)}</div>`;
+          }).filter(Boolean).join('');
+          dom.noteAiMessages.scrollTop = dom.noteAiMessages.scrollHeight;
+          // Auto-expand AI panel if there's history
+          const body = document.getElementById('note-ai-body');
+          const chevron = document.getElementById('note-ai-chevron');
+          if (body) body.style.display = 'flex';
+          if (chevron) chevron.style.transform = 'rotate(0deg)';
+        }
+      } catch {}
+    }
     state.noteAiSessionId = null;
 
     // Update project panel to highlight active note
@@ -4142,31 +4172,16 @@ window.sendNoteAiMessage = async function() {
   dom.noteAiMessages.scrollTop = dom.noteAiMessages.scrollHeight;
 
   try {
-    // Create or reuse note-specific session (hidden from project chat list)
+    // Create note session if not yet created
     if (!state.noteAiSessionId) {
-      // Check if this note already has a stored session ID
+      const noteCtx = `You are helping edit a markdown note called "${note.path}". When the user asks you to edit, add, or modify content, output the COMPLETE updated note content wrapped in [EDIT_NOTE]...[/EDIT_NOTE] tags. Only use these tags when making actual edits. For questions or explanations, respond normally without tags.`;
+      const sessionRes = await API.post('/v1/sessions', {
+        agent: note.agentId, project: note.project, note_context: noteCtx,
+        status: 'note_chat'
+      });
+      state.noteAiSessionId = sessionRes.session_id;
       const noteKey = `note-session:${note.agentId}:${note.project}:${note.path}`;
-      const storedSid = localStorage.getItem(noteKey);
-      if (storedSid) {
-        state.noteAiSessionId = storedSid;
-        // Restore previous messages
-        try {
-          const msgs = await API.get(`/v1/sessions/${storedSid}/messages`);
-          const messages = msgs.messages || [];
-          dom.noteAiMessages.innerHTML = messages.map(m =>
-            `<div class="note-ai-msg ${m.role === 'user' ? 'user' : 'assistant'}">${typeof marked !== 'undefined' && m.role === 'assistant' ? marked.parse(m.content || '') : esc(m.content || '')}</div>`
-          ).join('');
-          dom.noteAiMessages.scrollTop = dom.noteAiMessages.scrollHeight;
-        } catch {}
-      } else {
-        const noteCtx = `You are helping edit a markdown note called "${note.path}". When the user asks you to edit, add, or modify content, output the COMPLETE updated note content wrapped in [EDIT_NOTE]...[/EDIT_NOTE] tags. Only use these tags when making actual edits. For questions or explanations, respond normally without tags.`;
-        const sessionRes = await API.post('/v1/sessions', {
-          agent: note.agentId, project: note.project, note_context: noteCtx,
-          status: 'note_chat'
-        });
-        state.noteAiSessionId = sessionRes.session_id;
-        localStorage.setItem(noteKey, state.noteAiSessionId);
-      }
+      localStorage.setItem(noteKey, state.noteAiSessionId);
     }
 
     // Build message with current note content as context
