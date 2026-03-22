@@ -2280,7 +2280,7 @@ tailwind.config = {
         <div id="note-ai-toggle" onclick="toggleNoteAi()">
           <span class="pp-chevron" id="note-ai-chevron" style="transform:rotate(-90deg)">&#9660;</span>
           <span>AI Assistant</span>
-          <span style="margin-left:auto;font-size:9px;color:var(--color-text-muted)">Ask AI to edit or enhance this note</span>
+          <button onclick="event.stopPropagation();resetNoteAiChat()" title="Reset AI chat" style="margin-left:auto;background:none;border:none;color:var(--color-text-muted);cursor:pointer;font-size:10px;padding:2px 6px;border-radius:4px;font-family:'IBM Plex Mono',monospace" onmouseover="this.style.color='var(--color-error)'" onmouseout="this.style.color='var(--color-text-muted)'">Reset</button>
         </div>
         <div id="note-ai-body" style="display:none">
           <div id="note-ai-messages"></div>
@@ -4029,6 +4029,22 @@ window.ppDeleteFolder = async function(path) {
     renderProjectPanel();
     showToast('Folder removed');
   } catch (e) { showToast(e.message, true); }
+};
+
+window.resetNoteAiChat = function() {
+  const note = state.currentNote;
+  if (!note) return;
+  // Delete old session
+  if (state.noteAiSessionId) {
+    try { API.del(`/v1/sessions/${state.noteAiSessionId}`); } catch {}
+  }
+  // Clear localStorage key
+  const noteKey = `note-session:${note.agentId}:${note.project}:${note.path}`;
+  localStorage.removeItem(noteKey);
+  // Reset state
+  state.noteAiSessionId = null;
+  dom.noteAiMessages.innerHTML = '';
+  showToast('AI chat reset');
 };
 
 window.toggleNoteAi = function() {
