@@ -2014,8 +2014,7 @@ tailwind.config = {
     flex-shrink: 0;
   }
   #project-panel.collapsed { width: 0; min-width: 0; border-left: none; overflow: hidden; }
-  .pp-header { padding: 12px; border-bottom: 1px solid var(--color-border); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-  .pp-header select { flex: 1; background: var(--color-surface-light); border: 1px solid var(--color-border); border-radius: 8px; padding: 6px 10px; font-size: 13px; color: var(--color-text-primary); font-family: 'Outfit', sans-serif; }
+  .pp-header { padding: 4px 4px 4px 0; border-bottom: 1px solid var(--color-border); display: flex; align-items: center; gap: 0; flex-shrink: 0; }
   .pp-body { flex: 1; overflow-y: auto; }
   .pp-section-header { display: flex; align-items: center; gap: 6px; padding: 8px 12px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-text-muted); cursor: pointer; user-select: none; }
   .pp-section-header:hover { color: var(--color-text-secondary); }
@@ -2303,17 +2302,8 @@ tailwind.config = {
 
   <!-- PROJECT PANEL (right sidebar, collapsible) -->
   <div id="project-panel" class="collapsed">
-    <div class="pp-header">
-      <select id="pp-project-select" onchange="switchProjectPanel(this.value)"></select>
-      <button class="pp-toggle" onclick="toggleProjectPanel()" title="Close">&times;</button>
-    </div>
+    <div class="pp-header" id="pp-project-header"></div>
     <div class="pp-body">
-      <div class="pp-section" data-section="info">
-        <div class="pp-section-header" onclick="togglePpSection('info')">
-          <span class="pp-chevron">&#9660;</span> Info
-        </div>
-        <div class="pp-section-content" id="pp-info"></div>
-      </div>
       <div class="pp-section" data-section="chats">
         <div class="pp-section-header" onclick="togglePpSection('chats')">
           <span class="pp-chevron">&#9660;</span> Chats <button class="pp-add-btn" onclick="event.stopPropagation();newProjectChat(state.currentProject)">+</button>
@@ -2328,7 +2318,7 @@ tailwind.config = {
       </div>
       <div class="pp-section" data-section="documents">
         <div class="pp-section-header" onclick="togglePpSection('documents')">
-          <span class="pp-chevron">&#9660;</span> Documents
+          <span class="pp-chevron">&#9660;</span> Documents <button class="pp-add-btn" onclick="event.stopPropagation();showIngestDialog(state.activeAgentId,state.currentProject)" title="Ingest document">+</button>
         </div>
         <div class="pp-section-content" id="pp-documents"></div>
       </div>
@@ -2340,7 +2330,7 @@ tailwind.config = {
       </div>
       <div class="pp-section" data-section="folders">
         <div class="pp-section-header" onclick="togglePpSection('folders')">
-          <span class="pp-chevron">&#9660;</span> Folders
+          <span class="pp-chevron">&#9660;</span> Folders <button class="pp-add-btn" onclick="event.stopPropagation();ppAddWatchFolder()" title="Add watched folder">+</button>
         </div>
         <div class="pp-section-content" id="pp-folders"></div>
       </div>
@@ -2717,8 +2707,7 @@ const dom = {
   statusSession: $('#status-session'),
   // Project panel & note editor
   projectPanel: $('#project-panel'),
-  ppProjectSelect: $('#pp-project-select'),
-  ppInfo: $('#pp-info'),
+  ppProjectHeader: $('#pp-project-header'),
   ppChats: $('#pp-chats'),
   ppNotes: $('#pp-notes'),
   ppDocuments: $('#pp-documents'),
@@ -3546,26 +3535,30 @@ async function renderProjectPanel() {
   const projectName = state.currentProject;
   if (!agentId || !projectName) return;
 
-  // Populate project selector dropdown
   const projects = state.agentProjects[agentId] || [];
-  const activeProjects = projects.filter(p => (p.status || 'active') !== 'archived');
-  dom.ppProjectSelect.innerHTML = activeProjects.map(p =>
-    `<option value="${esc(p.name)}"${p.name === projectName ? ' selected' : ''}>${esc(p.name)}</option>`
-  ).join('');
-
   const proj = projects.find(p => p.name === projectName);
   const pIcon = proj?.icon || 'folder';
   const pDesc = proj?.description || '';
 
-  // Info section
-  dom.ppInfo.innerHTML = `<div class="pp-info-block">
-    <div class="pp-info-name">${renderProjectIcon(pIcon, 18)} ${esc(projectName)}</div>
-    ${pDesc ? `<div class="pp-info-desc">${esc(pDesc)}</div>` : ''}
-    <div class="pp-info-actions">
-      <button class="pp-info-btn" onclick="sidebarOpenProjectSettings('${esc(agentId)}','${esc(projectName)}')">Settings</button>
-      <button class="pp-info-btn" onclick="showIngestDialog('${esc(agentId)}','${esc(projectName)}')">Ingest</button>
-    </div>
-  </div>`;
+  // Header — agent-card style with icon, name, description, settings
+  const headerEl = document.getElementById('pp-project-header');
+  if (headerEl) {
+    headerEl.innerHTML = `
+      <div class="sb-agent-item active" style="margin:0;border-left:none;flex:1;padding:8px 10px" onclick="event.stopPropagation()">
+        <div class="sb-agent-avatar" style="display:flex;align-items:center;justify-content:center;width:28px;height:28px">
+          ${renderProjectIcon(pIcon, 20)}
+        </div>
+        <div class="sb-agent-info">
+          <div class="sb-agent-name">${esc(projectName)}</div>
+          <div class="sb-agent-meta">${pDesc ? esc(pDesc.substring(0, 40)) : '<span style="opacity:0.4">No description</span>'}</div>
+        </div>
+        <span class="sb-agent-actions" style="opacity:1">
+          <button class="btn-cfg-card" title="Project settings" onclick="sidebarOpenProjectSettings('${esc(agentId)}','${esc(projectName)}')">&#9881;</button>
+        </span>
+      </div>
+      <button class="pp-toggle" onclick="toggleProjectPanel()" title="Close panel">&times;</button>
+    `;
+  }
 
   // Chats section — project-scoped sessions
   await renderProjectPanelChats(agentId, projectName);
