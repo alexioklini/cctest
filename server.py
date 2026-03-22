@@ -1088,6 +1088,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         note_context = body.get("note_context", "")
         if note_context:
             session.note_context = note_context
+        # Allow setting custom status (e.g., 'note_chat' to hide from chat lists)
+        custom_status = body.get("status", "")
+        if custom_status:
+            session.status = custom_status
+            ChatDB.save_session(session.id, session.agent_id, session.model,
+                               session.title, session.status, session.created_at,
+                               session.last_active, session.project or "")
         self._send_json({
             "session_id": session.id,
             "agent": session.agent_id,

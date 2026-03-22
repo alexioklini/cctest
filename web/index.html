@@ -3633,7 +3633,7 @@ async function renderProjectPanel() {
 async function renderProjectPanelChats(agentId, projectName) {
   const entry = state.agentSessions[agentId];
   const allSessions = entry?.sessions || [];
-  const projectSessions = allSessions.filter(s => s.project === projectName && s.status !== 'archived');
+  const projectSessions = allSessions.filter(s => s.project === projectName && s.status !== 'archived' && s.status !== 'note_chat');
   const chat = state.agentChats[agentId];
   const currentSessionId = chat?.sessionId;
 
@@ -4142,13 +4142,31 @@ window.sendNoteAiMessage = async function() {
   dom.noteAiMessages.scrollTop = dom.noteAiMessages.scrollHeight;
 
   try {
-    // Create ephemeral session with note context
+    // Create or reuse note-specific session (hidden from project chat list)
     if (!state.noteAiSessionId) {
-      const noteCtx = `You are helping edit a markdown note called "${note.path}". When the user asks you to edit, add, or modify content, output the COMPLETE updated note content wrapped in [EDIT_NOTE]...[/EDIT_NOTE] tags. Only use these tags when making actual edits. For questions or explanations, respond normally without tags.`;
-      const sessionRes = await API.post('/v1/sessions', {
-        agent: note.agentId, project: note.project, note_context: noteCtx
-      });
-      state.noteAiSessionId = sessionRes.session_id;
+      // Check if this note already has a stored session ID
+      const noteKey = `note-session:${note.agentId}:${note.project}:${note.path}`;
+      const storedSid = localStorage.getItem(noteKey);
+      if (storedSid) {
+        state.noteAiSessionId = storedSid;
+        // Restore previous messages
+        try {
+          const msgs = await API.get(`/v1/sessions/${storedSid}/messages`);
+          const messages = msgs.messages || [];
+          dom.noteAiMessages.innerHTML = messages.map(m =>
+            `<div class="note-ai-msg ${m.role === 'user' ? 'user' : 'assistant'}">${typeof marked !== 'undefined' && m.role === 'assistant' ? marked.parse(m.content || '') : esc(m.content || '')}</div>`
+          ).join('');
+          dom.noteAiMessages.scrollTop = dom.noteAiMessages.scrollHeight;
+        } catch {}
+      } else {
+        const noteCtx = `You are helping edit a markdown note called "${note.path}". When the user asks you to edit, add, or modify content, output the COMPLETE updated note content wrapped in [EDIT_NOTE]...[/EDIT_NOTE] tags. Only use these tags when making actual edits. For questions or explanations, respond normally without tags.`;
+        const sessionRes = await API.post('/v1/sessions', {
+          agent: note.agentId, project: note.project, note_context: noteCtx,
+          status: 'note_chat'
+        });
+        state.noteAiSessionId = sessionRes.session_id;
+        localStorage.setItem(noteKey, state.noteAiSessionId);
+      }
     }
 
     // Build message with current note content as context
