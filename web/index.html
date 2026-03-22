@@ -3541,17 +3541,67 @@ function switchCenterView(mode) {
   }
 }
 
+let _projectPollTimer = null;
+let _projectPollHash = '';  // hash of notes+docs to detect changes
+
+function _startProjectPolling() {
+  _stopProjectPolling();
+  _projectPollTimer = setInterval(async () => {
+    if (!state.projectPanelOpen || !state.currentProject || !state.activeAgentId) return;
+    try {
+      const agentId = state.activeAgentId;
+      const project = state.currentProject;
+      // Fetch current notes list
+      const notesRes = await API.get(`/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(project)}/notes`);
+      const notes = notesRes.notes || [];
+      // Build a simple hash to detect changes (count + names + sizes)
+      const hash = notes.map(n => `${n.path}:${n.size || 0}`).sort().join('|');
+      if (_projectPollHash && hash !== _projectPollHash) {
+        // Notes changed — refresh the panel
+        await renderProjectPanelNotes(agentId, project);
+        await renderProjectPanelDocs(agentId, project);
+        renderProjectPanelAttachments(agentId, project);
+        // If current note was modified externally, reload editor
+        if (state.currentNote && state.centerView === 'note') {
+          const currentInList = notes.find(n => n.path === state.currentNote.path);
+          if (currentInList && currentInList.size !== (state.currentNote._lastSize || 0)) {
+            try {
+              const updated = await API.get(`/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(project)}/notes/${encodeURIComponent(state.currentNote.path)}`);
+              const newContent = updated.content || '';
+              if (newContent !== state.currentNote.content && !state.currentNote.dirty) {
+                dom.noteEditorTextarea.value = newContent;
+                state.currentNote.content = newContent;
+                dom.noteSaveStatus.textContent = 'Reloaded';
+                setTimeout(() => { if (dom.noteSaveStatus.textContent === 'Reloaded') dom.noteSaveStatus.textContent = 'Saved'; }, 2000);
+              }
+              state.currentNote._lastSize = currentInList.size;
+            } catch {}
+          }
+        }
+      }
+      _projectPollHash = hash;
+    } catch {}
+  }, 5000);  // Poll every 5 seconds
+}
+
+function _stopProjectPolling() {
+  if (_projectPollTimer) { clearInterval(_projectPollTimer); _projectPollTimer = null; }
+  _projectPollHash = '';
+}
+
 function openProjectPanel() {
   state.projectPanelOpen = true;
   dom.projectPanel.classList.remove('collapsed');
   localStorage.setItem('project-panel-open', '1');
   renderProjectPanel();
+  _startProjectPolling();
 }
 
 function closeProjectPanel() {
   state.projectPanelOpen = false;
   dom.projectPanel.classList.add('collapsed');
   localStorage.setItem('project-panel-open', '0');
+  _stopProjectPolling();
 }
 
 window.toggleProjectPanel = function() {
