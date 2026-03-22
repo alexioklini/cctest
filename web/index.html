@@ -2286,6 +2286,7 @@ tailwind.config = {
           <div id="note-ai-messages"></div>
           <div id="note-ai-input-area">
             <textarea id="note-ai-input" placeholder="Ask about this note or request edits..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendNoteAiMessage()}"></textarea>
+            <button onclick="refineNoteAiInput()" title="Refine with AI (✨)" style="padding:6px 8px;border-radius:8px;border:none;background:transparent;color:var(--color-text-muted);cursor:pointer;font-size:13px;flex-shrink:0">&#10024;</button>
             <button class="note-ai-send-btn" onclick="sendNoteAiMessage()" title="Send">
               <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M15.854.146a.5.5 0 0 1 .11.54l-5.819 14.547a.75.75 0 0 1-1.329.124l-3.178-4.995L.643 7.184a.75.75 0 0 1 .124-1.33L15.314.037a.5.5 0 0 1 .54.11ZM6.636 10.07l2.761 4.338L14.13 2.576zm6.787-8.201L1.591 6.602l4.339 2.76z"/></svg>
             </button>
@@ -4029,6 +4030,36 @@ window.ppDeleteFolder = async function(path) {
     renderProjectPanel();
     showToast('Folder removed');
   } catch (e) { showToast(e.message, true); }
+};
+
+window.refineNoteAiInput = async function() {
+  const input = document.getElementById('note-ai-input');
+  if (!input || !input.value.trim()) return;
+  const text = input.value.trim();
+  const btn = input.nextElementSibling; // the ✨ button
+  const origText = btn.innerHTML;
+  btn.innerHTML = '<span style="animation:spin 1s linear infinite;display:inline-block">&#10227;</span>';
+  btn.disabled = true;
+  try {
+    const note = state.currentNote;
+    const res = await API.post('/v1/refine', {
+      text,
+      session_id: state.noteAiSessionId || '',
+      agent: note?.agentId || state.activeAgentId || 'main',
+      project: note?.project || state.currentProject || '',
+    });
+    if (res.refined) {
+      input.value = res.refined;
+      input.style.height = 'auto';
+      input.style.height = input.scrollHeight + 'px';
+      input.focus();
+    }
+  } catch (e) {
+    showToast('Refine failed: ' + e.message, true);
+  } finally {
+    btn.innerHTML = origText;
+    btn.disabled = false;
+  }
 };
 
 window.resetNoteAiChat = function() {
