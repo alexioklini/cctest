@@ -3140,20 +3140,22 @@ function relativeTime(timestamp) {
 function renderSidebarSession(s, currentSessionId) {
   const isActive = currentSessionId === s.id;
   const title = s.title || 'Untitled';
-  const truncTitle = title.length > 30 ? title.substring(0, 30) + '...' : title;
+  const summary = s.summary || '';
+  const truncTitle = title.length > 35 ? title.substring(0, 35) + '…' : title;
+  const truncSummary = summary ? (summary.length > 40 ? summary.substring(0, 40) + '…' : summary) : '';
   const count = s.message_count || 0;
   const isArchived = s.status === 'archived';
   const isIncognito = s.status === 'incognito';
   const timeStr = relativeTime(s.last_active);
-  return `<div class="sb-session-item ${isActive ? 'active' : ''} ${isArchived ? 'opacity-50' : ''}" onclick="loadSession('${esc(s.id)}')" title="${esc(title)} - ${count} messages${isIncognito ? ' (incognito)' : ''}">
-    ${isIncognito ? '<span style="font-size:9px;flex-shrink:0" title="Incognito">&#128374;</span>' : ''}
-    <span class="sb-sess-title">${esc(truncTitle)}</span>
-    <span class="sb-sess-time">${timeStr}</span>
-    <span class="sb-sess-actions">
-      ${isIncognito
-        ? `<button onclick="event.stopPropagation();sessionAction('un_incognito','${esc(s.id)}')" title="Remove incognito">&#128065;</button>`
-        : `<button onclick="event.stopPropagation();sessionAction('incognito','${esc(s.id)}')" title="Incognito">&#128374;</button>`
-      }
+  return `<div class="sb-agent-item ${isActive ? 'active' : ''} ${isArchived ? 'opacity-50' : ''}" onclick="loadSession('${esc(s.id)}')" title="${esc(title)} — ${count} messages${isIncognito ? ' (incognito)' : ''}${summary ? '\n' + summary : ''}">
+    <div class="sb-agent-avatar" style="display:flex;align-items:center;justify-content:center;width:28px;height:28px">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="var(--color-text-muted)"><path d="M2.678 11.894a1 1 0 0 1 .287.801 11 11 0 0 1-.398 2c1.395-.323 2.247-.697 2.634-.893a1 1 0 0 1 .71-.074A8 8 0 0 0 8 14c3.996 0 7-2.807 7-6s-3.004-6-7-6-7 2.808-7 6c0 1.468.617 2.83 1.678 3.894"/></svg>
+    </div>
+    <div class="sb-agent-info">
+      <div class="sb-agent-name">${isIncognito ? '🕶 ' : ''}${esc(truncTitle)}</div>
+      <div class="sb-agent-meta">${truncSummary ? esc(truncSummary) : `${count} messages · ${timeStr}`}</div>
+    </div>
+    <span class="sb-agent-actions">
       ${isArchived
         ? `<button onclick="event.stopPropagation();sessionAction('unarchive','${esc(s.id)}')" title="Unarchive">&#128194;</button>`
         : `<button onclick="event.stopPropagation();sessionAction('archive','${esc(s.id)}')" title="Archive">&#128230;</button>`

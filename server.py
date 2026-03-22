@@ -223,16 +223,21 @@ class ChatDB:
                 conn.execute("ALTER TABLE messages ADD COLUMN metadata TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
+            # Add summary column for LLM-generated chat summaries (migration)
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN summary TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             conn.commit()
 
     @staticmethod
     @_db_safe(default=None)
-    def save_session(sid, agent_id, model, title, status, created_at, last_active, project=""):
+    def save_session(sid, agent_id, model, title, status, created_at, last_active, project="", summary=""):
         with _db_conn() as conn:
             conn.execute("""
-                INSERT OR REPLACE INTO sessions (id, agent_id, model, title, status, created_at, last_active, project)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (sid, agent_id, model, title, status, created_at, last_active, project or ""))
+                INSERT OR REPLACE INTO sessions (id, agent_id, model, title, status, created_at, last_active, project, summary)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (sid, agent_id, model, title, status, created_at, last_active, project or "", summary or ""))
             conn.commit()
 
     @staticmethod
@@ -371,6 +376,7 @@ class Session:
 
         self.project: str | None = None  # Active project name (for scoped chat)
         self.note_context: str | None = None  # Note content for AI-assisted editing
+        self.summary: str = ""  # LLM-generated chat summary for sidebar
         self._last_summary_at = 0  # Token count at last continuous summary
 
         self.agent = engine.AgentConfig(agent_id)
@@ -409,6 +415,7 @@ class Session:
             self.created_at = info.get("created_at", self.created_at)
             self.last_active = info.get("last_active", self.last_active)
             self.project = info.get("project", "") or None
+            self.summary = info.get("summary", "") or ""
 
 
 class SessionManager:
@@ -1241,6 +1248,18 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                                 daemon=True,
                                 name=f"auto_memory_{session.agent_id}"
                             ).start()
+                    except Exception:
+                        pass
+
+                    # Generate chat summary (background, for sidebar display)
+                    try:
+                        if len(session.messages) >= 2 and not session.summary:
+                            def _gen_summary():
+                                try:
+                                    _generate_chat_summary(session)
+                                except Exception:
+                                    pass
+                            threading.Thread(target=_gen_summary, daemon=True, name=f"chat_summary_{sid}").start()
                     except Exception:
                         pass
                 else:
@@ -4484,6 +4503,64 @@ def _load_config_file() -> dict:
         except (json.JSONDecodeError, OSError):
             pass
     return {}
+
+
+def _generate_chat_summary(session):
+    """Generate a short LLM summary of a chat session for sidebar display."""
+    if not engine._delegate_api_key or len(session.messages) < 2:
+        return
+    # Build a condensed view of the conversation (first + last few messages)
+    msgs = session.messages
+    sample = []
+    for m in msgs[:3]:
+        role = m.get("role", "?")
+        content = m.get("content", "")
+        if isinstance(content, str):
+            sample.append(f"[{role}] {content[:200]}")
+    if len(msgs) > 3:
+        for m in msgs[-2:]:
+            role = m.get("role", "?")
+            content = m.get("content", "")
+            if isinstance(content, str):
+                sample.append(f"[{role}] {content[:200]}")
+
+    prompt = (
+        "Summarize this conversation in ONE short sentence (max 60 chars). "
+        "Focus on the topic/task, not greetings. Output ONLY the summary, nothing else.\n\n"
+        + "\n".join(sample)
+    )
+    try:
+        # Use cheapest model
+        model = None
+        if engine._models_config:
+            for mid, cfg in engine._models_config.items():
+                if cfg.get("enabled", True) and "haiku" in mid.lower():
+                    model = mid
+                    break
+            if not model:
+                for mid, cfg in sorted(engine._models_config.items(), key=lambda x: x[1].get("cost_input", 999)):
+                    if cfg.get("enabled", True):
+                        model = mid
+                        break
+        if not model:
+            return
+
+        result = engine._run_delegate(
+            messages=[{"role": "user", "content": prompt}],
+            model=model,
+            system_prompt="Output only a brief summary sentence. No quotes, no prefix.",
+            memory_store=session.memory,
+            inference_params={"max_tokens": 80, "temperature": 0.1},
+        )
+        if result and not result.startswith("Delegation error"):
+            summary = result.strip().strip('"').strip("'")[:80]
+            session.summary = summary
+            # Persist to DB
+            ChatDB.save_session(session.id, session.agent_id, session.model,
+                                session.title, session.status, session.created_at,
+                                session.last_active, session.project or "", summary)
+    except Exception:
+        pass
 
 
 def main():
