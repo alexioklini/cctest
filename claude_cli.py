@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "3.5.0"
+VERSION = "3.6.0"
 VERSION_DATE = "2026-03-22"
 CHANGELOG = [
+    ("3.6.0", "2026-03-22", "Lossless context management: DAG-based hierarchical summarization, context_search/context_detail/context_recall tools, configurable fresh tail (32), summary model, condensation depth, settings UI with session stats"),
     ("3.5.0", "2026-03-22", "Chat content search (SQLite fallback + QMD), index status indicators, transcript backfill at startup, knowledge graph: fix search, fix frontmatter parsing for nested YAML, fix edge path resolution, two-stage relationship discovery (QMD candidates + LLM classification), deep search in project panel"),
     ("3.4.0", "2026-03-22", "Remote nodes: list_nodes tool, node settings UI (token, allowed tools, max concurrent, timeout), node.py launchd install/uninstall/status, node connection logging, dynamic sidebar refresh on async LLM summary"),
     ("3.3.0", "2026-03-22", "Enhanced projects: AI note editing via tools, chat transcript indexing in QMD, LLM chat summaries, deep chat search, project panel search + counts + delete, chat attachments in sidebar, auto-refresh polling, prompt refinement in notes"),
@@ -118,7 +119,8 @@ _web_cache = WebCache()
 
 READONLY_TOOLS = frozenset({
     "read_file", "list_directory", "search_files", "web_fetch", "exa_search",
-    "memory_recall", "memory_shared", "task_status", "list_nodes", "schedule_list",
+    "memory_recall", "memory_shared", "task_status", "list_nodes",
+    "context_search", "context_detail", "context_recall", "schedule_list",
     "schedule_history", "use_skill", "gmail_inbox", "gmail_read", "gmail_search",
 })
 
@@ -420,6 +422,40 @@ TOOL_DEFINITIONS = [
                 "limit": {"type": "integer", "description": "Max results for recall (default: 10)"},
             },
             "required": ["action"],
+        },
+    },
+    {
+        "name": "context_search",
+        "description": "Search through compacted conversation history by keyword. Returns matching message excerpts from earlier in the conversation that have been summarized away.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search keyword or phrase"},
+                "limit": {"type": "integer", "description": "Max results (default: 10)"},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "context_detail",
+        "description": "Expand a specific context summary to see the original messages it was created from. Use summary IDs from the conversation context header.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "summary_id": {"type": "string", "description": "The summary ID to expand"},
+            },
+            "required": ["summary_id"],
+        },
+    },
+    {
+        "name": "context_recall",
+        "description": "Deep recall: search compacted conversation history and get a focused answer about a specific topic from earlier in the conversation. Uses a sub-LLM call to analyze original messages.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "What to recall from earlier conversation"},
+            },
+            "required": ["query"],
         },
     },
     {
@@ -6847,6 +6883,51 @@ def tool_list_nodes(args: dict) -> str:
         return _err(f"Failed to list nodes: {e}")
 
 
+def tool_context_search(args: dict) -> str:
+    """Search compacted conversation history."""
+    if not _context_manager:
+        return _err("Context manager not initialized")
+    session_id = getattr(_thread_local, 'current_session_id', None) or ""
+    if not session_id:
+        return _err("No active session")
+    query = args.get("query", "")
+    if not query:
+        return _err("Missing query")
+    limit = args.get("limit", 10)
+    results = _context_manager.search(session_id, query, limit=limit)
+    return _ok({"results": results, "count": len(results), "query": query})
+
+
+def tool_context_detail(args: dict) -> str:
+    """Expand a summary to see original messages."""
+    if not _context_manager:
+        return _err("Context manager not initialized")
+    summary_id = args.get("summary_id", "")
+    if not summary_id:
+        return _err("Missing summary_id")
+    detail = _context_manager.get_detail(summary_id)
+    return _ok(detail) if "error" not in detail else _err(detail["error"])
+
+
+def tool_context_recall(args: dict) -> str:
+    """Deep recall from compacted conversation history."""
+    if not _context_manager:
+        return _err("Context manager not initialized")
+    session_id = getattr(_thread_local, 'current_session_id', None) or ""
+    if not session_id:
+        return _err("No active session")
+    query = args.get("query", "")
+    if not query:
+        return _err("Missing query")
+    # Get API credentials from thread local or delegate globals
+    model = getattr(_thread_local, 'current_model', None) or _delegate_fallback_model or ""
+    api_key = _delegate_api_key or ""
+    base_url = _delegate_base_url or ""
+    api_type = _delegate_api_type or "anthropic"
+    result = _context_manager.recall(session_id, query, model, api_key, base_url, api_type)
+    return _ok({"answer": result, "query": query})
+
+
 def tool_schedule_list(args: dict) -> str:
     """List all scheduled tasks."""
     if not _scheduler:
@@ -6944,8 +7025,512 @@ def tool_mcp_servers(args: dict) -> str:
 
 DEFAULT_MAX_CONTEXT_TOKENS = 131072
 COMPACT_THRESHOLD = 0.75  # compact at 75% full
-KEEP_RECENT_MESSAGES = 6  # always keep the last N messages untouched
+KEEP_RECENT_MESSAGES = 6  # always keep the last N messages untouched (legacy fallback)
 CHARS_PER_TOKEN = 4       # conservative estimate
+
+# --- Lossless Context Manager ---
+
+CONTEXT_DB = os.path.join(AGENTS_DIR, "main", "context.db")
+
+_CONTEXT_CONFIG_DEFAULTS = {
+    "enabled": True,
+    "fresh_tail_count": 32,
+    "compact_threshold": 0.75,
+    "summary_target_tokens": 1000,
+    "condense_threshold": 4,
+    "max_depth": 5,
+    "summary_model": "",
+    "messages_per_summary": 10,
+}
+
+_context_db_lock = threading.Lock()
+_context_db_pool: dict[int, sqlite3.Connection] = {}
+
+
+def _context_conn():
+    tid = threading.current_thread().ident
+    with _context_db_lock:
+        conn = _context_db_pool.get(tid)
+        if conn is None:
+            os.makedirs(os.path.dirname(CONTEXT_DB), exist_ok=True)
+            conn = sqlite3.connect(CONTEXT_DB, timeout=10, check_same_thread=False)
+            conn.execute("PRAGMA busy_timeout = 5000")
+            conn.execute("PRAGMA journal_mode = WAL")
+            _context_db_pool[tid] = conn
+    return conn
+
+
+def _context_init_db():
+    conn = _context_conn()
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS summaries (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            depth INTEGER NOT NULL DEFAULT 0,
+            token_count INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            parent_ids TEXT DEFAULT '[]',
+            message_range_start INTEGER NOT NULL,
+            message_range_end INTEGER NOT NULL,
+            created_at REAL DEFAULT (strftime('%s','now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_summary_session ON summaries(session_id);
+        CREATE INDEX IF NOT EXISTS idx_summary_depth ON summaries(session_id, depth);
+        CREATE TABLE IF NOT EXISTS context_config (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+    """)
+    conn.commit()
+
+
+class ContextManager:
+    """Lossless context management with DAG-based hierarchical summarization."""
+
+    def __init__(self):
+        _context_init_db()
+
+    def get_config(self) -> dict:
+        cfg = dict(_CONTEXT_CONFIG_DEFAULTS)
+        try:
+            conn = _context_conn()
+            rows = conn.execute("SELECT key, value FROM context_config").fetchall()
+            for k, v in rows:
+                if k in cfg:
+                    # Coerce types
+                    default = _CONTEXT_CONFIG_DEFAULTS[k]
+                    if isinstance(default, bool):
+                        cfg[k] = v.lower() in ("true", "1", "yes")
+                    elif isinstance(default, int):
+                        cfg[k] = int(v)
+                    elif isinstance(default, float):
+                        cfg[k] = float(v)
+                    else:
+                        cfg[k] = v
+        except Exception:
+            pass
+        return cfg
+
+    def save_config(self, updates: dict):
+        conn = _context_conn()
+        for k, v in updates.items():
+            if k in _CONTEXT_CONFIG_DEFAULTS:
+                conn.execute(
+                    "INSERT OR REPLACE INTO context_config (key, value) VALUES (?, ?)",
+                    (k, str(v))
+                )
+        conn.commit()
+
+    def _resolve_summary_model(self) -> str | None:
+        cfg = self.get_config()
+        model = cfg.get("summary_model", "")
+        if model:
+            return model
+        # Auto: prefer Haiku, then cheapest
+        if _models_config:
+            for mid, mcfg in _models_config.items():
+                if mcfg.get("enabled", True) and "haiku" in mid.lower():
+                    return mid
+            for mid, mcfg in sorted(_models_config.items(), key=lambda x: x[1].get("cost_input", 999)):
+                if mcfg.get("enabled", True):
+                    return mid
+        return None
+
+    def _extract_message_text(self, msg: dict) -> str:
+        """Extract plain text from a message (handles string and block content)."""
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            return f"{role}: {content}"
+        elif isinstance(content, list):
+            parts = []
+            for block in content:
+                if isinstance(block, dict):
+                    if block.get("type") == "text":
+                        parts.append(block.get("text", ""))
+                    elif block.get("type") == "tool_use":
+                        parts.append(f"[Tool: {block.get('name', '')}]")
+                    elif block.get("type") == "tool_result":
+                        c = block.get("content", "")
+                        parts.append(f"[Result: {str(c)[:300]}]")
+            return f"{role}: {' '.join(parts)}"
+        return f"{role}: {str(content)[:500]}"
+
+    def summarize_chunk(self, messages: list[dict], session_id: str,
+                        range_start: int, range_end: int,
+                        model: str, api_key: str, base_url: str, api_type: str) -> str | None:
+        """Summarize a chunk of messages into a leaf summary (depth 0). Returns summary ID."""
+        text_parts = [self._extract_message_text(m) for m in messages]
+        source_text = "\n".join(text_parts)
+
+        summary_text = None
+        try:
+            result = _run_delegate(
+                messages=[{"role": "user", "content": (
+                    "Summarize this conversation segment concisely. Preserve: key facts, decisions, "
+                    "file paths, commands run, errors encountered, and task context. "
+                    "Be factual and specific, not vague. ~200-300 words.\n\n" + source_text
+                )}],
+                model=model,
+                system_prompt="You are a precise conversation summarizer. Output only the summary.",
+                memory_store=None,
+                inference_params={"max_tokens": 2000, "temperature": 0.1},
+            )
+            if result and not result.startswith("Delegation error"):
+                summary_text = result.strip()
+        except Exception:
+            pass
+
+        if not summary_text:
+            # Fallback: truncation
+            summary_text = source_text[:3000]
+            if len(source_text) > 3000:
+                summary_text += "\n...(truncated)"
+
+        sid = hashlib.sha256(f"{session_id}:{range_start}:{range_end}:{time.time()}".encode()).hexdigest()[:16]
+        token_count = len(summary_text) // CHARS_PER_TOKEN
+
+        conn = _context_conn()
+        conn.execute(
+            "INSERT OR REPLACE INTO summaries (id, session_id, depth, token_count, content, parent_ids, message_range_start, message_range_end) "
+            "VALUES (?, ?, 0, ?, ?, '[]', ?, ?)",
+            (sid, session_id, token_count, summary_text, range_start, range_end)
+        )
+        conn.commit()
+        return sid
+
+    def condense(self, session_id: str) -> bool:
+        """Merge same-depth summaries into higher-depth summaries. Returns True if any merged."""
+        cfg = self.get_config()
+        threshold = cfg.get("condense_threshold", 4)
+        max_depth = cfg.get("max_depth", 5)
+        conn = _context_conn()
+        merged_any = False
+
+        for depth in range(max_depth):
+            rows = conn.execute(
+                "SELECT id, content, token_count, message_range_start, message_range_end "
+                "FROM summaries WHERE session_id = ? AND depth = ? ORDER BY message_range_start",
+                (session_id, depth)
+            ).fetchall()
+            if len(rows) < threshold:
+                continue
+
+            # Merge all same-depth summaries into one higher-depth summary
+            combined_text = "\n\n---\n\n".join(r[1] for r in rows)
+            parent_ids = [r[0] for r in rows]
+            range_start = rows[0][3]
+            range_end = rows[-1][4]
+
+            # Summarize the combined text
+            model = self._resolve_summary_model()
+            condensed_text = None
+            if model:
+                try:
+                    result = _run_delegate(
+                        messages=[{"role": "user", "content": (
+                            f"Condense these {len(rows)} conversation summaries into one cohesive summary. "
+                            "Preserve all key facts, decisions, and context. ~300-500 words.\n\n" + combined_text
+                        )}],
+                        model=model,
+                        system_prompt="You are a precise summarizer. Output only the condensed summary.",
+                        memory_store=None,
+                        inference_params={"max_tokens": 3000, "temperature": 0.1},
+                    )
+                    if result and not result.startswith("Delegation error"):
+                        condensed_text = result.strip()
+                except Exception:
+                    pass
+
+            if not condensed_text:
+                condensed_text = combined_text[:4000]
+
+            new_id = hashlib.sha256(f"condense:{session_id}:{depth+1}:{time.time()}".encode()).hexdigest()[:16]
+            token_count = len(condensed_text) // CHARS_PER_TOKEN
+
+            conn.execute(
+                "INSERT OR REPLACE INTO summaries (id, session_id, depth, token_count, content, parent_ids, message_range_start, message_range_end) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (new_id, session_id, depth + 1, token_count, condensed_text,
+                 json.dumps(parent_ids), range_start, range_end)
+            )
+            # Remove merged lower-depth summaries
+            conn.executemany("DELETE FROM summaries WHERE id = ?", [(pid,) for pid in parent_ids])
+            conn.commit()
+            merged_any = True
+
+        return merged_any
+
+    def assemble_context(self, session_id: str, messages: list[dict],
+                         system_prompt: str = "", max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS) -> list[dict]:
+        """Assemble context: summaries + fresh tail within token budget."""
+        cfg = self.get_config()
+        fresh_tail_count = cfg.get("fresh_tail_count", 32)
+
+        # Ensure we don't exceed available messages
+        fresh_tail_count = min(fresh_tail_count, len(messages))
+        fresh_tail = messages[-fresh_tail_count:] if fresh_tail_count > 0 else messages
+
+        # Calculate token budget
+        system_tokens = len(system_prompt) // CHARS_PER_TOKEN if system_prompt else 0
+        fresh_tokens = sum(_estimate_tokens_message(m) for m in fresh_tail)
+        response_reserve = 4000  # reserve tokens for response
+        budget = max_tokens - system_tokens - fresh_tokens - response_reserve
+
+        if budget <= 0:
+            return fresh_tail
+
+        # Load summaries, highest depth first
+        conn = _context_conn()
+        rows = conn.execute(
+            "SELECT id, depth, token_count, content, message_range_start, message_range_end "
+            "FROM summaries WHERE session_id = ? ORDER BY depth DESC, message_range_start ASC",
+            (session_id,)
+        ).fetchall()
+
+        if not rows:
+            return fresh_tail
+
+        # Fill budget with summaries
+        summary_parts = []
+        used_tokens = 0
+        for row in rows:
+            sid, depth, tc, content, rs, re_ = row
+            if used_tokens + tc > budget:
+                continue
+            summary_parts.append({
+                "id": sid, "depth": depth, "tokens": tc,
+                "content": content, "range": f"messages {rs}-{re_}"
+            })
+            used_tokens += tc
+
+        if not summary_parts:
+            return fresh_tail
+
+        # Sort by message range for chronological order
+        summary_parts.sort(key=lambda s: s["range"])
+
+        # Build summary message
+        summary_text = "## Compacted Conversation History\n\n"
+        summary_text += "The following summaries cover earlier parts of this conversation. "
+        summary_text += "Use context_search, context_detail, or context_recall tools to access original details.\n\n"
+        for s in summary_parts:
+            summary_text += f"### Summary (depth {s['depth']}, {s['range']})\n{s['content']}\n\n"
+
+        assembled = [
+            {"role": "user", "content": f"[Conversation Context]\n{summary_text}"},
+            {"role": "assistant", "content": "I have the context from our earlier conversation. I can use context_search, context_detail, or context_recall to access specific details if needed."},
+        ]
+        assembled.extend(fresh_tail)
+        return assembled
+
+    def check_and_compact(self, messages: list[dict], session_id: str,
+                          model: str, api_key: str, base_url: str, api_type: str,
+                          system_prompt: str = "",
+                          max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS) -> tuple[list[dict], bool]:
+        """Check if compaction needed and perform hierarchical summarization."""
+        cfg = self.get_config()
+        if not cfg.get("enabled", True):
+            return messages, False
+
+        threshold_pct = cfg.get("compact_threshold", 0.75)
+        estimated = _estimate_conversation_tokens(messages, system_prompt)
+        threshold = int(max_tokens * threshold_pct)
+
+        if estimated < threshold:
+            return messages, False
+
+        fresh_tail_count = cfg.get("fresh_tail_count", 32)
+        msgs_per_summary = cfg.get("messages_per_summary", 10)
+
+        # Determine which messages to summarize (everything before fresh tail)
+        if len(messages) <= fresh_tail_count:
+            return messages, False
+
+        old_messages = messages[:-fresh_tail_count]
+
+        # Find what's already summarized (by checking existing summary ranges)
+        conn = _context_conn()
+        existing = conn.execute(
+            "SELECT MAX(message_range_end) FROM summaries WHERE session_id = ?",
+            (session_id,)
+        ).fetchone()
+        already_summarized = existing[0] if existing and existing[0] else 0
+
+        # Calculate message indices (1-based, relative to session)
+        total_msg_count = len(messages)
+        old_count = len(old_messages)
+
+        # Only summarize messages not yet covered
+        unsummarized_start = already_summarized
+        unsummarized_msgs = old_messages[unsummarized_start:]
+
+        if len(unsummarized_msgs) < msgs_per_summary:
+            # Not enough new messages to summarize, just assemble
+            return self.assemble_context(session_id, messages, system_prompt, max_tokens), True
+
+        # Use summary model
+        summary_model = self._resolve_summary_model() or model
+
+        pct = int(estimated / max_tokens * 100)
+        logging.info(f"Context {pct}% full (~{estimated:,} tokens), creating hierarchical summaries...")
+
+        # Create leaf summaries in chunks
+        for i in range(0, len(unsummarized_msgs), msgs_per_summary):
+            chunk = unsummarized_msgs[i:i + msgs_per_summary]
+            if len(chunk) < 3:  # skip tiny remnants
+                continue
+            range_start = unsummarized_start + i
+            range_end = unsummarized_start + i + len(chunk)
+            self.summarize_chunk(chunk, session_id, range_start, range_end,
+                                 summary_model, api_key, base_url, api_type)
+
+        # Try condensation
+        self.condense(session_id)
+
+        # Assemble final context
+        assembled = self.assemble_context(session_id, messages, system_prompt, max_tokens)
+        new_estimated = _estimate_conversation_tokens(assembled, system_prompt)
+        new_pct = int(new_estimated / max_tokens * 100)
+        logging.info(f"Compacted: {pct}% → {new_pct}% (~{new_estimated:,} tokens)")
+
+        return assembled, True
+
+    def search(self, session_id: str, query: str, regex: bool = False, limit: int = 10) -> list[dict]:
+        """Search original messages in ChatDB by keyword/regex."""
+        results = []
+        try:
+            from server import _db_conn as chat_db_conn
+            conn = chat_db_conn()
+            conn.row_factory = sqlite3.Row
+            if regex:
+                # SQLite doesn't support regex natively, use LIKE as fallback
+                rows = conn.execute(
+                    "SELECT id, role, content, created_at FROM messages WHERE session_id = ? AND content LIKE ? ORDER BY id LIMIT ?",
+                    (session_id, f"%{query}%", limit)
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id, role, content, created_at FROM messages WHERE session_id = ? AND content LIKE ? ORDER BY id LIMIT ?",
+                    (session_id, f"%{query}%", limit)
+                ).fetchall()
+            for r in rows:
+                content = r["content"]
+                # Extract snippet around match
+                idx = content.lower().find(query.lower())
+                if idx >= 0:
+                    start = max(0, idx - 80)
+                    end = min(len(content), idx + len(query) + 120)
+                    snippet = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
+                else:
+                    snippet = content[:200]
+                results.append({
+                    "message_id": r["id"],
+                    "role": r["role"],
+                    "snippet": snippet,
+                    "timestamp": r["created_at"],
+                })
+        except Exception as e:
+            results.append({"error": str(e)})
+        return results
+
+    def get_detail(self, summary_id: str) -> dict:
+        """Get a summary and its original messages."""
+        conn = _context_conn()
+        row = conn.execute(
+            "SELECT * FROM summaries WHERE id = ?", (summary_id,)
+        ).fetchone()
+        if not row:
+            return {"error": f"Summary {summary_id} not found"}
+
+        summary = {
+            "id": row[0], "session_id": row[1], "depth": row[2],
+            "token_count": row[3], "content": row[4],
+            "parent_ids": json.loads(row[5] or "[]"),
+            "message_range": f"{row[6]}-{row[7]}",
+        }
+
+        # Load original messages from ChatDB
+        try:
+            from server import _db_conn as chat_db_conn
+            cconn = chat_db_conn()
+            cconn.row_factory = sqlite3.Row
+            msgs = cconn.execute(
+                "SELECT id, role, content FROM messages WHERE session_id = ? AND id >= ? AND id <= ? ORDER BY id",
+                (row[1], row[6], row[7])
+            ).fetchall()
+            summary["original_messages"] = [{"id": m["id"], "role": m["role"], "content": m["content"][:500]} for m in msgs]
+        except Exception:
+            summary["original_messages"] = []
+
+        return summary
+
+    def recall(self, session_id: str, query: str,
+               model: str, api_key: str, base_url: str, api_type: str) -> str:
+        """Deep recall: search summaries and original messages, then answer with a focused sub-query."""
+        # Find relevant summaries
+        conn = _context_conn()
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, content, message_range_start, message_range_end FROM summaries WHERE session_id = ? ORDER BY depth DESC",
+            (session_id,)
+        ).fetchall()
+
+        relevant_context = []
+        for r in rows:
+            if query.lower() in r["content"].lower():
+                relevant_context.append(r["content"])
+
+        # Also search original messages
+        msg_results = self.search(session_id, query, limit=5)
+        for mr in msg_results:
+            if "snippet" in mr:
+                relevant_context.append(f"[{mr['role']}]: {mr['snippet']}")
+
+        if not relevant_context:
+            return f"No relevant context found for: {query}"
+
+        context_text = "\n\n---\n\n".join(relevant_context[:10])
+        summary_model = self._resolve_summary_model() or model
+
+        try:
+            result = _run_delegate(
+                messages=[{"role": "user", "content": (
+                    f"Based on this conversation history, answer the following query precisely:\n\n"
+                    f"**Query:** {query}\n\n**Context:**\n{context_text}"
+                )}],
+                model=summary_model,
+                system_prompt="Answer based only on the provided context. Be specific and cite details.",
+                memory_store=None,
+                inference_params={"max_tokens": 2000, "temperature": 0.1},
+            )
+            if result and not result.startswith("Delegation error"):
+                return result.strip()
+        except Exception as e:
+            return f"Recall failed: {e}"
+
+        return f"Could not generate answer for: {query}"
+
+    def get_stats(self, session_id: str) -> dict:
+        """Get context stats for a session."""
+        conn = _context_conn()
+        rows = conn.execute(
+            "SELECT depth, COUNT(*), SUM(token_count) FROM summaries WHERE session_id = ? GROUP BY depth",
+            (session_id,)
+        ).fetchall()
+        depth_stats = {r[0]: {"count": r[1], "tokens": r[2]} for r in rows}
+        total_summaries = sum(s["count"] for s in depth_stats.values())
+        total_tokens = sum(s["tokens"] for s in depth_stats.values())
+        return {
+            "session_id": session_id,
+            "total_summaries": total_summaries,
+            "total_summary_tokens": total_tokens,
+            "depth_distribution": depth_stats,
+            "config": self.get_config(),
+        }
+
+
+_context_manager: ContextManager | None = None
 
 
 def _estimate_tokens_str(text: str) -> int:
@@ -7072,11 +7657,26 @@ def _compact_conversation(messages: list[dict], model: str, api_key: str,
 def _check_and_compact(messages: list[dict], model: str, api_key: str,
                        base_url: str, api_type: str,
                        system_prompt: str = "",
-                       max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS) -> tuple[list[dict], bool]:
+                       max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS,
+                       session_id: str = "") -> tuple[list[dict], bool]:
     """Check if conversation needs compaction and do it if necessary.
 
     Returns (messages, was_compacted).
+    Uses lossless ContextManager if enabled, otherwise falls back to legacy compaction.
     """
+    # Lossless context management (if enabled and session_id available)
+    if _context_manager and session_id:
+        try:
+            cfg = _context_manager.get_config()
+            if cfg.get("enabled", True):
+                return _context_manager.check_and_compact(
+                    messages, session_id, model, api_key, base_url, api_type,
+                    system_prompt=system_prompt, max_tokens=max_tokens,
+                )
+        except Exception as e:
+            logging.warning(f"ContextManager failed, falling back to legacy: {e}")
+
+    # Legacy flat compaction
     estimated = _estimate_conversation_tokens(messages, system_prompt)
     threshold = int(max_tokens * COMPACT_THRESHOLD)
 
@@ -7953,6 +8553,7 @@ TOOL_ICONS = {
     "gmail_inbox": "@", "gmail_read": "@", "gmail_search": "@",
     "gmail_send": "@", "gmail_reply": "@",
     "task_status": "?", "task_cancel": "x",
+    "context_search": "c", "context_detail": "c", "context_recall": "c",
     "list_nodes": "n", "schedule_list": "t", "schedule_history": "h",
 }
 
@@ -7965,6 +8566,7 @@ TOOL_VERBS = {
     "gmail_inbox": "Inbox", "gmail_read": "Reading Email", "gmail_search": "Searching Email",
     "gmail_send": "Sending Email", "gmail_reply": "Replying",
     "task_status": "Task Status", "task_cancel": "Cancelling",
+    "context_search": "Searching Context", "context_detail": "Context Detail", "context_recall": "Recalling",
     "list_nodes": "Listing Nodes", "schedule_list": "Schedules", "schedule_history": "History",
 }
 
@@ -8258,6 +8860,9 @@ TOOL_DISPATCH = {
     "task_cancel": tool_task_cancel,
     "use_skill": tool_use_skill,
     "list_nodes": tool_list_nodes,
+    "context_search": tool_context_search,
+    "context_detail": tool_context_detail,
+    "context_recall": tool_context_recall,
     "schedule_list": tool_schedule_list,
     "schedule_history": tool_schedule_history,
     "mcp_connect": tool_mcp_connect,

@@ -109,6 +109,19 @@ The `read_file`, `write_file`, `list_directory`, and `execute_command` tools acc
 
 ---
 
+## Context Tools (context_search, context_detail, context_recall)
+
+When conversations are long, older messages get hierarchically summarized but all originals are preserved.
+Use these tools to access details from compacted conversation history:
+
+- **context_search** — keyword search across all original messages in the session. Returns matching excerpts.
+- **context_detail** — expand a specific summary (by ID) to see the original messages it was created from.
+- **context_recall** — deep recall: ask a question about earlier conversation. Uses a sub-LLM to analyze relevant original messages and return a focused answer.
+
+Use these when you need to reference something from earlier in the conversation that has been summarized away.
+
+---
+
 ## web_fetch
 
 - Respects redirects automatically

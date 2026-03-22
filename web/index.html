@@ -7218,7 +7218,7 @@ function openSettingsModal() {
   modal.id = 'settings-modal';
   modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
   const stabs = [
-    {group: 'System', items: [{id:'server', label:'Server'}, {id:'qmd', label:'QMD'}, {id:'tools', label:'Tools'}, {id:'providers', label:'Providers'}, {id:'models', label:'Models'}]},
+    {group: 'System', items: [{id:'server', label:'Server'}, {id:'qmd', label:'QMD'}, {id:'tools', label:'Tools'}, {id:'context', label:'Context'}, {id:'providers', label:'Providers'}, {id:'models', label:'Models'}]},
     {group: 'Agents', items: [{id:'teams', label:'Teams'}, {id:'channels', label:'Channels'}, {id:'nodes', label:'Nodes'}, {id:'mcp', label:'MCP'}]},
     {group: 'Monitoring', items: [{id:'costs', label:'Costs'}, {id:'traces', label:'Traces'}, {id:'audit', label:'Audit'}, {id:'notifications', label:'Notifications'}]},
     {group: 'Data', items: [{id:'backup', label:'Backup'}]},
@@ -7265,6 +7265,7 @@ async function loadSettingsTab() {
     else if (_settingsTab === 'nodes') await renderNodesTab(el);
     else if (_settingsTab === 'teams') await renderTeamsTab(el);
     else if (_settingsTab === 'tools') await renderToolsTab(el);
+    else if (_settingsTab === 'context') await renderContextTab(el);
     else if (_settingsTab === 'providers') await renderProvidersTab(el);
     else if (_settingsTab === 'models') await renderModelsTab(el);
     else if (_settingsTab === 'costs') await renderCostsTab(el);
@@ -9701,6 +9702,7 @@ const slashCommands = [
   { cmd: '/providers', desc: 'Open providers settings',   action: () => { _settingsTab = 'providers'; openSettingsModal(); } },
   { cmd: '/teams',     desc: 'Open teams settings',       action: () => { _settingsTab = 'teams'; openSettingsModal(); } },
   { cmd: '/qmd',       desc: 'Open QMD settings',         action: () => { _settingsTab = 'qmd'; openSettingsModal(); } },
+  { cmd: '/context',   desc: 'Open context management settings', action: () => { _settingsTab = 'context'; openSettingsModal(); } },
   { cmd: '/nodes',     desc: 'Open remote nodes settings', action: () => { _settingsTab = 'nodes'; openSettingsModal(); } },
   { cmd: '/channels',  desc: 'Open channels settings',     action: () => { _settingsTab = 'channels'; openSettingsModal(); } },
   { cmd: '/projects',  desc: 'Manage projects for this agent', action: () => {
@@ -10146,6 +10148,145 @@ function renderImagePreviews() {
     }
   });
 })();
+
+// ─── Context Settings Tab ──────────────────────────────────────
+async function renderContextTab(el) {
+  let cfg = {};
+  try { cfg = await API.get('/v1/context/config'); } catch(e) { cfg = {}; }
+  const enabled = cfg.enabled !== false;
+  const freshTail = cfg.fresh_tail_count || 32;
+  const threshold = Math.round((cfg.compact_threshold || 0.75) * 100);
+  const msgsPerSum = cfg.messages_per_summary || 10;
+  const condenseThresh = cfg.condense_threshold || 4;
+  const maxDepth = cfg.max_depth || 5;
+  const summaryTarget = cfg.summary_target_tokens || 1000;
+  const summaryModel = cfg.summary_model || '';
+
+  // Build model options from state
+  let modelOpts = '<option value="">Auto (cheapest)</option>';
+  if (state.modelsConfig) {
+    for (const [mid, mcfg] of Object.entries(state.modelsConfig)) {
+      if (!mcfg.enabled) continue;
+      const sel = mid === summaryModel ? 'selected' : '';
+      modelOpts += `<option value="${esc(mid)}" ${sel}>${esc(mid)}</option>`;
+    }
+  }
+
+  // Fetch stats for current session
+  let statsHtml = '';
+  const chat = state.agentChats[state.activeAgentId];
+  const sid = chat?.sessionId;
+  if (sid) {
+    try {
+      const stats = await API.get('/v1/context/stats?session_id=' + encodeURIComponent(sid));
+      const depths = stats.depth_distribution || {};
+      const depthRows = Object.entries(depths).sort((a,b) => Number(a[0]) - Number(b[0]))
+        .map(([d, s]) => `<span class="px-2 py-0.5 rounded text-[10px] mono bg-surface-lighter border border-border">L${d}: ${s.count} summaries (${s.tokens} tok)</span>`).join(' ');
+      statsHtml = `
+        <div class="glass-card p-6 mt-4">
+          <h3 class="section-header text-sm mb-4">Current Session Stats</h3>
+          <div class="text-xs text-text-secondary mb-2">Session: <span class="mono">${esc(sid.substring(0,12))}</span></div>
+          <div class="flex gap-6 text-sm mb-3">
+            <div><span class="text-text-muted">Summaries:</span> <strong>${stats.total_summaries || 0}</strong></div>
+            <div><span class="text-text-muted">Summary tokens:</span> <strong>${(stats.total_summary_tokens || 0).toLocaleString()}</strong></div>
+          </div>
+          ${depthRows ? `<div class="flex flex-wrap gap-2">${depthRows}</div>` : '<div class="text-text-muted text-xs">No summaries yet for this session</div>'}
+        </div>`;
+    } catch(e) {}
+  }
+
+  el.innerHTML = `
+    <div class="glass-card p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="section-header text-sm">Lossless Context Management</h3>
+        <label class="relative inline-flex items-center cursor-pointer">
+          <input type="checkbox" id="ctx-enabled" class="sr-only peer" ${enabled ? 'checked' : ''}>
+          <div class="w-9 h-5 rounded-full peer-checked:bg-accent bg-surface-lighter border border-border peer-checked:border-accent transition-all after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+        </label>
+      </div>
+      <p class="text-xs text-text-muted mb-4">DAG-based hierarchical summarization that never loses messages. Replaces the legacy flat compaction with a lossless system where agents can drill back into any summary.</p>
+
+      <div class="grid grid-cols-2 gap-4 mb-4">
+        <div>
+          <label class="text-xs text-text-secondary block mb-1">Fresh Tail (messages kept raw)</label>
+          <input type="number" id="ctx-fresh-tail" min="4" max="200" value="${freshTail}"
+            class="w-full bg-surface-light border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary">
+          <div class="text-[10px] text-text-muted mt-1">Recent messages never compacted</div>
+        </div>
+        <div>
+          <label class="text-xs text-text-secondary block mb-1">Compact Threshold (%)</label>
+          <input type="number" id="ctx-threshold" min="50" max="95" value="${threshold}"
+            class="w-full bg-surface-light border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary">
+          <div class="text-[10px] text-text-muted mt-1">Trigger compaction at this % of context window</div>
+        </div>
+        <div>
+          <label class="text-xs text-text-secondary block mb-1">Messages per Summary</label>
+          <input type="number" id="ctx-msgs-per-sum" min="3" max="50" value="${msgsPerSum}"
+            class="w-full bg-surface-light border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary">
+          <div class="text-[10px] text-text-muted mt-1">Messages grouped into each leaf summary</div>
+        </div>
+        <div>
+          <label class="text-xs text-text-secondary block mb-1">Condense Threshold</label>
+          <input type="number" id="ctx-condense" min="2" max="10" value="${condenseThresh}"
+            class="w-full bg-surface-light border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary">
+          <div class="text-[10px] text-text-muted mt-1">Merge N same-depth summaries into one</div>
+        </div>
+        <div>
+          <label class="text-xs text-text-secondary block mb-1">Max Depth</label>
+          <input type="number" id="ctx-max-depth" min="1" max="10" value="${maxDepth}"
+            class="w-full bg-surface-light border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary">
+          <div class="text-[10px] text-text-muted mt-1">Maximum levels of summary hierarchy</div>
+        </div>
+        <div>
+          <label class="text-xs text-text-secondary block mb-1">Summary Target Tokens</label>
+          <input type="number" id="ctx-target-tokens" min="200" max="4000" step="100" value="${summaryTarget}"
+            class="w-full bg-surface-light border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary">
+          <div class="text-[10px] text-text-muted mt-1">Target size for each leaf summary</div>
+        </div>
+      </div>
+
+      <div class="mb-4">
+        <label class="text-xs text-text-secondary block mb-1">Summary Model</label>
+        <select id="ctx-summary-model"
+          class="w-full bg-surface-light border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary">
+          ${modelOpts}
+        </select>
+        <div class="text-[10px] text-text-muted mt-1">Model used for generating summaries. Auto picks cheapest available (Haiku preferred).</div>
+      </div>
+
+      <div class="flex justify-end">
+        <button onclick="saveContextConfig()" class="btn-primary px-4 py-2 rounded-lg text-sm">Save</button>
+      </div>
+    </div>
+    ${statsHtml}
+    <div class="glass-card p-6 mt-4">
+      <h3 class="section-header text-sm mb-3">How It Works</h3>
+      <div class="text-xs text-text-muted space-y-2">
+        <p><strong>1. Fresh Tail</strong> — The most recent messages are always kept in full. No compression.</p>
+        <p><strong>2. Leaf Summaries</strong> — When context exceeds the threshold, older messages are grouped and summarized into depth-0 summaries (~1000 tokens each).</p>
+        <p><strong>3. Condensation</strong> — When enough same-depth summaries accumulate, they are merged into higher-depth summaries, forming a DAG.</p>
+        <p><strong>4. Drill-back Tools</strong> — Agents can use <code>context_search</code>, <code>context_detail</code>, and <code>context_recall</code> to access original message details from any summary.</p>
+        <p><strong>5. Lossless</strong> — Every original message is preserved in the database. Nothing is ever deleted.</p>
+      </div>
+    </div>`;
+}
+
+window.saveContextConfig = async function() {
+  const cfg = {
+    enabled: document.getElementById('ctx-enabled').checked,
+    fresh_tail_count: parseInt(document.getElementById('ctx-fresh-tail').value) || 32,
+    compact_threshold: (parseInt(document.getElementById('ctx-threshold').value) || 75) / 100,
+    messages_per_summary: parseInt(document.getElementById('ctx-msgs-per-sum').value) || 10,
+    condense_threshold: parseInt(document.getElementById('ctx-condense').value) || 4,
+    max_depth: parseInt(document.getElementById('ctx-max-depth').value) || 5,
+    summary_target_tokens: parseInt(document.getElementById('ctx-target-tokens').value) || 1000,
+    summary_model: document.getElementById('ctx-summary-model').value,
+  };
+  try {
+    await API.post('/v1/context/config', cfg);
+    showToast('Context settings saved');
+  } catch(e) { showToast(e.message, 'error'); }
+};
 
 // ─── Nodes Settings Tab ──────────────────────────────────────
 const NODE_TOOLS = ['execute_command','read_file','write_file','edit_file','list_directory','search_files'];

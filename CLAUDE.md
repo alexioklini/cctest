@@ -94,6 +94,12 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - Knowledge graph edge resolution: ref files with `/` treated as agent-relative paths (no double-prefix)
 - Relationship discovery: two-stage (QMD semantic candidates → LLM full-content classification), scales to large file counts
 - QMD query cleanup: strip newlines, quotes, markdown formatting — QMD silently returns empty on multiline queries
+- Lossless context: `ContextManager` in `claude_cli.py` with SQLite DAG (`context.db`), replaces flat compaction
+- Context config: `GET/POST /v1/context/config`, `GET /v1/context/stats?session_id=X`
+- Context assembly: summaries (highest depth first) + fresh tail (default 32 messages) within token budget
+- Three-level escalation: leaf summaries → condensation → fallback truncation
+- Thread-local `current_session_id` set before compaction for context tools to access
+- Legacy `_compact_conversation` remains as fallback when ContextManager is disabled
 
 ### Agent Teams
 
@@ -156,6 +162,7 @@ Gmail: gmail_inbox, gmail_read, gmail_search, gmail_send, gmail_reply
 Memory: memory_store, memory_recall, memory_shared, memory_delete
 Agents: delegate_task, task_status, task_cancel
 Skills: use_skill
+Context: context_search, context_detail, context_recall (drill-back into compacted history)
 Nodes: list_nodes (remote node status and info)
 Schedule: schedule_list, schedule_history
 MCP: mcp_* (dynamic, from connected MCP servers)

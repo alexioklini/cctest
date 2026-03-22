@@ -161,6 +161,9 @@ brain-agent/
 | `task_status` | Check background task status |
 | `task_cancel` | Cancel running background task |
 | `use_skill` | Load skill instructions on demand |
+| `context_search` | Search compacted conversation history by keyword |
+| `context_detail` | Expand a summary to see original messages |
+| `context_recall` | Deep recall from compacted history via sub-LLM |
 | `list_nodes` | List registered remote nodes with status and resource usage |
 | `schedule_list` | List scheduled tasks |
 | `schedule_history` | View execution history |
@@ -350,6 +353,7 @@ Each task runs with a specified agent and model in its own context. Results stor
 
 | Version | Date | Changes |
 |---|---|---|
+| 3.6.0 | 2026-03-22 | Lossless context management: DAG-based hierarchical summarization, context_search/detail/recall tools, configurable fresh tail, summary model, condensation, settings UI |
 | 3.5.0 | 2026-03-22 | Chat content search (SQLite + QMD), index status indicators, transcript backfill, KG search fix, frontmatter nested YAML fix, edge path fix, two-stage relationship discovery (QMD + LLM), project panel deep search |
 | 3.4.0 | 2026-03-22 | Remote nodes: list_nodes tool, node settings UI (token, tools, concurrency, timeout), node.py launchd install/uninstall/status, connection logging, dynamic sidebar refresh on async summary |
 | 3.3.0 | 2026-03-22 | Project notes with AI editing via tools, chat transcript QMD indexing, LLM chat summaries, deep search in sidebar, project panel search + counts + auto-refresh, chat attachments in sidebar, prompt refinement in notes |

@@ -627,6 +627,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_audit_list()
         elif path.startswith("/v1/audit/export"):
             self._handle_audit_export()
+        # --- Context Management GET routes ---
+        elif path == "/v1/context/config":
+            self._handle_context_config_get()
+        elif path.startswith("/v1/context/stats"):
+            self._handle_context_stats()
         # --- MCP GET routes ---
         elif path == "/v1/mcp/connections":
             self._handle_mcp_list()
@@ -777,6 +782,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         # --- Tools config POST routes ---
         elif path == "/v1/tools/config":
             self._handle_tools_config_save()
+        # --- Context Management POST routes ---
+        elif path == "/v1/context/config":
+            self._handle_context_config_save()
         # --- Channels POST routes ---
         elif path == "/v1/channels":
             self._handle_channels_action()
@@ -1285,10 +1293,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         session.add_message("user", user_content)
 
         # Check context and compact
+        # Store session_id on thread local for context tools
+        engine._thread_local.current_session_id = session.id
         session.messages, _ = engine._check_and_compact(
             session.messages, session.model, session.api_key,
             session.base_url, session.api_type,
             max_tokens=session.max_context,
+            session_id=session.id,
         )
 
         # SSE streaming setup
@@ -3949,6 +3960,40 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         else:
             self._send_json({"status": "saved", "config": result})
 
+    # --- Context Management handlers ---
+
+    def _handle_context_config_get(self):
+        """GET /v1/context/config — return context management configuration."""
+        if not engine._context_manager:
+            self._send_json(engine._CONTEXT_CONFIG_DEFAULTS)
+            return
+        self._send_json(engine._context_manager.get_config())
+
+    def _handle_context_config_save(self):
+        """POST /v1/context/config — save context management configuration."""
+        body = self._read_json()
+        if not body:
+            self._send_json({"error": "No config provided"}, 400)
+            return
+        if not engine._context_manager:
+            engine._context_manager = engine.ContextManager()
+        engine._context_manager.save_config(body)
+        self._send_json({"status": "saved", "config": engine._context_manager.get_config()})
+
+    def _handle_context_stats(self):
+        """GET /v1/context/stats?session_id=X — context stats for a session."""
+        from urllib.parse import parse_qs, urlparse
+        qs = parse_qs(urlparse(self.path).query)
+        session_id = (qs.get("session_id") or [""])[0]
+        if not engine._context_manager:
+            self._send_json({"error": "Context manager not initialized"})
+            return
+        if not session_id:
+            self._send_json({"error": "Missing session_id"}, 400)
+            return
+        stats = engine._context_manager.get_stats(session_id)
+        self._send_json(stats)
+
     def _handle_restart(self):
         """POST /v1/restart — restart the server process."""
         self._send_json({"status": "restarting"})
@@ -4940,6 +4985,10 @@ def main():
     # Start scheduler
     engine._scheduler = engine.Scheduler()
     engine._scheduler.start()
+
+    # Initialize lossless context manager
+    engine._context_manager = engine.ContextManager()
+    print(f"Context manager: {engine.CONTEXT_DB} (lossless, {'enabled' if engine._context_manager.get_config().get('enabled') else 'disabled'})")
 
     # Initialize cost tracking and rate limiting
     engine._cost_tracker = engine.CostTracker()
