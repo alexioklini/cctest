@@ -87,6 +87,13 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - Node plist: `~/Library/LaunchAgents/com.brain-agent.node.{name}.plist`, logs to `~/.brain-agent/node-{name}.log`
 - Node connectivity: quick `GET /v1/nodes` check before entering long-poll loop for instant "Connected" feedback
 - Sidebar session list polls after stream end until async LLM summary appears (2s interval, 30s max)
+- Chat content search: 3-tier (QMD semantic → SQLite title/summary → SQLite message content)
+- Chat transcript indexing decoupled from summary generation; backfill runs at startup for unindexed sessions
+- Sessions API returns `indexed` field (true/false/null) based on chats-indexed file mtime vs last_active
+- `_parse_frontmatter()` skips indented/nested YAML lines to prevent `related:` sub-fields overwriting top-level keys
+- Knowledge graph edge resolution: ref files with `/` treated as agent-relative paths (no double-prefix)
+- Relationship discovery: two-stage (QMD semantic candidates → LLM full-content classification), scales to large file counts
+- QMD query cleanup: strip newlines, quotes, markdown formatting — QMD silently returns empty on multiline queries
 
 ### Agent Teams
 

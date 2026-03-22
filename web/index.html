@@ -11198,9 +11198,7 @@ async function _kgLoadAgent(agentId) {
       searchInput.value = '';
       searchInput.oninput = () => {
         kgInstance.searchQuery = searchInput.value;
-        kgInstance._applyFilters();
-        kgInstance.render();
-        kgInstance._updateStatus();
+        kgInstance.applyFilter();
       };
     }
   } catch (err) {

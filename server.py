@@ -2147,7 +2147,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     try:
                         stat = os.stat(fpath)
                         with open(fpath, "r", errors="replace") as f:
-                            raw = f.read(2000)  # frontmatter + start of body
+                            raw = f.read()  # full file for search
                         fm, body = engine._parse_frontmatter(raw)
                     except Exception:
                         continue
@@ -2178,8 +2178,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         pass
 
                     description = fm.get("description", "").strip('"').strip("'")
-                    # Content snippet for search (first 300 chars of body)
-                    snippet = body[:300].replace("\n", " ").strip() if body else ""
+                    # Full body for client-side search, truncated for display
+                    snippet = body.replace("\n", " ").strip() if body else ""
 
                     nodes.append({
                         "id": rel,
@@ -2200,8 +2200,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     related_types = _re.findall(r'type:\s*(prev_chunk|next_chunk|same_source|references|same_topic|depends_on|contradicts|extends|co_recalled|same_folder)', raw)
                     for i, ref_file in enumerate(related_files):
                         edge_type = related_types[i] if i < len(related_types) else "references"
-                        # Resolve ref_file relative to the same directory
-                        if os.path.dirname(rel):
+                        # Resolve ref_file: if it already contains a /, treat as relative to agent dir
+                        # Otherwise resolve relative to the current file's directory
+                        if "/" in ref_file or os.path.exists(os.path.join(agent_dir, ref_file)):
+                            ref_rel = ref_file
+                        elif os.path.dirname(rel):
                             ref_rel = os.path.join(os.path.dirname(rel), ref_file)
                         else:
                             ref_rel = ref_file

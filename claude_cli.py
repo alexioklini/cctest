@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "3.4.0"
+VERSION = "3.5.0"
 VERSION_DATE = "2026-03-22"
 CHANGELOG = [
+    ("3.5.0", "2026-03-22", "Chat content search (SQLite fallback + QMD), index status indicators, transcript backfill at startup, knowledge graph: fix search, fix frontmatter parsing for nested YAML, fix edge path resolution, two-stage relationship discovery (QMD candidates + LLM classification), deep search in project panel"),
     ("3.4.0", "2026-03-22", "Remote nodes: list_nodes tool, node settings UI (token, allowed tools, max concurrent, timeout), node.py launchd install/uninstall/status, node connection logging, dynamic sidebar refresh on async LLM summary"),
     ("3.3.0", "2026-03-22", "Enhanced projects: AI note editing via tools, chat transcript indexing in QMD, LLM chat summaries, deep chat search, project panel search + counts + delete, chat attachments in sidebar, auto-refresh polling, prompt refinement in notes"),
     ("3.2.0", "2026-03-22", "Project Notes system with AI-assisted editing, 3-column layout (sidebar + center + project panel), notes as first-class knowledge graph citizens, note editor with formatting toolbar and AI chat sidebar"),
@@ -2377,7 +2378,8 @@ def _parse_frontmatter(raw: str) -> tuple[dict, str]:
         fm_text, body = fm_match.groups()
         fm = {}
         for line in fm_text.split("\n"):
-            if ":" in line:
+            # Only parse top-level keys (skip indented/nested YAML lines)
+            if ":" in line and not line.startswith((" ", "\t", "-")):
                 k, v = line.split(":", 1)
                 fm[k.strip()] = v.strip()
         return fm, body.strip()
@@ -4627,63 +4629,135 @@ def _auto_memory_extract(agent_id: str, user_message: str, assistant_response: s
         logging.debug(f"Auto-memory extraction failed for {agent_id}: {e}")
 
 
-def _build_relationship_discovery_prompt(agent_id: str) -> str:
-    """Build a prompt listing agent memories for LLM-based relationship discovery.
-    Loads up to 30 non-ingested memory files."""
+def _collect_agent_memories(agent_id: str) -> list[dict]:
+    """Collect all memory files for an agent, walking subdirectories."""
     agent_dir = os.path.join(AGENTS_DIR, agent_id)
     if not os.path.isdir(agent_dir):
-        return ""
-
+        return []
     memories = []
-    for fname in sorted(os.listdir(agent_dir)):
-        if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
+    ignore_dirs = {"skills", ".trash", "ingested"}
+    for dirpath, dirnames, filenames in os.walk(agent_dir):
+        dirnames[:] = [d for d in dirnames if d not in ignore_dirs and not d.startswith(".")]
+        for fname in sorted(filenames):
+            if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
+                continue
+            if fname.startswith("ingest-"):
+                continue
+            fpath = os.path.join(dirpath, fname)
+            rel = os.path.relpath(fpath, agent_dir)
+            try:
+                with open(fpath, "r") as f:
+                    raw = f.read()
+                fm, body = _parse_frontmatter(raw)
+                memories.append({
+                    "file": rel,
+                    "name": fm.get("name", fname.replace(".md", "")),
+                    "type": fm.get("type", "general"),
+                    "description": fm.get("description", "").strip('"').strip("'"),
+                    "content": body.strip(),
+                })
+            except Exception:
+                continue
+    return memories
+
+
+def _find_candidate_pairs(agent_id: str, memories: list[dict], max_candidates: int = 40) -> list[tuple[dict, dict, float]]:
+    """Use QMD semantic search to find candidate pairs that might be related.
+    For each memory, query QMD with its content and find similar files.
+    Returns list of (mem_a, mem_b, score) tuples, deduplicated."""
+    ms = MemoryStore(agent_id)
+    seen_pairs = set()
+    candidates = []
+
+    for mem in memories:
+        # Build a clean plaintext query for QMD
+        def _clean(s):
+            s = re.sub(r'["\'\(\)\[\]#*_|]', '', s)
+            s = re.sub(r'\s*part\s+\d+/\d+\s*', '', s)
+            s = s.replace('\n', ' ').replace('\r', ' ')
+            return re.sub(r'\s+', ' ', s).strip()
+        query = _clean(f"{mem['name']} {mem['description']} {mem['content'][:200]}")[:300]
+        if not query:
             continue
-        if fname.startswith("ingest-"):
-            continue
-        fpath = os.path.join(agent_dir, fname)
         try:
-            with open(fpath, "r") as f:
-                raw = f.read()
-            fm, body = _parse_frontmatter(raw)
-            memories.append({
-                "file": fname,
-                "name": fm.get("name", fname.replace(".md", "")),
-                "type": fm.get("type", "general"),
-                "preview": body[:200].replace("\n", " "),
-            })
+            results = ms.recall(query, limit=5)
         except Exception:
             continue
-        if len(memories) >= 30:
-            break
+        for r in results:
+            other_file = os.path.relpath(r.get("file_path", ""), os.path.join(AGENTS_DIR, agent_id))
+            if other_file == mem["file"]:
+                continue
+            # Find the matching memory dict
+            other_mem = next((m for m in memories if m["file"] == other_file), None)
+            if not other_mem:
+                continue
+            pair_key = tuple(sorted([mem["file"], other_mem["file"]]))
+            if pair_key in seen_pairs:
+                continue
+            seen_pairs.add(pair_key)
+            candidates.append((mem, other_mem, r.get("score", 0)))
 
+    # Sort by score descending, take top candidates
+    candidates.sort(key=lambda x: x[2], reverse=True)
+    return candidates[:max_candidates]
+
+
+def _build_relationship_discovery_prompt(agent_id: str) -> str:
+    """Build prompt for LLM-based relationship discovery.
+    Two-stage approach:
+    1. QMD semantic search finds candidate pairs (scales to any number of files)
+    2. LLM reads full content of candidates and classifies relationships
+    """
+    memories = _collect_agent_memories(agent_id)
     if len(memories) < 2:
         return ""
 
-    listing = "\n".join(
-        f"- **{m['file']}** (name: {m['name']}, type: {m['type']}): {m['preview']}"
-        for m in memories
-    )
+    # Stage 1: find candidate pairs via QMD embeddings
+    candidates = _find_candidate_pairs(agent_id, memories)
 
-    return f"""Analyze the following memories for agent '{agent_id}' and identify relationships between them.
-
-## Memories
+    if not candidates:
+        # Fallback: if QMD unavailable, send all files with truncated content
+        listing = "\n\n".join(
+            f"### {m['file']} (type: {m['type']})\n{m['content'][:500]}"
+            for m in memories[:50]
+        )
+        return f"""Analyze these memories for agent '{agent_id}' and identify relationships.
 
 {listing}
 
+Output ONLY a JSON array. Each object: from_file, to_file, type (references|same_topic|depends_on|contradicts|extends), reason (under 20 words).
+If no relationships, output []. Be selective — meaningful relationships only."""
+
+    # Stage 2: build prompt with full content of candidate pairs
+    pair_sections = []
+    for i, (a, b, score) in enumerate(candidates, 1):
+        pair_sections.append(
+            f"## Candidate Pair {i} (similarity: {score:.2f})\n\n"
+            f"### File A: {a['file']} (type: {a['type']})\n{a['content']}\n\n"
+            f"### File B: {b['file']} (type: {b['type']})\n{b['content']}"
+        )
+
+    pairs_text = "\n\n---\n\n".join(pair_sections)
+
+    return f"""You are analyzing candidate pairs of memories for agent '{agent_id}'.
+Each pair was identified as potentially related by semantic similarity.
+Read the FULL content of each file and determine if a meaningful relationship exists.
+
+{pairs_text}
+
 ## Task
 
-Given these memories, identify pairs that are related. For each pair, specify:
-- from_file: the source memory filename
-- to_file: the target memory filename
+For each pair where a meaningful relationship exists, output:
+- from_file: filename of file A
+- to_file: filename of file B
 - type: one of (references, same_topic, depends_on, contradicts, extends)
 - reason: brief explanation (under 20 words)
 
-Output ONLY a JSON array of objects with those fields. If no relationships found, output [].
+Skip pairs that are only superficially similar. Output ONLY a JSON array.
+If no meaningful relationships, output [].
 
 Example:
-[{{"from_file": "foo_abc123.md", "to_file": "bar_def456.md", "type": "same_topic", "reason": "Both discuss authentication patterns"}}]
-
-Be selective — only report meaningful relationships, not superficial ones. Aim for precision over recall."""
+[{{"from_file": "notes/Meeting.md", "to_file": "chats-indexed/chat-abc-000.md", "type": "same_topic", "reason": "Both discuss macOS architecture on Apple Silicon"}}]"""
 
 
 def _apply_discovered_relationships(agent_id: str, relationships: list[dict]):
