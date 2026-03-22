@@ -4142,14 +4142,17 @@ window.sendNoteAiMessage = async function() {
   dom.noteAiMessages.scrollTop = dom.noteAiMessages.scrollHeight;
 
   try {
-    // Create ephemeral session if needed
+    // Create ephemeral session with note context
     if (!state.noteAiSessionId) {
-      const sessionRes = await API.createSession(note.agentId, undefined, note.project);
+      const noteCtx = `You are helping edit a markdown note called "${note.path}". When the user asks you to edit, add, or modify content, output the COMPLETE updated note content wrapped in [EDIT_NOTE]...[/EDIT_NOTE] tags. Only use these tags when making actual edits. For questions or explanations, respond normally without tags.`;
+      const sessionRes = await API.post('/v1/sessions', {
+        agent: note.agentId, project: note.project, note_context: noteCtx
+      });
       state.noteAiSessionId = sessionRes.session_id;
     }
 
-    // Build message with note context
-    const noteContext = `[Note: ${note.path}]\n\`\`\`markdown\n${note.content}\n\`\`\`\n\nUser question: ${text}\n\nIf you want to suggest edits to the note, wrap the new full content in [EDIT_NOTE]...[/EDIT_NOTE] tags.`;
+    // Build message with current note content as context
+    const noteContext = `Current note content:\n\`\`\`markdown\n${note.content}\n\`\`\`\n\n${text}`;
 
     const controller = new AbortController();
     const res = await fetch(`${BASE_URL}/v1/chat`, {
@@ -4188,7 +4191,7 @@ window.sendNoteAiMessage = async function() {
       }
     }
 
-    // Check for [EDIT_NOTE] blocks
+    // Check for [EDIT_NOTE] blocks and apply edits
     const editMatch = aiMsg.match(/\[EDIT_NOTE\]([\s\S]*?)\[\/EDIT_NOTE\]/);
     if (editMatch) {
       const newContent = editMatch[1].trim();
@@ -4200,7 +4203,10 @@ window.sendNoteAiMessage = async function() {
         clearTimeout(state.noteSaveTimer);
         state.noteSaveTimer = setTimeout(() => saveNote(), 2000);
       }
-      showToast('Note updated by AI');
+      // Clean the displayed message — remove the EDIT_NOTE block, show confirmation
+      const cleanMsg = aiMsg.replace(/\[EDIT_NOTE\][\s\S]*?\[\/EDIT_NOTE\]/, '').trim();
+      msgEl.innerHTML = (cleanMsg ? (typeof marked !== 'undefined' ? marked.parse(cleanMsg) : esc(cleanMsg)) : '') +
+        '<div style="margin-top:6px;padding:4px 8px;background:color-mix(in srgb, var(--color-accent) 10%, transparent);border-radius:6px;font-size:11px;color:var(--color-accent)">✓ Note updated</div>';
     }
   } catch (e) {
     dom.noteAiMessages.innerHTML += `<div class="note-ai-msg assistant" style="color:var(--color-error)">Error: ${esc(e.message)}</div>`;
