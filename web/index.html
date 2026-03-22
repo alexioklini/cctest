@@ -3204,21 +3204,43 @@ function renderSessionBar() {
   html += `</div>`;
   html += `<div class="sb-section-content">`;
 
+  // Search input
+  const searchVal = state._chatSearchQuery || '';
+  html += `<div style="padding:2px 8px 6px">
+    <input type="text" class="sb-chat-search" placeholder="Search chats..." value="${esc(searchVal)}"
+      oninput="state._chatSearchQuery=this.value;renderSessionBar()"
+      onclick="event.stopPropagation()"
+      style="width:100%;padding:4px 8px;border-radius:6px;border:1px solid var(--color-border);background:var(--color-surface-light);color:var(--color-text-primary);font-size:11px;outline:none;font-family:'IBM Plex Mono',monospace">
+  </div>`;
+
+  // Filter sessions by search query
+  const chatQuery = (state._chatSearchQuery || '').toLowerCase();
+  const filteredActive = chatQuery
+    ? generalActive.filter(s => (s.title || '').toLowerCase().includes(chatQuery) || (s.summary || '').toLowerCase().includes(chatQuery))
+    : generalActive;
+
   // Current unsaved session (general / no project)
-  if (chat && !currentSessionId && chat.messages.length === 0 && !state.currentProject) {
+  if (!chatQuery && chat && !currentSessionId && chat.messages.length === 0 && !state.currentProject) {
     html += `<div class="sb-session-item active" style="font-style:italic"><span class="sb-sess-title" style="color:var(--color-text-muted)">New chat</span></div>`;
   }
 
   // General active sessions (no project)
-  generalActive.forEach(s => { html += renderSidebarSession(s, currentSessionId); });
+  filteredActive.forEach(s => { html += renderSidebarSession(s, currentSessionId); });
 
-  // Archived general sessions
-  if (generalArchived.length > 0) {
-    const chatArchCollapsed = archivedSections['chats'] !== false;
+  if (chatQuery && filteredActive.length === 0) {
+    html += `<div style="padding:8px 12px;font-size:11px;color:var(--color-text-muted);opacity:0.5">No matching chats</div>`;
+  }
+
+  // Archived general sessions (also filtered by search)
+  const filteredArchived = chatQuery
+    ? generalArchived.filter(s => (s.title || '').toLowerCase().includes(chatQuery) || (s.summary || '').toLowerCase().includes(chatQuery))
+    : generalArchived;
+  if (filteredArchived.length > 0) {
+    const chatArchCollapsed = archivedSections['chats'] !== false && !chatQuery;
     html += `<div class="sb-archived-section${chatArchCollapsed ? ' collapsed' : ''}">`;
     html += `<div class="sb-archived-header" onclick="toggleArchivedSection('chats')"><span class="sb-section-chevron">&#9660;</span> Archived</div>`;
     html += `<div class="sb-archived-content">`;
-    generalArchived.forEach(s => { html += renderSidebarSession(s, currentSessionId); });
+    filteredArchived.forEach(s => { html += renderSidebarSession(s, currentSessionId); });
     html += `</div></div>`;
   }
 
