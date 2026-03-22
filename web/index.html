@@ -3985,7 +3985,7 @@ window.ppRenameNote = async function(oldPath, el) {
     const dir = oldPath.includes('/') ? oldPath.substring(0, oldPath.lastIndexOf('/') + 1) : '';
     const newPath = dir + (newName.endsWith('.md') ? newName : newName + '.md');
     try {
-      await API.post(`/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(project)}/notes`, {action: 'rename', old_path: oldPath, new_path: newPath});
+      await API.post(`/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(project)}/notes`, {action: 'rename', path: oldPath, new_path: newPath});
       renderProjectPanel();
       showToast('Note renamed');
     } catch (e) { showToast(e.message, true); input.replaceWith(nameSpan); }
