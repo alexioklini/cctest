@@ -4231,8 +4231,9 @@ window.sendNoteAiMessage = async function() {
       localStorage.setItem(noteKey, state.noteAiSessionId);
     }
 
-    // Build message with current note content as context
-    const noteContext = `Current note content:\n\`\`\`markdown\n${note.content}\n\`\`\`\n\n${text}`;
+    // Build message with note file path and current content
+    const noteFilePath = `agents/${note.agentId}/projects/${note.project}/notes/${note.path}`;
+    const noteContext = `Note file path: ${noteFilePath}\n\nCurrent note content:\n\`\`\`markdown\n${note.content}\n\`\`\`\n\n${text}`;
 
     const controller = new AbortController();
     const res = await fetch(`${BASE_URL}/v1/chat`, {
@@ -4245,11 +4246,13 @@ window.sendNoteAiMessage = async function() {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let aiMsg = '';
+    let noteFileModified = false;
     const msgEl = document.createElement('div');
     msgEl.className = 'note-ai-msg assistant';
     dom.noteAiMessages.appendChild(msgEl);
 
     let buffer = '';
+    let currentEvent = '';
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -4257,36 +4260,46 @@ window.sendNoteAiMessage = async function() {
       const lines = buffer.split('\n');
       buffer = lines.pop();
       for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          currentEvent = line.slice(7).trim();
+          continue;
+        }
         if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6);
-        if (data === '[DONE]') continue;
         try {
-          const evt = JSON.parse(data);
-          if (evt.type === 'text' && evt.content) {
-            aiMsg += evt.content;
+          const evt = JSON.parse(line.slice(6));
+          if (currentEvent === 'text_delta' && evt.text) {
+            aiMsg += evt.text;
             msgEl.innerHTML = typeof marked !== 'undefined' ? marked.parse(aiMsg) : esc(aiMsg);
             dom.noteAiMessages.scrollTop = dom.noteAiMessages.scrollHeight;
+          } else if (currentEvent === 'file_created') {
+            // AI edited the note file — auto-reload
+            noteFileModified = true;
+          } else if (currentEvent === 'tool_call') {
+            const toolName = evt.name || '';
+            if (toolName === 'write_file' || toolName === 'edit_file') {
+              msgEl.innerHTML = (aiMsg ? (typeof marked !== 'undefined' ? marked.parse(aiMsg) : esc(aiMsg)) : '') +
+                '<div style="padding:3px 0;font-size:10px;color:var(--color-text-muted)">✏️ Editing note...</div>';
+            }
+          } else if (currentEvent === 'done') {
+            if (evt.text) aiMsg = evt.text;
           }
         } catch {}
       }
     }
 
-    // Check for [EDIT_NOTE] blocks and apply edits
-    const editMatch = aiMsg.match(/\[EDIT_NOTE\]([\s\S]*?)\[\/EDIT_NOTE\]/);
-    if (editMatch) {
-      const newContent = editMatch[1].trim();
-      dom.noteEditorTextarea.value = newContent;
-      if (state.currentNote) {
+    // If the AI modified the note file, reload the editor content
+    if (noteFileModified && state.currentNote) {
+      try {
+        const updated = await API.get(`/v1/agents/${encodeURIComponent(note.agentId)}/projects/${encodeURIComponent(note.project)}/notes/${encodeURIComponent(note.path)}`);
+        const newContent = updated.content || '';
+        dom.noteEditorTextarea.value = newContent;
         state.currentNote.content = newContent;
-        state.currentNote.dirty = true;
-        dom.noteSaveStatus.textContent = 'Unsaved';
-        clearTimeout(state.noteSaveTimer);
-        state.noteSaveTimer = setTimeout(() => saveNote(), 2000);
-      }
-      // Clean the displayed message — remove the EDIT_NOTE block, show confirmation
-      const cleanMsg = aiMsg.replace(/\[EDIT_NOTE\][\s\S]*?\[\/EDIT_NOTE\]/, '').trim();
-      msgEl.innerHTML = (cleanMsg ? (typeof marked !== 'undefined' ? marked.parse(cleanMsg) : esc(cleanMsg)) : '') +
-        '<div style="margin-top:6px;padding:4px 8px;background:color-mix(in srgb, var(--color-accent) 10%, transparent);border-radius:6px;font-size:11px;color:var(--color-accent)">✓ Note updated</div>';
+        state.currentNote.dirty = false;
+        dom.noteSaveStatus.textContent = 'Saved';
+        // Show confirmation
+        msgEl.innerHTML = (aiMsg ? (typeof marked !== 'undefined' ? marked.parse(aiMsg) : esc(aiMsg)) : '') +
+          '<div style="margin-top:6px;padding:4px 8px;background:color-mix(in srgb, var(--color-accent) 10%, transparent);border-radius:6px;font-size:11px;color:var(--color-accent)">✓ Note updated</div>';
+      } catch {}
     }
   } catch (e) {
     dom.noteAiMessages.innerHTML += `<div class="note-ai-msg assistant" style="color:var(--color-error)">Error: ${esc(e.message)}</div>`;
