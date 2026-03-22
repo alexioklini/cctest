@@ -3826,8 +3826,28 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
     # --- Tools config handlers ---
 
     def _handle_tools_config_get(self):
-        """GET /v1/tools/config — return tool config with sensitive values masked."""
+        """GET /v1/tools/config — return tool config with fallback values merged and sensitive fields masked."""
         cfg = engine.get_tool_config()
+        # Merge fallback values so UI shows what's actually in use
+        exa_cfg = cfg.get("exa_search", {})
+        if not exa_cfg.get("api_key"):
+            env_key = os.environ.get("EXA_API_KEY", "")
+            if env_key:
+                exa_cfg["api_key"] = env_key
+                exa_cfg["_source"] = "environment variable"
+            else:
+                # Check built-in default (hardcoded in tool function)
+                exa_cfg["api_key"] = "97dbd594-f7b4-4866-9a8e-6a297e3df576"
+                exa_cfg["_source"] = "built-in default"
+        gmail_cfg = cfg.get("gmail", {})
+        if not gmail_cfg.get("email") or not gmail_cfg.get("app_password"):
+            fb = engine._gmail_config()
+            if fb:
+                if not gmail_cfg.get("email") and fb.get("email"):
+                    gmail_cfg["email"] = fb["email"]
+                if not gmail_cfg.get("app_password") and fb.get("app_password"):
+                    gmail_cfg["app_password"] = fb["app_password"]
+                gmail_cfg["_source"] = "gmail.json"
         # Mask sensitive values
         masked = {}
         for tool_name, tool_cfg in cfg.items():
