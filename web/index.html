@@ -3383,17 +3383,23 @@ function renderProjectSelector() {
   html += `<div class="sb-section-content">`;
 
   if (activeProjects.length === 0) {
-    html += `<div class="sb-project-selector-btn" onclick="sidebarNewProject()" title="Create a project" style="justify-content:center;opacity:0.5">
-      <span class="sb-btn-text" style="font-family:'Outfit',sans-serif;font-size:10px">No projects yet</span>
-    </div>`;
+    html += `<div style="padding:6px 12px;font-size:11px;color:var(--color-text-muted);opacity:0.5">No projects yet</div>`;
   } else {
     activeProjects.forEach(p => {
       const pIcon = p.icon || 'folder';
       const isActive = state.currentProject === p.name;
-      html += `<div class="sb-project-selector-btn${isActive ? ' active' : ''}" onclick="selectProject('${esc(p.name)}')" title="${esc(p.description || p.name)}">
-        <span style="display:inline-flex;flex-shrink:0">${renderProjectIcon(pIcon, 12)}</span>
-        <span class="sb-btn-text" style="font-family:'Outfit',sans-serif;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name)}</span>
-        ${isActive ? '<span style="font-size:7px;color:var(--color-accent);font-weight:700;flex-shrink:0">&#9679;</span>' : ''}
+      const desc = p.description || '';
+      html += `<div class="sb-agent-item${isActive ? ' active' : ''}" data-project="${esc(p.name)}" onclick="if(!event.target.closest('.btn-cfg-card'))selectProject('${esc(p.name)}')" title="${esc(desc || p.name)}">
+        <div class="sb-agent-avatar" style="display:flex;align-items:center;justify-content:center;width:28px;height:28px">
+          ${renderProjectIcon(pIcon, 18)}
+        </div>
+        <div class="sb-agent-info">
+          <div class="sb-agent-name">${esc(p.name)}</div>
+          <div class="sb-agent-meta">${desc ? esc(desc.substring(0, 30)) : '<span style="opacity:0.4">No description</span>'}</div>
+        </div>
+        <span class="sb-agent-actions">
+          <button class="btn-cfg-card" title="Project settings" onclick="event.stopPropagation();sidebarOpenProjectSettings('${esc(state.activeAgentId)}','${esc(p.name)}')">&#9881;</button>
+        </span>
       </div>`;
     });
   }
