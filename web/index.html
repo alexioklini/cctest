@@ -4174,7 +4174,7 @@ window.sendNoteAiMessage = async function() {
   try {
     // Create note session if not yet created
     if (!state.noteAiSessionId) {
-      const noteCtx = `You are helping edit a markdown note called "${note.path}". When the user asks you to edit, add, or modify content, output the COMPLETE updated note content wrapped in [EDIT_NOTE]...[/EDIT_NOTE] tags. Only use these tags when making actual edits. For questions or explanations, respond normally without tags.`;
+      const noteCtx = `note_editing:${note.path}`;
       const sessionRes = await API.post('/v1/sessions', {
         agent: note.agentId, project: note.project, note_context: noteCtx,
         status: 'note_chat'

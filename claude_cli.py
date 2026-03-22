@@ -8446,12 +8446,14 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         note_context = getattr(_thread_local, 'note_context', None)
         if note_context:
             system_instruction += (
-                "NOTE EDITING MODE: You are helping edit a project note. "
-                "The current note content is:\n"
-                f"{note_context}\n\n"
-                "When you want to suggest edits to the note, wrap your changes in "
-                "[EDIT_NOTE]...[/EDIT_NOTE] tags. The content inside these tags will "
-                "replace the entire note content in the editor.\n\n"
+                "\n\nNOTE EDITING MODE — CRITICAL INSTRUCTIONS:\n"
+                "You are helping the user edit a markdown note. The user will provide the current note content in their message.\n"
+                "When the user asks you to ADD, EDIT, MODIFY, or CHANGE the note content, you MUST:\n"
+                "1. Output the COMPLETE updated note content (the entire note, not just the changes)\n"
+                "2. Wrap it in [EDIT_NOTE] and [/EDIT_NOTE] tags\n"
+                "3. Example: [EDIT_NOTE]# Title\n\nExisting content...\n\n| New | Table |\n|-----|-------|\n| a   | b     |[/EDIT_NOTE]\n"
+                "4. You can include a brief explanation BEFORE or AFTER the tags, but the tags MUST contain the full note\n"
+                "5. If the user just asks a QUESTION (not requesting edits), respond normally WITHOUT tags\n\n"
             )
         # Inject team context for interactive sessions
         team_info = _get_agent_team_info(agent_id)
