@@ -545,6 +545,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_list_models()
         elif path == "/v1/sessions":
             self._handle_list_sessions()
+        elif path.startswith("/v1/sessions/search"):
+            self._handle_session_search()
         elif path.startswith("/v1/sessions/") and path.endswith("/messages"):
             self._handle_get_messages(path)
         elif path == "/v1/schedule":
@@ -849,6 +851,84 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         msgs = ChatDB.load_messages(sid)
         self._send_json({"session_id": sid, "messages": msgs})
 
+    def _handle_session_search(self):
+        """GET /v1/sessions/search?q=<query>&agent=<agent_id>&limit=20 — deep search across chat content."""
+        from urllib.parse import parse_qs, urlparse
+        qs = parse_qs(urlparse(self.path).query)
+        query = (qs.get("q") or [""])[0]
+        agent_id = (qs.get("agent") or [""])[0]
+        limit = int((qs.get("limit") or ["20"])[0])
+
+        if not query:
+            self._send_json({"results": [], "query": ""})
+            return
+
+        results = []
+        seen_sessions = set()
+
+        # 1. QMD semantic search on chat transcript chunks
+        if agent_id:
+            try:
+                ms = engine.MemoryStore(agent_id)
+                qmd_results = ms.recall(query, limit=limit * 2, mem_type="chat_transcript")
+                for r in qmd_results:
+                    sid = ""
+                    # Extract session_id from frontmatter (already parsed into result)
+                    fm_path = r.get("file_path", "")
+                    # Try to read session_id from the file's frontmatter
+                    if fm_path and os.path.exists(fm_path):
+                        try:
+                            with open(fm_path, "r") as f:
+                                raw_head = f.read(500)
+                            fm, _ = engine._parse_frontmatter(raw_head)
+                            sid = fm.get("session_id", "")
+                        except Exception:
+                            pass
+                    if not sid:
+                        # Try to extract from filename: chat-{session_id}-{chunk}.md
+                        fname = os.path.basename(fm_path or "")
+                        if fname.startswith("chat-") and fname.endswith(".md"):
+                            parts = fname[5:].rsplit("-", 1)
+                            if len(parts) == 2:
+                                sid = parts[0]
+                    if sid and sid not in seen_sessions:
+                        seen_sessions.add(sid)
+                        info = ChatDB.get_session_info(sid)
+                        if info:
+                            info["match_type"] = "content"
+                            info["match_preview"] = (r.get("content", ""))[:150]
+                            info["score"] = r.get("score", 0)
+                            results.append(info)
+            except Exception:
+                pass
+
+        # 2. SQLite search on title + summary (for sessions not found by QMD)
+        try:
+            with _db_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                q = ("SELECT s.*, (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) as message_count "
+                     "FROM sessions s WHERE (s.title LIKE ? OR s.summary LIKE ?)")
+                params = [f"%{query}%", f"%{query}%"]
+                if agent_id:
+                    q += " AND s.agent_id = ?"
+                    params.append(agent_id)
+                q += " ORDER BY s.last_active DESC LIMIT ?"
+                params.append(limit)
+                rows = conn.execute(q, params).fetchall()
+                for r in rows:
+                    d = dict(r)
+                    if d["id"] not in seen_sessions:
+                        seen_sessions.add(d["id"])
+                        d["match_type"] = "title" if query.lower() in (d.get("title") or "").lower() else "summary"
+                        d["score"] = 0
+                        results.append(d)
+        except Exception:
+            pass
+
+        # Sort by score (QMD results) then recency
+        results.sort(key=lambda x: (x.get("score", 0), x.get("last_active", 0)), reverse=True)
+        self._send_json({"results": results[:limit], "query": query})
+
     def _handle_manage_session(self):
         """POST /v1/sessions/manage — archive, unarchive, clear, delete_message"""
         body = self._read_json()
@@ -889,10 +969,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             info = ChatDB.get_session_info(sid)
             sessions.delete(sid)
             self._send_json({"status": "deleted", "session_id": sid})
-            # Trigger memory summary refresh to purge deleted chat insights
+            # Clean up indexed transcript files and trigger memory summary refresh
             if info:
+                agent = info.get("agent_id", "main")
                 try:
-                    engine.trigger_memory_summary_refresh(info.get("agent_id", "main"))
+                    _cleanup_chat_index(sid, agent)
+                except Exception:
+                    pass
+                try:
+                    engine.trigger_memory_summary_refresh(agent)
                 except Exception:
                     pass
         elif action == "incognito":
@@ -1259,7 +1344,26 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                                     _generate_chat_summary(session)
                                 except Exception:
                                     pass
+                                # Chain: index transcript after summary is ready
+                                try:
+                                    if len(session.messages) >= 4:
+                                        _index_chat_transcript(session)
+                                except Exception:
+                                    pass
                             threading.Thread(target=_gen_summary, daemon=True, name=f"chat_summary_{sid}").start()
+                    except Exception:
+                        pass
+
+                    # Re-index chat transcript on every 4th message (background)
+                    try:
+                        msg_count = len(session.messages)
+                        if msg_count >= 4 and msg_count % 4 == 0 and session.summary:
+                            threading.Thread(
+                                target=_index_chat_transcript,
+                                args=(session,),
+                                daemon=True,
+                                name=f"chat_index_{sid}"
+                            ).start()
                     except Exception:
                         pass
                 else:
@@ -1950,9 +2054,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
         for scan_dir, source_label in scan_dirs:
             for dirpath, _, filenames in os.walk(scan_dir):
-                # Skip nested agent subdirs that aren't ingested/projects
+                # Skip nested agent subdirs that aren't ingested/projects/chats-indexed
                 rel_to_agent = os.path.relpath(dirpath, agent_dir)
-                if rel_to_agent not in (".", "ingested") and not rel_to_agent.startswith("projects"):
+                if rel_to_agent not in (".", "ingested", "chats-indexed") and not rel_to_agent.startswith("projects"):
                     if rel_to_agent not in ("skills",):
                         continue
 
@@ -4503,6 +4607,118 @@ def _load_config_file() -> dict:
         except (json.JSONDecodeError, OSError):
             pass
     return {}
+
+
+def _index_chat_transcript(session):
+    """Store chat transcript as QMD-indexed .md chunks for semantic search.
+    Only indexes non-trivial chats (>=4 messages, not note sessions)."""
+    if len(session.messages) < 4:
+        return
+    # Skip note-editing sessions
+    if getattr(session, 'note_context', None):
+        return
+    # Skip incognito sessions
+    if getattr(session, 'status', '') == 'incognito':
+        return
+
+    agent_id = session.agent_id
+    session_id = session.id
+
+    # Build transcript text
+    lines = []
+    for m in session.messages:
+        role = m.get("role", "?")
+        content = m.get("content", "")
+        if isinstance(content, str) and content:
+            lines.append(f"**{role}**: {content}")
+        elif isinstance(content, list):
+            # Handle multi-part content (text blocks)
+            text_parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
+            if text_parts:
+                lines.append(f"**{role}**: {' '.join(text_parts)}")
+
+    if not lines:
+        return
+
+    transcript = "\n\n".join(lines)
+
+    # Store as chunked .md files in agents/{agent}/chats-indexed/
+    chats_dir = os.path.join(engine.AGENTS_DIR, agent_id, "chats-indexed")
+    os.makedirs(chats_dir, exist_ok=True)
+
+    # Use DocumentChunker to split into manageable chunks
+    chunks = engine.DocumentChunker.chunk(transcript, chunk_size=2000, chunk_overlap=300)
+    if not chunks:
+        return
+
+    # Remove old chunks for this session
+    prefix = f"chat-{session_id}"
+    try:
+        for existing in os.listdir(chats_dir):
+            if existing.startswith(prefix) and existing.endswith(".md"):
+                os.remove(os.path.join(chats_dir, existing))
+    except OSError:
+        pass
+
+    # Write new chunks
+    title = session.title or "Untitled chat"
+    summary = session.summary or ""
+    import datetime as _dt_idx
+    now_iso = _dt_idx.datetime.now().isoformat()
+
+    for chunk in chunks:
+        idx = chunk["index"]
+        fname = f"{prefix}-{idx:03d}.md"
+        fpath = os.path.join(chats_dir, fname)
+
+        fm_lines = ["---"]
+        fm_lines.append(f'name: "{engine._yaml_escape(f"{title} (part {idx+1}/{chunk["total"]})")}"')
+        fm_lines.append('type: chat_transcript')
+        fm_lines.append(f'description: "{engine._yaml_escape(summary)}"')
+        fm_lines.append(f'session_id: {session_id}')
+        fm_lines.append(f'agent: {agent_id}')
+        fm_lines.append(f'chunk_index: {idx}')
+        fm_lines.append(f'total_chunks: {chunk["total"]}')
+        fm_lines.append(f'created_at: "{now_iso}"')
+        if session.project:
+            fm_lines.append(f'project: "{engine._yaml_escape(session.project)}"')
+        fm_lines.append("---")
+        fm_lines.append("")
+
+        try:
+            with open(fpath, "w") as f:
+                f.write("\n".join(fm_lines) + "\n" + chunk["text"])
+        except OSError:
+            continue
+
+        # Entity extraction for knowledge graph participation
+        try:
+            entities = engine._extract_entities(chunk["text"])
+            if entities:
+                engine._update_entity_index(agent_id, fname, entities)
+        except Exception:
+            pass
+
+    # Trigger QMD reindex for this agent
+    engine._qmd_debounced_embed(agent_id)
+
+
+def _cleanup_chat_index(session_id: str, agent_id: str):
+    """Remove indexed transcript files when a session is deleted."""
+    chats_dir = os.path.join(engine.AGENTS_DIR, agent_id, "chats-indexed")
+    if not os.path.isdir(chats_dir):
+        return
+    prefix = f"chat-{session_id}"
+    removed = False
+    try:
+        for fname in os.listdir(chats_dir):
+            if fname.startswith(prefix) and fname.endswith(".md"):
+                os.remove(os.path.join(chats_dir, fname))
+                removed = True
+    except OSError:
+        pass
+    if removed:
+        engine._qmd_debounced_embed(agent_id)
 
 
 def _generate_chat_summary(session):

@@ -2565,31 +2565,37 @@ agent: {self.agent_id}
         if not terms:
             return self.list_all(mem_type)[:limit]
         results = []
-        for fname in os.listdir(self.dir):
-            if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
-                continue
-            fpath = os.path.join(self.dir, fname)
-            try:
-                with open(fpath, "r") as f:
-                    raw = f.read()
-                fm, body = _parse_frontmatter(raw)
-                mtype = fm.get("type", "general")
-                if mem_type and mtype != mem_type:
+        # Directories to scan: agent root + chats-indexed subdir
+        scan_dirs = [self.dir]
+        chats_dir = os.path.join(self.dir, "chats-indexed")
+        if os.path.isdir(chats_dir):
+            scan_dirs.append(chats_dir)
+        for scan_dir in scan_dirs:
+            for fname in os.listdir(scan_dir):
+                if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
                     continue
-                searchable = (fm.get("name", "") + " " + fm.get("description", "") + " " + body).lower()
-                hits = sum(1 for t in terms if t in searchable)
-                if hits > 0:
-                    results.append({
-                        "id": self._make_id(fm.get("name", fname)),
-                        "name": fm.get("name", fname.replace(".md", "")),
-                        "description": fm.get("description", ""),
-                        "type": mtype,
-                        "content": body,
-                        "file_path": fpath,
-                        "score": hits / len(terms),
-                    })
-            except Exception:
-                continue
+                fpath = os.path.join(scan_dir, fname)
+                try:
+                    with open(fpath, "r") as f:
+                        raw = f.read()
+                    fm, body = _parse_frontmatter(raw)
+                    mtype = fm.get("type", "general")
+                    if mem_type and mtype != mem_type:
+                        continue
+                    searchable = (fm.get("name", "") + " " + fm.get("description", "") + " " + body).lower()
+                    hits = sum(1 for t in terms if t in searchable)
+                    if hits > 0:
+                        results.append({
+                            "id": self._make_id(fm.get("name", fname)),
+                            "name": fm.get("name", fname.replace(".md", "")),
+                            "description": fm.get("description", ""),
+                            "type": mtype,
+                            "content": body,
+                            "file_path": fpath,
+                            "score": hits / len(terms),
+                        })
+                except Exception:
+                    continue
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:limit]
 
@@ -4280,6 +4286,7 @@ def _rebuild_entity_index(agent_id: str):
     if not os.path.isdir(agent_dir):
         return
     index: dict[str, set[str]] = {}
+    # Scan top-level agent dir
     for fname in os.listdir(agent_dir):
         if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
             continue
@@ -4296,6 +4303,22 @@ def _rebuild_entity_index(agent_id: str):
                 index.setdefault(ent, set()).add(fname)
         except Exception:
             continue
+    # Also scan chats-indexed/ subdirectory for chat transcript entities
+    chats_dir = os.path.join(agent_dir, "chats-indexed")
+    if os.path.isdir(chats_dir):
+        for fname in os.listdir(chats_dir):
+            if not fname.endswith(".md"):
+                continue
+            fpath = os.path.join(chats_dir, fname)
+            try:
+                with open(fpath, "r") as f:
+                    raw = f.read()
+                _, body = _parse_frontmatter(raw)
+                entities = _extract_entities(body)
+                for ent in entities:
+                    index.setdefault(ent, set()).add(fname)
+            except Exception:
+                continue
     with _entity_index_lock:
         _entity_indices[agent_id] = index
         _entity_index_initialized.add(agent_id)
