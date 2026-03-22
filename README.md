@@ -44,11 +44,14 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
 - **Auto memory** — automatic memory creation from conversations (corrections, decisions, preferences) via background LLM extraction
 - **Continuous summarization** — memory summary refreshes at token thresholds during active conversations
 - **Knowledge graph visualization** — interactive force-directed canvas with search, filtering, relationship discovery
+- **Project notes** — markdown notes with AI-assisted editing (uses write_file/edit_file tools), folder organization, auto-reload
 - **Document ingestion (RAG)** — PDF, DOCX, HTML, URL parsing with auto-chunking and watched folders
+- **Chat transcript indexing** — conversations indexed in QMD for semantic search across all chat history
+- **LLM chat summaries** — auto-generated one-line summaries for sidebar display
 - **Plan mode** — read-only analysis that disables write tools
 - **LLM input refinement** — context-aware prompt improvement before sending
 - **Multi-modal** — image upload with vision model support
-- **Chat file attachments** — files created by agents appear as viewable/downloadable attachments
+- **Chat file attachments** — files created by agents appear as viewable/downloadable attachments in chat and sidebar
 
 ### Infrastructure
 - **Multi-provider routing** — auto-routing across Anthropic, OpenAI-compatible, MiniMax, local oMLX
@@ -346,6 +349,8 @@ Each task runs with a specified agent and model in its own context. Results stor
 
 | Version | Date | Changes |
 |---|---|---|
+| 3.3.0 | 2026-03-22 | Project notes with AI editing via tools, chat transcript QMD indexing, LLM chat summaries, deep search in sidebar, project panel search + counts + auto-refresh, chat attachments in sidebar, prompt refinement in notes |
+| 3.2.0 | 2026-03-22 | Project Notes system, 3-column layout (sidebar + center + project panel), note editor with formatting toolbar and AI chat, notes in knowledge graph |
 | 3.1.0 | 2026-03-21 | Auto memory creation, continuous session summarization, knowledge graph visualization + auto-discovery, chat file attachments, model-aware max_tokens, sidebar redesign (Projects + Chats), Tools settings, improved fallback ordering |
 | 3.0.0 | 2026-03-20 | Provider fallback, backup/export, notifications, observability + audit trail, dynamic MCP client, multi-modal (vision), remote nodes, multi-messaging adapter framework |
 | 2.1.0 | 2026-03-20 | Agent workflows (YAML stages + approval gates), Web UI sidebar layout, mobile responsive |

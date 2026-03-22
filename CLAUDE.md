@@ -73,6 +73,11 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - Provider fallback ordering: same provider first, then capabilities, then priority
 - Chat file attachments: files created by agents (write_file/edit_file) appear as viewable/downloadable attachments
 - `get_model_max_output(model)` returns max output tokens based on model family or config
+- Project notes: NoteManager CRUD, AI editing via write_file/edit_file tools (not EDIT_NOTE tags), auto-reload on filesystem changes
+- Chat transcript indexing: chats-indexed/*.md chunks stored in QMD for semantic search
+- LLM chat summaries: generated via Haiku after first response, shown in sidebar
+- Project panel auto-refresh: 5s polling detects filesystem changes from any source
+- Note AI sessions: status `note_chat`, hidden from project chat list, persistent per note via localStorage
 - Agent teams: hierarchical team structure with team heads orchestrating members
 - Cost tracking: `CostTracker` logs every LLM call to `costs.db` (tokens, model, provider, estimated cost)
 - Rate limiting: `RateLimiter` with sliding-window per agent (requests/min, tokens/hr, cost/day) from `rate_limits` in agent.json

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "3.2.0"
+VERSION = "3.3.0"
 VERSION_DATE = "2026-03-22"
 CHANGELOG = [
+    ("3.3.0", "2026-03-22", "Enhanced projects: AI note editing via tools, chat transcript indexing in QMD, LLM chat summaries, deep chat search, project panel search + counts + delete, chat attachments in sidebar, auto-refresh polling, prompt refinement in notes"),
     ("3.2.0", "2026-03-22", "Project Notes system with AI-assisted editing, 3-column layout (sidebar + center + project panel), notes as first-class knowledge graph citizens, note editor with formatting toolbar and AI chat sidebar"),
     ("3.1.0", "2026-03-21", "Auto memory creation, continuous session summarization, knowledge graph visualization + auto-discovery, chat file attachments, model-aware max_tokens, Bootstrap Icons avatars, sidebar redesign (Projects + Chats), Tools settings, improved fallback ordering, prompt refinement improvements"),
     ("3.0.0", "2026-03-20", "All P2 features: provider fallback with retry, backup/export/import, notifications (webhook/email/in-app), observability tracing + audit trail, dynamic MCP client, multi-modal (image upload/vision), remote nodes, multi-messaging adapter framework"),
