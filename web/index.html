@@ -4287,18 +4287,22 @@ window.sendNoteAiMessage = async function() {
       }
     }
 
-    // If the AI modified the note file, reload the editor content
+    // If the AI modified files, reload editor + refresh notes tree
     if (noteFileModified && state.currentNote) {
       try {
+        // Reload current note content
         const updated = await API.get(`/v1/agents/${encodeURIComponent(note.agentId)}/projects/${encodeURIComponent(note.project)}/notes/${encodeURIComponent(note.path)}`);
         const newContent = updated.content || '';
         dom.noteEditorTextarea.value = newContent;
         state.currentNote.content = newContent;
         state.currentNote.dirty = false;
         dom.noteSaveStatus.textContent = 'Saved';
-        // Show confirmation
         msgEl.innerHTML = (aiMsg ? (typeof marked !== 'undefined' ? marked.parse(aiMsg) : esc(aiMsg)) : '') +
           '<div style="margin-top:6px;padding:4px 8px;background:color-mix(in srgb, var(--color-accent) 10%, transparent);border-radius:6px;font-size:11px;color:var(--color-accent)">✓ Note updated</div>';
+      } catch {}
+      // Refresh notes tree in project panel (catches new notes created by AI)
+      try {
+        await renderProjectPanelNotes(note.agentId, note.project);
       } catch {}
     }
   } catch (e) {

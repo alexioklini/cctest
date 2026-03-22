@@ -8447,13 +8447,16 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         if note_context:
             # note_context format: "note_editing:/path/to/note.md"
             note_path = note_context.replace("note_editing:", "").strip() if note_context.startswith("note_editing:") else ""
+            # Extract notes directory from note path for new note creation
+            notes_dir = os.path.dirname(note_path) if note_path else ""
             system_instruction += (
                 "\n\nNOTE EDITING MODE:\n"
                 f"You are helping the user edit a markdown note{' at: ' + note_path if note_path else ''}.\n"
                 "The user will provide the current note content in their message.\n"
                 "When the user asks you to ADD, EDIT, or MODIFY the note, use the edit_file or write_file tool "
                 "to make changes directly to the note file. The editor will auto-reload.\n"
-                "For questions or explanations, respond normally without editing the file.\n\n"
+                f"You can also CREATE NEW notes in the same project by writing to: {notes_dir}/<new-name>.md\n"
+                "For questions or explanations, respond normally without editing files.\n\n"
             )
         # Inject team context for interactive sessions
         team_info = _get_agent_team_info(agent_id)
