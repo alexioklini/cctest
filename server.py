@@ -1405,6 +1405,29 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
         handler_self = self  # capture for closure
 
+        def _rollback_messages(session, sid, target_count):
+            """Rollback session.messages to target_count and remove extras from DB.
+            Handles intermediate tool_use/tool_result messages from the agentic loop."""
+            extras = len(session.messages) - target_count
+            if extras <= 0:
+                return
+            session.messages = session.messages[:target_count]
+            # Delete the extra messages from DB (they were appended by send_message's tool loop)
+            try:
+                with _db_conn() as conn:
+                    # Get all message IDs for this session, ordered by id
+                    rows = conn.execute(
+                        "SELECT id FROM messages WHERE session_id = ? ORDER BY id",
+                        (sid,)
+                    ).fetchall()
+                    # Keep only the first target_count messages
+                    if len(rows) > target_count:
+                        ids_to_delete = [r[0] for r in rows[target_count:]]
+                        conn.executemany("DELETE FROM messages WHERE id = ?", [(mid,) for mid in ids_to_delete])
+                        conn.commit()
+            except Exception as e:
+                print(f"  [WARN] Message rollback DB cleanup: {e}", flush=True)
+
         def worker():
             # Set thread-local agent context (thread-safe, no global mutation)
             engine._thread_local.memory_store = session.memory
@@ -1440,6 +1463,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             old_mcp = engine._mcp_manager
             engine._current_agent = agent_config
             engine._mcp_manager = mcp
+
+            # Snapshot message count for rollback on failure
+            _msg_count_before = len(session.messages)
 
             try:
                 # Use detected purpose from auto-resolve, or fall back to agent's fixed purpose
@@ -1549,49 +1575,47 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
                 else:
-                    # Empty reply — remove dangling user message to prevent session corruption
-                    if session.messages and session.messages[-1].get("role") == "user":
-                        session.messages.pop()
-                        ChatDB.delete_last_message(sid, "user")
+                    # Empty reply — rollback all intermediate messages from tool loop
+                    _rollback_messages(session, sid, _msg_count_before)
                     event_queue.put(("done", {"text": "", "tokens": 0, "model": session.model}))
             except engine.TaskCancelled:
                 # Save partial response if any text was streamed
                 partial = "".join(_partial_reply).strip()
                 if partial:
+                    _rollback_messages(session, sid, _msg_count_before)
                     partial += "\n\n*(Cancelled)*"
                     meta = {"model": session.model, "partial": True}
                     if _partial_tools:
                         meta["tools"] = _partial_tools
                     session.add_message("assistant", partial, metadata=meta)
-                elif session.messages and session.messages[-1].get("role") == "user":
-                    session.messages.pop()
-                    ChatDB.delete_last_message(sid, "user")
+                else:
+                    _rollback_messages(session, sid, _msg_count_before)
                 event_queue.put(("error", {"message": "Cancelled"}))
             except SystemExit as e:
                 partial = "".join(_partial_reply).strip()
                 if partial:
+                    _rollback_messages(session, sid, _msg_count_before)
                     partial += f"\n\n*(Engine error: exit code {e.code})*"
                     meta = {"model": session.model, "partial": True}
                     if _partial_tools:
                         meta["tools"] = _partial_tools
                     session.add_message("assistant", partial, metadata=meta)
-                elif session.messages and session.messages[-1].get("role") == "user":
-                    session.messages.pop()
-                    ChatDB.delete_last_message(sid, "user")
+                else:
+                    _rollback_messages(session, sid, _msg_count_before)
                 event_queue.put(("error", {"message": f"Engine fatal error (exit code {e.code})"}))
             except Exception as e:
                 import traceback
                 traceback.print_exc()
                 partial = "".join(_partial_reply).strip()
                 if partial:
+                    _rollback_messages(session, sid, _msg_count_before)
                     partial += f"\n\n*(Error: {str(e)[:200]})*"
                     meta = {"model": session.model, "partial": True}
                     if _partial_tools:
                         meta["tools"] = _partial_tools
                     session.add_message("assistant", partial, metadata=meta)
-                elif session.messages and session.messages[-1].get("role") == "user":
-                    session.messages.pop()
-                    ChatDB.delete_last_message(sid, "user")
+                else:
+                    _rollback_messages(session, sid, _msg_count_before)
                 event_queue.put(("error", {"message": str(e)}))
             finally:
                 session._streaming = False
