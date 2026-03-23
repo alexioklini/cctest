@@ -35,6 +35,7 @@ Each item has a detailed feature proposal with mockups, user workflows, and effo
 
 ### Memory & Search
 - [Projects + Knowledge graph + RAG](features/document-ingestion.md) — per-agent projects with scoped docs/folders/chats, document ingestion pipeline, watched folders, memory graph traversal, self-awareness · ~25 days · **P1** (combines [knowledge-graph-memory.md](features/knowledge-graph-memory.md) + [document-ingestion.md](features/document-ingestion.md) + [self-awareness-memory.md](features/self-awareness-memory.md))
+- [Universal file intelligence](features/universal-file-intelligence.md) — XLSX/PPTX/CSV parsers, image vision+OCR, audio/video transcription, read/write/edit document tools, rich KG metadata, QMD indexing for all formats · ~11 days · **P1**
 - [Web result caching](features/web-result-caching.md) — LRU cache for web_fetch/exa_search with TTL · ~2 days · **P1** ✅ done (v1.7.0)
 
 ### Observability & Operations
