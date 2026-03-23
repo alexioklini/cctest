@@ -4509,9 +4509,17 @@ window.loadSession = async function(sessionId) {
     const res = await API.getSessionMessages(sessionId);
     const messages = (res.messages || []).map(m => {
       const msg = { role: m.role, content: m.content, id: m.id };
-      // Restore file attachments from metadata
-      if (m.metadata && m.metadata.files && m.metadata.files.length > 0) {
-        msg.files = m.metadata.files;
+      if (m.metadata) {
+        // Restore file attachments
+        if (m.metadata.files && m.metadata.files.length > 0) msg.files = m.metadata.files;
+        // Restore tool calls
+        if (m.metadata.tools && m.metadata.tools.length > 0) msg.tools = m.metadata.tools;
+        // Restore model/tokens/cost for footer display
+        if (m.metadata.model) msg.model = m.metadata.model;
+        if (m.metadata.tokens) msg.tokens = m.metadata.tokens;
+        if (m.metadata.cost != null) msg.cost = m.metadata.cost;
+        if (m.metadata.original_model) msg.fallbackNotice = `Used fallback: ${m.metadata.model} (primary ${m.metadata.original_model} unavailable)`;
+        if (m.metadata.partial) msg.partial = true;
       }
       return msg;
     });

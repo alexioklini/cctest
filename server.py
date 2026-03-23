@@ -1385,10 +1385,22 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
         event_queue = queue.Queue()
         created_files = []
+        _partial_reply = []  # accumulate text deltas for partial response recovery
+        _partial_tools = []  # accumulate tool calls
 
         def event_callback(event_type, data):
             if event_type == "file_created":
                 created_files.append(data)
+            elif event_type == "text_delta":
+                _partial_reply.append(data.get("text", ""))
+            elif event_type == "tool_call":
+                _partial_tools.append({"name": data.get("name", ""), "args": data.get("args", {})})
+            elif event_type == "tool_result":
+                # Attach result to the last matching tool
+                for t in reversed(_partial_tools):
+                    if t["name"] == data.get("name") and "result" not in t:
+                        t["result"] = str(data.get("result", ""))[:500]
+                        break
             event_queue.put((event_type, data))
 
         handler_self = self  # capture for closure
@@ -1446,10 +1458,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     session_id=sid,
                 )
                 if reply:
-                    # Build metadata for file attachments
-                    msg_metadata = {"files": created_files} if created_files else None
-                    session.add_message("assistant", reply, metadata=msg_metadata)
-                    # Include session cost in done event
+                    # Compute cost before saving
                     session_cost = None
                     if engine._cost_tracker:
                         try:
@@ -1457,6 +1466,21 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                             session_cost = round(sc.get("cost", 0.0), 4)
                         except Exception:
                             pass
+                    # Build metadata: model, tokens, cost, files, tools
+                    msg_metadata = {}
+                    msg_metadata["model"] = session.model
+                    fb_model = getattr(engine._thread_local, '_fallback_model_used', None)
+                    if fb_model:
+                        msg_metadata["model"] = fb_model
+                        msg_metadata["original_model"] = session.model
+                    msg_metadata["tokens"] = engine._estimate_conversation_tokens(session.messages)
+                    if session_cost is not None:
+                        msg_metadata["cost"] = session_cost
+                    if created_files:
+                        msg_metadata["files"] = created_files
+                    if _partial_tools:
+                        msg_metadata["tools"] = _partial_tools
+                    session.add_message("assistant", reply, metadata=msg_metadata or None)
                     done_data = {
                         "text": reply,
                         "tokens": engine._estimate_conversation_tokens(session.messages),
@@ -1531,22 +1555,41 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         ChatDB.delete_last_message(sid, "user")
                     event_queue.put(("done", {"text": "", "tokens": 0, "model": session.model}))
             except engine.TaskCancelled:
-                # Remove user message from in-memory list AND DB
-                if session.messages and session.messages[-1].get("role") == "user":
+                # Save partial response if any text was streamed
+                partial = "".join(_partial_reply).strip()
+                if partial:
+                    partial += "\n\n*(Cancelled)*"
+                    meta = {"model": session.model, "partial": True}
+                    if _partial_tools:
+                        meta["tools"] = _partial_tools
+                    session.add_message("assistant", partial, metadata=meta)
+                elif session.messages and session.messages[-1].get("role") == "user":
                     session.messages.pop()
                     ChatDB.delete_last_message(sid, "user")
                 event_queue.put(("error", {"message": "Cancelled"}))
             except SystemExit as e:
-                # Clean up dangling user message
-                if session.messages and session.messages[-1].get("role") == "user":
+                partial = "".join(_partial_reply).strip()
+                if partial:
+                    partial += f"\n\n*(Engine error: exit code {e.code})*"
+                    meta = {"model": session.model, "partial": True}
+                    if _partial_tools:
+                        meta["tools"] = _partial_tools
+                    session.add_message("assistant", partial, metadata=meta)
+                elif session.messages and session.messages[-1].get("role") == "user":
                     session.messages.pop()
                     ChatDB.delete_last_message(sid, "user")
                 event_queue.put(("error", {"message": f"Engine fatal error (exit code {e.code})"}))
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                # Clean up dangling user message to prevent session corruption
-                if session.messages and session.messages[-1].get("role") == "user":
+                partial = "".join(_partial_reply).strip()
+                if partial:
+                    partial += f"\n\n*(Error: {str(e)[:200]})*"
+                    meta = {"model": session.model, "partial": True}
+                    if _partial_tools:
+                        meta["tools"] = _partial_tools
+                    session.add_message("assistant", partial, metadata=meta)
+                elif session.messages and session.messages[-1].get("role") == "user":
                     session.messages.pop()
                     ChatDB.delete_last_message(sid, "user")
                 event_queue.put(("error", {"message": str(e)}))
