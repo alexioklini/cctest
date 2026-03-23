@@ -2246,6 +2246,7 @@ tailwind.config = {
       <!-- Spinner bar (visible during streaming) -->
       <div id="chat-spinner-bar" class="hidden flex items-center gap-3 px-5 py-2 border-b border-border/50 bg-surface/30" style="min-height:36px">
         <div class="dot-pulse"><span></span><span></span><span></span></div>
+        <span id="spinner-model" class="text-[10px] text-accent mono" style="opacity:0.7"></span>
         <span id="spinner-label" class="text-xs text-text-muted font-display">Thinking...</span>
         <span id="spinner-elapsed" class="text-[10px] text-text-muted mono ml-auto"></span>
       </div>
@@ -5077,6 +5078,8 @@ async function sendMessage() {
   const spinnerLabel = document.getElementById('spinner-label');
   const spinnerElapsed = document.getElementById('spinner-elapsed');
   if (spinnerBar) spinnerBar.classList.remove('hidden');
+  const spinnerModel = document.getElementById('spinner-model');
+  if (spinnerModel) spinnerModel.textContent = chat.model || '';
   if (spinnerLabel) spinnerLabel.textContent = 'Thinking...';
   const spinnerStart = Date.now();
   let toolCallCount = 0;
@@ -5139,11 +5142,12 @@ async function sendMessage() {
         updateStreamingMessage(chat);
       },
       fallback: (d) => {
-        // Show fallback notice in spinner area
+        // Show fallback notice in spinner area + update model display
         if (d.status === 'retry') {
-          if (spinnerLabel) spinnerLabel.textContent = `Retrying ${d.model} (${d.attempt}/${d.max_retries})...`;
+          if (spinnerLabel) spinnerLabel.textContent = `Retrying (${d.attempt}/${d.max_retries})...`;
         } else if (d.status === 'switch') {
-          if (spinnerLabel) spinnerLabel.textContent = `Falling back to ${d.to}...`;
+          if (spinnerModel) spinnerModel.textContent = d.to;
+          if (spinnerLabel) spinnerLabel.textContent = `Fallback...`;
           assistantMsg.fallbackNotice = `Using fallback: ${d.to} (primary ${d.from} unavailable)`;
         }
       },
