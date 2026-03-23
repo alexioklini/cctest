@@ -110,6 +110,18 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - GET/POST `/v1/agents/{id}/hooks` for hook management
 - Compaction sends SSE events (`compacting`, `compacted`) for spinner feedback
 
+- Universal File Intelligence: DocumentParser extended with parse_xlsx, parse_pptx, parse_csv, parse_image, parse_svg
+- read_document: format-aware reader dispatching by extension (PDF pages, XLSX sheets, PPTX slides, images, CSV)
+- write_document: markdown → DOCX/XLSX/PPTX/PDF conversion
+- edit_document: targeted edits (DOCX replace_text, XLSX update_cell/add_row, PPTX update_slide/add_slide)
+- IngestManager auto-handles all new formats via DocumentParser.parse() dispatch
+- Code Structure Graph: `CodeGraph` class with Tree-sitter AST parsing, SQLite storage (`code-graph.db`)
+- 14 languages: Python, JS, TS, TSX, Go, Rust, Java, C, C++, C#, Ruby, Kotlin, Swift, PHP
+- Qualified names: `{file_path}::{ClassName.method}`, edges: CALLS, IMPORTS_FROM, INHERITS, IMPLEMENTS, CONTAINS, TESTED_BY
+- `code_graph_build`: parse directory, `code_graph_query`: 8 query types, `code_graph_impact`: BFS blast-radius via NetworkX
+- `_maybe_update_code_graph(path)` in `_after_file_write()` for incremental updates on source file changes
+- Incremental builds: SHA-256 file hash skip, re-parse only changed + dependent files
+
 ### Agent Teams
 
 Agents can be organized into teams with a hierarchical delegation model:
@@ -162,9 +174,11 @@ agents/<name>/
   scheduler.db    # Scheduled tasks (in main agent dir)
 ```
 
-### Tools (20+)
+### Tools (30+)
 
 File ops: read_file, write_file, edit_file, list_directory, search_files
+Documents: read_document, write_document, edit_document (PDF/DOCX/XLSX/PPTX/CSV/images)
+Code graph: code_graph_build, code_graph_query, code_graph_impact (AST-based, 14 languages)
 Shell: execute_command (non-interactive only, see tools.md for banned commands)
 Web: web_fetch, exa_search
 Gmail: gmail_inbox, gmail_read, gmail_search, gmail_send, gmail_reply

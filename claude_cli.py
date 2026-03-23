@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "3.7.0"
+VERSION = "4.0.0"
 VERSION_DATE = "2026-03-23"
 CHANGELOG = [
+    ("4.0.0", "2026-03-23", "Universal File Intelligence (XLSX/PPTX/CSV/image/SVG parsers, read_document/write_document/edit_document tools, format-aware ingestion) + Code Structure Graph (Tree-sitter AST parsing for 14 languages, code_graph_build/query/impact tools, blast-radius analysis, incremental updates via hooks)"),
     ("3.7.0", "2026-03-23", "Three-layer hooks system: tool pre/post hooks, after_file_write pipeline, external shell scripts with env vars, HookRunner with timeout/fail-open, centralized file-write pipeline (QMD+KG+events), hooks UI in agent config, workflow tool restriction enforced, compaction SSE events"),
     ("3.6.0", "2026-03-22", "Lossless context management: DAG-based hierarchical summarization, context_search/context_detail/context_recall tools, configurable fresh tail (32), summary model, condensation depth, settings UI with session stats"),
     ("3.5.0", "2026-03-22", "Chat content search (SQLite fallback + QMD), index status indicators, transcript backfill at startup, knowledge graph: fix search, fix frontmatter parsing for nested YAML, fix edge path resolution, two-stage relationship discovery (QMD candidates + LLM classification), deep search in project panel"),
@@ -123,6 +124,8 @@ READONLY_TOOLS = frozenset({
     "memory_recall", "memory_shared", "task_status", "list_nodes",
     "context_search", "context_detail", "context_recall", "schedule_list",
     "schedule_history", "use_skill", "gmail_inbox", "gmail_read", "gmail_search",
+    "read_document",
+    "code_graph_build", "code_graph_query",
 })
 
 PLAN_MODE_PROMPT = (
@@ -460,6 +463,73 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "read_document",
+        "description": (
+            "Format-aware document reader for PDF, DOCX, XLSX, PPTX, CSV/TSV, and image files. "
+            "Returns structured content: PDF pages, DOCX paragraphs/tables, XLSX sheets as markdown tables, "
+            "PPTX slides with notes, CSV as markdown table, image metadata + vision description. "
+            "For unknown extensions, falls back to plain text read."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File path to the document"},
+                "sheet": {"type": "string", "description": "Sheet name for XLSX (default: all sheets)"},
+                "pages": {"type": "string", "description": "Page range for PDF, e.g. '1-5' or '1,3,7'"},
+                "slides": {"type": "string", "description": "Slide range for PPTX, e.g. '1-10' or '2,5'"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "write_document",
+        "description": (
+            "Create a new document from markdown content. Dispatches by file extension: "
+            ".docx (headings, tables, bold/italic), .xlsx (markdown tables to sheets), "
+            ".pptx (# sections to slides), .pdf (basic formatted PDF via reportlab)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Output file path (extension determines format)"},
+                "content": {"type": "string", "description": "Markdown content to convert into the document"},
+            },
+            "required": ["path", "content"],
+        },
+    },
+    {
+        "name": "edit_document",
+        "description": (
+            "Targeted edits to existing documents. Actions by format: "
+            "DOCX: replace_text (find/replace in paragraphs). "
+            "XLSX: update_cell (sheet, cell, value), add_row (sheet, values). "
+            "PPTX: update_slide (slide_index, title, body), add_slide (title, body)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the document to edit"},
+                "action": {
+                    "type": "string",
+                    "description": "Edit action to perform",
+                    "enum": ["replace_text", "update_cell", "add_row", "update_slide", "add_slide"],
+                },
+                "params": {
+                    "type": "object",
+                    "description": (
+                        "Action-specific parameters. "
+                        "replace_text: {old_text, new_text}. "
+                        "update_cell: {sheet, cell, value}. "
+                        "add_row: {sheet, values (array)}. "
+                        "update_slide: {slide_index (1-based), title, body}. "
+                        "add_slide: {title, body}."
+                    ),
+                },
+            },
+            "required": ["path", "action", "params"],
+        },
+    },
+    {
         "name": "delegate_task",
         "description": (
             "Delegate a task to another agent. Runs in a background thread with its own context. "
@@ -586,6 +656,65 @@ TOOL_DEFINITIONS = [
             "type": "object",
             "properties": {},
             "required": [],
+        },
+    },
+    {
+        "name": "code_graph_build",
+        "description": (
+            "Build or rebuild the code structure graph for a directory. Parses source files "
+            "using Tree-sitter AST parsing to extract functions, classes, imports, and call "
+            "relationships. Supports Python, JavaScript, TypeScript, Go, Rust, Java, and more. "
+            "Use incremental=true (default) to only re-parse changed files."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Directory to parse (absolute path)"},
+                "incremental": {"type": "boolean", "description": "Only re-parse changed files (default: true)"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "code_graph_query",
+        "description": (
+            "Query the code structure graph for structural relationships. Find callers/callees "
+            "of a function, imports, inheritance, test coverage, and more. Build the graph first "
+            "with code_graph_build."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query_type": {
+                    "type": "string",
+                    "enum": ["callers_of", "callees_of", "imports_of", "importers_of",
+                             "tests_for", "inheritors_of", "children_of", "file_summary"],
+                    "description": "Type of structural query",
+                },
+                "target": {"type": "string", "description": "Qualified name or function/class name to query"},
+                "limit": {"type": "integer", "description": "Max results (default: 20)"},
+            },
+            "required": ["query_type", "target"],
+        },
+    },
+    {
+        "name": "code_graph_impact",
+        "description": (
+            "Blast-radius analysis: given a list of changed files, find all functions, classes, "
+            "and files that could be affected. Uses BFS traversal of the code graph. "
+            "Build the graph first with code_graph_build."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of changed file paths",
+                },
+                "depth": {"type": "integer", "description": "Max traversal depth (default: 2)"},
+            },
+            "required": ["files"],
         },
     },
 ]
@@ -728,6 +857,444 @@ def tool_edit_file(args: dict) -> str:
         return _ok({"path": path, "replacements": count if replace_all else 1, "status": "edited"})
     except Exception as e:
         return _err(f"edit_file: {e}")
+
+
+def tool_read_document(args: dict) -> str:
+    """Format-aware document reader."""
+    path = args.get("path", "")
+    try:
+        path = os.path.expanduser(path)
+        if not os.path.isabs(path):
+            path = os.path.abspath(path)
+        if not os.path.exists(path):
+            return _err(f"File not found: {path}")
+        ext = os.path.splitext(path)[1].lower()
+
+        if ext == ".pdf":
+            try:
+                import fitz
+            except ImportError:
+                return _err("Install pymupdf: pip3 install pymupdf")
+            doc = fitz.open(path)
+            meta = {
+                "title": doc.metadata.get("title", ""),
+                "author": doc.metadata.get("author", ""),
+                "page_count": doc.page_count,
+            }
+            pages_param = args.get("pages", "")
+            page_indices = None
+            if pages_param:
+                page_indices = set()
+                for part in pages_param.split(","):
+                    part = part.strip()
+                    if "-" in part:
+                        a, b = part.split("-", 1)
+                        for i in range(int(a), int(b) + 1):
+                            page_indices.add(i)
+                    else:
+                        page_indices.add(int(part))
+            page_texts = []
+            for i, page in enumerate(doc, 1):
+                if page_indices and i not in page_indices:
+                    continue
+                page_texts.append(f"--- Page {i} ---\n{page.get_text()}")
+            doc.close()
+            content = "\n\n".join(page_texts)
+            meta_str = "\n".join(f"**{k}:** {v}" for k, v in meta.items() if v)
+            return _ok({"path": path, "format": "pdf", "metadata": meta_str, "content": content})
+
+        elif ext == ".docx":
+            try:
+                import docx
+            except ImportError:
+                return _err("Install python-docx: pip3 install python-docx")
+            doc = docx.Document(path)
+            paragraphs = []
+            for para in doc.paragraphs:
+                text = para.text.strip()
+                if text:
+                    if para.style and para.style.name and para.style.name.startswith("Heading"):
+                        level = 1
+                        try:
+                            level = int(para.style.name.replace("Heading", "").strip()) or 1
+                        except ValueError:
+                            pass
+                        text = "#" * level + " " + text
+                    paragraphs.append(text)
+            # Extract tables
+            for table in doc.tables:
+                rows = []
+                for row in table.rows:
+                    cells = [cell.text.strip() for cell in row.cells]
+                    rows.append(cells)
+                if rows:
+                    max_cols = max(len(r) for r in rows)
+                    for r in rows:
+                        while len(r) < max_cols:
+                            r.append("")
+                    header = "| " + " | ".join(rows[0]) + " |"
+                    sep = "| " + " | ".join("---" for _ in range(max_cols)) + " |"
+                    table_lines = [header, sep]
+                    for r in rows[1:]:
+                        table_lines.append("| " + " | ".join(r) + " |")
+                    paragraphs.append("\n".join(table_lines))
+            content = "\n\n".join(paragraphs)
+            return _ok({"path": path, "format": "docx", "content": content})
+
+        elif ext in (".xlsx", ".xls"):
+            sheet = args.get("sheet")
+            content = DocumentParser.parse_xlsx(path, sheet=sheet)
+            return _ok({"path": path, "format": "xlsx", "content": content})
+
+        elif ext == ".pptx":
+            slides = args.get("slides")
+            content = DocumentParser.parse_pptx(path, slides=slides)
+            return _ok({"path": path, "format": "pptx", "content": content})
+
+        elif ext in (".csv", ".tsv"):
+            content = DocumentParser.parse_csv(path)
+            return _ok({"path": path, "format": "csv", "content": content})
+
+        elif ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"):
+            meta_text = DocumentParser.parse_image(path)
+            vision_note = "\n\n*(For AI-powered image description, include this image directly in your chat message)*"
+            return _ok({"path": path, "format": "image", "content": meta_text + vision_note})
+
+        elif ext == ".svg":
+            content = DocumentParser.parse_svg(path)
+            return _ok({"path": path, "format": "svg", "content": content})
+
+        else:
+            # Fallback to plain text read (same as read_file)
+            with open(path, "r", errors="replace") as f:
+                lines = f.readlines()
+            total = len(lines)
+            limit = 500
+            selected = lines[:limit]
+            numbered = []
+            for i, line in enumerate(selected, start=1):
+                numbered.append(f"{i:>6}\t{line.rstrip()}")
+            content = "\n".join(numbered)
+            return _ok({"path": path, "format": "text", "total_lines": total, "content": content})
+    except ImportError as e:
+        return _err(str(e))
+    except Exception as e:
+        return _err(f"read_document: {e}")
+
+
+def tool_write_document(args: dict) -> str:
+    """Create documents from markdown content."""
+    path = args.get("path", "")
+    content = args.get("content", "")
+    try:
+        path = os.path.expanduser(path)
+        if not os.path.isabs(path):
+            path = os.path.abspath(path)
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        ext = os.path.splitext(path)[1].lower()
+
+        if ext == ".docx":
+            try:
+                import docx
+            except ImportError:
+                return _err("Install python-docx: pip3 install python-docx")
+            doc = docx.Document()
+            lines = content.split("\n")
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                # Headings
+                heading_match = re.match(r'^(#{1,6})\s+(.*)', line)
+                if heading_match:
+                    level = len(heading_match.group(1))
+                    doc.add_heading(heading_match.group(2), level=level)
+                    i += 1
+                    continue
+                # Table detection
+                if "|" in line and i + 1 < len(lines) and re.match(r'^\|[\s\-:|]+\|', lines[i + 1]):
+                    table_rows = []
+                    while i < len(lines) and "|" in lines[i]:
+                        cells = [c.strip() for c in lines[i].strip().strip("|").split("|")]
+                        if not re.match(r'^[\s\-:|]+$', lines[i].strip().strip("|")):
+                            table_rows.append(cells)
+                        i += 1
+                    if table_rows:
+                        max_cols = max(len(r) for r in table_rows)
+                        table = doc.add_table(rows=len(table_rows), cols=max_cols)
+                        table.style = "Table Grid"
+                        for ri, row_data in enumerate(table_rows):
+                            for ci, cell_val in enumerate(row_data):
+                                if ci < max_cols:
+                                    table.rows[ri].cells[ci].text = cell_val
+                    continue
+                # Regular paragraph with inline formatting
+                stripped = line.strip()
+                if stripped:
+                    para = doc.add_paragraph()
+                    parts = re.split(r'(\*\*\*.*?\*\*\*|\*\*.*?\*\*|\*.*?\*)', stripped)
+                    for part in parts:
+                        if part.startswith("***") and part.endswith("***"):
+                            run = para.add_run(part[3:-3])
+                            run.bold = True
+                            run.italic = True
+                        elif part.startswith("**") and part.endswith("**"):
+                            run = para.add_run(part[2:-2])
+                            run.bold = True
+                        elif part.startswith("*") and part.endswith("*") and len(part) > 2:
+                            run = para.add_run(part[1:-1])
+                            run.italic = True
+                        else:
+                            para.add_run(part)
+                i += 1
+            doc.save(path)
+
+        elif ext == ".xlsx":
+            try:
+                import openpyxl
+            except ImportError:
+                return _err("Install openpyxl: pip3 install openpyxl")
+            wb = openpyxl.Workbook()
+            wb.remove(wb.active)
+            sections = re.split(r'^##\s+(.+)$', content, flags=re.MULTILINE)
+            if len(sections) < 3:
+                ws = wb.create_sheet("Sheet1")
+                _write_md_table_to_sheet(ws, content)
+            else:
+                for si in range(1, len(sections), 2):
+                    sheet_name = sections[si].strip()
+                    if sheet_name.lower().startswith("sheet:"):
+                        sheet_name = sheet_name[6:].strip()
+                    sheet_content = sections[si + 1] if si + 1 < len(sections) else ""
+                    ws = wb.create_sheet(sheet_name[:31])
+                    _write_md_table_to_sheet(ws, sheet_content)
+            if not wb.sheetnames:
+                wb.create_sheet("Sheet1")
+            wb.save(path)
+
+        elif ext == ".pptx":
+            try:
+                from pptx import Presentation
+            except ImportError:
+                return _err("Install python-pptx: pip3 install python-pptx")
+            prs = Presentation()
+            slides_content = re.split(r'^#\s+(.+)$', content, flags=re.MULTILINE)
+            if len(slides_content) < 3:
+                slide_layout = prs.slide_layouts[1]
+                slide = prs.slides.add_slide(slide_layout)
+                slide.shapes.title.text = "Slide 1"
+                slide.placeholders[1].text = content.strip()
+            else:
+                for si in range(1, len(slides_content), 2):
+                    title = slides_content[si].strip()
+                    body = slides_content[si + 1].strip() if si + 1 < len(slides_content) else ""
+                    slide_layout = prs.slide_layouts[1]
+                    slide = prs.slides.add_slide(slide_layout)
+                    slide.shapes.title.text = title
+                    tf = slide.placeholders[1].text_frame
+                    tf.clear()
+                    body_lines = [l for l in body.split("\n") if l.strip()]
+                    for li, bline in enumerate(body_lines):
+                        bline = bline.strip()
+                        bline = re.sub(r'^[-*]\s+', '', bline)
+                        if li == 0:
+                            tf.text = bline
+                        else:
+                            p = tf.add_paragraph()
+                            p.text = bline
+            prs.save(path)
+
+        elif ext == ".pdf":
+            try:
+                from reportlab.lib.pagesizes import letter
+                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+                from reportlab.lib.styles import getSampleStyleSheet
+            except ImportError:
+                return _err("Install reportlab: pip3 install reportlab")
+            doc_pdf = SimpleDocTemplate(path, pagesize=letter)
+            styles = getSampleStyleSheet()
+            story = []
+            for line in content.split("\n"):
+                line = line.strip()
+                if not line:
+                    story.append(Spacer(1, 12))
+                    continue
+                heading_match = re.match(r'^(#{1,6})\s+(.*)', line)
+                if heading_match:
+                    level = len(heading_match.group(1))
+                    style_name = f"Heading{min(level, 6)}"
+                    if style_name not in styles:
+                        style_name = "Heading1"
+                    story.append(Paragraph(heading_match.group(2), styles[style_name]))
+                else:
+                    line = re.sub(r'\*\*\*(.+?)\*\*\*', r'<b><i>\1</i></b>', line)
+                    line = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', line)
+                    line = re.sub(r'\*(.+?)\*', r'<i>\1</i>', line)
+                    story.append(Paragraph(line, styles["Normal"]))
+            doc_pdf.build(story)
+
+        else:
+            return _err(f"write_document: unsupported format '{ext}'. Supported: .docx, .xlsx, .pptx, .pdf")
+
+        size = os.path.getsize(path)
+        agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+        _after_file_write(path, "created", agent.agent_id if agent else "main")
+        return _ok({"path": path, "size": size, "format": ext.lstrip("."), "status": "written"})
+    except ImportError as e:
+        return _err(str(e))
+    except Exception as e:
+        return _err(f"write_document: {e}")
+
+
+def _write_md_table_to_sheet(ws, md_text: str) -> None:
+    """Helper: parse markdown table text and write rows to an openpyxl worksheet."""
+    row_idx = 1
+    for line in md_text.split("\n"):
+        line = line.strip()
+        if not line or not line.startswith("|"):
+            continue
+        if re.match(r'^\|[\s\-:|]+\|$', line):
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        for ci, val in enumerate(cells, 1):
+            try:
+                ws.cell(row=row_idx, column=ci, value=float(val) if "." in val else int(val))
+            except (ValueError, TypeError):
+                ws.cell(row=row_idx, column=ci, value=val)
+        row_idx += 1
+
+
+def tool_edit_document(args: dict) -> str:
+    """Targeted edits to existing documents."""
+    path = args.get("path", "")
+    action = args.get("action", "")
+    params = args.get("params", {})
+    try:
+        path = os.path.expanduser(path)
+        if not os.path.isabs(path):
+            path = os.path.abspath(path)
+        if not os.path.exists(path):
+            return _err(f"File not found: {path}")
+        ext = os.path.splitext(path)[1].lower()
+
+        if ext == ".docx":
+            if action != "replace_text":
+                return _err(f"edit_document: unsupported action '{action}' for DOCX. Use: replace_text")
+            try:
+                import docx
+            except ImportError:
+                return _err("Install python-docx: pip3 install python-docx")
+            old_text = params.get("old_text", "")
+            new_text = params.get("new_text", "")
+            if not old_text:
+                return _err("edit_document: 'old_text' required in params")
+            doc = docx.Document(path)
+            count = 0
+            for para in doc.paragraphs:
+                if old_text in para.text:
+                    full_text = para.text
+                    new_full = full_text.replace(old_text, new_text)
+                    for run in para.runs:
+                        run.text = ""
+                    if para.runs:
+                        para.runs[0].text = new_full
+                    else:
+                        para.add_run(new_full)
+                    count += 1
+            doc.save(path)
+            agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+            _after_file_write(path, "modified", agent.agent_id if agent else "main")
+            return _ok({"path": path, "action": action, "replacements": count, "status": "edited"})
+
+        elif ext in (".xlsx", ".xls"):
+            try:
+                import openpyxl
+            except ImportError:
+                return _err("Install openpyxl: pip3 install openpyxl")
+            wb = openpyxl.load_workbook(path)
+
+            if action == "update_cell":
+                sheet_name = params.get("sheet", wb.sheetnames[0])
+                cell_ref = params.get("cell", "")
+                value = params.get("value", "")
+                if not cell_ref:
+                    return _err("edit_document: 'cell' required (e.g. 'A1')")
+                if sheet_name not in wb.sheetnames:
+                    return _err(f"Sheet '{sheet_name}' not found. Available: {wb.sheetnames}")
+                ws = wb[sheet_name]
+                try:
+                    ws[cell_ref] = float(value) if isinstance(value, str) and value.replace(".", "", 1).replace("-", "", 1).isdigit() else value
+                except Exception:
+                    ws[cell_ref] = value
+                wb.save(path)
+                agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+                _after_file_write(path, "modified", agent.agent_id if agent else "main")
+                return _ok({"path": path, "action": action, "cell": cell_ref, "sheet": sheet_name, "status": "edited"})
+
+            elif action == "add_row":
+                sheet_name = params.get("sheet", wb.sheetnames[0])
+                values = params.get("values", [])
+                if not values:
+                    return _err("edit_document: 'values' array required")
+                if sheet_name not in wb.sheetnames:
+                    return _err(f"Sheet '{sheet_name}' not found. Available: {wb.sheetnames}")
+                ws = wb[sheet_name]
+                ws.append(values)
+                wb.save(path)
+                agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+                _after_file_write(path, "modified", agent.agent_id if agent else "main")
+                return _ok({"path": path, "action": action, "sheet": sheet_name, "row_added": len(values), "status": "edited"})
+
+            else:
+                return _err(f"edit_document: unsupported action '{action}' for XLSX. Use: update_cell, add_row")
+
+        elif ext == ".pptx":
+            try:
+                from pptx import Presentation
+            except ImportError:
+                return _err("Install python-pptx: pip3 install python-pptx")
+            prs = Presentation(path)
+
+            if action == "update_slide":
+                slide_index = int(params.get("slide_index", 1))
+                if slide_index < 1 or slide_index > len(prs.slides):
+                    return _err(f"Slide index {slide_index} out of range (1-{len(prs.slides)})")
+                slide = prs.slides[slide_index - 1]
+                title = params.get("title")
+                body = params.get("body")
+                if title and slide.shapes.title:
+                    slide.shapes.title.text = title
+                if body:
+                    for shape in slide.shapes:
+                        if shape.has_text_frame and shape != slide.shapes.title:
+                            shape.text_frame.text = body
+                            break
+                prs.save(path)
+                agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+                _after_file_write(path, "modified", agent.agent_id if agent else "main")
+                return _ok({"path": path, "action": action, "slide_index": slide_index, "status": "edited"})
+
+            elif action == "add_slide":
+                title = params.get("title", "New Slide")
+                body = params.get("body", "")
+                slide_layout = prs.slide_layouts[1]
+                slide = prs.slides.add_slide(slide_layout)
+                slide.shapes.title.text = title
+                if body:
+                    slide.placeholders[1].text = body
+                prs.save(path)
+                agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+                _after_file_write(path, "modified", agent.agent_id if agent else "main")
+                return _ok({"path": path, "action": action, "slide_count": len(prs.slides), "status": "edited"})
+
+            else:
+                return _err(f"edit_document: unsupported action '{action}' for PPTX. Use: update_slide, add_slide")
+
+        else:
+            return _err(f"edit_document: unsupported format '{ext}'. Supported: .docx, .xlsx, .xls, .pptx")
+    except ImportError as e:
+        return _err(str(e))
+    except Exception as e:
+        return _err(f"edit_document: {e}")
 
 
 def tool_list_directory(args: dict) -> str:
@@ -3199,6 +3766,201 @@ class DocumentParser:
         return cleaned.strip()
 
     @staticmethod
+    def parse_xlsx(path: str, sheet: str | None = None) -> str:
+        """Parse XLSX/XLS to markdown tables using openpyxl."""
+        try:
+            import openpyxl
+        except ImportError:
+            raise ImportError("Install openpyxl for XLSX support: pip3 install openpyxl")
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=False)
+        parts = []
+        sheet_names = wb.sheetnames
+        parts.append(f"**Sheets:** {', '.join(sheet_names)}\n")
+        target_sheets = [sheet] if sheet and sheet in sheet_names else sheet_names
+        for sname in target_sheets:
+            ws = wb[sname]
+            parts.append(f"## Sheet: {sname}\n")
+            rows = []
+            for row in ws.iter_rows(values_only=False):
+                cells = []
+                for cell in row:
+                    val = cell.value
+                    if val is None:
+                        cells.append("")
+                    elif isinstance(val, str) and val.startswith("="):
+                        # Show formula
+                        cells.append(f"{val}")
+                    else:
+                        cells.append(str(val))
+                rows.append(cells)
+            if not rows:
+                parts.append("*(empty sheet)*\n")
+                continue
+            # Build markdown table
+            max_cols = max(len(r) for r in rows) if rows else 0
+            # Pad rows to same length
+            for r in rows:
+                while len(r) < max_cols:
+                    r.append("")
+            # Header row
+            header = "| " + " | ".join(rows[0]) + " |"
+            sep = "| " + " | ".join("---" for _ in range(max_cols)) + " |"
+            table_lines = [header, sep]
+            for r in rows[1:]:
+                table_lines.append("| " + " | ".join(r) + " |")
+            parts.append("\n".join(table_lines) + "\n")
+        wb.close()
+        return "\n".join(parts)
+
+    @staticmethod
+    def parse_pptx(path: str, slides: str | None = None) -> str:
+        """Parse PPTX to text using python-pptx."""
+        try:
+            from pptx import Presentation
+        except ImportError:
+            raise ImportError("Install python-pptx for PPTX support: pip3 install python-pptx")
+        prs = Presentation(path)
+        total_slides = len(prs.slides)
+        parts = [f"**Slides:** {total_slides}\n"]
+        # Parse slide range
+        slide_indices = None
+        if slides:
+            slide_indices = set()
+            for part in slides.split(","):
+                part = part.strip()
+                if "-" in part:
+                    a, b = part.split("-", 1)
+                    for i in range(int(a), int(b) + 1):
+                        slide_indices.add(i)
+                else:
+                    slide_indices.add(int(part))
+        for idx, slide in enumerate(prs.slides, 1):
+            if slide_indices and idx not in slide_indices:
+                continue
+            parts.append(f"## Slide {idx}")
+            # Title
+            if slide.shapes.title:
+                parts.append(f"**Title:** {slide.shapes.title.text}")
+            # Body text
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    for para in shape.text_frame.paragraphs:
+                        text = para.text.strip()
+                        if text:
+                            parts.append(text)
+                if shape.has_table:
+                    table = shape.table
+                    rows = []
+                    for row in table.rows:
+                        cells = [cell.text.strip() for cell in row.cells]
+                        rows.append(cells)
+                    if rows:
+                        max_cols = max(len(r) for r in rows)
+                        for r in rows:
+                            while len(r) < max_cols:
+                                r.append("")
+                        header = "| " + " | ".join(rows[0]) + " |"
+                        sep = "| " + " | ".join("---" for _ in range(max_cols)) + " |"
+                        table_lines = [header, sep]
+                        for r in rows[1:]:
+                            table_lines.append("| " + " | ".join(r) + " |")
+                        parts.append("\n".join(table_lines))
+            # Speaker notes
+            if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
+                notes = slide.notes_slide.notes_text_frame.text.strip()
+                if notes:
+                    parts.append(f"*Speaker Notes:* {notes}")
+            parts.append("")
+        return "\n".join(parts)
+
+    @staticmethod
+    def parse_csv(path: str) -> str:
+        """Parse CSV/TSV to markdown table."""
+        import csv
+        delimiter = "\t" if path.lower().endswith(".tsv") else ","
+        with open(path, "r", newline="", errors="replace") as f:
+            reader = csv.reader(f, delimiter=delimiter)
+            rows = [row for row in reader]
+        if not rows:
+            return "*(empty file)*"
+        max_cols = max(len(r) for r in rows)
+        for r in rows:
+            while len(r) < max_cols:
+                r.append("")
+        header = "| " + " | ".join(rows[0]) + " |"
+        sep = "| " + " | ".join("---" for _ in range(max_cols)) + " |"
+        lines = [header, sep]
+        for r in rows[1:]:
+            lines.append("| " + " | ".join(r) + " |")
+        return "\n".join(lines)
+
+    @staticmethod
+    def parse_image(path: str) -> str:
+        """Parse image metadata using Pillow. Returns metadata text."""
+        try:
+            from PIL import Image
+        except ImportError:
+            raise ImportError("Install Pillow for image support: pip3 install Pillow")
+        img = Image.open(path)
+        width, height = img.size
+        fmt = img.format or os.path.splitext(path)[1].lstrip(".")
+        mode = img.mode
+        info_parts = [
+            f"**Image:** {os.path.basename(path)}",
+            f"**Dimensions:** {width} x {height}",
+            f"**Format:** {fmt}",
+            f"**Mode:** {mode}",
+        ]
+        # Extract EXIF if available
+        try:
+            exif = img.getexif()
+            if exif:
+                for tag_id, value in list(exif.items())[:10]:
+                    try:
+                        from PIL.ExifTags import TAGS
+                        tag_name = TAGS.get(tag_id, str(tag_id))
+                        info_parts.append(f"**{tag_name}:** {value}")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        img.close()
+        return "\n".join(info_parts)
+
+    @staticmethod
+    def parse_svg(path: str) -> str:
+        """Parse SVG to extract text elements and metadata."""
+        from xml.etree import ElementTree
+        tree = ElementTree.parse(path)
+        root = tree.getroot()
+        ns = {"svg": "http://www.w3.org/2000/svg"}
+        parts = [f"**SVG:** {os.path.basename(path)}"]
+        # Get dimensions
+        w = root.get("width", "")
+        h = root.get("height", "")
+        vb = root.get("viewBox", "")
+        if w and h:
+            parts.append(f"**Dimensions:** {w} x {h}")
+        if vb:
+            parts.append(f"**ViewBox:** {vb}")
+        # Extract title and desc
+        for tag in ("title", "desc"):
+            el = root.find(f"svg:{tag}", ns) or root.find(tag)
+            if el is not None and el.text:
+                parts.append(f"**{tag.capitalize()}:** {el.text.strip()}")
+        # Extract all text elements
+        texts = []
+        for text_el in list(root.iter(f"{{{ns['svg']}}}text")) + list(root.iter("text")):
+            t = "".join(text_el.itertext()).strip()
+            if t:
+                texts.append(t)
+        if texts:
+            parts.append(f"\n**Text content:**")
+            for t in texts:
+                parts.append(f"- {t}")
+        return "\n".join(parts)
+
+    @staticmethod
     def parse_url(url: str) -> str:
         """Fetch URL and parse HTML to text."""
         req_headers = {
@@ -3229,6 +3991,18 @@ class DocumentParser:
             ".md": ("md", DocumentParser.parse_md),
             ".html": ("html", lambda p: DocumentParser.parse_html(open(p, "r", errors="replace").read())),
             ".htm": ("html", lambda p: DocumentParser.parse_html(open(p, "r", errors="replace").read())),
+            ".xlsx": ("xlsx", DocumentParser.parse_xlsx),
+            ".xls": ("xlsx", DocumentParser.parse_xlsx),
+            ".pptx": ("pptx", DocumentParser.parse_pptx),
+            ".csv": ("csv", DocumentParser.parse_csv),
+            ".tsv": ("csv", DocumentParser.parse_csv),
+            ".png": ("image", DocumentParser.parse_image),
+            ".jpg": ("image", DocumentParser.parse_image),
+            ".jpeg": ("image", DocumentParser.parse_image),
+            ".gif": ("image", DocumentParser.parse_image),
+            ".webp": ("image", DocumentParser.parse_image),
+            ".bmp": ("image", DocumentParser.parse_image),
+            ".svg": ("svg", DocumentParser.parse_svg),
         }
         if ext not in parsers:
             raise ValueError(f"Unsupported format: {ext}. Supported: {', '.join(parsers.keys())}")
@@ -7006,6 +7780,925 @@ def tool_mcp_servers(args: dict) -> str:
     return _ok({"servers": servers, "count": len(servers)})
 
 
+# --- Code Structure Graph ---
+
+CODE_GRAPH_DB = os.path.join(AGENTS_DIR, "main", "code-graph.db")
+
+_code_graph_db_lock = threading.Lock()
+_code_graph_db_pool: dict[int, sqlite3.Connection] = {}
+
+_EXT_TO_LANG = {
+    ".py": "python", ".js": "javascript", ".ts": "typescript", ".tsx": "tsx",
+    ".go": "go", ".rs": "rust", ".java": "java", ".c": "c", ".cpp": "cpp",
+    ".h": "c", ".hpp": "cpp", ".cs": "c_sharp", ".rb": "ruby",
+    ".kt": "kotlin", ".swift": "swift", ".php": "php",
+}
+
+_DEFAULT_EXCLUDE_DIRS = {"node_modules", ".git", "__pycache__", "venv", ".venv", "dist", "build", ".next", ".tox", "egg-info"}
+
+# AST node type mappings per language
+_CLASS_TYPES = {
+    "python": {"class_definition"},
+    "javascript": {"class_declaration"},
+    "typescript": {"class_declaration"},
+    "tsx": {"class_declaration"},
+    "go": {"type_declaration"},
+    "rust": {"struct_item", "enum_item", "impl_item"},
+    "java": {"class_declaration", "interface_declaration"},
+    "c": {"struct_specifier"},
+    "cpp": {"class_specifier", "struct_specifier"},
+    "c_sharp": {"class_declaration", "interface_declaration"},
+    "ruby": {"class", "module"},
+    "kotlin": {"class_declaration", "interface_declaration"},
+    "swift": {"class_declaration", "struct_declaration", "protocol_declaration"},
+    "php": {"class_declaration", "interface_declaration"},
+}
+
+_FUNCTION_TYPES = {
+    "python": {"function_definition"},
+    "javascript": {"function_declaration", "method_definition", "arrow_function"},
+    "typescript": {"function_declaration", "method_definition", "arrow_function"},
+    "tsx": {"function_declaration", "method_definition", "arrow_function"},
+    "go": {"function_declaration", "method_declaration"},
+    "rust": {"function_item"},
+    "java": {"method_declaration", "constructor_declaration"},
+    "c": {"function_definition"},
+    "cpp": {"function_definition"},
+    "c_sharp": {"method_declaration", "constructor_declaration"},
+    "ruby": {"method", "singleton_method"},
+    "kotlin": {"function_declaration"},
+    "swift": {"function_declaration"},
+    "php": {"function_definition", "method_declaration"},
+}
+
+_IMPORT_TYPES = {
+    "python": {"import_statement", "import_from_statement"},
+    "javascript": {"import_statement"},
+    "typescript": {"import_statement"},
+    "tsx": {"import_statement"},
+    "go": {"import_declaration"},
+    "rust": {"use_declaration"},
+    "java": {"import_declaration"},
+    "c": {"preproc_include"},
+    "cpp": {"preproc_include"},
+    "c_sharp": {"using_directive"},
+    "ruby": {"call"},  # require/require_relative
+    "kotlin": {"import_header"},
+    "swift": {"import_declaration"},
+    "php": {"namespace_use_declaration"},
+}
+
+_CALL_TYPES = {
+    "python": {"call"},
+    "javascript": {"call_expression"},
+    "typescript": {"call_expression"},
+    "tsx": {"call_expression"},
+    "go": {"call_expression"},
+    "rust": {"call_expression", "macro_invocation"},
+    "java": {"method_invocation"},
+    "c": {"call_expression"},
+    "cpp": {"call_expression"},
+    "c_sharp": {"invocation_expression"},
+    "ruby": {"call"},
+    "kotlin": {"call_expression"},
+    "swift": {"call_expression"},
+    "php": {"function_call_expression", "method_call_expression"},
+}
+
+
+def _code_graph_conn():
+    """Thread-local SQLite connection for code graph DB."""
+    tid = threading.current_thread().ident
+    with _code_graph_db_lock:
+        conn = _code_graph_db_pool.get(tid)
+        if conn is None:
+            os.makedirs(os.path.dirname(CODE_GRAPH_DB), exist_ok=True)
+            conn = sqlite3.connect(CODE_GRAPH_DB, timeout=10, check_same_thread=False)
+            conn.execute("PRAGMA busy_timeout = 5000")
+            conn.execute("PRAGMA journal_mode = WAL")
+            _code_graph_db_pool[tid] = conn
+    return conn
+
+
+def _code_graph_init_db():
+    """Initialize the code graph schema."""
+    conn = _code_graph_conn()
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS code_nodes (
+            qualified_name TEXT PRIMARY KEY,
+            file_path TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            name TEXT NOT NULL,
+            language TEXT,
+            line_start INTEGER,
+            line_end INTEGER,
+            parent_name TEXT,
+            params TEXT,
+            return_type TEXT,
+            modifiers TEXT,
+            file_hash TEXT,
+            line_count INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS code_edges (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL,
+            target TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            file_path TEXT
+        );
+        CREATE TABLE IF NOT EXISTS code_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_code_nodes_file ON code_nodes(file_path);
+        CREATE INDEX IF NOT EXISTS idx_code_nodes_kind ON code_nodes(kind);
+        CREATE INDEX IF NOT EXISTS idx_code_nodes_name ON code_nodes(name);
+        CREATE INDEX IF NOT EXISTS idx_code_edges_source ON code_edges(source);
+        CREATE INDEX IF NOT EXISTS idx_code_edges_target ON code_edges(target);
+        CREATE INDEX IF NOT EXISTS idx_code_edges_kind ON code_edges(kind);
+    """)
+    conn.commit()
+
+
+def _extract_node_name(node):
+    """Extract the name from a tree-sitter AST node."""
+    # Try field name "name" first
+    name_node = node.child_by_field_name("name")
+    if name_node:
+        return name_node.text.decode("utf-8", errors="replace")
+    # Fallback: look for first identifier child
+    for child in node.children:
+        if child.type == "identifier":
+            return child.text.decode("utf-8", errors="replace")
+        if child.type == "type_identifier":
+            return child.text.decode("utf-8", errors="replace")
+    return None
+
+
+def _extract_call_name(node):
+    """Extract the called function/method name from a call expression."""
+    fn = node.child_by_field_name("function")
+    if fn is None:
+        fn = node.child_by_field_name("method")
+    if fn is None:
+        # Fallback: first child
+        if node.children:
+            fn = node.children[0]
+    if fn is None:
+        return None
+    # Dotted: a.b.c -> take full text
+    text = fn.text.decode("utf-8", errors="replace")
+    # For method calls, extract just the method name
+    if "." in text:
+        return text.rsplit(".", 1)[-1]
+    return text
+
+
+def _extract_import_name(node, language):
+    """Extract imported module name from an import node."""
+    text = node.text.decode("utf-8", errors="replace")
+    if language == "python":
+        # import foo / from foo import bar
+        if text.startswith("from "):
+            parts = text.split()
+            if len(parts) >= 2:
+                return parts[1]
+        elif text.startswith("import "):
+            parts = text.split()
+            if len(parts) >= 2:
+                return parts[1].split(",")[0].strip()
+    elif language in ("javascript", "typescript", "tsx"):
+        # import ... from "module"
+        src = node.child_by_field_name("source")
+        if src:
+            return src.text.decode("utf-8", errors="replace").strip("'\"")
+    elif language == "go":
+        # Walk children for interpreted_string_literal
+        for child in node.children:
+            if child.type == "import_spec_list":
+                for spec in child.children:
+                    if spec.type == "import_spec":
+                        path_node = spec.child_by_field_name("path")
+                        if path_node:
+                            return path_node.text.decode("utf-8", errors="replace").strip('"')
+            elif child.type == "import_spec":
+                path_node = child.child_by_field_name("path")
+                if path_node:
+                    return path_node.text.decode("utf-8", errors="replace").strip('"')
+            elif child.type == "interpreted_string_literal":
+                return child.text.decode("utf-8", errors="replace").strip('"')
+    elif language == "rust":
+        # use foo::bar
+        if text.startswith("use "):
+            return text[4:].rstrip(";").strip()
+    elif language == "java":
+        # import foo.bar.Baz;
+        if text.startswith("import "):
+            return text[7:].rstrip(";").strip()
+    elif language in ("c", "cpp"):
+        # #include <foo> or #include "foo"
+        path_node = node.child_by_field_name("path")
+        if path_node:
+            return path_node.text.decode("utf-8", errors="replace").strip('<>"')
+    return text
+
+
+def _is_test_function(name, file_path):
+    """Detect if a function is a test by name or file location."""
+    if not name:
+        return False
+    lower = name.lower()
+    if lower.startswith("test_") or (lower.startswith("test") and len(name) > 4 and name[4].isupper()):
+        return True
+    basename = os.path.basename(file_path).lower()
+    if basename.startswith("test_") or basename.endswith("_test.py") or basename.endswith(".test.js") or \
+       basename.endswith(".test.ts") or basename.endswith(".test.tsx") or basename.endswith("_test.go") or \
+       basename.endswith(".spec.js") or basename.endswith(".spec.ts"):
+        return True
+    return False
+
+
+class CodeGraph:
+    """AST-based code structure graph using Tree-sitter and SQLite."""
+
+    def __init__(self):
+        _code_graph_init_db()
+        self._ts_available = None
+
+    def _check_ts(self):
+        """Lazy check for tree-sitter availability."""
+        if self._ts_available is not None:
+            return self._ts_available
+        try:
+            from tree_sitter_language_pack import get_parser  # noqa: F401
+            self._ts_available = True
+        except ImportError:
+            self._ts_available = False
+        return self._ts_available
+
+    def parse_file(self, file_path: str) -> tuple[list[dict], list[dict]]:
+        """Parse a single file with tree-sitter. Returns (nodes, edges)."""
+        if not self._check_ts():
+            return [], []
+
+        ext = os.path.splitext(file_path)[1].lower()
+        language = _EXT_TO_LANG.get(ext)
+        if not language:
+            return [], []
+
+        try:
+            from tree_sitter_language_pack import get_parser
+        except ImportError:
+            return [], []
+
+        try:
+            parser = get_parser(language)
+        except Exception:
+            return [], []
+
+        try:
+            with open(file_path, "rb") as f:
+                source = f.read()
+        except (OSError, IOError):
+            return [], []
+
+        try:
+            tree = parser.parse(source)
+        except Exception:
+            return [], []
+
+        nodes = []
+        edges = []
+        line_count = source.count(b"\n") + 1
+
+        # Compute file hash
+        file_hash = hashlib.sha256(source).hexdigest()
+
+        # File node
+        file_qn = file_path
+        nodes.append({
+            "qualified_name": file_qn,
+            "file_path": file_path,
+            "kind": "file",
+            "name": os.path.basename(file_path),
+            "language": language,
+            "line_start": 1,
+            "line_end": line_count,
+            "parent_name": None,
+            "params": None,
+            "return_type": None,
+            "modifiers": None,
+            "file_hash": file_hash,
+            "line_count": line_count,
+        })
+
+        class_types = _CLASS_TYPES.get(language, set())
+        func_types = _FUNCTION_TYPES.get(language, set())
+        import_types = _IMPORT_TYPES.get(language, set())
+        call_types = _CALL_TYPES.get(language, set())
+
+        # Walk AST
+        def walk(node, parent_class=None):
+            ntype = node.type
+
+            if ntype in class_types:
+                name = _extract_node_name(node)
+                if name:
+                    qn = f"{file_path}::{name}"
+                    nodes.append({
+                        "qualified_name": qn,
+                        "file_path": file_path,
+                        "kind": "class",
+                        "name": name,
+                        "language": language,
+                        "line_start": node.start_point[0] + 1,
+                        "line_end": node.end_point[0] + 1,
+                        "parent_name": f"{file_path}::{parent_class}" if parent_class else file_qn,
+                        "params": None,
+                        "return_type": None,
+                        "modifiers": None,
+                        "file_hash": None,
+                        "line_count": node.end_point[0] - node.start_point[0] + 1,
+                    })
+                    edges.append({
+                        "source": file_qn,
+                        "target": qn,
+                        "kind": "CONTAINS",
+                        "file_path": file_path,
+                    })
+                    # Check for inheritance
+                    superclass = node.child_by_field_name("superclass")
+                    if superclass is None:
+                        superclass = node.child_by_field_name("argument_list")
+                    if superclass is None:
+                        superclass = node.child_by_field_name("superclasses")
+                    if superclass:
+                        sc_text = superclass.text.decode("utf-8", errors="replace").strip("()")
+                        if sc_text and sc_text not in ("object", "Object"):
+                            for sc in sc_text.split(","):
+                                sc = sc.strip()
+                                if sc:
+                                    edges.append({
+                                        "source": qn,
+                                        "target": sc,
+                                        "kind": "INHERITS",
+                                        "file_path": file_path,
+                                    })
+                    # Recurse with this class as parent
+                    for child in node.children:
+                        walk(child, parent_class=name)
+                    return
+
+            elif ntype in func_types:
+                name = _extract_node_name(node)
+                if name:
+                    if parent_class:
+                        qn = f"{file_path}::{parent_class}.{name}"
+                    else:
+                        qn = f"{file_path}::{name}"
+
+                    is_test = _is_test_function(name, file_path)
+                    kind = "test" if is_test else "function"
+
+                    # Extract params
+                    params_node = node.child_by_field_name("parameters")
+                    params_text = None
+                    if params_node:
+                        params_text = params_node.text.decode("utf-8", errors="replace")
+
+                    # Extract return type
+                    ret_node = node.child_by_field_name("return_type")
+                    ret_text = None
+                    if ret_node:
+                        ret_text = ret_node.text.decode("utf-8", errors="replace")
+
+                    nodes.append({
+                        "qualified_name": qn,
+                        "file_path": file_path,
+                        "kind": kind,
+                        "name": name,
+                        "language": language,
+                        "line_start": node.start_point[0] + 1,
+                        "line_end": node.end_point[0] + 1,
+                        "parent_name": f"{file_path}::{parent_class}" if parent_class else file_qn,
+                        "params": params_text,
+                        "return_type": ret_text,
+                        "modifiers": None,
+                        "file_hash": None,
+                        "line_count": node.end_point[0] - node.start_point[0] + 1,
+                    })
+                    container = f"{file_path}::{parent_class}" if parent_class else file_qn
+                    edges.append({
+                        "source": container,
+                        "target": qn,
+                        "kind": "CONTAINS",
+                        "file_path": file_path,
+                    })
+
+                    # If it's a test, try to link TESTED_BY
+                    if is_test:
+                        tested_name = name
+                        if tested_name.startswith("test_"):
+                            tested_name = tested_name[5:]
+                        elif tested_name.startswith("Test"):
+                            tested_name = tested_name[4:]
+                            if tested_name:
+                                tested_name = tested_name[0].lower() + tested_name[1:]
+                        if tested_name and tested_name != name:
+                            edges.append({
+                                "source": tested_name,
+                                "target": qn,
+                                "kind": "TESTED_BY",
+                                "file_path": file_path,
+                            })
+
+            elif ntype in import_types:
+                import_name = _extract_import_name(node, language)
+                if import_name:
+                    edges.append({
+                        "source": file_qn,
+                        "target": import_name,
+                        "kind": "IMPORTS_FROM",
+                        "file_path": file_path,
+                    })
+
+            elif ntype in call_types:
+                call_name = _extract_call_name(node)
+                # Find enclosing function
+                enclosing = None
+                p = node.parent
+                while p:
+                    if p.type in func_types:
+                        enc_name = _extract_node_name(p)
+                        if enc_name:
+                            pp = p.parent
+                            enc_class = None
+                            while pp:
+                                if pp.type in class_types:
+                                    enc_class = _extract_node_name(pp)
+                                    break
+                                pp = pp.parent
+                            if enc_class:
+                                enclosing = f"{file_path}::{enc_class}.{enc_name}"
+                            else:
+                                enclosing = f"{file_path}::{enc_name}"
+                        break
+                    p = p.parent
+                if call_name and enclosing:
+                    edges.append({
+                        "source": enclosing,
+                        "target": call_name,
+                        "kind": "CALLS",
+                        "file_path": file_path,
+                    })
+
+            # Recurse into children
+            for child in node.children:
+                walk(child, parent_class=parent_class)
+
+        walk(tree.root_node)
+        return nodes, edges
+
+    def build(self, root_dir: str, incremental: bool = True, exclude_dirs: set | None = None) -> dict:
+        """Parse all source files in directory and build the graph."""
+        if not self._check_ts():
+            return {"error": "tree-sitter-language-pack not installed. Run: pip install tree-sitter-language-pack"}
+
+        root_dir = os.path.abspath(root_dir)
+        if not os.path.isdir(root_dir):
+            return {"error": f"Not a directory: {root_dir}"}
+
+        exclude = exclude_dirs or _DEFAULT_EXCLUDE_DIRS
+        conn = _code_graph_conn()
+
+        # Get existing hashes for incremental mode
+        existing_hashes = {}
+        if incremental:
+            try:
+                rows = conn.execute(
+                    "SELECT file_path, file_hash FROM code_nodes WHERE kind = 'file'"
+                ).fetchall()
+                existing_hashes = {r[0]: r[1] for r in rows}
+            except Exception:
+                pass
+
+        stats = {"files_parsed": 0, "files_skipped": 0, "nodes": 0, "edges": 0, "languages": set()}
+        all_nodes = []
+        all_edges = []
+
+        for dirpath, dirnames, filenames in os.walk(root_dir):
+            # Skip excluded directories
+            dirnames[:] = [d for d in dirnames if d not in exclude and not d.startswith(".")]
+
+            for fname in filenames:
+                ext = os.path.splitext(fname)[1].lower()
+                if ext not in _EXT_TO_LANG:
+                    continue
+
+                fpath = os.path.join(dirpath, fname)
+
+                # Skip large files (>500KB)
+                try:
+                    if os.path.getsize(fpath) > 500_000:
+                        stats["files_skipped"] += 1
+                        continue
+                except OSError:
+                    continue
+
+                # Check hash for incremental
+                if incremental and fpath in existing_hashes:
+                    try:
+                        with open(fpath, "rb") as f:
+                            current_hash = hashlib.sha256(f.read()).hexdigest()
+                        if current_hash == existing_hashes[fpath]:
+                            stats["files_skipped"] += 1
+                            continue
+                    except OSError:
+                        continue
+
+                nodes, edges = self.parse_file(fpath)
+                if nodes:
+                    all_nodes.extend(nodes)
+                    all_edges.extend(edges)
+                    stats["files_parsed"] += 1
+                    stats["languages"].add(_EXT_TO_LANG[ext])
+
+        # Bulk insert into SQLite
+        if all_nodes or not incremental:
+            try:
+                if not incremental:
+                    conn.execute("DELETE FROM code_nodes")
+                    conn.execute("DELETE FROM code_edges")
+                else:
+                    parsed_files = {n["file_path"] for n in all_nodes if n["kind"] == "file"}
+                    for fp in parsed_files:
+                        conn.execute("DELETE FROM code_nodes WHERE file_path = ?", (fp,))
+                        conn.execute("DELETE FROM code_edges WHERE file_path = ?", (fp,))
+
+                for n in all_nodes:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO code_nodes "
+                        "(qualified_name, file_path, kind, name, language, line_start, line_end, "
+                        "parent_name, params, return_type, modifiers, file_hash, line_count) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (n["qualified_name"], n["file_path"], n["kind"], n["name"],
+                         n["language"], n["line_start"], n["line_end"], n["parent_name"],
+                         n["params"], n["return_type"], n["modifiers"], n["file_hash"],
+                         n["line_count"])
+                    )
+
+                for e in all_edges:
+                    conn.execute(
+                        "INSERT INTO code_edges (source, target, kind, file_path) "
+                        "VALUES (?, ?, ?, ?)",
+                        (e["source"], e["target"], e["kind"], e["file_path"])
+                    )
+
+                conn.execute(
+                    "INSERT OR REPLACE INTO code_meta (key, value) VALUES (?, ?)",
+                    ("last_build", datetime.datetime.now(datetime.timezone.utc).isoformat())
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO code_meta (key, value) VALUES (?, ?)",
+                    ("root_dir", root_dir)
+                )
+                conn.commit()
+            except Exception as e:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                return {"error": f"Database error: {e}"}
+
+        stats["nodes"] = len(all_nodes)
+        stats["edges"] = len(all_edges)
+        stats["languages"] = sorted(stats["languages"])
+
+        try:
+            total_nodes = conn.execute("SELECT COUNT(*) FROM code_nodes").fetchone()[0]
+            total_edges = conn.execute("SELECT COUNT(*) FROM code_edges").fetchone()[0]
+            stats["total_nodes"] = total_nodes
+            stats["total_edges"] = total_edges
+        except Exception:
+            pass
+
+        return stats
+
+    def query(self, query_type: str, target: str, limit: int = 20) -> list[dict]:
+        """Run predefined structural queries."""
+        conn = _code_graph_conn()
+        results = []
+
+        try:
+            if query_type == "callers_of":
+                rows = conn.execute(
+                    "SELECT e.source, e.file_path, n.kind, n.line_start, n.line_end "
+                    "FROM code_edges e LEFT JOIN code_nodes n ON e.source = n.qualified_name "
+                    "WHERE e.kind = 'CALLS' AND (e.target = ? OR e.target LIKE ?) LIMIT ?",
+                    (target, f"%::{target}", limit)
+                ).fetchall()
+                for r in rows:
+                    results.append({"caller": r[0], "file": r[1], "kind": r[2], "line_start": r[3], "line_end": r[4]})
+
+            elif query_type == "callees_of":
+                rows = conn.execute(
+                    "SELECT e.target, e.file_path "
+                    "FROM code_edges e "
+                    "WHERE e.kind = 'CALLS' AND (e.source = ? OR e.source LIKE ?) LIMIT ?",
+                    (target, f"%::{target}", limit)
+                ).fetchall()
+                for r in rows:
+                    results.append({"callee": r[0], "file": r[1]})
+
+            elif query_type == "imports_of":
+                rows = conn.execute(
+                    "SELECT e.target, e.file_path "
+                    "FROM code_edges e "
+                    "WHERE e.kind = 'IMPORTS_FROM' AND (e.source = ? OR e.source LIKE ?) LIMIT ?",
+                    (target, f"%{target}%", limit)
+                ).fetchall()
+                for r in rows:
+                    results.append({"imports": r[0], "file": r[1]})
+
+            elif query_type == "importers_of":
+                rows = conn.execute(
+                    "SELECT e.source, e.file_path "
+                    "FROM code_edges e "
+                    "WHERE e.kind = 'IMPORTS_FROM' AND (e.target = ? OR e.target LIKE ?) LIMIT ?",
+                    (target, f"%{target}%", limit)
+                ).fetchall()
+                for r in rows:
+                    results.append({"importer": r[0], "file": r[1]})
+
+            elif query_type == "tests_for":
+                rows = conn.execute(
+                    "SELECT e.target, e.file_path, n.line_start, n.line_end "
+                    "FROM code_edges e LEFT JOIN code_nodes n ON e.target = n.qualified_name "
+                    "WHERE e.kind = 'TESTED_BY' AND (e.source = ? OR e.source LIKE ?) LIMIT ?",
+                    (target, f"%::{target}", limit)
+                ).fetchall()
+                for r in rows:
+                    results.append({"test": r[0], "file": r[1], "line_start": r[2], "line_end": r[3]})
+
+            elif query_type == "inheritors_of":
+                rows = conn.execute(
+                    "SELECT e.source, e.file_path, n.line_start, n.line_end "
+                    "FROM code_edges e LEFT JOIN code_nodes n ON e.source = n.qualified_name "
+                    "WHERE e.kind = 'INHERITS' AND (e.target = ? OR e.target LIKE ?) LIMIT ?",
+                    (target, f"%::{target}", limit)
+                ).fetchall()
+                for r in rows:
+                    results.append({"inheritor": r[0], "file": r[1], "line_start": r[2], "line_end": r[3]})
+
+            elif query_type == "children_of":
+                rows = conn.execute(
+                    "SELECT e.target, n.kind, n.name, n.line_start, n.line_end, n.params "
+                    "FROM code_edges e LEFT JOIN code_nodes n ON e.target = n.qualified_name "
+                    "WHERE e.kind = 'CONTAINS' AND (e.source = ? OR e.source LIKE ?) LIMIT ?",
+                    (target, f"%::{target}", limit)
+                ).fetchall()
+                for r in rows:
+                    results.append({"child": r[0], "kind": r[1], "name": r[2], "line_start": r[3], "line_end": r[4], "params": r[5]})
+
+            elif query_type == "file_summary":
+                rows = conn.execute(
+                    "SELECT qualified_name, kind, name, line_start, line_end, params, return_type "
+                    "FROM code_nodes WHERE file_path = ? OR file_path LIKE ? ORDER BY line_start LIMIT ?",
+                    (target, f"%{target}", limit)
+                ).fetchall()
+                for r in rows:
+                    results.append({
+                        "qualified_name": r[0], "kind": r[1], "name": r[2],
+                        "line_start": r[3], "line_end": r[4], "params": r[5], "return_type": r[6],
+                    })
+
+        except Exception as e:
+            return [{"error": str(e)}]
+
+        return results
+
+    def impact_analysis(self, files: list[str], depth: int = 2) -> dict:
+        """BFS blast-radius analysis using networkx."""
+        try:
+            import networkx as nx
+        except ImportError:
+            return {"error": "networkx not installed. Run: pip install networkx"}
+
+        conn = _code_graph_conn()
+
+        G = nx.DiGraph()
+        try:
+            edges = conn.execute("SELECT source, target, kind FROM code_edges").fetchall()
+            for src, tgt, kind in edges:
+                G.add_edge(src, tgt, kind=kind)
+                G.add_edge(tgt, src, kind=f"REV_{kind}")
+        except Exception as e:
+            return {"error": f"Database error: {e}"}
+
+        changed_nodes = set()
+        for fp in files:
+            fp = os.path.abspath(fp)
+            try:
+                rows = conn.execute(
+                    "SELECT qualified_name FROM code_nodes WHERE file_path = ?", (fp,)
+                ).fetchall()
+                for r in rows:
+                    changed_nodes.add(r[0])
+            except Exception:
+                pass
+
+        if not changed_nodes:
+            return {
+                "changed_nodes": [],
+                "impacted_nodes": [],
+                "impacted_files": [],
+                "warnings": ["No nodes found for the specified files. Run code_graph_build first."],
+            }
+
+        impacted = set()
+        frontier = set(changed_nodes)
+        visited = set(changed_nodes)
+        for _ in range(depth):
+            next_frontier = set()
+            for node in frontier:
+                if node in G:
+                    for neighbor in G.neighbors(node):
+                        if neighbor not in visited:
+                            visited.add(neighbor)
+                            next_frontier.add(neighbor)
+                            impacted.add(neighbor)
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        impacted_files = set()
+        for qn in impacted:
+            try:
+                row = conn.execute(
+                    "SELECT file_path FROM code_nodes WHERE qualified_name = ?", (qn,)
+                ).fetchone()
+                if row:
+                    impacted_files.add(row[0])
+            except Exception:
+                pass
+
+        warnings = []
+        for qn in changed_nodes:
+            try:
+                test_count = conn.execute(
+                    "SELECT COUNT(*) FROM code_edges WHERE kind = 'TESTED_BY' AND source = ?", (qn,)
+                ).fetchone()[0]
+                if test_count == 0:
+                    row = conn.execute(
+                        "SELECT kind, name FROM code_nodes WHERE qualified_name = ?", (qn,)
+                    ).fetchone()
+                    if row and row[0] in ("function", "class"):
+                        warnings.append(f"No tests found for {row[1]} ({qn})")
+            except Exception:
+                pass
+
+        return {
+            "changed_nodes": sorted(changed_nodes),
+            "impacted_nodes": sorted(impacted),
+            "impacted_files": sorted(impacted_files),
+            "warnings": warnings,
+        }
+
+    def get_stats(self) -> dict:
+        """Return node/edge counts and language distribution."""
+        conn = _code_graph_conn()
+        try:
+            total_nodes = conn.execute("SELECT COUNT(*) FROM code_nodes").fetchone()[0]
+            total_edges = conn.execute("SELECT COUNT(*) FROM code_edges").fetchone()[0]
+            kind_dist = conn.execute(
+                "SELECT kind, COUNT(*) FROM code_nodes GROUP BY kind ORDER BY COUNT(*) DESC"
+            ).fetchall()
+            lang_dist = conn.execute(
+                "SELECT language, COUNT(*) FROM code_nodes WHERE language IS NOT NULL GROUP BY language ORDER BY COUNT(*) DESC"
+            ).fetchall()
+            edge_dist = conn.execute(
+                "SELECT kind, COUNT(*) FROM code_edges GROUP BY kind ORDER BY COUNT(*) DESC"
+            ).fetchall()
+            last_build = conn.execute(
+                "SELECT value FROM code_meta WHERE key = 'last_build'"
+            ).fetchone()
+            root_dir = conn.execute(
+                "SELECT value FROM code_meta WHERE key = 'root_dir'"
+            ).fetchone()
+            return {
+                "total_nodes": total_nodes,
+                "total_edges": total_edges,
+                "node_kinds": {k: c for k, c in kind_dist},
+                "languages": {k: c for k, c in lang_dist},
+                "edge_kinds": {k: c for k, c in edge_dist},
+                "last_build": last_build[0] if last_build else None,
+                "root_dir": root_dir[0] if root_dir else None,
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    def update_file(self, file_path: str):
+        """Incrementally re-parse a single file and update the graph."""
+        file_path = os.path.abspath(file_path)
+        ext = os.path.splitext(file_path)[1].lower()
+        if ext not in _EXT_TO_LANG:
+            return
+
+        conn = _code_graph_conn()
+        nodes, edges = self.parse_file(file_path)
+        if not nodes:
+            return
+
+        try:
+            conn.execute("DELETE FROM code_nodes WHERE file_path = ?", (file_path,))
+            conn.execute("DELETE FROM code_edges WHERE file_path = ?", (file_path,))
+            for n in nodes:
+                conn.execute(
+                    "INSERT OR REPLACE INTO code_nodes "
+                    "(qualified_name, file_path, kind, name, language, line_start, line_end, "
+                    "parent_name, params, return_type, modifiers, file_hash, line_count) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (n["qualified_name"], n["file_path"], n["kind"], n["name"],
+                     n["language"], n["line_start"], n["line_end"], n["parent_name"],
+                     n["params"], n["return_type"], n["modifiers"], n["file_hash"],
+                     n["line_count"])
+                )
+            for e in edges:
+                conn.execute(
+                    "INSERT INTO code_edges (source, target, kind, file_path) "
+                    "VALUES (?, ?, ?, ?)",
+                    (e["source"], e["target"], e["kind"], e["file_path"])
+                )
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+
+_code_graph: CodeGraph | None = None
+
+
+def _get_code_graph() -> CodeGraph:
+    """Get or create the global CodeGraph instance."""
+    global _code_graph
+    if _code_graph is None:
+        _code_graph = CodeGraph()
+    return _code_graph
+
+
+def _maybe_update_code_graph(path: str):
+    """Update code graph if the file is a supported source file."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in _EXT_TO_LANG:
+        return
+    try:
+        cg = _get_code_graph()
+        if cg._check_ts():
+            cg.update_file(path)
+    except Exception:
+        pass
+
+
+def tool_code_graph_build(args: dict) -> str:
+    """Build or rebuild the code structure graph."""
+    path = args.get("path", ".")
+    incremental = args.get("incremental", True)
+    cg = _get_code_graph()
+    stats = cg.build(path, incremental=incremental)
+    if "error" in stats:
+        return _err(stats["error"])
+    return _ok(stats)
+
+
+def tool_code_graph_query(args: dict) -> str:
+    """Query the code structure graph."""
+    query_type = args.get("query_type", "")
+    target = args.get("target", "")
+    limit = args.get("limit", 20)
+    if not query_type:
+        return _err("Missing query_type")
+    if not target:
+        return _err("Missing target")
+    cg = _get_code_graph()
+    results = cg.query(query_type, target, limit)
+    return _ok({"query_type": query_type, "target": target, "results": results, "count": len(results)})
+
+
+def tool_code_graph_impact(args: dict) -> str:
+    """Blast-radius impact analysis."""
+    files = args.get("files", [])
+    depth = args.get("depth", 2)
+    if not files:
+        return _err("Missing files list")
+    cg = _get_code_graph()
+    result = cg.impact_analysis(files, depth=depth)
+    if "error" in result:
+        return _err(result["error"])
+    return _ok(result)
+
+
 # --- Context Window Management ---
 
 DEFAULT_MAX_CONTEXT_TOKENS = 131072
@@ -8540,6 +10233,8 @@ TOOL_ICONS = {
     "task_status": "?", "task_cancel": "x",
     "context_search": "c", "context_detail": "c", "context_recall": "c",
     "list_nodes": "n", "schedule_list": "t", "schedule_history": "h",
+    "read_document": "D", "write_document": "D", "edit_document": "D",
+    "code_graph_build": "G", "code_graph_query": "G", "code_graph_impact": "G",
 }
 
 TOOL_VERBS = {
@@ -8553,6 +10248,8 @@ TOOL_VERBS = {
     "task_status": "Task Status", "task_cancel": "Cancelling",
     "context_search": "Searching Context", "context_detail": "Context Detail", "context_recall": "Recalling",
     "list_nodes": "Listing Nodes", "schedule_list": "Schedules", "schedule_history": "History",
+    "read_document": "Reading Document", "write_document": "Writing Document", "edit_document": "Editing Document",
+    "code_graph_build": "Building Graph", "code_graph_query": "Querying Graph", "code_graph_impact": "Impact Analysis",
 }
 
 
@@ -8850,9 +10547,15 @@ TOOL_DISPATCH = {
     "context_recall": tool_context_recall,
     "schedule_list": tool_schedule_list,
     "schedule_history": tool_schedule_history,
+    "read_document": tool_read_document,
+    "write_document": tool_write_document,
+    "edit_document": tool_edit_document,
     "mcp_connect": tool_mcp_connect,
     "mcp_disconnect": tool_mcp_disconnect,
     "mcp_servers": tool_mcp_servers,
+    "code_graph_build": tool_code_graph_build,
+    "code_graph_query": tool_code_graph_query,
+    "code_graph_impact": tool_code_graph_impact,
 }
 
 
@@ -9067,7 +10770,10 @@ def _after_file_write(path: str, action: str = "created", agent_id: str = ""):
         except Exception:
             pass
 
-    # 4. External after_file_write hooks
+    # 4. Update code graph if source file
+    _maybe_update_code_graph(path)
+
+    # 5. External after_file_write hooks
     if agent_id:
         try:
             runner = _get_hook_runner(agent_id)

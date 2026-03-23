@@ -146,6 +146,12 @@ brain-agent/
 | `list_directory` | List files/dirs with glob patterns |
 | `search_files` | Regex search across files |
 | `execute_command` | Run shell commands (non-interactive) |
+| `read_document` | Format-aware reader (PDF/DOCX/XLSX/PPTX/CSV/images) |
+| `write_document` | Create DOCX/XLSX/PPTX/PDF from markdown content |
+| `edit_document` | Targeted edits to office documents |
+| `code_graph_build` | Build AST-based code structure graph (14 languages) |
+| `code_graph_query` | Query callers, callees, imports, tests, inheritors |
+| `code_graph_impact` | Blast-radius analysis for changed files |
 | `web_fetch` | Fetch URL content |
 | `exa_search` | Web search via Exa AI |
 | `gmail_inbox` | List recent emails from Gmail |
@@ -353,6 +359,7 @@ Each task runs with a specified agent and model in its own context. Results stor
 
 | Version | Date | Changes |
 |---|---|---|
+| 4.0.0 | 2026-03-23 | Universal File Intelligence (XLSX/PPTX/CSV/image/SVG, read/write/edit document tools) + Code Structure Graph (Tree-sitter AST, 14 languages, blast-radius analysis) |
 | 3.7.0 | 2026-03-23 | Three-layer hooks: tool pre/post + after_file_write pipeline, external shell scripts, HookRunner, centralized file-write pipeline, hooks UI, workflow restriction enforced, compaction SSE |
 | 3.6.0 | 2026-03-22 | Lossless context management: DAG-based hierarchical summarization, context_search/detail/recall tools, configurable fresh tail, summary model, condensation, settings UI |
 | 3.5.0 | 2026-03-22 | Chat content search (SQLite + QMD), index status indicators, transcript backfill, KG search fix, frontmatter nested YAML fix, edge path fix, two-stage relationship discovery (QMD + LLM), project panel deep search |
