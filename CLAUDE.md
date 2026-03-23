@@ -121,6 +121,17 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - `code_graph_build`: parse directory, `code_graph_query`: 8 query types, `code_graph_impact`: BFS blast-radius via NetworkX
 - `_maybe_update_code_graph(path)` in `_after_file_write()` for incremental updates on source file changes
 - Incremental builds: SHA-256 file hash skip, re-parse only changed + dependent files
+- Session corruption fix: `_rollback_messages()` reverts all intermediate tool-loop messages on failure
+- Partial response preservation: on cancel/error, save streamed text + tools to chat history
+- Message metadata: model, tokens, cost, tools, thinking persisted per assistant message, restored on load
+- `augmented_messages` strips metadata fields (only role+content sent to API) — prevents 400 errors
+- Extended thinking: `thinking` param in inference_params, budget levels (low=2K, med=8K, high=32K)
+- Thinking blocks: `content_block_start/delta/stop` with `thinking_delta` + `signature_delta` capture
+- Thinking blocks preserved in conversation history (required by Anthropic API for tool loops)
+- Thinking UI: collapsible purple block in chat, "Thinking deeply..." spinner, persisted in metadata
+- Model display: shown in inline thinking indicator + spinner bar, updates on fallback
+- Remote node badge: purple pill on tool blocks when `node` param present
+- Resizable sidebars: drag handles on right edge of left sidebar, left edge of project panel, persisted to localStorage
 
 ### Agent Teams
 

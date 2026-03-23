@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "4.0.0"
+VERSION = "4.1.0"
 VERSION_DATE = "2026-03-23"
 CHANGELOG = [
+    ("4.1.0", "2026-03-23", "Chat stability: session corruption fix (message rollback on failed tool loops), partial response preservation, metadata persistence (model/tokens/cost/tools/thinking), thinking level control (none/low/med/high), extended thinking with signature capture, model name in thinking indicator, remote node badges on tool calls, resizable sidebars, error_msg fix"),
     ("4.0.0", "2026-03-23", "Universal File Intelligence (XLSX/PPTX/CSV/image/SVG parsers, read_document/write_document/edit_document tools, format-aware ingestion) + Code Structure Graph (Tree-sitter AST parsing for 14 languages, code_graph_build/query/impact tools, blast-radius analysis, incremental updates via hooks)"),
     ("3.7.0", "2026-03-23", "Three-layer hooks system: tool pre/post hooks, after_file_write pipeline, external shell scripts with env vars, HookRunner with timeout/fail-open, centralized file-write pipeline (QMD+KG+events), hooks UI in agent config, workflow tool restriction enforced, compaction SSE events"),
     ("3.6.0", "2026-03-22", "Lossless context management: DAG-based hierarchical summarization, context_search/context_detail/context_recall tools, configurable fresh tail (32), summary model, condensation depth, settings UI with session stats"),

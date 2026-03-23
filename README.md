@@ -359,6 +359,7 @@ Each task runs with a specified agent and model in its own context. Results stor
 
 | Version | Date | Changes |
 |---|---|---|
+| 4.1.0 | 2026-03-23 | Chat stability: session corruption fix, partial response preservation, metadata persistence, thinking level control, extended thinking, model display, remote node badges, resizable sidebars |
 | 4.0.0 | 2026-03-23 | Universal File Intelligence (XLSX/PPTX/CSV/image/SVG, read/write/edit document tools) + Code Structure Graph (Tree-sitter AST, 14 languages, blast-radius analysis) |
 | 3.7.0 | 2026-03-23 | Three-layer hooks: tool pre/post + after_file_write pipeline, external shell scripts, HookRunner, centralized file-write pipeline, hooks UI, workflow restriction enforced, compaction SSE |
 | 3.6.0 | 2026-03-22 | Lossless context management: DAG-based hierarchical summarization, context_search/detail/recall tools, configurable fresh tail, summary model, condensation, settings UI |
