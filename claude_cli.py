@@ -11200,14 +11200,16 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                     _tool_round, event_callback, inference_params, session_id)
 
     except urllib.error.HTTPError as e:
-        if e.code == 400:
-            return None
         error_msg = f"HTTP Error {e.code}: {e.reason}"
         try:
             error_body = e.read().decode("utf-8")
             error_msg += f" — {error_body[:200]}"
         except:
             pass
+        if e.code == 400:
+            print(error_msg, file=sys.stderr)
+            _thread_local._last_send_error = {"code": e.code, "message": error_msg, "permanent": True}
+            return None
         print(error_msg, file=sys.stderr)
         # Transient errors: return None to trigger retry/fallback
         _TRANSIENT_CODES = {429, 500, 502, 503, 504, 529}
@@ -11272,6 +11274,7 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
                         print(f"\nAPI error: {err_msg}", file=sys.stderr)
                     if event_callback:
                         event_callback("error", {"message": f"{err_type}: {err_msg}"})
+                    _thread_local._last_send_error = {"code": 0, "message": err_msg, "permanent": True} # Streaming error: always permanent
                     return None
 
                 elif etype == "message_delta":
