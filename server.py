@@ -228,6 +228,11 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN summary TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
+            # Add compacted flag for lossless context management (migration)
+            try:
+                conn.execute("ALTER TABLE messages ADD COLUMN compacted INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
             conn.commit()
 
     @staticmethod
@@ -252,14 +257,20 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=list)
-    def load_messages(session_id):
+    def load_messages(session_id, include_compacted=False):
         with _db_conn() as conn:
-            rows = conn.execute(
-                "SELECT id, role, content, metadata FROM messages WHERE session_id = ? ORDER BY id",
-                (session_id,)
-            ).fetchall()
+            if include_compacted:
+                rows = conn.execute(
+                    "SELECT id, role, content, metadata, compacted FROM messages WHERE session_id = ? ORDER BY id",
+                    (session_id,)
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id, role, content, metadata, compacted FROM messages WHERE session_id = ? AND (compacted = 0 OR compacted IS NULL) ORDER BY id",
+                    (session_id,)
+                ).fetchall()
             messages = []
-            for mid, role, content, metadata in rows:
+            for mid, role, content, metadata, compacted in rows:
                 try:
                     parsed = json.loads(content)
                 except (json.JSONDecodeError, TypeError):
@@ -272,6 +283,8 @@ class ChatDB:
                             msg["metadata"] = meta
                     except (json.JSONDecodeError, TypeError):
                         pass
+                if compacted:
+                    msg["compacted"] = True
                 messages.append(msg)
             return messages
 
@@ -281,8 +294,8 @@ class ChatDB:
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
             q = ("SELECT s.*, "
-                 "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) as message_count, "
-                 "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.metadata LIKE '%\"files\"%') as has_attachments "
+                 "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND (m.compacted = 0 OR m.compacted IS NULL)) as message_count, "
+                 "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND (m.compacted = 0 OR m.compacted IS NULL) AND m.metadata LIKE '%\"files\"%') as has_attachments "
                  "FROM sessions s WHERE 1=1")
             params = []
             if agent_id:
@@ -4212,18 +4225,25 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 force=True,
             )
             session.messages = result[0]
-            # Persist compacted messages to DB (replace old messages)
+            # Persist: mark old messages as compacted, insert new summary messages
             if result[1]:
                 try:
                     with _db_conn() as conn:
-                        conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+                        # Mark ALL existing messages as compacted (preserves originals for search)
+                        conn.execute(
+                            "UPDATE messages SET compacted = 1 WHERE session_id = ? AND (compacted = 0 OR compacted IS NULL)",
+                            (session_id,)
+                        )
+                        # Insert the new compacted message set (summaries + fresh tail)
                         for msg in session.messages:
                             role = msg.get("role", "user")
                             content = msg.get("content", "")
                             c = json.dumps(content) if not isinstance(content, str) else content
                             meta = json.dumps(msg.get("metadata", {})) if msg.get("metadata") else ""
-                            conn.execute("INSERT INTO messages (session_id, role, content, metadata) VALUES (?, ?, ?, ?)",
-                                         (session_id, role, c, meta))
+                            conn.execute(
+                                "INSERT INTO messages (session_id, role, content, metadata, compacted) VALUES (?, ?, ?, ?, 0)",
+                                (session_id, role, c, meta)
+                            )
                         conn.commit()
                 except Exception as e:
                     print(f"  [WARN] Compact DB persist: {e}", flush=True)
