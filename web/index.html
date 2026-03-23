@@ -8220,6 +8220,58 @@ async function renderToolsTab(el) {
       <div class="text-[10px] text-text-muted mt-2">Model used by the ✨ refine button in chat and note AI inputs.</div>
     </div>
 
+    <!-- Read Document -->
+    <div class="glass-card p-6">
+      ${toggleHtml('read_document', 'Read Document', '\uD83D\uDCC4')}
+      <div class="space-y-3">
+        <div>
+          <label class="text-text-muted text-xs block mb-1">Max File Size (MB)</label>
+          <input id="tool-rdoc-maxsize" type="number" min="1" max="200" value="${(cfg.read_document||{}).max_file_size_mb || 50}"
+            class="bg-surface border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary mono w-24">
+        </div>
+        <div>
+          <label class="text-text-muted text-xs block mb-1">Vision Model (for images)</label>
+          <select id="tool-rdoc-vision-model" class="w-full bg-surface border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary mono">
+            <option value="">Auto (cheapest vision model)</option>
+            ${Object.entries(state.modelsConfig || {}).filter(([_,c]) => c.enabled !== false).map(([mid, c]) =>
+              '<option value="' + esc(mid) + '"' + ((cfg.read_document||{}).vision_model === mid ? ' selected' : '') + '>' + esc(mid) + '</option>'
+            ).join('')}
+          </select>
+        </div>
+        <div class="text-text-muted text-[10px]">Reads PDF, DOCX, XLSX, PPTX, CSV, images, SVG with format-aware parsing.</div>
+      </div>
+    </div>
+
+    <!-- Write Document -->
+    <div class="glass-card p-6">
+      ${toggleHtml('write_document', 'Write Document', '\uD83D\uDCDD')}
+      <div class="text-text-muted text-[10px]">Creates DOCX, XLSX, PPTX, PDF from markdown content.</div>
+    </div>
+
+    <!-- Edit Document -->
+    <div class="glass-card p-6">
+      ${toggleHtml('edit_document', 'Edit Document', '\u270F\uFE0F')}
+      <div class="text-text-muted text-[10px]">Targeted edits: DOCX replace text, XLSX update cells, PPTX update slides.</div>
+    </div>
+
+    <!-- Code Graph -->
+    <div class="glass-card p-6">
+      ${toggleHtml('code_graph', 'Code Graph', '\uD83C\uDF33')}
+      <div class="space-y-3">
+        <div>
+          <label class="text-text-muted text-xs block mb-1">Exclude Directories (comma-separated)</label>
+          <input id="tool-cg-exclude" type="text" value="${esc((cfg.code_graph||{}).exclude_dirs || 'node_modules,.git,__pycache__,venv')}"
+            class="bg-surface border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary mono w-full">
+        </div>
+        <div>
+          <label class="text-text-muted text-xs block mb-1">Max File Size (KB)</label>
+          <input id="tool-cg-maxsize" type="number" min="50" max="5000" value="${(cfg.code_graph||{}).max_file_size_kb || 500}"
+            class="bg-surface border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary mono w-24">
+        </div>
+        <div class="text-text-muted text-[10px]">AST-based code structure graph. 14 languages via Tree-sitter. Callers, callees, imports, blast-radius.</div>
+      </div>
+    </div>
+
     <!-- Save Button -->
     <div class="flex justify-end mt-2">
       <button onclick="saveToolsConfig()" class="btn-primary px-6 py-2.5 rounded-xl text-sm font-display font-medium">Save Tools Config</button>
@@ -8255,6 +8307,22 @@ async function saveToolsConfig() {
     refinement: {
       enabled: document.getElementById('tool-refinement-enabled')?.checked ?? true,
       model: document.getElementById('tool-refine-model')?.value || '',
+    },
+    read_document: {
+      enabled: document.getElementById('tool-read_document-enabled')?.checked ?? true,
+      max_file_size_mb: parseInt(document.getElementById('tool-rdoc-maxsize')?.value) || 50,
+      vision_model: document.getElementById('tool-rdoc-vision-model')?.value || '',
+    },
+    write_document: {
+      enabled: document.getElementById('tool-write_document-enabled')?.checked ?? true,
+    },
+    edit_document: {
+      enabled: document.getElementById('tool-edit_document-enabled')?.checked ?? true,
+    },
+    code_graph: {
+      enabled: document.getElementById('tool-code_graph-enabled')?.checked ?? true,
+      exclude_dirs: document.getElementById('tool-cg-exclude')?.value || '',
+      max_file_size_kb: parseInt(document.getElementById('tool-cg-maxsize')?.value) || 500,
     },
   };
 
