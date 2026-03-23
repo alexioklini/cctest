@@ -835,6 +835,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         elif path.startswith("/v1/agents/") and path.endswith("/hooks"):
             self._handle_hooks_save(path)
         # --- Context Management POST routes ---
+        elif path == "/v1/context/compact":
+            self._handle_context_compact()
         elif path == "/v1/context/config":
             self._handle_context_config_save()
         # --- Channels POST routes ---
@@ -4185,6 +4187,40 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             engine._context_manager = engine.ContextManager()
         engine._context_manager.save_config(body)
         self._send_json({"status": "saved", "config": engine._context_manager.get_config()})
+
+    def _handle_context_compact(self):
+        """POST /v1/context/compact — manually trigger compaction for a session."""
+        body = self._read_json()
+        session_id = body.get("session_id", "")
+        if not session_id:
+            self._send_json({"error": "Missing session_id"}, 400)
+            return
+        session = sessions.get(session_id)
+        if not session:
+            self._send_json({"error": "Session not found"}, 404)
+            return
+        if not engine._context_manager:
+            self._send_json({"error": "Context manager not initialized"}, 500)
+            return
+        try:
+            before = engine._estimate_conversation_tokens(session.messages)
+            # Force compaction regardless of threshold
+            result = engine._context_manager.check_and_compact(
+                session.messages, session.id, session.model,
+                session.api_key, session.base_url, session.api_type,
+                max_tokens=session.max_context,
+            )
+            session.messages = result[0]
+            after = engine._estimate_conversation_tokens(session.messages)
+            stats = engine._context_manager.get_stats(session_id)
+            self._send_json({
+                "status": "compacted" if result[1] else "no_change",
+                "before_tokens": before,
+                "after_tokens": after,
+                "stats": stats,
+            })
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
 
     def _handle_context_stats(self):
         """GET /v1/context/stats?session_id=X — context stats for a session."""
