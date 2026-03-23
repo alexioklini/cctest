@@ -4887,12 +4887,25 @@ window.previewFile = async function(encodedPath) {
   }
 };
 
+function _extractNodeBadge(args) {
+  if (!args) return '';
+  const a = typeof args === 'string' ? (() => { try { return JSON.parse(args); } catch { return {}; } })() : args;
+  const node = a.node || a.tag;
+  if (!node) return '';
+  return `<span style="background:#8b5cf6;color:#fff;font-size:9px;padding:1px 5px;border-radius:4px;margin-left:4px;white-space:nowrap" title="Remote node"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" style="display:inline;vertical-align:middle;margin-right:2px"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="3"/></svg>${esc(String(node))}</span>`;
+}
+
 function renderToolBlock(tool) {
   const statusIcon = tool.result !== undefined
     ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>'
     : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#ff7b00" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>';
   const name = esc(tool.name || '');
-  const argsPreview = tool.args ? esc(typeof tool.args === 'string' ? tool.args : JSON.stringify(tool.args)).substring(0, 120) : '';
+  const nodeBadge = _extractNodeBadge(tool.args);
+  const argsObj = typeof tool.args === 'string' ? (() => { try { return JSON.parse(tool.args); } catch { return {}; } })() : (tool.args || {});
+  // Build preview without the node param
+  const previewArgs = {...argsObj};
+  delete previewArgs.node;
+  const argsPreview = esc(JSON.stringify(previewArgs)).substring(0, 120);
   // Check if result contains cached flag
   let isCached = false;
   if (tool.result !== undefined) {
@@ -4909,7 +4922,7 @@ function renderToolBlock(tool) {
     <div class="flex items-center gap-2.5">
       <span class="tool-chevron text-text-muted text-[10px]">&#x25B6;</span>
       ${statusIcon}
-      <span class="text-accent font-medium font-mono">${name}</span>${cachedBadge}
+      <span class="text-accent font-medium font-mono">${name}</span>${nodeBadge}${cachedBadge}
       <span class="text-text-muted truncate">${argsPreview}</span>
     </div>
     <div class="tool-detail hidden">${resultContent}${toolOutputHtml}</div>
@@ -4921,6 +4934,15 @@ function renderToolsSummary(tools) {
   const completed = tools.filter(t => t.result !== undefined).length;
   const running = tools.length - completed;
   const names = [...new Set(tools.map(t => t.name))].join(', ');
+  // Check for any remote node executions
+  const remoteNodes = new Set();
+  tools.forEach(t => {
+    const a = typeof t.args === 'string' ? (() => { try { return JSON.parse(t.args); } catch { return {}; } })() : (t.args || {});
+    if (a.node) remoteNodes.add(a.node);
+  });
+  const nodeBadges = [...remoteNodes].map(n =>
+    `<span style="background:#8b5cf6;color:#fff;font-size:9px;padding:1px 4px;border-radius:3px;white-space:nowrap">${esc(n)}</span>`
+  ).join(' ');
   const statusText = running > 0 ? `${completed}/${tools.length} done` : `${tools.length} tool${tools.length > 1 ? 's' : ''}`;
   const statusIcon = running > 0
     ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#ff7b00" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>'
@@ -4929,6 +4951,7 @@ function renderToolsSummary(tools) {
     ${statusIcon}
     <span>${statusText}</span>
     <span class="text-text-muted truncate" style="max-width:300px;">${esc(names)}</span>
+    ${nodeBadges}
   </div>`;
 }
 
@@ -5086,10 +5109,11 @@ async function sendMessage() {
       tool_call: (d) => {
         toolCallCount++;
         assistantMsg.tools.push({ name: d.name, args: d.args });
-        if (spinnerLabel) spinnerLabel.textContent = `Tool: ${d.name} (${toolCallCount})`;
+        const nodeTarget = d.args?.node ? ` @ ${d.args.node}` : '';
+        if (spinnerLabel) spinnerLabel.textContent = `Tool: ${d.name}${nodeTarget} (${toolCallCount})`;
         // Update inline thinking label too
         const inlineLabel = document.getElementById('thinking-status');
-        if (inlineLabel) inlineLabel.textContent = `${d.name}... (${toolCallCount})`;
+        if (inlineLabel) inlineLabel.textContent = `${d.name}${nodeTarget}... (${toolCallCount})`;
         updateStreamingMessage(chat);
       },
       tool_result: (d) => {
