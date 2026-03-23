@@ -1087,7 +1087,8 @@ tailwind.config = {
   /* ── Sidebar ── */
   #sidebar {
     width: 240px;
-    min-width: 240px;
+    min-width: 52px;
+    max-width: 500px;
     height: 100vh;
     background: var(--color-surface);
     border-right: 1px solid var(--color-border);
@@ -1095,14 +1096,14 @@ tailwind.config = {
     flex-direction: column;
     overflow-y: auto;
     overflow-x: hidden;
-    transition: width 0.2s ease, min-width 0.2s ease;
     flex-shrink: 0;
     position: relative;
     z-index: 20;
   }
+  #sidebar.resizing { transition: none !important; }
+  #sidebar:not(.resizing) { transition: width 0.2s ease; }
   #sidebar.collapsed {
-    width: 52px;
-    min-width: 52px;
+    width: 52px !important;
   }
   #sidebar .sidebar-header {
     display: flex;
@@ -1121,6 +1122,26 @@ tailwind.config = {
     min-width: 0;
     overflow: hidden;
   }
+  /* Resize handles */
+  .resize-handle {
+    position: absolute;
+    top: 0;
+    width: 6px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 30;
+    background: transparent;
+    transition: background 0.15s;
+  }
+  .resize-handle:hover, .resize-handle.active {
+    background: var(--color-accent);
+    opacity: 0.4;
+  }
+  .resize-handle-right { right: -3px; }
+  .resize-handle-left { left: -3px; }
+  body.col-resizing { cursor: col-resize !important; user-select: none !important; }
+  body.col-resizing * { cursor: col-resize !important; user-select: none !important; }
+
   #sidebar.collapsed .sidebar-brand-text,
   #sidebar.collapsed .sidebar-conn {
     display: none;
@@ -2005,14 +2026,15 @@ tailwind.config = {
 
   /* ── Project Panel (right sidebar) ── */
   #project-panel {
-    width: 320px; min-width: 320px; height: 100vh;
+    width: 320px; min-width: 200px; max-width: 600px; height: 100vh;
     background: var(--color-surface);
     border-left: 1px solid var(--color-border);
     display: flex; flex-direction: column;
     overflow-y: auto; overflow-x: hidden;
-    transition: width 0.2s ease, min-width 0.2s ease;
-    flex-shrink: 0;
+    flex-shrink: 0; position: relative;
   }
+  #project-panel.resizing { transition: none !important; }
+  #project-panel:not(.resizing) { transition: width 0.2s ease; }
   #project-panel.collapsed { width: 0; min-width: 0; border-left: none; overflow: hidden; }
   .pp-header { padding: 4px 4px 4px 0; border-bottom: 1px solid var(--color-border); display: flex; align-items: center; gap: 0; flex-shrink: 0; }
   .pp-body { flex: 1; overflow-y: auto; }
@@ -2194,6 +2216,7 @@ tailwind.config = {
       </button>
       <span id="server-url" class="sb-footer-label text-text-muted mono text-[9px]" style="margin-left:auto"></span>
     </div>
+    <div class="resize-handle resize-handle-right" id="sidebar-resize"></div>
   </aside>
 
   <!-- MAIN CONTENT -->
@@ -2333,6 +2356,7 @@ tailwind.config = {
 
   <!-- PROJECT PANEL (right sidebar, collapsible) -->
   <div id="project-panel" class="collapsed">
+    <div class="resize-handle resize-handle-left" id="project-panel-resize"></div>
     <div class="pp-header" id="pp-project-header"></div>
     <div class="pp-search" style="padding:4px 8px 8px">
       <input type="text" id="pp-search-input" placeholder="Search project..."
@@ -9778,11 +9802,66 @@ dom.btnNewSession.onclick = () => {
   }
 };
 
+// ─── Sidebar / Panel Resize ─────────────────────────────────
+(function initResizeHandles() {
+  function setupResize(handleId, targetId, side) {
+    const handle = document.getElementById(handleId);
+    const target = document.getElementById(targetId);
+    if (!handle || !target) return;
+
+    let startX, startW;
+    function onMouseDown(e) {
+      if (target.classList.contains('collapsed')) return;
+      e.preventDefault();
+      startX = e.clientX;
+      startW = target.offsetWidth;
+      handle.classList.add('active');
+      target.classList.add('resizing');
+      document.body.classList.add('col-resizing');
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    }
+    function onMouseMove(e) {
+      const dx = e.clientX - startX;
+      const newW = side === 'right' ? startW + dx : startW - dx;
+      const min = parseInt(getComputedStyle(target).minWidth) || 150;
+      const max = parseInt(getComputedStyle(target).maxWidth) || 600;
+      target.style.width = Math.max(min, Math.min(max, newW)) + 'px';
+    }
+    function onMouseUp() {
+      handle.classList.remove('active');
+      target.classList.remove('resizing');
+      document.body.classList.remove('col-resizing');
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      // Persist width
+      localStorage.setItem(targetId + '-width', target.style.width);
+    }
+    handle.addEventListener('mousedown', onMouseDown);
+
+    // Restore persisted width
+    const saved = localStorage.getItem(targetId + '-width');
+    if (saved && !target.classList.contains('collapsed')) {
+      target.style.width = saved;
+    }
+  }
+
+  setupResize('sidebar-resize', 'sidebar', 'right');
+  setupResize('project-panel-resize', 'project-panel', 'left');
+})();
+
 // ─── Sidebar Toggle ─────────────────────────────────────────
 function toggleSidebar() {
   const sb = dom.sidebar;
   sb.classList.toggle('collapsed');
-  localStorage.setItem('sidebar-collapsed', sb.classList.contains('collapsed') ? '1' : '0');
+  const collapsed = sb.classList.contains('collapsed');
+  localStorage.setItem('sidebar-collapsed', collapsed ? '1' : '0');
+  if (!collapsed) {
+    // Restore saved width
+    const saved = localStorage.getItem('sidebar-width');
+    if (saved) sb.style.width = saved;
+    else sb.style.width = '240px';
+  }
 }
 function openMobileSidebar() {
   dom.sidebar.classList.add('mobile-open');
