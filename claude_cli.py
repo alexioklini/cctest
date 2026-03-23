@@ -11321,6 +11321,10 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
                             current_block["thinking_text"] += thinking_text
                         if event_callback:
                             event_callback("thinking_delta", {"text": thinking_text})
+                    elif delta.get("type") == "signature_delta":
+                        sig = delta.get("signature", "")
+                        if current_block and "signature" in current_block:
+                            current_block["signature"] += sig
 
                 elif etype == "content_block_stop":
                     if current_block_type == "tool_use" and current_block:
@@ -11372,10 +11376,11 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
     # Build the assistant message content blocks (must include thinking for Anthropic API)
     assistant_content = []
     for tb in thinking_blocks:
-        block = {"type": "thinking", "thinking": tb["text"]}
-        if tb.get("signature"):
-            block["signature"] = tb["signature"]
-        assistant_content.append(block)
+        assistant_content.append({
+            "type": "thinking",
+            "thinking": tb["text"],
+            "signature": tb.get("signature", ""),
+        })
     if full_text:
         assistant_content.append({"type": "text", "text": full_text})
     for tu in tool_uses:
