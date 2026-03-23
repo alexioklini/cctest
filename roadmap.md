@@ -5,7 +5,10 @@
 Each item has a detailed feature proposal with mockups, user workflows, and effort estimates.
 
 ### Security & Control
-- [Hooks system](features/hooks-system.md) — pre/post tool execution hooks (deterministic shell scripts) · ~6 days · **P5**
+- [Hooks system](features/hooks-system.md) — pre/post tool execution hooks (deterministic shell scripts) · ~6 days · **P1** ✅ done (v3.7.0)
+
+### Code Intelligence
+- [Code structure graph](features/code-graph.md) — AST-based code knowledge graph via Tree-sitter (14 languages), blast-radius analysis, callers/callees/imports/tests queries, integrated KG visualization · ~9 days · **P1**
 - [Permissions model](features/permissions-model.md) — per-tool approval with allow/deny patterns, sandboxing · ~9 days · **P5**
 - [Plan mode](features/plan-mode.md) — read-only analysis mode that disables write tools · ~5 days · **P1** ✅ done (v1.7.0)
 
