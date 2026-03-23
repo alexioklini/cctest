@@ -377,6 +377,47 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=None)
+    def delete_last_message(session_id, role="user"):
+        """Delete the last message of a given role from a session. Returns True if deleted."""
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT id FROM messages WHERE session_id = ? AND role = ? ORDER BY id DESC LIMIT 1",
+                (session_id, role)
+            ).fetchone()
+            if row:
+                conn.execute("DELETE FROM messages WHERE id = ?", (row[0],))
+                conn.commit()
+                return True
+        return False
+
+    @staticmethod
+    @_db_safe(default=None)
+    def repair_session(session_id):
+        """Repair a session by ensuring alternating user/assistant messages.
+        Removes trailing user messages that have no assistant response."""
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, role FROM messages WHERE session_id = ? ORDER BY id",
+                (session_id,)
+            ).fetchall()
+            if not rows:
+                return 0
+            removed = 0
+            # Remove consecutive same-role messages from the end
+            while len(rows) >= 2 and rows[-1][1] == rows[-2][1]:
+                conn.execute("DELETE FROM messages WHERE id = ?", (rows[-1][0],))
+                rows.pop()
+                removed += 1
+            # If last message is user (no assistant response), remove it
+            if rows and rows[-1][1] == "user":
+                conn.execute("DELETE FROM messages WHERE id = ?", (rows[-1][0],))
+                removed += 1
+            if removed:
+                conn.commit()
+            return removed
+
+    @staticmethod
+    @_db_safe(default=None)
     def archive_all(agent_id=None):
         with _db_conn() as conn:
             if agent_id:
@@ -439,6 +480,11 @@ class Session:
 
     def load_from_db(self):
         """Load messages from database (for restoring sessions)."""
+        # Auto-repair corrupted sessions (dangling user messages, consecutive same-role)
+        repaired = ChatDB.repair_session(self.id)
+        if repaired:
+            print(f"  Session {self.id[:12]}: repaired {repaired} dangling message(s)", flush=True)
+
         db_msgs = ChatDB.load_messages(self.id)
         self.messages = [{"role": m["role"], "content": m["content"]} for m in db_msgs]
         info = ChatDB.get_session_info(self.id)
@@ -1479,17 +1525,30 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
                 else:
+                    # Empty reply — remove dangling user message to prevent session corruption
+                    if session.messages and session.messages[-1].get("role") == "user":
+                        session.messages.pop()
+                        ChatDB.delete_last_message(sid, "user")
                     event_queue.put(("done", {"text": "", "tokens": 0, "model": session.model}))
             except engine.TaskCancelled:
-                # Remove user message from in-memory list and DB
+                # Remove user message from in-memory list AND DB
                 if session.messages and session.messages[-1].get("role") == "user":
                     session.messages.pop()
+                    ChatDB.delete_last_message(sid, "user")
                 event_queue.put(("error", {"message": "Cancelled"}))
             except SystemExit as e:
+                # Clean up dangling user message
+                if session.messages and session.messages[-1].get("role") == "user":
+                    session.messages.pop()
+                    ChatDB.delete_last_message(sid, "user")
                 event_queue.put(("error", {"message": f"Engine fatal error (exit code {e.code})"}))
             except Exception as e:
                 import traceback
                 traceback.print_exc()
+                # Clean up dangling user message to prevent session corruption
+                if session.messages and session.messages[-1].get("role") == "user":
+                    session.messages.pop()
+                    ChatDB.delete_last_message(sid, "user")
                 event_queue.put(("error", {"message": str(e)}))
             finally:
                 session._streaming = False
