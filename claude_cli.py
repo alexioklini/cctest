@@ -2334,6 +2334,22 @@ _TOOLS_CONFIG_DEFAULTS = {
         "enabled": True,
         "model": "",  # empty = auto-select (Haiku > Sonnet > cheapest)
     },
+    "read_document": {
+        "enabled": True,
+        "max_file_size_mb": 50,
+        "vision_model": "",  # for image description; empty = auto
+    },
+    "write_document": {
+        "enabled": True,
+    },
+    "edit_document": {
+        "enabled": True,
+    },
+    "code_graph": {
+        "enabled": True,
+        "exclude_dirs": "node_modules,.git,__pycache__,venv,.venv,dist,build",
+        "max_file_size_kb": 500,
+    },
 }
 
 
