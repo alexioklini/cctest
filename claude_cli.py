@@ -9029,9 +9029,9 @@ class ContextManager:
         if not cfg.get("enabled", True) and not force:
             return messages, False
 
+        estimated = _estimate_conversation_tokens(messages, system_prompt)
         if not force:
             threshold_pct = cfg.get("compact_threshold", 0.75)
-            estimated = _estimate_conversation_tokens(messages, system_prompt)
             threshold = int(max_tokens * threshold_pct)
             if estimated < threshold:
                 return messages, False
