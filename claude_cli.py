@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "4.1.0"
+VERSION = "4.2.0"
 VERSION_DATE = "2026-03-23"
 CHANGELOG = [
+    ("4.2.0", "2026-03-23", "Code graph enhancements: LLM-generated node summaries, architecture layer classification (api/service/data/ui/util/test), guided tour generation, code_graph_enhance tool, lossless compaction with compacted flag, context fill indicator, manual compact, LCM footer controls"),
     ("4.1.0", "2026-03-23", "Chat stability: session corruption fix (message rollback on failed tool loops), partial response preservation, metadata persistence (model/tokens/cost/tools/thinking), thinking level control (none/low/med/high), extended thinking with signature capture, model name in thinking indicator, remote node badges on tool calls, resizable sidebars, error_msg fix"),
     ("4.0.0", "2026-03-23", "Universal File Intelligence (XLSX/PPTX/CSV/image/SVG parsers, read_document/write_document/edit_document tools, format-aware ingestion) + Code Structure Graph (Tree-sitter AST parsing for 14 languages, code_graph_build/query/impact tools, blast-radius analysis, incremental updates via hooks)"),
     ("3.7.0", "2026-03-23", "Three-layer hooks system: tool pre/post hooks, after_file_write pipeline, external shell scripts with env vars, HookRunner with timeout/fail-open, centralized file-write pipeline (QMD+KG+events), hooks UI in agent config, workflow tool restriction enforced, compaction SSE events"),
@@ -716,6 +717,27 @@ TOOL_DEFINITIONS = [
                 "depth": {"type": "integer", "description": "Max traversal depth (default: 2)"},
             },
             "required": ["files"],
+        },
+    },
+    {
+        "name": "code_graph_enhance",
+        "description": (
+            "Enhance the code graph with LLM-generated summaries, architecture layer classification, "
+            "and a guided tour. Actions: 'all' (default), 'summaries' (LLM descriptions per function/class), "
+            "'layers' (classify as api/service/data/ui/util/test), 'tour' (dependency-ordered walkthrough)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["all", "summaries", "layers", "tour"],
+                    "description": "What to generate (default: all)",
+                },
+                "batch_size": {"type": "integer", "description": "Max files to summarize per run (default: 20)"},
+                "root_dir": {"type": "string", "description": "Root directory for tour (default: last build dir)"},
+            },
+            "required": [],
         },
     },
 ]
@@ -7932,6 +7954,14 @@ def _code_graph_init_db():
         CREATE INDEX IF NOT EXISTS idx_code_nodes_name ON code_nodes(name);
         CREATE INDEX IF NOT EXISTS idx_code_edges_source ON code_edges(source);
         CREATE INDEX IF NOT EXISTS idx_code_edges_target ON code_edges(target);
+    """)
+    # Migration: add summary and layer columns
+    for col, default in [("summary", "''"), ("layer", "''")]:
+        try:
+            conn.execute(f"ALTER TABLE code_nodes ADD COLUMN {col} TEXT DEFAULT {default}")
+        except Exception:
+            pass
+    conn.executescript("""
         CREATE INDEX IF NOT EXISTS idx_code_edges_kind ON code_edges(kind);
     """)
     conn.commit()
@@ -8654,6 +8684,246 @@ class CodeGraph:
                 pass
 
 
+    # --- Architecture Layer Classification ---
+
+    _LAYER_PATTERNS = {
+        "api": ["route", "router", "handler", "endpoint", "controller", "view", "api", "rest", "graphql", "grpc"],
+        "service": ["service", "manager", "engine", "processor", "worker", "scheduler", "pipeline"],
+        "data": ["model", "schema", "migration", "orm", "database", "db", "query", "repository", "dao", "store"],
+        "ui": ["component", "page", "layout", "widget", "template", "style", "css", "html", "view", "screen", "form"],
+        "util": ["util", "helper", "common", "shared", "lib", "config", "constant", "middleware", "decorator", "mixin"],
+        "test": ["test", "spec", "fixture", "mock", "stub", "fake"],
+    }
+
+    def classify_layers(self) -> dict:
+        """Classify all nodes into architecture layers based on file paths and names."""
+        conn = _code_graph_conn()
+        rows = conn.execute("SELECT qualified_name, file_path, name, kind FROM code_nodes").fetchall()
+        classified = 0
+        for qn, fp, name, kind in rows:
+            layer = self._detect_layer(fp, name, kind)
+            if layer:
+                conn.execute("UPDATE code_nodes SET layer = ? WHERE qualified_name = ?", (layer, qn))
+                classified += 1
+        conn.commit()
+        # Get distribution
+        dist = conn.execute(
+            "SELECT layer, COUNT(*) FROM code_nodes WHERE layer != '' GROUP BY layer ORDER BY COUNT(*) DESC"
+        ).fetchall()
+        return {"classified": classified, "layers": {k: c for k, c in dist}}
+
+    def _detect_layer(self, file_path: str, name: str, kind: str) -> str:
+        """Detect architecture layer from file path and node name."""
+        fp_lower = file_path.lower().replace("\\", "/")
+        name_lower = name.lower()
+        combined = fp_lower + "/" + name_lower
+
+        if kind == "test":
+            return "test"
+
+        for layer, patterns in self._LAYER_PATTERNS.items():
+            for p in patterns:
+                if p in combined:
+                    return layer
+        return ""
+
+    # --- LLM-Generated Summaries ---
+
+    def generate_summaries(self, batch_size: int = 20) -> dict:
+        """Generate plain-English summaries for nodes that don't have one.
+        Uses a cheap LLM (Haiku) to describe functions/classes from their signature + context."""
+        conn = _code_graph_conn()
+        # Get nodes without summaries (classes and functions only)
+        rows = conn.execute(
+            "SELECT qualified_name, file_path, kind, name, params, return_type, line_start, line_end, language "
+            "FROM code_nodes WHERE (summary IS NULL OR summary = '') AND kind IN ('class', 'function') "
+            "ORDER BY file_path, line_start LIMIT ?",
+            (batch_size * 5,)  # over-fetch to batch by file
+        ).fetchall()
+
+        if not rows:
+            return {"summarized": 0, "message": "All nodes already have summaries"}
+
+        # Resolve summary model
+        model = None
+        if _models_config:
+            for mid, cfg in _models_config.items():
+                if cfg.get("enabled", True) and "haiku" in mid.lower():
+                    model = mid
+                    break
+            if not model:
+                for mid, cfg in sorted(_models_config.items(), key=lambda x: x[1].get("cost_input", 999)):
+                    if cfg.get("enabled", True):
+                        model = mid
+                        break
+        if not model:
+            return {"error": "No model available for summary generation"}
+
+        # Group by file for efficient source reading
+        file_groups = {}
+        for r in rows:
+            fp = r[1]
+            if fp not in file_groups:
+                file_groups[fp] = []
+            file_groups[fp].append(r)
+
+        summarized = 0
+        for fp, file_nodes in list(file_groups.items())[:batch_size]:
+            # Read source file
+            try:
+                with open(fp, "r", errors="replace") as f:
+                    lines = f.readlines()
+            except (OSError, IOError):
+                continue
+
+            # Build batch prompt
+            node_snippets = []
+            for qn, _, kind, name, params, ret_type, ls, le, lang in file_nodes:
+                snippet = "".join(lines[max(0, ls-1):min(len(lines), le)])[:500]
+                sig = f"{kind} {name}"
+                if params:
+                    sig += f"({params})"
+                if ret_type:
+                    sig += f" -> {ret_type}"
+                node_snippets.append({"qn": qn, "sig": sig, "snippet": snippet})
+
+            if not node_snippets:
+                continue
+
+            prompt_parts = [f"**{s['sig']}**\n```\n{s['snippet']}\n```" for s in node_snippets]
+            prompt = (
+                f"For each function/class below from `{os.path.basename(fp)}`, write a ONE-LINE summary "
+                f"(max 80 chars) describing what it does. Output as numbered list matching the order.\n\n"
+                + "\n\n".join(f"{i+1}. {p}" for i, p in enumerate(prompt_parts))
+            )
+
+            try:
+                result = _run_delegate(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=model,
+                    system_prompt="Output only numbered one-line summaries. No markdown, no explanations.",
+                    memory_store=None,
+                    inference_params={"max_tokens": 2000, "temperature": 0.1},
+                )
+                if result and not result.startswith("Delegation error"):
+                    # Parse numbered lines
+                    summary_lines = []
+                    for line in result.strip().split("\n"):
+                        line = line.strip()
+                        if line and line[0].isdigit():
+                            # Strip number prefix
+                            parts = line.split(".", 1)
+                            if len(parts) == 2:
+                                summary_lines.append(parts[1].strip())
+                            else:
+                                summary_lines.append(line)
+
+                    for i, s in enumerate(node_snippets):
+                        summary = summary_lines[i] if i < len(summary_lines) else ""
+                        if summary:
+                            conn.execute("UPDATE code_nodes SET summary = ? WHERE qualified_name = ?",
+                                        (summary[:200], s["qn"]))
+                            summarized += 1
+            except Exception:
+                continue
+
+        conn.commit()
+        return {"summarized": summarized, "total_pending": len(rows) - summarized}
+
+    # --- Guided Tour Generation ---
+
+    def generate_tour(self, root_dir: str | None = None) -> str:
+        """Generate a dependency-ordered guided tour of the codebase."""
+        conn = _code_graph_conn()
+        if not root_dir:
+            row = conn.execute("SELECT value FROM code_meta WHERE key = 'root_dir'").fetchone()
+            root_dir = row[0] if row else "."
+
+        # Get all file nodes with summaries and layers
+        files = conn.execute(
+            "SELECT qualified_name, name, language, line_count, layer, summary "
+            "FROM code_nodes WHERE kind = 'file' ORDER BY qualified_name"
+        ).fetchall()
+
+        if not files:
+            return "No files in the code graph. Run code_graph_build first."
+
+        # Build dependency order: files with fewest imports first
+        file_imports = {}
+        for f in files:
+            imports = conn.execute(
+                "SELECT COUNT(*) FROM code_edges WHERE source = ? AND kind = 'IMPORTS_FROM'",
+                (f[0],)
+            ).fetchone()[0]
+            importers = conn.execute(
+                "SELECT COUNT(*) FROM code_edges WHERE target LIKE ? AND kind = 'IMPORTS_FROM'",
+                (f"%%{f[1]}%%",)
+            ).fetchone()[0]
+            file_imports[f[0]] = {"imports": imports, "importers": importers}
+
+        # Sort: foundation files first (many importers, few imports), then leaves
+        sorted_files = sorted(files, key=lambda f: (
+            file_imports.get(f[0], {}).get("imports", 0) - file_imports.get(f[0], {}).get("importers", 0),
+            f[0]
+        ))
+
+        # Group by layer
+        layer_groups = {}
+        for f in sorted_files:
+            layer = f[4] or "other"
+            if layer not in layer_groups:
+                layer_groups[layer] = []
+            layer_groups[layer].append(f)
+
+        # Build tour markdown
+        tour = f"# Codebase Tour: {os.path.basename(root_dir)}\n\n"
+        tour += f"**{len(files)} files** across {len(set(f[2] for f in files if f[2]))} language(s)\n\n"
+
+        # Architecture overview
+        if layer_groups:
+            tour += "## Architecture Layers\n\n"
+            layer_order = ["api", "service", "data", "ui", "util", "test", "other"]
+            layer_emoji = {"api": "🌐", "service": "⚙️", "data": "💾", "ui": "🖥️", "util": "🔧", "test": "🧪", "other": "📁"}
+            for layer in layer_order:
+                if layer in layer_groups:
+                    files_in_layer = layer_groups[layer]
+                    tour += f"### {layer_emoji.get(layer, '📁')} {layer.upper()} ({len(files_in_layer)} files)\n\n"
+                    for f in files_in_layer[:10]:
+                        qn, name, lang, lc, _, summary = f
+                        rel = os.path.relpath(qn, root_dir) if root_dir else qn
+                        imp_count = file_imports.get(qn, {}).get("importers", 0)
+                        desc = f" — {summary}" if summary else ""
+                        tour += f"- `{rel}` ({lang}, {lc} lines, {imp_count} dependents){desc}\n"
+                    if len(files_in_layer) > 10:
+                        tour += f"- ... and {len(files_in_layer) - 10} more\n"
+                    tour += "\n"
+
+        # Entry points
+        tour += "## Suggested Reading Order\n\n"
+        tour += "Start with the foundation (most imported) files, then work outward:\n\n"
+        for i, f in enumerate(sorted_files[:15], 1):
+            qn, name, lang, lc, layer, summary = f
+            rel = os.path.relpath(qn, root_dir) if root_dir else qn
+            imp = file_imports.get(qn, {})
+            desc = f" — {summary}" if summary else ""
+            tour += f"{i}. `{rel}` ({imp.get('importers', 0)} dependents, {imp.get('imports', 0)} imports){desc}\n"
+
+        # Get key classes
+        key_classes = conn.execute(
+            "SELECT n.qualified_name, n.name, n.file_path, n.summary, COUNT(e.id) as edge_count "
+            "FROM code_nodes n LEFT JOIN code_edges e ON n.qualified_name = e.source OR n.qualified_name = e.target "
+            "WHERE n.kind = 'class' GROUP BY n.qualified_name ORDER BY edge_count DESC LIMIT 10"
+        ).fetchall()
+        if key_classes:
+            tour += "\n## Key Classes\n\n"
+            for qn, name, fp, summary, edges in key_classes:
+                rel = os.path.relpath(fp, root_dir) if root_dir else fp
+                desc = f" — {summary}" if summary else ""
+                tour += f"- **{name}** in `{rel}` ({edges} connections){desc}\n"
+
+        return tour
+
+
 _code_graph: CodeGraph | None = None
 
 
@@ -8713,6 +8983,23 @@ def tool_code_graph_impact(args: dict) -> str:
     result = cg.impact_analysis(files, depth=depth)
     if "error" in result:
         return _err(result["error"])
+    return _ok(result)
+
+
+def tool_code_graph_enhance(args: dict) -> str:
+    """Enhance the code graph with LLM summaries, architecture layers, and guided tour."""
+    action = args.get("action", "all")
+    cg = _get_code_graph()
+
+    result = {}
+    if action in ("all", "layers"):
+        result["layers"] = cg.classify_layers()
+    if action in ("all", "summaries"):
+        batch_size = args.get("batch_size", 20)
+        result["summaries"] = cg.generate_summaries(batch_size=batch_size)
+    if action in ("all", "tour"):
+        root_dir = args.get("root_dir")
+        result["tour"] = cg.generate_tour(root_dir=root_dir)
     return _ok(result)
 
 
@@ -10252,7 +10539,7 @@ TOOL_ICONS = {
     "context_search": "c", "context_detail": "c", "context_recall": "c",
     "list_nodes": "n", "schedule_list": "t", "schedule_history": "h",
     "read_document": "D", "write_document": "D", "edit_document": "D",
-    "code_graph_build": "G", "code_graph_query": "G", "code_graph_impact": "G",
+    "code_graph_build": "G", "code_graph_query": "G", "code_graph_impact": "G", "code_graph_enhance": "G",
 }
 
 TOOL_VERBS = {
@@ -10267,7 +10554,7 @@ TOOL_VERBS = {
     "context_search": "Searching Context", "context_detail": "Context Detail", "context_recall": "Recalling",
     "list_nodes": "Listing Nodes", "schedule_list": "Schedules", "schedule_history": "History",
     "read_document": "Reading Document", "write_document": "Writing Document", "edit_document": "Editing Document",
-    "code_graph_build": "Building Graph", "code_graph_query": "Querying Graph", "code_graph_impact": "Impact Analysis",
+    "code_graph_build": "Building Graph", "code_graph_query": "Querying Graph", "code_graph_impact": "Impact Analysis", "code_graph_enhance": "Enhancing Graph",
 }
 
 
@@ -10574,6 +10861,7 @@ TOOL_DISPATCH = {
     "code_graph_build": tool_code_graph_build,
     "code_graph_query": tool_code_graph_query,
     "code_graph_impact": tool_code_graph_impact,
+    "code_graph_enhance": tool_code_graph_enhance,
 }
 
 

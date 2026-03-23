@@ -121,6 +121,13 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - `code_graph_build`: parse directory, `code_graph_query`: 8 query types, `code_graph_impact`: BFS blast-radius via NetworkX
 - `_maybe_update_code_graph(path)` in `_after_file_write()` for incremental updates on source file changes
 - Incremental builds: SHA-256 file hash skip, re-parse only changed + dependent files
+- `code_graph_enhance` tool: generate LLM summaries, classify architecture layers, generate guided tour
+- Node summaries: one-line LLM descriptions per function/class (batched by file, uses Haiku)
+- Architecture layers: api/service/data/ui/util/test classification via path+name pattern matching
+- Guided tour: dependency-ordered walkthrough with layer grouping, key classes, reading order
+- Lossless compaction: `compacted` column on messages — originals preserved for search, compacted set used for conversation
+- Context fill indicator in footer: token estimate / max context with color-coded progress bar
+- Manual compact button + LCM badge in footer
 - Session corruption fix: `_rollback_messages()` reverts all intermediate tool-loop messages on failure
 - Partial response preservation: on cancel/error, save streamed text + tools to chat history
 - Message metadata: model, tokens, cost, tools, thinking persisted per assistant message, restored on load
