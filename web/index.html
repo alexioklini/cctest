@@ -4551,6 +4551,7 @@ window.loadSession = async function(sessionId) {
         if (m.metadata.cost != null) msg.cost = m.metadata.cost;
         if (m.metadata.original_model) msg.fallbackNotice = `Used fallback: ${m.metadata.model} (primary ${m.metadata.original_model} unavailable)`;
         if (m.metadata.partial) msg.partial = true;
+        if (m.metadata.thinking) msg.thinking = m.metadata.thinking;
       }
       return msg;
     });

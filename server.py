@@ -1388,12 +1388,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         created_files = []
         _partial_reply = []  # accumulate text deltas for partial response recovery
         _partial_tools = []  # accumulate tool calls
+        _partial_thinking = []  # accumulate thinking blocks
 
         def event_callback(event_type, data):
             if event_type == "file_created":
                 created_files.append(data)
             elif event_type == "text_delta":
                 _partial_reply.append(data.get("text", ""))
+            elif event_type == "thinking_delta":
+                _partial_thinking.append(data.get("text", ""))
             elif event_type == "tool_call":
                 _partial_tools.append({"name": data.get("name", ""), "args": data.get("args", {})})
             elif event_type == "tool_result":
@@ -1515,6 +1518,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         msg_metadata["files"] = created_files
                     if _partial_tools:
                         msg_metadata["tools"] = _partial_tools
+                    thinking_text = "".join(_partial_thinking).strip()
+                    if thinking_text:
+                        msg_metadata["thinking"] = thinking_text
                     session.add_message("assistant", reply, metadata=msg_metadata or None)
                     done_data = {
                         "text": reply,
