@@ -5375,12 +5375,30 @@ window.manualCompact = async function() {
   const compactingEl = document.getElementById('status-compacting');
   if (compactingEl) { compactingEl.textContent = 'Compacting...'; compactingEl.style.display = ''; }
   try {
-    await API.post('/v1/context/compact', { session_id: chat.sessionId });
-    showToast('Context compacted');
-    // Reload session to get updated messages
+    const result = await API.post('/v1/context/compact', { session_id: chat.sessionId });
+    const beforeK = ((result.before_tokens||0)/1000).toFixed(1);
+    const afterK = ((result.after_tokens||0)/1000).toFixed(1);
+    showToast(`Compacted: ${beforeK}k → ${afterK}k tokens`);
+    // Reload session messages from server (in-memory state was updated)
     if (chat.sessionId) {
       const res = await API.getSessionMessages(chat.sessionId);
-      chat.messages = (res.messages || []).map(m => ({ role: m.role, content: m.content }));
+      const msgs = (res.messages || []).map(m => {
+        const msg = { role: m.role, content: m.content };
+        if (m.metadata) {
+          if (m.metadata.model) msg.model = m.metadata.model;
+          if (m.metadata.tokens) msg.tokens = m.metadata.tokens;
+          if (m.metadata.tools) msg.tools = m.metadata.tools;
+          if (m.metadata.thinking) msg.thinking = m.metadata.thinking;
+        }
+        return msg;
+      });
+      // If DB has more messages than compacted (DB not updated), use shorter set
+      // The server's session.messages is the truth after compaction
+      if (result.status === 'compacted') {
+        // Estimate: compacted messages are fewer. Rebuild from after_tokens estimate.
+        chat.totalTokens = result.after_tokens || 0;
+      }
+      chat.messages = msgs;
       renderMessages();
     }
   } catch(e) { showToast(e.message, 'error'); }

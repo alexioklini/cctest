@@ -4212,6 +4212,21 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 force=True,
             )
             session.messages = result[0]
+            # Persist compacted messages to DB (replace old messages)
+            if result[1]:
+                try:
+                    with _db_conn() as conn:
+                        conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+                        for msg in session.messages:
+                            role = msg.get("role", "user")
+                            content = msg.get("content", "")
+                            c = json.dumps(content) if not isinstance(content, str) else content
+                            meta = json.dumps(msg.get("metadata", {})) if msg.get("metadata") else ""
+                            conn.execute("INSERT INTO messages (session_id, role, content, metadata) VALUES (?, ?, ?, ?)",
+                                         (session_id, role, c, meta))
+                        conn.commit()
+                except Exception as e:
+                    print(f"  [WARN] Compact DB persist: {e}", flush=True)
             after = engine._estimate_conversation_tokens(session.messages)
             stats = engine._context_manager.get_stats(session_id)
             self._send_json({
