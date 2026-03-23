@@ -11296,6 +11296,10 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
                             "name": block.get("name"),
                             "input_json": "",
                         }
+                    elif current_block_type == "thinking":
+                        current_block = {"thinking_text": ""}
+                        if event_callback:
+                            event_callback("thinking_start", {})
                     elif current_block_type == "text":
                         pass  # text handled via deltas
 
@@ -11310,6 +11314,12 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
                         collected_text.append(text)
                     elif delta.get("type") == "input_json_delta":
                         current_block["input_json"] += delta.get("partial_json", "")
+                    elif delta.get("type") == "thinking_delta":
+                        thinking_text = delta.get("thinking", "")
+                        if current_block and "thinking_text" in current_block:
+                            current_block["thinking_text"] += thinking_text
+                        if event_callback:
+                            event_callback("thinking_delta", {"text": thinking_text})
 
                 elif etype == "content_block_stop":
                     if current_block_type == "tool_use" and current_block:
@@ -11318,6 +11328,10 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
                         except json.JSONDecodeError:
                             current_block["input"] = {}
                         tool_uses.append(current_block)
+                        current_block = {}
+                    elif current_block_type == "thinking" and current_block:
+                        if event_callback:
+                            event_callback("thinking_done", {"text": current_block.get("thinking_text", "")})
                         current_block = {}
                     current_block_type = None
 

@@ -1271,6 +1271,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         model_override = body.get("model")
         chat_mode = body.get("mode", "")
         project_name = body.get("project")  # Optional project scope
+        thinking_level = body.get("thinking")  # none, low, medium, high
         session = sessions.get(sid)
 
         if not session:
@@ -1473,6 +1474,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 if not purpose and session.agent.config.get("model") == "auto":
                     purpose = engine.classify_task_purpose(message)
                 inf_params = engine.get_inference_params(session.model, purpose)
+                # Apply thinking level from request
+                if thinking_level and thinking_level != "none":
+                    _THINKING_BUDGETS = {"low": 2048, "medium": 8192, "high": 32768}
+                    inf_params["thinking"] = True
+                    inf_params["thinking_budget"] = _THINKING_BUDGETS.get(thinking_level, 8192)
+                elif thinking_level == "none":
+                    inf_params.pop("thinking", None)
+                    inf_params.pop("thinking_budget", None)
                 reply = engine.send_message_with_fallback(
                     session.messages, session.model, session.api_key,
                     session.base_url, session.api_type,

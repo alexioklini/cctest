@@ -2268,6 +2268,7 @@ tailwind.config = {
             <input type="file" id="image-file-input" accept="image/png,image/jpeg,image/gif,image/webp" multiple style="display:none" onchange="handleImageFiles(this.files)">
             <button id="btn-attach" title="Attach image" style="padding:6px 10px;border-radius:8px;font-size:14px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;align-self:flex-end;" onclick="document.getElementById('image-file-input').click()">&#x1F4CE;</button>
             <textarea id="chat-input" class="flex-1 bg-transparent border-none px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none font-body" rows="2" placeholder="Type a message... (Ctrl+Enter to send)" style="box-shadow:none !important;"></textarea>
+            <button id="btn-thinking" title="Thinking level (click to cycle)" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="cycleThinkingLevel()"><span id="thinking-level-label">Think</span></button>
             <button id="btn-plan-mode" title="Toggle Plan Mode (read-only)" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="togglePlanMode()">Plan</button>
             <button id="btn-toggle-tools" title="Toggle tool call visibility" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="toggleToolCalls()">🔧</button>
             <button id="btn-refine" title="Refine message with AI" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="refineMessage()">&#x2728;</button>
@@ -2591,6 +2592,7 @@ class API {
     const body = { session_id: sessionId, message };
     if (model) body.model = model;
     if (planModeActive) body.mode = 'plan';
+    if (thinkingLevel && thinkingLevel !== 'none') body.thinking = thinkingLevel;
     if (state.currentProject) body.project = state.currentProject;
     // Include images from the latest user message
     const chat = state.activeChat;
@@ -2736,6 +2738,10 @@ class AppState {
 
 const state = new AppState();
 let planModeActive = false;
+const _THINKING_LEVELS = ['none', 'low', 'medium', 'high'];
+const _THINKING_LABELS = { none: 'Think', low: 'Think \u00b7 Low', medium: 'Think \u00b7 Med', high: 'Think \u00b7 High' };
+const _THINKING_COLORS = { none: 'transparent', low: '#3b82f6', medium: '#f59e0b', high: '#ef4444' };
+let thinkingLevel = localStorage.getItem('thinking-level') || 'none';
 let showToolCalls = localStorage.getItem('showToolCalls') !== 'false'; // default true
 let customCommands = {}; // agentId -> [{name, template, description}]
 
@@ -4782,8 +4788,13 @@ function renderMessage(msg, idx, container) {
       <div class="response-pulse-bar mt-2"></div>
     </div>` : '';
     const filesHtml = (msg.files && msg.files.length > 0) ? renderFileAttachments(msg.files) : '';
+    const thinkingHtml = msg.thinking ? `<details class="mb-2" style="border-left:3px solid #8b5cf6;border-radius:0 6px 6px 0;background:color-mix(in srgb, #8b5cf6 5%, transparent);">
+      <summary style="padding:6px 10px;font-size:10px;color:#a78bfa;cursor:pointer;user-select:none;font-family:'IBM Plex Mono',monospace">Thinking (${msg.thinking.length.toLocaleString()} chars)</summary>
+      <div style="padding:4px 10px 8px;font-size:11px;color:var(--color-text-secondary);white-space:pre-wrap;max-height:300px;overflow-y:auto;font-family:'IBM Plex Mono',monospace;line-height:1.5">${esc(msg.thinking)}</div>
+    </details>` : '';
     div.innerHTML = `<div class="assistant-msg max-w-[90%] pl-4 text-sm text-text-primary">
       ${toolsHtml}
+      ${thinkingHtml}
       ${spinnerHtml}
       <div class="msg-content">${content}</div>
       ${filesHtml}
@@ -5099,6 +5110,19 @@ async function sendMessage() {
 
   try {
     await API.streamChat(chat.sessionId, text || 'What can you see in this image?', {
+      thinking_start: () => {
+        if (spinnerLabel) spinnerLabel.textContent = 'Thinking deeply...';
+        assistantMsg._thinking = '';
+      },
+      thinking_delta: (d) => {
+        assistantMsg._thinking = (assistantMsg._thinking || '') + (d.text || '');
+      },
+      thinking_done: (d) => {
+        assistantMsg.thinking = d.text || assistantMsg._thinking || '';
+        delete assistantMsg._thinking;
+        if (spinnerLabel) spinnerLabel.textContent = 'Generating...';
+        updateStreamingMessage(chat);
+      },
       compacting: (d) => {
         if (spinnerLabel) spinnerLabel.textContent = `Compacting context (${d.pct}% full)...`;
       },
@@ -9765,6 +9789,30 @@ function updateToolToggleButton() {
 }
 
 // ─── Plan Mode ──────────────────────────────────────────────
+function cycleThinkingLevel() {
+  const idx = _THINKING_LEVELS.indexOf(thinkingLevel);
+  thinkingLevel = _THINKING_LEVELS[(idx + 1) % _THINKING_LEVELS.length];
+  localStorage.setItem('thinking-level', thinkingLevel);
+  _updateThinkingButton();
+  showToast(`Thinking: ${thinkingLevel === 'none' ? 'off' : thinkingLevel}`);
+}
+function _updateThinkingButton() {
+  const btn = document.getElementById('btn-thinking');
+  const label = document.getElementById('thinking-level-label');
+  if (!btn) return;
+  if (thinkingLevel !== 'none') {
+    btn.style.background = _THINKING_COLORS[thinkingLevel];
+    btn.style.color = '#fff';
+    btn.style.borderColor = _THINKING_COLORS[thinkingLevel];
+  } else {
+    btn.style.background = 'transparent';
+    btn.style.color = 'var(--text-secondary)';
+    btn.style.borderColor = 'var(--border)';
+  }
+  if (label) label.textContent = _THINKING_LABELS[thinkingLevel];
+}
+_updateThinkingButton(); // init on load
+
 function togglePlanMode() {
   planModeActive = !planModeActive;
   const btn = document.getElementById('btn-plan-mode');
