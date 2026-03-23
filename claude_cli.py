@@ -11245,6 +11245,7 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
     # Parse the full SSE stream to get content blocks and stop reason
     collected_text = []
     tool_uses = []
+    thinking_blocks = []
     current_event = None
     current_block_type = None
     current_block = {}
@@ -11297,7 +11298,7 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
                             "input_json": "",
                         }
                     elif current_block_type == "thinking":
-                        current_block = {"thinking_text": ""}
+                        current_block = {"thinking_text": "", "signature": block.get("signature", "")}
                         if event_callback:
                             event_callback("thinking_start", {})
                     elif current_block_type == "text":
@@ -11330,8 +11331,11 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
                         tool_uses.append(current_block)
                         current_block = {}
                     elif current_block_type == "thinking" and current_block:
+                        thinking_text = current_block.get("thinking_text", "")
+                        if thinking_text:
+                            thinking_blocks.append({"text": thinking_text, "signature": current_block.get("signature", "")})
                         if event_callback:
-                            event_callback("thinking_done", {"text": current_block.get("thinking_text", "")})
+                            event_callback("thinking_done", {"text": thinking_text})
                         current_block = {}
                     current_block_type = None
 
@@ -11365,8 +11369,13 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
     if full_text:
         print()
 
-    # Build the assistant message content blocks
+    # Build the assistant message content blocks (must include thinking for Anthropic API)
     assistant_content = []
+    for tb in thinking_blocks:
+        block = {"type": "thinking", "thinking": tb["text"]}
+        if tb.get("signature"):
+            block["signature"] = tb["signature"]
+        assistant_content.append(block)
     if full_text:
         assistant_content.append({"type": "text", "text": full_text})
     for tu in tool_uses:
