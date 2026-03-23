@@ -2352,7 +2352,13 @@ tailwind.config = {
       <span id="status-model" class="text-model mono font-medium"></span>
       <span class="text-text-muted">|</span>
       <span id="status-tokens" class="mono"></span>
-      <span id="status-session" class="mono" style="margin-left:auto"></span>
+      <span id="status-context" class="flex items-center gap-1.5" style="margin-left:auto">
+        <span id="status-context-label" class="mono" style="font-size:10px"></span>
+        <div id="status-context-bar" style="width:60px;height:6px;border-radius:3px;background:var(--color-surface-lighter);overflow:hidden;display:none">
+          <div id="status-context-fill" style="height:100%;border-radius:3px;transition:width 0.3s,background 0.3s"></div>
+        </div>
+      </span>
+      <span id="status-session" class="mono"></span>
     </footer>
   </div>
 
@@ -5257,6 +5263,23 @@ async function stopGeneration() {
 }
 
 // ─── Status Bar ─────────────────────────────────────────────
+function _estimateTokens(messages) {
+  let total = 0;
+  for (const m of messages || []) {
+    const c = m.content;
+    if (typeof c === 'string') total += Math.ceil(c.length / 4) + 4;
+    else if (Array.isArray(c)) {
+      for (const b of c) {
+        if (b?.text) total += Math.ceil(b.text.length / 4);
+        else if (b?.thinking) total += Math.ceil(b.thinking.length / 4);
+        else total += 20;
+      }
+      total += 4;
+    } else total += 10;
+  }
+  return total;
+}
+
 function updateStatusBar() {
   const chat = state.activeChat;
   const agentLabel = chat?.agent || '';
@@ -5265,10 +5288,35 @@ function updateStatusBar() {
   const costStr = chat?.sessionCost != null ? ` · $${chat.sessionCost.toFixed(2)}` : '';
   dom.statusTokens.textContent = chat?.totalTokens ? `${chat.totalTokens} tokens${costStr}` : '';
   dom.statusSession.textContent = chat?.sessionId ? `${chat.sessionId.substring(0, 8)}` : '';
+
+  // Context fill indicator
+  const ctxLabel = document.getElementById('status-context-label');
+  const ctxBar = document.getElementById('status-context-bar');
+  const ctxFill = document.getElementById('status-context-fill');
+  if (ctxLabel && ctxBar && ctxFill) {
+    if (chat && chat.messages && chat.messages.length > 0) {
+      const est = _estimateTokens(chat.messages);
+      // Get max context from model config or default 128K
+      const modelCfg = (state.modelsConfig || {})[chat.model] || {};
+      const maxCtx = modelCfg.max_context || 131072;
+      const pct = Math.min(100, Math.round(est / maxCtx * 100));
+      const estK = (est / 1000).toFixed(1);
+      const maxK = (maxCtx / 1000).toFixed(0);
+      ctxLabel.textContent = `${estK}k / ${maxK}k`;
+      ctxBar.style.display = '';
+      ctxFill.style.width = pct + '%';
+      ctxFill.style.background = pct >= 75 ? '#ef4444' : pct >= 50 ? '#f59e0b' : '#4ade80';
+      ctxLabel.style.color = pct >= 75 ? '#ef4444' : pct >= 50 ? '#f59e0b' : 'var(--color-text-muted)';
+    } else {
+      ctxLabel.textContent = '';
+      ctxBar.style.display = 'none';
+    }
+  }
+
   // Hide separators when no data
   const footer = dom.statusAgent.closest('footer');
   if (footer) {
-    const seps = footer.querySelectorAll('.text-text-muted');
+    const seps = footer.querySelectorAll(':scope > .text-text-muted');
     seps.forEach((sep, i) => {
       if (i === 0) sep.style.display = agentLabel && chat?.model ? '' : 'none';
       if (i === 1) sep.style.display = chat?.model && chat?.totalTokens ? '' : 'none';
