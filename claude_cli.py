@@ -10985,7 +10985,11 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         endpoint = f"{base_url}/messages"
 
     # System instruction for the agent
-    augmented_messages = list(messages)
+    # Strip metadata from messages — API providers don't accept extra fields
+    augmented_messages = []
+    for msg in messages:
+        clean = {k: v for k, v in msg.items() if k in ("role", "content")}
+        augmented_messages.append(clean)
     if tools:
         cwd = os.getcwd()
         import platform
