@@ -2246,7 +2246,7 @@ tailwind.config = {
       <!-- Spinner bar (visible during streaming) -->
       <div id="chat-spinner-bar" class="hidden flex items-center gap-3 px-5 py-2 border-b border-border/50 bg-surface/30" style="min-height:36px">
         <div class="dot-pulse"><span></span><span></span><span></span></div>
-        <span id="spinner-model" class="text-[10px] text-accent mono" style="opacity:0.7"></span>
+        <span id="spinner-model" style="font-size:11px;color:var(--color-accent);font-family:'IBM Plex Mono',monospace;font-weight:500"></span>
         <span id="spinner-label" class="text-xs text-text-muted font-display">Thinking...</span>
         <span id="spinner-elapsed" class="text-[10px] text-text-muted mono ml-auto"></span>
       </div>
@@ -4771,9 +4771,11 @@ function renderMessage(msg, idx, container) {
       : (toolCount > 0 ? renderToolsSummary(msg.tools) : '');
     const content = msg.content ? marked.parse(msg.content) : '';
     const isStreaming = !msg.content && !msg.tokens && (msg.tools || []).length === 0;
+    const _modelLabel = msg._requestModel || '';
     const spinnerHtml = isStreaming ? `<div class="thinking-indicator" id="inline-thinking">
       <div class="thinking-header">
         <div class="wave-bars"><span></span><span></span><span></span><span></span><span></span></div>
+        ${_modelLabel ? `<span style="font-size:10px;color:var(--color-accent);font-family:'IBM Plex Mono',monospace;font-weight:500" id="thinking-model">${esc(_modelLabel)}</span>` : ''}
         <span class="thinking-label" id="thinking-status">Thinking...</span>
         <span class="thinking-elapsed" id="thinking-time"></span>
       </div>
@@ -5091,7 +5093,7 @@ async function sendMessage() {
     if (inlineTime) inlineTime.textContent = `${s}s`;
   }, 1000);
 
-  const assistantMsg = { role: 'assistant', content: '', tools: [], files: [], ts: Date.now() };
+  const assistantMsg = { role: 'assistant', content: '', tools: [], files: [], ts: Date.now(), _requestModel: chat.model || '' };
   chat.messages.push(assistantMsg);
   renderMessages();
 
@@ -5147,6 +5149,8 @@ async function sendMessage() {
           if (spinnerLabel) spinnerLabel.textContent = `Retrying (${d.attempt}/${d.max_retries})...`;
         } else if (d.status === 'switch') {
           if (spinnerModel) spinnerModel.textContent = d.to;
+          const thinkingModel = document.getElementById('thinking-model');
+          if (thinkingModel) thinkingModel.textContent = d.to;
           if (spinnerLabel) spinnerLabel.textContent = `Fallback...`;
           assistantMsg.fallbackNotice = `Using fallback: ${d.to} (primary ${d.from} unavailable)`;
         }
