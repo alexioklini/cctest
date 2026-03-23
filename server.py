@@ -627,6 +627,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_audit_list()
         elif path.startswith("/v1/audit/export"):
             self._handle_audit_export()
+        # --- Hooks GET routes ---
+        elif path.startswith("/v1/agents/") and path.endswith("/hooks"):
+            self._handle_hooks_get(path)
         # --- Context Management GET routes ---
         elif path == "/v1/context/config":
             self._handle_context_config_get()
@@ -782,6 +785,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         # --- Tools config POST routes ---
         elif path == "/v1/tools/config":
             self._handle_tools_config_save()
+        # --- Hooks POST routes ---
+        elif path.startswith("/v1/agents/") and path.endswith("/hooks"):
+            self._handle_hooks_save(path)
         # --- Context Management POST routes ---
         elif path == "/v1/context/config":
             self._handle_context_config_save()
@@ -1292,23 +1298,44 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         # Add user message (persisted to DB)
         session.add_message("user", user_content)
 
-        # Check context and compact
-        # Store session_id on thread local for context tools
-        engine._thread_local.current_session_id = session.id
-        session.messages, _ = engine._check_and_compact(
-            session.messages, session.model, session.api_key,
-            session.base_url, session.api_type,
-            max_tokens=session.max_context,
-            session_id=session.id,
-        )
-
-        # SSE streaming setup
+        # SSE streaming setup (start early so we can send compaction events)
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "keep-alive")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
+
+        # Check context and compact (with SSE progress)
+        engine._thread_local.current_session_id = session.id
+        estimated = engine._estimate_conversation_tokens(session.messages)
+        ctx_cfg = engine._context_manager.get_config() if engine._context_manager else {}
+        threshold_pct = ctx_cfg.get("compact_threshold", 0.75) if ctx_cfg.get("enabled") else engine.COMPACT_THRESHOLD
+        pre_compact_pct = 0
+        if estimated >= int(session.max_context * threshold_pct):
+            pre_compact_pct = int(estimated / session.max_context * 100)
+            sse_line = f"event: compacting\ndata: {json.dumps({'pct': pre_compact_pct, 'tokens': estimated, 'max_tokens': session.max_context})}\n\n"
+            try:
+                self.wfile.write(sse_line.encode("utf-8"))
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        session.messages, was_compacted = engine._check_and_compact(
+            session.messages, session.model, session.api_key,
+            session.base_url, session.api_type,
+            max_tokens=session.max_context,
+            session_id=session.id,
+        )
+        if was_compacted:
+            new_est = engine._estimate_conversation_tokens(session.messages)
+            new_pct = int(new_est / session.max_context * 100)
+            sse_line = f"event: compacted\ndata: {json.dumps({'pct': new_pct, 'tokens': new_est, 'old_pct': pre_compact_pct})}\n\n"
+            try:
+                self.wfile.write(sse_line.encode("utf-8"))
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
         event_queue = queue.Queue()
         created_files = []
@@ -3959,6 +3986,44 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json(result, 500)
         else:
             self._send_json({"status": "saved", "config": result})
+
+    # --- Hooks handlers ---
+
+    def _handle_hooks_get(self, path: str):
+        """GET /v1/agents/{id}/hooks — list hooks for an agent."""
+        agent_id = self._parse_agent_from_path(path)
+        if not agent_id:
+            self._send_json({"error": "Missing agent ID"}, 400)
+            return
+        try:
+            cfg = engine.AgentConfig(agent_id)
+            hooks_cfg = cfg.config.get("hooks", {"enabled": False, "timeout": 5000, "scripts": []})
+            self._send_json(hooks_cfg)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_hooks_save(self, path: str):
+        """POST /v1/agents/{id}/hooks — save hooks config for an agent."""
+        agent_id = self._parse_agent_from_path(path)
+        if not agent_id:
+            self._send_json({"error": "Missing agent ID"}, 400)
+            return
+        body = self._read_json()
+        try:
+            agent_json_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
+            config = {}
+            if os.path.exists(agent_json_path):
+                with open(agent_json_path) as f:
+                    config = json.load(f)
+            config["hooks"] = body
+            with open(agent_json_path, "w") as f:
+                json.dump(config, f, indent=2)
+            # Reload hook runner cache
+            with engine._hook_runners_lock:
+                engine._hook_runners.pop(agent_id, None)
+            self._send_json({"status": "saved", "hooks": body})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
 
     # --- Context Management handlers ---
 

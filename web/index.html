@@ -5039,6 +5039,13 @@ async function sendMessage() {
 
   try {
     await API.streamChat(chat.sessionId, text || 'What can you see in this image?', {
+      compacting: (d) => {
+        if (spinnerLabel) spinnerLabel.textContent = `Compacting context (${d.pct}% full)...`;
+      },
+      compacted: (d) => {
+        if (spinnerLabel) spinnerLabel.textContent = `Compacted ${d.old_pct || '?'}% → ${d.pct}%`;
+        setTimeout(() => { if (spinnerLabel) spinnerLabel.textContent = 'Thinking...'; }, 1500);
+      },
       text_delta: (d) => {
         assistantMsg.content += d.text || '';
         if (spinnerLabel) spinnerLabel.textContent = 'Generating...';
@@ -5193,7 +5200,7 @@ function openConfigModal(agentName) {
   const displayName = agentData ? (agentData.display_name || agentName) : agentName;
   const cfgTabs = [
     {group: 'Agent', items: [{id:'soul', label:'Soul'}, {id:'settings', label:'Settings'}, {id:'commands', label:'Commands'}]},
-    {group: 'Tools', items: [{id:'skills', label:'Skills'}, {id:'mcp', label:'MCP'}]},
+    {group: 'Tools', items: [{id:'skills', label:'Skills'}, {id:'mcp', label:'MCP'}, {id:'hooks', label:'Hooks'}]},
     {group: 'Work', items: [{id:'projects', label:'Projects'}, {id:'workflows', label:'Workflows'}, {id:'schedule', label:'Schedule'}]},
     {group: 'Memory', items: [{id:'memory', label:'Memory'}, {id:'graph', label:'Graph'}]},
   ];
@@ -5457,6 +5464,65 @@ async function loadConfigTabContent(tab, agentName) {
           <textarea id="mcp-editor" class="w-full bg-surface-light border border-border rounded-xl px-5 py-4 text-sm text-text-primary mono focus:border-accent transition-colors" rows="15">${esc(JSON.stringify({ servers: [] }, null, 2))}</textarea>
           <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="saveMcpConfig('${esc(agentName)}')">Save MCP Config</button>
         </div>`;
+    }
+  } else if (tab === 'hooks') {
+    try {
+      const hooksData = await API.get(`/v1/agents/${encodeURIComponent(agentName)}/hooks`);
+      const enabled = hooksData.enabled || false;
+      const timeout = hooksData.timeout || 5000;
+      const scripts = hooksData.scripts || [];
+
+      let tableRows = '';
+      if (scripts.length === 0) {
+        tableRows = '<div class="text-text-muted text-sm py-4">No hooks configured. Add hooks to enforce policies, log actions, or transform tool output.</div>';
+      } else {
+        tableRows = scripts.map((h, i) => `
+          <div class="flex items-center gap-3 py-2 px-3 border-b border-border/30 text-sm">
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" class="sr-only peer" ${h.enabled !== false ? 'checked' : ''}
+                onchange="toggleHookEnabled('${esc(agentName)}',${i},this.checked)">
+              <div class="w-7 h-4 rounded-full peer-checked:bg-accent bg-surface-lighter border border-border peer-checked:border-accent after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:after:translate-x-3"></div>
+            </label>
+            <span class="text-text-primary font-medium flex-1">${esc(h.name || 'unnamed')}</span>
+            <span class="px-2 py-0.5 rounded text-[10px] mono ${h.type === 'pre' ? 'bg-error/10 text-error' : h.type === 'after_file_write' ? 'bg-accent/10 text-accent' : 'bg-success/10 text-success'}">${esc(h.type || '?')}</span>
+            <span class="text-xs text-text-muted mono">${esc((h.tools || ['*']).join(', '))}</span>
+            <span class="text-xs text-text-muted mono">${esc(h.script || '')}</span>
+            <button onclick="removeHook('${esc(agentName)}',${i})" class="text-error text-xs hover:underline">Remove</button>
+          </div>
+        `).join('');
+      }
+
+      el.innerHTML = `
+        <div class="glass-card p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="section-header text-sm">Hooks</h3>
+            <div class="flex items-center gap-3">
+              <label class="text-xs text-text-secondary">Timeout (ms):</label>
+              <input type="number" id="hooks-timeout" value="${timeout}" min="1000" max="30000" step="1000"
+                class="w-20 bg-surface-light border border-border rounded-lg px-2 py-1 text-xs text-text-primary"
+                onchange="saveHooksConfig('${esc(agentName)}')">
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="hooks-enabled" class="sr-only peer" ${enabled ? 'checked' : ''}
+                  onchange="saveHooksConfig('${esc(agentName)}')">
+                <div class="w-9 h-5 rounded-full peer-checked:bg-accent bg-surface-lighter border border-border peer-checked:border-accent transition-all after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+              </label>
+            </div>
+          </div>
+          <div id="hooks-list" class="border border-border/50 rounded-lg overflow-hidden mb-4">
+            ${tableRows}
+          </div>
+          <button onclick="showAddHookDialog('${esc(agentName)}')" class="btn-primary text-xs px-3 py-1.5 rounded-lg">+ Add Hook</button>
+        </div>
+        <div class="glass-card p-6 mt-4">
+          <h3 class="section-header text-sm mb-3">Hook Types</h3>
+          <div class="text-xs text-text-muted space-y-1">
+            <p><span class="px-1.5 py-0.5 rounded bg-error/10 text-error mono">pre</span> Runs before tool executes. Exit 1 = block. Stdout = block message.</p>
+            <p><span class="px-1.5 py-0.5 rounded bg-success/10 text-success mono">post</span> Runs after tool executes. Stdout = modified result (empty = pass-through).</p>
+            <p><span class="px-1.5 py-0.5 rounded bg-accent/10 text-accent mono">after_file_write</span> Runs after write_file/edit_file. For notifications, custom indexing.</p>
+          </div>
+        </div>`;
+    } catch(e) {
+      el.innerHTML = `<div class="text-error p-4">${esc(e.message)}</div>`;
     }
   } else if (tab === 'schedule') {
     try {
@@ -7055,6 +7121,92 @@ window.saveMcpConfig = async function(agentName) {
   } catch (e) {
     showToast(`Error: ${e.message}`, true);
   }
+};
+
+// --- Hooks management ---
+window._hooksCache = {};
+
+window.saveHooksConfig = async function(agentName) {
+  try {
+    const current = window._hooksCache[agentName] || await API.get(`/v1/agents/${encodeURIComponent(agentName)}/hooks`);
+    const cfg = {
+      enabled: document.getElementById('hooks-enabled')?.checked || false,
+      timeout: parseInt(document.getElementById('hooks-timeout')?.value) || 5000,
+      scripts: current.scripts || [],
+    };
+    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/hooks`, cfg);
+    window._hooksCache[agentName] = cfg;
+    showToast('Hooks config saved');
+  } catch(e) { showToast(e.message, 'error'); }
+};
+
+window.toggleHookEnabled = async function(agentName, idx, enabled) {
+  try {
+    const data = await API.get(`/v1/agents/${encodeURIComponent(agentName)}/hooks`);
+    if (data.scripts && data.scripts[idx]) {
+      data.scripts[idx].enabled = enabled;
+      await API.post(`/v1/agents/${encodeURIComponent(agentName)}/hooks`, data);
+      window._hooksCache[agentName] = data;
+      showToast(`Hook ${enabled ? 'enabled' : 'disabled'}`);
+    }
+  } catch(e) { showToast(e.message, 'error'); }
+};
+
+window.removeHook = async function(agentName, idx) {
+  try {
+    const data = await API.get(`/v1/agents/${encodeURIComponent(agentName)}/hooks`);
+    if (data.scripts) {
+      data.scripts.splice(idx, 1);
+      await API.post(`/v1/agents/${encodeURIComponent(agentName)}/hooks`, data);
+      window._hooksCache[agentName] = data;
+      showToast('Hook removed');
+      loadConfigTabContent('hooks', agentName);
+    }
+  } catch(e) { showToast(e.message, 'error'); }
+};
+
+window.showAddHookDialog = function(agentName) {
+  const d = document.createElement('div');
+  d.className = 'modal-overlay'; d.onclick = e => { if(e.target===d)d.remove(); };
+  d.innerHTML = `<div class="modal-content p-6" style="max-width:500px">
+    <h3 class="font-display font-semibold mb-4 text-text-primary">Add Hook</h3>
+    <label class="text-xs text-text-secondary block mb-1">Name</label>
+    <input id="add-hook-name" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3" placeholder="block-dangerous-commands">
+    <label class="text-xs text-text-secondary block mb-1">Type</label>
+    <select id="add-hook-type" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3">
+      <option value="pre">pre (before tool — can block)</option>
+      <option value="post">post (after tool — can modify result)</option>
+      <option value="after_file_write">after_file_write (after write/edit)</option>
+    </select>
+    <label class="text-xs text-text-secondary block mb-1">Tools (comma-separated, * for all)</label>
+    <input id="add-hook-tools" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3" placeholder="execute_command, write_file" value="*">
+    <label class="text-xs text-text-secondary block mb-1">Script path (relative to agent dir)</label>
+    <input id="add-hook-script" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary mb-3" placeholder="hooks/my-hook.sh">
+    <div class="flex justify-end gap-2 mt-4">
+      <button onclick="this.closest('.modal-overlay').remove()" class="btn-secondary px-4 py-2 rounded-lg text-sm">Cancel</button>
+      <button onclick="createHook('${esc(agentName)}')" class="btn-primary px-4 py-2 rounded-lg text-sm">Add Hook</button>
+    </div>
+  </div>`;
+  document.body.appendChild(d);
+};
+
+window.createHook = async function(agentName) {
+  const name = document.getElementById('add-hook-name')?.value?.trim();
+  const type = document.getElementById('add-hook-type')?.value;
+  const tools = document.getElementById('add-hook-tools')?.value?.split(',').map(t=>t.trim()).filter(Boolean) || ['*'];
+  const script = document.getElementById('add-hook-script')?.value?.trim();
+  if (!name || !script) { showToast('Name and script required', 'error'); return; }
+  try {
+    const data = await API.get(`/v1/agents/${encodeURIComponent(agentName)}/hooks`);
+    if (!data.scripts) data.scripts = [];
+    data.scripts.push({ name, type, tools, script, enabled: true });
+    if (!data.enabled) data.enabled = true;
+    if (!data.timeout) data.timeout = 5000;
+    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/hooks`, data);
+    document.querySelector('.modal-overlay:last-child')?.remove();
+    showToast('Hook added');
+    loadConfigTabContent('hooks', agentName);
+  } catch(e) { showToast(e.message, 'error'); }
 };
 
 window.viewAgentFile = async function(agentName, fileName) {

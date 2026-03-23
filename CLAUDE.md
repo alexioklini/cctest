@@ -100,6 +100,15 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - Three-level escalation: leaf summaries → condensation → fallback truncation
 - Thread-local `current_session_id` set before compaction for context tools to access
 - Legacy `_compact_conversation` remains as fallback when ContextManager is disabled
+- Three-layer hooks: tool pre/post (external scripts), after_file_write (centralized pipeline), LLM-level (built-in)
+- `HookRunner` loads hooks from `agent.json` `hooks.scripts[]`, runs via subprocess with env vars + stdin JSON
+- Hooks timeout (default 5s), fail-open on crash, exit 1 = block (pre) or error (post), exit 2 = skip chain
+- `_after_file_write()` centralizes QMD reindex + entity extraction + KG update + file events + external hooks
+- `_execute_tool()` orchestrates: built-in pre → external pre → execute → built-in post → external post
+- Workflow `allowed_tools` restriction now enforced (was dead code)
+- Hook runners cached per agent, invalidated on config save
+- GET/POST `/v1/agents/{id}/hooks` for hook management
+- Compaction sends SSE events (`compacting`, `compacted`) for spinner feedback
 
 ### Agent Teams
 

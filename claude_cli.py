@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "3.6.0"
-VERSION_DATE = "2026-03-22"
+VERSION = "3.7.0"
+VERSION_DATE = "2026-03-23"
 CHANGELOG = [
+    ("3.7.0", "2026-03-23", "Three-layer hooks system: tool pre/post hooks, after_file_write pipeline, external shell scripts with env vars, HookRunner with timeout/fail-open, centralized file-write pipeline (QMD+KG+events), hooks UI in agent config, workflow tool restriction enforced, compaction SSE events"),
     ("3.6.0", "2026-03-22", "Lossless context management: DAG-based hierarchical summarization, context_search/context_detail/context_recall tools, configurable fresh tail (32), summary model, condensation depth, settings UI with session stats"),
     ("3.5.0", "2026-03-22", "Chat content search (SQLite fallback + QMD), index status indicators, transcript backfill at startup, knowledge graph: fix search, fix frontmatter parsing for nested YAML, fix edge path resolution, two-stage relationship discovery (QMD candidates + LLM classification), deep search in project panel"),
     ("3.4.0", "2026-03-22", "Remote nodes: list_nodes tool, node settings UI (token, allowed tools, max concurrent, timeout), node.py launchd install/uninstall/status, node connection logging, dynamic sidebar refresh on async LLM summary"),
@@ -693,16 +694,8 @@ def tool_write_file(args: dict) -> str:
         with open(path, "w") as f:
             f.write(content)
         size = os.path.getsize(path)
-        _maybe_qmd_reindex(path)
-        # Emit file_created event for attachment tracking
-        ecb = getattr(_thread_local, 'event_callback', None)
-        if ecb:
-            ecb("file_created", {
-                "path": path,
-                "name": os.path.basename(path),
-                "size": size,
-                "action": "created",
-            })
+        agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+        _after_file_write(path, "created", agent.agent_id if agent else "main")
         return _ok({"path": path, "size": size, "status": "written"})
     except Exception as e:
         return _err(f"write_file: {e}")
@@ -730,16 +723,8 @@ def tool_edit_file(args: dict) -> str:
             new_content = content.replace(old_string, new_string, 1)
         with open(path, "w") as f:
             f.write(new_content)
-        _maybe_qmd_reindex(path)
-        # Emit file_created event for attachment tracking
-        ecb = getattr(_thread_local, 'event_callback', None)
-        if ecb:
-            ecb("file_created", {
-                "path": path,
-                "name": os.path.basename(path),
-                "size": os.path.getsize(path),
-                "action": "modified",
-            })
+        agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+        _after_file_write(path, "modified", agent.agent_id if agent else "main")
         return _ok({"path": path, "replacements": count if replace_all else 1, "status": "edited"})
     except Exception as e:
         return _err(f"edit_file: {e}")
@@ -8902,26 +8887,226 @@ def reset_tool_dedup():
     _tool_call_history.dupe_count = 0
 
 
+# --- Hook Runner ---
+
+class HookRunner:
+    """Runs external hook scripts for tool execution lifecycle events."""
+
+    def __init__(self, agent_id: str = "main"):
+        self.agent_id = agent_id
+        self._hooks = self._load_hooks()
+
+    def _load_hooks(self) -> list[dict]:
+        """Load hook config from agent.json."""
+        try:
+            cfg = AgentConfig(self.agent_id)
+            hooks_cfg = cfg.config.get("hooks", {})
+            if not hooks_cfg.get("enabled", False):
+                return []
+            return [h for h in hooks_cfg.get("scripts", []) if h.get("enabled", True)]
+        except Exception:
+            return []
+
+    def reload(self):
+        self._hooks = self._load_hooks()
+
+    def _get_timeout(self) -> int:
+        try:
+            cfg = AgentConfig(self.agent_id)
+            return cfg.config.get("hooks", {}).get("timeout", 5000)
+        except Exception:
+            return 5000
+
+    def get_hooks(self, hook_type: str, tool_name: str = "") -> list[dict]:
+        """Get matching hooks for a type and tool."""
+        result = []
+        for h in self._hooks:
+            if h.get("type") != hook_type:
+                continue
+            tools = h.get("tools", ["*"])
+            if "*" in tools or tool_name in tools:
+                result.append(h)
+        return result
+
+    def run_hook(self, hook: dict, env_extra: dict) -> tuple[int, str]:
+        """Run a hook script. Returns (exit_code, stdout)."""
+        script = hook.get("script", "")
+        if not script:
+            return 0, ""
+
+        agent_dir = os.path.join(AGENTS_DIR, self.agent_id)
+        script_path = os.path.join(agent_dir, script)
+        if not os.path.isfile(script_path):
+            logging.warning(f"Hook script not found: {script_path}")
+            return 0, ""
+
+        env = os.environ.copy()
+        env["HOOK_AGENT"] = self.agent_id
+        env["HOOK_SESSION_ID"] = getattr(_thread_local, 'session_id', "") or ""
+        env["HOOK_TIMESTAMP"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        env.update({k: str(v) for k, v in env_extra.items()})
+
+        timeout_s = self._get_timeout() / 1000.0
+        stdin_data = json.dumps(env_extra).encode("utf-8")
+
+        try:
+            proc = subprocess.Popen(
+                ["bash", script_path],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                stdin=subprocess.PIPE, env=env,
+                cwd=agent_dir, start_new_session=True,
+            )
+            stdout, stderr = proc.communicate(input=stdin_data, timeout=timeout_s)
+            output = stdout.decode("utf-8", errors="replace").strip()
+            if stderr:
+                logging.debug(f"Hook {hook.get('name','?')} stderr: {stderr.decode('utf-8', errors='replace')[:200]}")
+            return proc.returncode, output
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, 9)
+            except OSError:
+                proc.kill()
+            proc.communicate(timeout=2)
+            logging.warning(f"Hook {hook.get('name','?')} timed out after {timeout_s}s")
+            return 1, f"Hook timed out after {timeout_s}s"
+        except Exception as e:
+            logging.warning(f"Hook {hook.get('name','?')} failed: {e}")
+            return 0, ""  # fail-open
+
+    def run_pre_hooks(self, tool_name: str, args: dict) -> str | None:
+        """Run pre-hooks. Returns error message if blocked, None if allowed."""
+        hooks = self.get_hooks("pre", tool_name)
+        for h in hooks:
+            env = {
+                "HOOK_TYPE": "pre",
+                "HOOK_TOOL_NAME": tool_name,
+                "HOOK_TOOL_ARGS": json.dumps(args),
+            }
+            code, output = self.run_hook(h, env)
+            if code == 1:
+                hook_name = h.get("name", "unknown")
+                msg = output or f"Blocked by hook: {hook_name}"
+                logging.info(f"Hook {hook_name} blocked {tool_name}: {msg[:100]}")
+                return _err(f"HOOK BLOCKED ({hook_name}): {msg}")
+            if code == 2:
+                break  # skip remaining hooks
+        return None
+
+    def run_post_hooks(self, tool_name: str, args: dict, result: str) -> str:
+        """Run post-hooks. Returns (possibly modified) result."""
+        hooks = self.get_hooks("post", tool_name)
+        for h in hooks:
+            env = {
+                "HOOK_TYPE": "post",
+                "HOOK_TOOL_NAME": tool_name,
+                "HOOK_TOOL_ARGS": json.dumps(args),
+                "HOOK_TOOL_RESULT": result[:50000],  # cap env var size
+            }
+            code, output = self.run_hook(h, env)
+            if code == 0 and output:
+                result = output  # modify result
+            if code == 2:
+                break
+        return result
+
+    def run_after_file_write(self, file_path: str, action: str):
+        """Run after_file_write hooks."""
+        hooks = self.get_hooks("after_file_write")
+        for h in hooks:
+            env = {
+                "HOOK_TYPE": "after_file_write",
+                "HOOK_FILE_PATH": file_path,
+                "HOOK_FILE_ACTION": action,
+            }
+            self.run_hook(h, env)
+
+
+# Cache hook runners per agent
+_hook_runners: dict[str, HookRunner] = {}
+_hook_runners_lock = threading.Lock()
+
+
+def _get_hook_runner(agent_id: str = "main") -> HookRunner:
+    """Get or create a HookRunner for an agent."""
+    with _hook_runners_lock:
+        if agent_id not in _hook_runners:
+            _hook_runners[agent_id] = HookRunner(agent_id)
+        return _hook_runners[agent_id]
+
+
+# --- Centralized File-Write Pipeline ---
+
+def _after_file_write(path: str, action: str = "created", agent_id: str = ""):
+    """Centralized post-file-write pipeline. Called from tool_write_file and tool_edit_file.
+    Replaces scattered _maybe_qmd_reindex(), _extract_entities(), file_created calls."""
+    # 1. QMD reindex
+    _maybe_qmd_reindex(path)
+
+    # 2. Entity extraction + knowledge graph (if .md in agent dir)
+    if path.endswith(".md") and agent_id:
+        try:
+            with open(path, "r") as f:
+                raw = f.read()
+            fm, body = _parse_frontmatter(raw)
+            entities = _extract_entities(body)
+            if entities:
+                _update_entity_index(agent_id, os.path.basename(path), entities)
+        except Exception:
+            pass
+
+    # 3. File event emission (for UI attachments)
+    ecb = getattr(_thread_local, 'event_callback', None)
+    if ecb:
+        try:
+            ecb("file_created", {
+                "path": path,
+                "name": os.path.basename(path),
+                "size": os.path.getsize(path),
+                "action": action,
+            })
+        except Exception:
+            pass
+
+    # 4. External after_file_write hooks
+    if agent_id:
+        try:
+            runner = _get_hook_runner(agent_id)
+            runner.run_after_file_write(path, action)
+        except Exception:
+            pass
+
+
 def _execute_tool(name: str, args: dict) -> str:
     """Execute a tool by name with the given arguments."""
+    # --- Built-in pre-hooks ---
     # Plan mode: block non-readonly tools
     if getattr(_thread_local, 'plan_mode', False):
-        # Special case: memory_shared with action=store should be blocked
         if name == "memory_shared" and args.get("action") == "store":
             return _err("Blocked in plan mode. Describe what you would do instead.")
         if name not in READONLY_TOOLS:
             return _err("Blocked in plan mode. Describe what you would do instead.")
-    # Check for duplicate tool calls
+    # Workflow tool restriction (was dead code — now enforced)
+    workflow_tools = getattr(_thread_local, 'workflow_allowed_tools', None)
+    if workflow_tools is not None and name not in workflow_tools:
+        return _err(f"Tool '{name}' not allowed in this workflow stage.")
+    # Dedup check
     dedup = _check_tool_dedup(name, args)
     if dedup:
         return dedup
 
-    # --- Tracing & Audit instrumentation ---
+    # --- External pre-hooks ---
     agent = getattr(_thread_local, 'current_agent', None) or _current_agent
     agent_id = agent.agent_id if agent else "main"
     session_id = getattr(_thread_local, 'session_id', None)
+    try:
+        runner = _get_hook_runner(agent_id)
+        blocked = runner.run_pre_hooks(name, args)
+        if blocked:
+            return blocked
+    except Exception:
+        pass
 
-    # Start trace span for tool call
+    # --- Tracing: start span ---
     tool_span = None
     if _trace_manager:
         parent_span = getattr(_thread_local, 'current_trace_span', None)
@@ -8951,6 +9136,7 @@ def _execute_tool(name: str, args: dict) -> str:
         result = _err(str(e))
     finally:
         duration_ms = int((time.time() - tool_start) * 1000)
+        # --- Built-in post-hooks ---
         # Determine audit status from result
         if result and result_status == "success":
             try:
@@ -8981,7 +9167,15 @@ def _execute_tool(name: str, args: dict) -> str:
                     source=getattr(_thread_local, 'audit_source', 'chat'),
                 )
             except Exception:
-                pass  # Never let audit logging crash tool execution
+                pass
+
+        # --- External post-hooks ---
+        if result is not None:
+            try:
+                runner = _get_hook_runner(agent_id)
+                result = runner.run_post_hooks(name, args, result)
+            except Exception:
+                pass
 
     return result
 
