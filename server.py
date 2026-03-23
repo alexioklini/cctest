@@ -4209,6 +4209,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 session.messages, session.id, session.model,
                 session.api_key, session.base_url, session.api_type,
                 max_tokens=session.max_context,
+                force=True,
             )
             session.messages = result[0]
             after = engine._estimate_conversation_tokens(session.messages)

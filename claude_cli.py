@@ -9022,18 +9022,19 @@ class ContextManager:
     def check_and_compact(self, messages: list[dict], session_id: str,
                           model: str, api_key: str, base_url: str, api_type: str,
                           system_prompt: str = "",
-                          max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS) -> tuple[list[dict], bool]:
+                          max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS,
+                          force: bool = False) -> tuple[list[dict], bool]:
         """Check if compaction needed and perform hierarchical summarization."""
         cfg = self.get_config()
-        if not cfg.get("enabled", True):
+        if not cfg.get("enabled", True) and not force:
             return messages, False
 
-        threshold_pct = cfg.get("compact_threshold", 0.75)
-        estimated = _estimate_conversation_tokens(messages, system_prompt)
-        threshold = int(max_tokens * threshold_pct)
-
-        if estimated < threshold:
-            return messages, False
+        if not force:
+            threshold_pct = cfg.get("compact_threshold", 0.75)
+            estimated = _estimate_conversation_tokens(messages, system_prompt)
+            threshold = int(max_tokens * threshold_pct)
+            if estimated < threshold:
+                return messages, False
 
         fresh_tail_count = cfg.get("fresh_tail_count", 32)
         msgs_per_summary = cfg.get("messages_per_summary", 10)

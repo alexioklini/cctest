@@ -5316,8 +5316,7 @@ function updateStatusBar() {
       ctxFill.style.width = pct + '%';
       ctxFill.style.background = pct >= 75 ? '#ef4444' : pct >= 50 ? '#f59e0b' : '#4ade80';
       ctxLabel.style.color = pct >= 75 ? '#ef4444' : pct >= 50 ? '#f59e0b' : 'var(--color-text-muted)';
-      // Show compact button when context is over 30%
-      if (compactBtn) compactBtn.style.display = pct >= 30 && chat.sessionId ? '' : 'none';
+      if (compactBtn) compactBtn.style.display = chat.sessionId && chat.messages.length > 4 ? '' : 'none';
     } else {
       ctxLabel.textContent = '';
       ctxBar.style.display = 'none';
