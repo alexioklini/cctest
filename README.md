@@ -152,6 +152,8 @@ brain-agent/
 | `code_graph_build` | Build AST-based code structure graph (14 languages) |
 | `code_graph_query` | Query callers, callees, imports, tests, inheritors |
 | `code_graph_impact` | Blast-radius analysis for changed files |
+| `git_command` | Git operations (status, diff, log, branch, commit, stash, blame, tag) |
+| `github_command` | GitHub via gh CLI (PRs, issues, repo, releases, workflows, API) |
 | `web_fetch` | Fetch URL content |
 | `exa_search` | Web search via Exa AI |
 | `gmail_inbox` | List recent emails from Gmail |

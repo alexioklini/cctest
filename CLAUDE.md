@@ -203,6 +203,8 @@ Gmail: gmail_inbox, gmail_read, gmail_search, gmail_send, gmail_reply
 Memory: memory_store, memory_recall, memory_shared, memory_delete
 Agents: delegate_task, task_status, task_cancel
 Skills: use_skill
+Git: git_command (status, diff, log, branch, commit, stash, blame, show, tag, remote)
+GitHub: github_command (PRs, issues, repo, releases, workflows, API via gh CLI)
 Context: context_search, context_detail, context_recall (drill-back into compacted history)
 Nodes: list_nodes (remote node status and info)
 Schedule: schedule_list, schedule_history
