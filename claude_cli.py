@@ -6344,7 +6344,7 @@ def _cleanup_autodream_reports(agent_id: str, ms: MemoryStore, retention: int):
             with open(fpath, "r") as f:
                 raw = f.read(500)
             fm, _ = _parse_frontmatter(raw)
-            if fm.get("name", "").startswith("Memory Health Report"):
+            if fm.get("name", "").strip('"').strip("'").startswith("Memory Health Report"):
                 reports.append((fpath, os.path.getmtime(fpath), fm.get("name", "")))
         except Exception:
             continue
@@ -6399,7 +6399,7 @@ def get_memory_health(agent_id: str) -> dict:
         except Exception:
             continue
 
-        name = fm.get("name", fname.replace(".md", ""))
+        name = fm.get("name", fname.replace(".md", "")).strip('"').strip("'")
         mem_type = fm.get("type", "general")
         mtime = os.path.getmtime(fpath)
 
