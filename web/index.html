@@ -6041,6 +6041,8 @@ variables:
       const rdStats = rd.stats || {};
       const amCfg = res.auto_memory || {};
       const amEnabled = amCfg.enabled !== false;
+      const adCfg = res.autodream || {};
+      const adEnabled = adCfg.enabled !== false;
 
       el.innerHTML = `
         <div class="space-y-5">
@@ -6109,7 +6111,47 @@ variables:
               </div>
             </div>
           </div>
+
+          <!-- Memory Health (Autodream) -->
+          <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--color-border)">
+            <h3 class="section-header text-sm mb-2">Memory Health</h3>
+            <div class="text-[11px] text-text-muted mb-3">
+              Nightly consolidation: deduplication, staleness detection, conflict resolution, and skill candidate identification. Chains after relationship discovery.
+            </div>
+            <div class="flex items-center gap-3 flex-wrap mb-4">
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full ${adEnabled ? 'bg-success' : 'bg-error'}"></span>
+                <span class="text-xs text-text-secondary">${adEnabled ? 'Enabled' : 'Disabled'}</span>
+              </div>
+              <span class="text-[10px] text-text-muted mono">stale threshold: ${adCfg.stale_threshold_days || 30}d · max merges: ${adCfg.max_dedup_merges || 10}/run</span>
+              <div class="flex gap-2 ml-auto">
+                <button class="btn-secondary text-xs px-3 py-1.5 rounded-lg" onclick="memorySummaryAction('${esc(agentName)}','run_autodream')" title="Run memory consolidation now">Run Now</button>
+                <button class="btn-secondary text-xs px-3 py-1.5 rounded-lg" onclick="toggleAutodream('${esc(agentName)}',${!adEnabled})">${adEnabled ? 'Disable' : 'Enable'}</button>
+              </div>
+            </div>
+            <div id="memory-health-container">
+              <div class="text-xs text-text-muted">Loading health data...</div>
+            </div>
+          </div>
         </div>`;
+
+      // Fetch health data asynchronously + poll while running
+      (function pollHealth() {
+        API.get(`/v1/agents/${encodeURIComponent(agentName)}/memory-health`).then(health => {
+          const container = document.getElementById('memory-health-container');
+          if (!container) return;
+          container.innerHTML = renderMemoryHealth(health);
+          // Auto-refresh every 3s while autodream is running
+          const live = health?.autodream?.live;
+          if (live && live.status === 'running') {
+            setTimeout(pollHealth, 3000);
+          }
+        }).catch(() => {
+          const container = document.getElementById('memory-health-container');
+          if (container) container.innerHTML = '<div class="text-xs text-text-muted">Health data unavailable</div>';
+        });
+      })();
+
     } catch (e) {
       el.innerHTML = `<div class="text-error text-sm">Error loading memory summary: ${esc(e.message)}</div>`;
     }
@@ -6125,7 +6167,7 @@ window.memorySummaryAction = async function(agentName, action) {
   if (action === 'reset' && !confirm("Permanently delete this agent's memory summary? This cannot be undone.")) return;
   try {
     await API.post(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`, { action });
-    const msgs = {reset: 'Memory summary reset', refresh: 'Memory summary refresh scheduled', discover: 'Relationship discovery started'};
+    const msgs = {reset: 'Memory summary reset', refresh: 'Memory summary refresh scheduled', discover: 'Relationship discovery started', run_autodream: 'Autodream consolidation started'};
     showToast(msgs[action] || action);
     if (action === 'reset') {
       const editor = document.getElementById('memory-summary-editor');
@@ -6185,6 +6227,154 @@ window.memorySummaryTogglePause = async function(agentName, pause) {
     showToast(`Error: ${e.message}`, true);
   }
 };
+
+window.toggleAutodream = async function(agentName, enabled) {
+  try {
+    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`, { action: 'toggle_autodream', enabled });
+    showToast(`Autodream ${enabled ? 'enabled' : 'disabled'}`);
+    loadConfigTabContent(agentName, 'memory');
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+function renderMemoryHealth(h) {
+  const score = h.health_score || 0;
+  const scoreColor = score >= 80 ? 'bg-success' : score >= 50 ? 'bg-yellow-400' : 'bg-error';
+  const scoreTextColor = score >= 80 ? 'text-green-400' : score >= 50 ? 'text-yellow-400' : 'text-red-400';
+  const ad = h.autodream || {};
+  const lastRun = ad.last_run ? new Date(ad.last_run).toLocaleString() : 'Never';
+  const lr = ad.last_results || {};
+  const reports = ad.reports || [];
+
+  function statsCard(label, value, extraClass) {
+    return `<div class="bg-surface-light rounded-lg p-3 text-center" style="min-width:0">
+      <div class="text-lg font-bold ${extraClass || ''}">${value}</div>
+      <div class="text-[10px] text-text-muted uppercase tracking-wider">${label}</div>
+    </div>`;
+  }
+
+  function expandableSection(title, items) {
+    if (!items || !items.length) return '';
+    return `<details class="mt-2">
+      <summary class="text-xs text-text-secondary cursor-pointer hover:text-text-primary transition-colors">${esc(title)} (${items.length})</summary>
+      <div class="mt-1 pl-3 text-xs text-text-muted mono space-y-0.5" style="max-height:200px;overflow-y:auto">
+        ${items.map(i => `<div style="padding:2px 0">· ${esc(String(i))}</div>`).join('')}
+      </div>
+    </details>`;
+  }
+
+  // Recall frequency bar
+  const rf = h.recall_frequency || {};
+  const rfTotal = (rf.hot || 0) + (rf.warm || 0) + (rf.cold || 0) + (rf.never_recalled || 0);
+  function rfPct(v) { return rfTotal ? Math.round((v / rfTotal) * 100) : 0; }
+
+  // Live status
+  const live = ad.live || {};
+  const isRunning = live.status === 'running';
+  const phases = {starting:'Starting…', dedup:'Deduplicating…', staleness:'Checking staleness…', conflicts:'Detecting conflicts…', skill_candidates:'Finding skill candidates…', report:'Writing report…', done:'Done', failed:'Failed'};
+
+  let html = '';
+
+  // Live status banner
+  if (isRunning) {
+    html += `<div class="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-accent/10 border border-accent/30">
+      <span class="w-2 h-2 rounded-full bg-accent breathing-dot"></span>
+      <span class="text-xs text-accent font-medium">Running: ${phases[live.phase] || live.phase || '…'}</span>
+      <span class="text-[10px] text-text-muted mono ml-auto">started ${new Date(live.started_at).toLocaleTimeString()}</span>
+    </div>`;
+  } else if (live.status === 'completed' && live.finished_at) {
+    const lr2 = live.results || {};
+    html += `<div class="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-success/10 border border-success/30">
+      <span class="w-2 h-2 rounded-full bg-success"></span>
+      <span class="text-xs text-green-400 font-medium">Last run completed</span>
+      <span class="text-[10px] text-text-muted mono">${new Date(live.finished_at).toLocaleTimeString()} · ${live.elapsed || 0}s · score ${lr2.health_score || '?'} · ${lr2.merged || 0} merged · ${lr2.stale || 0} stale · ${lr2.conflicts || 0} conflicts</span>
+    </div>`;
+  } else if (live.status === 'error') {
+    html += `<div class="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-error/10 border border-error/30">
+      <span class="w-2 h-2 rounded-full bg-error"></span>
+      <span class="text-xs text-red-400 font-medium">Last run failed</span>
+      <span class="text-[10px] text-text-muted mono">${esc(live.error || 'Unknown error')}</span>
+    </div>`;
+  }
+
+  html += `
+    <!-- Health Score + Last Run -->
+    <div class="flex items-center gap-4 mb-4">
+      <div class="flex items-center gap-2">
+        <div class="w-10 h-10 rounded-full ${scoreColor} flex items-center justify-center text-sm font-bold text-white" style="flex-shrink:0">${score}</div>
+        <div>
+          <div class="text-xs font-medium ${scoreTextColor}">Health Score</div>
+          <div class="text-[10px] text-text-muted mono">Last report: ${esc(lastRun)}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats Cards -->
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px" class="mb-4">
+      ${statsCard('Total', h.total_memories || 0)}
+      ${statsCard('Stale', h.stale_count || 0, (h.stale_count || 0) > 0 ? 'text-yellow-400' : '')}
+      ${statsCard('Conflicts', lr.conflicts_found || 0, (lr.conflicts_found || 0) > 0 ? 'text-red-400' : '')}
+      ${statsCard('Merged', lr.merged || 0, (lr.merged || 0) > 0 ? 'text-blue-400' : '')}
+      ${statsCard('Skill Ideas', lr.candidates_found || 0)}
+    </div>
+
+    <!-- Recall Frequency Bar -->
+    ${rfTotal > 0 ? `
+    <div class="mb-3">
+      <div class="text-[10px] text-text-secondary uppercase tracking-wider mb-1">Recall Frequency</div>
+      <div class="flex rounded-lg overflow-hidden h-3 bg-surface-light">
+        ${rf.hot ? `<div class="bg-green-500" style="width:${rfPct(rf.hot)}%" title="Hot (7d): ${rf.hot}"></div>` : ''}
+        ${rf.warm ? `<div class="bg-blue-400" style="width:${rfPct(rf.warm)}%" title="Warm (30d): ${rf.warm}"></div>` : ''}
+        ${rf.cold ? `<div class="bg-yellow-500" style="width:${rfPct(rf.cold)}%" title="Cold (30d+): ${rf.cold}"></div>` : ''}
+        ${rf.never_recalled ? `<div class="bg-gray-600" style="width:${rfPct(rf.never_recalled)}%" title="Never recalled: ${rf.never_recalled}"></div>` : ''}
+      </div>
+      <div class="flex gap-3 mt-1 text-[9px] text-text-muted">
+        <span><span class="inline-block w-2 h-2 rounded-sm bg-green-500 mr-0.5"></span>Hot ${rf.hot || 0}</span>
+        <span><span class="inline-block w-2 h-2 rounded-sm bg-blue-400 mr-0.5"></span>Warm ${rf.warm || 0}</span>
+        <span><span class="inline-block w-2 h-2 rounded-sm bg-yellow-500 mr-0.5"></span>Cold ${rf.cold || 0}</span>
+        <span><span class="inline-block w-2 h-2 rounded-sm bg-gray-600 mr-0.5"></span>Never ${rf.never_recalled || 0}</span>
+      </div>
+    </div>` : ''}
+
+    <!-- Type Breakdown -->
+    ${h.by_type && Object.keys(h.by_type).length ? `
+    <div class="mb-3">
+      <div class="text-[10px] text-text-secondary uppercase tracking-wider mb-1">By Type</div>
+      <div class="flex gap-2 flex-wrap">
+        ${Object.entries(h.by_type).map(([t, c]) => `<span class="text-[10px] bg-surface-light px-2 py-0.5 rounded-full mono">${esc(t)}: ${c}</span>`).join('')}
+      </div>
+    </div>` : ''}
+
+    <!-- Age Distribution -->
+    ${h.age_distribution ? `
+    <div class="mb-3 text-[10px] text-text-muted mono">
+      Age: avg ${h.age_distribution.avg_days}d · oldest ${h.age_distribution.oldest_days}d · newest ${h.age_distribution.newest_days}d
+      · Created: ${h.auto_memory_rate?.last_24h || 0} (24h) / ${h.auto_memory_rate?.last_7d || 0} (7d)
+    </div>` : ''}
+  `;
+
+  // Expandable detail sections
+  html += expandableSection('Stale Memories', h.stale_names || []);
+  html += expandableSection('Conflict Pairs',
+    (lr.conflict_pairs || []).map(p => p.a + ' ↔ ' + p.b + ': ' + p.nature));
+  html += expandableSection('Skill Candidates',
+    (lr.candidate_details || []).map(c => c.name + ' — ' + c.reason));
+
+  // Run History
+  if (reports.length) {
+    html += `<div class="mt-3">
+      <div class="text-[10px] text-text-secondary uppercase tracking-wider mb-1">Recent Runs</div>
+      ${reports.map(r => {
+        const sc = r.health_score || 0;
+        const c = sc >= 80 ? 'text-green-400' : sc >= 50 ? 'text-yellow-400' : 'text-red-400';
+        return `<div class="text-[10px] text-text-muted mono">${esc(r.date)} — <span class="${c}">Score: ${sc}</span></div>`;
+      }).join('')}
+    </div>`;
+  }
+
+  return html;
+}
 
 // ─── Project Helpers ────────────────────────────────────────
 window.showNewProjectForm = function(agentName) {
@@ -7592,13 +7782,13 @@ function openSettingsModal() {
   const stabs = [
     {group: 'System', items: [{id:'server', label:'Server'}, {id:'qmd', label:'QMD'}, {id:'tools', label:'Tools'}, {id:'context', label:'Context'}, {id:'providers', label:'Providers'}, {id:'models', label:'Models'}]},
     {group: 'Agents', items: [{id:'teams', label:'Teams'}, {id:'channels', label:'Channels'}, {id:'nodes', label:'Nodes'}, {id:'mcp', label:'MCP'}]},
-    {group: 'Monitoring', items: [{id:'costs', label:'Costs'}, {id:'traces', label:'Traces'}, {id:'audit', label:'Audit'}, {id:'notifications', label:'Notifications'}]},
+    {group: 'Monitoring', items: [{id:'memory-health', label:'Memory'}, {id:'costs', label:'Costs'}, {id:'traces', label:'Traces'}, {id:'audit', label:'Audit'}, {id:'notifications', label:'Notifications'}]},
     {group: 'Data', items: [{id:'backup', label:'Backup'}]},
   ];
   const navHtml = stabs.map(g => `
     <div class="settings-nav-group">
       <div class="settings-nav-label">${g.group}</div>
-      ${g.items.map(t => `<button class="settings-nav-item ${_settingsTab === t.id ? 'active' : ''}" onclick="switchSettingsTab('${t.id}')">${t.label}</button>`).join('')}
+      ${g.items.map(t => `<button class="settings-nav-item ${_settingsTab === t.id ? 'active' : ''}" data-stab="${t.id}" onclick="switchSettingsTab('${t.id}')">${t.label}</button>`).join('')}
     </div>
   `).join('');
   modal.innerHTML = `
@@ -7620,7 +7810,7 @@ function openSettingsModal() {
 function switchSettingsTab(tab) {
   _settingsTab = tab;
   document.querySelectorAll('#settings-modal .settings-nav-item').forEach(b => {
-    b.classList.toggle('active', b.textContent.toLowerCase() === tab || b.textContent === tab);
+    b.classList.toggle('active', b.dataset.stab === tab || b.textContent.toLowerCase() === tab || b.textContent === tab);
   });
   loadSettingsTab();
 }
@@ -7646,6 +7836,7 @@ async function loadSettingsTab() {
     else if (_settingsTab === 'mcp') await renderMcpTab(el);
     else if (_settingsTab === 'backup') await renderBackupTab(el);
     else if (_settingsTab === 'notifications') await renderNotificationsTab(el);
+    else if (_settingsTab === 'memory-health') await renderMemoryHealthTab(el);
   } catch (e) {
     el.innerHTML = `<div class="text-error text-sm">Error: ${esc(e.message)}</div>`;
   }
@@ -7869,6 +8060,159 @@ window.teamRemoveMember = async function(teamId, memberId) {
     loadSettingsTab();
   } catch (e) { showToast(e.message, true); }
 };
+
+async function renderMemoryHealthTab(el) {
+  const agents = await API.get('/v1/agents');
+  const agentList = Array.isArray(agents) ? agents : (agents.agents || []);
+
+  // Fetch health for all agents in parallel
+  const healthData = await Promise.all(
+    agentList.map(a => {
+      const id = typeof a === 'string' ? a : (a.id || a.name);
+      return API.get(`/v1/agents/${encodeURIComponent(id)}/memory-health`).catch(() => ({ agent: id, error: true }));
+    })
+  );
+
+  // Compute global totals
+  const totMemories = healthData.reduce((s, h) => s + (h.total_memories || 0), 0);
+  const totStale = healthData.reduce((s, h) => s + (h.stale_count || 0), 0);
+  const totConflicts = healthData.reduce((s, h) => s + (h.autodream?.last_results?.conflicts_found || 0), 0);
+  const avgScore = healthData.length
+    ? Math.round(healthData.reduce((s, h) => s + (h.health_score || 0), 0) / healthData.filter(h => !h.error).length)
+    : 0;
+  const globalScoreColor = avgScore >= 80 ? 'bg-success' : avgScore >= 50 ? 'bg-yellow-400' : 'bg-error';
+  const globalScoreText = avgScore >= 80 ? 'text-green-400' : avgScore >= 50 ? 'text-yellow-400' : 'text-red-400';
+
+  el.innerHTML = `
+    <!-- Global Summary Card -->
+    <div class="glass-card p-6 mb-4">
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-full ${globalScoreColor} flex items-center justify-center text-sm font-bold text-white">${avgScore}</div>
+          <div>
+            <span class="text-text-primary font-display font-semibold">Memory Health</span>
+            <div class="text-[10px] text-text-muted">Across ${healthData.filter(h => !h.error).length} agents</div>
+          </div>
+        </div>
+        <div class="flex items-center gap-4 text-xs mono text-text-muted">
+          <span>${totMemories} memories</span>
+          <span class="text-border">|</span>
+          <span class="${totStale > 0 ? 'text-yellow-400' : ''}">${totStale} stale</span>
+          <span class="text-border">|</span>
+          <span class="${totConflicts > 0 ? 'text-red-400' : ''}">${totConflicts} conflicts</span>
+        </div>
+      </div>
+      <div class="text-xs text-text-muted">
+        Nightly autodream consolidation: deduplication, staleness detection, conflict resolution, and skill candidate identification. Chains after Memory Summary → Relationship Discovery.
+      </div>
+    </div>
+
+    <!-- Per-Agent Cards -->
+    <div class="space-y-3" id="memory-health-agents">
+      ${healthData.map(h => {
+        if (h.error) return `<div class="glass-card p-4 text-xs text-text-muted">${esc(h.agent)}: health data unavailable</div>`;
+        const score = h.health_score || 0;
+        const sc = score >= 80 ? 'bg-success' : score >= 50 ? 'bg-yellow-400' : 'bg-error';
+        const stc = score >= 80 ? 'text-green-400' : score >= 50 ? 'text-yellow-400' : 'text-red-400';
+        const ad = h.autodream || {};
+        const adEnabled = ad.config?.enabled !== false;
+        const lastRun = ad.last_run ? new Date(ad.last_run).toLocaleString() : 'Never';
+        const lr = ad.last_results || {};
+        const rf = h.recall_frequency || {};
+        const rfTotal = (rf.hot||0) + (rf.warm||0) + (rf.cold||0) + (rf.never_recalled||0);
+        const rfPct = (v) => rfTotal ? Math.round((v/rfTotal)*100) : 0;
+        const live = ad.live || {};
+        const livePhases = {starting:'Starting…', dedup:'Deduplicating…', staleness:'Checking staleness…', conflicts:'Detecting conflicts…', skill_candidates:'Finding skills…', report:'Writing report…'};
+
+        return `
+        <div class="glass-card p-5">
+          ${live.status === 'running' ? `<div class="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-lg bg-accent/10 border border-accent/30">
+            <span class="w-2 h-2 rounded-full bg-accent breathing-dot"></span>
+            <span class="text-[11px] text-accent font-medium">Running: ${livePhases[live.phase] || live.phase || '…'}</span>
+          </div>` : ''}
+          ${live.status === 'error' ? `<div class="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-lg bg-error/10 border border-error/30">
+            <span class="w-2 h-2 rounded-full bg-error"></span>
+            <span class="text-[11px] text-red-400">Failed: ${esc(live.error || '')}</span>
+          </div>` : ''}
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-3">
+              <div class="w-8 h-8 rounded-full ${sc} flex items-center justify-center text-xs font-bold text-white">${score}</div>
+              <div>
+                <span class="text-text-primary font-display font-semibold text-sm">${esc(h.agent)}</span>
+                <div class="text-[10px] text-text-muted mono">${live.status === 'completed' && live.elapsed ? 'Last run: '+live.elapsed+'s · ' : ''}Last report: ${esc(lastRun)}</div>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full ${adEnabled ? 'bg-success' : 'bg-error'}"></span>
+              <span class="text-[10px] text-text-muted">${adEnabled ? 'Enabled' : 'Disabled'}</span>
+              <button class="btn-secondary text-xs px-2 py-1 rounded-lg ml-2" onclick="memorySummaryAction('${esc(h.agent)}','run_autodream')">Run</button>
+              <button class="btn-secondary text-xs px-2 py-1 rounded-lg" onclick="toggleAutodream('${esc(h.agent)}',${!adEnabled})">${adEnabled ? 'Off' : 'On'}</button>
+            </div>
+          </div>
+
+          <!-- Stats Row -->
+          <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px" class="mb-3">
+            <div class="bg-surface-light rounded-lg p-2 text-center">
+              <div class="text-sm font-bold">${h.total_memories || 0}</div>
+              <div class="text-[9px] text-text-muted uppercase">Total</div>
+            </div>
+            <div class="bg-surface-light rounded-lg p-2 text-center">
+              <div class="text-sm font-bold ${(h.stale_count||0) > 0 ? 'text-yellow-400' : ''}">${h.stale_count || 0}</div>
+              <div class="text-[9px] text-text-muted uppercase">Stale</div>
+            </div>
+            <div class="bg-surface-light rounded-lg p-2 text-center">
+              <div class="text-sm font-bold ${(lr.conflicts_found||0) > 0 ? 'text-red-400' : ''}">${lr.conflicts_found || 0}</div>
+              <div class="text-[9px] text-text-muted uppercase">Conflicts</div>
+            </div>
+            <div class="bg-surface-light rounded-lg p-2 text-center">
+              <div class="text-sm font-bold ${(lr.merged||0) > 0 ? 'text-blue-400' : ''}">${lr.merged || 0}</div>
+              <div class="text-[9px] text-text-muted uppercase">Merged</div>
+            </div>
+            <div class="bg-surface-light rounded-lg p-2 text-center">
+              <div class="text-sm font-bold">${lr.candidates_found || 0}</div>
+              <div class="text-[9px] text-text-muted uppercase">Skills</div>
+            </div>
+            <div class="bg-surface-light rounded-lg p-2 text-center">
+              <div class="text-sm font-bold">${h.auto_memory_rate?.last_24h || 0}/${h.auto_memory_rate?.last_7d || 0}</div>
+              <div class="text-[9px] text-text-muted uppercase">New 24h/7d</div>
+            </div>
+          </div>
+
+          <!-- Recall Frequency Bar -->
+          ${rfTotal > 0 ? `
+          <div class="mb-2">
+            <div class="flex rounded-lg overflow-hidden h-2 bg-surface-light">
+              ${rf.hot ? '<div class="bg-green-500" style="width:'+rfPct(rf.hot)+'%"></div>' : ''}
+              ${rf.warm ? '<div class="bg-blue-400" style="width:'+rfPct(rf.warm)+'%"></div>' : ''}
+              ${rf.cold ? '<div class="bg-yellow-500" style="width:'+rfPct(rf.cold)+'%"></div>' : ''}
+              ${rf.never_recalled ? '<div class="bg-gray-600" style="width:'+rfPct(rf.never_recalled)+'%"></div>' : ''}
+            </div>
+            <div class="flex gap-2 mt-0.5 text-[8px] text-text-muted">
+              <span class="flex items-center gap-0.5"><span class="inline-block w-1.5 h-1.5 rounded-sm bg-green-500"></span>${rf.hot||0} hot</span>
+              <span class="flex items-center gap-0.5"><span class="inline-block w-1.5 h-1.5 rounded-sm bg-blue-400"></span>${rf.warm||0} warm</span>
+              <span class="flex items-center gap-0.5"><span class="inline-block w-1.5 h-1.5 rounded-sm bg-yellow-500"></span>${rf.cold||0} cold</span>
+              <span class="flex items-center gap-0.5"><span class="inline-block w-1.5 h-1.5 rounded-sm bg-gray-600"></span>${rf.never_recalled||0} never</span>
+            </div>
+          </div>` : ''}
+
+          <!-- Type breakdown + Age -->
+          <div class="flex items-center gap-3 flex-wrap text-[10px] text-text-muted mono">
+            ${h.by_type ? Object.entries(h.by_type).map(([t,c]) => '<span class="bg-surface-light px-1.5 py-0.5 rounded">'+esc(t)+': '+c+'</span>').join('') : ''}
+            ${h.age_distribution ? '<span>avg '+h.age_distribution.avg_days+'d · oldest '+h.age_distribution.oldest_days+'d</span>' : ''}
+          </div>
+
+          <!-- Expandable details -->
+          ${(h.stale_names?.length) ? '<details class="mt-2"><summary class="text-[10px] text-text-secondary cursor-pointer">Stale ('+h.stale_names.length+')</summary><div class="pl-3 mt-1 text-[10px] text-text-muted mono" style="max-height:120px;overflow-y:auto">'+h.stale_names.map(n => '<div>· '+esc(n)+'</div>').join('')+'</div></details>' : ''}
+          ${(lr.conflict_pairs?.length) ? '<details class="mt-1"><summary class="text-[10px] text-text-secondary cursor-pointer">Conflicts ('+lr.conflict_pairs.length+')</summary><div class="pl-3 mt-1 text-[10px] text-text-muted mono" style="max-height:120px;overflow-y:auto">'+lr.conflict_pairs.map(p => '<div>· '+esc(p.a)+' ↔ '+esc(p.b)+': '+esc(p.nature)+'</div>').join('')+'</div></details>' : ''}
+          ${(lr.candidate_details?.length) ? '<details class="mt-1"><summary class="text-[10px] text-text-secondary cursor-pointer">Skill candidates ('+lr.candidate_details.length+')</summary><div class="pl-3 mt-1 text-[10px] text-text-muted mono" style="max-height:120px;overflow-y:auto">'+lr.candidate_details.map(c => '<div>· '+esc(c.name)+': '+esc(c.reason)+'</div>').join('')+'</div></details>' : ''}
+
+          <!-- Run history -->
+          ${(ad.reports?.length) ? '<div class="mt-2 text-[9px] text-text-muted mono">'+ad.reports.map(r => { const rsc = r.health_score >= 80 ? 'text-green-400' : r.health_score >= 50 ? 'text-yellow-400' : 'text-red-400'; return esc(r.date)+' <span class="'+rsc+'">'+r.health_score+'</span>'; }).join(' · ')+'</div>' : ''}
+        </div>`;
+      }).join('')}
+    </div>
+  `;
+}
 
 async function renderQmdTab(el) {
   const svc = await API.get('/v1/services');
@@ -10221,6 +10565,7 @@ const slashCommands = [
   { cmd: '/providers', desc: 'Open providers settings',   action: () => { _settingsTab = 'providers'; openSettingsModal(); } },
   { cmd: '/teams',     desc: 'Open teams settings',       action: () => { _settingsTab = 'teams'; openSettingsModal(); } },
   { cmd: '/qmd',       desc: 'Open QMD settings',         action: () => { _settingsTab = 'qmd'; openSettingsModal(); } },
+  { cmd: '/health',    desc: 'Open memory health dashboard', action: () => { _settingsTab = 'memory-health'; openSettingsModal(); } },
   { cmd: '/context',   desc: 'Open context management settings', action: () => { _settingsTab = 'context'; openSettingsModal(); } },
   { cmd: '/nodes',     desc: 'Open remote nodes settings', action: () => { _settingsTab = 'nodes'; openSettingsModal(); } },
   { cmd: '/channels',  desc: 'Open channels settings',     action: () => { _settingsTab = 'channels'; openSettingsModal(); } },

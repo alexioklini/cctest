@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "4.2.0"
-VERSION_DATE = "2026-03-23"
+VERSION = "4.3.0"
+VERSION_DATE = "2026-03-24"
 CHANGELOG = [
+    ("4.3.0", "2026-03-24", "Autodream memory consolidation: nightly dedup (QMD similarity + LLM merge), staleness detection (last_recalled tracking + stale flags), conflict resolution (LLM contradiction detection), skill candidate identification, health reports with scoring, live status tracking with phase updates, Memory Health dashboard in global settings (Monitoring → Memory) with per-agent cards, recall frequency visualization, /health command"),
     ("4.2.0", "2026-03-23", "Code graph enhancements: LLM-generated node summaries, architecture layer classification (api/service/data/ui/util/test), guided tour generation, code_graph_enhance tool, lossless compaction with compacted flag, context fill indicator, manual compact, LCM footer controls"),
     ("4.1.0", "2026-03-23", "Chat stability: session corruption fix (message rollback on failed tool loops), partial response preservation, metadata persistence (model/tokens/cost/tools/thinking), thinking level control (none/low/med/high), extended thinking with signature capture, model name in thinking indicator, remote node badges on tool calls, resizable sidebars, error_msg fix"),
     ("4.0.0", "2026-03-23", "Universal File Intelligence (XLSX/PPTX/CSV/image/SVG parsers, read_document/write_document/edit_document tools, format-aware ingestion) + Code Structure Graph (Tree-sitter AST parsing for 14 languages, code_graph_build/query/impact tools, blast-radius analysis, incremental updates via hooks)"),
@@ -3218,9 +3219,39 @@ agent: {self.agent_id}
         # Try QMD first
         results = self._qmd_query(query, limit, mem_type)
         if results is not None:
+            self._stamp_last_recalled_bg(results)
             return results
         # Fallback: scan files
-        return self._fallback_search(query, limit, mem_type)
+        results = self._fallback_search(query, limit, mem_type)
+        self._stamp_last_recalled_bg(results)
+        return results
+
+    def _stamp_last_recalled_bg(self, results: list[dict]):
+        """Stamp last_recalled date on recalled files in a background thread."""
+        paths = [r.get("file_path") for r in results if r.get("file_path")]
+        if paths:
+            threading.Thread(target=self._stamp_last_recalled, args=(paths,),
+                             daemon=True, name="stamp_recalled").start()
+
+    def _stamp_last_recalled(self, file_paths: list[str]):
+        """Update last_recalled frontmatter field on recalled memory files. Best-effort."""
+        now = datetime.datetime.now().strftime("%Y-%m-%d")
+        for fpath in file_paths:
+            try:
+                with open(fpath, "r") as f:
+                    raw = f.read()
+                fm_match = re.match(r'^(---\s*\n)(.*?)(\n---\s*\n)(.*)$', raw, re.DOTALL)
+                if not fm_match:
+                    continue
+                opener, fm_text, closer, body = fm_match.groups()
+                if "last_recalled:" in fm_text:
+                    fm_text = re.sub(r'last_recalled:.*', f'last_recalled: {now}', fm_text)
+                else:
+                    fm_text = fm_text.rstrip() + f"\nlast_recalled: {now}"
+                with open(fpath, "w") as f:
+                    f.write(opener + fm_text + closer + body)
+            except Exception:
+                continue
 
     def _qmd_query(self, query: str, limit: int, mem_type: str | None) -> list[dict] | None:
         """Query QMD via MCP HTTP. Returns list of results or None if unavailable."""
@@ -5407,6 +5438,30 @@ def _get_relationship_discovery_config(agent_id: str) -> dict:
     return result
 
 
+AUTODREAM_DEFAULTS = {
+    "enabled": True,
+    "stale_threshold_days": 30,
+    "dedup_similarity_threshold": 0.85,
+    "max_dedup_merges": 10,
+    "max_conflict_checks": 30,
+    "report_retention": 3,
+}
+
+
+def _get_autodream_config(agent_id: str) -> dict:
+    """Read autodream settings from agent.json, merging with defaults."""
+    cfg = AgentConfig(agent_id).config
+    ad_cfg = cfg.get("autodream", {})
+    result = dict(AUTODREAM_DEFAULTS)
+    if isinstance(ad_cfg, dict):
+        for k in AUTODREAM_DEFAULTS:
+            if k in ad_cfg:
+                result[k] = ad_cfg[k]
+    elif isinstance(ad_cfg, bool):
+        result["enabled"] = ad_cfg
+    return result
+
+
 def _get_auto_memory_config(agent_id: str) -> dict:
     """Read auto_memory settings from agent.json, merging with defaults."""
     cfg = AgentConfig(agent_id).config
@@ -5824,6 +5879,669 @@ def ensure_relationship_discovery_schedules():
         else:
             if sched_name in existing:
                 _scheduler.remove(sched_name)
+
+
+# ─── Autodream: Memory Consolidation System ─────────────────────────────
+
+
+def _autodream_dedup(agent_id: str, ms: MemoryStore, config: dict) -> dict:
+    """Scan memories for semantic duplicates via QMD, merge with LLM."""
+    memories = _collect_agent_memories(agent_id)
+    if len(memories) < 2:
+        return {"duplicates_found": 0, "merged": 0, "skipped": 0, "merge_log": []}
+
+    threshold = config.get("dedup_similarity_threshold", 0.85)
+    max_merges = config.get("max_dedup_merges", 10)
+
+    # Find candidate pairs via QMD semantic search
+    try:
+        pairs = _find_candidate_pairs(agent_id, memories, max_candidates=60)
+    except Exception:
+        return {"duplicates_found": 0, "merged": 0, "skipped": 0, "merge_log": [],
+                "error": "Failed to find candidate pairs"}
+
+    # Filter to high-similarity pairs
+    high_sim = [(a, b, score) for a, b, score in pairs if score >= threshold]
+
+    duplicates_found = 0
+    merged = 0
+    skipped = 0
+    merge_log = []
+    deleted_files = set()
+
+    # Find cheapest model for LLM calls
+    model = _find_cheapest_model()
+    if not model or not _delegate_api_key:
+        return {"duplicates_found": len(high_sim), "merged": 0, "skipped": len(high_sim),
+                "merge_log": ["No model available for merge confirmation"]}
+
+    for mem_a, mem_b, score in high_sim:
+        if merged >= max_merges:
+            skipped += len(high_sim) - duplicates_found
+            break
+        if mem_a["file"] in deleted_files or mem_b["file"] in deleted_files:
+            continue
+
+        duplicates_found += 1
+        prompt = (
+            f"Are these two memories duplicates or near-duplicates that should be merged?\n\n"
+            f"MEMORY A ({mem_a['name']}):\n{mem_a['content'][:800]}\n\n"
+            f"MEMORY B ({mem_b['name']}):\n{mem_b['content'][:800]}\n\n"
+            f"If they are duplicates, produce a merged version that preserves all unique information.\n"
+            f'Output ONLY JSON: {{"is_duplicate": true/false, "merged_name": "...", "merged_content": "...", '
+            f'"merged_description": "..."}}\n'
+            f'If not duplicates: {{"is_duplicate": false}}'
+        )
+        try:
+            result = _run_delegate(
+                messages=[{"role": "user", "content": prompt}],
+                model=model,
+                system_prompt="You are a memory deduplication assistant. Output only valid JSON.",
+                inference_params={"max_tokens": 1024, "temperature": 0.1},
+            )
+            if not result:
+                skipped += 1
+                continue
+            json_match = re.search(r'\{.*\}', result, re.DOTALL)
+            if not json_match:
+                skipped += 1
+                continue
+            data = json.loads(json_match.group())
+            if not data.get("is_duplicate"):
+                skipped += 1
+                continue
+
+            # Determine which file is older (keep newer filename)
+            agent_dir = os.path.join(AGENTS_DIR, agent_id)
+            path_a = os.path.join(agent_dir, mem_a["file"])
+            path_b = os.path.join(agent_dir, mem_b["file"])
+            mtime_a = os.path.getmtime(path_a) if os.path.exists(path_a) else 0
+            mtime_b = os.path.getmtime(path_b) if os.path.exists(path_b) else 0
+
+            # Store merged content under the newer file's name
+            merged_name = data.get("merged_name", mem_a["name"] if mtime_a >= mtime_b else mem_b["name"])
+            ms.store(merged_name, data.get("merged_content", ""),
+                     data.get("merged_description", ""), mem_a.get("type", "general"))
+
+            # Delete the older file
+            older = mem_b if mtime_a >= mtime_b else mem_a
+            ms.delete(older["name"])
+            deleted_files.add(older["file"])
+            merged += 1
+            merge_log.append(f"Merged '{mem_a['name']}' + '{mem_b['name']}' → '{merged_name}'")
+        except Exception as e:
+            skipped += 1
+            merge_log.append(f"Error merging '{mem_a['name']}' + '{mem_b['name']}': {str(e)[:100]}")
+
+    return {"duplicates_found": duplicates_found, "merged": merged,
+            "skipped": skipped, "merge_log": merge_log}
+
+
+def _autodream_staleness(agent_id: str, ms: MemoryStore, config: dict) -> dict:
+    """Flag memories not recalled in N days as stale. No LLM calls."""
+    threshold_days = config.get("stale_threshold_days", 30)
+    now = datetime.datetime.now()
+    agent_dir = os.path.join(AGENTS_DIR, agent_id)
+
+    total = 0
+    stale_count = 0
+    newly_stale = 0
+    stale_names = []
+    # Skip system files (Memory Summary, Memory Health Report)
+    skip_prefixes = ("Memory Summary", "Memory Health Report")
+
+    for fname in os.listdir(agent_dir):
+        if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
+            continue
+        if fname.startswith("ingest-"):
+            continue
+        fpath = os.path.join(agent_dir, fname)
+        try:
+            with open(fpath, "r") as f:
+                raw = f.read()
+            fm, body = _parse_frontmatter(raw)
+        except Exception:
+            continue
+
+        name = fm.get("name", fname.replace(".md", ""))
+        if any(name.startswith(p) for p in skip_prefixes):
+            continue
+        total += 1
+
+        # Determine last activity date
+        last_recalled_str = fm.get("last_recalled", "")
+        if last_recalled_str:
+            try:
+                last_date = datetime.datetime.strptime(last_recalled_str.strip(), "%Y-%m-%d")
+            except ValueError:
+                last_date = datetime.datetime.fromtimestamp(os.path.getmtime(fpath))
+        else:
+            last_date = datetime.datetime.fromtimestamp(os.path.getmtime(fpath))
+
+        days_since = (now - last_date).days
+        already_stale = fm.get("stale", "").lower() == "true"
+
+        if days_since > threshold_days:
+            stale_count += 1
+            stale_names.append(name)
+            if not already_stale:
+                # Stamp stale: true in frontmatter
+                try:
+                    fm_match = re.match(r'^(---\s*\n)(.*?)(\n---\s*\n)(.*)$', raw, re.DOTALL)
+                    if fm_match:
+                        opener, fm_text, closer, body_text = fm_match.groups()
+                        if "stale:" not in fm_text:
+                            fm_text = fm_text.rstrip() + "\nstale: true"
+                        with open(fpath, "w") as f:
+                            f.write(opener + fm_text + closer + body_text)
+                        newly_stale += 1
+                except Exception:
+                    pass
+        elif already_stale:
+            # Was stale but now recalled within threshold — remove stale flag
+            try:
+                fm_match = re.match(r'^(---\s*\n)(.*?)(\n---\s*\n)(.*)$', raw, re.DOTALL)
+                if fm_match:
+                    opener, fm_text, closer, body_text = fm_match.groups()
+                    fm_text = re.sub(r'\nstale:.*', '', fm_text)
+                    with open(fpath, "w") as f:
+                        f.write(opener + fm_text + closer + body_text)
+            except Exception:
+                pass
+
+    return {"total": total, "stale_count": stale_count, "stale_names": stale_names,
+            "newly_stale": newly_stale}
+
+
+def _autodream_conflicts(agent_id: str, ms: MemoryStore, config: dict) -> dict:
+    """Find contradicting memories using QMD similarity + LLM classification."""
+    memories = _collect_agent_memories(agent_id)
+    if len(memories) < 2:
+        return {"conflicts_found": 0, "conflict_pairs": []}
+
+    max_checks = config.get("max_conflict_checks", 30)
+
+    try:
+        pairs = _find_candidate_pairs(agent_id, memories, max_candidates=max_checks * 2)
+    except Exception:
+        return {"conflicts_found": 0, "conflict_pairs": [], "error": "Failed to find candidate pairs"}
+
+    # Filter to same-type pairs (contradictions are most likely within same type)
+    same_type_pairs = [(a, b, s) for a, b, s in pairs if a["type"] == b["type"]][:max_checks]
+
+    model = _find_cheapest_model()
+    if not model or not _delegate_api_key:
+        return {"conflicts_found": 0, "conflict_pairs": [],
+                "error": "No model available for conflict detection"}
+
+    conflicts_found = 0
+    conflict_pairs = []
+
+    for mem_a, mem_b, score in same_type_pairs:
+        prompt = (
+            f"Do these two memories contradict each other? Look for conflicting facts, "
+            f"opposing instructions, or incompatible information.\n\n"
+            f"MEMORY A ({mem_a['name']}, type={mem_a['type']}):\n{mem_a['content'][:600]}\n\n"
+            f"MEMORY B ({mem_b['name']}, type={mem_b['type']}):\n{mem_b['content'][:600]}\n\n"
+            f'Output ONLY JSON: {{"contradicts": true/false, "nature": "brief description of conflict"}}\n'
+            f'If no contradiction: {{"contradicts": false}}'
+        )
+        try:
+            result = _run_delegate(
+                messages=[{"role": "user", "content": prompt}],
+                model=model,
+                system_prompt="You are a memory conflict detector. Output only valid JSON.",
+                inference_params={"max_tokens": 256, "temperature": 0.1},
+            )
+            if not result:
+                continue
+            json_match = re.search(r'\{.*\}', result, re.DOTALL)
+            if not json_match:
+                continue
+            data = json.loads(json_match.group())
+            if data.get("contradicts"):
+                conflicts_found += 1
+                conflict_pairs.append({
+                    "a": mem_a["name"], "b": mem_b["name"],
+                    "nature": data.get("nature", "Unknown conflict"),
+                })
+        except Exception:
+            continue
+
+    return {"conflicts_found": conflicts_found, "conflict_pairs": conflict_pairs}
+
+
+def _autodream_skill_candidates(agent_id: str, ms: MemoryStore, config: dict) -> dict:
+    """Identify procedural memories that could become skills."""
+    memories = _collect_agent_memories(agent_id)
+    # Filter to feedback/general types
+    candidates_pool = [m for m in memories if m["type"] in ("feedback", "general")]
+
+    # Heuristic pre-filter: procedural patterns
+    procedural_patterns = [
+        r'\b\d+\.\s', r'always\b', r'never\b', r'when\s.*\bdo\b', r'steps?:',
+        r'how to\b', r'make sure\b', r'first\b.*then\b', r'rule:',
+    ]
+    heuristic_matches = []
+    for mem in candidates_pool:
+        content_lower = mem["content"].lower()
+        if any(re.search(p, content_lower) for p in procedural_patterns):
+            heuristic_matches.append(mem)
+    heuristic_matches = heuristic_matches[:15]  # Cap
+
+    if not heuristic_matches:
+        return {"candidates_found": 0, "candidate_names": [], "candidate_details": []}
+
+    model = _find_cheapest_model()
+    if not model or not _delegate_api_key:
+        return {"candidates_found": 0, "candidate_names": [], "candidate_details": [],
+                "error": "No model available for skill detection"}
+
+    candidates_found = 0
+    candidate_names = []
+    candidate_details = []
+
+    for mem in heuristic_matches:
+        prompt = (
+            f"Is this memory a reusable procedure or workflow that should become a skill?\n"
+            f"A skill is a repeatable process with clear steps that an AI agent would benefit from having as a template.\n\n"
+            f"Memory ({mem['name']}, type={mem['type']}):\n{mem['content'][:800]}\n\n"
+            f'Output ONLY JSON: {{"is_skill_candidate": true/false, "reason": "brief explanation"}}\n'
+            f'If not a skill candidate: {{"is_skill_candidate": false}}'
+        )
+        try:
+            result = _run_delegate(
+                messages=[{"role": "user", "content": prompt}],
+                model=model,
+                system_prompt="You are a skill detection assistant. Output only valid JSON.",
+                inference_params={"max_tokens": 256, "temperature": 0.1},
+            )
+            if not result:
+                continue
+            json_match = re.search(r'\{.*\}', result, re.DOTALL)
+            if not json_match:
+                continue
+            data = json.loads(json_match.group())
+            if data.get("is_skill_candidate"):
+                candidates_found += 1
+                candidate_names.append(mem["name"])
+                candidate_details.append({
+                    "name": mem["name"],
+                    "reason": data.get("reason", "Procedural content detected"),
+                })
+        except Exception:
+            continue
+
+    return {"candidates_found": candidates_found, "candidate_names": candidate_names,
+            "candidate_details": candidate_details}
+
+
+def _find_cheapest_model() -> str | None:
+    """Find the cheapest available model (prefer Haiku)."""
+    if not _models_config:
+        return None
+    for mid, cfg in sorted(_models_config.items(), key=lambda x: x[1].get('cost_input', 999)):
+        if cfg.get('enabled', True):
+            if 'haiku' in mid.lower():
+                return mid
+    for mid, cfg in sorted(_models_config.items(), key=lambda x: x[1].get('priority', 0)):
+        if cfg.get('enabled', True):
+            return mid
+    return None
+
+
+def _build_autodream_report(agent_id: str, results: dict) -> str:
+    """Compile autodream results into a structured markdown report."""
+    now = datetime.datetime.now()
+    dedup = results.get("dedup", {})
+    stale = results.get("staleness", {})
+    conflicts = results.get("conflicts", {})
+    skills = results.get("skill_candidates", {})
+
+    # Calculate health score
+    total = stale.get("total", 1) or 1
+    stale_pct = (stale.get("stale_count", 0) / total) * 100
+    health_score = max(0, min(100, int(
+        100
+        - (stale_pct * 0.3)
+        - (conflicts.get("conflicts_found", 0) * 5)
+        - (max(0, dedup.get("duplicates_found", 0) - dedup.get("merged", 0)) * 2)
+    )))
+    results["health_score"] = health_score
+
+    report = f"""# Memory Health Report — {now.strftime('%Y-%m-%d %H:%M')}
+
+**Health Score: {health_score}/100**
+
+## Deduplication
+- Duplicates found: {dedup.get('duplicates_found', 0)}
+- Merged: {dedup.get('merged', 0)}
+- Skipped: {dedup.get('skipped', 0)}
+"""
+    for entry in dedup.get("merge_log", []):
+        report += f"- {entry}\n"
+
+    report += f"""
+## Staleness
+- Total memories: {stale.get('total', 0)}
+- Stale (>{results.get('config', {}).get('stale_threshold_days', 30)}d): {stale.get('stale_count', 0)} ({stale_pct:.0f}%)
+- Newly flagged: {stale.get('newly_stale', 0)}
+"""
+    for name in stale.get("stale_names", [])[:20]:
+        report += f"- {name}\n"
+
+    report += f"""
+## Conflicts
+- Conflicts detected: {conflicts.get('conflicts_found', 0)}
+"""
+    for pair in conflicts.get("conflict_pairs", []):
+        report += f"- **{pair['a']}** ↔ **{pair['b']}**: {pair['nature']}\n"
+
+    report += f"""
+## Skill Candidates
+- Candidates found: {skills.get('candidates_found', 0)}
+"""
+    for c in skills.get("candidate_details", []):
+        report += f"- **{c['name']}**: {c['reason']}\n"
+
+    return report
+
+
+# Live autodream status per agent: {agent_id: {status, phase, started_at, finished_at, error, results}}
+_autodream_status: dict[str, dict] = {}
+_autodream_status_lock = threading.Lock()
+
+
+def get_autodream_status(agent_id: str) -> dict | None:
+    """Get live autodream status for an agent."""
+    with _autodream_status_lock:
+        return dict(_autodream_status.get(agent_id, {})) or None
+
+
+def trigger_autodream(agent_id: str):
+    """Run all autodream passes and produce a health report. Background thread."""
+    ad_cfg = _get_autodream_config(agent_id)
+    if not ad_cfg.get("enabled"):
+        return
+
+    def _update_status(**kwargs):
+        with _autodream_status_lock:
+            if agent_id not in _autodream_status:
+                _autodream_status[agent_id] = {}
+            _autodream_status[agent_id].update(kwargs)
+
+    def _run():
+        started = datetime.datetime.now()
+        _update_status(status="running", phase="starting", started_at=started.isoformat(),
+                       finished_at=None, error=None, results=None)
+        try:
+            logging.info(f"Autodream starting for {agent_id}")
+            ms = MemoryStore(agent_id)
+            results = {"config": ad_cfg, "agent": agent_id}
+
+            # Run passes sequentially
+            _update_status(phase="dedup")
+            results["dedup"] = _autodream_dedup(agent_id, ms, ad_cfg)
+            logging.info(f"Autodream dedup done for {agent_id}: {results['dedup'].get('merged', 0)} merged")
+
+            _update_status(phase="staleness")
+            results["staleness"] = _autodream_staleness(agent_id, ms, ad_cfg)
+            logging.info(f"Autodream staleness done for {agent_id}: {results['staleness'].get('stale_count', 0)} stale")
+
+            _update_status(phase="conflicts")
+            results["conflicts"] = _autodream_conflicts(agent_id, ms, ad_cfg)
+            logging.info(f"Autodream conflicts done for {agent_id}: {results['conflicts'].get('conflicts_found', 0)} found")
+
+            _update_status(phase="skill_candidates")
+            results["skill_candidates"] = _autodream_skill_candidates(agent_id, ms, ad_cfg)
+            logging.info(f"Autodream skills done for {agent_id}: {results['skill_candidates'].get('candidates_found', 0)} candidates")
+
+            # Build and store report
+            _update_status(phase="report")
+            report = _build_autodream_report(agent_id, results)
+            now_str = datetime.datetime.now().strftime('%Y-%m-%d')
+            ms.store(
+                f"Memory Health Report — {now_str}",
+                report,
+                description=f"Autodream consolidation report for {now_str}",
+                mem_type="system",
+            )
+
+            # Clean up old reports beyond retention limit
+            retention = ad_cfg.get("report_retention", 3)
+            _cleanup_autodream_reports(agent_id, ms, retention)
+
+            finished = datetime.datetime.now()
+            elapsed = (finished - started).total_seconds()
+            logging.info(f"Autodream complete for {agent_id}: health_score={results.get('health_score', '?')} ({elapsed:.1f}s)")
+            _update_status(status="completed", phase="done", finished_at=finished.isoformat(),
+                           elapsed=round(elapsed, 1), results={
+                               "health_score": results.get("health_score"),
+                               "merged": results.get("dedup", {}).get("merged", 0),
+                               "stale": results.get("staleness", {}).get("stale_count", 0),
+                               "conflicts": results.get("conflicts", {}).get("conflicts_found", 0),
+                               "skill_candidates": results.get("skill_candidates", {}).get("candidates_found", 0),
+                           })
+
+        except Exception as e:
+            logging.error(f"Autodream failed for {agent_id}: {e}")
+            _update_status(status="error", phase="failed",
+                           finished_at=datetime.datetime.now().isoformat(),
+                           error=str(e)[:300])
+
+    threading.Thread(target=_run, daemon=True, name=f"autodream_{agent_id}").start()
+
+
+def _cleanup_autodream_reports(agent_id: str, ms: MemoryStore, retention: int):
+    """Delete old Memory Health Report files beyond the retention limit."""
+    agent_dir = os.path.join(AGENTS_DIR, agent_id)
+    reports = []
+    for fname in os.listdir(agent_dir):
+        if not fname.endswith(".md"):
+            continue
+        fpath = os.path.join(agent_dir, fname)
+        try:
+            with open(fpath, "r") as f:
+                raw = f.read(500)
+            fm, _ = _parse_frontmatter(raw)
+            if fm.get("name", "").startswith("Memory Health Report"):
+                reports.append((fpath, os.path.getmtime(fpath), fm.get("name", "")))
+        except Exception:
+            continue
+
+    # Sort by mtime descending, delete older ones
+    reports.sort(key=lambda x: x[1], reverse=True)
+    for fpath, _, name in reports[retention:]:
+        try:
+            os.remove(fpath)
+        except Exception:
+            pass
+    if len(reports) > retention:
+        _qmd_debounced_embed(agent_id)
+
+
+def get_memory_health(agent_id: str) -> dict:
+    """Compute live memory health stats for an agent."""
+    agent_dir = os.path.join(AGENTS_DIR, agent_id)
+    if not os.path.isdir(agent_dir):
+        return {"error": f"Agent not found: {agent_id}"}
+
+    now = datetime.datetime.now()
+    total = 0
+    by_type: dict[str, int] = {}
+    stale_count = 0
+    stale_names = []
+    ages = []
+    recall_hot = 0     # recalled in last 7 days
+    recall_warm = 0    # recalled in last 30 days
+    recall_cold = 0    # recalled 30+ days ago
+    recall_never = 0   # never recalled
+    auto_24h = 0
+    auto_7d = 0
+    reports = []
+    last_results = None
+    last_run = None
+    cutoff_24h = time.time() - 86400
+    cutoff_7d = time.time() - 604800
+
+    skip_prefixes = ("Memory Summary", "Memory Health Report")
+
+    for fname in os.listdir(agent_dir):
+        if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
+            continue
+        if fname.startswith("ingest-"):
+            continue
+        fpath = os.path.join(agent_dir, fname)
+        try:
+            with open(fpath, "r") as f:
+                raw = f.read()
+            fm, body = _parse_frontmatter(raw)
+        except Exception:
+            continue
+
+        name = fm.get("name", fname.replace(".md", ""))
+        mem_type = fm.get("type", "general")
+        mtime = os.path.getmtime(fpath)
+
+        # Collect health reports
+        if name.startswith("Memory Health Report"):
+            # Parse health score from body
+            score_match = re.search(r'Health Score:\s*(\d+)/100', body)
+            score = int(score_match.group(1)) if score_match else 0
+            date_match = re.search(r'(\d{4}-\d{2}-\d{2})', name)
+            date_str = date_match.group(1) if date_match else datetime.datetime.fromtimestamp(mtime).strftime('%Y-%m-%d')
+            reports.append({"date": date_str, "health_score": score, "mtime": mtime})
+            if not last_run or mtime > last_run:
+                last_run = mtime
+                # Try to parse last results from report
+                try:
+                    last_results = _parse_health_report(body)
+                except Exception:
+                    last_results = None
+            continue
+
+        if any(name.startswith(p) for p in skip_prefixes):
+            continue
+
+        total += 1
+        by_type[mem_type] = by_type.get(mem_type, 0) + 1
+
+        # Age
+        age_days = (now - datetime.datetime.fromtimestamp(mtime)).days
+        ages.append(age_days)
+
+        # Staleness
+        if fm.get("stale", "").lower() == "true":
+            stale_count += 1
+            stale_names.append(name)
+
+        # Recall frequency
+        lr = fm.get("last_recalled", "")
+        if lr:
+            try:
+                lr_date = datetime.datetime.strptime(lr.strip(), "%Y-%m-%d")
+                days_since = (now - lr_date).days
+                if days_since <= 7:
+                    recall_hot += 1
+                elif days_since <= 30:
+                    recall_warm += 1
+                else:
+                    recall_cold += 1
+            except ValueError:
+                recall_never += 1
+        else:
+            recall_never += 1
+
+        # Auto-memory rate (by creation time)
+        if mtime > cutoff_24h:
+            auto_24h += 1
+        if mtime > cutoff_7d:
+            auto_7d += 1
+
+    # Sort reports by mtime
+    reports.sort(key=lambda x: x.get("mtime", 0), reverse=True)
+    for r in reports:
+        r.pop("mtime", None)
+
+    # QMD health
+    qmd_health = {"indexed": 0, "embedded": 0, "stale": 0, "not_indexed": 0}
+    try:
+        r = subprocess.run(["qmd", "collection", "show", agent_id],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            # Count from the docs endpoint instead
+            pass
+    except Exception:
+        pass
+
+    # Health score from latest report, or compute a basic one
+    if reports:
+        health_score = reports[0].get("health_score", 0)
+    else:
+        stale_pct = (stale_count / max(total, 1)) * 100
+        health_score = max(0, min(100, int(100 - (stale_pct * 0.3))))
+
+    ad_cfg = _get_autodream_config(agent_id)
+
+    return {
+        "agent": agent_id,
+        "total_memories": total,
+        "by_type": by_type,
+        "qmd_health": qmd_health,
+        "stale_count": stale_count,
+        "stale_names": stale_names[:50],
+        "age_distribution": {
+            "avg_days": round(sum(ages) / max(len(ages), 1), 1),
+            "oldest_days": max(ages) if ages else 0,
+            "newest_days": min(ages) if ages else 0,
+        },
+        "recall_frequency": {
+            "hot": recall_hot, "warm": recall_warm,
+            "cold": recall_cold, "never_recalled": recall_never,
+        },
+        "autodream": {
+            "config": ad_cfg,
+            "last_run": datetime.datetime.fromtimestamp(last_run).isoformat() if last_run else None,
+            "last_results": last_results,
+            "reports": reports[:ad_cfg.get("report_retention", 3)],
+            "live": get_autodream_status(agent_id),
+        },
+        "auto_memory_rate": {"last_24h": auto_24h, "last_7d": auto_7d},
+        "health_score": health_score,
+    }
+
+
+def _parse_health_report(body: str) -> dict:
+    """Parse structured data from a Memory Health Report body."""
+    results = {}
+    # Dedup section
+    m = re.search(r'Duplicates found:\s*(\d+)', body)
+    results["duplicates_found"] = int(m.group(1)) if m else 0
+    m = re.search(r'Merged:\s*(\d+)', body)
+    results["merged"] = int(m.group(1)) if m else 0
+    # Staleness
+    m = re.search(r'Stale.*?:\s*(\d+)', body)
+    results["stale_count"] = int(m.group(1)) if m else 0
+    m = re.search(r'Newly flagged:\s*(\d+)', body)
+    results["newly_stale"] = int(m.group(1)) if m else 0
+    # Conflicts
+    m = re.search(r'Conflicts detected:\s*(\d+)', body)
+    results["conflicts_found"] = int(m.group(1)) if m else 0
+    # Parse conflict pairs
+    conflict_pairs = []
+    for cm in re.finditer(r'\*\*(.+?)\*\* ↔ \*\*(.+?)\*\*:\s*(.+)', body):
+        conflict_pairs.append({"a": cm.group(1), "b": cm.group(2), "nature": cm.group(3).strip()})
+    results["conflict_pairs"] = conflict_pairs
+    # Skill candidates
+    m = re.search(r'Candidates found:\s*(\d+)', body)
+    results["candidates_found"] = int(m.group(1)) if m else 0
+    candidate_details = []
+    for cm in re.finditer(r'- \*\*(.+?)\*\*:\s*(.+)', body):
+        name = cm.group(1)
+        if name not in [p["a"] for p in conflict_pairs] + [p["b"] for p in conflict_pairs]:
+            candidate_details.append({"name": name, "reason": cm.group(2).strip()})
+    results["candidate_details"] = candidate_details
+    return results
 
 
 def get_graph_stats(agent_id: str) -> dict:
@@ -7026,6 +7744,15 @@ class Scheduler:
                 except Exception:
                     pass
 
+        # Chain autodream after relationship discovery completes
+        if name.startswith("_relationship_discovery_") and status == "success":
+            ad_cfg = _get_autodream_config(agent_id)
+            if ad_cfg.get("enabled"):
+                try:
+                    trigger_autodream(agent_id)
+                except Exception:
+                    pass
+
         # Fire notification hook for task completion/failure
         if _notification_hook:
             try:
@@ -7037,7 +7764,8 @@ class Scheduler:
                                        agent=agent_id,
                                        metadata={"task_name": name, "status": status,
                                                   "tool_calls": run_info.get("tool_calls", 0)})
-                elif status == "success" and not name.startswith("_memory_summary_"):
+                elif status == "success" and not name.startswith("_memory_summary_") \
+                        and not name.startswith("_relationship_discovery_"):
                     _notification_hook("task_complete", f"Task completed: {name}",
                                        f"Agent {agent_id} completed '{name}' with {run_info.get('tool_calls', 0)} tool calls.",
                                        severity="info", agent=agent_id,

@@ -669,6 +669,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_service_log()
         elif path.startswith("/v1/agents/") and path.endswith("/memory-summary"):
             self._handle_memory_summary_get(path)
+        elif path.startswith("/v1/agents/") and path.endswith("/memory-health"):
+            self._handle_memory_health_get(path)
         elif path.startswith("/v1/agents/") and path.endswith("/commands"):
             self._handle_agent_commands_get(path)
         elif path == "/v1/costs":
@@ -3491,11 +3493,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             rd_config = engine._get_relationship_discovery_config(agent_id)
             rd_stats = engine.get_graph_stats(agent_id) if hasattr(engine, 'get_graph_stats') else {}
             am_config = engine._get_auto_memory_config(agent_id)
+            ad_config = engine._get_autodream_config(agent_id)
             self._send_json({
                 "agent": agent_id,
                 "summary": summary or "",
                 "config": config,
                 "auto_memory": am_config,
+                "autodream": ad_config,
                 "relationship_discovery": {
                     "config": rd_config,
                     "stats": rd_stats,
@@ -3557,8 +3561,34 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             with open(cfg_path, "w") as f:
                 json.dump(cfg, f, indent=2)
             self._send_json({"status": "updated", "enabled": bool(enabled), "agent": agent_id})
+        elif action == "toggle_autodream":
+            enabled = body.get("enabled", True)
+            agent_cfg = engine.AgentConfig(agent_id)
+            cfg = agent_cfg.config
+            ad = cfg.get("autodream", {})
+            if not isinstance(ad, dict):
+                ad = {}
+            ad["enabled"] = bool(enabled)
+            cfg["autodream"] = ad
+            cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
+            with open(cfg_path, "w") as f:
+                json.dump(cfg, f, indent=2)
+            self._send_json({"status": "updated", "enabled": bool(enabled), "agent": agent_id})
+        elif action == "run_autodream":
+            engine.trigger_autodream(agent_id)
+            self._send_json({"status": "autodream_scheduled", "agent": agent_id})
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)
+
+    def _handle_memory_health_get(self, path):
+        """GET /v1/agents/<id>/memory-health — live memory health stats + autodream status."""
+        parts = path.split("/")
+        agent_id = parts[3]
+        try:
+            health = engine.get_memory_health(agent_id)
+            self._send_json(health)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
 
     def _handle_costs(self):
         """GET /v1/costs?agent=X&hours=24 — cost stats."""

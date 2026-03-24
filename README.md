@@ -42,6 +42,7 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
 ### Intelligence
 - **Knowledge graph memory** — QMD hybrid search (BM25 + vector + LLM reranking) with relationship traversal and auto-discovery
 - **Auto memory** — automatic memory creation from conversations (corrections, decisions, preferences) via background LLM extraction
+- **Autodream consolidation** — nightly memory maintenance: deduplication, staleness detection, conflict resolution, skill candidate identification, health scoring with live status tracking
 - **Continuous summarization** — memory summary refreshes at token thresholds during active conversations
 - **Knowledge graph visualization** — interactive force-directed canvas with search, filtering, relationship discovery
 - **Project notes** — markdown notes with AI-assisted editing (uses write_file/edit_file tools), folder organization, auto-reload

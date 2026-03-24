@@ -68,6 +68,13 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - Agent activity tracking: `/v1/agents/activity` returns active tasks/chats per agent for UI indicators
 - Auto memory creation: heuristic detection (corrections, identity, decisions, references) + LLM extraction via Haiku, runs in background after each response
 - Continuous session summarization: memory summary refreshes at 10K tokens, then every 5K during active conversations
+- Autodream memory consolidation: chains after relationship discovery in nightly pipeline (Memory Summary → RD → Autodream)
+- Autodream passes: dedup (QMD similarity + LLM merge), staleness (frontmatter `last_recalled` + `stale` flags), conflicts (LLM contradiction detection), skill candidates (procedural memory detection)
+- Autodream config in agent.json: `autodream: {enabled, stale_threshold_days, dedup_similarity_threshold, max_dedup_merges, max_conflict_checks, report_retention}`
+- Autodream health report: stored as "Memory Health Report — {date}" memory file (type: system), auto-retained (last N reports)
+- `last_recalled` frontmatter field: stamped on recall in background thread, used for staleness detection
+- `get_memory_health(agent_id)`: live stats — total, by_type, stale_count, age_distribution, recall_frequency (hot/warm/cold/never), autodream results, health_score
+- `GET /v1/agents/<id>/memory-health`: full health dashboard data; `trigger_autodream(agent_id)` for manual runs
 - Knowledge graph: auto-discovery (LLM-based, entity extraction, co-recall), graph-aware recall default (1 hop), visualization via Canvas 2D
 - Model-aware max_tokens: Opus 32K, Sonnet 16K, Haiku 8K, MiniMax 32K, configurable via `max_output` in models config
 - Provider fallback ordering: same provider first, then capabilities, then priority
