@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "4.3.0"
-VERSION_DATE = "2026-03-24"
+VERSION = "4.3.1"
+VERSION_DATE = "2026-03-25"
 CHANGELOG = [
+    ("4.3.1", "2026-03-25", "Fallback resilience: fix session corruption when mid-tool-loop errors trigger model fallback (message history snapshot/rollback before fallback attempt), SSE streaming overload/rate-limit errors now classified as transient (retries with backoff instead of immediate fallback), login shell support for execute_command (/bin/zsh -l -c wrapper with config options)"),
     ("4.3.0", "2026-03-24", "Autodream memory consolidation: nightly dedup (QMD similarity + LLM merge), staleness detection (last_recalled tracking + stale flags), conflict resolution (LLM contradiction detection), skill candidate identification, health reports with scoring, live status tracking with phase updates, Memory Health dashboard in global settings (Monitoring → Memory) with per-agent cards, recall frequency visualization, /health command"),
     ("4.2.0", "2026-03-23", "Code graph enhancements: LLM-generated node summaries, architecture layer classification (api/service/data/ui/util/test), guided tour generation, code_graph_enhance tool, lossless compaction with compacted flag, context fill indicator, manual compact, LCM footer controls"),
     ("4.1.0", "2026-03-23", "Chat stability: session corruption fix (message rollback on failed tool loops), partial response preservation, metadata persistence (model/tokens/cost/tools/thinking), thinking level control (none/low/med/high), extended thinking with signature capture, model name in thinking indicator, remote node badges on tool calls, resizable sidebars, error_msg fix"),
@@ -1525,6 +1526,21 @@ def _strip_ansi(text: str) -> str:
     return text
 
 
+def _build_shell_command(command: str) -> tuple[list | str, bool]:
+    """Build the shell invocation based on execute_command config.
+
+    Returns (cmd, shell_flag) for subprocess.Popen.
+    If login_shell is True, wraps the command in a login shell invocation
+    so that ~/.zprofile, ~/.zshrc etc. are sourced (giving full PATH).
+    """
+    _exec_cfg = get_tool_config().get("execute_command", {})
+    use_login_shell = _exec_cfg.get("login_shell", True)
+    if use_login_shell:
+        shell_path = _exec_cfg.get("shell_path", "") or os.environ.get("SHELL", "/bin/zsh")
+        return [shell_path, "-l", "-c", command], False
+    return command, True
+
+
 def _streaming_execute_command(command: str, timeout: int, cwd: str | None,
                                event_callback, tool_use_id: str) -> str:
     """Execute command with streaming output via event_callback."""
@@ -1535,8 +1551,9 @@ def _streaming_execute_command(command: str, timeout: int, cwd: str | None,
     env["COLUMNS"] = "200"
     env["LINES"] = "50"
 
+    shell_cmd, shell_flag = _build_shell_command(command)
     proc = subprocess.Popen(
-        command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        shell_cmd, shell=shell_flag, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         stdin=subprocess.DEVNULL, cwd=cwd, env=env,
         start_new_session=True,
     )
@@ -1620,8 +1637,9 @@ def tool_execute_command(args: dict) -> str:
         env["COLUMNS"] = "200"
         env["LINES"] = "50"
 
+        shell_cmd, shell_flag = _build_shell_command(command)
         proc = subprocess.Popen(
-            command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            shell_cmd, shell=shell_flag, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL, cwd=cwd, env=env,
             start_new_session=True,  # own process group so we can kill the tree
         )
@@ -2060,8 +2078,18 @@ class MCPStdioClient:
             run_env = os.environ.copy()
             if self.env:
                 run_env.update(self.env)
+            # Use login shell to resolve commands installed via nvm/brew/etc.
+            # Same approach as _build_shell_command() for execute_command.
+            _exec_cfg = get_tool_config().get("execute_command", {})
+            use_login_shell = _exec_cfg.get("login_shell", True)
+            if use_login_shell:
+                shell_path = _exec_cfg.get("shell_path", "") or os.environ.get("SHELL", "/bin/zsh")
+                full_cmd = " ".join([self.command] + self.args)
+                cmd = [shell_path, "-l", "-c", full_cmd]
+            else:
+                cmd = [self.command] + self.args
             self.process = subprocess.Popen(
-                [self.command] + self.args,
+                cmd,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 env=run_env, start_new_session=True,
             )
@@ -2079,8 +2107,25 @@ class MCPStdioClient:
                 if tools_resp and tools_resp.get("result"):
                     self.tools = tools_resp["result"].get("tools", [])
                 return True
+            # Capture stderr for diagnostics
+            self._last_error = ""
+            if self.process and self.process.stderr:
+                try:
+                    self._last_error = self.process.stderr.read(2000).decode("utf-8", errors="replace")
+                except Exception:
+                    pass
+            if self.process:
+                self.process.terminate()
+                self.process = None
             return False
-        except Exception:
+        except Exception as e:
+            self._last_error = str(e)
+            if self.process:
+                try:
+                    self.process.terminate()
+                except Exception:
+                    pass
+                self.process = None
             return False
 
     def stop(self):
@@ -2153,11 +2198,17 @@ class MCPStdioClient:
         self.process.stdin.write(f"{data}\n".encode("utf-8"))
         self.process.stdin.flush()
 
-    def _read(self) -> dict | None:
+    def _read(self, timeout: int = 30) -> dict | None:
         if not self.process or not self.process.stdout:
             return None
+        import select as _select
         # Read lines until we get a JSON-RPC response (skip notifications)
-        while True:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            remaining = max(0.1, deadline - time.time())
+            ready, _, _ = _select.select([self.process.stdout], [], [], remaining)
+            if not ready:
+                return None  # Timeout
             line = self.process.stdout.readline()
             if not line:
                 return None
@@ -2171,6 +2222,7 @@ class MCPStdioClient:
                 # Skip notifications
             except json.JSONDecodeError:
                 continue
+        return None  # Timeout
 
 
 class MCPSSEClient:
@@ -2385,7 +2437,11 @@ class MCPManager:
                 "tools": [{"name": t["name"], "description": t.get("description", "")} for t in client.tools],
                 "tool_count": len(client.tools),
             }
-        return {"error": f"Failed to connect to MCP server '{name}' at {url}"}
+        detail = getattr(client, '_last_error', '') or ''
+        msg = f"Failed to connect to MCP server '{name}' at {url}"
+        if detail:
+            msg += f"\nDetail: {detail[:500]}"
+        return {"error": msg}
 
     def disconnect_runtime(self, name: str) -> dict:
         """Disconnect a runtime MCP server."""
@@ -2435,6 +2491,8 @@ _TOOLS_CONFIG_DEFAULTS = {
         "enabled": True,
         "timeout": 120,
         "banned_commands": ["rm -rf /", "mkfs", "dd if="],
+        "login_shell": True,       # Use login shell (sources ~/.zprofile, ~/.zshrc) for full PATH
+        "shell_path": "",           # Shell binary path, empty = auto-detect from $SHELL (default: /bin/zsh)
     },
     "web_fetch": {
         "enabled": True,
@@ -5440,6 +5498,7 @@ def _get_relationship_discovery_config(agent_id: str) -> dict:
 
 AUTODREAM_DEFAULTS = {
     "enabled": True,
+    "model": None,  # None = auto (cheapest/Haiku), or explicit model ID
     "stale_threshold_days": 30,
     "dedup_similarity_threshold": 0.85,
     "max_dedup_merges": 10,
@@ -5909,8 +5968,8 @@ def _autodream_dedup(agent_id: str, ms: MemoryStore, config: dict) -> dict:
     merge_log = []
     deleted_files = set()
 
-    # Find cheapest model for LLM calls
-    model = _find_cheapest_model()
+    # Resolve model (configured or cheapest)
+    model = _resolve_autodream_model(config)
     if not model or not _delegate_api_key:
         return {"duplicates_found": len(high_sim), "merged": 0, "skipped": len(high_sim),
                 "merge_log": ["No model available for merge confirmation"]}
@@ -6069,7 +6128,7 @@ def _autodream_conflicts(agent_id: str, ms: MemoryStore, config: dict) -> dict:
     # Filter to same-type pairs (contradictions are most likely within same type)
     same_type_pairs = [(a, b, s) for a, b, s in pairs if a["type"] == b["type"]][:max_checks]
 
-    model = _find_cheapest_model()
+    model = _resolve_autodream_model(config)
     if not model or not _delegate_api_key:
         return {"conflicts_found": 0, "conflict_pairs": [],
                 "error": "No model available for conflict detection"}
@@ -6132,7 +6191,7 @@ def _autodream_skill_candidates(agent_id: str, ms: MemoryStore, config: dict) ->
     if not heuristic_matches:
         return {"candidates_found": 0, "candidate_names": [], "candidate_details": []}
 
-    model = _find_cheapest_model()
+    model = _resolve_autodream_model(config)
     if not model or not _delegate_api_key:
         return {"candidates_found": 0, "candidate_names": [], "candidate_details": [],
                 "error": "No model available for skill detection"}
@@ -6176,6 +6235,14 @@ def _autodream_skill_candidates(agent_id: str, ms: MemoryStore, config: dict) ->
             "candidate_details": candidate_details}
 
 
+def _resolve_autodream_model(config: dict) -> str | None:
+    """Resolve the model to use for autodream. Uses config override or cheapest available."""
+    configured = config.get("model")
+    if configured and _models_config and configured in _models_config:
+        return configured
+    return _find_cheapest_model()
+
+
 def _find_cheapest_model() -> str | None:
     """Find the cheapest available model (prefer Haiku)."""
     if not _models_config:
@@ -6188,6 +6255,77 @@ def _find_cheapest_model() -> str | None:
         if cfg.get('enabled', True):
             return mid
     return None
+
+
+def promote_memory_to_skill(agent_id: str, memory_name: str) -> dict:
+    """Convert a memory into a skill by generating a SKILL.md via LLM."""
+    ms = MemoryStore(agent_id)
+    # Find the memory
+    memories = _collect_agent_memories(agent_id)
+    mem = next((m for m in memories if m["name"] == memory_name), None)
+    if not mem:
+        return {"error": f"Memory '{memory_name}' not found"}
+
+    ad_cfg = _get_autodream_config(agent_id)
+    model = _resolve_autodream_model(ad_cfg)
+    if not model or not _delegate_api_key:
+        return {"error": "No model available for skill generation"}
+
+    # Generate SKILL.md content via LLM
+    prompt = (
+        f"Convert this memory into a well-structured SKILL.md file.\n\n"
+        f"Memory name: {mem['name']}\n"
+        f"Memory content:\n{mem['content']}\n\n"
+        f"Generate a skill document with:\n"
+        f"1. A clear, concise title\n"
+        f"2. Step-by-step instructions or reference material\n"
+        f"3. Examples where helpful\n"
+        f"4. Keep it practical and actionable\n\n"
+        f'Output ONLY JSON: {{"slug": "short-kebab-case-name", "name": "Display Name", '
+        f'"description": "one-line description", "body": "the full skill body in markdown"}}'
+    )
+    try:
+        result = _run_delegate(
+            messages=[{"role": "user", "content": prompt}],
+            model=model,
+            system_prompt="You are a skill creation assistant. Output only valid JSON.",
+            inference_params={"max_tokens": 2048, "temperature": 0.2},
+        )
+        if not result:
+            return {"error": "LLM returned empty response"}
+
+        json_match = re.search(r'\{.*\}', result, re.DOTALL)
+        if not json_match:
+            return {"error": "Could not parse LLM response"}
+
+        data = json.loads(json_match.group())
+        slug = re.sub(r'[^a-z0-9-]', '', data.get("slug", "").lower().replace(" ", "-"))[:40]
+        if not slug:
+            slug = re.sub(r'[^a-z0-9-]', '', memory_name.lower().replace(" ", "-"))[:40]
+        name = data.get("name", memory_name)
+        description = data.get("description", "")
+        body = data.get("body", mem["content"])
+
+        # Write SKILL.md
+        skills_dir = os.path.join(AGENTS_DIR, agent_id, "skills", slug)
+        os.makedirs(skills_dir, exist_ok=True)
+        skill_path = os.path.join(skills_dir, "SKILL.md")
+
+        skill_content = f"""---
+name: {_yaml_escape(name)}
+description: {_yaml_escape(description)}
+---
+
+{body}
+"""
+        with open(skill_path, "w") as f:
+            f.write(skill_content)
+
+        logging.info(f"Promoted memory '{memory_name}' to skill '{slug}' for {agent_id}")
+        return {"status": "created", "slug": slug, "name": name, "path": skill_path}
+
+    except Exception as e:
+        return {"error": f"Skill generation failed: {str(e)[:200]}"}
 
 
 def _build_autodream_report(agent_id: str, results: dict) -> str:
@@ -12792,7 +12930,10 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
                         print(f"\nAPI error: {err_msg}", file=sys.stderr)
                     if event_callback:
                         event_callback("error", {"message": f"{err_type}: {err_msg}"})
-                    _thread_local._last_send_error = {"code": 0, "message": err_msg, "permanent": True} # Streaming error: always permanent
+                    # Overload/rate-limit errors are transient — allow retries before fallback
+                    _TRANSIENT_SSE_ERRORS = {"overloaded_error", "rate_limit_error", "api_error"}
+                    is_permanent = err_type not in _TRANSIENT_SSE_ERRORS
+                    _thread_local._last_send_error = {"code": 0, "message": err_msg, "permanent": is_permanent}
                     return None
 
                 elif etype == "message_delta":
@@ -13164,6 +13305,10 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
     # Track which model actually responded (for done event)
     _thread_local._fallback_model_used = None
 
+    # Snapshot message count before primary attempt — if it fails mid-tool-loop,
+    # intermediate messages must be stripped before trying fallback models
+    msg_count_original = len(messages)
+
     # Try primary model with retries
     result, error_info = _retry_with_backoff(
         messages, model, api_key, base_url, api_type,
@@ -13171,6 +13316,10 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
         inference_params, session_id, max_retries=2)
     if result is not None:
         return result
+
+    # Strip any intermediate tool-loop messages from failed primary attempt
+    if len(messages) > msg_count_original:
+        del messages[msg_count_original:]
 
     primary_error = (error_info or {}).get("message", "unknown error")
 
@@ -13233,11 +13382,20 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
             })
 
         fb_params = get_inference_params(fallback_model, purpose)
+        # Snapshot message count: if fallback uses different api_type, tool-loop
+        # messages will be in the wrong format and must be stripped after success
+        msg_count_before = len(messages)
         result, fb_error = _retry_with_backoff(
             messages, fallback_model, fb_api_key, fb_base_url, fb_api_type,
             silent, tools, escape_watcher, event_callback,
             fb_params, session_id, max_retries=1)
         if result is not None:
+            # Strip intermediate tool-loop messages appended by the fallback model.
+            # These corrupt the session: different api_type → wrong message format,
+            # same api_type → thinking blocks with invalid/missing signatures.
+            # The final text reply is returned; server adds it properly to session.
+            if len(messages) > msg_count_before:
+                del messages[msg_count_before:]
             _thread_local._fallback_model_used = fallback_model
             # Log fallback event to cost tracker
             if _cost_tracker:
@@ -13826,10 +13984,11 @@ def _switch_agent(agent_id: str, args) -> tuple[str, AgentConfig]:
     _current_agent = agent
     _memory_store = MemoryStore(agent_id=agent_id, base_dir=agent.memory_dir)
 
-    # Load MCP servers: main's (global) + agent-specific
-    if _mcp_manager:
+    # Load MCP servers: reuse shared manager if available, else create one
+    if not _mcp_manager:
+        _mcp_manager = MCPManager()
+    else:
         _mcp_manager.stop_all()
-    _mcp_manager = MCPManager()
     main_mcp = os.path.join(AGENTS_DIR, "main", "mcp.json")
     _mcp_manager.load_config(main_mcp)
     if agent_id != "main":

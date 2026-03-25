@@ -56,7 +56,7 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
 
 ### Infrastructure
 - **Multi-provider routing** — auto-routing across Anthropic, OpenAI-compatible, MiniMax, local oMLX
-- **Provider fallback** — exponential backoff retry with ordered fallback chains
+- **Provider fallback** — exponential backoff retry with ordered fallback chains, message history rollback on mid-tool-loop failures, transient SSE error detection
 - **Cost tracking + Rate limiting** — per-agent spend monitoring, budgets, throttling
 - **Observability** — span-based tracing for LLM calls and tool execution
 - **Audit trail** — append-only log of all agent actions, searchable, CSV export
