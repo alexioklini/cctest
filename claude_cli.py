@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "4.4.1"
+VERSION = "4.4.2"
 VERSION_DATE = "2026-03-26"
 CHANGELOG = [
+    ("4.4.2", "2026-03-26", "File read optimization: _collect_agent_memories truncates content at 2000 chars (max callers ever use) and reads only needed bytes via f.read(max_content*4); autodream run now collects memories once and shares across dedup/conflicts/skill_candidates phases (was 3 separate filesystem walks)"),
     ("4.4.1", "2026-03-26", "Token optimization: smart model routing with time-aware fallback chains (local → cloud) for all background tasks, tools=False for all JSON-only _run_delegate calls (saves ~8K tokens/call: autodream dedup/conflicts/skills, relationship discovery, context summarization/condensation/recall, skill detection, code graph summaries, memory extraction)"),
     ("4.4.0", "2026-03-26", "Context token optimization: read_file default limit 400 lines, fresh_tail_count 32→16, memory summary 3K char cap + skip on tool rounds 1+, compact threshold 75%→60%, relationship discovery uses Haiku (not agent model), memory summary scheduled tasks use Sonnet, candidate pair content capped at 2K chars, GUI model selectors for memory summary + relationship discovery, schedule auto-recreates on model change"),
     ("4.3.1", "2026-03-25", "Fallback resilience: fix session corruption when mid-tool-loop errors trigger model fallback (message history snapshot/rollback before fallback attempt), SSE streaming overload/rate-limit errors now classified as transient (retries with backoff instead of immediate fallback), login shell support for execute_command (/bin/zsh -l -c wrapper with config options)"),
@@ -5671,8 +5672,9 @@ def _auto_memory_extract(agent_id: str, user_message: str, assistant_response: s
         logging.debug(f"Auto-memory extraction failed for {agent_id}: {e}")
 
 
-def _collect_agent_memories(agent_id: str) -> list[dict]:
-    """Collect all memory files for an agent, walking subdirectories."""
+def _collect_agent_memories(agent_id: str, max_content: int = 2000) -> list[dict]:
+    """Collect all memory files for an agent, walking subdirectories.
+    Content is truncated at max_content chars — callers never need more than 2000."""
     agent_dir = os.path.join(AGENTS_DIR, agent_id)
     if not os.path.isdir(agent_dir):
         return []
@@ -5689,14 +5691,15 @@ def _collect_agent_memories(agent_id: str) -> list[dict]:
             rel = os.path.relpath(fpath, agent_dir)
             try:
                 with open(fpath, "r") as f:
-                    raw = f.read()
+                    raw = f.read(max_content * 4)  # read only what we need (frontmatter + content)
                 fm, body = _parse_frontmatter(raw)
+                content = body.strip()
                 memories.append({
                     "file": rel,
                     "name": fm.get("name", fname.replace(".md", "")),
                     "type": fm.get("type", "general"),
                     "description": fm.get("description", "").strip('"').strip("'"),
-                    "content": body.strip(),
+                    "content": content[:max_content],
                 })
             except Exception:
                 continue
@@ -5960,9 +5963,10 @@ def ensure_relationship_discovery_schedules():
 # ─── Autodream: Memory Consolidation System ─────────────────────────────
 
 
-def _autodream_dedup(agent_id: str, ms: MemoryStore, config: dict) -> dict:
+def _autodream_dedup(agent_id: str, ms: MemoryStore, config: dict, memories: list[dict] | None = None) -> dict:
     """Scan memories for semantic duplicates via QMD, merge with LLM."""
-    memories = _collect_agent_memories(agent_id)
+    if memories is None:
+        memories = _collect_agent_memories(agent_id)
     if len(memories) < 2:
         return {"duplicates_found": 0, "merged": 0, "skipped": 0, "merge_log": []}
 
@@ -6130,9 +6134,10 @@ def _autodream_staleness(agent_id: str, ms: MemoryStore, config: dict) -> dict:
             "newly_stale": newly_stale}
 
 
-def _autodream_conflicts(agent_id: str, ms: MemoryStore, config: dict) -> dict:
+def _autodream_conflicts(agent_id: str, ms: MemoryStore, config: dict, memories: list[dict] | None = None) -> dict:
     """Find contradicting memories using QMD similarity + LLM classification."""
-    memories = _collect_agent_memories(agent_id)
+    if memories is None:
+        memories = _collect_agent_memories(agent_id)
     if len(memories) < 2:
         return {"conflicts_found": 0, "conflict_pairs": []}
 
@@ -6189,9 +6194,10 @@ def _autodream_conflicts(agent_id: str, ms: MemoryStore, config: dict) -> dict:
     return {"conflicts_found": conflicts_found, "conflict_pairs": conflict_pairs}
 
 
-def _autodream_skill_candidates(agent_id: str, ms: MemoryStore, config: dict) -> dict:
+def _autodream_skill_candidates(agent_id: str, ms: MemoryStore, config: dict, memories: list[dict] | None = None) -> dict:
     """Identify procedural memories that could become skills."""
-    memories = _collect_agent_memories(agent_id)
+    if memories is None:
+        memories = _collect_agent_memories(agent_id)
     # Filter to feedback/general types
     candidates_pool = [m for m in memories if m["type"] in ("feedback", "general")]
 
@@ -6480,9 +6486,12 @@ def trigger_autodream(agent_id: str):
             ms = MemoryStore(agent_id)
             results = {"config": ad_cfg, "agent": agent_id}
 
+            # Collect memories once — shared across all passes to avoid repeated filesystem walks
+            memories = _collect_agent_memories(agent_id)
+
             # Run passes sequentially
             _update_status(phase="dedup")
-            results["dedup"] = _autodream_dedup(agent_id, ms, ad_cfg)
+            results["dedup"] = _autodream_dedup(agent_id, ms, ad_cfg, memories=memories)
             logging.info(f"Autodream dedup done for {agent_id}: {results['dedup'].get('merged', 0)} merged")
 
             _update_status(phase="staleness")
@@ -6490,11 +6499,11 @@ def trigger_autodream(agent_id: str):
             logging.info(f"Autodream staleness done for {agent_id}: {results['staleness'].get('stale_count', 0)} stale")
 
             _update_status(phase="conflicts")
-            results["conflicts"] = _autodream_conflicts(agent_id, ms, ad_cfg)
+            results["conflicts"] = _autodream_conflicts(agent_id, ms, ad_cfg, memories=memories)
             logging.info(f"Autodream conflicts done for {agent_id}: {results['conflicts'].get('conflicts_found', 0)} found")
 
             _update_status(phase="skill_candidates")
-            results["skill_candidates"] = _autodream_skill_candidates(agent_id, ms, ad_cfg)
+            results["skill_candidates"] = _autodream_skill_candidates(agent_id, ms, ad_cfg, memories=memories)
             logging.info(f"Autodream skills done for {agent_id}: {results['skill_candidates'].get('candidates_found', 0)} candidates")
 
             # Build and store report
