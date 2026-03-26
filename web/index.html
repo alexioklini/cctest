@@ -2085,6 +2085,41 @@ tailwind.config = {
   .sb-attach-item a { color: var(--color-accent); text-decoration: none; font-size: 10px; }
   .sb-attach-item a:hover { text-decoration: underline; }
 
+  /* Team channel sidebar items */
+  .sb-channel-item { display: flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--color-text-secondary); transition: background 0.15s; }
+  .sb-channel-item:hover { background: var(--color-surface-light); }
+  .sb-channel-item.active { background: var(--color-surface-lighter, var(--color-surface-light)); color: var(--color-text-primary); font-weight: 600; }
+  .sb-channel-item.unread { color: var(--color-text-primary); font-weight: 600; }
+  .sb-channel-icon { opacity: 0.5; font-size: 12px; flex-shrink: 0; width: 16px; text-align: center; }
+  .sb-channel-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sb-unread-badge { min-width: 18px; height: 18px; border-radius: 9px; background: var(--color-accent); color: #fff; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding: 0 5px; flex-shrink: 0; }
+  .sb-mention-badge { background: #f87171; }
+  .sb-presence-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .sb-presence-dot.online { background: #4ade80; }
+  .sb-presence-dot.away { background: #facc15; }
+  .sb-presence-dot.dnd { background: #f87171; }
+  .sb-presence-dot.offline { background: #6b7280; }
+
+  /* Team message styles */
+  .team-msg { display: flex; gap: 10px; padding: 4px 0; }
+  .team-msg:hover { background: var(--color-surface-light); border-radius: 6px; }
+  .team-msg-avatar { width: 36px; height: 36px; border-radius: 8px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: var(--color-surface-light); font-size: 16px; }
+  .team-msg-body { flex: 1; min-width: 0; }
+  .team-msg-header { display: flex; align-items: baseline; gap: 6px; }
+  .team-msg-sender { font-weight: 600; font-size: 13px; color: var(--color-text-primary); }
+  .team-msg-time { font-size: 10px; color: var(--color-text-muted); }
+  .team-msg-content { font-size: 13.5px; line-height: 1.5; color: var(--color-text-secondary); margin-top: 2px; word-wrap: break-word; }
+  .team-msg-actions { display: none; position: absolute; right: 4px; top: -12px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 6px; padding: 2px; gap: 2px; }
+  .team-msg:hover .team-msg-actions { display: flex; }
+  .team-msg-action-btn { padding: 3px 6px; border: none; background: none; cursor: pointer; font-size: 12px; border-radius: 4px; color: var(--color-text-muted); }
+  .team-msg-action-btn:hover { background: var(--color-surface-light); color: var(--color-text-primary); }
+  .team-msg-reactions { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+  .team-msg-reaction { display: flex; align-items: center; gap: 3px; padding: 2px 6px; border-radius: 12px; font-size: 11px; border: 1px solid var(--color-border); cursor: pointer; background: var(--color-surface-light); }
+  .team-msg-reaction:hover { border-color: var(--color-accent); }
+  .team-msg-reaction.mine { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+  .team-msg-thread-link { font-size: 11px; color: var(--color-accent); cursor: pointer; margin-top: 4px; }
+  .team-msg-thread-link:hover { text-decoration: underline; }
+
   /* Sidebar project selector button */
   .sb-project-selector-btn { display: flex; align-items: center; gap: 6px; padding: 5px 12px; cursor: pointer; color: var(--color-text-muted); font-size: 11px; transition: all 0.15s; border-radius: 4px; margin: 2px 6px; }
   .sb-project-selector-btn:hover { color: var(--color-accent); background: var(--color-surface-light); }
@@ -2178,6 +2213,28 @@ tailwind.config = {
       </button>
     </div>
 
+    <!-- Team Channels section -->
+    <div class="sb-section" data-section="team-channels" id="sb-team-channels-section">
+      <div class="sb-section-header" onclick="toggleSidebarSection('team-channels')">
+        <span class="sb-section-left"><span class="sb-section-chevron">&#9660;</span> Channels</span>
+        <button class="sb-section-add" onclick="event.stopPropagation();showCreateChannelModal()" title="New Channel">+</button>
+      </div>
+      <div class="sb-section-content" id="sidebar-team-channels"></div>
+    </div>
+
+    <div class="sb-divider"></div>
+
+    <!-- Team DMs section -->
+    <div class="sb-section" data-section="team-dms" id="sb-team-dms-section">
+      <div class="sb-section-header" onclick="toggleSidebarSection('team-dms')">
+        <span class="sb-section-left"><span class="sb-section-chevron">&#9660;</span> Direct Messages</span>
+        <button class="sb-section-add" onclick="event.stopPropagation();showCreateDMModal()" title="New Message">+</button>
+      </div>
+      <div class="sb-section-content" id="sidebar-team-dms"></div>
+    </div>
+
+    <div class="sb-divider"></div>
+
     <div class="sb-section" data-section="agents" id="sb-agents-section">
       <div class="sb-section-header" onclick="toggleSidebarSection('agents')">
         <span class="sb-section-left"><span class="sb-section-chevron">&#9660;</span> Agents</span>
@@ -2229,9 +2286,15 @@ tailwind.config = {
         <button id="mobile-hamburger" onclick="openMobileSidebar()" title="Open sidebar">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
+        <!-- Agent header (shown for agent chats) -->
         <span id="chat-agent-name" class="text-agent font-display font-semibold text-sm flex items-center gap-2">
           <span class="w-2 h-2 rounded-full bg-agent breathing-dot"></span>
           <span></span>
+        </span>
+        <!-- Channel header (shown for team channels) -->
+        <span id="channel-header-info" class="hidden flex items-center gap-2">
+          <span id="channel-name" class="font-display font-semibold text-sm text-text-primary"></span>
+          <span id="channel-topic" class="text-xs text-text-muted truncate" style="max-width:300px"></span>
         </span>
         <div class="flex-1"></div>
         <select id="model-selector" class="bg-surface-light border border-border rounded-lg px-3 py-1.5 text-xs text-model mono focus:border-model transition-colors"></select>
@@ -2260,6 +2323,8 @@ tailwind.config = {
       <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-6">
         <div class="flex items-center justify-center h-full text-text-muted text-sm font-body">Select an agent to start chatting</div>
       </div>
+      <!-- Typing indicator -->
+      <div id="typing-indicator" class="hidden px-4 py-1 text-xs text-text-muted" style="max-width:800px;margin:0 auto"></div>
       <!-- Input area -->
       <div id="chat-input-area" class="flex-shrink-0 p-4 pt-2">
         <div class="max-w-[800px] mx-auto" style="position:relative">
@@ -2364,6 +2429,22 @@ tailwind.config = {
       </span>
       <span id="status-session" class="mono"></span>
     </footer>
+  </div>
+
+  <!-- THREAD PANEL (right sidebar for threads, collapsible) -->
+  <div id="thread-panel" style="width:0;min-width:0;overflow:hidden;border-left:none;background:var(--color-surface);display:flex;flex-direction:column;flex-shrink:0;transition:width 0.2s,min-width 0.2s,border 0.2s">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--color-border);flex-shrink:0">
+      <span class="font-display font-semibold text-sm text-text-primary">Thread</span>
+      <button class="btn btn-sm" onclick="closeThreadPanel()" title="Close">&times;</button>
+    </div>
+    <div id="thread-parent-msg" style="padding:12px;border-bottom:1px solid var(--color-border);flex-shrink:0;max-height:200px;overflow-y:auto"></div>
+    <div id="thread-replies" style="flex:1;overflow-y:auto;padding:12px"></div>
+    <div style="padding:8px 12px;border-top:1px solid var(--color-border);flex-shrink:0">
+      <div style="display:flex;gap:6px;align-items:end">
+        <textarea id="thread-input" class="w-full" style="resize:none;background:var(--color-base);border:1px solid var(--color-border);border-radius:8px;padding:6px 10px;font-size:13px;color:var(--color-text-primary);min-height:36px;max-height:120px" rows="1" placeholder="Reply in thread..."></textarea>
+        <button class="btn btn-primary" style="padding:6px 12px;border-radius:8px;font-size:12px;white-space:nowrap" onclick="sendThreadReply()">Reply</button>
+      </div>
+    </div>
   </div>
 
   <!-- PROJECT PANEL (right sidebar, collapsible) -->
@@ -3009,6 +3090,13 @@ async function loadInitialData() {
   if (!ok) return;
   // Connect EventStream for real-time push
   eventStream.connect();
+  // Load team channels
+  loadTeamChannels().catch(() => {});
+  // Load unread counts
+  API.get('/v1/team/unread').then(r => {
+    state.unreadCounts = r.channels || {};
+    renderTeamChannelSidebar();
+  }).catch(() => {});
   try {
     const [agents, models, providers, modelsConfig] = await Promise.allSettled([
       API.getAgents(),
@@ -4275,6 +4363,334 @@ window.toggleChatAttachments = function(sessionId) {
   }
 };
 
+// ─── Team Channel Sidebar & Messaging ────────────────────────
+
+async function loadTeamChannels() {
+  try {
+    const res = await API.get('/v1/team/channels');
+    state.teamChannels = res.channels || [];
+    renderTeamChannelSidebar();
+  } catch {}
+}
+
+function renderTeamChannelSidebar() {
+  const channels = (state.teamChannels || []).filter(c => c.channel_type === 'public' || c.channel_type === 'private');
+  const dms = (state.teamChannels || []).filter(c => c.channel_type === 'dm' || c.channel_type === 'group_dm');
+  const unread = state.unreadCounts || {};
+
+  // Channels section
+  const chContainer = document.getElementById('sidebar-team-channels');
+  if (chContainer) {
+    chContainer.innerHTML = channels.length === 0 ? '<div style="padding:4px 12px;font-size:11px;color:var(--color-text-muted);font-style:italic">No channels yet</div>' :
+      channels.map(ch => {
+        const u = unread[ch.id] || {};
+        const isActive = ch.id === state.activeChannelId;
+        const cls = `sb-channel-item${isActive ? ' active' : ''}${u.unread > 0 ? ' unread' : ''}`;
+        const badge = u.mentions > 0 ? `<span class="sb-unread-badge sb-mention-badge">${u.mentions}</span>` :
+          u.unread > 0 ? `<span class="sb-unread-badge">${u.unread}</span>` : '';
+        const icon = ch.channel_type === 'private' ? '🔒' : '#';
+        return `<div class="${cls}" onclick="switchTeamChannel('${esc(ch.id)}')"><span class="sb-channel-icon">${icon}</span><span class="sb-channel-name">${esc(ch.name)}</span>${badge}</div>`;
+      }).join('');
+  }
+
+  // DMs section
+  const dmContainer = document.getElementById('sidebar-team-dms');
+  if (dmContainer) {
+    dmContainer.innerHTML = dms.length === 0 ? '<div style="padding:4px 12px;font-size:11px;color:var(--color-text-muted);font-style:italic">No conversations yet</div>' :
+      dms.map(ch => {
+        const u = unread[ch.id] || {};
+        const isActive = ch.id === state.activeChannelId;
+        const cls = `sb-channel-item${isActive ? ' active' : ''}${u.unread > 0 ? ' unread' : ''}`;
+        const badge = u.mentions > 0 ? `<span class="sb-unread-badge sb-mention-badge">${u.mentions}</span>` :
+          u.unread > 0 ? `<span class="sb-unread-badge">${u.unread}</span>` : '';
+        const presence = state.onlineUsers || {};
+        // For DMs, try to find the other member's presence
+        const dot = ch.channel_type === 'dm' ? `<span class="sb-presence-dot ${presence[ch.created_by] || 'offline'}"></span>` : '';
+        return `<div class="${cls}" onclick="switchTeamChannel('${esc(ch.id)}')"><span class="sb-channel-icon">${dot || '💬'}</span><span class="sb-channel-name">${esc(ch.name)}</span>${badge}</div>`;
+      }).join('');
+  }
+}
+
+window.switchTeamChannel = async function(channelId) {
+  state.activeChannelId = channelId;
+  renderTeamChannelSidebar();
+  // Load messages if not cached
+  if (!state.channelMessages[channelId]) {
+    state.channelMessages[channelId] = { messages: [], hasMore: true, loading: false };
+  }
+  const ch = state.channelMessages[channelId];
+  if (ch.messages.length === 0 && !ch.loading) {
+    ch.loading = true;
+    try {
+      const res = await API.get(`/v1/team/channels/${encodeURIComponent(channelId)}/messages?limit=50`);
+      ch.messages = res.messages || [];
+      ch.hasMore = res.has_more || false;
+    } catch {}
+    ch.loading = false;
+  }
+  renderTeamMessages();
+  // Mark as read
+  if (ch.messages.length > 0) {
+    const lastId = ch.messages[ch.messages.length - 1].id;
+    API.post(`/v1/team/channels/${encodeURIComponent(channelId)}/read`, { message_id: lastId }).catch(() => {});
+  }
+  // Update channel header — show channel info, hide agent info
+  const agentHeader = document.getElementById('chat-agent-name');
+  const channelHeader = document.getElementById('channel-header-info');
+  const modelSelector = document.getElementById('model-selector');
+  const btnNew = document.getElementById('btn-new-session');
+  if (agentHeader) agentHeader.classList.add('hidden');
+  if (channelHeader) channelHeader.classList.remove('hidden');
+  if (channelHeader) channelHeader.style.display = 'flex';
+  if (modelSelector) modelSelector.style.display = 'none';
+  if (btnNew) btnNew.style.display = 'none';
+  const channel = state.teamChannels.find(c => c.id === channelId);
+  if (channel) {
+    const icon = channel.channel_type === 'dm' || channel.channel_type === 'group_dm' ? '💬' : '#';
+    const headerName = document.getElementById('channel-name');
+    const headerTopic = document.getElementById('channel-topic');
+    if (headerName) headerName.textContent = `${icon} ${channel.name}`;
+    if (headerTopic) headerTopic.textContent = channel.topic || '';
+  }
+};
+
+function renderTeamMessages() {
+  const container = document.getElementById('chat-messages');
+  if (!container || !state.activeChannelId) return;
+  const ch = state.channelMessages[state.activeChannelId];
+  if (!ch) return;
+  const msgs = ch.messages;
+  if (msgs.length === 0) {
+    container.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--color-text-muted)"><div style="font-size:32px;margin-bottom:8px">#</div><div style="font-size:14px">No messages yet</div></div>';
+    return;
+  }
+  let html = '<div class="max-w-[800px] mx-auto py-4" style="display:flex;flex-direction:column;gap:2px">';
+  let lastDate = '';
+  for (const m of msgs) {
+    // Date separator
+    const d = new Date((m.created_at || 0) * 1000);
+    const dateStr = d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+    if (dateStr !== lastDate) {
+      html += `<div style="text-align:center;font-size:11px;color:var(--color-text-muted);padding:12px 0 4px;font-weight:600">${esc(dateStr)}</div>`;
+      lastDate = dateStr;
+    }
+    html += renderTeamMessage(m);
+  }
+  html += '</div>';
+  container.innerHTML = html;
+  container.scrollTop = container.scrollHeight;
+}
+
+function renderTeamMessage(m) {
+  const time = new Date((m.created_at || 0) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const senderName = m.sender_name || m.sender_id || 'User';
+  const avatar = m.sender_avatar || (m.sender_type === 'agent' ? '🤖' : senderName.charAt(0).toUpperCase());
+  const avatarHtml = avatar.length <= 2 ? avatar : `<img src="${esc(avatar)}" style="width:100%;height:100%;object-fit:cover;border-radius:8px">`;
+  const isAgent = m.sender_type === 'agent';
+
+  // Content with mention highlighting
+  let content = esc(typeof m.content === 'string' ? m.content : JSON.stringify(m.content));
+  content = content.replace(/@(\w+)/g, '<span style="background:color-mix(in srgb, var(--color-accent) 20%, transparent);padding:0 3px;border-radius:3px;color:var(--color-accent);font-weight:600">@$1</span>');
+  // Render markdown for agent messages
+  if (isAgent) {
+    try { content = marked.parse(m.content || ''); } catch {}
+  }
+
+  // Reactions
+  let reactionsHtml = '';
+  if (m.reactions && m.reactions.length > 0) {
+    const userId = state.currentUser?.id;
+    reactionsHtml = '<div class="team-msg-reactions">' +
+      m.reactions.map(r => {
+        const mine = r.users?.includes(userId) ? ' mine' : '';
+        return `<span class="team-msg-reaction${mine}" onclick="toggleReaction('${state.activeChannelId}',${m.id},'${esc(r.emoji)}')">${r.emoji} ${r.count}</span>`;
+      }).join('') + '</div>';
+  }
+
+  // Thread link
+  let threadHtml = '';
+  if (m.reply_count > 0) {
+    threadHtml = `<div class="team-msg-thread-link" onclick="openThread(${m.id})">${m.reply_count} repl${m.reply_count === 1 ? 'y' : 'ies'}</div>`;
+  }
+
+  return `<div class="team-msg" style="position:relative" data-msg-id="${m.id}">
+    <div class="team-msg-avatar">${avatarHtml}</div>
+    <div class="team-msg-body">
+      <div class="team-msg-header">
+        <span class="team-msg-sender">${esc(senderName)}</span>
+        <span class="team-msg-time">${time}</span>
+        ${isAgent ? '<span style="background:#8b5cf6;color:#fff;font-size:9px;padding:1px 5px;border-radius:4px">bot</span>' : ''}
+      </div>
+      <div class="team-msg-content">${content}</div>
+      ${reactionsHtml}${threadHtml}
+    </div>
+    <div class="team-msg-actions">
+      <button class="team-msg-action-btn" onclick="showEmojiPicker(${m.id})" title="React">😀</button>
+      <button class="team-msg-action-btn" onclick="openThread(${m.id})" title="Reply in thread">💬</button>
+    </div>
+  </div>`;
+}
+
+window.toggleReaction = async function(channelId, msgId, emoji) {
+  try {
+    const m = state.channelMessages[channelId]?.messages?.find(msg => msg.id === msgId);
+    const userId = state.currentUser?.id;
+    const existing = m?.reactions?.find(r => r.emoji === emoji && r.users?.includes(userId));
+    await API.post(`/v1/team/channels/${encodeURIComponent(channelId)}/messages/${msgId}/reactions`, {
+      emoji, action: existing ? 'remove' : 'add'
+    });
+  } catch {}
+};
+
+window.showEmojiPicker = function(msgId) {
+  // Quick emoji picker (simplified — just common emojis)
+  const emojis = ['👍','👎','😀','😂','❤️','🎉','🤔','👀','🔥','✅'];
+  const existing = document.getElementById('emoji-picker-popup');
+  if (existing) existing.remove();
+  const el = document.querySelector(`.team-msg[data-msg-id="${msgId}"]`);
+  if (!el) return;
+  const popup = document.createElement('div');
+  popup.id = 'emoji-picker-popup';
+  popup.style.cssText = 'position:absolute;top:-32px;right:0;background:var(--color-surface);border:1px solid var(--color-border);border-radius:8px;padding:4px;display:flex;gap:2px;z-index:20;box-shadow:0 4px 12px rgba(0,0,0,0.15)';
+  popup.innerHTML = emojis.map(e => `<button style="border:none;background:none;cursor:pointer;font-size:16px;padding:2px 4px;border-radius:4px" onmouseover="this.style.background='var(--color-surface-light)'" onmouseout="this.style.background='none'" onclick="toggleReaction('${state.activeChannelId}',${msgId},'${e}');this.closest('#emoji-picker-popup').remove()">${e}</button>`).join('');
+  el.appendChild(popup);
+  setTimeout(() => { document.addEventListener('click', function rm(ev) { if (!popup.contains(ev.target)) { popup.remove(); document.removeEventListener('click', rm); } }, { once: false }); }, 10);
+};
+
+window.openThread = async function(parentId) {
+  state.activeThreadId = parentId;
+  const panel = document.getElementById('thread-panel');
+  if (panel) {
+    panel.style.width = '320px';
+    panel.style.minWidth = '200px';
+    panel.style.borderLeft = '1px solid var(--color-border)';
+    panel.style.overflow = '';
+  }
+  // Render parent message
+  const parentMsg = state.channelMessages[state.activeChannelId]?.messages?.find(m => m.id === parentId);
+  const parentEl = document.getElementById('thread-parent-msg');
+  if (parentEl && parentMsg) parentEl.innerHTML = renderTeamMessage(parentMsg);
+  // Load thread replies
+  const repliesEl = document.getElementById('thread-replies');
+  if (repliesEl) repliesEl.innerHTML = '<div style="padding:8px;font-size:12px;color:var(--color-text-muted)">Loading...</div>';
+  try {
+    const res = await API.get(`/v1/team/channels/${encodeURIComponent(state.activeChannelId)}/messages?thread=${parentId}&limit=100`);
+    const replies = res.messages || [];
+    state.threadMessages[parentId] = { messages: replies };
+    if (repliesEl) {
+      repliesEl.innerHTML = replies.length === 0 ? '<div style="padding:8px;font-size:12px;color:var(--color-text-muted)">No replies yet</div>' :
+        replies.map(r => renderTeamMessage(r)).join('');
+      repliesEl.scrollTop = repliesEl.scrollHeight;
+    }
+  } catch {}
+};
+
+window.closeThreadPanel = function() {
+  state.activeThreadId = null;
+  const panel = document.getElementById('thread-panel');
+  if (panel) {
+    panel.style.width = '0';
+    panel.style.minWidth = '0';
+    panel.style.borderLeft = 'none';
+    panel.style.overflow = 'hidden';
+  }
+};
+
+window.sendThreadReply = async function() {
+  const input = document.getElementById('thread-input');
+  if (!input || !state.activeThreadId || !state.activeChannelId) return;
+  const content = input.value.trim();
+  if (!content) return;
+  input.value = '';
+  try {
+    await API.post(`/v1/team/channels/${encodeURIComponent(state.activeChannelId)}/messages`, {
+      content, parent_id: state.activeThreadId
+    });
+    // Reload thread
+    openThread(state.activeThreadId);
+  } catch (e) {
+    showToast(`Reply failed: ${e.message}`, true);
+  }
+};
+
+window.showCreateChannelModal = function() {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div class="modal-content" style="max-width:420px;padding:24px">
+    <h3 class="text-base font-display font-semibold text-text-primary mb-4">Create Channel</h3>
+    <input id="new-ch-name" type="text" class="w-full px-3 py-2 mb-3 rounded-lg bg-base border border-border text-sm text-text-primary" placeholder="Channel name" autofocus>
+    <input id="new-ch-topic" type="text" class="w-full px-3 py-2 mb-3 rounded-lg bg-base border border-border text-sm text-text-primary" placeholder="Topic (optional)">
+    <select id="new-ch-type" class="w-full px-3 py-2 mb-4 rounded-lg bg-base border border-border text-sm text-text-primary">
+      <option value="public">Public</option>
+      <option value="private">Private</option>
+    </select>
+    <div class="flex gap-2 justify-end">
+      <button class="btn btn-sm" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      <button class="btn btn-sm btn-primary" onclick="_createChannel()">Create</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+};
+
+window._createChannel = async function() {
+  const name = document.getElementById('new-ch-name')?.value?.trim();
+  const topic = document.getElementById('new-ch-topic')?.value?.trim();
+  const type = document.getElementById('new-ch-type')?.value;
+  if (!name) return;
+  try {
+    await API.post('/v1/team/channels', { name, topic, type });
+    document.querySelector('.modal-overlay')?.remove();
+    await loadTeamChannels();
+    showToast(`Channel #${name} created`);
+  } catch (e) { showToast(e.message, true); }
+};
+
+window.showCreateDMModal = function() {
+  // Simple DM creation — enter username
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div class="modal-content" style="max-width:380px;padding:24px">
+    <h3 class="text-base font-display font-semibold text-text-primary mb-4">New Direct Message</h3>
+    <input id="new-dm-user" type="text" class="w-full px-3 py-2 mb-4 rounded-lg bg-base border border-border text-sm text-text-primary" placeholder="Enter username" autofocus>
+    <div class="flex gap-2 justify-end">
+      <button class="btn btn-sm" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      <button class="btn btn-sm btn-primary" onclick="_createDM()">Message</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+};
+
+window._createDM = async function() {
+  const username = document.getElementById('new-dm-user')?.value?.trim();
+  if (!username) return;
+  try {
+    // Look up user by username
+    const users = await API.get('/v1/auth/users');
+    const target = (users.users || []).find(u => u.username === username);
+    if (!target) { showToast('User not found', true); return; }
+    const res = await API.post('/v1/team/dm', { members: [state.currentUser?.id, target.id] });
+    document.querySelector('.modal-overlay')?.remove();
+    await loadTeamChannels();
+    switchTeamChannel(res.channel.id);
+  } catch (e) { showToast(e.message, true); }
+};
+
+// Wire team message sending from the main chat input when a team channel is active
+function sendTeamMessage() {
+  const input = document.getElementById('chat-input');
+  if (!input || !state.activeChannelId) return false;
+  const content = input.value.trim();
+  if (!content) return false;
+  input.value = '';
+  input.style.height = '';
+  // Typing indicator debounce cancel
+  if (state._typingTimer) { clearTimeout(state._typingTimer); state._typingTimer = null; }
+  API.post(`/v1/team/channels/${encodeURIComponent(state.activeChannelId)}/messages`, { content }).catch(e => showToast(e.message, true));
+  return true;
+}
+
 // ─── Note Editor Functions ───────────────────────────────────
 
 window.ppRenameNote = async function(oldPath, el) {
@@ -5258,6 +5674,11 @@ function scrollToBottom() {
 
 // ─── Send Message ───────────────────────────────────────────
 async function sendMessage() {
+  // If a team channel is active, send there instead
+  if (state.activeChannelId && !state.activeChat?.sessionId) {
+    sendTeamMessage();
+    return;
+  }
   const chat = state.activeChat;
   if (!chat || chat.streaming) return;
   const text = dom.chatInput.value.trim();
