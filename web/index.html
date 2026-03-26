@@ -4121,7 +4121,8 @@ async function loadSessionAttachments(sessionId, container) {
       : '<div style="font-size:10px;color:var(--color-text-muted);font-style:italic">No files</div>';
     if (listEl) listEl.innerHTML = listHtml;
     container.dataset.loaded = '1';
-    // Store in cache so re-renders can restore this
+    const toggle = container.querySelector('.sb-attach-toggle');
+    if (toggle) toggle.innerHTML = `\ud83d\udcce ${files.length} file${files.length !== 1 ? 's' : ''} \u25bc`;
     _sbAttachCache[sessionId] = { listHtml, collapsed: false };
   } catch (e) {
     const listEl = container.querySelector('.sb-attach-list');
