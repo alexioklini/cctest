@@ -2728,10 +2728,20 @@ let editingProvider = null; // tracks provider name being edited, null = adding 
 class AppState {
   constructor() {
     this.connected = false;
+    this.currentUser = null;           // {id, username, display_name, avatar_url}
     this.agents = [];
     this.models = [];
     this.providers = [];
     this.serverInfo = null;
+    // Team channel state
+    this.teamChannels = [];            // [{id, name, channel_type, topic, ...}]
+    this.activeChannelId = null;       // current team channel
+    this.channelMessages = {};         // channel_id -> {messages: [], hasMore, loading}
+    this.activeThreadId = null;        // parent_id for open thread panel
+    this.threadMessages = {};          // parent_id -> {messages: [], loading}
+    this.typingUsers = {};             // channel_id -> {user_id: {name, ts}}
+    this.onlineUsers = {};             // user_id -> presence status
+    this.unreadCounts = {};            // channel_id -> {unread, mentions}
     // Active chat per agent: { agentId: { sessionId, agent, model, messages[], streaming, totalTokens } }
     this.agentChats = {};
     // Session history per agent: { agentId: { sessions: [], showArchived: false, loaded: false } }
@@ -2882,6 +2892,85 @@ window._doLogin = async function() {
   }
 };
 
+// ─── EventStream (Real-Time Push) ───────────────────────────
+class EventStream {
+  constructor() { this._source = null; this._handlers = {}; this._reconnectTimer = null; }
+
+  connect() {
+    if (this._source) this.disconnect();
+    const token = localStorage.getItem('ba-auth-token') || '';
+    const url = `${BASE_URL}/v1/events${token ? '?token=' + encodeURIComponent(token) : ''}`;
+    this._source = new EventSource(url);
+    this._source.onopen = () => { console.log('[EventStream] connected'); };
+    this._source.onerror = () => {
+      console.warn('[EventStream] error, reconnecting in 5s');
+      this.disconnect();
+      this._reconnectTimer = setTimeout(() => this.connect(), 5000);
+    };
+    for (const [type, fn] of Object.entries(this._handlers)) {
+      this._source.addEventListener(type, (e) => { try { fn(JSON.parse(e.data)); } catch {} });
+    }
+  }
+
+  on(type, handler) { this._handlers[type] = handler; return this; }
+
+  disconnect() {
+    if (this._source) { this._source.close(); this._source = null; }
+    if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
+  }
+}
+
+const eventStream = new EventStream();
+
+// Register EventBus handlers
+eventStream
+  .on('connected', (d) => { console.log('[EventStream] session:', d.user_id); })
+  .on('message', (d) => {
+    // New message in a team channel
+    if (d.channel_id && state.channelMessages?.[d.channel_id]) {
+      state.channelMessages[d.channel_id].messages.push(d.message);
+      if (d.channel_id === state.activeChannelId) renderMessages();
+    }
+  })
+  .on('typing', (d) => {
+    if (!state.typingUsers) state.typingUsers = {};
+    const ch = state.typingUsers[d.channel_id] || {};
+    ch[d.user_id] = { name: d.user_name, ts: Date.now() };
+    state.typingUsers[d.channel_id] = ch;
+    _updateTypingIndicator();
+  })
+  .on('presence', (d) => {
+    if (!state.onlineUsers) state.onlineUsers = {};
+    state.onlineUsers[d.user_id] = d.status;
+  })
+  .on('reaction_add', (d) => { _handleReactionEvent(d, 'add'); })
+  .on('reaction_remove', (d) => { _handleReactionEvent(d, 'remove'); })
+  .on('unread_update', (d) => {
+    if (!state.unreadCounts) state.unreadCounts = {};
+    state.unreadCounts[d.channel_id] = { unread: d.unread || 0, mentions: d.mentions || 0 };
+    _updateUnreadBadges();
+  });
+
+function _updateTypingIndicator() {
+  const el = document.getElementById('typing-indicator');
+  if (!el || !state.activeChannelId) return;
+  const typers = state.typingUsers?.[state.activeChannelId] || {};
+  const now = Date.now();
+  const active = Object.entries(typers).filter(([, v]) => now - v.ts < 5000).map(([, v]) => v.name);
+  if (active.length === 0) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  el.textContent = active.length === 1 ? `${active[0]} is typing...` :
+    active.length <= 3 ? `${active.join(', ')} are typing...` : 'Several people are typing...';
+}
+
+function _handleReactionEvent(d, action) {
+  // Will be wired up when channel message rendering is complete
+}
+
+function _updateUnreadBadges() {
+  // Will be wired up when channel sidebar rendering is complete
+}
+
 // ─── Connection ─────────────────────────────────────────────
 async function checkConnection() {
   try {
@@ -2918,6 +3007,8 @@ async function checkConnection() {
 async function loadInitialData() {
   const ok = await checkConnection();
   if (!ok) return;
+  // Connect EventStream for real-time push
+  eventStream.connect();
   try {
     const [agents, models, providers, modelsConfig] = await Promise.allSettled([
       API.getAgents(),

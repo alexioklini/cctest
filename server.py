@@ -793,6 +793,69 @@ class Session:
             self.summary = info.get("summary", "") or ""
 
 
+# --- EventBus: Real-Time Push via Persistent SSE ─────────────────────────────
+
+class EventBus:
+    """Server-Sent Events bus for real-time push to connected clients."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._subscribers: dict[str, list[queue.Queue]] = {}  # user_id -> [queues]
+
+    def subscribe(self, user_id: str) -> queue.Queue:
+        q = queue.Queue(maxsize=200)
+        with self._lock:
+            self._subscribers.setdefault(user_id, []).append(q)
+        return q
+
+    def unsubscribe(self, user_id: str, q: queue.Queue):
+        with self._lock:
+            subs = self._subscribers.get(user_id, [])
+            if q in subs:
+                subs.remove(q)
+            if not subs:
+                self._subscribers.pop(user_id, None)
+
+    def connected_user_ids(self) -> set[str]:
+        with self._lock:
+            return set(self._subscribers.keys())
+
+    def publish(self, event_type: str, data: dict,
+                target_users: list[str] | set[str] | None = None,
+                target_channel: str | None = None):
+        """Push event to subscribers. target_users or target_channel to scope, else broadcast."""
+        recipients: set[str] = set()
+        if target_users:
+            recipients.update(target_users)
+        elif target_channel:
+            recipients = self._get_channel_user_ids(target_channel)
+        else:
+            with self._lock:
+                recipients = set(self._subscribers.keys())
+        payload = f"event: {event_type}\ndata: {json.dumps(data, default=str)}\n\n"
+        with self._lock:
+            for uid in recipients:
+                for q in self._subscribers.get(uid, []):
+                    try:
+                        q.put_nowait(payload)
+                    except queue.Full:
+                        pass  # drop if client too slow
+
+    def _get_channel_user_ids(self, channel_id: str) -> set[str]:
+        try:
+            with _db_conn() as conn:
+                rows = conn.execute(
+                    "SELECT member_id FROM channel_members WHERE channel_id=? AND member_type='user'",
+                    (channel_id,)
+                ).fetchall()
+                return {r[0] for r in rows}
+        except Exception:
+            return set()
+
+
+event_bus = EventBus()
+
+
 class SessionManager:
     """Thread-safe session storage with SQLite persistence."""
 
@@ -1024,6 +1087,42 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
+    # --- EventBus SSE ---
+
+    def _handle_events(self):
+        """GET /v1/events?token=<jwt> — persistent SSE stream for real-time push."""
+        user = self._authenticate_qs()
+        if user is None:
+            user = self._authenticate()
+        if user is None:
+            self._send_json({"error": "Authentication required"}, 401)
+            return
+        user_id = user["id"]
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        q = event_bus.subscribe(user_id)
+        try:
+            # Send initial connected event
+            self.wfile.write(f"event: connected\ndata: {json.dumps({'user_id': user_id})}\n\n".encode())
+            self.wfile.flush()
+            while True:
+                try:
+                    payload = q.get(timeout=30)
+                    self.wfile.write(payload.encode())
+                    self.wfile.flush()
+                except queue.Empty:
+                    # Send keepalive comment
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            event_bus.unsubscribe(user_id, q)
+
     # --- Routing ---
 
     def do_GET(self):
@@ -1035,6 +1134,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_auth_me()
         elif path == "/v1/auth/users":
             self._handle_auth_users()
+        elif path.startswith("/v1/events"):
+            self._handle_events()
         elif path == "/v1/agents":
             self._handle_status()
         elif path == "/v1/agents":
