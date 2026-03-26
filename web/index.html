@@ -2169,7 +2169,7 @@ tailwind.config = {
         <span class="sidebar-brand-text font-display text-sm font-semibold text-text-primary tracking-tight" style="white-space:nowrap">Brain Agent</span>
         <span class="sidebar-conn flex items-center gap-1.5 ml-auto" style="flex-shrink:0">
           <span id="conn-dot" class="w-2 h-2 rounded-full bg-error breathing-dot"></span>
-          <span id="conn-label" class="text-text-secondary font-body text-[10px]">Disconnected</span>
+          <span id="conn-label" class="text-text-secondary font-body text-[10px] cursor-pointer hover:text-accent transition-colors" title="About / Changelog" onclick="showAboutModal()">Disconnected</span>
         </span>
       </div>
       <button class="sidebar-toggle" id="sidebar-toggle-btn" title="Toggle sidebar (Ctrl+B)" onclick="toggleSidebar()">
@@ -10051,6 +10051,20 @@ window.submitCreateAgent = async function() {
 };
 
 // ─── Toast Notification ─────────────────────────────────────
+async function showAboutModal() {
+  try {
+    const data = state.serverInfo || await API.getStatus();
+    const rows = (data.changelog || []).map(e =>
+      `<div class="mb-3"><div class="flex items-baseline gap-2 mb-1"><span class="mono text-xs font-bold text-accent">v${e.version}</span><span class="text-xs text-text-secondary">${e.date}</span></div><p class="text-xs text-text-secondary leading-relaxed">${esc(e.changes)}</p></div>`
+    ).join('');
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+    modal.innerHTML = `<div class="modal-content p-6" style="max-width:520px;max-height:80vh;overflow-y:auto"><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button><div class="flex items-baseline gap-3 mb-5"><h2 class="font-display text-lg font-semibold text-text-primary">Brain Agent</h2><span class="mono text-sm font-bold text-accent">v${esc(data.version || '?')}</span></div><h3 class="text-sm font-semibold text-text-primary mb-3">Changelog</h3>${rows}</div>`;
+    document.body.appendChild(modal);
+  } catch(e) { showToast('Could not load version info'); }
+}
+
 function showToast(msg, isError = false) {
   const toast = document.createElement('div');
   toast.className = `fixed bottom-12 right-4 px-5 py-3 rounded-xl text-sm shadow-2xl z-[100] fade-in backdrop-blur-sm border ${isError ? 'bg-error/20 text-error border-error/30' : 'bg-surface/90 text-text-primary border-border'}`;
@@ -10693,19 +10707,7 @@ const slashCommands = [
   { cmd: '/graph',     desc: 'Open knowledge map',         action: () => openKnowledgeMap() },
   { cmd: '/note',      desc: 'Create new note (Ctrl+Shift+N)', action: () => { if (state.currentProject) createNewNote(); else showToast('Select a project first'); } },
   { cmd: '/project',   desc: 'Toggle project panel (Ctrl+])', action: () => toggleProjectPanel() },
-  { cmd: '/about',     desc: 'Show version and changelog', action: async () => {
-    try {
-      const data = await API.get('/v1/status');
-      const rows = (data.changelog || []).map(e =>
-        `<div class="mb-3"><div class="flex items-baseline gap-2 mb-1"><span class="mono text-xs font-bold text-accent">v${e.version}</span><span class="text-xs text-text-secondary">${e.date}</span></div><p class="text-xs text-text-secondary leading-relaxed">${e.changes}</p></div>`
-      ).join('');
-      const modal = document.createElement('div');
-      modal.className = 'modal-overlay';
-      modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-      modal.innerHTML = `<div class="modal-content p-6" style="max-width:520px;max-height:80vh;overflow-y:auto"><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button><div class="flex items-baseline gap-3 mb-5"><h2 class="font-display text-lg font-semibold text-text-primary">Brain Agent</h2><span class="mono text-sm font-bold text-accent">v${data.version}</span></div><h3 class="text-sm font-semibold text-text-primary mb-3">Changelog</h3>${rows}</div>`;
-      document.body.appendChild(modal);
-    } catch(e) { showToast('Could not load version info'); }
-  }},
+  { cmd: '/about',     desc: 'Show version and changelog', action: () => showAboutModal() },
   { cmd: '/help',      desc: 'Show keyboard shortcuts',   action: () => {
     const helpHtml = [
       ['Ctrl+Enter', 'Send message'],
