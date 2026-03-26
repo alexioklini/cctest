@@ -4124,7 +4124,9 @@ async function loadSessionAttachments(sessionId, container) {
     // Store in cache so re-renders can restore this
     _sbAttachCache[sessionId] = { listHtml, collapsed: false };
   } catch (e) {
-    // silently fail
+    const listEl = container.querySelector('.sb-attach-list');
+    if (listEl) listEl.innerHTML = '<div style="font-size:10px;color:var(--color-text-muted);font-style:italic">No files</div>';
+    container.dataset.loaded = '1';
   }
 }
 
