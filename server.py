@@ -5077,16 +5077,25 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 return
             if ext in office_exts:
                 try:
-                    parser = engine.DocumentParser()
-                    result = parser.parse(resolved, max_pages=5)
-                    content = result.get("content") or result.get("text") or str(result)
-                    # Trim to ~200 lines for preview
-                    lines = content.splitlines()[:200]
-                    truncated = len(content.splitlines()) > 200
+                    if ext == "pdf":
+                        content = engine.DocumentParser.parse_pdf(resolved)
+                    elif ext == "docx":
+                        content = engine.DocumentParser.parse_docx(resolved)
+                    elif ext in ("xlsx", "xls"):
+                        content = engine.DocumentParser.parse_xlsx(resolved)
+                    elif ext == "pptx":
+                        content = engine.DocumentParser.parse_pptx(resolved)
+                    elif ext == "csv":
+                        with open(resolved, "r", errors="replace") as f:
+                            content = f.read(50 * 1024)
+                    else:
+                        content = ""
+                    all_lines = content.splitlines()
+                    truncated = len(all_lines) > 200
                     self._send_json({
                         "path": resolved, "name": name, "size": size,
                         "type": "document", "ext": ext,
-                        "content": "\n".join(lines), "truncated": truncated,
+                        "content": "\n".join(all_lines[:200]), "truncated": truncated,
                     })
                 except Exception as e:
                     self._send_json({"error": f"Could not parse {ext.upper()}: {e}"}, 500)
