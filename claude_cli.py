@@ -13705,6 +13705,7 @@ def _print_greeting(model: str, agent_id: str = "default") -> None:
 
 SLASH_COMMANDS = {
     "/help":     "Show this help",
+    "/about":    "Show version and changelog",
     "/new":      "Start a new conversation",
     "/agent":    "Switch agent or list agents",
     "/model":    "Switch model",
@@ -13747,6 +13748,29 @@ def _print_help() -> None:
     ]:
         print(f"  {YELLOW}{key:12s}{RESET} {DIM}{desc}{RESET}")
     print()
+
+
+def _print_about() -> None:
+    """Print version info and changelog."""
+    print()
+    print(f"  {BOLD}Brain Agent{RESET}  {GREEN}{BOLD}v{VERSION}{RESET}  {DIM}{VERSION_DATE}{RESET}")
+    print()
+    print(f"  {BOLD}Changelog{RESET}")
+    print()
+    for v, date, changes in CHANGELOG[:8]:
+        print(f"  {GREEN}{BOLD}v{v}{RESET}  {DIM}{date}{RESET}")
+        # Word-wrap changes at ~72 chars
+        words = changes.split()
+        line = "    "
+        for word in words:
+            if len(line) + len(word) + 1 > 76:
+                print(f"{DIM}{line}{RESET}")
+                line = "    " + word
+            else:
+                line = line + (" " if line.strip() else "") + word
+        if line.strip():
+            print(f"{DIM}{line}{RESET}")
+        print()
 
 
 def _select_menu(items: list[str], prompt: str = "Select",
@@ -14143,6 +14167,10 @@ def _run_interactive(args):
 
             if stripped == "/help":
                 _print_help()
+                continue
+
+            if stripped == "/about":
+                _print_about()
                 continue
 
             if stripped == "/new":
