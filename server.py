@@ -1423,26 +1423,46 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 conn.row_factory = sqlite3.Row
                 if thread_id:
                     # Thread replies
-                    q = "SELECT * FROM messages WHERE channel_id=? AND parent_id=?"
+                    q = ("SELECT m.*, u.username as sender_username, u.display_name as sender_display_name, u.avatar_url as sender_avatar "
+                         "FROM messages m LEFT JOIN users u ON u.id = m.sender_id "
+                         "WHERE m.channel_id=? AND m.parent_id=?")
                     params = [ch_id, int(thread_id)]
                     if before:
-                        q += " AND id < ?"
+                        q += " AND m.id < ?"
                         params.append(int(before))
-                    q += " ORDER BY id DESC LIMIT ?"
+                    q += " ORDER BY m.id DESC LIMIT ?"
                     params.append(limit + 1)
                 else:
                     # Top-level messages (no parent)
-                    q = "SELECT * FROM messages WHERE channel_id=? AND parent_id IS NULL"
+                    q = ("SELECT m.*, u.username as sender_username, u.display_name as sender_display_name, u.avatar_url as sender_avatar "
+                         "FROM messages m LEFT JOIN users u ON u.id = m.sender_id "
+                         "WHERE m.channel_id=? AND m.parent_id IS NULL")
                     params = [ch_id]
                     if before:
-                        q += " AND id < ?"
+                        q += " AND m.id < ?"
                         params.append(int(before))
-                    q += " ORDER BY id DESC LIMIT ?"
+                    q += " ORDER BY m.id DESC LIMIT ?"
                     params.append(limit + 1)
                 rows = conn.execute(q, params).fetchall()
                 messages = []
                 for r in rows[:limit]:
                     m = dict(r)
+                    # Set sender_name from joined user data
+                    dn = m.pop("sender_display_name", None)
+                    un = m.pop("sender_username", None)
+                    sa = m.pop("sender_avatar", None)
+                    if m.get("sender_type") == "agent":
+                        aid = (m.get("sender_id") or "").replace("agent:", "")
+                        try:
+                            acfg = engine.AgentConfig(aid).config
+                            m["sender_name"] = acfg.get("display_name") or aid
+                            m["sender_avatar"] = acfg.get("avatar") or ""
+                        except Exception:
+                            m["sender_name"] = aid or "Agent"
+                            m["sender_avatar"] = ""
+                    else:
+                        m["sender_name"] = dn or un or m.get("sender_id") or "User"
+                        m["sender_avatar"] = sa or ""
                     if m.get("metadata"):
                         try:
                             m["metadata"] = json.loads(m["metadata"])
