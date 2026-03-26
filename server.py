@@ -926,6 +926,7 @@ def _check_agent_mentions(content: str, channel_id: str, parent_id: int | None =
     """Check if message mentions any AI agents and trigger responses."""
     mentioned_agents = []
     all_agents = engine.list_agents()
+    print(f"  [Team] Checking agent mentions in: {content[:80]}... agents={all_agents}", flush=True)
     for agent_id in all_agents:
         # Check @agent_id or @display_name
         if f"@{agent_id}" in content.lower() or f"@{agent_id.lower()}" in content.lower():
@@ -947,8 +948,8 @@ def _agent_channel_respond(channel_id: str, agent_id: str, context_msg: str, par
     try:
         agent = engine.AgentConfig(agent_id)
         model = agent.preferred_model or engine._default_model
-        api_key, base_url, api_type = engine._resolve_provider_static(model)
-        if not api_key:
+        if not engine._delegate_api_key:
+            print(f"  [WARN] No delegate API key for agent channel respond", flush=True)
             return
         # Build context from recent channel messages
         recent = []

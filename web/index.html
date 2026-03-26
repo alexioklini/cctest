@@ -5693,7 +5693,7 @@ function scrollToBottom() {
 // ─── Send Message ───────────────────────────────────────────
 async function sendMessage() {
   // If a team channel is active, send there instead
-  if (state.activeChannelId && !state.activeChat?.sessionId) {
+  if (state.activeChannelId) {
     sendTeamMessage();
     return;
   }
