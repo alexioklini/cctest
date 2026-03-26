@@ -3410,13 +3410,15 @@ window.toggleSidebarSection = function(section) {
   const stored = JSON.parse(localStorage.getItem('sb-sections-collapsed') || '{}');
   if (stored[section]) { delete stored[section]; } else { stored[section] = true; }
   localStorage.setItem('sb-sections-collapsed', JSON.stringify(stored));
-  // Toggle the DOM element directly for agents (not rendered by renderSessionBar)
+  // Toggle CSS class directly — avoids re-rendering which would destroy lazy-loaded file lists
+  const isCollapsed = !!stored[section];
   if (section === 'agents') {
     const el = document.getElementById('sb-agents-section');
-    if (el) el.classList.toggle('collapsed', !!stored[section]);
+    if (el) el.classList.toggle('collapsed', isCollapsed);
+  } else {
+    const el = document.querySelector(`.sb-section[data-section="${section}"]`);
+    if (el) el.classList.toggle('collapsed', isCollapsed);
   }
-  renderSessionBar();
-  renderProjectSelector();
 };
 
 window.toggleArchivedSection = function(key) {
