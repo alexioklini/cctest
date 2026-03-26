@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "5.0.0"
+VERSION = "5.0.1"
 VERSION_DATE = "2026-03-26"
 CHANGELOG = [
+    ("5.0.1", "2026-03-26", "Team chat polish — fixed message routing so conversations stay in the active channel, sender names display correctly instead of user IDs, bot messages show their proper avatar icons, the chat input stays visible in team channels, and a #general channel is auto-created on first login."),
     ("5.0.0", "2026-03-26", "Team collaboration — Brain Agent now supports Slack-like team communication. Create public and private channels, direct messages, and group DMs. Real-time messaging via Server-Sent Events, message threading with a dedicated thread panel, emoji reactions, @mention notifications with unread badges, user presence indicators, file sharing in channels, and AI agents that respond when @mentioned. Full authentication system with JWT login and registration. The sidebar now shows Channels, Direct Messages, and Agents sections."),
     ("4.4.5", "2026-03-26", "File previews now support images (JPEG, PNG, GIF, WebP, SVG) and office documents (DOCX, XLSX, PPTX, PDF, CSV). Sidebar chat attachments show preview and download buttons, file counts are accurate from first load, and the list is stable across re-renders."),
     ("4.4.4", "2026-03-26", "Fixed sidebar file attachments disappearing when the accordion was opened — files created in a chat session are now fetched from a dedicated endpoint that includes the full message history, so compacted messages no longer hide previously created files."),
