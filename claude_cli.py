@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "4.4.5"
+VERSION = "5.0.0"
 VERSION_DATE = "2026-03-26"
 CHANGELOG = [
+    ("5.0.0", "2026-03-26", "Team collaboration — Brain Agent now supports Slack-like team communication. Create public and private channels, direct messages, and group DMs. Real-time messaging via Server-Sent Events, message threading with a dedicated thread panel, emoji reactions, @mention notifications with unread badges, user presence indicators, file sharing in channels, and AI agents that respond when @mentioned. Full authentication system with JWT login and registration. The sidebar now shows Channels, Direct Messages, and Agents sections."),
     ("4.4.5", "2026-03-26", "File previews now support images (JPEG, PNG, GIF, WebP, SVG) and office documents (DOCX, XLSX, PPTX, PDF, CSV). Sidebar chat attachments show preview and download buttons, file counts are accurate from first load, and the list is stable across re-renders."),
     ("4.4.4", "2026-03-26", "Fixed sidebar file attachments disappearing when the accordion was opened — files created in a chat session are now fetched from a dedicated endpoint that includes the full message history, so compacted messages no longer hide previously created files."),
     ("4.4.3", "2026-03-26", "Fixed cost tracking showing $0 for all models — auto-discovery was writing cost_input=0 to config, which silently overrode the built-in Anthropic rate table. Config zeros are now treated as unset and fall through to correct rates. Added missing model IDs (Haiku 4.5, Sonnet 4.0, Opus 4.0) to the built-in table, plus prefix patterns as a catch-all for future versions. Historical costs for the past week were retroactively corrected."),
