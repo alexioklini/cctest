@@ -295,7 +295,7 @@ class ChatDB:
             conn.row_factory = sqlite3.Row
             q = ("SELECT s.*, "
                  "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND (m.compacted = 0 OR m.compacted IS NULL)) as message_count, "
-                 "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND (m.compacted = 0 OR m.compacted IS NULL) AND m.metadata LIKE '%\"files\"%') as has_attachments "
+                 "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.metadata LIKE '%\"files\"%') as has_attachments "
                  "FROM sessions s WHERE 1=1")
             params = []
             if agent_id:
