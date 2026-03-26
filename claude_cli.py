@@ -5192,6 +5192,13 @@ def ensure_memory_summary_schedules():
     agents = list_agents()
     existing = {s["name"]: s for s in _scheduler.list_all()}
 
+    # Remove orphaned schedules for agents that no longer exist
+    for sched_name, sched in existing.items():
+        if sched_name.startswith("_memory_summary_"):
+            orphan_agent = sched_name[len("_memory_summary_"):]
+            if orphan_agent not in agents:
+                _scheduler.remove(sched_name)
+
     for agent_id in agents:
         sched_name = _memory_summary_schedule_name(agent_id)
         ms_cfg = _get_memory_summary_config(agent_id)
@@ -5936,6 +5943,13 @@ def ensure_relationship_discovery_schedules():
         return
     agents = list_agents()
     existing = {s["name"]: s for s in _scheduler.list_all()}
+
+    # Remove orphaned schedules for agents that no longer exist
+    for sched_name in list(existing):
+        if sched_name.startswith("_relationship_discovery_"):
+            orphan_agent = sched_name[len("_relationship_discovery_"):]
+            if orphan_agent not in agents:
+                _scheduler.remove(sched_name)
 
     for agent_id in agents:
         sched_name = _relationship_discovery_schedule_name(agent_id)

@@ -2926,6 +2926,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             shutil.move(agent_dir, dest)
             # Remove QMD collection for deleted agent
             self._qmd_remove_collection(agent_id)
+            # Remove scheduled tasks for deleted agent
+            try:
+                if engine._scheduler:
+                    for s in engine._scheduler.list_all():
+                        if s.get("agent") == agent_id:
+                            engine._scheduler.remove(s["name"])
+            except Exception:
+                pass
             self._send_json({"status": "deleted", "agent": agent_id, "moved_to": dest})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
