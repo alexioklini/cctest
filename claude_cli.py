@@ -8015,20 +8015,31 @@ def _cost_conn():
 
 # Default cost rates per 1M tokens — 0 for free providers
 _cost_rates: dict[str, dict[str, float]] = {
-    "claude-opus-4-6": {"input": 15.0, "output": 75.0},
-    "claude-opus-4-5-20251101": {"input": 15.0, "output": 75.0},
-    "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
-    "claude-sonnet-4-5-20241022": {"input": 3.0, "output": 15.0},
-    "claude-haiku-3.5": {"input": 0.80, "output": 4.0},
+    # Anthropic — per-million-token rates (USD)
+    "claude-opus-4-6":            {"input": 15.0,  "output": 75.0},
+    "claude-opus-4-5-20251101":   {"input": 15.0,  "output": 75.0},
+    "claude-opus-4-20250514":     {"input": 15.0,  "output": 75.0},
+    "claude-sonnet-4-6":          {"input": 3.0,   "output": 15.0},
+    "claude-sonnet-4-5-20241022": {"input": 3.0,   "output": 15.0},
+    "claude-sonnet-4-20250514":   {"input": 3.0,   "output": 15.0},
+    "claude-haiku-4-5-20251001":  {"input": 0.80,  "output": 4.0},
+    "claude-haiku-3.5":           {"input": 0.80,  "output": 4.0},
+    "claude-3-5-haiku-20241022":  {"input": 0.80,  "output": 4.0},
+    "claude-3-7-sonnet-20250219": {"input": 3.0,   "output": 15.0},
+    # Prefix patterns for future model IDs
+    "claude-opus":                {"input": 15.0,  "output": 75.0},
+    "claude-sonnet":              {"input": 3.0,   "output": 15.0},
+    "claude-haiku":               {"input": 0.80,  "output": 4.0},
 }
 
 
 def _get_cost_rate(model: str) -> dict[str, float]:
-    """Look up cost rate for a model. Checks _models_config first, then defaults."""
+    """Look up cost rate for a model. Checks _models_config first, then defaults.
+    Config values of 0 are treated as unset — auto-discovery writes 0 for all models."""
     cfg = _models_config.get(model, {})
     ci = cfg.get("cost_input")
     co = cfg.get("cost_output")
-    if ci is not None and co is not None:
+    if ci is not None and co is not None and (float(ci) > 0 or float(co) > 0):
         return {"input": float(ci), "output": float(co)}
     # Check built-in rates
     if model in _cost_rates:
