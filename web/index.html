@@ -6058,7 +6058,11 @@ variables:
               <span class="text-xs text-text-secondary">${isEnabled ? (isPaused ? 'Paused' : 'Active') : 'Disabled'}</span>
             </div>
             <span class="text-[10px] text-text-muted mono">${cfg.frequency || 'every 24h'} at ${cfg.start_time || '03:00'} · model: </span>
-            <select id="memsummary-model-select" class="text-[10px] bg-surface-light border border-border rounded px-1 py-0.5 mono text-text-secondary" onchange="setMemorySummaryModel('${esc(agentName)}',this.value)" style="max-width:180px">
+            <select id="memsummary-model-select" class="text-[10px] bg-surface-light border border-border rounded px-1 py-0.5 mono text-text-secondary" onchange="setMemorySummaryModel('${esc(agentName)}','model',this.value)" style="max-width:180px">
+              <option value="">default (Crow-9B)</option>
+            </select>
+            <span class="text-[10px] text-text-muted mono">→ fallback:</span>
+            <select id="memsummary-fallback-select" class="text-[10px] bg-surface-light border border-border rounded px-1 py-0.5 mono text-text-secondary" onchange="setMemorySummaryModel('${esc(agentName)}','model_fallback',this.value)" style="max-width:180px">
               <option value="">default (Sonnet)</option>
             </select>
             <div class="flex gap-2 ml-auto">
@@ -6089,8 +6093,12 @@ variables:
                 <span class="w-2 h-2 rounded-full ${rdEnabled ? 'bg-success' : 'bg-error'}"></span>
                 <span class="text-xs text-text-secondary">${rdEnabled ? 'Enabled' : 'Disabled'}</span>
               </div>
-              <span class="text-[10px] text-text-muted mono">${rdStats.total_nodes || 0} nodes · ${rdStats.total_edges || 0} edges · ${rdStats.auto_discovered_edges || 0} auto-discovered · model: </span>
-              <select id="reldiscovery-model-select" class="text-[10px] bg-surface-light border border-border rounded px-1 py-0.5 mono text-text-secondary" onchange="setRelationshipDiscoveryModel('${esc(agentName)}',this.value)" style="max-width:180px">
+              <span class="text-[10px] text-text-muted mono">${rdStats.total_nodes || 0} nodes · ${rdStats.total_edges || 0} edges · model: </span>
+              <select id="reldiscovery-model-select" class="text-[10px] bg-surface-light border border-border rounded px-1 py-0.5 mono text-text-secondary" onchange="setRelationshipDiscoveryModel('${esc(agentName)}','model',this.value)" style="max-width:180px">
+                <option value="">default (Crow-4B)</option>
+              </select>
+              <span class="text-[10px] text-text-muted mono">→ fallback:</span>
+              <select id="reldiscovery-fallback-select" class="text-[10px] bg-surface-light border border-border rounded px-1 py-0.5 mono text-text-secondary" onchange="setRelationshipDiscoveryModel('${esc(agentName)}','model_fallback',this.value)" style="max-width:180px">
                 <option value="">default (Haiku)</option>
               </select>
               <div class="flex gap-2 ml-auto">
@@ -6130,8 +6138,12 @@ variables:
                 <span class="text-xs text-text-secondary">${adEnabled ? 'Enabled' : 'Disabled'}</span>
               </div>
               <span class="text-[10px] text-text-muted mono">stale: ${adCfg.stale_threshold_days || 30}d · merges: ${adCfg.max_dedup_merges || 10}/run · model: </span>
-              <select id="autodream-model-select" class="text-[10px] bg-surface-light border border-border rounded px-1 py-0.5 mono text-text-secondary" onchange="setAutodreamModel('${esc(agentName)}',this.value)" style="max-width:180px">
-                <option value="">auto (cheapest)</option>
+              <select id="autodream-model-select" class="text-[10px] bg-surface-light border border-border rounded px-1 py-0.5 mono text-text-secondary" onchange="setAutodreamModel('${esc(agentName)}','model',this.value)" style="max-width:180px">
+                <option value="">default (Crow-4B)</option>
+              </select>
+              <span class="text-[10px] text-text-muted mono">→ fallback:</span>
+              <select id="autodream-fallback-select" class="text-[10px] bg-surface-light border border-border rounded px-1 py-0.5 mono text-text-secondary" onchange="setAutodreamModel('${esc(agentName)}','model_fallback',this.value)" style="max-width:180px">
+                <option value="">default (Haiku)</option>
               </select>
               <div class="flex gap-2 ml-auto">
                 <button class="btn-secondary text-xs px-3 py-1.5 rounded-lg" onclick="memorySummaryAction('${esc(agentName)}','run_autodream')" title="Run memory consolidation now">Run Now</button>
@@ -6144,13 +6156,16 @@ variables:
           </div>
         </div>`;
 
-      // Populate model dropdowns
+      // Populate model dropdowns (primary + fallback)
       API.getModels().then(models => {
         const modelList = Array.isArray(models) ? models : (models.models || []);
         const selectors = [
-          { id: 'autodream-model-select', current: adCfg.model || '' },
-          { id: 'memsummary-model-select', current: cfg.model || '' },
-          { id: 'reldiscovery-model-select', current: rdCfg.model || '' },
+          { id: 'autodream-model-select',      current: adCfg.model || '' },
+          { id: 'autodream-fallback-select',   current: adCfg.model_fallback || '' },
+          { id: 'memsummary-model-select',     current: cfg.model || '' },
+          { id: 'memsummary-fallback-select',  current: cfg.model_fallback || '' },
+          { id: 'reldiscovery-model-select',   current: rdCfg.model || '' },
+          { id: 'reldiscovery-fallback-select',current: rdCfg.model_fallback || '' },
         ];
         selectors.forEach(({ id, current }) => {
           const sel = document.getElementById(id);
@@ -6278,28 +6293,28 @@ window.promoteToSkill = async function(agentName, memoryName, btn) {
   }
 };
 
-window.setAutodreamModel = async function(agentName, model) {
+window.setAutodreamModel = async function(agentName, field, model) {
   try {
-    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`, { action: 'set_autodream_model', model: model || null });
-    showToast(model ? `Autodream model set to ${model}` : 'Autodream model set to auto (cheapest)');
+    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`, { action: 'set_autodream_model', [field]: model || null });
+    showToast(model ? `Autodream ${field === 'model_fallback' ? 'fallback' : 'model'} set to ${model}` : `Autodream ${field === 'model_fallback' ? 'fallback' : 'model'} reset to default`);
   } catch (e) {
     showToast(`Error: ${e.message}`, true);
   }
 };
 
-window.setMemorySummaryModel = async function(agentName, model) {
+window.setMemorySummaryModel = async function(agentName, field, model) {
   try {
-    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`, { action: 'set_memory_summary_model', model: model || null });
-    showToast(model ? `Memory summary model set to ${model}` : 'Memory summary model set to default (Sonnet)');
+    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`, { action: 'set_memory_summary_model', [field]: model || null });
+    showToast(model ? `Memory summary ${field === 'model_fallback' ? 'fallback' : 'model'} set to ${model}` : `Memory summary ${field === 'model_fallback' ? 'fallback' : 'model'} reset to default`);
   } catch (e) {
     showToast(`Error: ${e.message}`, true);
   }
 };
 
-window.setRelationshipDiscoveryModel = async function(agentName, model) {
+window.setRelationshipDiscoveryModel = async function(agentName, field, model) {
   try {
-    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`, { action: 'set_relationship_discovery_model', model: model || null });
-    showToast(model ? `Relationship discovery model set to ${model}` : 'Relationship discovery model set to default (Haiku)');
+    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`, { action: 'set_relationship_discovery_model', [field]: model || null });
+    showToast(model ? `Relationship discovery ${field === 'model_fallback' ? 'fallback' : 'model'} set to ${model}` : `Relationship discovery ${field === 'model_fallback' ? 'fallback' : 'model'} reset to default`);
   } catch (e) {
     showToast(`Error: ${e.message}`, true);
   }

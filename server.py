@@ -3568,7 +3568,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 json.dump(cfg, f, indent=2)
             self._send_json({"status": "updated", "enabled": bool(enabled), "agent": agent_id})
         elif action == "set_memory_summary_model":
-            model = body.get("model")  # None or "" = default (Sonnet)
+            model = body.get("model")
+            fallback = body.get("model_fallback")
             agent_cfg = engine.AgentConfig(agent_id)
             cfg = agent_cfg.config
             ms = cfg.get("memory_summary", {})
@@ -3578,6 +3579,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 ms["model"] = model
             else:
                 ms.pop("model", None)
+            if fallback:
+                ms["model_fallback"] = fallback
+            else:
+                ms.pop("model_fallback", None)
             cfg["memory_summary"] = ms
             cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
             with open(cfg_path, "w") as f:
@@ -3585,7 +3590,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             engine.ensure_memory_summary_schedules()
             self._send_json({"status": "updated", "model": model or "default", "agent": agent_id})
         elif action == "set_relationship_discovery_model":
-            model = body.get("model")  # None or "" = default (Haiku)
+            model = body.get("model")
+            fallback = body.get("model_fallback")
             agent_cfg = engine.AgentConfig(agent_id)
             cfg = agent_cfg.config
             rd = cfg.get("relationship_discovery", {})
@@ -3595,16 +3601,22 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 rd["model"] = model
             else:
                 rd.pop("model", None)
+            if fallback:
+                rd["model_fallback"] = fallback
+            else:
+                rd.pop("model_fallback", None)
             cfg["relationship_discovery"] = rd
             cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
             with open(cfg_path, "w") as f:
                 json.dump(cfg, f, indent=2)
+            engine.ensure_relationship_discovery_schedules()
             self._send_json({"status": "updated", "model": model or "default", "agent": agent_id})
         elif action == "run_autodream":
             engine.trigger_autodream(agent_id)
             self._send_json({"status": "autodream_scheduled", "agent": agent_id})
         elif action == "set_autodream_model":
-            model = body.get("model")  # None or "" = auto
+            model = body.get("model")
+            fallback = body.get("model_fallback")
             agent_cfg = engine.AgentConfig(agent_id)
             cfg = agent_cfg.config
             ad = cfg.get("autodream", {})
@@ -3614,6 +3626,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 ad["model"] = model
             else:
                 ad.pop("model", None)
+            if fallback:
+                ad["model_fallback"] = fallback
+            else:
+                ad.pop("model_fallback", None)
             cfg["autodream"] = ad
             cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
             with open(cfg_path, "w") as f:

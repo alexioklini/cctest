@@ -5194,8 +5194,10 @@ def ensure_memory_summary_schedules():
         if ms_cfg["enabled"] and not ms_cfg.get("paused"):
             schedule_str = _memory_summary_schedule_str(ms_cfg)
             task_prompt = _build_memory_summary_prompt(agent_id)
-            # Use Sonnet for memory summary — synthesis task, doesn't need Opus
-            summary_model = ms_cfg.get("model", "claude-sonnet-4-6")
+            # Use Crow-9B for memory summary (local, free); fallback to Sonnet
+            primary = ms_cfg.get("model") or "Crow-9B-HERETIC-4.6-MLX-8bit"
+            fallback = ms_cfg.get("model_fallback") or "claude-sonnet-4-6"
+            summary_model, _ = _resolve_model_with_fallback(primary, fallback, "claude-sonnet-4-6")
 
             if sched_name in existing:
                 old = existing[sched_name]
@@ -5846,15 +5848,17 @@ def trigger_relationship_discovery(agent_id: str):
 
     def _run():
         try:
-            # Use Haiku for relationship discovery — it's JSON classification, not complex reasoning
+            # Use Crow-4B for relationship discovery — JSON classification; fallback to Haiku
             target = AgentConfig(agent_id)
             rd_cfg = _get_relationship_discovery_config(agent_id)
-            model = rd_cfg.get("model") or "claude-haiku-4-5-20251001"
+            primary = rd_cfg.get("model") or "Crow-4B-Opus-4.6-Distill"
+            fallback = rd_cfg.get("model_fallback") or "claude-haiku-4-5-20251001"
+            model, fallback_model = _resolve_model_with_fallback(primary, fallback, "claude-haiku-4-5-20251001")
             ms = MemoryStore(agent_id)
-            logging.info(f"Relationship discovery starting for {agent_id} using {model}")
-            result_text = _run_delegate(
+            logging.info(f"Relationship discovery starting for {agent_id} using {model} (fallback: {fallback_model})")
+            result_text = _run_delegate_with_fallback(
                 messages=[{"role": "user", "content": prompt}],
-                model=model,
+                primary_model=model, fallback_model=fallback_model,
                 system_prompt="You are a relationship analysis assistant. Analyze the given memories and output ONLY a valid JSON array of relationships. No explanations, no markdown, just the JSON array.",
                 memory_store=ms,
                 inference_params={"max_tokens": 16384, "temperature": 0.2},
@@ -5931,8 +5935,10 @@ def ensure_relationship_discovery_schedules():
         if rd_cfg["enabled"]:
             schedule_str = _relationship_discovery_schedule_str(rd_cfg)
             task_prompt = _build_relationship_discovery_task_prompt(agent_id)
-            # Use Haiku for relationship discovery scheduled task — JSON classification, not complex reasoning
-            rd_model = rd_cfg.get("model", "claude-haiku-4-5-20251001")
+            # Use Crow-4B for RD scheduled task; fallback Haiku
+            primary = rd_cfg.get("model") or "Crow-4B-Opus-4.6-Distill"
+            fallback = rd_cfg.get("model_fallback") or "claude-haiku-4-5-20251001"
+            rd_model, _ = _resolve_model_with_fallback(primary, fallback, "claude-haiku-4-5-20251001")
 
             if sched_name in existing:
                 old = existing[sched_name]
@@ -5976,8 +5982,8 @@ def _autodream_dedup(agent_id: str, ms: MemoryStore, config: dict) -> dict:
     merge_log = []
     deleted_files = set()
 
-    # Resolve model (configured or cheapest)
-    model = _resolve_autodream_model(config)
+    # Resolve model (configured primary + fallback)
+    model, fallback_model = _resolve_autodream_model(config)
     if not model or not _delegate_api_key:
         return {"duplicates_found": len(high_sim), "merged": 0, "skipped": len(high_sim),
                 "merge_log": ["No model available for merge confirmation"]}
@@ -6000,9 +6006,9 @@ def _autodream_dedup(agent_id: str, ms: MemoryStore, config: dict) -> dict:
             f'If not duplicates: {{"is_duplicate": false}}'
         )
         try:
-            result = _run_delegate(
+            result = _run_delegate_with_fallback(
                 messages=[{"role": "user", "content": prompt}],
-                model=model,
+                primary_model=model, fallback_model=fallback_model,
                 system_prompt="You are a memory deduplication assistant. Output only valid JSON.",
                 inference_params={"max_tokens": 1024, "temperature": 0.1},
             )
@@ -6136,7 +6142,7 @@ def _autodream_conflicts(agent_id: str, ms: MemoryStore, config: dict) -> dict:
     # Filter to same-type pairs (contradictions are most likely within same type)
     same_type_pairs = [(a, b, s) for a, b, s in pairs if a["type"] == b["type"]][:max_checks]
 
-    model = _resolve_autodream_model(config)
+    model, fallback_model = _resolve_autodream_model(config)
     if not model or not _delegate_api_key:
         return {"conflicts_found": 0, "conflict_pairs": [],
                 "error": "No model available for conflict detection"}
@@ -6154,9 +6160,9 @@ def _autodream_conflicts(agent_id: str, ms: MemoryStore, config: dict) -> dict:
             f'If no contradiction: {{"contradicts": false}}'
         )
         try:
-            result = _run_delegate(
+            result = _run_delegate_with_fallback(
                 messages=[{"role": "user", "content": prompt}],
-                model=model,
+                primary_model=model, fallback_model=fallback_model,
                 system_prompt="You are a memory conflict detector. Output only valid JSON.",
                 inference_params={"max_tokens": 256, "temperature": 0.1},
             )
@@ -6199,7 +6205,7 @@ def _autodream_skill_candidates(agent_id: str, ms: MemoryStore, config: dict) ->
     if not heuristic_matches:
         return {"candidates_found": 0, "candidate_names": [], "candidate_details": []}
 
-    model = _resolve_autodream_model(config)
+    model, fallback_model = _resolve_autodream_model(config)
     if not model or not _delegate_api_key:
         return {"candidates_found": 0, "candidate_names": [], "candidate_details": [],
                 "error": "No model available for skill detection"}
@@ -6217,9 +6223,9 @@ def _autodream_skill_candidates(agent_id: str, ms: MemoryStore, config: dict) ->
             f'If not a skill candidate: {{"is_skill_candidate": false}}'
         )
         try:
-            result = _run_delegate(
+            result = _run_delegate_with_fallback(
                 messages=[{"role": "user", "content": prompt}],
-                model=model,
+                primary_model=model, fallback_model=fallback_model,
                 system_prompt="You are a skill detection assistant. Output only valid JSON.",
                 inference_params={"max_tokens": 256, "temperature": 0.1},
             )
@@ -6243,22 +6249,63 @@ def _autodream_skill_candidates(agent_id: str, ms: MemoryStore, config: dict) ->
             "candidate_details": candidate_details}
 
 
-def _resolve_autodream_model(config: dict) -> str | None:
-    """Resolve the model to use for autodream. Uses config override or cheapest available."""
-    configured = config.get("model")
-    if configured and _models_config and configured in _models_config:
-        return configured
-    return _find_cheapest_model()
+def _resolve_model_with_fallback(primary: str | None, fallback: str | None, hardcoded_default: str) -> tuple[str, str | None]:
+    """Return (primary_to_use, fallback_to_use) after validating against enabled models.
+    Falls back through the chain: configured primary → configured fallback → hardcoded default."""
+    def _is_available(mid: str) -> bool:
+        if not mid:
+            return False
+        if not _models_config:
+            return True  # can't check, assume available
+        mcfg = _models_config.get(mid, {})
+        return mcfg.get("enabled", True)
+
+    resolved_primary = primary if _is_available(primary) else None
+    resolved_fallback = fallback if _is_available(fallback) else None
+
+    if resolved_primary:
+        return resolved_primary, resolved_fallback or hardcoded_default
+    if resolved_fallback:
+        return resolved_fallback, hardcoded_default
+    return hardcoded_default, None
+
+
+def _run_delegate_with_fallback(messages, primary_model, fallback_model, system_prompt,
+                                 memory_store=None, inference_params=None) -> str | None:
+    """Run _run_delegate with automatic fallback if primary model fails."""
+    result = _run_delegate(
+        messages=messages, model=primary_model, system_prompt=system_prompt,
+        memory_store=memory_store, inference_params=inference_params,
+    )
+    if result and result.startswith("Delegation error:") and fallback_model and fallback_model != primary_model:
+        logging.warning(f"Primary model {primary_model} failed, falling back to {fallback_model}")
+        result = _run_delegate(
+            messages=messages, model=fallback_model, system_prompt=system_prompt,
+            memory_store=memory_store, inference_params=inference_params,
+        )
+    return result
+
+
+def _resolve_autodream_model(config: dict) -> tuple[str, str | None]:
+    """Resolve (primary, fallback) models for autodream."""
+    primary = config.get("model") or "Crow-4B-Opus-4.6-Distill"
+    fallback = config.get("model_fallback") or "claude-haiku-4-5-20251001"
+    return _resolve_model_with_fallback(primary, fallback, "claude-haiku-4-5-20251001")
 
 
 def _find_cheapest_model() -> str | None:
-    """Find the cheapest available model (prefer Haiku)."""
+    """Find the cheapest available model (prefer local, then Haiku)."""
     if not _models_config:
         return None
-    for mid, cfg in sorted(_models_config.items(), key=lambda x: x[1].get('cost_input', 999)):
-        if cfg.get('enabled', True):
-            if 'haiku' in mid.lower():
-                return mid
+    # Prefer local models first (priority <= 30)
+    for mid, cfg in sorted(_models_config.items(), key=lambda x: x[1].get('priority', 50)):
+        if cfg.get('enabled', True) and cfg.get('priority', 50) <= 30:
+            return mid
+    # Then Haiku
+    for mid, cfg in _models_config.items():
+        if cfg.get('enabled', True) and 'haiku' in mid.lower():
+            return mid
+    # Then lowest priority
     for mid, cfg in sorted(_models_config.items(), key=lambda x: x[1].get('priority', 0)):
         if cfg.get('enabled', True):
             return mid
@@ -10370,7 +10417,8 @@ _CONTEXT_CONFIG_DEFAULTS = {
     "summary_target_tokens": 1000,
     "condense_threshold": 4,
     "max_depth": 5,
-    "summary_model": "",
+    "summary_model": "gemini-2.5-flash",
+    "summary_model_fallback": "claude-haiku-4-5-20251001",
     "messages_per_summary": 10,
 }
 
@@ -10452,20 +10500,13 @@ class ContextManager:
                 )
         conn.commit()
 
-    def _resolve_summary_model(self) -> str | None:
+    def _resolve_summary_model(self) -> tuple[str | None, str | None]:
+        """Return (primary_model, fallback_model) for context summarization."""
         cfg = self.get_config()
-        model = cfg.get("summary_model", "")
-        if model:
-            return model
-        # Auto: prefer Haiku, then cheapest
-        if _models_config:
-            for mid, mcfg in _models_config.items():
-                if mcfg.get("enabled", True) and "haiku" in mid.lower():
-                    return mid
-            for mid, mcfg in sorted(_models_config.items(), key=lambda x: x[1].get("cost_input", 999)):
-                if mcfg.get("enabled", True):
-                    return mid
-        return None
+        primary = cfg.get("summary_model") or "gemini-2.5-flash"
+        fallback = cfg.get("summary_model_fallback") or "claude-haiku-4-5-20251001"
+        p, f = _resolve_model_with_fallback(primary, fallback, "claude-haiku-4-5-20251001")
+        return p, f
 
     def _extract_message_text(self, msg: dict) -> str:
         """Extract plain text from a message (handles string and block content)."""
@@ -10489,20 +10530,21 @@ class ContextManager:
 
     def summarize_chunk(self, messages: list[dict], session_id: str,
                         range_start: int, range_end: int,
-                        model: str, api_key: str, base_url: str, api_type: str) -> str | None:
+                        model: str, api_key: str, base_url: str, api_type: str,
+                        fallback_model: str | None = None) -> str | None:
         """Summarize a chunk of messages into a leaf summary (depth 0). Returns summary ID."""
         text_parts = [self._extract_message_text(m) for m in messages]
         source_text = "\n".join(text_parts)
 
         summary_text = None
         try:
-            result = _run_delegate(
+            result = _run_delegate_with_fallback(
                 messages=[{"role": "user", "content": (
                     "Summarize this conversation segment concisely. Preserve: key facts, decisions, "
                     "file paths, commands run, errors encountered, and task context. "
                     "Be factual and specific, not vague. ~200-300 words.\n\n" + source_text
                 )}],
-                model=model,
+                primary_model=model, fallback_model=fallback_model,
                 system_prompt="You are a precise conversation summarizer. Output only the summary.",
                 memory_store=None,
                 inference_params={"max_tokens": 2000, "temperature": 0.1},
@@ -10554,16 +10596,16 @@ class ContextManager:
             range_end = rows[-1][4]
 
             # Summarize the combined text
-            model = self._resolve_summary_model()
+            c_model, c_fallback = self._resolve_summary_model()
             condensed_text = None
-            if model:
+            if c_model:
                 try:
-                    result = _run_delegate(
+                    result = _run_delegate_with_fallback(
                         messages=[{"role": "user", "content": (
                             f"Condense these {len(rows)} conversation summaries into one cohesive summary. "
                             "Preserve all key facts, decisions, and context. ~300-500 words.\n\n" + combined_text
                         )}],
-                        model=model,
+                        primary_model=c_model, fallback_model=c_fallback,
                         system_prompt="You are a precise summarizer. Output only the condensed summary.",
                         memory_store=None,
                         inference_params={"max_tokens": 3000, "temperature": 0.1},
@@ -10701,8 +10743,10 @@ class ContextManager:
             # Not enough new messages to summarize, just assemble
             return self.assemble_context(session_id, messages, system_prompt, max_tokens), True
 
-        # Use summary model
-        summary_model = self._resolve_summary_model() or model
+        # Use summary model (Gemini Flash default, Haiku fallback)
+        summary_model, summary_model_fallback = self._resolve_summary_model()
+        summary_model = summary_model or model
+        summary_model_fallback = summary_model_fallback or model
 
         pct = int(estimated / max_tokens * 100)
         logging.info(f"Context {pct}% full (~{estimated:,} tokens), creating hierarchical summaries...")
@@ -10715,7 +10759,8 @@ class ContextManager:
             range_start = unsummarized_start + i
             range_end = unsummarized_start + i + len(chunk)
             self.summarize_chunk(chunk, session_id, range_start, range_end,
-                                 summary_model, api_key, base_url, api_type)
+                                 summary_model, api_key, base_url, api_type,
+                                 fallback_model=summary_model_fallback)
 
         # Try condensation
         self.condense(session_id)
@@ -10823,15 +10868,16 @@ class ContextManager:
             return f"No relevant context found for: {query}"
 
         context_text = "\n\n---\n\n".join(relevant_context[:10])
-        summary_model = self._resolve_summary_model() or model
+        r_model, r_fallback = self._resolve_summary_model()
+        r_model = r_model or model
 
         try:
-            result = _run_delegate(
+            result = _run_delegate_with_fallback(
                 messages=[{"role": "user", "content": (
                     f"Based on this conversation history, answer the following query precisely:\n\n"
                     f"**Query:** {query}\n\n**Context:**\n{context_text}"
                 )}],
-                model=summary_model,
+                primary_model=r_model, fallback_model=r_fallback,
                 system_prompt="Answer based only on the provided context. Be specific and cite details.",
                 memory_store=None,
                 inference_params={"max_tokens": 2000, "temperature": 0.1},
