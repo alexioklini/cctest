@@ -3121,12 +3121,18 @@ async function loadInitialData() {
   } catch {}
   renderModelSelector();
   renderAgentCards();
-  // Apply agents section collapsed state from localStorage
+  // Apply section collapsed states from localStorage
   const _agSectState = JSON.parse(localStorage.getItem('sb-sections-collapsed') || '{}');
   if (_agSectState['agents']) {
     const agentsSect = document.getElementById('sb-agents-section');
     if (agentsSect) agentsSect.classList.add('collapsed');
   }
+  ['team-channels', 'team-dms'].forEach(s => {
+    if (_agSectState[s]) {
+      const el = document.getElementById(`sb-${s}-section`);
+      if (el) el.classList.add('collapsed');
+    }
+  });
   updateChatArea();
 }
 
@@ -4369,7 +4375,19 @@ async function loadTeamChannels() {
   try {
     const res = await API.get('/v1/team/channels');
     state.teamChannels = res.channels || [];
+    // Auto-create #general if no channels exist and user is authenticated
+    if (state.teamChannels.length === 0 && state.currentUser && state.currentUser.id !== 'anonymous') {
+      try {
+        await API.post('/v1/team/channels', { name: 'general', type: 'public', topic: 'General discussion' });
+        const res2 = await API.get('/v1/team/channels');
+        state.teamChannels = res2.channels || [];
+      } catch {}
+    }
     renderTeamChannelSidebar();
+    // Auto-select first channel if none active
+    if (!state.activeChannelId && state.teamChannels.length > 0) {
+      switchTeamChannel(state.teamChannels[0].id);
+    }
   } catch {}
 }
 
