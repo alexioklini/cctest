@@ -28,8 +28,8 @@ tailwind.config = {
         'text-muted': 'var(--color-text-muted)',
       },
       fontFamily: {
-        display: ['Outfit', 'sans-serif'],
-        body: ['IBM Plex Sans', 'sans-serif'],
+        display: ['Lato', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+        body: ['Lato', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
         mono: ['IBM Plex Mono', 'monospace'],
       }
     }
@@ -37,76 +37,92 @@ tailwind.config = {
 }
 </script>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Lato:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
   /* ── Light theme (default) ── */
   :root, [data-theme="light"] {
     --color-base: #ffffff;
-    --color-surface: #f8f9fa;
-    --color-surface-light: #f0f1f3;
-    --color-surface-lighter: #e8e9ec;
-    --color-border: #e0e0e6;
-    --color-text-primary: #1a1a2e;
-    --color-text-secondary: #666680;
-    --color-text-muted: #9999aa;
-    --color-accent: #ff7b00;
-    --color-agent: #7c3aed;
-    --color-model: #2563eb;
-    --color-code-bg: #f5f5f8;
-    --color-code-text: #1a1a2e;
-    --color-user-border: rgba(255,123,0,0.4);
-    --color-user-shadow: rgba(255,123,0,0.06);
-    --color-assistant-border: rgba(124,58,237,0.35);
-    --color-inline-code-bg: #eeeef3;
-    --color-tool-bg: rgba(240,241,243,0.7);
-    --color-tool-hover-bg: rgba(232,233,236,0.6);
+    --color-surface: #ffffff;
+    --color-surface-light: #f8f8f8;
+    --color-surface-lighter: #f0f0f0;
+    --color-border: #e0e0e0;
+    --color-text-primary: #1d1c1d;
+    --color-text-secondary: #616061;
+    --color-text-muted: #868686;
+    --color-accent: #1264a3;
+    --color-agent: #1264a3;
+    --color-model: #1264a3;
+    --color-code-bg: #f4f4f4;
+    --color-code-text: #1d1c1d;
+    --color-user-border: rgba(18,100,163,0.3);
+    --color-user-shadow: rgba(18,100,163,0.04);
+    --color-assistant-border: rgba(18,100,163,0.25);
+    --color-inline-code-bg: #f0f0f0;
+    --color-tool-bg: rgba(248,248,248,0.8);
+    --color-tool-hover-bg: rgba(240,240,240,0.8);
     --color-modal-bg: #ffffff;
-    --color-modal-overlay: rgba(0,0,0,0.3);
+    --color-modal-overlay: rgba(0,0,0,0.4);
     --color-toast-bg: rgba(255,255,255,0.95);
-    --color-header-gradient-1: rgba(124,58,237,0.04);
-    --color-header-gradient-2: rgba(255,123,0,0.03);
-    --color-header-gradient-3: rgba(37,99,235,0.02);
-    --color-input-shadow: rgba(0,0,0,0.08);
-    --color-scrollbar: #d0d0d8;
-    --color-scrollbar-hover: #b0b0bc;
-    --noise-opacity: 0.015;
+    --color-header-gradient-1: transparent;
+    --color-header-gradient-2: transparent;
+    --color-header-gradient-3: transparent;
+    --color-input-shadow: rgba(0,0,0,0.06);
+    --color-scrollbar: #d0d0d4;
+    --color-scrollbar-hover: #b0b0b4;
+    --noise-opacity: 0;
+    --color-sidebar-bg: #4a154b;
+    --color-sidebar-text: #cfc3cf;
+    --color-sidebar-active: #ffffff;
+    --color-sidebar-hover: rgba(255,255,255,0.06);
+    --color-sidebar-selected: #1164a3;
+    --color-success: #2eb67d;
+    --color-error: #e01e5a;
+    --color-warning: #ecb22e;
   }
 
   /* ── Dark theme ── */
   [data-theme="dark"] {
-    --color-base: #0f0f1a;
-    --color-surface: #16162a;
-    --color-surface-light: #1e1e38;
-    --color-surface-lighter: #282850;
-    --color-border: #2a2a45;
-    --color-text-primary: #e8e8f0;
-    --color-text-secondary: #8888aa;
-    --color-text-muted: #555570;
-    --color-accent: #ff7b00;
-    --color-agent: #b48eff;
-    --color-model: #64b5f6;
-    --color-code-bg: #16162a;
-    --color-code-text: #e8e8f0;
-    --color-user-border: rgba(255,123,0,0.5);
-    --color-user-shadow: rgba(255,123,0,0.06);
-    --color-assistant-border: rgba(180,142,255,0.4);
-    --color-inline-code-bg: #1e1e38;
-    --color-tool-bg: rgba(18,18,34,0.6);
-    --color-tool-hover-bg: rgba(30,30,56,0.4);
-    --color-modal-bg: #16162a;
+    --color-base: #1a1d21;
+    --color-surface: #1a1d21;
+    --color-surface-light: #222529;
+    --color-surface-lighter: #2c2d31;
+    --color-border: #383a3e;
+    --color-text-primary: #d1d2d3;
+    --color-text-secondary: #ababad;
+    --color-text-muted: #7a7b7d;
+    --color-accent: #1d9bd1;
+    --color-agent: #1d9bd1;
+    --color-model: #1d9bd1;
+    --color-code-bg: #222529;
+    --color-code-text: #d1d2d3;
+    --color-user-border: rgba(29,155,209,0.3);
+    --color-user-shadow: rgba(29,155,209,0.04);
+    --color-assistant-border: rgba(29,155,209,0.25);
+    --color-inline-code-bg: #2c2d31;
+    --color-tool-bg: rgba(34,37,41,0.8);
+    --color-tool-hover-bg: rgba(44,45,49,0.8);
+    --color-modal-bg: #222529;
     --color-modal-overlay: rgba(0,0,0,0.6);
-    --color-toast-bg: rgba(22,22,42,0.9);
-    --color-header-gradient-1: rgba(180,142,255,0.06);
-    --color-header-gradient-2: rgba(255,123,0,0.04);
-    --color-header-gradient-3: rgba(100,181,246,0.03);
-    --color-input-shadow: rgba(0,0,0,0.3);
-    --color-scrollbar: #2a2a45;
-    --color-scrollbar-hover: #3a3a5a;
-    --noise-opacity: 0.025;
+    --color-toast-bg: rgba(34,37,41,0.95);
+    --color-header-gradient-1: transparent;
+    --color-header-gradient-2: transparent;
+    --color-header-gradient-3: transparent;
+    --color-input-shadow: rgba(0,0,0,0.2);
+    --color-scrollbar: #383a3e;
+    --color-scrollbar-hover: #4a4c50;
+    --noise-opacity: 0;
+    --color-sidebar-bg: #4a154b;
+    --color-sidebar-text: #cfc3cf;
+    --color-sidebar-active: #ffffff;
+    --color-sidebar-hover: rgba(255,255,255,0.06);
+    --color-sidebar-selected: #1164a3;
+    --color-success: #2eb67d;
+    --color-error: #e01e5a;
+    --color-warning: #ecb22e;
   }
 
   * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; font-family: 'IBM Plex Sans', sans-serif; color: var(--color-text-primary); }
+  html, body { height: 100%; margin: 0; font-family: 'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: var(--color-text-primary); }
 
   /* Noise texture overlay */
   body::before {
@@ -129,7 +145,7 @@ tailwind.config = {
 
   /* Mono utility */
   .mono { font-family: 'IBM Plex Mono', monospace; }
-  .font-display { font-family: 'Outfit', sans-serif; }
+  .font-display { font-family: 'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
 
   /* Animations */
   .fade-in { animation: fadeIn 0.25s ease-out; }
@@ -164,7 +180,7 @@ tailwind.config = {
     gap: 10px;
   }
   .thinking-indicator .thinking-label {
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Lato', sans-serif;
     font-size: 13px;
     font-weight: 600;
     color: var(--accent);
@@ -219,7 +235,7 @@ tailwind.config = {
   .msg-content p { margin: 0.4em 0; line-height: 1.7; }
   .msg-content ul, .msg-content ol { margin: 0.5em 0; padding-left: 1.5em; }
   .msg-content li { margin: 0.25em 0; }
-  .msg-content h1, .msg-content h2, .msg-content h3 { margin: 0.8em 0 0.4em; font-weight: 600; font-family: 'Outfit', sans-serif; color: var(--color-text-primary); }
+  .msg-content h1, .msg-content h2, .msg-content h3 { margin: 0.8em 0 0.4em; font-weight: 600; font-family: 'Lato', sans-serif; color: var(--color-text-primary); }
   .msg-content h1 { font-size: 1.3em; }
   .msg-content h2 { font-size: 1.15em; }
   .msg-content h3 { font-size: 1.05em; }
@@ -347,16 +363,17 @@ tailwind.config = {
     text-align: center;
   }
 
-  /* Buttons */
+  /* Buttons (Slack style) */
   .btn-primary {
-    background: linear-gradient(135deg, #ff7b00, #ff9a3d);
+    background: #007a5a;
     color: #ffffff;
-    font-weight: 600;
-    transition: all 0.2s ease;
-    box-shadow: 0 2px 8px rgba(255,123,0,0.15);
+    font-weight: 700;
+    transition: all 0.15s ease;
+    box-shadow: none;
+    border-radius: 4px;
   }
-  .btn-primary:hover { box-shadow: 0 4px 16px rgba(255,123,0,0.3); transform: translateY(-1px); }
-  .btn-primary:active { transform: translateY(0); }
+  .btn-primary:hover { background: #006549; }
+  .btn-primary:active { background: #005540; }
   .btn-secondary {
     background: var(--color-surface-light);
     color: var(--color-text-secondary);
@@ -444,17 +461,17 @@ tailwind.config = {
   }
   .session-bar-toggle:hover { color: var(--color-text-primary); }
 
-  /* Chat input area */
+  /* Chat input area (Slack style) */
   .chat-input-wrapper {
     background: var(--color-base);
-    border: 1px solid var(--color-border);
-    border-radius: 1rem;
-    box-shadow: 0 -4px 20px var(--color-input-shadow);
-    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    border: 2px solid var(--color-border);
+    border-radius: 8px;
+    box-shadow: none;
+    transition: border-color 0.15s ease;
   }
   .chat-input-wrapper:focus-within {
     border-color: var(--color-accent);
-    box-shadow: 0 -4px 24px rgba(255,123,0,0.08);
+    box-shadow: none;
   }
 
   /* Slash command popup */
@@ -553,7 +570,7 @@ tailwind.config = {
 
   /* Section header */
   .section-header {
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Lato', sans-serif;
     font-size: 0.65rem;
     font-weight: 600;
     text-transform: uppercase;
@@ -831,7 +848,7 @@ tailwind.config = {
     text-align: left;
     padding: 6px 16px;
     font-size: 13px;
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Lato', sans-serif;
     color: var(--color-text-secondary);
     background: none;
     border: none;
@@ -918,7 +935,7 @@ tailwind.config = {
     flex-shrink: 0;
   }
   #activity-panel .ap-title {
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Lato', sans-serif;
     font-weight: 600;
     font-size: 13px;
     color: var(--color-text-primary);
@@ -1080,19 +1097,19 @@ tailwind.config = {
 
   /* Toggle button active state */
   #btn-activity-toggle.active {
-    color: var(--color-accent);
-    background: rgba(255,123,0,0.08);
+    color: var(--color-sidebar-active);
+    background: rgba(255,255,255,0.1);
   }
 
-  /* ── Sidebar ── */
+  /* ── Sidebar (Slack aubergine) ── */
   #sidebar {
-    width: 240px;
+    width: 260px;
     min-width: 52px;
-    max-width: 500px;
+    max-width: 400px;
     height: 100vh;
     height: 100dvh;
-    background: var(--color-surface);
-    border-right: 1px solid var(--color-border);
+    background: var(--color-sidebar-bg);
+    border-right: none;
     display: flex;
     flex-direction: column;
     overflow-y: auto;
@@ -1213,7 +1230,7 @@ tailwind.config = {
     overflow: hidden;
   }
   .sb-agent-item .sb-agent-name {
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Lato', sans-serif;
     font-size: 12px;
     font-weight: 600;
     color: var(--color-text-primary);
@@ -1419,7 +1436,7 @@ tailwind.config = {
   /* Sidebar divider */
   .sb-divider {
     height: 1px;
-    background: var(--color-border);
+    background: rgba(255,255,255,0.1);
     margin: 4px 12px;
   }
   #sidebar.collapsed .sb-divider {
@@ -1439,7 +1456,7 @@ tailwind.config = {
     color: var(--color-accent);
     font-size: 11px;
     font-weight: 600;
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Lato', sans-serif;
     cursor: pointer;
     transition: all 0.15s;
     width: calc(100% - 16px);
@@ -1527,17 +1544,17 @@ tailwind.config = {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 6px 12px;
-    font-size: 9px;
+    padding: 8px 16px 4px;
+    font-size: 12px;
     font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--color-text-muted);
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--color-sidebar-text);
     cursor: pointer;
     user-select: none;
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: inherit;
   }
-  .sb-section-header:hover { color: var(--color-text-secondary); }
+  .sb-section-header:hover { color: var(--color-sidebar-active); }
   .sb-section-header .sb-section-left {
     display: flex;
     align-items: center;
@@ -1546,15 +1563,17 @@ tailwind.config = {
   .sb-section-header .sb-section-add {
     background: none;
     border: none;
-    color: var(--color-text-muted);
+    color: var(--color-sidebar-text);
     cursor: pointer;
-    font-size: 14px;
-    padding: 0 2px;
+    font-size: 16px;
+    padding: 2px 6px;
     line-height: 1;
-    transition: color 0.15s;
+    border-radius: 4px;
+    transition: all 0.15s;
   }
   .sb-section-header .sb-section-add:hover {
-    color: var(--color-accent);
+    color: var(--color-sidebar-active);
+    background: rgba(255,255,255,0.1);
   }
   .sb-section-content {
     max-height: 2000px;
@@ -1648,7 +1667,7 @@ tailwind.config = {
   .sb-project-context-bar .project-ctx-name {
     font-weight: 600;
     color: var(--color-text-primary);
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Lato', sans-serif;
   }
   .sb-project-context-bar .project-ctx-desc {
     flex: 1;
@@ -1704,13 +1723,13 @@ tailwind.config = {
     align-items: center;
     gap: 2px;
     padding: 6px 8px;
-    border-top: 1px solid var(--color-border);
+    border-top: 1px solid rgba(255,255,255,0.1);
     flex-shrink: 0;
   }
   .sb-footer button {
     background: none;
     border: none;
-    color: var(--color-text-muted);
+    color: var(--color-sidebar-text);
     cursor: pointer;
     padding: 5px;
     border-radius: 6px;
@@ -1863,7 +1882,7 @@ tailwind.config = {
     flex-shrink: 0;
   }
   .kg-header h2 {
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Lato', sans-serif;
     font-size: 16px;
     font-weight: 600;
     color: var(--color-text-primary);
@@ -1886,7 +1905,7 @@ tailwind.config = {
     padding: 3px 10px;
     border-radius: 12px;
     font-size: 11px;
-    font-family: 'IBM Plex Sans', sans-serif;
+    font-family: 'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     cursor: pointer;
     border: 1px solid var(--color-border);
     background: var(--color-surface-light);
@@ -1981,7 +2000,7 @@ tailwind.config = {
   }
   .kg-detail.visible { display: block; }
   .kg-detail h3 {
-    font-family: 'Outfit', sans-serif;
+    font-family: 'Lato', sans-serif;
     font-size: 14px;
     font-weight: 600;
     color: var(--color-text-primary);
@@ -2022,7 +2041,7 @@ tailwind.config = {
     height: 100%;
     font-size: 14px;
     color: var(--color-text-muted);
-    font-family: 'IBM Plex Sans', sans-serif;
+    font-family: 'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
 
   /* ── Project Panel (right sidebar) ── */
@@ -2063,7 +2082,7 @@ tailwind.config = {
   .pp-item-delete:hover { color: var(--color-error, #ef4444); }
   .pp-note-item:hover .pp-item-delete, .pp-doc-item:hover .pp-item-delete { display: inline; }
   .pp-info-block { padding: 8px 12px; }
-  .pp-info-name { font-family: 'Outfit', sans-serif; font-weight: 600; font-size: 14px; color: var(--color-text-primary); display: flex; align-items: center; gap: 6px; }
+  .pp-info-name { font-family: 'Lato', sans-serif; font-weight: 600; font-size: 14px; color: var(--color-text-primary); display: flex; align-items: center; gap: 6px; }
   .pp-info-desc { font-size: 11px; color: var(--color-text-muted); margin-top: 4px; }
   .pp-info-actions { display: flex; gap: 6px; margin-top: 8px; }
   .pp-info-btn { font-size: 10px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-surface-light); color: var(--color-text-secondary); cursor: pointer; }
@@ -2085,38 +2104,38 @@ tailwind.config = {
   .sb-attach-item a { color: var(--color-accent); text-decoration: none; font-size: 10px; }
   .sb-attach-item a:hover { text-decoration: underline; }
 
-  /* Team channel sidebar items */
-  .sb-channel-item { display: flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--color-text-secondary); transition: background 0.15s; }
-  .sb-channel-item:hover { background: var(--color-surface-light); }
-  .sb-channel-item.active { background: var(--color-surface-lighter, var(--color-surface-light)); color: var(--color-text-primary); font-weight: 600; }
-  .sb-channel-item.unread { color: var(--color-text-primary); font-weight: 600; }
-  .sb-channel-icon { opacity: 0.5; font-size: 12px; flex-shrink: 0; width: 16px; text-align: center; }
+  /* Team channel sidebar items (Slack style) */
+  .sb-channel-item { display: flex; align-items: center; gap: 6px; padding: 4px 16px; border-radius: 6px; cursor: pointer; font-size: 15px; color: var(--color-sidebar-text); transition: background 0.15s; margin: 0 8px; }
+  .sb-channel-item:hover { background: var(--color-sidebar-hover); }
+  .sb-channel-item.active { background: var(--color-sidebar-selected); color: var(--color-sidebar-active); font-weight: 700; }
+  .sb-channel-item.unread { color: var(--color-sidebar-active); font-weight: 700; }
+  .sb-channel-icon { opacity: 0.7; font-size: 14px; flex-shrink: 0; width: 18px; text-align: center; }
   .sb-channel-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sb-unread-badge { min-width: 18px; height: 18px; border-radius: 9px; background: var(--color-accent); color: #fff; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding: 0 5px; flex-shrink: 0; }
-  .sb-mention-badge { background: #f87171; }
-  .sb-presence-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .sb-presence-dot.online { background: #4ade80; }
-  .sb-presence-dot.away { background: #facc15; }
+  .sb-unread-badge { min-width: 18px; height: 18px; border-radius: 9px; background: var(--color-error, #e01e5a); color: #fff; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding: 0 5px; flex-shrink: 0; }
+  .sb-mention-badge { background: var(--color-error, #e01e5a); }
+  .sb-presence-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .sb-presence-dot.online { background: var(--color-success, #2eb67d); }
+  .sb-presence-dot.away { background: transparent; border: 2px solid var(--color-sidebar-text); }
   .sb-presence-dot.dnd { background: #f87171; }
   .sb-presence-dot.offline { background: #6b7280; }
 
   /* Team message styles */
   .team-msg { display: flex; gap: 10px; padding: 4px 0; }
   .team-msg:hover { background: var(--color-surface-light); border-radius: 6px; }
-  .team-msg-avatar { width: 36px; height: 36px; border-radius: 8px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: var(--color-surface-light); font-size: 16px; }
+  .team-msg-avatar { width: 36px; height: 36px; border-radius: 4px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: var(--color-surface-light); font-size: 16px; }
   .team-msg-body { flex: 1; min-width: 0; }
   .team-msg-header { display: flex; align-items: baseline; gap: 6px; }
-  .team-msg-sender { font-weight: 600; font-size: 13px; color: var(--color-text-primary); }
-  .team-msg-time { font-size: 10px; color: var(--color-text-muted); }
-  .team-msg-content { font-size: 13.5px; line-height: 1.5; color: var(--color-text-secondary); margin-top: 2px; word-wrap: break-word; }
+  .team-msg-sender { font-weight: 700; font-size: 15px; color: var(--color-text-primary); }
+  .team-msg-time { font-size: 12px; color: var(--color-text-muted); }
+  .team-msg-content { font-size: 15px; line-height: 1.46; color: var(--color-text-primary); margin-top: 2px; word-wrap: break-word; }
   .team-msg-actions { display: none; position: absolute; right: 4px; top: -12px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 6px; padding: 2px; gap: 2px; }
   .team-msg:hover .team-msg-actions { display: flex; }
   .team-msg-action-btn { padding: 3px 6px; border: none; background: none; cursor: pointer; font-size: 12px; border-radius: 4px; color: var(--color-text-muted); }
   .team-msg-action-btn:hover { background: var(--color-surface-light); color: var(--color-text-primary); }
   .team-msg-reactions { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
-  .team-msg-reaction { display: flex; align-items: center; gap: 3px; padding: 2px 6px; border-radius: 12px; font-size: 11px; border: 1px solid var(--color-border); cursor: pointer; background: var(--color-surface-light); }
-  .team-msg-reaction:hover { border-color: var(--color-accent); }
-  .team-msg-reaction.mine { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+  .team-msg-reaction { display: flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 16px; font-size: 12px; border: 1px solid var(--color-border); cursor: pointer; background: var(--color-surface-light); height: 26px; }
+  .team-msg-reaction:hover { border-color: var(--color-accent); background: var(--color-surface-lighter); }
+  .team-msg-reaction.mine { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
   .team-msg-thread-link { font-size: 11px; color: var(--color-accent); cursor: pointer; margin-top: 4px; }
   .team-msg-thread-link:hover { text-decoration: underline; }
 
@@ -2133,16 +2152,16 @@ tailwind.config = {
   #note-toolbar { display: flex; align-items: center; gap: 4px; padding: 6px 12px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); flex-shrink: 0; }
   .note-tool-btn { padding: 4px 8px; border-radius: 4px; border: 1px solid transparent; background: none; color: var(--color-text-secondary); cursor: pointer; font-size: 12px; font-family: 'IBM Plex Mono', monospace; }
   .note-tool-btn:hover { background: var(--color-surface-lighter); border-color: var(--color-border); }
-  .note-back-btn { padding: 4px 8px; border-radius: 4px; border: 1px solid var(--color-border); background: var(--color-surface-light); color: var(--color-text-secondary); cursor: pointer; font-size: 11px; font-family: 'Outfit', sans-serif; margin-right: 8px; }
+  .note-back-btn { padding: 4px 8px; border-radius: 4px; border: 1px solid var(--color-border); background: var(--color-surface-light); color: var(--color-text-secondary); cursor: pointer; font-size: 11px; font-family: 'Lato', sans-serif; margin-right: 8px; }
   .note-back-btn:hover { color: var(--color-accent); border-color: var(--color-accent); }
-  .note-title-display { font-family: 'Outfit', sans-serif; font-size: 13px; font-weight: 600; color: var(--color-text-primary); margin-right: auto; }
+  .note-title-display { font-family: 'Lato', sans-serif; font-size: 13px; font-weight: 600; color: var(--color-text-primary); margin-right: auto; }
   .note-save-status { margin-left: auto; font-size: 10px; color: var(--color-text-muted); font-family: 'IBM Plex Mono', monospace; }
   #note-editor-textarea { flex: 1; resize: none; border: none; outline: none; padding: 20px 24px; font-family: 'IBM Plex Mono', monospace; font-size: 14px; line-height: 1.6; color: var(--color-text-primary); background: var(--color-base); width: 100%; }
 
   /* Note AI Sidebar */
   /* Note AI panel — bottom of editor, collapsible, chat-style */
   #note-ai-panel { border-top: 1px solid var(--color-border); background: var(--color-surface); flex-shrink: 0; }
-  #note-ai-toggle { display: flex; align-items: center; gap: 6px; padding: 8px 12px; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--color-text-secondary); font-family: 'Outfit', sans-serif; user-select: none; transition: color 0.15s; }
+  #note-ai-toggle { display: flex; align-items: center; gap: 6px; padding: 8px 12px; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--color-text-secondary); font-family: 'Lato', sans-serif; user-select: none; transition: color 0.15s; }
   #note-ai-toggle:hover { color: var(--color-text-primary); }
   #note-ai-body { max-height: 300px; display: flex; flex-direction: column; }
   #note-ai-messages { flex: 1; overflow-y: auto; padding: 12px 16px; max-height: 220px; }
@@ -2151,7 +2170,7 @@ tailwind.config = {
   .note-ai-msg.user { background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-text-primary); margin-left: auto; border-bottom-right-radius: 4px; }
   .note-ai-msg.assistant { background: var(--color-surface-light); color: var(--color-text-secondary); margin-right: auto; border-bottom-left-radius: 4px; }
   #note-ai-input-area { display: flex; align-items: flex-end; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--color-border); }
-  #note-ai-input { flex: 1; resize: none; border: 1px solid var(--color-border); border-radius: 12px; padding: 8px 14px; font-size: 13px; background: var(--color-surface-light); color: var(--color-text-primary); font-family: 'IBM Plex Sans', sans-serif; outline: none; max-height: 80px; }
+  #note-ai-input { flex: 1; resize: none; border: 1px solid var(--color-border); border-radius: 12px; padding: 8px 14px; font-size: 13px; background: var(--color-surface-light); color: var(--color-text-primary); font-family: 'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; outline: none; max-height: 80px; }
   #note-ai-input:focus { border-color: var(--color-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 15%, transparent); }
   .note-ai-send-btn { padding: 8px 10px; border-radius: 10px; border: none; background: var(--color-accent); color: var(--color-base); cursor: pointer; display: flex; align-items: center; flex-shrink: 0; }
   .note-ai-send-btn:hover { opacity: 0.85; }
@@ -2202,7 +2221,7 @@ tailwind.config = {
         <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-accent to-orange-400 flex items-center justify-center flex-shrink-0">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0f0f1a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a8 8 0 0 0-8 8c0 3 1.5 5 3 6.5V20h10v-3.5c1.5-1.5 3-3.5 3-6.5a8 8 0 0 0-8-8z"/><path d="M10 20v2h4v-2"/><path d="M9 10h.01M15 10h.01"/></svg>
         </div>
-        <span class="sidebar-brand-text font-display text-sm font-semibold text-text-primary tracking-tight" style="white-space:nowrap">Brain Agent</span>
+        <span class="sidebar-brand-text font-display text-sm font-semibold tracking-tight" style="white-space:nowrap;color:var(--color-sidebar-active)">Brain Agent</span>
         <span class="sidebar-conn flex items-center gap-1.5 ml-auto" style="flex-shrink:0">
           <span id="conn-dot" class="w-2 h-2 rounded-full bg-error breathing-dot"></span>
           <span id="conn-label" class="text-text-secondary font-body text-[10px] cursor-pointer hover:text-accent transition-colors" title="About / Changelog" onclick="showAboutModal()">Disconnected</span>
@@ -4500,7 +4519,7 @@ function renderTeamMessages() {
     const d = new Date((m.created_at || 0) * 1000);
     const dateStr = d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
     if (dateStr !== lastDate) {
-      html += `<div style="text-align:center;font-size:11px;color:var(--color-text-muted);padding:12px 0 4px;font-weight:600">${esc(dateStr)}</div>`;
+      html += `<div style="display:flex;align-items:center;gap:8px;padding:16px 0 8px"><hr style="flex:1;border:none;border-top:1px solid var(--color-border)"><span style="font-size:12px;font-weight:700;color:var(--color-text-muted);white-space:nowrap">${esc(dateStr)}</span><hr style="flex:1;border:none;border-top:1px solid var(--color-border)"></div>`;
       lastDate = dateStr;
     }
     html += renderTeamMessage(m);
