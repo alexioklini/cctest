@@ -5232,6 +5232,15 @@ window.toggleShowArchived = async function() {
 
 // ─── Update Chat Area ───────────────────────────────────────
 function updateChatArea() {
+  // If a team channel is active, keep chat area visible
+  if (state.activeChannelId) {
+    dom.chatTopBar.style.display = '';
+    dom.chatInputArea.style.display = '';
+    dom.sessionBar.style.display = 'none';
+    if (dom.projectContextBar) dom.projectContextBar.style.display = 'none';
+    renderTeamMessages();
+    return;
+  }
   const chat = state.activeChat;
   if (!chat) {
     // No agent selected — on mobile, keep top bar visible for hamburger menu
