@@ -28,8 +28,8 @@ tailwind.config = {
         'text-muted': 'var(--color-text-muted)',
       },
       fontFamily: {
-        display: ['Lato', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
-        body: ['Lato', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+        display: ['Outfit', 'sans-serif'],
+        body: ['IBM Plex Sans', 'sans-serif'],
         mono: ['IBM Plex Mono', 'monospace'],
       }
     }
@@ -37,92 +37,76 @@ tailwind.config = {
 }
 </script>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Lato:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap');
 
   /* ── Light theme (default) ── */
   :root, [data-theme="light"] {
     --color-base: #ffffff;
-    --color-surface: #ffffff;
-    --color-surface-light: #f8f8f8;
-    --color-surface-lighter: #f0f0f0;
-    --color-border: #e0e0e0;
-    --color-text-primary: #1d1c1d;
-    --color-text-secondary: #616061;
-    --color-text-muted: #868686;
-    --color-accent: #1264a3;
-    --color-agent: #1264a3;
-    --color-model: #1264a3;
-    --color-code-bg: #f4f4f4;
-    --color-code-text: #1d1c1d;
-    --color-user-border: rgba(18,100,163,0.3);
-    --color-user-shadow: rgba(18,100,163,0.04);
-    --color-assistant-border: rgba(18,100,163,0.25);
-    --color-inline-code-bg: #f0f0f0;
-    --color-tool-bg: rgba(248,248,248,0.8);
-    --color-tool-hover-bg: rgba(240,240,240,0.8);
+    --color-surface: #f8f9fa;
+    --color-surface-light: #f0f1f3;
+    --color-surface-lighter: #e8e9ec;
+    --color-border: #e0e0e6;
+    --color-text-primary: #1a1a2e;
+    --color-text-secondary: #666680;
+    --color-text-muted: #9999aa;
+    --color-accent: #ff7b00;
+    --color-agent: #7c3aed;
+    --color-model: #2563eb;
+    --color-code-bg: #f5f5f8;
+    --color-code-text: #1a1a2e;
+    --color-user-border: rgba(255,123,0,0.4);
+    --color-user-shadow: rgba(255,123,0,0.06);
+    --color-assistant-border: rgba(124,58,237,0.35);
+    --color-inline-code-bg: #eeeef3;
+    --color-tool-bg: rgba(240,241,243,0.7);
+    --color-tool-hover-bg: rgba(232,233,236,0.6);
     --color-modal-bg: #ffffff;
-    --color-modal-overlay: rgba(0,0,0,0.4);
+    --color-modal-overlay: rgba(0,0,0,0.3);
     --color-toast-bg: rgba(255,255,255,0.95);
-    --color-header-gradient-1: transparent;
-    --color-header-gradient-2: transparent;
-    --color-header-gradient-3: transparent;
-    --color-input-shadow: rgba(0,0,0,0.06);
-    --color-scrollbar: #d0d0d4;
-    --color-scrollbar-hover: #b0b0b4;
-    --noise-opacity: 0;
-    --color-sidebar-bg: #4a154b;
-    --color-sidebar-text: #cfc3cf;
-    --color-sidebar-active: #ffffff;
-    --color-sidebar-hover: rgba(255,255,255,0.06);
-    --color-sidebar-selected: #1164a3;
-    --color-success: #2eb67d;
-    --color-error: #e01e5a;
-    --color-warning: #ecb22e;
+    --color-header-gradient-1: rgba(124,58,237,0.04);
+    --color-header-gradient-2: rgba(255,123,0,0.03);
+    --color-header-gradient-3: rgba(37,99,235,0.02);
+    --color-input-shadow: rgba(0,0,0,0.08);
+    --color-scrollbar: #d0d0d8;
+    --color-scrollbar-hover: #b0b0bc;
+    --noise-opacity: 0.015;
   }
 
   /* ── Dark theme ── */
   [data-theme="dark"] {
-    --color-base: #1a1d21;
-    --color-surface: #1a1d21;
-    --color-surface-light: #222529;
-    --color-surface-lighter: #2c2d31;
-    --color-border: #383a3e;
-    --color-text-primary: #d1d2d3;
-    --color-text-secondary: #ababad;
-    --color-text-muted: #7a7b7d;
-    --color-accent: #1d9bd1;
-    --color-agent: #1d9bd1;
-    --color-model: #1d9bd1;
-    --color-code-bg: #222529;
-    --color-code-text: #d1d2d3;
-    --color-user-border: rgba(29,155,209,0.3);
-    --color-user-shadow: rgba(29,155,209,0.04);
-    --color-assistant-border: rgba(29,155,209,0.25);
-    --color-inline-code-bg: #2c2d31;
-    --color-tool-bg: rgba(34,37,41,0.8);
-    --color-tool-hover-bg: rgba(44,45,49,0.8);
-    --color-modal-bg: #222529;
+    --color-base: #0f0f1a;
+    --color-surface: #16162a;
+    --color-surface-light: #1e1e38;
+    --color-surface-lighter: #282850;
+    --color-border: #2a2a45;
+    --color-text-primary: #e8e8f0;
+    --color-text-secondary: #8888aa;
+    --color-text-muted: #555570;
+    --color-accent: #ff7b00;
+    --color-agent: #b48eff;
+    --color-model: #64b5f6;
+    --color-code-bg: #16162a;
+    --color-code-text: #e8e8f0;
+    --color-user-border: rgba(255,123,0,0.5);
+    --color-user-shadow: rgba(255,123,0,0.06);
+    --color-assistant-border: rgba(180,142,255,0.4);
+    --color-inline-code-bg: #1e1e38;
+    --color-tool-bg: rgba(18,18,34,0.6);
+    --color-tool-hover-bg: rgba(30,30,56,0.4);
+    --color-modal-bg: #16162a;
     --color-modal-overlay: rgba(0,0,0,0.6);
-    --color-toast-bg: rgba(34,37,41,0.95);
-    --color-header-gradient-1: transparent;
-    --color-header-gradient-2: transparent;
-    --color-header-gradient-3: transparent;
-    --color-input-shadow: rgba(0,0,0,0.2);
-    --color-scrollbar: #383a3e;
-    --color-scrollbar-hover: #4a4c50;
-    --noise-opacity: 0;
-    --color-sidebar-bg: #4a154b;
-    --color-sidebar-text: #cfc3cf;
-    --color-sidebar-active: #ffffff;
-    --color-sidebar-hover: rgba(255,255,255,0.06);
-    --color-sidebar-selected: #1164a3;
-    --color-success: #2eb67d;
-    --color-error: #e01e5a;
-    --color-warning: #ecb22e;
+    --color-toast-bg: rgba(22,22,42,0.9);
+    --color-header-gradient-1: rgba(180,142,255,0.06);
+    --color-header-gradient-2: rgba(255,123,0,0.04);
+    --color-header-gradient-3: rgba(100,181,246,0.03);
+    --color-input-shadow: rgba(0,0,0,0.3);
+    --color-scrollbar: #2a2a45;
+    --color-scrollbar-hover: #3a3a5a;
+    --noise-opacity: 0.025;
   }
 
   * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; font-family: 'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: var(--color-text-primary); }
+  html, body { height: 100%; margin: 0; font-family: 'IBM Plex Sans', sans-serif; color: var(--color-text-primary); }
 
   /* Noise texture overlay */
   body::before {
@@ -145,7 +129,7 @@ tailwind.config = {
 
   /* Mono utility */
   .mono { font-family: 'IBM Plex Mono', monospace; }
-  .font-display { font-family: 'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .font-display { font-family: 'Outfit', sans-serif; }
 
   /* Animations */
   .fade-in { animation: fadeIn 0.25s ease-out; }
@@ -180,7 +164,7 @@ tailwind.config = {
     gap: 10px;
   }
   .thinking-indicator .thinking-label {
-    font-family: 'Lato', sans-serif;
+    font-family: 'Outfit', sans-serif;
     font-size: 13px;
     font-weight: 600;
     color: var(--accent);
@@ -235,7 +219,7 @@ tailwind.config = {
   .msg-content p { margin: 0.4em 0; line-height: 1.7; }
   .msg-content ul, .msg-content ol { margin: 0.5em 0; padding-left: 1.5em; }
   .msg-content li { margin: 0.25em 0; }
-  .msg-content h1, .msg-content h2, .msg-content h3 { margin: 0.8em 0 0.4em; font-weight: 600; font-family: 'Lato', sans-serif; color: var(--color-text-primary); }
+  .msg-content h1, .msg-content h2, .msg-content h3 { margin: 0.8em 0 0.4em; font-weight: 600; font-family: 'Outfit', sans-serif; color: var(--color-text-primary); }
   .msg-content h1 { font-size: 1.3em; }
   .msg-content h2 { font-size: 1.15em; }
   .msg-content h3 { font-size: 1.05em; }
@@ -363,17 +347,16 @@ tailwind.config = {
     text-align: center;
   }
 
-  /* Buttons (Slack style) */
+  /* Buttons */
   .btn-primary {
-    background: #007a5a;
+    background: linear-gradient(135deg, #ff7b00, #ff9a3d);
     color: #ffffff;
-    font-weight: 700;
-    transition: all 0.15s ease;
-    box-shadow: none;
-    border-radius: 4px;
+    font-weight: 600;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(255,123,0,0.15);
   }
-  .btn-primary:hover { background: #006549; }
-  .btn-primary:active { background: #005540; }
+  .btn-primary:hover { box-shadow: 0 4px 16px rgba(255,123,0,0.3); transform: translateY(-1px); }
+  .btn-primary:active { transform: translateY(0); }
   .btn-secondary {
     background: var(--color-surface-light);
     color: var(--color-text-secondary);
@@ -461,17 +444,17 @@ tailwind.config = {
   }
   .session-bar-toggle:hover { color: var(--color-text-primary); }
 
-  /* Chat input area (Slack style) */
+  /* Chat input area */
   .chat-input-wrapper {
     background: var(--color-base);
-    border: 2px solid var(--color-border);
-    border-radius: 8px;
-    box-shadow: none;
-    transition: border-color 0.15s ease;
+    border: 1px solid var(--color-border);
+    border-radius: 1rem;
+    box-shadow: 0 -4px 20px var(--color-input-shadow);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
   }
   .chat-input-wrapper:focus-within {
     border-color: var(--color-accent);
-    box-shadow: none;
+    box-shadow: 0 -4px 24px rgba(255,123,0,0.08);
   }
 
   /* Slash command popup */
@@ -570,7 +553,7 @@ tailwind.config = {
 
   /* Section header */
   .section-header {
-    font-family: 'Lato', sans-serif;
+    font-family: 'Outfit', sans-serif;
     font-size: 0.65rem;
     font-weight: 600;
     text-transform: uppercase;
@@ -848,7 +831,7 @@ tailwind.config = {
     text-align: left;
     padding: 6px 16px;
     font-size: 13px;
-    font-family: 'Lato', sans-serif;
+    font-family: 'Outfit', sans-serif;
     color: var(--color-text-secondary);
     background: none;
     border: none;
@@ -935,7 +918,7 @@ tailwind.config = {
     flex-shrink: 0;
   }
   #activity-panel .ap-title {
-    font-family: 'Lato', sans-serif;
+    font-family: 'Outfit', sans-serif;
     font-weight: 600;
     font-size: 13px;
     color: var(--color-text-primary);
@@ -1097,19 +1080,18 @@ tailwind.config = {
 
   /* Toggle button active state */
   #btn-activity-toggle.active {
-    color: var(--color-sidebar-active);
-    background: rgba(255,255,255,0.1);
+    color: var(--color-accent);
+    background: rgba(255,123,0,0.08);
   }
 
-  /* ── Sidebar (Slack aubergine) ── */
+  /* ── Sidebar ── */
   #sidebar {
-    width: 260px;
+    width: 240px;
     min-width: 52px;
-    max-width: 400px;
+    max-width: 500px;
     height: 100vh;
-    height: 100dvh;
-    background: var(--color-sidebar-bg);
-    border-right: none;
+    background: var(--color-surface);
+    border-right: 1px solid var(--color-border);
     display: flex;
     flex-direction: column;
     overflow-y: auto;
@@ -1230,7 +1212,7 @@ tailwind.config = {
     overflow: hidden;
   }
   .sb-agent-item .sb-agent-name {
-    font-family: 'Lato', sans-serif;
+    font-family: 'Outfit', sans-serif;
     font-size: 12px;
     font-weight: 600;
     color: var(--color-text-primary);
@@ -1436,7 +1418,7 @@ tailwind.config = {
   /* Sidebar divider */
   .sb-divider {
     height: 1px;
-    background: rgba(255,255,255,0.1);
+    background: var(--color-border);
     margin: 4px 12px;
   }
   #sidebar.collapsed .sb-divider {
@@ -1456,7 +1438,7 @@ tailwind.config = {
     color: var(--color-accent);
     font-size: 11px;
     font-weight: 600;
-    font-family: 'Lato', sans-serif;
+    font-family: 'Outfit', sans-serif;
     cursor: pointer;
     transition: all 0.15s;
     width: calc(100% - 16px);
@@ -1544,17 +1526,17 @@ tailwind.config = {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 16px 4px;
-    font-size: 12px;
+    padding: 6px 12px;
+    font-size: 9px;
     font-weight: 700;
-    text-transform: none;
-    letter-spacing: 0;
-    color: var(--color-sidebar-text);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--color-text-muted);
     cursor: pointer;
     user-select: none;
-    font-family: inherit;
+    font-family: 'IBM Plex Mono', monospace;
   }
-  .sb-section-header:hover { color: var(--color-sidebar-active); }
+  .sb-section-header:hover { color: var(--color-text-secondary); }
   .sb-section-header .sb-section-left {
     display: flex;
     align-items: center;
@@ -1563,17 +1545,15 @@ tailwind.config = {
   .sb-section-header .sb-section-add {
     background: none;
     border: none;
-    color: var(--color-sidebar-text);
+    color: var(--color-text-muted);
     cursor: pointer;
-    font-size: 16px;
-    padding: 2px 6px;
+    font-size: 14px;
+    padding: 0 2px;
     line-height: 1;
-    border-radius: 4px;
-    transition: all 0.15s;
+    transition: color 0.15s;
   }
   .sb-section-header .sb-section-add:hover {
-    color: var(--color-sidebar-active);
-    background: rgba(255,255,255,0.1);
+    color: var(--color-accent);
   }
   .sb-section-content {
     max-height: 2000px;
@@ -1667,7 +1647,7 @@ tailwind.config = {
   .sb-project-context-bar .project-ctx-name {
     font-weight: 600;
     color: var(--color-text-primary);
-    font-family: 'Lato', sans-serif;
+    font-family: 'Outfit', sans-serif;
   }
   .sb-project-context-bar .project-ctx-desc {
     flex: 1;
@@ -1723,13 +1703,13 @@ tailwind.config = {
     align-items: center;
     gap: 2px;
     padding: 6px 8px;
-    border-top: 1px solid rgba(255,255,255,0.1);
+    border-top: 1px solid var(--color-border);
     flex-shrink: 0;
   }
   .sb-footer button {
     background: none;
     border: none;
-    color: var(--color-sidebar-text);
+    color: var(--color-text-muted);
     cursor: pointer;
     padding: 5px;
     border-radius: 6px;
@@ -1882,7 +1862,7 @@ tailwind.config = {
     flex-shrink: 0;
   }
   .kg-header h2 {
-    font-family: 'Lato', sans-serif;
+    font-family: 'Outfit', sans-serif;
     font-size: 16px;
     font-weight: 600;
     color: var(--color-text-primary);
@@ -1905,7 +1885,7 @@ tailwind.config = {
     padding: 3px 10px;
     border-radius: 12px;
     font-size: 11px;
-    font-family: 'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: 'IBM Plex Sans', sans-serif;
     cursor: pointer;
     border: 1px solid var(--color-border);
     background: var(--color-surface-light);
@@ -2000,7 +1980,7 @@ tailwind.config = {
   }
   .kg-detail.visible { display: block; }
   .kg-detail h3 {
-    font-family: 'Lato', sans-serif;
+    font-family: 'Outfit', sans-serif;
     font-size: 14px;
     font-weight: 600;
     color: var(--color-text-primary);
@@ -2041,7 +2021,7 @@ tailwind.config = {
     height: 100%;
     font-size: 14px;
     color: var(--color-text-muted);
-    font-family: 'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: 'IBM Plex Sans', sans-serif;
   }
 
   /* ── Project Panel (right sidebar) ── */
@@ -2082,7 +2062,7 @@ tailwind.config = {
   .pp-item-delete:hover { color: var(--color-error, #ef4444); }
   .pp-note-item:hover .pp-item-delete, .pp-doc-item:hover .pp-item-delete { display: inline; }
   .pp-info-block { padding: 8px 12px; }
-  .pp-info-name { font-family: 'Lato', sans-serif; font-weight: 600; font-size: 14px; color: var(--color-text-primary); display: flex; align-items: center; gap: 6px; }
+  .pp-info-name { font-family: 'Outfit', sans-serif; font-weight: 600; font-size: 14px; color: var(--color-text-primary); display: flex; align-items: center; gap: 6px; }
   .pp-info-desc { font-size: 11px; color: var(--color-text-muted); margin-top: 4px; }
   .pp-info-actions { display: flex; gap: 6px; margin-top: 8px; }
   .pp-info-btn { font-size: 10px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-surface-light); color: var(--color-text-secondary); cursor: pointer; }
@@ -2104,41 +2084,6 @@ tailwind.config = {
   .sb-attach-item a { color: var(--color-accent); text-decoration: none; font-size: 10px; }
   .sb-attach-item a:hover { text-decoration: underline; }
 
-  /* Team channel sidebar items (Slack style) */
-  .sb-channel-item { display: flex; align-items: center; gap: 6px; padding: 4px 16px; border-radius: 6px; cursor: pointer; font-size: 15px; color: var(--color-sidebar-text); transition: background 0.15s; margin: 0 8px; }
-  .sb-channel-item:hover { background: var(--color-sidebar-hover); }
-  .sb-channel-item.active { background: var(--color-sidebar-selected); color: var(--color-sidebar-active); font-weight: 700; }
-  .sb-channel-item.unread { color: var(--color-sidebar-active); font-weight: 700; }
-  .sb-channel-icon { opacity: 0.7; font-size: 14px; flex-shrink: 0; width: 18px; text-align: center; }
-  .sb-channel-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sb-unread-badge { min-width: 18px; height: 18px; border-radius: 9px; background: var(--color-error, #e01e5a); color: #fff; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding: 0 5px; flex-shrink: 0; }
-  .sb-mention-badge { background: var(--color-error, #e01e5a); }
-  .sb-presence-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-  .sb-presence-dot.online { background: var(--color-success, #2eb67d); }
-  .sb-presence-dot.away { background: transparent; border: 2px solid var(--color-sidebar-text); }
-  .sb-presence-dot.dnd { background: #f87171; }
-  .sb-presence-dot.offline { background: #6b7280; }
-
-  /* Team message styles */
-  .team-msg { display: flex; gap: 10px; padding: 4px 0; }
-  .team-msg:hover { background: var(--color-surface-light); border-radius: 6px; }
-  .team-msg-avatar { width: 36px; height: 36px; border-radius: 4px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: var(--color-surface-light); font-size: 16px; }
-  .team-msg-body { flex: 1; min-width: 0; }
-  .team-msg-header { display: flex; align-items: baseline; gap: 6px; }
-  .team-msg-sender { font-weight: 700; font-size: 15px; color: var(--color-text-primary); }
-  .team-msg-time { font-size: 12px; color: var(--color-text-muted); }
-  .team-msg-content { font-size: 15px; line-height: 1.46; color: var(--color-text-primary); margin-top: 2px; word-wrap: break-word; }
-  .team-msg-actions { display: none; position: absolute; right: 4px; top: -12px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 6px; padding: 2px; gap: 2px; }
-  .team-msg:hover .team-msg-actions { display: flex; }
-  .team-msg-action-btn { padding: 3px 6px; border: none; background: none; cursor: pointer; font-size: 12px; border-radius: 4px; color: var(--color-text-muted); }
-  .team-msg-action-btn:hover { background: var(--color-surface-light); color: var(--color-text-primary); }
-  .team-msg-reactions { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
-  .team-msg-reaction { display: flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 16px; font-size: 12px; border: 1px solid var(--color-border); cursor: pointer; background: var(--color-surface-light); height: 26px; }
-  .team-msg-reaction:hover { border-color: var(--color-accent); background: var(--color-surface-lighter); }
-  .team-msg-reaction.mine { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
-  .team-msg-thread-link { font-size: 11px; color: var(--color-accent); cursor: pointer; margin-top: 4px; }
-  .team-msg-thread-link:hover { text-decoration: underline; }
-
   /* Sidebar project selector button */
   .sb-project-selector-btn { display: flex; align-items: center; gap: 6px; padding: 5px 12px; cursor: pointer; color: var(--color-text-muted); font-size: 11px; transition: all 0.15s; border-radius: 4px; margin: 2px 6px; }
   .sb-project-selector-btn:hover { color: var(--color-accent); background: var(--color-surface-light); }
@@ -2152,16 +2097,16 @@ tailwind.config = {
   #note-toolbar { display: flex; align-items: center; gap: 4px; padding: 6px 12px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); flex-shrink: 0; }
   .note-tool-btn { padding: 4px 8px; border-radius: 4px; border: 1px solid transparent; background: none; color: var(--color-text-secondary); cursor: pointer; font-size: 12px; font-family: 'IBM Plex Mono', monospace; }
   .note-tool-btn:hover { background: var(--color-surface-lighter); border-color: var(--color-border); }
-  .note-back-btn { padding: 4px 8px; border-radius: 4px; border: 1px solid var(--color-border); background: var(--color-surface-light); color: var(--color-text-secondary); cursor: pointer; font-size: 11px; font-family: 'Lato', sans-serif; margin-right: 8px; }
+  .note-back-btn { padding: 4px 8px; border-radius: 4px; border: 1px solid var(--color-border); background: var(--color-surface-light); color: var(--color-text-secondary); cursor: pointer; font-size: 11px; font-family: 'Outfit', sans-serif; margin-right: 8px; }
   .note-back-btn:hover { color: var(--color-accent); border-color: var(--color-accent); }
-  .note-title-display { font-family: 'Lato', sans-serif; font-size: 13px; font-weight: 600; color: var(--color-text-primary); margin-right: auto; }
+  .note-title-display { font-family: 'Outfit', sans-serif; font-size: 13px; font-weight: 600; color: var(--color-text-primary); margin-right: auto; }
   .note-save-status { margin-left: auto; font-size: 10px; color: var(--color-text-muted); font-family: 'IBM Plex Mono', monospace; }
   #note-editor-textarea { flex: 1; resize: none; border: none; outline: none; padding: 20px 24px; font-family: 'IBM Plex Mono', monospace; font-size: 14px; line-height: 1.6; color: var(--color-text-primary); background: var(--color-base); width: 100%; }
 
   /* Note AI Sidebar */
   /* Note AI panel — bottom of editor, collapsible, chat-style */
   #note-ai-panel { border-top: 1px solid var(--color-border); background: var(--color-surface); flex-shrink: 0; }
-  #note-ai-toggle { display: flex; align-items: center; gap: 6px; padding: 8px 12px; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--color-text-secondary); font-family: 'Lato', sans-serif; user-select: none; transition: color 0.15s; }
+  #note-ai-toggle { display: flex; align-items: center; gap: 6px; padding: 8px 12px; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--color-text-secondary); font-family: 'Outfit', sans-serif; user-select: none; transition: color 0.15s; }
   #note-ai-toggle:hover { color: var(--color-text-primary); }
   #note-ai-body { max-height: 300px; display: flex; flex-direction: column; }
   #note-ai-messages { flex: 1; overflow-y: auto; padding: 12px 16px; max-height: 220px; }
@@ -2170,7 +2115,7 @@ tailwind.config = {
   .note-ai-msg.user { background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-text-primary); margin-left: auto; border-bottom-right-radius: 4px; }
   .note-ai-msg.assistant { background: var(--color-surface-light); color: var(--color-text-secondary); margin-right: auto; border-bottom-left-radius: 4px; }
   #note-ai-input-area { display: flex; align-items: flex-end; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--color-border); }
-  #note-ai-input { flex: 1; resize: none; border: 1px solid var(--color-border); border-radius: 12px; padding: 8px 14px; font-size: 13px; background: var(--color-surface-light); color: var(--color-text-primary); font-family: 'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; outline: none; max-height: 80px; }
+  #note-ai-input { flex: 1; resize: none; border: 1px solid var(--color-border); border-radius: 12px; padding: 8px 14px; font-size: 13px; background: var(--color-surface-light); color: var(--color-text-primary); font-family: 'IBM Plex Sans', sans-serif; outline: none; max-height: 80px; }
   #note-ai-input:focus { border-color: var(--color-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 15%, transparent); }
   .note-ai-send-btn { padding: 8px 10px; border-radius: 10px; border: none; background: var(--color-accent); color: var(--color-base); cursor: pointer; display: flex; align-items: center; flex-shrink: 0; }
   .note-ai-send-btn:hover { opacity: 0.85; }
@@ -2221,7 +2166,7 @@ tailwind.config = {
         <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-accent to-orange-400 flex items-center justify-center flex-shrink-0">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0f0f1a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a8 8 0 0 0-8 8c0 3 1.5 5 3 6.5V20h10v-3.5c1.5-1.5 3-3.5 3-6.5a8 8 0 0 0-8-8z"/><path d="M10 20v2h4v-2"/><path d="M9 10h.01M15 10h.01"/></svg>
         </div>
-        <span class="sidebar-brand-text font-display text-sm font-semibold tracking-tight" style="white-space:nowrap;color:var(--color-sidebar-active)">Brain Agent</span>
+        <span class="sidebar-brand-text font-display text-sm font-semibold text-text-primary tracking-tight" style="white-space:nowrap">Brain Agent</span>
         <span class="sidebar-conn flex items-center gap-1.5 ml-auto" style="flex-shrink:0">
           <span id="conn-dot" class="w-2 h-2 rounded-full bg-error breathing-dot"></span>
           <span id="conn-label" class="text-text-secondary font-body text-[10px] cursor-pointer hover:text-accent transition-colors" title="About / Changelog" onclick="showAboutModal()">Disconnected</span>
@@ -2231,28 +2176,6 @@ tailwind.config = {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
     </div>
-
-    <!-- Team Channels section -->
-    <div class="sb-section" data-section="team-channels" id="sb-team-channels-section">
-      <div class="sb-section-header" onclick="toggleSidebarSection('team-channels')">
-        <span class="sb-section-left"><span class="sb-section-chevron">&#9660;</span> Channels</span>
-        <button class="sb-section-add" onclick="event.stopPropagation();showCreateChannelModal()" title="New Channel">+</button>
-      </div>
-      <div class="sb-section-content" id="sidebar-team-channels"></div>
-    </div>
-
-    <div class="sb-divider"></div>
-
-    <!-- Team DMs section -->
-    <div class="sb-section" data-section="team-dms" id="sb-team-dms-section">
-      <div class="sb-section-header" onclick="toggleSidebarSection('team-dms')">
-        <span class="sb-section-left"><span class="sb-section-chevron">&#9660;</span> Direct Messages</span>
-        <button class="sb-section-add" onclick="event.stopPropagation();showCreateDMModal()" title="New Message">+</button>
-      </div>
-      <div class="sb-section-content" id="sidebar-team-dms"></div>
-    </div>
-
-    <div class="sb-divider"></div>
 
     <div class="sb-section" data-section="agents" id="sb-agents-section">
       <div class="sb-section-header" onclick="toggleSidebarSection('agents')">
@@ -2305,15 +2228,9 @@ tailwind.config = {
         <button id="mobile-hamburger" onclick="openMobileSidebar()" title="Open sidebar">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
-        <!-- Agent header (shown for agent chats) -->
         <span id="chat-agent-name" class="text-agent font-display font-semibold text-sm flex items-center gap-2">
           <span class="w-2 h-2 rounded-full bg-agent breathing-dot"></span>
           <span></span>
-        </span>
-        <!-- Channel header (shown for team channels) -->
-        <span id="channel-header-info" class="hidden flex items-center gap-2">
-          <span id="channel-name" class="font-display font-semibold text-sm text-text-primary"></span>
-          <span id="channel-topic" class="text-xs text-text-muted truncate" style="max-width:300px"></span>
         </span>
         <div class="flex-1"></div>
         <select id="model-selector" class="bg-surface-light border border-border rounded-lg px-3 py-1.5 text-xs text-model mono focus:border-model transition-colors"></select>
@@ -2342,8 +2259,6 @@ tailwind.config = {
       <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-6">
         <div class="flex items-center justify-center h-full text-text-muted text-sm font-body">Select an agent to start chatting</div>
       </div>
-      <!-- Typing indicator -->
-      <div id="typing-indicator" class="hidden px-4 py-1 text-xs text-text-muted" style="max-width:800px;margin:0 auto"></div>
       <!-- Input area -->
       <div id="chat-input-area" class="flex-shrink-0 p-4 pt-2">
         <div class="max-w-[800px] mx-auto" style="position:relative">
@@ -2448,22 +2363,6 @@ tailwind.config = {
       </span>
       <span id="status-session" class="mono"></span>
     </footer>
-  </div>
-
-  <!-- THREAD PANEL (right sidebar for threads, collapsible) -->
-  <div id="thread-panel" style="width:0;min-width:0;overflow:hidden;border-left:none;background:var(--color-surface);display:flex;flex-direction:column;flex-shrink:0;transition:width 0.2s,min-width 0.2s,border 0.2s">
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--color-border);flex-shrink:0">
-      <span class="font-display font-semibold text-sm text-text-primary">Thread</span>
-      <button class="btn btn-sm" onclick="closeThreadPanel()" title="Close">&times;</button>
-    </div>
-    <div id="thread-parent-msg" style="padding:12px;border-bottom:1px solid var(--color-border);flex-shrink:0;max-height:200px;overflow-y:auto"></div>
-    <div id="thread-replies" style="flex:1;overflow-y:auto;padding:12px"></div>
-    <div style="padding:8px 12px;border-top:1px solid var(--color-border);flex-shrink:0">
-      <div style="display:flex;gap:6px;align-items:end">
-        <textarea id="thread-input" class="w-full" style="resize:none;background:var(--color-base);border:1px solid var(--color-border);border-radius:8px;padding:6px 10px;font-size:13px;color:var(--color-text-primary);min-height:36px;max-height:120px" rows="1" placeholder="Reply in thread..."></textarea>
-        <button class="btn btn-primary" style="padding:6px 12px;border-radius:8px;font-size:12px;white-space:nowrap" onclick="sendThreadReply()">Reply</button>
-      </div>
-    </div>
   </div>
 
   <!-- PROJECT PANEL (right sidebar, collapsible) -->
@@ -2658,16 +2557,8 @@ marked.setOptions({
 
 // ─── API Client ─────────────────────────────────────────────
 class API {
-  static _authHeaders(extra = {}) {
-    const h = { 'Content-Type': 'application/json', ...extra };
-    const token = localStorage.getItem('ba-auth-token');
-    if (token) h['Authorization'] = `Bearer ${token}`;
-    return h;
-  }
-
   static async get(path) {
-    const res = await fetch(`${BASE_URL}${path}`, { headers: API._authHeaders() });
-    if (res.status === 401) { _showLoginScreen(); throw new Error('Auth required'); }
+    const res = await fetch(`${BASE_URL}${path}`);
     if (!res.ok) throw new Error(`GET ${path}: ${res.status}`);
     return res.json();
   }
@@ -2675,17 +2566,15 @@ class API {
   static async post(path, body) {
     const res = await fetch(`${BASE_URL}${path}`, {
       method: 'POST',
-      headers: API._authHeaders(),
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (res.status === 401 && path !== '/v1/auth/login' && path !== '/v1/auth/register') { _showLoginScreen(); throw new Error('Auth required'); }
     if (!res.ok) throw new Error(`POST ${path}: ${res.status}`);
     return res.json();
   }
 
   static async del(path) {
-    const res = await fetch(`${BASE_URL}${path}`, { method: 'DELETE', headers: API._authHeaders() });
-    if (res.status === 401) { _showLoginScreen(); throw new Error('Auth required'); }
+    const res = await fetch(`${BASE_URL}${path}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`DELETE ${path}: ${res.status}`);
     return res.json();
   }
@@ -2693,10 +2582,9 @@ class API {
   static async put(path, body) {
     const res = await fetch(`${BASE_URL}${path}`, {
       method: 'PUT',
-      headers: API._authHeaders(),
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (res.status === 401) { _showLoginScreen(); throw new Error('Auth required'); }
     if (!res.ok) throw new Error(`PUT ${path}: ${res.status}`);
     return res.json();
   }
@@ -2725,7 +2613,7 @@ class API {
     }
     const res = await fetch(`${BASE_URL}/v1/chat`, {
       method: 'POST',
-      headers: API._authHeaders(),
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       signal: API._abortController.signal,
     });
@@ -2828,20 +2716,10 @@ let editingProvider = null; // tracks provider name being edited, null = adding 
 class AppState {
   constructor() {
     this.connected = false;
-    this.currentUser = null;           // {id, username, display_name, avatar_url}
     this.agents = [];
     this.models = [];
     this.providers = [];
     this.serverInfo = null;
-    // Team channel state
-    this.teamChannels = [];            // [{id, name, channel_type, topic, ...}]
-    this.activeChannelId = null;       // current team channel
-    this.channelMessages = {};         // channel_id -> {messages: [], hasMore, loading}
-    this.activeThreadId = null;        // parent_id for open thread panel
-    this.threadMessages = {};          // parent_id -> {messages: [], loading}
-    this.typingUsers = {};             // channel_id -> {user_id: {name, ts}}
-    this.onlineUsers = {};             // user_id -> presence status
-    this.unreadCounts = {};            // channel_id -> {unread, mentions}
     // Active chat per agent: { agentId: { sessionId, agent, model, messages[], streaming, totalTokens } }
     this.agentChats = {};
     // Session history per agent: { agentId: { sessions: [], showArchived: false, loaded: false } }
@@ -2921,179 +2799,15 @@ const dom = {
   centerContent: $('#center-content'),
 };
 
-// ─── Auth / Login ───────────────────────────────────────────
-function _showLoginScreen(message) {
-  if (document.getElementById('login-overlay')) return;
-  const overlay = document.createElement('div');
-  overlay.id = 'login-overlay';
-  overlay.style.cssText = 'position:fixed;inset:0;z-index:999;background:var(--color-base);display:flex;align-items:center;justify-content:center;flex-direction:column';
-  const allowReg = state.serverInfo?.auth_registration !== false;
-  overlay.innerHTML = `
-    <div style="width:340px;padding:32px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,0.3)">
-      <h2 class="font-display font-bold text-xl text-text-primary mb-1 text-center">Brain Agent</h2>
-      <p class="text-xs text-text-muted text-center mb-6">Sign in to continue</p>
-      ${message ? `<div class="text-xs text-error mb-3 text-center">${esc(message)}</div>` : ''}
-      <div id="login-tab-bar" class="flex gap-2 mb-4">
-        <button id="tab-login" class="btn btn-sm btn-primary flex-1" onclick="_switchAuthTab('login')">Login</button>
-        ${allowReg ? `<button id="tab-register" class="btn btn-sm flex-1" onclick="_switchAuthTab('register')">Register</button>` : ''}
-      </div>
-      <form id="login-form" onsubmit="event.preventDefault();_doLogin()">
-        <input id="login-username" type="text" class="w-full px-3 py-2 mb-3 rounded-lg bg-base border border-border text-sm text-text-primary" placeholder="Username" autocomplete="username" autofocus>
-        <input id="login-password" type="password" class="w-full px-3 py-2 mb-3 rounded-lg bg-base border border-border text-sm text-text-primary" placeholder="Password" autocomplete="current-password">
-        <div id="login-display-name-row" class="hidden">
-          <input id="login-display-name" type="text" class="w-full px-3 py-2 mb-3 rounded-lg bg-base border border-border text-sm text-text-primary" placeholder="Display Name (optional)">
-        </div>
-        <div id="login-error" class="text-xs text-error mb-2 hidden"></div>
-        <button type="submit" id="login-submit" class="btn btn-primary w-full py-2 rounded-lg text-sm font-semibold">Sign In</button>
-      </form>
-    </div>`;
-  document.body.appendChild(overlay);
-  document.getElementById('app').style.display = 'none';
-}
-
-let _authMode = 'login';
-window._switchAuthTab = function(mode) {
-  _authMode = mode;
-  const tabLogin = document.getElementById('tab-login');
-  const tabReg = document.getElementById('tab-register');
-  const dnRow = document.getElementById('login-display-name-row');
-  const submit = document.getElementById('login-submit');
-  if (mode === 'register') {
-    tabLogin?.classList.remove('btn-primary'); tabReg?.classList.add('btn-primary');
-    dnRow?.classList.remove('hidden'); submit.textContent = 'Create Account';
-  } else {
-    tabLogin?.classList.add('btn-primary'); tabReg?.classList.remove('btn-primary');
-    dnRow?.classList.add('hidden'); submit.textContent = 'Sign In';
-  }
-};
-
-window._doLogin = async function() {
-  const username = document.getElementById('login-username')?.value?.trim();
-  const password = document.getElementById('login-password')?.value;
-  const displayName = document.getElementById('login-display-name')?.value?.trim();
-  const errEl = document.getElementById('login-error');
-  if (!username || !password) { errEl.textContent = 'Username and password required'; errEl.classList.remove('hidden'); return; }
-  try {
-    const endpoint = _authMode === 'register' ? '/v1/auth/register' : '/v1/auth/login';
-    const body = { username, password };
-    if (_authMode === 'register' && displayName) body.display_name = displayName;
-    const res = await fetch(`${BASE_URL}${endpoint}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-    });
-    const data = await res.json();
-    if (!res.ok) { errEl.textContent = data.error || 'Login failed'; errEl.classList.remove('hidden'); return; }
-    localStorage.setItem('ba-auth-token', data.token);
-    state.currentUser = data.user;
-    document.getElementById('login-overlay')?.remove();
-    document.getElementById('app').style.display = '';
-    loadInitialData();
-  } catch (e) {
-    errEl.textContent = e.message; errEl.classList.remove('hidden');
-  }
-};
-
-// ─── EventStream (Real-Time Push) ───────────────────────────
-class EventStream {
-  constructor() { this._source = null; this._handlers = {}; this._reconnectTimer = null; }
-
-  connect() {
-    if (this._source) this.disconnect();
-    const token = localStorage.getItem('ba-auth-token') || '';
-    const url = `${BASE_URL}/v1/events${token ? '?token=' + encodeURIComponent(token) : ''}`;
-    this._source = new EventSource(url);
-    this._source.onopen = () => { console.log('[EventStream] connected'); };
-    this._source.onerror = () => {
-      console.warn('[EventStream] error, reconnecting in 5s');
-      this.disconnect();
-      this._reconnectTimer = setTimeout(() => this.connect(), 5000);
-    };
-    for (const [type, fn] of Object.entries(this._handlers)) {
-      this._source.addEventListener(type, (e) => { try { fn(JSON.parse(e.data)); } catch {} });
-    }
-  }
-
-  on(type, handler) { this._handlers[type] = handler; return this; }
-
-  disconnect() {
-    if (this._source) { this._source.close(); this._source = null; }
-    if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
-  }
-}
-
-const eventStream = new EventStream();
-
-// Register EventBus handlers
-eventStream
-  .on('connected', (d) => { console.log('[EventStream] session:', d.user_id); })
-  .on('message', (d) => {
-    // New message in a team channel
-    if (d.channel_id && state.channelMessages?.[d.channel_id]) {
-      state.channelMessages[d.channel_id].messages.push(d.message);
-      if (d.channel_id === state.activeChannelId) renderTeamMessages();
-    }
-  })
-  .on('typing', (d) => {
-    if (!state.typingUsers) state.typingUsers = {};
-    const ch = state.typingUsers[d.channel_id] || {};
-    ch[d.user_id] = { name: d.user_name, ts: Date.now() };
-    state.typingUsers[d.channel_id] = ch;
-    _updateTypingIndicator();
-  })
-  .on('presence', (d) => {
-    if (!state.onlineUsers) state.onlineUsers = {};
-    state.onlineUsers[d.user_id] = d.status;
-  })
-  .on('reaction_add', (d) => { _handleReactionEvent(d, 'add'); })
-  .on('reaction_remove', (d) => { _handleReactionEvent(d, 'remove'); })
-  .on('unread_update', (d) => {
-    if (!state.unreadCounts) state.unreadCounts = {};
-    state.unreadCounts[d.channel_id] = { unread: d.unread || 0, mentions: d.mentions || 0 };
-    _updateUnreadBadges();
-  });
-
-function _updateTypingIndicator() {
-  const el = document.getElementById('typing-indicator');
-  if (!el || !state.activeChannelId) return;
-  const typers = state.typingUsers?.[state.activeChannelId] || {};
-  const now = Date.now();
-  const active = Object.entries(typers).filter(([, v]) => now - v.ts < 5000).map(([, v]) => v.name);
-  if (active.length === 0) { el.classList.add('hidden'); return; }
-  el.classList.remove('hidden');
-  el.textContent = active.length === 1 ? `${active[0]} is typing...` :
-    active.length <= 3 ? `${active.join(', ')} are typing...` : 'Several people are typing...';
-}
-
-function _handleReactionEvent(d, action) {
-  // Will be wired up when channel message rendering is complete
-}
-
-function _updateUnreadBadges() {
-  // Will be wired up when channel sidebar rendering is complete
-}
-
 // ─── Connection ─────────────────────────────────────────────
 async function checkConnection() {
   try {
-    // Status endpoint is always public — check auth_enabled before proceeding
-    const statusRes = await fetch(`${BASE_URL}/v1/status`);
-    const info = await statusRes.json();
+    const info = await API.getStatus();
     state.connected = true;
     state.serverInfo = info;
     dom.connDot.className = 'w-2 h-2 rounded-full bg-success breathing-dot';
     dom.connLabel.textContent = `v${info.version || '?'}`;
     dom.serverUrl.textContent = BASE_URL;
-    // If auth enabled, verify token or show login
-    if (info.auth_enabled) {
-      const token = localStorage.getItem('ba-auth-token');
-      if (!token) { _showLoginScreen(); return false; }
-      try {
-        const me = await API.get('/v1/auth/me');
-        state.currentUser = me.user;
-      } catch {
-        localStorage.removeItem('ba-auth-token');
-        _showLoginScreen(); return false;
-      }
-    }
     return true;
   } catch {
     state.connected = false;
@@ -3107,15 +2821,6 @@ async function checkConnection() {
 async function loadInitialData() {
   const ok = await checkConnection();
   if (!ok) return;
-  // Connect EventStream for real-time push
-  eventStream.connect();
-  // Load team channels
-  loadTeamChannels().catch(() => {});
-  // Load unread counts
-  API.get('/v1/team/unread').then(r => {
-    state.unreadCounts = r.channels || {};
-    renderTeamChannelSidebar();
-  }).catch(() => {});
   try {
     const [agents, models, providers, modelsConfig] = await Promise.allSettled([
       API.getAgents(),
@@ -3140,18 +2845,12 @@ async function loadInitialData() {
   } catch {}
   renderModelSelector();
   renderAgentCards();
-  // Apply section collapsed states from localStorage
+  // Apply agents section collapsed state from localStorage
   const _agSectState = JSON.parse(localStorage.getItem('sb-sections-collapsed') || '{}');
   if (_agSectState['agents']) {
     const agentsSect = document.getElementById('sb-agents-section');
     if (agentsSect) agentsSect.classList.add('collapsed');
   }
-  ['team-channels', 'team-dms'].forEach(s => {
-    if (_agSectState[s]) {
-      const el = document.getElementById(`sb-${s}-section`);
-      if (el) el.classList.add('collapsed');
-    }
-  });
   updateChatArea();
 }
 
@@ -3416,16 +3115,7 @@ function getDefaultModel(agentName) {
 
 function selectAgent(agentName) {
   state.activeAgentId = agentName;
-  state.activeChannelId = null; // exit team channel mode
   state.currentProject = null; // reset project on agent switch
-  // Restore agent header, hide channel header
-  const agentHeader = document.getElementById('chat-agent-name');
-  const channelHeader = document.getElementById('channel-header-info');
-  const modelSelector = document.getElementById('model-selector');
-  if (agentHeader) agentHeader.classList.remove('hidden');
-  if (channelHeader) { channelHeader.classList.add('hidden'); channelHeader.style.display = 'none'; }
-  if (modelSelector) modelSelector.style.display = '';
-  renderTeamChannelSidebar();
   closeProjectPanel();
   if (state.centerView === 'note') switchCenterView('chat');
   // Create chat entry if not exists
@@ -4397,358 +4087,6 @@ window.toggleChatAttachments = function(sessionId) {
   }
 };
 
-// ─── Team Channel Sidebar & Messaging ────────────────────────
-
-async function loadTeamChannels() {
-  try {
-    const res = await API.get('/v1/team/channels');
-    state.teamChannels = res.channels || [];
-    // Auto-create #general if no channels exist and user is authenticated
-    if (state.teamChannels.length === 0 && state.currentUser && state.currentUser.id !== 'anonymous') {
-      try {
-        await API.post('/v1/team/channels', { name: 'general', type: 'public', topic: 'General discussion' });
-        const res2 = await API.get('/v1/team/channels');
-        state.teamChannels = res2.channels || [];
-      } catch {}
-    }
-    renderTeamChannelSidebar();
-    // Auto-select first channel if none active
-    if (!state.activeChannelId && state.teamChannels.length > 0) {
-      switchTeamChannel(state.teamChannels[0].id);
-    }
-  } catch {}
-}
-
-function renderTeamChannelSidebar() {
-  const channels = (state.teamChannels || []).filter(c => c.channel_type === 'public' || c.channel_type === 'private');
-  const dms = (state.teamChannels || []).filter(c => c.channel_type === 'dm' || c.channel_type === 'group_dm');
-  const unread = state.unreadCounts || {};
-
-  // Channels section
-  const chContainer = document.getElementById('sidebar-team-channels');
-  if (chContainer) {
-    chContainer.innerHTML = channels.length === 0 ? '<div style="padding:4px 12px;font-size:11px;color:var(--color-text-muted);font-style:italic">No channels yet</div>' :
-      channels.map(ch => {
-        const u = unread[ch.id] || {};
-        const isActive = ch.id === state.activeChannelId;
-        const cls = `sb-channel-item${isActive ? ' active' : ''}${u.unread > 0 ? ' unread' : ''}`;
-        const badge = u.mentions > 0 ? `<span class="sb-unread-badge sb-mention-badge">${u.mentions}</span>` :
-          u.unread > 0 ? `<span class="sb-unread-badge">${u.unread}</span>` : '';
-        const icon = ch.channel_type === 'private' ? '🔒' : '#';
-        return `<div class="${cls}" onclick="switchTeamChannel('${esc(ch.id)}')"><span class="sb-channel-icon">${icon}</span><span class="sb-channel-name">${esc(ch.name)}</span>${badge}</div>`;
-      }).join('');
-  }
-
-  // DMs section
-  const dmContainer = document.getElementById('sidebar-team-dms');
-  if (dmContainer) {
-    dmContainer.innerHTML = dms.length === 0 ? '<div style="padding:4px 12px;font-size:11px;color:var(--color-text-muted);font-style:italic">No conversations yet</div>' :
-      dms.map(ch => {
-        const u = unread[ch.id] || {};
-        const isActive = ch.id === state.activeChannelId;
-        const cls = `sb-channel-item${isActive ? ' active' : ''}${u.unread > 0 ? ' unread' : ''}`;
-        const badge = u.mentions > 0 ? `<span class="sb-unread-badge sb-mention-badge">${u.mentions}</span>` :
-          u.unread > 0 ? `<span class="sb-unread-badge">${u.unread}</span>` : '';
-        const presence = state.onlineUsers || {};
-        // For DMs, try to find the other member's presence
-        const dot = ch.channel_type === 'dm' ? `<span class="sb-presence-dot ${presence[ch.created_by] || 'offline'}"></span>` : '';
-        return `<div class="${cls}" onclick="switchTeamChannel('${esc(ch.id)}')"><span class="sb-channel-icon">${dot || '💬'}</span><span class="sb-channel-name">${esc(ch.name)}</span>${badge}</div>`;
-      }).join('');
-  }
-}
-
-window.switchTeamChannel = async function(channelId) {
-  state.activeChannelId = channelId;
-  state.activeAgentId = null; // exit agent chat mode
-  renderTeamChannelSidebar();
-  renderAgentCards(); // deselect agent in sidebar
-  // Load messages if not cached
-  if (!state.channelMessages[channelId]) {
-    state.channelMessages[channelId] = { messages: [], hasMore: true, loading: false };
-  }
-  const ch = state.channelMessages[channelId];
-  if (ch.messages.length === 0 && !ch.loading) {
-    ch.loading = true;
-    try {
-      const res = await API.get(`/v1/team/channels/${encodeURIComponent(channelId)}/messages?limit=50`);
-      ch.messages = res.messages || [];
-      ch.hasMore = res.has_more || false;
-    } catch {}
-    ch.loading = false;
-  }
-  renderTeamMessages();
-  // Mark as read
-  if (ch.messages.length > 0) {
-    const lastId = ch.messages[ch.messages.length - 1].id;
-    API.post(`/v1/team/channels/${encodeURIComponent(channelId)}/read`, { message_id: lastId }).catch(() => {});
-  }
-  // Update channel header — show channel info, hide agent info
-  const agentHeader = document.getElementById('chat-agent-name');
-  const channelHeader = document.getElementById('channel-header-info');
-  const modelSelector = document.getElementById('model-selector');
-  const btnNew = document.getElementById('btn-new-session');
-  if (agentHeader) agentHeader.classList.add('hidden');
-  if (channelHeader) channelHeader.classList.remove('hidden');
-  if (channelHeader) channelHeader.style.display = 'flex';
-  if (modelSelector) modelSelector.style.display = 'none';
-  if (btnNew) btnNew.style.display = 'none';
-  const channel = state.teamChannels.find(c => c.id === channelId);
-  if (channel) {
-    const icon = channel.channel_type === 'dm' || channel.channel_type === 'group_dm' ? '💬' : '#';
-    const headerName = document.getElementById('channel-name');
-    const headerTopic = document.getElementById('channel-topic');
-    if (headerName) headerName.textContent = `${icon} ${channel.name}`;
-    if (headerTopic) headerTopic.textContent = channel.topic || '';
-  }
-};
-
-function renderTeamMessages() {
-  const container = document.getElementById('chat-messages');
-  if (!container || !state.activeChannelId) return;
-  const ch = state.channelMessages[state.activeChannelId];
-  if (!ch) return;
-  const msgs = ch.messages;
-  if (msgs.length === 0) {
-    container.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--color-text-muted)"><div style="font-size:32px;margin-bottom:8px">#</div><div style="font-size:14px">No messages yet</div></div>';
-    return;
-  }
-  let html = '<div class="max-w-[800px] mx-auto py-4" style="display:flex;flex-direction:column;gap:2px">';
-  let lastDate = '';
-  for (const m of msgs) {
-    // Date separator
-    const d = new Date((m.created_at || 0) * 1000);
-    const dateStr = d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
-    if (dateStr !== lastDate) {
-      html += `<div style="display:flex;align-items:center;gap:8px;padding:16px 0 8px"><hr style="flex:1;border:none;border-top:1px solid var(--color-border)"><span style="font-size:12px;font-weight:700;color:var(--color-text-muted);white-space:nowrap">${esc(dateStr)}</span><hr style="flex:1;border:none;border-top:1px solid var(--color-border)"></div>`;
-      lastDate = dateStr;
-    }
-    html += renderTeamMessage(m);
-  }
-  html += '</div>';
-  container.innerHTML = html;
-  container.scrollTop = container.scrollHeight;
-}
-
-function renderTeamMessage(m) {
-  const time = new Date((m.created_at || 0) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const senderName = m.sender_name || m.sender_id || 'User';
-  const isAgent = m.sender_type === 'agent';
-  // Use renderAvatar for known avatar IDs (agent icons), fallback to emoji/initial
-  const rawAvatar = m.sender_avatar || '';
-  let avatarHtml;
-  if (rawAvatar && AVATARS[rawAvatar]) {
-    avatarHtml = renderAvatar(rawAvatar, 36);
-  } else if (rawAvatar && rawAvatar.startsWith('data:')) {
-    avatarHtml = `<img src="${rawAvatar}" style="width:36px;height:36px;object-fit:cover;border-radius:8px">`;
-  } else if (isAgent) {
-    avatarHtml = renderAvatar(rawAvatar || null, 36);
-  } else {
-    avatarHtml = senderName.charAt(0).toUpperCase();
-  }
-
-  // Content with mention highlighting
-  let content = esc(typeof m.content === 'string' ? m.content : JSON.stringify(m.content));
-  content = content.replace(/@(\w+)/g, '<span style="background:color-mix(in srgb, var(--color-accent) 20%, transparent);padding:0 3px;border-radius:3px;color:var(--color-accent);font-weight:600">@$1</span>');
-  // Render markdown for agent messages
-  if (isAgent) {
-    try { content = marked.parse(m.content || ''); } catch {}
-  }
-
-  // Reactions
-  let reactionsHtml = '';
-  if (m.reactions && m.reactions.length > 0) {
-    const userId = state.currentUser?.id;
-    reactionsHtml = '<div class="team-msg-reactions">' +
-      m.reactions.map(r => {
-        const mine = r.users?.includes(userId) ? ' mine' : '';
-        return `<span class="team-msg-reaction${mine}" onclick="toggleReaction('${state.activeChannelId}',${m.id},'${esc(r.emoji)}')">${r.emoji} ${r.count}</span>`;
-      }).join('') + '</div>';
-  }
-
-  // Thread link
-  let threadHtml = '';
-  if (m.reply_count > 0) {
-    threadHtml = `<div class="team-msg-thread-link" onclick="openThread(${m.id})">${m.reply_count} repl${m.reply_count === 1 ? 'y' : 'ies'}</div>`;
-  }
-
-  return `<div class="team-msg" style="position:relative" data-msg-id="${m.id}">
-    <div class="team-msg-avatar">${avatarHtml}</div>
-    <div class="team-msg-body">
-      <div class="team-msg-header">
-        <span class="team-msg-sender">${esc(senderName)}</span>
-        <span class="team-msg-time">${time}</span>
-        ${isAgent ? '<span style="background:#8b5cf6;color:#fff;font-size:9px;padding:1px 5px;border-radius:4px">bot</span>' : ''}
-      </div>
-      <div class="team-msg-content">${content}</div>
-      ${reactionsHtml}${threadHtml}
-    </div>
-    <div class="team-msg-actions">
-      <button class="team-msg-action-btn" onclick="showEmojiPicker(${m.id})" title="React">😀</button>
-      <button class="team-msg-action-btn" onclick="openThread(${m.id})" title="Reply in thread">💬</button>
-    </div>
-  </div>`;
-}
-
-window.toggleReaction = async function(channelId, msgId, emoji) {
-  try {
-    const m = state.channelMessages[channelId]?.messages?.find(msg => msg.id === msgId);
-    const userId = state.currentUser?.id;
-    const existing = m?.reactions?.find(r => r.emoji === emoji && r.users?.includes(userId));
-    await API.post(`/v1/team/channels/${encodeURIComponent(channelId)}/messages/${msgId}/reactions`, {
-      emoji, action: existing ? 'remove' : 'add'
-    });
-  } catch {}
-};
-
-window.showEmojiPicker = function(msgId) {
-  // Quick emoji picker (simplified — just common emojis)
-  const emojis = ['👍','👎','😀','😂','❤️','🎉','🤔','👀','🔥','✅'];
-  const existing = document.getElementById('emoji-picker-popup');
-  if (existing) existing.remove();
-  const el = document.querySelector(`.team-msg[data-msg-id="${msgId}"]`);
-  if (!el) return;
-  const popup = document.createElement('div');
-  popup.id = 'emoji-picker-popup';
-  popup.style.cssText = 'position:absolute;top:-32px;right:0;background:var(--color-surface);border:1px solid var(--color-border);border-radius:8px;padding:4px;display:flex;gap:2px;z-index:20;box-shadow:0 4px 12px rgba(0,0,0,0.15)';
-  popup.innerHTML = emojis.map(e => `<button style="border:none;background:none;cursor:pointer;font-size:16px;padding:2px 4px;border-radius:4px" onmouseover="this.style.background='var(--color-surface-light)'" onmouseout="this.style.background='none'" onclick="toggleReaction('${state.activeChannelId}',${msgId},'${e}');this.closest('#emoji-picker-popup').remove()">${e}</button>`).join('');
-  el.appendChild(popup);
-  setTimeout(() => { document.addEventListener('click', function rm(ev) { if (!popup.contains(ev.target)) { popup.remove(); document.removeEventListener('click', rm); } }, { once: false }); }, 10);
-};
-
-window.openThread = async function(parentId) {
-  state.activeThreadId = parentId;
-  const panel = document.getElementById('thread-panel');
-  if (panel) {
-    panel.style.width = '320px';
-    panel.style.minWidth = '200px';
-    panel.style.borderLeft = '1px solid var(--color-border)';
-    panel.style.overflow = '';
-  }
-  // Render parent message
-  const parentMsg = state.channelMessages[state.activeChannelId]?.messages?.find(m => m.id === parentId);
-  const parentEl = document.getElementById('thread-parent-msg');
-  if (parentEl && parentMsg) parentEl.innerHTML = renderTeamMessage(parentMsg);
-  // Load thread replies
-  const repliesEl = document.getElementById('thread-replies');
-  if (repliesEl) repliesEl.innerHTML = '<div style="padding:8px;font-size:12px;color:var(--color-text-muted)">Loading...</div>';
-  try {
-    const res = await API.get(`/v1/team/channels/${encodeURIComponent(state.activeChannelId)}/messages?thread=${parentId}&limit=100`);
-    const replies = res.messages || [];
-    state.threadMessages[parentId] = { messages: replies };
-    if (repliesEl) {
-      repliesEl.innerHTML = replies.length === 0 ? '<div style="padding:8px;font-size:12px;color:var(--color-text-muted)">No replies yet</div>' :
-        replies.map(r => renderTeamMessage(r)).join('');
-      repliesEl.scrollTop = repliesEl.scrollHeight;
-    }
-  } catch {}
-};
-
-window.closeThreadPanel = function() {
-  state.activeThreadId = null;
-  const panel = document.getElementById('thread-panel');
-  if (panel) {
-    panel.style.width = '0';
-    panel.style.minWidth = '0';
-    panel.style.borderLeft = 'none';
-    panel.style.overflow = 'hidden';
-  }
-};
-
-window.sendThreadReply = async function() {
-  const input = document.getElementById('thread-input');
-  if (!input || !state.activeThreadId || !state.activeChannelId) return;
-  const content = input.value.trim();
-  if (!content) return;
-  input.value = '';
-  try {
-    await API.post(`/v1/team/channels/${encodeURIComponent(state.activeChannelId)}/messages`, {
-      content, parent_id: state.activeThreadId
-    });
-    // Reload thread
-    openThread(state.activeThreadId);
-  } catch (e) {
-    showToast(`Reply failed: ${e.message}`, true);
-  }
-};
-
-window.showCreateChannelModal = function() {
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-  overlay.innerHTML = `<div class="modal-content" style="max-width:420px;padding:24px">
-    <h3 class="text-base font-display font-semibold text-text-primary mb-4">Create Channel</h3>
-    <input id="new-ch-name" type="text" class="w-full px-3 py-2 mb-3 rounded-lg bg-base border border-border text-sm text-text-primary" placeholder="Channel name" autofocus>
-    <input id="new-ch-topic" type="text" class="w-full px-3 py-2 mb-3 rounded-lg bg-base border border-border text-sm text-text-primary" placeholder="Topic (optional)">
-    <select id="new-ch-type" class="w-full px-3 py-2 mb-4 rounded-lg bg-base border border-border text-sm text-text-primary">
-      <option value="public">Public</option>
-      <option value="private">Private</option>
-    </select>
-    <div class="flex gap-2 justify-end">
-      <button class="btn btn-sm" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-      <button class="btn btn-sm btn-primary" onclick="_createChannel()">Create</button>
-    </div>
-  </div>`;
-  document.body.appendChild(overlay);
-};
-
-window._createChannel = async function() {
-  const name = document.getElementById('new-ch-name')?.value?.trim();
-  const topic = document.getElementById('new-ch-topic')?.value?.trim();
-  const type = document.getElementById('new-ch-type')?.value;
-  if (!name) return;
-  try {
-    await API.post('/v1/team/channels', { name, topic, type });
-    document.querySelector('.modal-overlay')?.remove();
-    await loadTeamChannels();
-    showToast(`Channel #${name} created`);
-  } catch (e) { showToast(e.message, true); }
-};
-
-window.showCreateDMModal = function() {
-  // Simple DM creation — enter username
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-  overlay.innerHTML = `<div class="modal-content" style="max-width:380px;padding:24px">
-    <h3 class="text-base font-display font-semibold text-text-primary mb-4">New Direct Message</h3>
-    <input id="new-dm-user" type="text" class="w-full px-3 py-2 mb-4 rounded-lg bg-base border border-border text-sm text-text-primary" placeholder="Enter username" autofocus>
-    <div class="flex gap-2 justify-end">
-      <button class="btn btn-sm" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-      <button class="btn btn-sm btn-primary" onclick="_createDM()">Message</button>
-    </div>
-  </div>`;
-  document.body.appendChild(overlay);
-};
-
-window._createDM = async function() {
-  const username = document.getElementById('new-dm-user')?.value?.trim();
-  if (!username) return;
-  try {
-    // Look up user by username
-    const users = await API.get('/v1/auth/users');
-    const target = (users.users || []).find(u => u.username === username);
-    if (!target) { showToast('User not found', true); return; }
-    const res = await API.post('/v1/team/dm', { members: [state.currentUser?.id, target.id] });
-    document.querySelector('.modal-overlay')?.remove();
-    await loadTeamChannels();
-    switchTeamChannel(res.channel.id);
-  } catch (e) { showToast(e.message, true); }
-};
-
-// Wire team message sending from the main chat input when a team channel is active
-function sendTeamMessage() {
-  const input = document.getElementById('chat-input');
-  if (!input || !state.activeChannelId) return false;
-  const content = input.value.trim();
-  if (!content) return false;
-  input.value = '';
-  input.style.height = '';
-  // Typing indicator debounce cancel
-  if (state._typingTimer) { clearTimeout(state._typingTimer); state._typingTimer = null; }
-  API.post(`/v1/team/channels/${encodeURIComponent(state.activeChannelId)}/messages`, { content }).catch(e => showToast(e.message, true));
-  return true;
-}
-
 // ─── Note Editor Functions ───────────────────────────────────
 
 window.ppRenameNote = async function(oldPath, el) {
@@ -5261,40 +4599,17 @@ window.toggleShowArchived = async function() {
 
 // ─── Update Chat Area ───────────────────────────────────────
 function updateChatArea() {
-  // If a team channel is active, keep chat area visible
-  if (state.activeChannelId) {
-    dom.chatTopBar.style.display = '';
-    dom.chatInputArea.style.display = '';
-    dom.sessionBar.style.display = 'none';
-    if (dom.projectContextBar) dom.projectContextBar.style.display = 'none';
-    renderTeamMessages();
-    return;
-  }
   const chat = state.activeChat;
   if (!chat) {
-    // No agent selected — on mobile, keep top bar visible for hamburger menu
-    const isMobile = window.innerWidth < 768;
-    if (isMobile) {
-      dom.chatTopBar.style.display = '';
-      // Hide agent-specific elements in top bar
-      dom.chatAgentName.style.display = 'none';
-      dom.modelSelector.style.display = 'none';
-      if (dom.btnNewSession) dom.btnNewSession.style.display = 'none';
-    } else {
-      dom.chatTopBar.style.display = 'none';
-    }
+    // No agent selected
+    dom.chatTopBar.style.display = 'none';
     dom.sessionBar.style.display = 'none';
     dom.projectContextBar.style.display = 'none';
     dom.chatInputArea.style.display = 'none';
-    dom.chatMessages.innerHTML = isMobile
-      ? '<div class="flex flex-col items-center justify-center h-full text-text-muted font-body gap-4 px-6"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg><span class="text-sm text-center">Tap the menu icon above<br>to select an agent</span></div>'
-      : '<div class="flex items-center justify-center h-full text-text-muted text-sm font-body">Select an agent to start chatting</div>';
+    dom.chatMessages.innerHTML = '<div class="flex items-center justify-center h-full text-text-muted text-sm font-body">Select an agent to start chatting</div>';
     updateStatusBar();
     return;
   }
-  // Agent selected — restore top bar elements
-  dom.chatAgentName.style.display = '';
-  dom.modelSelector.style.display = '';
   dom.chatTopBar.style.display = '';
   dom.chatInputArea.style.display = '';
   renderSessionBar();
@@ -5741,11 +5056,6 @@ function scrollToBottom() {
 
 // ─── Send Message ───────────────────────────────────────────
 async function sendMessage() {
-  // If a team channel is active, send there instead
-  if (state.activeChannelId) {
-    sendTeamMessage();
-    return;
-  }
   const chat = state.activeChat;
   if (!chat || chat.streaming) return;
   const text = dom.chatInput.value.trim();
@@ -12163,7 +11473,7 @@ window.nodeAction = async function(action, name) {
 
 // ─── Channels Settings Tab ──────────────────────────────────
 async function renderChannelsTab(el) {
-  const res = await API.get('/v1/adapters');
+  const res = await API.get('/v1/channels');
   const channels = res.channels || [];
   el.innerHTML = `
     <div class="glass-card p-6">
@@ -12245,7 +11555,7 @@ window.createChannel = async function() {
   if (!name || !token) { showToast('Name and bot token required'); return; }
   const allowed_users = usersStr ? usersStr.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n)) : null;
   try {
-    await API.post('/v1/adapters', {
+    await API.post('/v1/channels', {
       action: 'create', id: name.toLowerCase().replace(/\s+/g, '-'), name, type: 'telegram',
       credentials: { bot_token: token, allowed_users },
       agent_routing: { default: agent }, enabled: true,
@@ -12259,7 +11569,7 @@ window.createChannel = async function() {
 window.editChannel = async function(chId) {
   // Get current channel config from the channels list
   try {
-    const res = await API.get('/v1/adapters');
+    const res = await API.get('/v1/channels');
     const ch = (res.channels || []).find(c => c.channel_id === chId);
     if (!ch) { showToast('Channel not found'); return; }
     const agents = state.agents || [];
@@ -12306,14 +11616,14 @@ window.saveChannelEdit = async function(chId, wasRunning) {
   if (!token) { showToast('Bot token required'); return; }
   const allowed_users = usersStr ? usersStr.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n)) : null;
   try {
-    await API.post('/v1/adapters', {
+    await API.post('/v1/channels', {
       action: 'update', id: chId, name,
       credentials: { bot_token: token, allowed_users },
       agent_routing: { default: agent },
     });
     // Auto-restart if was running
     if (wasRunning) {
-      await API.post(`/v1/adapters/${encodeURIComponent(chId)}/restart`);
+      await API.post(`/v1/channels/${encodeURIComponent(chId)}/restart`);
       showToast('Channel updated and restarted');
     } else {
       showToast('Channel updated');
@@ -12325,7 +11635,7 @@ window.saveChannelEdit = async function(chId, wasRunning) {
 
 window.channelLifecycle = async function(chId, action) {
   try {
-    await API.post(`/v1/adapters/${encodeURIComponent(chId)}/${action}`);
+    await API.post(`/v1/channels/${encodeURIComponent(chId)}/${action}`);
     showToast(`Channel ${chId}: ${action}`);
     setTimeout(() => loadSettingsTab(), 500);
   } catch(e) { showToast(e.message, 'error'); }
@@ -12333,7 +11643,7 @@ window.channelLifecycle = async function(chId, action) {
 
 window.channelAction = async function(action, chId) {
   try {
-    await API.post('/v1/adapters', {action, id: chId});
+    await API.post('/v1/channels', {action, id: chId});
     showToast(`Channel ${chId}: ${action}`);
     setTimeout(() => loadSettingsTab(), 500);
   } catch(e) { showToast(e.message, 'error'); }

@@ -237,37 +237,6 @@ Server runs on port 8420 (configurable). Key endpoints:
 - `GET /v1/costs/daily` — daily cost breakdown (agent, days params)
 - `POST /v1/restart` — re-execs the server process
 
-### Team Collaboration (Slack-like)
-
-Auth (opt-in via `config.json` `auth.enabled`):
-- `POST /v1/auth/login` — JWT login
-- `POST /v1/auth/register` — create account (if `auth.allow_registration`)
-- `POST /v1/auth/logout` — revoke token
-- `GET /v1/auth/me` — current user profile
-- `GET /v1/auth/users` — list all users
-
-Team channels (`/v1/team/` namespace):
-- `GET|POST /v1/team/channels` — list/create channels (public, private, dm, group_dm)
-- `GET /v1/team/channels/<id>` — channel detail + members
-- `POST /v1/team/dm` — create or find existing DM
-- `GET|POST /v1/team/channels/<id>/messages` — paginated history, send message
-- `POST /v1/team/channels/<id>/messages/<id>/reactions` — add/remove emoji reactions
-- `POST /v1/team/channels/<id>/typing` — typing indicator
-- `POST /v1/team/channels/<id>/read` — mark channel as read
-- `GET|POST /v1/team/channels/<id>/members` — list/add members
-- `POST /v1/team/channels/<id>/upload` — file upload (multipart)
-- `GET /v1/team/unread` — unread counts per channel
-- `POST /v1/team/presence` — update user presence (online/away/dnd)
-- `GET /v1/events` — persistent SSE stream for real-time push
-
-DB tables: `users`, `auth_tokens`, `team_channels`, `channel_members`, `reactions`, `read_cursors`
-Message columns: `channel_id`, `sender_id`, `sender_type`, `parent_id`, `edited_at`
-EventBus: in-memory per-user `queue.Queue`, publishes to channel members via SSE
-Auth: JWT HS256 (stdlib hmac), PBKDF2-SHA256 passwords, opt-in via config flag
-Adapter routes renamed: `/v1/channels` → `/v1/adapters` (old routes kept as aliases)
-AI in channels: `@agent` mentions spawn background `_agent_channel_respond` thread
-Presence: auto online/offline on SSE connect/disconnect, manual via `/v1/team/presence`
-
 ### Deployment
 
 - Server: launchd daemon (`com.brain-agent.server.plist`)
