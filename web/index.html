@@ -3395,30 +3395,10 @@ function renderSessionBar() {
 
   html += `</div></div>`; // close sb-section-content + sb-section
 
-  // Snapshot loaded attachment state before re-render (polling destroys them otherwise)
-  const attachSnap = {};
-  container.querySelectorAll('.sb-chat-attachments[data-loaded]').forEach(el => {
-    const sid = el.dataset.session;
-    if (sid) attachSnap[sid] = {
-      collapsed: el.classList.contains('collapsed'),
-      html: el.querySelector('.sb-attach-list')?.innerHTML || '',
-      toggleHtml: el.querySelector('.sb-attach-toggle')?.innerHTML || '',
-    };
-  });
-
   container.innerHTML = html;
 
-  // Restore attachment state
-  Object.entries(attachSnap).forEach(([sid, snap]) => {
-    const el = container.querySelector(`.sb-chat-attachments[data-session="${sid}"]`);
-    if (!el) return;
-    el.dataset.loaded = '1';
-    el.classList.toggle('collapsed', snap.collapsed);
-    const list = el.querySelector('.sb-attach-list');
-    if (list) list.innerHTML = snap.html;
-    const toggle = el.querySelector('.sb-attach-toggle');
-    if (toggle) toggle.innerHTML = snap.toggleHtml;
-  });
+  // Restore any cached attachment state (survives polling re-renders)
+  Object.keys(_sbAttachCache).forEach(sid => _sbAttachApply(sid));
 
   renderProjectSelector();
 }
@@ -4091,19 +4071,37 @@ window.ppSubmitWatchFolder = async function() {
 };
 
 // ─── Sidebar Chat Attachments ────────────────────────────────
+// Persistent cache survives renderSessionBar() re-renders
+const _sbAttachCache = {}; // sessionId -> { listHtml, collapsed }
+
+function _sbAttachApply(sessionId) {
+  const cache = _sbAttachCache[sessionId];
+  if (!cache) return;
+  const el = document.querySelector(`.sb-chat-attachments[data-session="${sessionId}"]`);
+  if (!el) return;
+  el.dataset.loaded = '1';
+  el.classList.toggle('collapsed', cache.collapsed);
+  const listEl = el.querySelector('.sb-attach-list');
+  if (listEl) listEl.innerHTML = cache.listHtml;
+  const count = (cache.listHtml.match(/sb-attach-item/g) || []).length;
+  const toggle = el.querySelector('.sb-attach-toggle');
+  if (toggle) toggle.innerHTML = `\ud83d\udcce ${count} file${count !== 1 ? 's' : ''} ${cache.collapsed ? '\u25b6' : '\u25bc'}`;
+}
 
 window.toggleChatAttachments = function(sessionId) {
   const el = document.querySelector(`.sb-chat-attachments[data-session="${sessionId}"]`);
   if (!el) return;
   el.classList.toggle('collapsed');
+  const isCollapsed = el.classList.contains('collapsed');
+  if (_sbAttachCache[sessionId]) {
+    _sbAttachCache[sessionId].collapsed = isCollapsed;
+  }
   const toggle = el.querySelector('.sb-attach-toggle');
   if (toggle) {
-    const isCollapsed = el.classList.contains('collapsed');
     const count = el.querySelectorAll('.sb-attach-item').length;
     toggle.innerHTML = `\ud83d\udcce ${count} file${count !== 1 ? 's' : ''} ${isCollapsed ? '\u25b6' : '\u25bc'}`;
   }
-  // Lazy-load attachment details if expanding and not yet loaded
-  if (!el.classList.contains('collapsed') && !el.dataset.loaded) {
+  if (!isCollapsed && !el.dataset.loaded) {
     loadSessionAttachments(sessionId, el);
   }
 };
@@ -4113,26 +4111,20 @@ async function loadSessionAttachments(sessionId, container) {
     const res = await API.get(`/v1/sessions/${encodeURIComponent(sessionId)}/messages`);
     const msgs = res.messages || [];
     const files = [];
-    msgs.forEach(m => {
-      if (m.files && m.files.length > 0) {
-        m.files.forEach(f => files.push(f));
-      }
-    });
+    msgs.forEach(m => { if (m.files?.length) m.files.forEach(f => files.push(f)); });
     const listEl = container.querySelector('.sb-attach-list');
-    if (listEl && files.length > 0) {
-      listEl.innerHTML = files.map(f => {
-        const name = f.name || f.path || 'file';
-        const size = f.size ? `(${formatFileSize(f.size)})` : '';
-        const downloadUrl = f.path ? `/v1/files/download?path=${encodeURIComponent(f.path)}` : '#';
-        return `<div class="sb-attach-item">
-          <span>\ud83d\udcc4 ${esc(name)} ${size}</span>
-          <a href="${downloadUrl}" download title="Download">\u2b07</a>
-        </div>`;
-      }).join('');
-    } else if (listEl) {
-      listEl.innerHTML = '<div style="font-size:10px;color:var(--color-text-muted);font-style:italic">No files</div>';
-    }
+    const listHtml = files.length > 0
+      ? files.map(f => {
+          const name = f.name || f.path || 'file';
+          const size = f.size ? `(${formatFileSize(f.size)})` : '';
+          const downloadUrl = f.path ? `/v1/files/download?path=${encodeURIComponent(f.path)}` : '#';
+          return `<div class="sb-attach-item"><span>\ud83d\udcc4 ${esc(name)} ${size}</span><a href="${downloadUrl}" download title="Download">\u2b07</a></div>`;
+        }).join('')
+      : '<div style="font-size:10px;color:var(--color-text-muted);font-style:italic">No files</div>';
+    if (listEl) listEl.innerHTML = listHtml;
     container.dataset.loaded = '1';
+    // Store in cache so re-renders can restore this
+    _sbAttachCache[sessionId] = { listHtml, collapsed: false };
   } catch (e) {
     // silently fail
   }
