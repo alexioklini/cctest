@@ -804,8 +804,20 @@ class EventBus:
 
     def subscribe(self, user_id: str) -> queue.Queue:
         q = queue.Queue(maxsize=200)
+        was_first = False
         with self._lock:
+            was_first = user_id not in self._subscribers or not self._subscribers[user_id]
             self._subscribers.setdefault(user_id, []).append(q)
+        if was_first and user_id != "anonymous":
+            # Auto-publish presence online
+            self.publish("presence", {"user_id": user_id, "status": "online"})
+            try:
+                with _db_conn() as conn:
+                    conn.execute("UPDATE users SET presence='online', presence_updated_at=?, last_seen=? WHERE id=?",
+                                 (time.time(), time.time(), user_id))
+                    conn.commit()
+            except Exception:
+                pass
         return q
 
     def unsubscribe(self, user_id: str, q: queue.Queue):
@@ -813,8 +825,18 @@ class EventBus:
             subs = self._subscribers.get(user_id, [])
             if q in subs:
                 subs.remove(q)
-            if not subs:
+            is_last = not subs
+            if is_last:
                 self._subscribers.pop(user_id, None)
+        if is_last and user_id != "anonymous":
+            self.publish("presence", {"user_id": user_id, "status": "offline"})
+            try:
+                with _db_conn() as conn:
+                    conn.execute("UPDATE users SET presence='offline', last_seen=? WHERE id=?",
+                                 (time.time(), user_id))
+                    conn.commit()
+            except Exception:
+                pass
 
     def connected_user_ids(self) -> set[str]:
         with self._lock:
@@ -898,6 +920,89 @@ def _update_unread_counts(channel_id: str, msg_id: int, sender_id: str, mentions
                 }, target_users=[mid])
     except Exception:
         pass
+
+
+def _check_agent_mentions(content: str, channel_id: str, parent_id: int | None = None):
+    """Check if message mentions any AI agents and trigger responses."""
+    mentioned_agents = []
+    all_agents = engine.list_agents()
+    for agent_id in all_agents:
+        # Check @agent_id or @display_name
+        if f"@{agent_id}" in content.lower() or f"@{agent_id.lower()}" in content.lower():
+            mentioned_agents.append(agent_id)
+            continue
+        try:
+            cfg = engine.AgentConfig(agent_id)
+            dn = cfg.config.get("display_name", "")
+            if dn and f"@{dn.lower()}" in content.lower():
+                mentioned_agents.append(agent_id)
+        except Exception:
+            pass
+    for agent_id in mentioned_agents:
+        threading.Thread(target=_agent_channel_respond, args=(channel_id, agent_id, content, parent_id), daemon=True).start()
+
+
+def _agent_channel_respond(channel_id: str, agent_id: str, context_msg: str, parent_id: int | None = None):
+    """Background: make an AI agent respond to a message in a team channel."""
+    try:
+        agent = engine.AgentConfig(agent_id)
+        model = agent.preferred_model or engine._default_model
+        api_key, base_url, api_type = engine._resolve_provider_static(model)
+        if not api_key:
+            return
+        # Build context from recent channel messages
+        recent = []
+        try:
+            with _db_conn() as conn:
+                rows = conn.execute(
+                    "SELECT sender_type, content FROM messages WHERE channel_id=? AND parent_id IS NULL ORDER BY id DESC LIMIT 20",
+                    (channel_id,)).fetchall()
+                for role_raw, c in reversed(rows):
+                    role = "assistant" if role_raw == "agent" else "user"
+                    recent.append({"role": role, "content": c})
+        except Exception:
+            recent = [{"role": "user", "content": context_msg}]
+        if not recent:
+            recent = [{"role": "user", "content": context_msg}]
+        # Ensure last message is user role
+        if recent[-1]["role"] != "user":
+            recent.append({"role": "user", "content": context_msg})
+        system_prompt = f"You are {agent_id}, an AI assistant participating in a team chat channel. Respond helpfully and concisely."
+        if agent.soul:
+            system_prompt = agent.soul
+        reply = engine._run_delegate(
+            messages=recent, model=model,
+            system_prompt=system_prompt,
+            tools=False,
+        )
+        if not reply:
+            return
+        # Save reply as channel message
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT INTO messages (session_id, role, content, channel_id, sender_id, sender_type, parent_id) VALUES (?,?,?,?,?,?,?)",
+                ("", "assistant", reply, channel_id, f"agent:{agent_id}", "agent", parent_id))
+            msg_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.commit()
+        # Get agent display info
+        display_name = agent_id
+        avatar = ""
+        try:
+            cfg = agent.config
+            display_name = cfg.get("display_name") or agent_id
+            avatar = cfg.get("avatar") or ""
+        except Exception:
+            pass
+        msg = {
+            "id": msg_id, "channel_id": channel_id, "content": reply,
+            "sender_id": f"agent:{agent_id}", "sender_type": "agent",
+            "sender_name": display_name, "sender_avatar": avatar,
+            "parent_id": parent_id, "created_at": time.time(),
+            "reactions": [], "reply_count": 0,
+        }
+        event_bus.publish("message", {"channel_id": channel_id, "message": msg}, target_channel=channel_id)
+    except Exception as e:
+        print(f"  [WARN] Agent channel respond failed: {e}", flush=True)
 
 
 class SessionManager:
@@ -1394,6 +1499,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             event_bus.publish("message", {"channel_id": ch_id, "message": msg}, target_channel=ch_id)
             # Update unread for other members
             _update_unread_counts(ch_id, msg_id, user["id"], mentions)
+            # Check for @agent mentions and trigger AI response
+            _check_agent_mentions(content, ch_id, parent_id)
             self._send_json({"message": msg})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
@@ -1540,6 +1647,80 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                             (ch_id, last_read, f"%@{user['username']}%")).fetchone()[0]
                     result[ch_id] = {"unread": unread, "mentions": mention_count}
                 self._send_json({"channels": result})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_team_upload(self, path):
+        """POST /v1/team/channels/<id>/upload — upload a file to channel."""
+        parts = path.split("/")
+        ch_id = parts[4] if len(parts) > 4 else ""
+        user = self._require_auth()
+        if not user:
+            return
+        content_type = self.headers.get("Content-Type", "")
+        length = int(self.headers.get("Content-Length", 0))
+        if length == 0 or length > 50 * 1024 * 1024:  # 50MB limit
+            self._send_json({"error": "File too large or empty"}, 400)
+            return
+        # Parse multipart or raw upload
+        try:
+            import cgi
+            if "multipart" in content_type:
+                form = cgi.FieldStorage(fp=self.rfile, headers=self.headers,
+                                        environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": content_type})
+                file_item = form["file"]
+                filename = file_item.filename or "upload"
+                file_data = file_item.file.read()
+            else:
+                # Raw body upload — use filename from query param
+                from urllib.parse import parse_qs, urlparse
+                qs = parse_qs(urlparse(self.path).query)
+                filename = qs.get("filename", ["upload"])[0]
+                file_data = self.rfile.read(length)
+            # Save to uploads dir
+            upload_dir = os.path.join(engine.AGENTS_DIR, "main", "uploads", ch_id)
+            os.makedirs(upload_dir, exist_ok=True)
+            safe_name = f"{uuid.uuid4().hex[:8]}-{filename}"
+            file_path = os.path.join(upload_dir, safe_name)
+            with open(file_path, "wb") as f:
+                f.write(file_data)
+            file_size = len(file_data)
+            # Create a message with file attachment
+            meta = json.dumps({"files": [{"name": filename, "path": file_path, "size": file_size}]})
+            with _db_conn() as conn:
+                conn.execute(
+                    "INSERT INTO messages (session_id, role, content, metadata, channel_id, sender_id, sender_type) VALUES (?,?,?,?,?,?,?)",
+                    ("", "user", f"shared a file: {filename}", meta, ch_id, user["id"], "user"))
+                msg_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                conn.commit()
+            msg = {
+                "id": msg_id, "channel_id": ch_id, "content": f"shared a file: {filename}",
+                "sender_id": user["id"], "sender_type": "user",
+                "sender_name": user.get("display_name") or user.get("username"),
+                "created_at": time.time(), "reactions": [], "reply_count": 0,
+                "files": [{"name": filename, "path": file_path, "size": file_size}],
+            }
+            event_bus.publish("message", {"channel_id": ch_id, "message": msg}, target_channel=ch_id)
+            self._send_json({"file": {"name": filename, "path": file_path, "size": file_size}, "message": msg})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_team_presence(self):
+        """POST /v1/team/presence — update user presence status."""
+        user = self._require_auth()
+        if not user:
+            return
+        body = self._read_json()
+        status = body.get("status", "online")
+        if status not in ("online", "away", "dnd", "offline"):
+            status = "online"
+        try:
+            with _db_conn() as conn:
+                conn.execute("UPDATE users SET presence=?, presence_updated_at=?, last_seen=? WHERE id=?",
+                             (status, time.time(), time.time(), user["id"]))
+                conn.commit()
+            event_bus.publish("presence", {"user_id": user["id"], "status": status})
+            self._send_json({"ok": True})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
@@ -1819,6 +2000,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_team_members_post(path)
         elif path.startswith("/v1/team/channels/") and "/reactions" in path:
             self._handle_team_reaction(path)
+        elif path == "/v1/team/presence":
+            self._handle_team_presence()
+        elif path.startswith("/v1/team/channels/") and path.endswith("/upload"):
+            self._handle_team_upload(path)
         # --- Adapter POST routes (formerly /v1/channels) ---
         elif path == "/v1/adapters" or path == "/v1/channels":
             self._handle_channels_action()
