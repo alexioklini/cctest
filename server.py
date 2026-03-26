@@ -639,6 +639,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_list_sessions()
         elif path.startswith("/v1/sessions/search"):
             self._handle_session_search()
+        elif path.startswith("/v1/sessions/") and path.endswith("/files"):
+            self._handle_get_session_files(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/messages"):
             self._handle_get_messages(path)
         elif path == "/v1/schedule":
@@ -960,6 +962,22 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         sid = parts[3]
         msgs = ChatDB.load_messages(sid)
         self._send_json({"session_id": sid, "messages": msgs})
+
+    def _handle_get_session_files(self, path):
+        """GET /v1/sessions/<id>/files — returns all files from all messages (including compacted)"""
+        parts = path.split("/")
+        sid = parts[3]
+        msgs = ChatDB.load_messages(sid, include_compacted=True)
+        files = []
+        seen = set()
+        for m in msgs:
+            meta = m.get("metadata") or {}
+            for f in (meta.get("files") or []):
+                key = f.get("path") or f.get("name") or str(f)
+                if key not in seen:
+                    seen.add(key)
+                    files.append(f)
+        self._send_json({"session_id": sid, "files": files})
 
     def _handle_session_search(self):
         """GET /v1/sessions/search?q=<query>&agent=<agent_id>&limit=20 — deep search across chat content."""

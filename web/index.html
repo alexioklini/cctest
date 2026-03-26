@@ -4108,10 +4108,8 @@ window.toggleChatAttachments = function(sessionId) {
 
 async function loadSessionAttachments(sessionId, container) {
   try {
-    const res = await API.get(`/v1/sessions/${encodeURIComponent(sessionId)}/messages`);
-    const msgs = res.messages || [];
-    const files = [];
-    msgs.forEach(m => { if (m.files?.length) m.files.forEach(f => files.push(f)); });
+    const res = await API.get(`/v1/sessions/${encodeURIComponent(sessionId)}/files`);
+    const files = res.files || [];
     const listEl = container.querySelector('.sb-attach-list');
     const listHtml = files.length > 0
       ? files.map(f => {
