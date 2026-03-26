@@ -856,6 +856,50 @@ class EventBus:
 event_bus = EventBus()
 
 
+import re as _re
+_MENTION_RE = _re.compile(r'@(\w+)')
+
+
+def _extract_mentions(content: str) -> list[str]:
+    """Extract @username mentions from message content. Returns list of user_ids."""
+    usernames = _MENTION_RE.findall(content)
+    if not usernames:
+        return []
+    user_ids = []
+    try:
+        with _db_conn() as conn:
+            for uname in set(usernames):
+                row = conn.execute("SELECT id FROM users WHERE username=?", (uname,)).fetchone()
+                if row:
+                    user_ids.append(row[0])
+    except Exception:
+        pass
+    return user_ids
+
+
+def _update_unread_counts(channel_id: str, msg_id: int, sender_id: str, mentions: list[str]):
+    """Compute and push unread_update events for all channel members except sender."""
+    try:
+        with _db_conn() as conn:
+            members = conn.execute(
+                "SELECT member_id FROM channel_members WHERE channel_id=? AND member_type='user' AND member_id != ?",
+                (channel_id, sender_id)).fetchall()
+            for (mid,) in members:
+                cursor = conn.execute(
+                    "SELECT last_message_id FROM read_cursors WHERE user_id=? AND channel_id=?",
+                    (mid, channel_id)).fetchone()
+                last_read = cursor[0] if cursor else 0
+                unread = conn.execute(
+                    "SELECT COUNT(*) FROM messages WHERE channel_id=? AND id > ? AND parent_id IS NULL AND sender_id != ?",
+                    (channel_id, last_read, mid)).fetchone()[0]
+                mention_count = 1 if mid in mentions else 0
+                event_bus.publish("unread_update", {
+                    "channel_id": channel_id, "unread": unread, "mentions": mention_count,
+                }, target_users=[mid])
+    except Exception:
+        pass
+
+
 class SessionManager:
     """Thread-safe session storage with SQLite persistence."""
 
@@ -1123,6 +1167,382 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         finally:
             event_bus.unsubscribe(user_id, q)
 
+    # --- Team Channel Handlers ─────────────────────────────────────────────────
+
+    def _handle_team_channels_list(self):
+        """GET /v1/team/channels — list all channels the user is a member of."""
+        user = self._require_auth()
+        if not user:
+            return
+        try:
+            with _db_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute("""
+                    SELECT tc.*, cm.role as member_role, cm.muted
+                    FROM team_channels tc
+                    JOIN channel_members cm ON cm.channel_id = tc.id
+                    WHERE cm.member_id = ? AND tc.archived = 0
+                    ORDER BY tc.name
+                """, (user["id"],)).fetchall()
+                channels = [dict(r) for r in rows]
+                self._send_json({"channels": channels})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_team_channel_get(self, path):
+        """GET /v1/team/channels/<id> — channel detail."""
+        parts = path.split("/")
+        ch_id = parts[4] if len(parts) > 4 else ""
+        user = self._require_auth()
+        if not user:
+            return
+        try:
+            with _db_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                ch = conn.execute("SELECT * FROM team_channels WHERE id=?", (ch_id,)).fetchone()
+                if not ch:
+                    self._send_json({"error": "Channel not found"}, 404)
+                    return
+                members = conn.execute("""
+                    SELECT cm.*, u.username, u.display_name, u.avatar_url, u.presence
+                    FROM channel_members cm
+                    LEFT JOIN users u ON u.id = cm.member_id AND cm.member_type = 'user'
+                    WHERE cm.channel_id = ?
+                """, (ch_id,)).fetchall()
+                self._send_json({"channel": dict(ch), "members": [dict(m) for m in members]})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_team_channel_create(self):
+        """POST /v1/team/channels — create a new channel."""
+        user = self._require_auth()
+        if not user:
+            return
+        body = self._read_json()
+        name = body.get("name", "").strip()
+        ch_type = body.get("type", "public")
+        topic = body.get("topic", "")
+        description = body.get("description", "")
+        if not name:
+            self._send_json({"error": "Channel name required"}, 400)
+            return
+        ch_id = uuid.uuid4().hex[:12]
+        try:
+            with _db_conn() as conn:
+                conn.execute(
+                    "INSERT INTO team_channels (id, name, channel_type, topic, description, created_by) VALUES (?,?,?,?,?,?)",
+                    (ch_id, name, ch_type, topic, description, user["id"]))
+                conn.execute(
+                    "INSERT INTO channel_members (channel_id, member_id, member_type, role) VALUES (?,?,?,?)",
+                    (ch_id, user["id"], "user", "owner"))
+                # Add any initial members
+                for mid in body.get("members", []):
+                    try:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO channel_members (channel_id, member_id, member_type, role) VALUES (?,?,?,?)",
+                            (ch_id, mid, "user", "member"))
+                    except Exception:
+                        pass
+                conn.commit()
+            ch = {"id": ch_id, "name": name, "channel_type": ch_type, "topic": topic,
+                  "description": description, "created_by": user["id"]}
+            event_bus.publish("channel_update", {"channel": ch})
+            self._send_json({"channel": ch})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_team_dm_create(self):
+        """POST /v1/team/dm — create or find existing DM channel."""
+        user = self._require_auth()
+        if not user:
+            return
+        body = self._read_json()
+        members = body.get("members", [])
+        if user["id"] not in members:
+            members.append(user["id"])
+        members = sorted(set(members))
+        if len(members) < 2:
+            self._send_json({"error": "DM needs at least 2 members"}, 400)
+            return
+        ch_type = "dm" if len(members) == 2 else "group_dm"
+        try:
+            with _db_conn() as conn:
+                # Check if exact DM between these members already exists
+                for row in conn.execute("SELECT id FROM team_channels WHERE channel_type IN ('dm','group_dm')").fetchall():
+                    ch_members = {r[0] for r in conn.execute(
+                        "SELECT member_id FROM channel_members WHERE channel_id=? AND member_type='user'",
+                        (row[0],)).fetchall()}
+                    if ch_members == set(members):
+                        conn.row_factory = sqlite3.Row
+                        ch = conn.execute("SELECT * FROM team_channels WHERE id=?", (row[0],)).fetchone()
+                        self._send_json({"channel": dict(ch), "existing": True})
+                        return
+                # Create new DM
+                ch_id = uuid.uuid4().hex[:12]
+                # Build name from member display names
+                conn.row_factory = sqlite3.Row
+                names = []
+                for mid in members:
+                    if mid != user["id"]:
+                        u = conn.execute("SELECT display_name, username FROM users WHERE id=?", (mid,)).fetchone()
+                        names.append(u["display_name"] or u["username"] if u else mid)
+                dm_name = ", ".join(names) or "DM"
+                conn.execute(
+                    "INSERT INTO team_channels (id, name, channel_type, created_by) VALUES (?,?,?,?)",
+                    (ch_id, dm_name, ch_type, user["id"]))
+                for mid in members:
+                    conn.execute(
+                        "INSERT INTO channel_members (channel_id, member_id, member_type, role) VALUES (?,?,?,?)",
+                        (ch_id, mid, "user", "member"))
+                conn.commit()
+                ch = {"id": ch_id, "name": dm_name, "channel_type": ch_type, "created_by": user["id"]}
+                self._send_json({"channel": ch})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_team_messages_get(self, path):
+        """GET /v1/team/channels/<id>/messages?before=<msg_id>&limit=50"""
+        parts = path.split("/")
+        ch_id = parts[4] if len(parts) > 4 else ""
+        user = self._require_auth()
+        if not user:
+            return
+        from urllib.parse import parse_qs, urlparse
+        qs = parse_qs(urlparse(self.path).query)
+        before = qs.get("before", [None])[0]
+        limit = min(int(qs.get("limit", ["50"])[0]), 200)
+        thread_id = qs.get("thread", [None])[0]
+        try:
+            with _db_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                if thread_id:
+                    # Thread replies
+                    q = "SELECT * FROM messages WHERE channel_id=? AND parent_id=?"
+                    params = [ch_id, int(thread_id)]
+                    if before:
+                        q += " AND id < ?"
+                        params.append(int(before))
+                    q += " ORDER BY id DESC LIMIT ?"
+                    params.append(limit + 1)
+                else:
+                    # Top-level messages (no parent)
+                    q = "SELECT * FROM messages WHERE channel_id=? AND parent_id IS NULL"
+                    params = [ch_id]
+                    if before:
+                        q += " AND id < ?"
+                        params.append(int(before))
+                    q += " ORDER BY id DESC LIMIT ?"
+                    params.append(limit + 1)
+                rows = conn.execute(q, params).fetchall()
+                messages = []
+                for r in rows[:limit]:
+                    m = dict(r)
+                    if m.get("metadata"):
+                        try:
+                            m["metadata"] = json.loads(m["metadata"])
+                        except Exception:
+                            pass
+                    # Get reply count for top-level messages
+                    if not thread_id:
+                        rc = conn.execute("SELECT COUNT(*) FROM messages WHERE parent_id=?", (m["id"],)).fetchone()
+                        m["reply_count"] = rc[0] if rc else 0
+                    # Get reactions
+                    reacts = conn.execute(
+                        "SELECT emoji, GROUP_CONCAT(user_id) as users FROM reactions WHERE message_id=? GROUP BY emoji",
+                        (m["id"],)).fetchall()
+                    m["reactions"] = [{"emoji": rx["emoji"], "users": rx["users"].split(","), "count": len(rx["users"].split(","))} for rx in reacts]
+                    messages.append(m)
+                messages.reverse()  # oldest first
+                has_more = len(rows) > limit
+                self._send_json({"messages": messages, "has_more": has_more})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_team_message_post(self, path):
+        """POST /v1/team/channels/<id>/messages — send a message."""
+        parts = path.split("/")
+        ch_id = parts[4] if len(parts) > 4 else ""
+        user = self._require_auth()
+        if not user:
+            return
+        body = self._read_json()
+        content = body.get("content", "").strip()
+        parent_id = body.get("parent_id")
+        if not content:
+            self._send_json({"error": "Message content required"}, 400)
+            return
+        try:
+            with _db_conn() as conn:
+                conn.execute(
+                    "INSERT INTO messages (session_id, role, content, channel_id, sender_id, sender_type, parent_id) VALUES (?,?,?,?,?,?,?)",
+                    ("", "user", content, ch_id, user["id"], "user", parent_id))
+                msg_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                conn.commit()
+            msg = {
+                "id": msg_id, "channel_id": ch_id, "content": content,
+                "sender_id": user["id"], "sender_type": "user",
+                "sender_name": user.get("display_name") or user.get("username"),
+                "sender_avatar": user.get("avatar_url", ""),
+                "parent_id": parent_id, "created_at": time.time(),
+                "reactions": [], "reply_count": 0,
+            }
+            # Extract mentions from content
+            mentions = _extract_mentions(content)
+            if mentions:
+                msg["mentions"] = mentions
+            # Publish to EventBus
+            event_bus.publish("message", {"channel_id": ch_id, "message": msg}, target_channel=ch_id)
+            # Update unread for other members
+            _update_unread_counts(ch_id, msg_id, user["id"], mentions)
+            self._send_json({"message": msg})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_team_typing(self, path):
+        """POST /v1/team/channels/<id>/typing"""
+        parts = path.split("/")
+        ch_id = parts[4] if len(parts) > 4 else ""
+        user = self._require_auth()
+        if not user:
+            return
+        event_bus.publish("typing", {
+            "channel_id": ch_id,
+            "user_id": user["id"],
+            "user_name": user.get("display_name") or user.get("username"),
+        }, target_channel=ch_id)
+        self._send_json({"ok": True})
+
+    def _handle_team_mark_read(self, path):
+        """POST /v1/team/channels/<id>/read"""
+        parts = path.split("/")
+        ch_id = parts[4] if len(parts) > 4 else ""
+        user = self._require_auth()
+        if not user:
+            return
+        body = self._read_json()
+        msg_id = body.get("message_id", 0)
+        try:
+            with _db_conn() as conn:
+                conn.execute("""
+                    INSERT OR REPLACE INTO read_cursors (user_id, channel_id, last_message_id, updated_at)
+                    VALUES (?, ?, ?, ?)
+                """, (user["id"], ch_id, msg_id, time.time()))
+                conn.commit()
+            event_bus.publish("unread_update", {
+                "channel_id": ch_id, "unread": 0, "mentions": 0
+            }, target_users=[user["id"]])
+            self._send_json({"ok": True})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_team_members_get(self, path):
+        """GET /v1/team/channels/<id>/members"""
+        parts = path.split("/")
+        ch_id = parts[4] if len(parts) > 4 else ""
+        user = self._require_auth()
+        if not user:
+            return
+        try:
+            with _db_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute("""
+                    SELECT cm.*, u.username, u.display_name, u.avatar_url, u.presence
+                    FROM channel_members cm
+                    LEFT JOIN users u ON u.id = cm.member_id AND cm.member_type = 'user'
+                    WHERE cm.channel_id = ?
+                """, (ch_id,)).fetchall()
+                self._send_json({"members": [dict(r) for r in rows]})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_team_members_post(self, path):
+        """POST /v1/team/channels/<id>/members — add member."""
+        parts = path.split("/")
+        ch_id = parts[4] if len(parts) > 4 else ""
+        user = self._require_auth()
+        if not user:
+            return
+        body = self._read_json()
+        member_id = body.get("member_id", "")
+        member_type = body.get("member_type", "user")
+        role = body.get("role", "member")
+        if not member_id:
+            self._send_json({"error": "member_id required"}, 400)
+            return
+        try:
+            with _db_conn() as conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO channel_members (channel_id, member_id, member_type, role) VALUES (?,?,?,?)",
+                    (ch_id, member_id, member_type, role))
+                conn.commit()
+            event_bus.publish("member_join", {"channel_id": ch_id, "member_id": member_id, "member_type": member_type}, target_channel=ch_id)
+            self._send_json({"ok": True})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_team_reaction(self, path):
+        """POST /v1/team/channels/<id>/messages/<msg_id>/reactions — add/remove reaction."""
+        parts = path.split("/")
+        ch_id = parts[4] if len(parts) > 4 else ""
+        msg_id = int(parts[6]) if len(parts) > 6 else 0
+        user = self._require_auth()
+        if not user:
+            return
+        body = self._read_json()
+        emoji = body.get("emoji", "")
+        action = body.get("action", "add")  # "add" or "remove"
+        if not emoji:
+            self._send_json({"error": "emoji required"}, 400)
+            return
+        try:
+            with _db_conn() as conn:
+                if action == "remove":
+                    conn.execute("DELETE FROM reactions WHERE message_id=? AND user_id=? AND emoji=?",
+                                 (msg_id, user["id"], emoji))
+                else:
+                    conn.execute("INSERT OR IGNORE INTO reactions (message_id, user_id, emoji) VALUES (?,?,?)",
+                                 (msg_id, user["id"], emoji))
+                conn.commit()
+            event_type = "reaction_add" if action == "add" else "reaction_remove"
+            event_bus.publish(event_type, {
+                "channel_id": ch_id, "message_id": msg_id,
+                "emoji": emoji, "user_id": user["id"]
+            }, target_channel=ch_id)
+            self._send_json({"ok": True})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_team_unread(self):
+        """GET /v1/team/unread — all unread counts for current user."""
+        user = self._require_auth()
+        if not user:
+            return
+        try:
+            with _db_conn() as conn:
+                # Get all channels user is a member of
+                ch_ids = [r[0] for r in conn.execute(
+                    "SELECT channel_id FROM channel_members WHERE member_id=? AND member_type='user'",
+                    (user["id"],)).fetchall()]
+                result = {}
+                for ch_id in ch_ids:
+                    cursor = conn.execute(
+                        "SELECT last_message_id FROM read_cursors WHERE user_id=? AND channel_id=?",
+                        (user["id"], ch_id)).fetchone()
+                    last_read = cursor[0] if cursor else 0
+                    unread = conn.execute(
+                        "SELECT COUNT(*) FROM messages WHERE channel_id=? AND id > ? AND parent_id IS NULL AND sender_id != ?",
+                        (ch_id, last_read, user["id"])).fetchone()[0]
+                    # Count mentions (messages containing @username)
+                    mention_count = 0
+                    if unread > 0:
+                        mention_count = conn.execute(
+                            "SELECT COUNT(*) FROM messages WHERE channel_id=? AND id > ? AND content LIKE ?",
+                            (ch_id, last_read, f"%@{user['username']}%")).fetchone()[0]
+                    result[ch_id] = {"unread": unread, "mentions": mention_count}
+                self._send_json({"channels": result})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
     # --- Routing ---
 
     def do_GET(self):
@@ -1136,6 +1556,17 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_auth_users()
         elif path.startswith("/v1/events"):
             self._handle_events()
+        # --- Team channel GET routes ---
+        elif path == "/v1/team/channels":
+            self._handle_team_channels_list()
+        elif path.startswith("/v1/team/channels/") and "/messages" in path:
+            self._handle_team_messages_get(path)
+        elif path.startswith("/v1/team/channels/") and "/members" in path:
+            self._handle_team_members_get(path)
+        elif path.startswith("/v1/team/channels/"):
+            self._handle_team_channel_get(path)
+        elif path == "/v1/team/unread":
+            self._handle_team_unread()
         elif path == "/v1/agents":
             self._handle_status()
         elif path == "/v1/agents":
@@ -1373,6 +1804,21 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_context_compact()
         elif path == "/v1/context/config":
             self._handle_context_config_save()
+        # --- Team channel POST routes ---
+        elif path == "/v1/team/channels":
+            self._handle_team_channel_create()
+        elif path == "/v1/team/dm":
+            self._handle_team_dm_create()
+        elif path.startswith("/v1/team/channels/") and path.endswith("/messages"):
+            self._handle_team_message_post(path)
+        elif path.startswith("/v1/team/channels/") and path.endswith("/typing"):
+            self._handle_team_typing(path)
+        elif path.startswith("/v1/team/channels/") and path.endswith("/read"):
+            self._handle_team_mark_read(path)
+        elif path.startswith("/v1/team/channels/") and "/members" in path:
+            self._handle_team_members_post(path)
+        elif path.startswith("/v1/team/channels/") and "/reactions" in path:
+            self._handle_team_reaction(path)
         # --- Adapter POST routes (formerly /v1/channels) ---
         elif path == "/v1/adapters" or path == "/v1/channels":
             self._handle_channels_action()
