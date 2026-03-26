@@ -5051,7 +5051,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"error": str(e)}, 500)
 
     def _handle_file_preview(self):
-        """GET /v1/files/preview?path=<absolute_path>&lines=100 — return file content as text."""
+        """GET /v1/files/preview?path=<absolute_path>&lines=100 — return file content for preview."""
         from urllib.parse import urlparse, parse_qs
         qs = parse_qs(urlparse(self.path).query)
         file_path = qs.get("path", [""])[0]
@@ -5065,7 +5065,34 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             return
         try:
             size = os.path.getsize(resolved)
-            max_bytes = 50 * 1024  # 50KB limit
+            name = os.path.basename(resolved)
+            ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+            image_exts = {"jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "ico"}
+            office_exts = {"pdf", "docx", "xlsx", "pptx", "csv"}
+            if ext in image_exts:
+                self._send_json({
+                    "path": resolved, "name": name, "size": size,
+                    "type": "image", "ext": ext,
+                })
+                return
+            if ext in office_exts:
+                try:
+                    parser = engine.DocumentParser()
+                    result = parser.parse(resolved, max_pages=5)
+                    content = result.get("content") or result.get("text") or str(result)
+                    # Trim to ~200 lines for preview
+                    lines = content.splitlines()[:200]
+                    truncated = len(content.splitlines()) > 200
+                    self._send_json({
+                        "path": resolved, "name": name, "size": size,
+                        "type": "document", "ext": ext,
+                        "content": "\n".join(lines), "truncated": truncated,
+                    })
+                except Exception as e:
+                    self._send_json({"error": f"Could not parse {ext.upper()}: {e}"}, 500)
+                return
+            # Plain text / code
+            max_bytes = 50 * 1024
             with open(resolved, "r", errors="replace") as f:
                 lines = []
                 total_bytes = 0
@@ -5078,11 +5105,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 else:
                     truncated = False
             self._send_json({
-                "path": resolved,
-                "name": os.path.basename(resolved),
-                "size": size,
-                "content": "".join(lines),
-                "truncated": truncated,
+                "path": resolved, "name": name, "size": size,
+                "type": "text",
+                "content": "".join(lines), "truncated": truncated,
             })
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
