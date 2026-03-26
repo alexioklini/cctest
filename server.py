@@ -1455,13 +1455,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             agent_config = engine.AgentConfig(session.agent_id)
             engine._thread_local.current_agent = agent_config
 
-            # Load MCP for this agent (thread-local)
-            mcp = engine.MCPManager()
-            main_mcp = os.path.join(engine.AGENTS_DIR, "main", "mcp.json")
-            mcp.load_config(main_mcp)
-            if session.agent_id != "main":
-                mcp.load_config(session.agent.mcp_config_path)
-            engine._thread_local.mcp_manager = mcp
+            # Use shared MCP manager (singleton from main())
+            engine._thread_local.mcp_manager = engine._mcp_manager
 
             # Set plan mode if requested
             engine._thread_local.plan_mode = (chat_mode == "plan")
@@ -1483,7 +1478,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             old_agent = engine._current_agent
             old_mcp = engine._mcp_manager
             engine._current_agent = agent_config
-            engine._mcp_manager = mcp
 
             # Snapshot message count for rollback on failure
             _msg_count_before = len(session.messages)
@@ -1658,7 +1652,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 engine._thread_local.mcp_manager = None
                 engine._thread_local.memory_store = None
                 engine._thread_local.plan_mode = False
-                mcp.stop_all()
                 event_queue.put(None)  # sentinel
 
         t = threading.Thread(target=worker, daemon=True)
@@ -3574,9 +3567,68 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             with open(cfg_path, "w") as f:
                 json.dump(cfg, f, indent=2)
             self._send_json({"status": "updated", "enabled": bool(enabled), "agent": agent_id})
+        elif action == "set_memory_summary_model":
+            model = body.get("model")  # None or "" = default (Sonnet)
+            agent_cfg = engine.AgentConfig(agent_id)
+            cfg = agent_cfg.config
+            ms = cfg.get("memory_summary", {})
+            if not isinstance(ms, dict):
+                ms = {}
+            if model:
+                ms["model"] = model
+            else:
+                ms.pop("model", None)
+            cfg["memory_summary"] = ms
+            cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
+            with open(cfg_path, "w") as f:
+                json.dump(cfg, f, indent=2)
+            engine.ensure_memory_summary_schedules()
+            self._send_json({"status": "updated", "model": model or "default", "agent": agent_id})
+        elif action == "set_relationship_discovery_model":
+            model = body.get("model")  # None or "" = default (Haiku)
+            agent_cfg = engine.AgentConfig(agent_id)
+            cfg = agent_cfg.config
+            rd = cfg.get("relationship_discovery", {})
+            if not isinstance(rd, dict):
+                rd = {}
+            if model:
+                rd["model"] = model
+            else:
+                rd.pop("model", None)
+            cfg["relationship_discovery"] = rd
+            cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
+            with open(cfg_path, "w") as f:
+                json.dump(cfg, f, indent=2)
+            self._send_json({"status": "updated", "model": model or "default", "agent": agent_id})
         elif action == "run_autodream":
             engine.trigger_autodream(agent_id)
             self._send_json({"status": "autodream_scheduled", "agent": agent_id})
+        elif action == "set_autodream_model":
+            model = body.get("model")  # None or "" = auto
+            agent_cfg = engine.AgentConfig(agent_id)
+            cfg = agent_cfg.config
+            ad = cfg.get("autodream", {})
+            if not isinstance(ad, dict):
+                ad = {}
+            if model:
+                ad["model"] = model
+            else:
+                ad.pop("model", None)
+            cfg["autodream"] = ad
+            cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
+            with open(cfg_path, "w") as f:
+                json.dump(cfg, f, indent=2)
+            self._send_json({"status": "updated", "model": model or "auto", "agent": agent_id})
+        elif action == "promote_skill":
+            memory_name = body.get("memory_name", "")
+            if not memory_name:
+                self._send_json({"error": "memory_name required"}, 400)
+                return
+            result = engine.promote_memory_to_skill(agent_id, memory_name)
+            if "error" in result:
+                self._send_json(result, 400)
+            else:
+                self._send_json(result)
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)
 
@@ -5344,6 +5396,12 @@ def main():
     # Initialize main agent
     engine._current_agent = engine.AgentConfig("main")
     engine._memory_store = engine.MemoryStore("main", base_dir=engine._current_agent.memory_dir)
+
+    # Initialize shared MCP manager (singleton used by all request handlers + Web UI)
+    engine._mcp_manager = engine.MCPManager()
+    main_mcp = os.path.join(engine.AGENTS_DIR, "main", "mcp.json")
+    mcp_count = engine._mcp_manager.load_config(main_mcp)
+    print(f"MCP: loaded {mcp_count} server(s) from mcp.json")
 
     # Backfill: index any unindexed chat transcripts (runs once at startup)
     def _backfill_chat_index():

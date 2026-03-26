@@ -71,6 +71,10 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - Autodream memory consolidation: chains after relationship discovery in nightly pipeline (Memory Summary → RD → Autodream)
 - Autodream passes: dedup (QMD similarity + LLM merge), staleness (frontmatter `last_recalled` + `stale` flags), conflicts (LLM contradiction detection), skill candidates (procedural memory detection)
 - Autodream config in agent.json: `autodream: {enabled, stale_threshold_days, dedup_similarity_threshold, max_dedup_merges, max_conflict_checks, report_retention}`
+- Memory summary config: `memory_summary: {enabled, frequency, start_time, model}` — `model` overrides default Sonnet for the nightly scheduled task
+- Relationship discovery config: `relationship_discovery: {enabled, frequency, start_time, model}` — `model` overrides default Haiku; configurable in GUI (Agent config → Memory tab)
+- Token optimization: memory summary injected on `_tool_round==0` only (not per tool-loop call), 3K char cap on injected summary, `read_file` default limit 400 lines, compact threshold 60%, fresh_tail 16
+- Background pipeline models: memory summary scheduled tasks → Sonnet, relationship discovery → Haiku; `ensure_*_schedules()` auto-recreates when model changes
 - Autodream health report: stored as "Memory Health Report — {date}" memory file (type: system), auto-retained (last N reports)
 - `last_recalled` frontmatter field: stamped on recall in background thread, used for staleness detection
 - `get_memory_health(agent_id)`: live stats — total, by_type, stale_count, age_distribution, recall_frequency (hot/warm/cold/never), autodream results, health_score
@@ -103,7 +107,7 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - QMD query cleanup: strip newlines, quotes, markdown formatting — QMD silently returns empty on multiline queries
 - Lossless context: `ContextManager` in `claude_cli.py` with SQLite DAG (`context.db`), replaces flat compaction
 - Context config: `GET/POST /v1/context/config`, `GET /v1/context/stats?session_id=X`
-- Context assembly: summaries (highest depth first) + fresh tail (default 32 messages) within token budget
+- Context assembly: summaries (highest depth first) + fresh tail (default 16 messages) within token budget
 - Three-level escalation: leaf summaries → condensation → fallback truncation
 - Thread-local `current_session_id` set before compaction for context tools to access
 - Legacy `_compact_conversation` remains as fallback when ContextManager is disabled

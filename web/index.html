@@ -6057,7 +6057,10 @@ variables:
               <span class="w-2 h-2 rounded-full ${isEnabled && !isPaused ? 'bg-success' : isPaused ? 'bg-yellow-400' : 'bg-error'}"></span>
               <span class="text-xs text-text-secondary">${isEnabled ? (isPaused ? 'Paused' : 'Active') : 'Disabled'}</span>
             </div>
-            <span class="text-[10px] text-text-muted mono">${cfg.frequency || 'every 24h'} at ${cfg.start_time || '03:00'}</span>
+            <span class="text-[10px] text-text-muted mono">${cfg.frequency || 'every 24h'} at ${cfg.start_time || '03:00'} · model: </span>
+            <select id="memsummary-model-select" class="text-[10px] bg-surface-light border border-border rounded px-1 py-0.5 mono text-text-secondary" onchange="setMemorySummaryModel('${esc(agentName)}',this.value)" style="max-width:180px">
+              <option value="">default (Sonnet)</option>
+            </select>
             <div class="flex gap-2 ml-auto">
               <button class="btn-secondary text-xs px-3 py-1.5 rounded-lg" onclick="memorySummaryAction('${esc(agentName)}','refresh')" title="Trigger an immediate refresh">Refresh Now</button>
               ${isPaused
@@ -6086,7 +6089,10 @@ variables:
                 <span class="w-2 h-2 rounded-full ${rdEnabled ? 'bg-success' : 'bg-error'}"></span>
                 <span class="text-xs text-text-secondary">${rdEnabled ? 'Enabled' : 'Disabled'}</span>
               </div>
-              <span class="text-[10px] text-text-muted mono">${rdStats.total_nodes || 0} nodes · ${rdStats.total_edges || 0} edges · ${rdStats.auto_discovered_edges || 0} auto-discovered · ${rdStats.entity_count || 0} entities</span>
+              <span class="text-[10px] text-text-muted mono">${rdStats.total_nodes || 0} nodes · ${rdStats.total_edges || 0} edges · ${rdStats.auto_discovered_edges || 0} auto-discovered · model: </span>
+              <select id="reldiscovery-model-select" class="text-[10px] bg-surface-light border border-border rounded px-1 py-0.5 mono text-text-secondary" onchange="setRelationshipDiscoveryModel('${esc(agentName)}',this.value)" style="max-width:180px">
+                <option value="">default (Haiku)</option>
+              </select>
               <div class="flex gap-2 ml-auto">
                 <button class="btn-secondary text-xs px-3 py-1.5 rounded-lg" onclick="memorySummaryAction('${esc(agentName)}','discover')" title="Run relationship discovery now">Discover Now</button>
                 <button class="btn-secondary text-xs px-3 py-1.5 rounded-lg" onclick="toggleRelationshipDiscovery('${esc(agentName)}',${!rdEnabled})">${rdEnabled ? 'Disable' : 'Enable'}</button>
@@ -6123,7 +6129,10 @@ variables:
                 <span class="w-2 h-2 rounded-full ${adEnabled ? 'bg-success' : 'bg-error'}"></span>
                 <span class="text-xs text-text-secondary">${adEnabled ? 'Enabled' : 'Disabled'}</span>
               </div>
-              <span class="text-[10px] text-text-muted mono">stale threshold: ${adCfg.stale_threshold_days || 30}d · max merges: ${adCfg.max_dedup_merges || 10}/run</span>
+              <span class="text-[10px] text-text-muted mono">stale: ${adCfg.stale_threshold_days || 30}d · merges: ${adCfg.max_dedup_merges || 10}/run · model: </span>
+              <select id="autodream-model-select" class="text-[10px] bg-surface-light border border-border rounded px-1 py-0.5 mono text-text-secondary" onchange="setAutodreamModel('${esc(agentName)}',this.value)" style="max-width:180px">
+                <option value="">auto (cheapest)</option>
+              </select>
               <div class="flex gap-2 ml-auto">
                 <button class="btn-secondary text-xs px-3 py-1.5 rounded-lg" onclick="memorySummaryAction('${esc(agentName)}','run_autodream')" title="Run memory consolidation now">Run Now</button>
                 <button class="btn-secondary text-xs px-3 py-1.5 rounded-lg" onclick="toggleAutodream('${esc(agentName)}',${!adEnabled})">${adEnabled ? 'Disable' : 'Enable'}</button>
@@ -6134,6 +6143,29 @@ variables:
             </div>
           </div>
         </div>`;
+
+      // Populate model dropdowns
+      API.getModels().then(models => {
+        const modelList = Array.isArray(models) ? models : (models.models || []);
+        const selectors = [
+          { id: 'autodream-model-select', current: adCfg.model || '' },
+          { id: 'memsummary-model-select', current: cfg.model || '' },
+          { id: 'reldiscovery-model-select', current: rdCfg.model || '' },
+        ];
+        selectors.forEach(({ id, current }) => {
+          const sel = document.getElementById(id);
+          if (!sel) return;
+          modelList.forEach(m => {
+            const mid = typeof m === 'string' ? m : (m.id || m.name || '');
+            if (!mid) return;
+            const opt = document.createElement('option');
+            opt.value = mid;
+            opt.textContent = mid;
+            if (mid === current) opt.selected = true;
+            sel.appendChild(opt);
+          });
+        });
+      }).catch(() => {});
 
       // Fetch health data asynchronously + poll while running
       (function pollHealth() {
@@ -6223,6 +6255,51 @@ window.memorySummaryTogglePause = async function(agentName, pause) {
     await API.writeAgentFile(agentName, 'agent.json', JSON.stringify(parsed, null, 2));
     showToast(pause ? 'Memory paused — existing summary preserved but not used or updated' : 'Memory resumed');
     loadConfigTabContent('memory', agentName);
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+window.promoteToSkill = async function(agentName, memoryName, btn) {
+  if (!confirm(`Promote memory "${memoryName}" to a skill? This will create a new skill using LLM to generate the content.`)) return;
+  const origText = btn.textContent;
+  btn.textContent = '…';
+  btn.disabled = true;
+  try {
+    const res = await API.post(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`, { action: 'promote_skill', memory_name: memoryName });
+    showToast(`Skill "${res.name || res.slug}" created`);
+    btn.textContent = '✓';
+    btn.classList.remove('btn-primary');
+    btn.classList.add('btn-secondary');
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+    btn.textContent = origText;
+    btn.disabled = false;
+  }
+};
+
+window.setAutodreamModel = async function(agentName, model) {
+  try {
+    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`, { action: 'set_autodream_model', model: model || null });
+    showToast(model ? `Autodream model set to ${model}` : 'Autodream model set to auto (cheapest)');
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+window.setMemorySummaryModel = async function(agentName, model) {
+  try {
+    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`, { action: 'set_memory_summary_model', model: model || null });
+    showToast(model ? `Memory summary model set to ${model}` : 'Memory summary model set to default (Sonnet)');
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+window.setRelationshipDiscoveryModel = async function(agentName, model) {
+  try {
+    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/memory-summary`, { action: 'set_relationship_discovery_model', model: model || null });
+    showToast(model ? `Relationship discovery model set to ${model}` : 'Relationship discovery model set to default (Haiku)');
   } catch (e) {
     showToast(`Error: ${e.message}`, true);
   }
@@ -6358,8 +6435,20 @@ function renderMemoryHealth(h) {
   html += expandableSection('Stale Memories', h.stale_names || []);
   html += expandableSection('Conflict Pairs',
     (lr.conflict_pairs || []).map(p => p.a + ' ↔ ' + p.b + ': ' + p.nature));
-  html += expandableSection('Skill Candidates',
-    (lr.candidate_details || []).map(c => c.name + ' — ' + c.reason));
+
+  // Skill candidates with Promote buttons
+  const skillCandidates = lr.candidate_details || [];
+  if (skillCandidates.length) {
+    html += `<details class="mt-2">
+      <summary class="text-xs text-text-secondary cursor-pointer hover:text-text-primary transition-colors">Skill Candidates (${skillCandidates.length})</summary>
+      <div class="mt-1 pl-3 text-xs text-text-muted mono space-y-1" style="max-height:200px;overflow-y:auto">
+        ${skillCandidates.map(c => `<div class="flex items-center gap-2" style="padding:2px 0">
+          <span class="flex-1">· ${esc(c.name)} — ${esc(c.reason)}</span>
+          <button class="btn-primary text-[10px] px-2 py-0.5 rounded" onclick="promoteToSkill('${esc(h.agent)}','${esc(c.name)}',this)">Promote</button>
+        </div>`).join('')}
+      </div>
+    </details>`;
+  }
 
   // Run History
   if (reports.length) {
@@ -8204,7 +8293,7 @@ async function renderMemoryHealthTab(el) {
           <!-- Expandable details -->
           ${(h.stale_names?.length) ? '<details class="mt-2"><summary class="text-[10px] text-text-secondary cursor-pointer">Stale ('+h.stale_names.length+')</summary><div class="pl-3 mt-1 text-[10px] text-text-muted mono" style="max-height:120px;overflow-y:auto">'+h.stale_names.map(n => '<div>· '+esc(n)+'</div>').join('')+'</div></details>' : ''}
           ${(lr.conflict_pairs?.length) ? '<details class="mt-1"><summary class="text-[10px] text-text-secondary cursor-pointer">Conflicts ('+lr.conflict_pairs.length+')</summary><div class="pl-3 mt-1 text-[10px] text-text-muted mono" style="max-height:120px;overflow-y:auto">'+lr.conflict_pairs.map(p => '<div>· '+esc(p.a)+' ↔ '+esc(p.b)+': '+esc(p.nature)+'</div>').join('')+'</div></details>' : ''}
-          ${(lr.candidate_details?.length) ? '<details class="mt-1"><summary class="text-[10px] text-text-secondary cursor-pointer">Skill candidates ('+lr.candidate_details.length+')</summary><div class="pl-3 mt-1 text-[10px] text-text-muted mono" style="max-height:120px;overflow-y:auto">'+lr.candidate_details.map(c => '<div>· '+esc(c.name)+': '+esc(c.reason)+'</div>').join('')+'</div></details>' : ''}
+          ${(lr.candidate_details?.length) ? '<details class="mt-1"><summary class="text-[10px] text-text-secondary cursor-pointer">Skill candidates ('+lr.candidate_details.length+')</summary><div class="pl-3 mt-1 text-[10px] text-text-muted mono" style="max-height:120px;overflow-y:auto">'+lr.candidate_details.map(c => '<div class="flex items-center gap-2" style="padding:1px 0"><span class="flex-1">· '+esc(c.name)+': '+esc(c.reason)+'</span><button class="btn-primary text-[9px] px-1.5 py-0.5 rounded" onclick="promoteToSkill(\''+esc(h.agent)+'\',\''+esc(c.name)+'\',this)">Promote</button></div>').join('')+'</div></details>' : ''}
 
           <!-- Run history -->
           ${(ad.reports?.length) ? '<div class="mt-2 text-[9px] text-text-muted mono">'+ad.reports.map(r => { const rsc = r.health_score >= 80 ? 'text-green-400' : r.health_score >= 50 ? 'text-yellow-400' : 'text-red-400'; return esc(r.date)+' <span class="'+rsc+'">'+r.health_score+'</span>'; }).join(' · ')+'</div>' : ''}

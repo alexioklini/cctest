@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "4.3.1"
-VERSION_DATE = "2026-03-25"
+VERSION = "4.4.0"
+VERSION_DATE = "2026-03-26"
 CHANGELOG = [
+    ("4.4.0", "2026-03-26", "Context token optimization: read_file default limit 400 lines, fresh_tail_count 32→16, memory summary 3K char cap + skip on tool rounds 1+, compact threshold 75%→60%, relationship discovery uses Haiku (not agent model), memory summary scheduled tasks use Sonnet, candidate pair content capped at 2K chars, GUI model selectors for memory summary + relationship discovery, schedule auto-recreates on model change"),
     ("4.3.1", "2026-03-25", "Fallback resilience: fix session corruption when mid-tool-loop errors trigger model fallback (message history snapshot/rollback before fallback attempt), SSE streaming overload/rate-limit errors now classified as transient (retries with backoff instead of immediate fallback), login shell support for execute_command (/bin/zsh -l -c wrapper with config options)"),
     ("4.3.0", "2026-03-24", "Autodream memory consolidation: nightly dedup (QMD similarity + LLM merge), staleness detection (last_recalled tracking + stale flags), conflict resolution (LLM contradiction detection), skill candidate identification, health reports with scoring, live status tracking with phase updates, Memory Health dashboard in global settings (Monitoring → Memory) with per-agent cards, recall frequency visualization, /health command"),
     ("4.2.0", "2026-03-23", "Code graph enhancements: LLM-generated node summaries, architecture layer classification (api/service/data/ui/util/test), guided tour generation, code_graph_enhance tool, lossless compaction with compacted flag, context fill indicator, manual compact, LCM footer controls"),
@@ -888,7 +889,7 @@ def tool_read_file(args: dict) -> str:
         return node_result
     path = args.get("path", "")
     offset = args.get("offset", 1)
-    limit = args.get("limit")
+    limit = args.get("limit", 400)
     try:
         path = os.path.expanduser(path)
         if not os.path.isabs(path):
@@ -5193,17 +5194,18 @@ def ensure_memory_summary_schedules():
         if ms_cfg["enabled"] and not ms_cfg.get("paused"):
             schedule_str = _memory_summary_schedule_str(ms_cfg)
             task_prompt = _build_memory_summary_prompt(agent_id)
+            # Use Sonnet for memory summary — synthesis task, doesn't need Opus
+            summary_model = ms_cfg.get("model", "claude-sonnet-4-6")
 
             if sched_name in existing:
-                # Update if schedule changed
                 old = existing[sched_name]
-                if old["schedule"] != schedule_str or old.get("enabled") != 1:
+                if old["schedule"] != schedule_str or old.get("enabled") != 1 or old.get("model") != summary_model:
                     _scheduler.remove(sched_name)
                     _scheduler.add(sched_name, task_prompt, schedule_str,
-                                   agent=agent_id, timeout=600)
+                                   agent=agent_id, model=summary_model, timeout=600)
             else:
                 _scheduler.add(sched_name, task_prompt, schedule_str,
-                               agent=agent_id, timeout=600)
+                               agent=agent_id, model=summary_model, timeout=600)
         else:
             # Disabled or paused — remove schedule if exists
             if sched_name in existing:
@@ -5764,13 +5766,16 @@ def _build_relationship_discovery_prompt(agent_id: str) -> str:
 Output ONLY a JSON array. Each object: from_file, to_file, type (references|same_topic|depends_on|contradicts|extends), reason (under 20 words).
 If no relationships, output []. Be selective — meaningful relationships only."""
 
-    # Stage 2: build prompt with full content of candidate pairs
+    # Stage 2: build prompt with truncated content of candidate pairs
+    _PAIR_CONTENT_LIMIT = 2000
     pair_sections = []
     for i, (a, b, score) in enumerate(candidates, 1):
+        a_content = a['content'][:_PAIR_CONTENT_LIMIT] + ("…" if len(a['content']) > _PAIR_CONTENT_LIMIT else "")
+        b_content = b['content'][:_PAIR_CONTENT_LIMIT] + ("…" if len(b['content']) > _PAIR_CONTENT_LIMIT else "")
         pair_sections.append(
             f"## Candidate Pair {i} (similarity: {score:.2f})\n\n"
-            f"### File A: {a['file']} (type: {a['type']})\n{a['content']}\n\n"
-            f"### File B: {b['file']} (type: {b['type']})\n{b['content']}"
+            f"### File A: {a['file']} (type: {a['type']})\n{a_content}\n\n"
+            f"### File B: {b['file']} (type: {b['type']})\n{b_content}"
         )
 
     pairs_text = "\n\n---\n\n".join(pair_sections)
@@ -5841,9 +5846,10 @@ def trigger_relationship_discovery(agent_id: str):
 
     def _run():
         try:
-            # Use the delegate model (same as scheduled tasks)
+            # Use Haiku for relationship discovery — it's JSON classification, not complex reasoning
             target = AgentConfig(agent_id)
-            model = target.preferred_model or _delegate_fallback_model or "claude-sonnet-4-6"
+            rd_cfg = _get_relationship_discovery_config(agent_id)
+            model = rd_cfg.get("model") or "claude-haiku-4-5-20251001"
             ms = MemoryStore(agent_id)
             logging.info(f"Relationship discovery starting for {agent_id} using {model}")
             result_text = _run_delegate(
@@ -5925,16 +5931,18 @@ def ensure_relationship_discovery_schedules():
         if rd_cfg["enabled"]:
             schedule_str = _relationship_discovery_schedule_str(rd_cfg)
             task_prompt = _build_relationship_discovery_task_prompt(agent_id)
+            # Use Haiku for relationship discovery scheduled task — JSON classification, not complex reasoning
+            rd_model = rd_cfg.get("model", "claude-haiku-4-5-20251001")
 
             if sched_name in existing:
                 old = existing[sched_name]
-                if old["schedule"] != schedule_str or old.get("enabled") != 1:
+                if old["schedule"] != schedule_str or old.get("enabled") != 1 or old.get("model") != rd_model:
                     _scheduler.remove(sched_name)
                     _scheduler.add(sched_name, task_prompt, schedule_str,
-                                   agent=agent_id, timeout=600)
+                                   agent=agent_id, model=rd_model, timeout=600)
             else:
                 _scheduler.add(sched_name, task_prompt, schedule_str,
-                               agent=agent_id, timeout=600)
+                               agent=agent_id, model=rd_model, timeout=600)
         else:
             if sched_name in existing:
                 _scheduler.remove(sched_name)
@@ -10357,8 +10365,8 @@ CONTEXT_DB = os.path.join(AGENTS_DIR, "main", "context.db")
 
 _CONTEXT_CONFIG_DEFAULTS = {
     "enabled": True,
-    "fresh_tail_count": 32,
-    "compact_threshold": 0.75,
+    "fresh_tail_count": 16,
+    "compact_threshold": 0.60,
     "summary_target_tokens": 1000,
     "condense_threshold": 4,
     "max_depth": 5,
@@ -12688,16 +12696,19 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
             "- All agents can read from shared memory; store shared facts there too\n"
             "- Check shared memory when your own memory doesn't have what you need\n\n"
         )
-        # Inject memory summary (auto-generated synthesis) if available
-        try:
-            mem_summary = get_memory_summary(agent_id)
-            if mem_summary:
-                system_instruction += (
-                    "MEMORY SUMMARY (auto-generated synthesis of recent activity — use as context):\n"
-                    f"{mem_summary}\n\n"
-                )
-        except Exception:
-            pass
+        # Inject memory summary (auto-generated synthesis) if available, only on first tool round
+        if _tool_round == 0:
+            try:
+                mem_summary = get_memory_summary(agent_id)
+                if mem_summary:
+                    if len(mem_summary) > 3000:
+                        mem_summary = mem_summary[:3000] + "\n...(truncated)"
+                    system_instruction += (
+                        "MEMORY SUMMARY (auto-generated synthesis of recent activity — use as context):\n"
+                        f"{mem_summary}\n\n"
+                    )
+            except Exception:
+                pass
         # Inject project context if a project is active
         active_project = getattr(_thread_local, 'project', None)
         if active_project:
