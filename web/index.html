@@ -3010,7 +3010,7 @@ eventStream
     // New message in a team channel
     if (d.channel_id && state.channelMessages?.[d.channel_id]) {
       state.channelMessages[d.channel_id].messages.push(d.message);
-      if (d.channel_id === state.activeChannelId) renderMessages();
+      if (d.channel_id === state.activeChannelId) renderTeamMessages();
     }
   })
   .on('typing', (d) => {
@@ -3397,7 +3397,16 @@ function getDefaultModel(agentName) {
 
 function selectAgent(agentName) {
   state.activeAgentId = agentName;
+  state.activeChannelId = null; // exit team channel mode
   state.currentProject = null; // reset project on agent switch
+  // Restore agent header, hide channel header
+  const agentHeader = document.getElementById('chat-agent-name');
+  const channelHeader = document.getElementById('channel-header-info');
+  const modelSelector = document.getElementById('model-selector');
+  if (agentHeader) agentHeader.classList.remove('hidden');
+  if (channelHeader) { channelHeader.classList.add('hidden'); channelHeader.style.display = 'none'; }
+  if (modelSelector) modelSelector.style.display = '';
+  renderTeamChannelSidebar();
   closeProjectPanel();
   if (state.centerView === 'note') switchCenterView('chat');
   // Create chat entry if not exists
@@ -4431,7 +4440,9 @@ function renderTeamChannelSidebar() {
 
 window.switchTeamChannel = async function(channelId) {
   state.activeChannelId = channelId;
+  state.activeAgentId = null; // exit agent chat mode
   renderTeamChannelSidebar();
+  renderAgentCards(); // deselect agent in sidebar
   // Load messages if not cached
   if (!state.channelMessages[channelId]) {
     state.channelMessages[channelId] = { messages: [], hasMore: true, loading: false };
