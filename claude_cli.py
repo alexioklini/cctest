@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "4.4.5"
+VERSION = "4.4.6"
 VERSION_DATE = "2026-03-26"
 CHANGELOG = [
+    ("4.4.6", "2026-03-26", "Token consumption guardrails — base64 image data is stripped from tool results after processing, individual tool results are capped at 30K chars, accumulated results are compressed when they exceed 50K tokens, mid-turn compaction runs every 3 tool rounds, and CLIProxyAPI gets a tighter 8-round tool limit to protect the OAuth quota. Telegram dedup guard prevents duplicate sessions from 409 polling conflicts."),
     ("4.4.5", "2026-03-26", "File previews now support images (JPEG, PNG, GIF, WebP, SVG) and office documents (DOCX, XLSX, PPTX, PDF, CSV). Sidebar chat attachments show preview and download buttons, file counts are accurate from first load, and the list is stable across re-renders."),
     ("4.4.4", "2026-03-26", "Fixed sidebar file attachments disappearing when the accordion was opened — files created in a chat session are now fetched from a dedicated endpoint that includes the full message history, so compacted messages no longer hide previously created files."),
     ("4.4.3", "2026-03-26", "Fixed cost tracking showing $0 for all models — auto-discovery was writing cost_input=0 to config, which silently overrode the built-in Anthropic rate table. Config zeros are now treated as unset and fall through to correct rates. Added missing model IDs (Haiku 4.5, Sonnet 4.0, Opus 4.0) to the built-in table, plus prefix patterns as a catch-all for future versions. Historical costs for the past week were retroactively corrected."),
@@ -12642,6 +12643,64 @@ def _execute_tool(name: str, args: dict) -> str:
 
 
 MAX_TOOL_ROUNDS = 15  # Maximum number of tool-use round trips before forcing a text response
+MAX_TOOL_ROUNDS_PROXY = 8  # Tighter limit for CLIProxyAPI (shares personal OAuth quota)
+MAX_TOOL_RESULT_CHARS = 30000  # ~7,500 tokens — truncate individual tool results beyond this
+MAX_TOOL_RESULTS_TOKENS = 50000  # Cap accumulated tool results per turn before compressing old ones
+
+# Base64 image data pattern (matches "data": "...long base64..." in JSON)
+_BASE64_DATA_RE = re.compile(r'"data"\s*:\s*"[A-Za-z0-9+/=]{500,}"')
+# Raw base64 strings > 1000 chars inside quotes
+_BASE64_RAW_RE = re.compile(r'(?<=")[A-Za-z0-9+/=]{1000,}(?=")')
+
+
+def _sanitize_tool_result(name: str, result: str) -> str:
+    """Strip base64 image data and enforce size limits on tool results.
+
+    Applied before appending tool results to messages so that large blobs
+    (especially MCP puppeteer screenshots) don't snowball the context on
+    subsequent API calls.
+    """
+    # Replace base64 image blobs with placeholder
+    result = _BASE64_DATA_RE.sub('"data": "[base64 image removed — already processed]"', result)
+    result = _BASE64_RAW_RE.sub('[base64 data removed]', result)
+
+    # Truncate oversized results
+    if len(result) > MAX_TOOL_RESULT_CHARS:
+        result = result[:MAX_TOOL_RESULT_CHARS] + \
+            f"\n\n[Result truncated from {len(result):,} to {MAX_TOOL_RESULT_CHARS:,} chars]"
+    return result
+
+
+def _compress_old_tool_results(messages: list[dict], keep_recent: int = 4):
+    """Compress tool results in older messages to free context budget.
+
+    Walks messages backwards, skipping the most recent `keep_recent` tool-result
+    messages, and truncates older tool results to a short summary.
+    """
+    # Find indices of tool-result messages (Anthropic: user with tool_result blocks, OpenAI: role=tool)
+    tool_result_indices = []
+    for i, msg in enumerate(messages):
+        if msg.get("role") == "tool":
+            tool_result_indices.append(i)
+        elif msg.get("role") == "user" and isinstance(msg.get("content"), list):
+            if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in msg["content"]):
+                tool_result_indices.append(i)
+
+    # Skip the most recent ones
+    to_compress = tool_result_indices[:-keep_recent] if len(tool_result_indices) > keep_recent else []
+
+    for idx in to_compress:
+        msg = messages[idx]
+        if msg.get("role") == "tool":
+            content = msg.get("content", "")
+            if len(content) > 500:
+                msg["content"] = content[:200] + "\n[...compressed...]"
+        elif isinstance(msg.get("content"), list):
+            for block in msg["content"]:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    content = block.get("content", "")
+                    if isinstance(content, str) and len(content) > 500:
+                        block["content"] = content[:200] + "\n[...compressed...]"
 
 
 def _log_call_cost(model: str, tokens_in: int, tokens_out: int,
@@ -12686,9 +12745,10 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     Returns the assistant's full response text on success, None on model-related errors.
     Raises TaskCancelled if escape_watcher detects cancellation.
     """
-    # Reset dedup tracker at the start of each conversation turn
+    # Reset dedup tracker and accumulated token counter at the start of each conversation turn
     if _tool_round == 0:
         reset_tool_dedup()
+        _thread_local._tool_results_tokens = 0
         # Start a request-level trace span for the full conversation turn
         if _trace_manager:
             agent = getattr(_thread_local, 'current_agent', None) or _current_agent
@@ -12729,7 +12789,13 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         _thread_local.current_trace_span = llm_span
 
     # Soft stop after max tool rounds — use thread-local override if set (delegation)
-    effective_max_rounds = getattr(_thread_local, 'max_tool_rounds', None) or MAX_TOOL_ROUNDS
+    # Tighter limit for CLIProxyAPI (shares personal OAuth quota)
+    effective_max_rounds = getattr(_thread_local, 'max_tool_rounds', None)
+    if not effective_max_rounds:
+        if ":8317" in base_url or "cliproxy" in base_url.lower():
+            effective_max_rounds = MAX_TOOL_ROUNDS_PROXY
+        else:
+            effective_max_rounds = MAX_TOOL_ROUNDS
     if _tool_round >= effective_max_rounds:
         tools = False
     headers = make_headers(api_key, api_type)
@@ -13176,10 +13242,30 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
         tool_results.append({
             "type": "tool_result",
             "tool_use_id": tu["id"],
-            "content": result,
+            "content": _sanitize_tool_result(tu["name"], result),
         })
 
     messages.append({"role": "user", "content": tool_results})
+
+    # Accumulated tool result cap: compress old results if we've exceeded the budget
+    if _tool_round > 0:
+        accumulated = sum(
+            _estimate_tokens_str(str(tr.get("content", ""))) for tr in tool_results
+        ) + getattr(_thread_local, '_tool_results_tokens', 0)
+        _thread_local._tool_results_tokens = accumulated
+        if accumulated > MAX_TOOL_RESULTS_TOKENS:
+            _compress_old_tool_results(messages, keep_recent=4)
+
+    # Mid-turn compaction: check every 3 tool rounds if context has grown too large
+    if _tool_round > 0 and _tool_round % 3 == 0:
+        _sid = session_id or getattr(_thread_local, 'current_session_id', None) or ""
+        max_ctx = get_model_max_context(model)
+        messages, compacted = _check_and_compact(
+            messages, model, api_key, base_url, api_type,
+            max_tokens=max_ctx, session_id=_sid,
+        )
+        if compacted and event_callback:
+            event_callback("compacted", {})
 
     # Recurse to get the model's final response (or more tool calls)
     return send_message(messages, model, api_key, base_url, api_type,
@@ -13310,11 +13396,32 @@ def _handle_openai_response(response, payload, messages, model, api_key,
         if event_callback:
             event_callback("tool_result", {"name": tool_name, "result": result})
 
+        sanitized = _sanitize_tool_result(tool_name, result)
         messages.append({
             "role": "tool",
             "tool_call_id": tc["id"],
-            "content": result,
+            "content": sanitized,
         })
+
+    # Accumulated tool result cap: compress old results if we've exceeded the budget
+    if _tool_round > 0:
+        accumulated = sum(
+            _estimate_tokens_str(msg.get("content", ""))
+            for msg in messages if msg.get("role") == "tool"
+        )
+        if accumulated > MAX_TOOL_RESULTS_TOKENS:
+            _compress_old_tool_results(messages, keep_recent=4)
+
+    # Mid-turn compaction: check every 3 tool rounds if context has grown too large
+    if _tool_round > 0 and _tool_round % 3 == 0:
+        _sid = session_id or getattr(_thread_local, 'current_session_id', None) or ""
+        max_ctx = get_model_max_context(model)
+        messages, compacted = _check_and_compact(
+            messages, model, api_key, base_url, api_type,
+            max_tokens=max_ctx, session_id=_sid,
+        )
+        if compacted and event_callback:
+            event_callback("compacted", {})
 
     return send_message(messages, model, api_key, base_url, api_type,
                         silent=silent, tools=tools, escape_watcher=escape_watcher,

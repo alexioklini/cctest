@@ -20,6 +20,11 @@ import html as html_mod
 
 _models_config: dict = {}  # populated from server on startup
 
+# Dedup guard: prevent same Telegram message from being processed concurrently
+# (can happen when 409 Conflict causes duplicate polling loops)
+_processing_messages: set[tuple[int, str]] = set()
+_processing_lock = threading.Lock()
+
 
 def model_icon(model: str) -> str:
     # Check server-provided config first
@@ -109,8 +114,13 @@ class TelegramBot:
                 self.offset = updates[-1]["update_id"] + 1
             return updates
         except Exception as e:
-            print(f"  get_updates error: {e}", flush=True)
-            time.sleep(2)
+            error_str = str(e)
+            if "409" in error_str or "Conflict" in error_str:
+                print(f"  409 Conflict: another polling instance detected, backing off 10s", flush=True)
+                time.sleep(10)
+            else:
+                print(f"  get_updates error: {e}", flush=True)
+                time.sleep(2)
             return []
 
     def send_message(self, chat_id: int, text: str, as_html: bool = False) -> int | None:
@@ -347,6 +357,23 @@ def handle_command(bot: TelegramBot, manager: ChatManager,
 def handle_message(bot: TelegramBot, manager: ChatManager,
                    chat_id: int, text: str, images: list[dict] | None = None):
     """Handle a regular chat message, optionally with images."""
+    # Dedup: prevent concurrent processing of the same message (409 race condition)
+    dedup_key = (chat_id, text[:100])
+    with _processing_lock:
+        if dedup_key in _processing_messages:
+            return  # Skip duplicate
+        _processing_messages.add(dedup_key)
+
+    try:
+        _handle_message_inner(bot, manager, chat_id, text, images)
+    finally:
+        with _processing_lock:
+            _processing_messages.discard(dedup_key)
+
+
+def _handle_message_inner(bot: TelegramBot, manager: ChatManager,
+                          chat_id: int, text: str, images: list[dict] | None = None):
+    """Inner handler after dedup check."""
     sid = manager.get_session(chat_id)
     chat_client = BrainAgentClient(manager.client.server_url)
     chat_client.session_id = sid
@@ -575,6 +602,11 @@ class TelegramService:
             bot = TelegramBot(token)
             me = bot._call("getMe")
             self.bot_username = me.get("result", {}).get("username", "")
+            # Clear any stale webhook to prevent 409 conflicts
+            try:
+                bot._call("deleteWebhook", {"drop_pending_updates": False})
+            except Exception:
+                pass
         except Exception as e:
             self.error = str(e)
             return False
