@@ -3242,9 +3242,9 @@ function renderSidebarSession(s, currentSessionId) {
     const fileListHtml = files.length > 0
       ? files.map(f => {
           const name = f.name || f.path || 'file';
-          const size = f.size ? ` (${formatFileSize(f.size)})` : '';
-          const downloadUrl = f.path ? `/v1/files/download?path=${encodeURIComponent(f.path)}` : '#';
-          return `<div class="sb-attach-item"><span>\ud83d\udcc4 ${esc(name)}${size}</span><a href="${downloadUrl}" download title="Download">\u2b07</a></div>`;
+          const size = f.size ? ` ${formatFileSize(f.size)}` : '';
+          const pathEnc = encodeURIComponent(f.path || name);
+          return `<div class="sb-attach-item"><span>\ud83d\udcc4 ${esc(name)}${size}</span><span style="display:flex;gap:3px"><button class="file-btn" style="padding:1px 3px" onclick="previewFile('${pathEnc}')" title="Preview"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button><a class="file-btn" style="padding:1px 3px" href="${BASE_URL}/v1/files/download?path=${pathEnc}" download title="Download"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></a></span></div>`;
         }).join('')
       : '';
     html += `<div class="sb-chat-attachments collapsed" data-session="${esc(s.id)}">
