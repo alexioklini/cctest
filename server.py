@@ -233,6 +233,109 @@ class ChatDB:
                 conn.execute("ALTER TABLE messages ADD COLUMN compacted INTEGER DEFAULT 0")
             except sqlite3.OperationalError:
                 pass
+
+            # ─── Team/Slack-like tables (Phase 1) ─────────────────────────
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    username TEXT UNIQUE NOT NULL,
+                    display_name TEXT DEFAULT '',
+                    email TEXT DEFAULT '',
+                    password_hash TEXT NOT NULL,
+                    avatar_url TEXT DEFAULT '',
+                    status TEXT DEFAULT 'active',
+                    presence TEXT DEFAULT 'offline',
+                    presence_updated_at REAL DEFAULT 0,
+                    created_at REAL DEFAULT (strftime('%s','now')),
+                    last_seen REAL DEFAULT 0,
+                    metadata TEXT DEFAULT '{}'
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS auth_tokens (
+                    token TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    created_at REAL DEFAULT (strftime('%s','now')),
+                    expires_at REAL NOT NULL,
+                    revoked INTEGER DEFAULT 0,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS team_channels (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    channel_type TEXT NOT NULL DEFAULT 'public',
+                    topic TEXT DEFAULT '',
+                    description TEXT DEFAULT '',
+                    created_by TEXT,
+                    created_at REAL DEFAULT (strftime('%s','now')),
+                    archived INTEGER DEFAULT 0,
+                    metadata TEXT DEFAULT '{}'
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS channel_members (
+                    channel_id TEXT NOT NULL,
+                    member_id TEXT NOT NULL,
+                    member_type TEXT DEFAULT 'user',
+                    role TEXT DEFAULT 'member',
+                    joined_at REAL DEFAULT (strftime('%s','now')),
+                    muted INTEGER DEFAULT 0,
+                    PRIMARY KEY (channel_id, member_id),
+                    FOREIGN KEY (channel_id) REFERENCES team_channels(id)
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS reactions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    message_id INTEGER NOT NULL,
+                    user_id TEXT NOT NULL,
+                    emoji TEXT NOT NULL,
+                    created_at REAL DEFAULT (strftime('%s','now')),
+                    UNIQUE(message_id, user_id, emoji),
+                    FOREIGN KEY (message_id) REFERENCES messages(id)
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS read_cursors (
+                    user_id TEXT NOT NULL,
+                    channel_id TEXT NOT NULL,
+                    last_message_id INTEGER DEFAULT 0,
+                    updated_at REAL DEFAULT (strftime('%s','now')),
+                    PRIMARY KEY (user_id, channel_id)
+                )
+            """)
+
+            # Message columns for team features (migrations)
+            try:
+                conn.execute("ALTER TABLE messages ADD COLUMN channel_id TEXT DEFAULT NULL")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE messages ADD COLUMN sender_id TEXT DEFAULT NULL")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE messages ADD COLUMN sender_type TEXT DEFAULT 'user'")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE messages ADD COLUMN parent_id INTEGER DEFAULT NULL")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE messages ADD COLUMN edited_at REAL DEFAULT NULL")
+            except sqlite3.OperationalError:
+                pass
+
+            # Indexes for team queries
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_msg_channel ON messages(channel_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_msg_parent ON messages(parent_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_reactions_msg ON reactions(message_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_channel_members ON channel_members(channel_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_msg_session_id_desc ON messages(session_id, id DESC)")
+
             conn.commit()
 
     @staticmethod
