@@ -3395,7 +3395,31 @@ function renderSessionBar() {
 
   html += `</div></div>`; // close sb-section-content + sb-section
 
+  // Snapshot loaded attachment state before re-render (polling destroys them otherwise)
+  const attachSnap = {};
+  container.querySelectorAll('.sb-chat-attachments[data-loaded]').forEach(el => {
+    const sid = el.dataset.session;
+    if (sid) attachSnap[sid] = {
+      collapsed: el.classList.contains('collapsed'),
+      html: el.querySelector('.sb-attach-list')?.innerHTML || '',
+      toggleHtml: el.querySelector('.sb-attach-toggle')?.innerHTML || '',
+    };
+  });
+
   container.innerHTML = html;
+
+  // Restore attachment state
+  Object.entries(attachSnap).forEach(([sid, snap]) => {
+    const el = container.querySelector(`.sb-chat-attachments[data-session="${sid}"]`);
+    if (!el) return;
+    el.dataset.loaded = '1';
+    el.classList.toggle('collapsed', snap.collapsed);
+    const list = el.querySelector('.sb-attach-list');
+    if (list) list.innerHTML = snap.html;
+    const toggle = el.querySelector('.sb-attach-toggle');
+    if (toggle) toggle.innerHTML = snap.toggleHtml;
+  });
+
   renderProjectSelector();
 }
 
