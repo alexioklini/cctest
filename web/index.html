@@ -3238,11 +3238,18 @@ function renderSidebarSession(s, currentSessionId) {
   </div>`;
   // Attachment collapsible section
   if (hasAttach) {
+    const files = s.files || [];
+    const fileListHtml = files.length > 0
+      ? files.map(f => {
+          const name = f.name || f.path || 'file';
+          const size = f.size ? ` (${formatFileSize(f.size)})` : '';
+          const downloadUrl = f.path ? `/v1/files/download?path=${encodeURIComponent(f.path)}` : '#';
+          return `<div class="sb-attach-item"><span>\ud83d\udcc4 ${esc(name)}${size}</span><a href="${downloadUrl}" download title="Download">\u2b07</a></div>`;
+        }).join('')
+      : '';
     html += `<div class="sb-chat-attachments collapsed" data-session="${esc(s.id)}">
       <div class="sb-attach-toggle" onclick="event.stopPropagation();toggleChatAttachments('${esc(s.id)}')">\ud83d\udcce ${s.has_attachments} file${s.has_attachments !== 1 ? 's' : ''} \u25b6</div>
-      <div class="sb-attach-list">
-        <div style="font-size:10px;color:var(--color-text-muted);font-style:italic">Loading\u2026</div>
-      </div>
+      <div class="sb-attach-list">${fileListHtml}</div>
     </div>`;
   }
   return html;
@@ -3396,9 +3403,6 @@ function renderSessionBar() {
   html += `</div></div>`; // close sb-section-content + sb-section
 
   container.innerHTML = html;
-
-  // Restore any cached attachment state (survives polling re-renders)
-  Object.keys(_sbAttachCache).forEach(sid => _sbAttachApply(sid));
 
   renderProjectSelector();
 }
@@ -4071,65 +4075,17 @@ window.ppSubmitWatchFolder = async function() {
 };
 
 // ─── Sidebar Chat Attachments ────────────────────────────────
-// Persistent cache survives renderSessionBar() re-renders
-const _sbAttachCache = {}; // sessionId -> { listHtml, collapsed }
-
-function _sbAttachApply(sessionId) {
-  const cache = _sbAttachCache[sessionId];
-  if (!cache) return;
-  const el = document.querySelector(`.sb-chat-attachments[data-session="${sessionId}"]`);
-  if (!el) return;
-  el.dataset.loaded = '1';
-  el.classList.toggle('collapsed', cache.collapsed);
-  const listEl = el.querySelector('.sb-attach-list');
-  if (listEl) listEl.innerHTML = cache.listHtml;
-  const count = (cache.listHtml.match(/sb-attach-item/g) || []).length;
-  const toggle = el.querySelector('.sb-attach-toggle');
-  if (toggle) toggle.innerHTML = `\ud83d\udcce ${count} file${count !== 1 ? 's' : ''} ${cache.collapsed ? '\u25b6' : '\u25bc'}`;
-}
-
 window.toggleChatAttachments = function(sessionId) {
   const el = document.querySelector(`.sb-chat-attachments[data-session="${sessionId}"]`);
   if (!el) return;
   el.classList.toggle('collapsed');
   const isCollapsed = el.classList.contains('collapsed');
-  if (_sbAttachCache[sessionId]) {
-    _sbAttachCache[sessionId].collapsed = isCollapsed;
-  }
   const toggle = el.querySelector('.sb-attach-toggle');
   if (toggle) {
     const count = el.querySelectorAll('.sb-attach-item').length;
     toggle.innerHTML = `\ud83d\udcce ${count} file${count !== 1 ? 's' : ''} ${isCollapsed ? '\u25b6' : '\u25bc'}`;
   }
-  if (!isCollapsed && !el.dataset.loaded) {
-    loadSessionAttachments(sessionId, el);
-  }
 };
-
-async function loadSessionAttachments(sessionId, container) {
-  try {
-    const res = await API.get(`/v1/sessions/${encodeURIComponent(sessionId)}/files`);
-    const files = res.files || [];
-    const listEl = container.querySelector('.sb-attach-list');
-    const listHtml = files.length > 0
-      ? files.map(f => {
-          const name = f.name || f.path || 'file';
-          const size = f.size ? `(${formatFileSize(f.size)})` : '';
-          const downloadUrl = f.path ? `/v1/files/download?path=${encodeURIComponent(f.path)}` : '#';
-          return `<div class="sb-attach-item"><span>\ud83d\udcc4 ${esc(name)} ${size}</span><a href="${downloadUrl}" download title="Download">\u2b07</a></div>`;
-        }).join('')
-      : '<div style="font-size:10px;color:var(--color-text-muted);font-style:italic">No files</div>';
-    if (listEl) listEl.innerHTML = listHtml;
-    container.dataset.loaded = '1';
-    const toggle = container.querySelector('.sb-attach-toggle');
-    if (toggle) toggle.innerHTML = `\ud83d\udcce ${files.length} file${files.length !== 1 ? 's' : ''} \u25bc`;
-    _sbAttachCache[sessionId] = { listHtml, collapsed: false };
-  } catch (e) {
-    const listEl = container.querySelector('.sb-attach-list');
-    if (listEl) listEl.innerHTML = '<div style="font-size:10px;color:var(--color-text-muted);font-style:italic">No files</div>';
-    container.dataset.loaded = '1';
-  }
-}
 
 // ─── Note Editor Functions ───────────────────────────────────
 

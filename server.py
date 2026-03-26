@@ -342,7 +342,7 @@ class ChatDB:
                         last_active = d.get("last_active", 0)
                         d["indexed"] = last_indexed >= (last_active - 5)  # 5s tolerance
                 results.append(d)
-            # Replace message-count-based has_attachments with real file count
+            # Collect actual file lists for sessions that have attachments
             attach_sids = [d["id"] for d in results if d.get("has_attachments")]
             if attach_sids:
                 placeholders = ",".join("?" * len(attach_sids))
@@ -350,16 +350,23 @@ class ChatDB:
                     f"SELECT session_id, metadata FROM messages WHERE session_id IN ({placeholders}) AND metadata LIKE '%\"files\"%'",
                     attach_sids
                 ).fetchall()
-                file_counts = {}
+                session_files: dict[str, list] = {}
+                seen_keys: dict[str, set] = {}
                 for sid2, meta_str in meta_rows:
                     try:
                         meta = json.loads(meta_str) if meta_str else {}
-                        file_counts[sid2] = file_counts.get(sid2, 0) + len(meta.get("files") or [])
+                        for f in (meta.get("files") or []):
+                            key = f.get("path") or f.get("name") or str(f)
+                            if key not in seen_keys.setdefault(sid2, set()):
+                                seen_keys[sid2].add(key)
+                                session_files.setdefault(sid2, []).append(f)
                     except (json.JSONDecodeError, TypeError):
                         pass
                 for d in results:
-                    if d["id"] in file_counts:
-                        d["has_attachments"] = file_counts[d["id"]]
+                    files = session_files.get(d["id"])
+                    if files:
+                        d["has_attachments"] = len(files)
+                        d["files"] = files
             return results
 
     @staticmethod
