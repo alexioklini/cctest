@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "4.4.0"
+VERSION = "4.4.1"
 VERSION_DATE = "2026-03-26"
 CHANGELOG = [
+    ("4.4.1", "2026-03-26", "Token optimization: smart model routing with time-aware fallback chains (local → cloud) for all background tasks, tools=False for all JSON-only _run_delegate calls (saves ~8K tokens/call: autodream dedup/conflicts/skills, relationship discovery, context summarization/condensation/recall, skill detection, code graph summaries, memory extraction)"),
     ("4.4.0", "2026-03-26", "Context token optimization: read_file default limit 400 lines, fresh_tail_count 32→16, memory summary 3K char cap + skip on tool rounds 1+, compact threshold 75%→60%, relationship discovery uses Haiku (not agent model), memory summary scheduled tasks use Sonnet, candidate pair content capped at 2K chars, GUI model selectors for memory summary + relationship discovery, schedule auto-recreates on model change"),
     ("4.3.1", "2026-03-25", "Fallback resilience: fix session corruption when mid-tool-loop errors trigger model fallback (message history snapshot/rollback before fallback attempt), SSE streaming overload/rate-limit errors now classified as transient (retries with backoff instead of immediate fallback), login shell support for execute_command (/bin/zsh -l -c wrapper with config options)"),
     ("4.3.0", "2026-03-24", "Autodream memory consolidation: nightly dedup (QMD similarity + LLM merge), staleness detection (last_recalled tracking + stale flags), conflict resolution (LLM contradiction detection), skill candidate identification, health reports with scoring, live status tracking with phase updates, Memory Health dashboard in global settings (Monitoring → Memory) with per-agent cards, recall frequency visualization, /health command"),
@@ -5633,6 +5634,7 @@ def _auto_memory_extract(agent_id: str, user_message: str, assistant_response: s
             system_prompt="You are a memory extraction assistant. Output only valid JSON.",
             memory_store=ms,
             inference_params={"max_tokens": 256, "temperature": 0.1},
+            tools=False,
         )
 
         if not result or 'skip' in result.lower():
@@ -5862,6 +5864,7 @@ def trigger_relationship_discovery(agent_id: str):
                 system_prompt="You are a relationship analysis assistant. Analyze the given memories and output ONLY a valid JSON array of relationships. No explanations, no markdown, just the JSON array.",
                 memory_store=ms,
                 inference_params={"max_tokens": 16384, "temperature": 0.2},
+                tools=False,
             )
             if not result_text:
                 logging.warning(f"Relationship discovery for {agent_id}: empty response")
@@ -6011,6 +6014,7 @@ def _autodream_dedup(agent_id: str, ms: MemoryStore, config: dict) -> dict:
                 primary_model=model, fallback_model=fallback_model,
                 system_prompt="You are a memory deduplication assistant. Output only valid JSON.",
                 inference_params={"max_tokens": 1024, "temperature": 0.1},
+                tools=False,
             )
             if not result:
                 skipped += 1
@@ -6165,6 +6169,7 @@ def _autodream_conflicts(agent_id: str, ms: MemoryStore, config: dict) -> dict:
                 primary_model=model, fallback_model=fallback_model,
                 system_prompt="You are a memory conflict detector. Output only valid JSON.",
                 inference_params={"max_tokens": 256, "temperature": 0.1},
+                tools=False,
             )
             if not result:
                 continue
@@ -6228,6 +6233,7 @@ def _autodream_skill_candidates(agent_id: str, ms: MemoryStore, config: dict) ->
                 primary_model=model, fallback_model=fallback_model,
                 system_prompt="You are a skill detection assistant. Output only valid JSON.",
                 inference_params={"max_tokens": 256, "temperature": 0.1},
+                tools=False,
             )
             if not result:
                 continue
@@ -6271,17 +6277,18 @@ def _resolve_model_with_fallback(primary: str | None, fallback: str | None, hard
 
 
 def _run_delegate_with_fallback(messages, primary_model, fallback_model, system_prompt,
-                                 memory_store=None, inference_params=None) -> str | None:
+                                 memory_store=None, inference_params=None,
+                                 tools: bool = True) -> str | None:
     """Run _run_delegate with automatic fallback if primary model fails."""
     result = _run_delegate(
         messages=messages, model=primary_model, system_prompt=system_prompt,
-        memory_store=memory_store, inference_params=inference_params,
+        memory_store=memory_store, inference_params=inference_params, tools=tools,
     )
     if result and result.startswith("Delegation error:") and fallback_model and fallback_model != primary_model:
         logging.warning(f"Primary model {primary_model} failed, falling back to {fallback_model}")
         result = _run_delegate(
             messages=messages, model=fallback_model, system_prompt=system_prompt,
-            memory_store=memory_store, inference_params=inference_params,
+            memory_store=memory_store, inference_params=inference_params, tools=tools,
         )
     return result
 
@@ -6345,6 +6352,7 @@ def promote_memory_to_skill(agent_id: str, memory_name: str) -> dict:
             model=model,
             system_prompt="You are a skill creation assistant. Output only valid JSON.",
             inference_params={"max_tokens": 2048, "temperature": 0.2},
+            tools=False,
         )
         if not result:
             return {"error": "LLM returned empty response"}
@@ -6799,7 +6807,8 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
                   memory_store: MemoryStore | None = None,
                   cancel_token: CancelToken | None = None,
                   event_callback=None,
-                  inference_params: dict | None = None) -> str | None:
+                  inference_params: dict | None = None,
+                  tools: bool = True) -> str | None:
     """Run a delegated task in a fresh context. Returns the final text response.
     Thread-safe: uses thread-local storage for memory instead of swapping globals."""
     # Store memory in thread-local so tool_memory_* can find it
@@ -6824,7 +6833,7 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
         "max_tokens": get_model_max_output(model),
         "messages": aug_messages,
         "stream": True,
-        "tools": TOOL_DEFINITIONS if api_type != "openai" else TOOL_DEFINITIONS_OPENAI,
+        "tools": (TOOL_DEFINITIONS if api_type != "openai" else TOOL_DEFINITIONS_OPENAI) if tools else [],
     }
     if inference_params:
         provider = _models_config.get(model, {}).get("provider", "")
@@ -9813,6 +9822,7 @@ class CodeGraph:
                     system_prompt="Output only numbered one-line summaries. No markdown, no explanations.",
                     memory_store=None,
                     inference_params={"max_tokens": 2000, "temperature": 0.1},
+                    tools=False,
                 )
                 if result and not result.startswith("Delegation error"):
                     # Parse numbered lines
@@ -10548,6 +10558,7 @@ class ContextManager:
                 system_prompt="You are a precise conversation summarizer. Output only the summary.",
                 memory_store=None,
                 inference_params={"max_tokens": 2000, "temperature": 0.1},
+                tools=False,
             )
             if result and not result.startswith("Delegation error"):
                 summary_text = result.strip()
@@ -10609,6 +10620,7 @@ class ContextManager:
                         system_prompt="You are a precise summarizer. Output only the condensed summary.",
                         memory_store=None,
                         inference_params={"max_tokens": 3000, "temperature": 0.1},
+                        tools=False,
                     )
                     if result and not result.startswith("Delegation error"):
                         condensed_text = result.strip()
@@ -10881,6 +10893,7 @@ class ContextManager:
                 system_prompt="Answer based only on the provided context. Be specific and cite details.",
                 memory_store=None,
                 inference_params={"max_tokens": 2000, "temperature": 0.1},
+                tools=False,
             )
             if result and not result.startswith("Delegation error"):
                 return result.strip()
