@@ -2558,8 +2558,16 @@ marked.setOptions({
 
 // ─── API Client ─────────────────────────────────────────────
 class API {
+  static _authHeaders(extra = {}) {
+    const h = { 'Content-Type': 'application/json', ...extra };
+    const token = localStorage.getItem('ba-auth-token');
+    if (token) h['Authorization'] = `Bearer ${token}`;
+    return h;
+  }
+
   static async get(path) {
-    const res = await fetch(`${BASE_URL}${path}`);
+    const res = await fetch(`${BASE_URL}${path}`, { headers: API._authHeaders() });
+    if (res.status === 401) { _showLoginScreen(); throw new Error('Auth required'); }
     if (!res.ok) throw new Error(`GET ${path}: ${res.status}`);
     return res.json();
   }
@@ -2567,15 +2575,17 @@ class API {
   static async post(path, body) {
     const res = await fetch(`${BASE_URL}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: API._authHeaders(),
       body: JSON.stringify(body),
     });
+    if (res.status === 401 && path !== '/v1/auth/login' && path !== '/v1/auth/register') { _showLoginScreen(); throw new Error('Auth required'); }
     if (!res.ok) throw new Error(`POST ${path}: ${res.status}`);
     return res.json();
   }
 
   static async del(path) {
-    const res = await fetch(`${BASE_URL}${path}`, { method: 'DELETE' });
+    const res = await fetch(`${BASE_URL}${path}`, { method: 'DELETE', headers: API._authHeaders() });
+    if (res.status === 401) { _showLoginScreen(); throw new Error('Auth required'); }
     if (!res.ok) throw new Error(`DELETE ${path}: ${res.status}`);
     return res.json();
   }
@@ -2583,9 +2593,10 @@ class API {
   static async put(path, body) {
     const res = await fetch(`${BASE_URL}${path}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: API._authHeaders(),
       body: JSON.stringify(body),
     });
+    if (res.status === 401) { _showLoginScreen(); throw new Error('Auth required'); }
     if (!res.ok) throw new Error(`PUT ${path}: ${res.status}`);
     return res.json();
   }
@@ -2614,7 +2625,7 @@ class API {
     }
     const res = await fetch(`${BASE_URL}/v1/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: API._authHeaders(),
       body: JSON.stringify(body),
       signal: API._abortController.signal,
     });
@@ -2800,15 +2811,100 @@ const dom = {
   centerContent: $('#center-content'),
 };
 
+// ─── Auth / Login ───────────────────────────────────────────
+function _showLoginScreen(message) {
+  if (document.getElementById('login-overlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'login-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:999;background:var(--color-base);display:flex;align-items:center;justify-content:center;flex-direction:column';
+  const allowReg = state.serverInfo?.auth_registration !== false;
+  overlay.innerHTML = `
+    <div style="width:340px;padding:32px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,0.3)">
+      <h2 class="font-display font-bold text-xl text-text-primary mb-1 text-center">Brain Agent</h2>
+      <p class="text-xs text-text-muted text-center mb-6">Sign in to continue</p>
+      ${message ? `<div class="text-xs text-error mb-3 text-center">${esc(message)}</div>` : ''}
+      <div id="login-tab-bar" class="flex gap-2 mb-4">
+        <button id="tab-login" class="btn btn-sm btn-primary flex-1" onclick="_switchAuthTab('login')">Login</button>
+        ${allowReg ? `<button id="tab-register" class="btn btn-sm flex-1" onclick="_switchAuthTab('register')">Register</button>` : ''}
+      </div>
+      <form id="login-form" onsubmit="event.preventDefault();_doLogin()">
+        <input id="login-username" type="text" class="w-full px-3 py-2 mb-3 rounded-lg bg-base border border-border text-sm text-text-primary" placeholder="Username" autocomplete="username" autofocus>
+        <input id="login-password" type="password" class="w-full px-3 py-2 mb-3 rounded-lg bg-base border border-border text-sm text-text-primary" placeholder="Password" autocomplete="current-password">
+        <div id="login-display-name-row" class="hidden">
+          <input id="login-display-name" type="text" class="w-full px-3 py-2 mb-3 rounded-lg bg-base border border-border text-sm text-text-primary" placeholder="Display Name (optional)">
+        </div>
+        <div id="login-error" class="text-xs text-error mb-2 hidden"></div>
+        <button type="submit" id="login-submit" class="btn btn-primary w-full py-2 rounded-lg text-sm font-semibold">Sign In</button>
+      </form>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('app').style.display = 'none';
+}
+
+let _authMode = 'login';
+window._switchAuthTab = function(mode) {
+  _authMode = mode;
+  const tabLogin = document.getElementById('tab-login');
+  const tabReg = document.getElementById('tab-register');
+  const dnRow = document.getElementById('login-display-name-row');
+  const submit = document.getElementById('login-submit');
+  if (mode === 'register') {
+    tabLogin?.classList.remove('btn-primary'); tabReg?.classList.add('btn-primary');
+    dnRow?.classList.remove('hidden'); submit.textContent = 'Create Account';
+  } else {
+    tabLogin?.classList.add('btn-primary'); tabReg?.classList.remove('btn-primary');
+    dnRow?.classList.add('hidden'); submit.textContent = 'Sign In';
+  }
+};
+
+window._doLogin = async function() {
+  const username = document.getElementById('login-username')?.value?.trim();
+  const password = document.getElementById('login-password')?.value;
+  const displayName = document.getElementById('login-display-name')?.value?.trim();
+  const errEl = document.getElementById('login-error');
+  if (!username || !password) { errEl.textContent = 'Username and password required'; errEl.classList.remove('hidden'); return; }
+  try {
+    const endpoint = _authMode === 'register' ? '/v1/auth/register' : '/v1/auth/login';
+    const body = { username, password };
+    if (_authMode === 'register' && displayName) body.display_name = displayName;
+    const res = await fetch(`${BASE_URL}${endpoint}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok) { errEl.textContent = data.error || 'Login failed'; errEl.classList.remove('hidden'); return; }
+    localStorage.setItem('ba-auth-token', data.token);
+    state.currentUser = data.user;
+    document.getElementById('login-overlay')?.remove();
+    document.getElementById('app').style.display = '';
+    loadInitialData();
+  } catch (e) {
+    errEl.textContent = e.message; errEl.classList.remove('hidden');
+  }
+};
+
 // ─── Connection ─────────────────────────────────────────────
 async function checkConnection() {
   try {
-    const info = await API.getStatus();
+    // Status endpoint is always public — check auth_enabled before proceeding
+    const statusRes = await fetch(`${BASE_URL}/v1/status`);
+    const info = await statusRes.json();
     state.connected = true;
     state.serverInfo = info;
     dom.connDot.className = 'w-2 h-2 rounded-full bg-success breathing-dot';
     dom.connLabel.textContent = `v${info.version || '?'}`;
     dom.serverUrl.textContent = BASE_URL;
+    // If auth enabled, verify token or show login
+    if (info.auth_enabled) {
+      const token = localStorage.getItem('ba-auth-token');
+      if (!token) { _showLoginScreen(); return false; }
+      try {
+        const me = await API.get('/v1/auth/me');
+        state.currentUser = me.user;
+      } catch {
+        localStorage.removeItem('ba-auth-token');
+        _showLoginScreen(); return false;
+      }
+    }
     return true;
   } catch {
     state.connected = false;

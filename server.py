@@ -10,6 +10,9 @@ import signal
 import subprocess
 import sys
 import threading
+import hashlib
+import hmac
+import base64
 import time
 import urllib.request
 import urllib.error
@@ -28,6 +31,158 @@ import notifications as _notif_mod
 
 # --- Notification Manager (initialized in main()) ---
 _notification_manager: _notif_mod.NotificationManager | None = None
+
+# --- Auth System ────────────────────────────────────────────────────────────
+
+_auth_config: dict = {"enabled": False, "secret": "", "session_ttl_hours": 168, "allow_registration": True}
+
+
+def _load_auth_config():
+    """Load auth config from config.json, auto-generate secret if needed."""
+    global _auth_config
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+    try:
+        with open(config_path) as f:
+            config = json.load(f)
+        auth = config.get("auth", {})
+        if isinstance(auth, dict):
+            _auth_config.update(auth)
+        if _auth_config["enabled"] and not _auth_config.get("secret"):
+            _auth_config["secret"] = uuid.uuid4().hex
+            config["auth"] = _auth_config
+            with open(config_path, "w") as f:
+                json.dump(config, f, indent=2)
+    except Exception:
+        pass
+
+
+def _hash_password(password: str, salt: bytes | None = None) -> str:
+    """Hash password with PBKDF2-SHA256. Returns 'salt_hex:hash_hex'."""
+    if salt is None:
+        salt = os.urandom(16)
+    h = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
+    return salt.hex() + ":" + h.hex()
+
+
+def _verify_password(password: str, stored: str) -> bool:
+    """Verify password against stored hash."""
+    try:
+        salt_hex, hash_hex = stored.split(":", 1)
+        salt = bytes.fromhex(salt_hex)
+        h = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
+        return hmac.compare_digest(h.hex(), hash_hex)
+    except Exception:
+        return False
+
+
+def _jwt_encode(payload: dict) -> str:
+    """Minimal JWT encoder (HS256, no external deps)."""
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).rstrip(b"=").decode()
+    body = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
+    msg = f"{header}.{body}"
+    sig = hmac.new(_auth_config["secret"].encode(), msg.encode(), hashlib.sha256).digest()
+    sig_b64 = base64.urlsafe_b64encode(sig).rstrip(b"=").decode()
+    return f"{msg}.{sig_b64}"
+
+
+def _jwt_decode(token: str) -> dict | None:
+    """Decode and verify a JWT. Returns payload dict or None."""
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        msg = f"{parts[0]}.{parts[1]}"
+        sig = hmac.new(_auth_config["secret"].encode(), msg.encode(), hashlib.sha256).digest()
+        sig_b64 = base64.urlsafe_b64encode(sig).rstrip(b"=").decode()
+        if not hmac.compare_digest(sig_b64, parts[2]):
+            return None
+        # Decode payload (add padding)
+        padded = parts[1] + "=" * (4 - len(parts[1]) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded))
+        if payload.get("exp", 0) < time.time():
+            return None
+        return payload
+    except Exception:
+        return None
+
+
+def _create_user(username: str, password: str, display_name: str = "", email: str = "") -> dict | None:
+    """Create a new user. Returns user dict or None if username taken."""
+    uid = uuid.uuid4().hex[:12]
+    pw_hash = _hash_password(password)
+    try:
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT INTO users (id, username, display_name, email, password_hash) VALUES (?,?,?,?,?)",
+                (uid, username, display_name or username, email, pw_hash))
+            conn.commit()
+        return {"id": uid, "username": username, "display_name": display_name or username, "avatar_url": "", "email": email}
+    except Exception:
+        return None
+
+
+def _get_user_by_username(username: str) -> dict | None:
+    """Look up user by username."""
+    try:
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+            return dict(row) if row else None
+    except Exception:
+        return None
+
+
+def _get_user_by_id(user_id: str) -> dict | None:
+    """Look up user by ID."""
+    try:
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+            return dict(row) if row else None
+    except Exception:
+        return None
+
+
+def _issue_token(user_id: str) -> str:
+    """Issue a JWT for a user."""
+    jti = uuid.uuid4().hex[:16]
+    ttl = _auth_config.get("session_ttl_hours", 168)
+    exp = time.time() + ttl * 3600
+    payload = {"sub": user_id, "jti": jti, "iat": time.time(), "exp": exp}
+    token = _jwt_encode(payload)
+    try:
+        with _db_conn() as conn:
+            conn.execute("INSERT INTO auth_tokens (token, user_id, expires_at) VALUES (?,?,?)",
+                         (jti, user_id, exp))
+            conn.commit()
+    except Exception:
+        pass
+    return token
+
+
+def _revoke_token(jti: str):
+    """Revoke a JWT by its jti claim."""
+    try:
+        with _db_conn() as conn:
+            conn.execute("UPDATE auth_tokens SET revoked=1 WHERE token=?", (jti,))
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _is_token_revoked(jti: str) -> bool:
+    """Check if a token has been revoked."""
+    try:
+        with _db_conn() as conn:
+            row = conn.execute("SELECT revoked FROM auth_tokens WHERE token=?", (jti,)).fetchone()
+            return bool(row and row[0])
+    except Exception:
+        return False
+
+
+# Anonymous user for when auth is disabled
+_ANON_USER = {"id": "anonymous", "username": "anonymous", "display_name": "User", "avatar_url": ""}
+
 
 # --- Node Manager (in-memory registry for remote nodes) ---
 
@@ -748,12 +903,139 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             sid = body.get("session_id", "")
         return sessions.get(sid) if sid else None
 
+    # --- Auth ---
+
+    def _authenticate(self) -> dict | None:
+        """Validate JWT from Authorization header. Returns user dict or None."""
+        if not _auth_config.get("enabled"):
+            return _ANON_USER
+        auth_header = self.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return None
+        token = auth_header[7:]
+        payload = _jwt_decode(token)
+        if not payload:
+            return None
+        jti = payload.get("jti", "")
+        if _is_token_revoked(jti):
+            return None
+        user = _get_user_by_id(payload.get("sub", ""))
+        if not user or user.get("status") != "active":
+            return None
+        return {"id": user["id"], "username": user["username"],
+                "display_name": user.get("display_name", ""), "avatar_url": user.get("avatar_url", "")}
+
+    def _require_auth(self) -> dict | None:
+        """Authenticate and return user, or send 401 and return None."""
+        user = self._authenticate()
+        if user is None:
+            self._send_json({"error": "Authentication required"}, 401)
+            return None
+        return user
+
+    def _authenticate_qs(self) -> dict | None:
+        """Authenticate from query param ?token=<jwt> (for SSE/EventSource)."""
+        if not _auth_config.get("enabled"):
+            return _ANON_USER
+        from urllib.parse import parse_qs, urlparse
+        qs = parse_qs(urlparse(self.path).query)
+        token = qs.get("token", [""])[0]
+        if not token:
+            return None
+        payload = _jwt_decode(token)
+        if not payload:
+            return None
+        jti = payload.get("jti", "")
+        if _is_token_revoked(jti):
+            return None
+        user = _get_user_by_id(payload.get("sub", ""))
+        if not user or user.get("status") != "active":
+            return None
+        return {"id": user["id"], "username": user["username"],
+                "display_name": user.get("display_name", ""), "avatar_url": user.get("avatar_url", "")}
+
+    def _handle_auth_login(self):
+        """POST /v1/auth/login — authenticate and return JWT."""
+        body = self._read_json()
+        username = body.get("username", "").strip()
+        password = body.get("password", "")
+        if not username or not password:
+            self._send_json({"error": "Username and password required"}, 400)
+            return
+        user = _get_user_by_username(username)
+        if not user or not _verify_password(password, user.get("password_hash", "")):
+            self._send_json({"error": "Invalid credentials"}, 401)
+            return
+        token = _issue_token(user["id"])
+        self._send_json({"token": token, "user": {
+            "id": user["id"], "username": user["username"],
+            "display_name": user.get("display_name", ""), "avatar_url": user.get("avatar_url", "")}})
+
+    def _handle_auth_register(self):
+        """POST /v1/auth/register — create account (if allowed)."""
+        if not _auth_config.get("allow_registration", True):
+            self._send_json({"error": "Registration disabled"}, 403)
+            return
+        body = self._read_json()
+        username = body.get("username", "").strip().lower()
+        password = body.get("password", "")
+        display_name = body.get("display_name", "").strip()
+        if not username or not password:
+            self._send_json({"error": "Username and password required"}, 400)
+            return
+        if len(password) < 4:
+            self._send_json({"error": "Password must be at least 4 characters"}, 400)
+            return
+        user = _create_user(username, password, display_name)
+        if not user:
+            self._send_json({"error": "Username already taken"}, 409)
+            return
+        token = _issue_token(user["id"])
+        self._send_json({"token": token, "user": user})
+
+    def _handle_auth_logout(self):
+        """POST /v1/auth/logout — revoke current token."""
+        auth_header = self.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            payload = _jwt_decode(auth_header[7:])
+            if payload:
+                _revoke_token(payload.get("jti", ""))
+        self._send_json({"ok": True})
+
+    def _handle_auth_me(self):
+        """GET /v1/auth/me — return current user."""
+        user = self._require_auth()
+        if not user:
+            return
+        self._send_json({"user": user})
+
+    def _handle_auth_users(self):
+        """GET /v1/auth/users — list all users."""
+        user = self._require_auth()
+        if not user:
+            return
+        try:
+            with _db_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    "SELECT id, username, display_name, avatar_url, presence, status FROM users WHERE status='active' ORDER BY username"
+                ).fetchall()
+                self._send_json({"users": [dict(r) for r in rows]})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
     # --- Routing ---
 
     def do_GET(self):
         path = self.path.split("?")[0]
 
         if path == "/v1/status":
+            self._handle_status()
+        elif path == "/v1/auth/me":
+            self._handle_auth_me()
+        elif path == "/v1/auth/users":
+            self._handle_auth_users()
+        elif path == "/v1/agents":
             self._handle_status()
         elif path == "/v1/agents":
             self._handle_list_agents()
@@ -875,7 +1157,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path.split("?")[0]
 
-        if path == "/v1/sessions":
+        if path == "/v1/auth/login":
+            self._handle_auth_login()
+        elif path == "/v1/auth/register":
+            self._handle_auth_register()
+        elif path == "/v1/auth/logout":
+            self._handle_auth_logout()
+        elif path == "/v1/sessions":
             self._handle_create_session()
         elif path == "/v1/chat":
             self._handle_chat()
@@ -1040,7 +1328,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Session-ID")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Session-ID, Authorization")
         self.end_headers()
 
     # --- Handlers ---
@@ -1053,6 +1341,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             "sessions": len(sessions.list_all()),
             "scheduler_tasks": len(engine._scheduler.list_all()) if engine._scheduler else 0,
             "changelog": [{"version": v, "date": d, "changes": c} for v, d, c in engine.CHANGELOG],
+            "auth_enabled": bool(_auth_config.get("enabled")),
+            "auth_registration": bool(_auth_config.get("allow_registration")),
         })
 
     def _handle_list_agents(self):
@@ -5872,6 +6162,10 @@ def main():
     print("  POST /v1/agents/{id}/workflows — save workflow")
     print("  POST /v1/agents/{id}/workflows/{name}/run — run workflow")
     print("  GET  /v1/workflows/executions  — list executions")
+    # Initialize auth config
+    _load_auth_config()
+    if _auth_config.get("enabled"):
+        print(f"Auth: enabled (registration: {'open' if _auth_config.get('allow_registration') else 'closed'})")
     # Initialize remote nodes registry
     _init_node_registry()
     nodes_cfg = _load_node_config()
