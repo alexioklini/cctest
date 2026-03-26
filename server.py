@@ -752,8 +752,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_nodes_list()
         elif path.startswith("/v1/nodes/poll"):
             self._handle_node_poll()
-        # --- Channels GET routes ---
-        elif path == "/v1/channels":
+        # --- Adapter GET routes (formerly /v1/channels) ---
+        elif path == "/v1/adapters" or path == "/v1/channels":
             self._handle_channels_list()
         # --- Tools config GET routes ---
         elif path == "/v1/tools/config":
@@ -881,14 +881,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_context_compact()
         elif path == "/v1/context/config":
             self._handle_context_config_save()
-        # --- Channels POST routes ---
-        elif path == "/v1/channels":
+        # --- Adapter POST routes (formerly /v1/channels) ---
+        elif path == "/v1/adapters" or path == "/v1/channels":
             self._handle_channels_action()
-        elif path.startswith("/v1/channels/") and path.endswith("/start"):
+        elif (path.startswith("/v1/adapters/") or path.startswith("/v1/channels/")) and path.endswith("/start"):
             self._handle_channel_lifecycle(path, "start")
-        elif path.startswith("/v1/channels/") and path.endswith("/stop"):
+        elif (path.startswith("/v1/adapters/") or path.startswith("/v1/channels/")) and path.endswith("/stop"):
             self._handle_channel_lifecycle(path, "stop")
-        elif path.startswith("/v1/channels/") and path.endswith("/restart"):
+        elif (path.startswith("/v1/adapters/") or path.startswith("/v1/channels/")) and path.endswith("/restart"):
             self._handle_channel_lifecycle(path, "restart")
         else:
             self._send_json({"error": "Not found"}, 404)
@@ -4918,7 +4918,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
     # --- Channels API handlers ---
 
     def _handle_channels_list(self):
-        """GET /v1/channels — list all messaging channels."""
+        """GET /v1/adapters — list all messaging adapter channels."""
         mgr = _adapters_mod.channel_manager
         if not mgr:
             self._send_json({"channels": []})
@@ -4926,7 +4926,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         self._send_json({"channels": mgr.status()})
 
     def _handle_channels_action(self):
-        """POST /v1/channels — create/remove/update a channel."""
+        """POST /v1/adapters — create/remove/update a messaging adapter."""
         body = self._read_json()
         action = body.get("action", "create")
         mgr = _adapters_mod.channel_manager
@@ -4969,7 +4969,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"error": f"Unknown action: {action}"}, 400)
 
     def _handle_channel_lifecycle(self, path: str, action: str):
-        """POST /v1/channels/:id/start|stop|restart."""
+        """POST /v1/adapters/:id/start|stop|restart."""
         parts = path.split("/")
         ch_id = parts[3] if len(parts) > 3 else ""
         mgr = _adapters_mod.channel_manager

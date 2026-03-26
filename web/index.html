@@ -1090,6 +1090,7 @@ tailwind.config = {
     min-width: 52px;
     max-width: 500px;
     height: 100vh;
+    height: 100dvh;
     background: var(--color-surface);
     border-right: 1px solid var(--color-border);
     display: flex;
@@ -4601,15 +4602,29 @@ window.toggleShowArchived = async function() {
 function updateChatArea() {
   const chat = state.activeChat;
   if (!chat) {
-    // No agent selected
-    dom.chatTopBar.style.display = 'none';
+    // No agent selected — on mobile, keep top bar visible for hamburger menu
+    const isMobile = window.innerWidth < 768;
+    if (isMobile) {
+      dom.chatTopBar.style.display = '';
+      // Hide agent-specific elements in top bar
+      dom.chatAgentName.style.display = 'none';
+      dom.modelSelector.style.display = 'none';
+      if (dom.btnNewSession) dom.btnNewSession.style.display = 'none';
+    } else {
+      dom.chatTopBar.style.display = 'none';
+    }
     dom.sessionBar.style.display = 'none';
     dom.projectContextBar.style.display = 'none';
     dom.chatInputArea.style.display = 'none';
-    dom.chatMessages.innerHTML = '<div class="flex items-center justify-center h-full text-text-muted text-sm font-body">Select an agent to start chatting</div>';
+    dom.chatMessages.innerHTML = isMobile
+      ? '<div class="flex flex-col items-center justify-center h-full text-text-muted font-body gap-4 px-6"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg><span class="text-sm text-center">Tap the menu icon above<br>to select an agent</span></div>'
+      : '<div class="flex items-center justify-center h-full text-text-muted text-sm font-body">Select an agent to start chatting</div>';
     updateStatusBar();
     return;
   }
+  // Agent selected — restore top bar elements
+  dom.chatAgentName.style.display = '';
+  dom.modelSelector.style.display = '';
   dom.chatTopBar.style.display = '';
   dom.chatInputArea.style.display = '';
   renderSessionBar();
@@ -11473,7 +11488,7 @@ window.nodeAction = async function(action, name) {
 
 // ─── Channels Settings Tab ──────────────────────────────────
 async function renderChannelsTab(el) {
-  const res = await API.get('/v1/channels');
+  const res = await API.get('/v1/adapters');
   const channels = res.channels || [];
   el.innerHTML = `
     <div class="glass-card p-6">
@@ -11555,7 +11570,7 @@ window.createChannel = async function() {
   if (!name || !token) { showToast('Name and bot token required'); return; }
   const allowed_users = usersStr ? usersStr.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n)) : null;
   try {
-    await API.post('/v1/channels', {
+    await API.post('/v1/adapters', {
       action: 'create', id: name.toLowerCase().replace(/\s+/g, '-'), name, type: 'telegram',
       credentials: { bot_token: token, allowed_users },
       agent_routing: { default: agent }, enabled: true,
@@ -11569,7 +11584,7 @@ window.createChannel = async function() {
 window.editChannel = async function(chId) {
   // Get current channel config from the channels list
   try {
-    const res = await API.get('/v1/channels');
+    const res = await API.get('/v1/adapters');
     const ch = (res.channels || []).find(c => c.channel_id === chId);
     if (!ch) { showToast('Channel not found'); return; }
     const agents = state.agents || [];
@@ -11616,14 +11631,14 @@ window.saveChannelEdit = async function(chId, wasRunning) {
   if (!token) { showToast('Bot token required'); return; }
   const allowed_users = usersStr ? usersStr.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n)) : null;
   try {
-    await API.post('/v1/channels', {
+    await API.post('/v1/adapters', {
       action: 'update', id: chId, name,
       credentials: { bot_token: token, allowed_users },
       agent_routing: { default: agent },
     });
     // Auto-restart if was running
     if (wasRunning) {
-      await API.post(`/v1/channels/${encodeURIComponent(chId)}/restart`);
+      await API.post(`/v1/adapters/${encodeURIComponent(chId)}/restart`);
       showToast('Channel updated and restarted');
     } else {
       showToast('Channel updated');
@@ -11635,7 +11650,7 @@ window.saveChannelEdit = async function(chId, wasRunning) {
 
 window.channelLifecycle = async function(chId, action) {
   try {
-    await API.post(`/v1/channels/${encodeURIComponent(chId)}/${action}`);
+    await API.post(`/v1/adapters/${encodeURIComponent(chId)}/${action}`);
     showToast(`Channel ${chId}: ${action}`);
     setTimeout(() => loadSettingsTab(), 500);
   } catch(e) { showToast(e.message, 'error'); }
@@ -11643,7 +11658,7 @@ window.channelLifecycle = async function(chId, action) {
 
 window.channelAction = async function(action, chId) {
   try {
-    await API.post('/v1/channels', {action, id: chId});
+    await API.post('/v1/adapters', {action, id: chId});
     showToast(`Channel ${chId}: ${action}`);
     setTimeout(() => loadSettingsTab(), 500);
   } catch(e) { showToast(e.message, 'error'); }
