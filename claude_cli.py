@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "4.4.4"
+VERSION = "4.4.5"
 VERSION_DATE = "2026-03-26"
 CHANGELOG = [
+    ("4.4.5", "2026-03-26", "File previews now support images (JPEG, PNG, GIF, WebP, SVG) and office documents (DOCX, XLSX, PPTX, PDF, CSV). Sidebar chat attachments show preview and download buttons, file counts are accurate from first load, and the list is stable across re-renders."),
     ("4.4.4", "2026-03-26", "Fixed sidebar file attachments disappearing when the accordion was opened — files created in a chat session are now fetched from a dedicated endpoint that includes the full message history, so compacted messages no longer hide previously created files."),
     ("4.4.3", "2026-03-26", "Fixed cost tracking showing $0 for all models — auto-discovery was writing cost_input=0 to config, which silently overrode the built-in Anthropic rate table. Config zeros are now treated as unset and fall through to correct rates. Added missing model IDs (Haiku 4.5, Sonnet 4.0, Opus 4.0) to the built-in table, plus prefix patterns as a catch-all for future versions. Historical costs for the past week were retroactively corrected."),
     ("4.4.2", "2026-03-26", "Smarter memory I/O — the nightly background pipeline now reads only what it needs from memory files instead of loading everything into RAM. The autodream consolidation run also reuses a single memory scan across all its passes, reducing redundant filesystem work."),
