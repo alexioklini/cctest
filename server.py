@@ -922,7 +922,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             "agents": engine.list_agents(),
             "sessions": len(sessions.list_all()),
             "scheduler_tasks": len(engine._scheduler.list_all()) if engine._scheduler else 0,
-            "changelog": [{"version": v, "date": d, "changes": c} for v, d, c in engine.CHANGELOG[:5]],
+            "changelog": [{"version": v, "date": d, "changes": c} for v, d, c in engine.CHANGELOG],
         })
 
     def _handle_list_agents(self):
