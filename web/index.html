@@ -3239,7 +3239,7 @@ function renderSidebarSession(s, currentSessionId) {
   // Attachment collapsible section
   if (hasAttach) {
     html += `<div class="sb-chat-attachments collapsed" data-session="${esc(s.id)}">
-      <div class="sb-attach-toggle" onclick="event.stopPropagation();toggleChatAttachments('${esc(s.id)}')">\ud83d\udcce Files \u25b6</div>
+      <div class="sb-attach-toggle" onclick="event.stopPropagation();toggleChatAttachments('${esc(s.id)}')">\ud83d\udcce ${s.has_attachments} file${s.has_attachments !== 1 ? 's' : ''} \u25b6</div>
       <div class="sb-attach-list">
         <div style="font-size:10px;color:var(--color-text-muted);font-style:italic">Loading\u2026</div>
       </div>
