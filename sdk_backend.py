@@ -140,14 +140,20 @@ def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None) -> dict:
         header_buf += b
 
     # Read SSE body — recv small chunks for low latency
+    sock.settimeout(5)  # 5s timeout per recv to detect stalls
     full_text = ""
     tool_calls = []
     sse_buf = b""
+    _client_gone = False
 
     while True:
         try:
             data = sock.recv(512)
         except socket.timeout:
+            if _client_gone:
+                break  # Client disconnected, stop proxying
+            continue  # Keep waiting — sidecar may be executing tools
+        except OSError:
             break
         if not data:
             break
@@ -177,11 +183,21 @@ def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None) -> dict:
                     wfile.write(sse_out)
                     wfile.flush()
                 except (BrokenPipeError, ConnectionResetError, OSError):
-                    pass
+                    _client_gone = True
+                    # Client gone — close sidecar connection and return immediately
+                    try:
+                        sock.close()
+                    except Exception:
+                        pass
+                    if not result["text"] and full_text:
+                        result["text"] = full_text
+                    if not result["tools"] and tool_calls:
+                        result["tools"] = tool_calls
+                    return result
                 if event_callback and evt_data:
                     event_callback(evt_type, evt_data)
 
-            # Collect metadata from _result
+            # Collect metadata from _result and stop reading
             if evt_type == "_result" and evt_data:
                 result["text"] = evt_data.get("text", "")
                 result["sdk_session_id"] = evt_data.get("sdk_session_id")
@@ -189,6 +205,13 @@ def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None) -> dict:
                 result["tokens_out"] = evt_data.get("tokens_out", 0)
                 result["cost"] = evt_data.get("cost", 0)
                 result["tools"] = evt_data.get("tools", [])
+                sock.close()
+                # Use accumulated text if _result didn't provide it
+                if not result["text"] and full_text:
+                    result["text"] = full_text
+                if not result["tools"] and tool_calls:
+                    result["tools"] = tool_calls
+                return result
             elif evt_type == "text_delta" and evt_data:
                 full_text += evt_data.get("text", "")
             elif evt_type == "tool_call" and evt_data:

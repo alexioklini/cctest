@@ -1775,45 +1775,57 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             try:
                 # Proxy SSE from sidecar directly to client wfile
                 r = sdk_backend.proxy_sidecar_sse(payload, self.wfile, event_callback)
-                reply = r.get("text", "")
-                session.sdk_session_id = r.get("sdk_session_id")
+            except Exception as e:
+                r = {}
+                try:
+                    self.wfile.write(f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n".encode())
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
 
-                if reply:
-                    # Log cost
+            # Save response (complete or partial)
+            reply = r.get("text", "") or "".join(_partial_reply).strip()
+            session.sdk_session_id = r.get("sdk_session_id") or session.sdk_session_id
+            is_partial = not r.get("text")  # No _result event = partial/cancelled
+
+            if reply:
+                try:
+                    engine._log_call_cost(model=model, tokens_in=r.get("tokens_in", 0),
+                                          tokens_out=r.get("tokens_out", 0), session_id=sid)
+                except Exception:
+                    pass
+
+                session_cost = None
+                if engine._cost_tracker:
                     try:
-                        engine._log_call_cost(model=model, tokens_in=r.get("tokens_in", 0),
-                                              tokens_out=r.get("tokens_out", 0), session_id=sid)
+                        sc = engine._cost_tracker.get_session_cost(sid)
+                        session_cost = round(sc.get("cost", 0.0), 4)
                     except Exception:
                         pass
 
-                    # Save message
-                    session_cost = None
-                    if engine._cost_tracker:
-                        try:
-                            sc = engine._cost_tracker.get_session_cost(sid)
-                            session_cost = round(sc.get("cost", 0.0), 4)
-                        except Exception:
-                            pass
-                    msg_metadata = {"model": model, "sdk": True,
-                                    "tokens": r.get("tokens_in", 0) + r.get("tokens_out", 0)}
-                    if session_cost is not None:
-                        msg_metadata["cost"] = session_cost
-                    if r.get("tools"):
-                        msg_metadata["tools"] = r["tools"]
-                    session.add_message("assistant", reply, metadata=msg_metadata)
+                msg_metadata = {"model": model, "sdk": True,
+                                "tokens": r.get("tokens_in", 0) + r.get("tokens_out", 0)}
+                if is_partial:
+                    msg_metadata["partial"] = True
+                if session_cost is not None:
+                    msg_metadata["cost"] = session_cost
+                if r.get("tools") or _partial_tools:
+                    msg_metadata["tools"] = r.get("tools") or _partial_tools
+                session.add_message("assistant", reply, metadata=msg_metadata)
 
-                    # Done event
-                    done_data = {"text": reply, "tokens": r.get("tokens_in", 0) + r.get("tokens_out", 0),
-                                 "model": model, "sdk": True}
-                    if session_cost is not None:
-                        done_data["cost"] = session_cost
-                    try:
-                        self.wfile.write(f"event: done\ndata: {json.dumps(done_data)}\n\n".encode())
-                        self.wfile.flush()
-                    except (BrokenPipeError, ConnectionResetError):
-                        pass
+                # Done event (may fail if client disconnected — that's ok)
+                done_data = {"text": reply, "tokens": r.get("tokens_in", 0) + r.get("tokens_out", 0),
+                             "model": model, "sdk": True}
+                if session_cost is not None:
+                    done_data["cost"] = session_cost
+                try:
+                    self.wfile.write(f"event: done\ndata: {json.dumps(done_data)}\n\n".encode())
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
 
-                    # Post-response hooks
+                # Post-response hooks (only for complete responses)
+                if not is_partial:
                     try:
                         token_count = engine._estimate_conversation_tokens(session.messages)
                         if token_count >= getattr(session, '_last_summary_at', 0) + 5000 or \
@@ -1830,13 +1842,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                                                  args=(session.agent_id, message, reply[:1000]), daemon=True).start()
                         except Exception:
                             pass
-
-            except Exception as e:
-                try:
-                    self.wfile.write(f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n".encode())
-                    self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
             return
 
         t = threading.Thread(target=worker, daemon=True)
