@@ -1790,6 +1790,8 @@ tailwind.config = {
       top: 0;
       bottom: 0;
       z-index: 30;
+      width: 280px !important;
+      min-width: 280px !important;
       transform: translateX(-100%);
       transition: transform 0.25s ease;
       box-shadow: 4px 0 24px rgba(0,0,0,0.15);
@@ -1797,10 +1799,7 @@ tailwind.config = {
     #sidebar.mobile-open {
       transform: translateX(0);
     }
-    #sidebar.collapsed {
-      width: 240px;
-      min-width: 240px;
-    }
+    /* On mobile, NEVER show collapsed state — always full sidebar */
     #sidebar.collapsed .sidebar-brand-text,
     #sidebar.collapsed .sidebar-conn,
     #sidebar.collapsed .sb-section-label,
@@ -1813,8 +1812,10 @@ tailwind.config = {
     #sidebar.collapsed .sb-footer .sb-footer-label,
     #sidebar.collapsed .sb-create-agent-btn .sb-btn-text,
     #sidebar.collapsed .sb-section-header,
-    #sidebar.collapsed .sb-section-content {
-      display: revert;
+    #sidebar.collapsed .sb-section-content,
+    #sidebar.collapsed .sb-section-label,
+    #sidebar.collapsed .sb-project-selector-btn .sb-btn-text {
+      display: block !important;
     }
     #sidebar.collapsed .sb-agent-item {
       justify-content: flex-start;
@@ -1837,9 +1838,16 @@ tailwind.config = {
     #sidebar.collapsed .sb-divider {
       margin: 4px 12px;
     }
+    /* Hide resize handle on mobile */
+    .resize-handle { display: none !important; }
+    /* Hide sidebar toggle (collapse) button on mobile */
+    .sidebar-toggle { display: none !important; }
     #mobile-hamburger {
       display: flex;
     }
+    /* Footer adjustments for mobile */
+    footer { padding: 0 8px !important; }
+    footer span { font-size: 9px !important; }
   }
 
   /* ── Knowledge Map Overlay ── */
