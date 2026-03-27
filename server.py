@@ -4162,9 +4162,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     def _handle_services_status(self):
         """GET /v1/services — status of all managed services."""
+        import sdk_backend
         uptime = int(time.time() - _server_start_time)
         qmd_running = self._is_qmd_running()
         tg_running = self._is_telegram_running()
+        sdk_running = sdk_backend.is_sidecar_running()
 
         collections = self._qmd_collections() if qmd_running else []
 
@@ -4185,6 +4187,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "status": "running" if qmd_running else "stopped",
                 "port": _QMD_PORT,
                 "collections": collections,
+            },
+            "sdk_sidecar": {
+                "status": "running" if sdk_running else "stopped",
+                "port": sdk_backend.SIDECAR_PORT,
             },
             "telegram": {
                 "status": "running" if tg_running else "stopped",
@@ -5931,6 +5937,50 @@ def main():
     else:
         print("Telegram: disabled in config")
 
+    # Auto-start SDK sidecar
+    _sdk_sidecar_process = None
+
+    def _start_sdk_sidecar():
+        nonlocal _sdk_sidecar_process
+        import subprocess as _sp
+        sidecar_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sdk_sidecar.py")
+        if not os.path.isfile(sidecar_script):
+            print("SDK sidecar: sdk_sidecar.py not found")
+            return
+        # Check if already running
+        import sdk_backend
+        if sdk_backend.is_sidecar_running():
+            print("SDK sidecar: already running on port 8421")
+            return
+        _sdk_sidecar_process = _sp.Popen(
+            [sys.executable, "-u", sidecar_script],
+            stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+        )
+        # Wait for it to be ready
+        for _ in range(20):
+            time.sleep(0.5)
+            if sdk_backend.is_sidecar_running():
+                print(f"SDK sidecar: started (PID {_sdk_sidecar_process.pid}, port 8421)")
+                return
+        print("SDK sidecar: failed to start within 10s")
+
+    def _sdk_sidecar_watchdog():
+        """Monitor sidecar and restart if it dies."""
+        nonlocal _sdk_sidecar_process
+        import sdk_backend
+        while True:
+            time.sleep(30)
+            if not sdk_backend.is_sidecar_running():
+                print("SDK sidecar: not running, restarting...", flush=True)
+                try:
+                    _start_sdk_sidecar()
+                except Exception as e:
+                    print(f"SDK sidecar restart failed: {e}", flush=True)
+
+    threading.Thread(target=_start_sdk_sidecar, daemon=True, name="sdk-sidecar-start").start()
+    threading.Thread(target=_sdk_sidecar_watchdog, daemon=True, name="sdk-sidecar-watchdog").start()
+
     # Start enabled messaging channels
     def _start_channels():
         time.sleep(2)
@@ -5955,6 +6005,12 @@ def main():
             engine._scheduler.stop()
         if engine._mcp_manager:
             engine._mcp_manager.stop_all()
+        if _sdk_sidecar_process:
+            try:
+                _sdk_sidecar_process.terminate()
+                _sdk_sidecar_process.wait(timeout=3)
+            except Exception:
+                pass
         server.server_close()
 
 

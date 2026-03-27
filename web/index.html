@@ -7977,6 +7977,26 @@ async function renderServerTab(el) {
         <button onclick="toggleServiceLog('server')" class="btn-secondary text-xs px-4 py-2 rounded-lg">View Log</button>
       </div>
     </div>
+    <div class="glass-card p-6 mt-4">
+      <div class="text-text-primary text-sm font-medium mb-3">Services</div>
+      <div class="grid grid-cols-3 gap-3 text-xs">
+        <div class="flex items-center gap-2">
+          <span class="inline-block w-2 h-2 rounded-full ${svc.qmd?.status==='running'?'bg-green-500':'bg-red-500'}"></span>
+          <span class="text-text-muted">QMD</span>
+          <span class="mono text-text-secondary">${svc.qmd?.status==='running'?'port '+svc.qmd.port:'stopped'}</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="inline-block w-2 h-2 rounded-full ${svc.sdk_sidecar?.status==='running'?'bg-green-500':'bg-red-500'}"></span>
+          <span class="text-text-muted">SDK Sidecar</span>
+          <span class="mono text-text-secondary">${svc.sdk_sidecar?.status==='running'?'port '+svc.sdk_sidecar.port:'stopped'}</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="inline-block w-2 h-2 rounded-full ${svc.telegram?.status==='running'?'bg-green-500':'bg-red-500'}"></span>
+          <span class="text-text-muted">Telegram</span>
+          <span class="mono text-text-secondary">${svc.telegram?.status==='running'?svc.telegram.bot:'stopped'}</span>
+        </div>
+      </div>
+    </div>
     <div id="log-server" class="hidden mt-4"></div>`;
 }
 
@@ -11039,6 +11059,7 @@ function apRender() {
     const rows = [];
     rows.push(`<div class="ap-svc"><span class="ap-svc-name">Server</span><span class="ap-svc-dot svc-up"></span><span class="ap-svc-info">${svc.server.sessions||0} sess</span></div>`);
     rows.push(`<div class="ap-svc"><span class="ap-svc-name">QMD</span><span class="ap-svc-dot ${svc.qmd?.status==='running'?'svc-up':'svc-down'}"></span><span class="ap-svc-info">${svc.qmd?.status==='running'?(svc.qmd.collections?.length||0)+' coll':'stopped'}</span></div>`);
+    rows.push(`<div class="ap-svc"><span class="ap-svc-name">SDK Sidecar</span><span class="ap-svc-dot ${svc.sdk_sidecar?.status==='running'?'svc-up':'svc-down'}"></span><span class="ap-svc-info">${svc.sdk_sidecar?.status==='running'?'port '+svc.sdk_sidecar.port:'stopped'}</span></div>`);
     rows.push(`<div class="ap-svc"><span class="ap-svc-name">Telegram</span><span class="ap-svc-dot ${svc.telegram?.status==='running'?'svc-up':'svc-down'}"></span><span class="ap-svc-info">${svc.telegram?.status==='running'?(svc.telegram.bot||'active'):'stopped'}</span></div>`);
     sb.innerHTML = rows.join('');
   }
