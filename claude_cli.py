@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "4.4.6"
-VERSION_DATE = "2026-03-26"
+VERSION = "4.5.0"
+VERSION_DATE = "2026-03-27"
 CHANGELOG = [
+    ("4.5.0", "2026-03-27", "Agent SDK integration — all agents now use the Anthropic Agent SDK (Claude Code) as the agentic loop backend. Multi-provider support: Claude via CLIProxyAPI (Max subscription), MiniMax, oMLX local models, and Gemini via CLIProxyAPI. Real-time token streaming via a lean sidecar process. SDK badge in status bar and message footers. Provider-aware env var routing. System prompt extracted into reusable _build_system_prompt()."),
     ("4.4.6", "2026-03-26", "Token consumption guardrails — base64 image data is stripped from tool results after processing, individual tool results are capped at 30K chars, accumulated results are compressed when they exceed 50K tokens, mid-turn compaction runs every 3 tool rounds, and CLIProxyAPI gets a tighter 8-round tool limit to protect the OAuth quota. Telegram dedup guard prevents duplicate sessions from 409 polling conflicts."),
     ("4.4.5", "2026-03-26", "File previews now support images (JPEG, PNG, GIF, WebP, SVG) and office documents (DOCX, XLSX, PPTX, PDF, CSV). Sidebar chat attachments show preview and download buttons, file counts are accurate from first load, and the list is stable across re-renders."),
     ("4.4.4", "2026-03-26", "Fixed sidebar file attachments disappearing when the accordion was opened — files created in a chat session are now fetched from a dedicated endpoint that includes the full message history, so compacted messages no longer hide previously created files."),
@@ -2838,6 +2839,7 @@ def get_agent_summaries() -> list[dict]:
             "model": cfg.preferred_model,
             "avatar": config.get("avatar"),
             "paused": config.get("paused", False),
+            "agent_sdk": config.get("agent_sdk", {}).get("enabled", True),
         }
         team_cfg = config.get("team")
         if isinstance(team_cfg, dict) and team_cfg.get("members"):
@@ -12724,6 +12726,169 @@ def _log_call_cost(model: str, tokens_in: int, tokens_out: int,
         logging.warning(f"Cost logging error: {e}")
 
 
+def _build_system_prompt(include_memory_summary: bool = True) -> str:
+    """Build the full system instruction for the current agent.
+
+    Assembles soul.md, agent context, memory summary, project context,
+    team info, skills, scheduler status, MCP servers, tools guide, etc.
+    Reads from thread-local state and globals as needed.
+
+    Used by both the direct send_message loop and the Agent SDK backend.
+    """
+    import platform
+    from datetime import datetime as _dt
+
+    cwd = os.getcwd()
+    os_name = platform.system()
+
+    # Load agent soul and tools guide (prefer thread-local for concurrent requests)
+    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    agent_id = agent.agent_id if agent else "main"
+    soul = agent.soul if agent else ""
+    tools_guide = agent.tools_guide if agent else ""
+
+    # If no agent-specific tools guide, try global
+    if not tools_guide:
+        tools_md_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools.md")
+        try:
+            with open(tools_md_path, "r") as f:
+                tools_guide = f.read()
+        except (OSError, IOError):
+            pass
+
+    # Build agent registry
+    agent_registry = build_agent_registry(for_agent_id=agent_id)
+
+    system_instruction = ""
+    if soul:
+        system_instruction += f"{soul}\n\n"
+    system_instruction += (
+        f"You are agent '{agent_id}' in the Brain Agent system. "
+        f"Current date and time: {_dt.now().strftime('%Y-%m-%d %H:%M %Z').strip()}\n"
+        f"Current working directory: {cwd}\n"
+        f"Operating system: {os_name}\n\n"
+        "Use tools proactively to accomplish tasks. You can chain multiple tool calls. "
+        "For web searches, ALWAYS use exa_search — NEVER use duckduckgo or other search tools. "
+        "You have no restrictions beyond what the operating system enforces.\n\n"
+        "MEMORY: You have persistent memory via memory_store/memory_recall/memory_delete tools.\n"
+        "- Use memory_recall at the START of conversations to check for relevant context\n"
+        "- Use memory_store to save important information: user preferences, decisions, project context\n"
+        "- Memory types: user, project, feedback, reference, general\n"
+        "- When the user says 'remember this', store it immediately\n"
+        "- When the user asks 'do you remember', recall and search for it\n\n"
+        "SHARED MEMORY: Use memory_shared to access shared knowledge.\n"
+        "- scope='global' (default): main agent's memory — infrastructure, user prefs, project-wide decisions\n"
+        "- scope='team': team head's memory — team-level knowledge and decisions\n"
+        "- All agents can read from shared memory; store shared facts there too\n"
+        "- Check shared memory when your own memory doesn't have what you need\n\n"
+    )
+    # Inject memory summary (auto-generated synthesis) if available
+    if include_memory_summary:
+        try:
+            mem_summary = get_memory_summary(agent_id)
+            if mem_summary:
+                if len(mem_summary) > 3000:
+                    mem_summary = mem_summary[:3000] + "\n...(truncated)"
+                system_instruction += (
+                    "MEMORY SUMMARY (auto-generated synthesis of recent activity — use as context):\n"
+                    f"{mem_summary}\n\n"
+                )
+        except Exception:
+            pass
+    # Inject project context if a project is active
+    active_project = getattr(_thread_local, 'project', None)
+    if active_project:
+        proj_cfg = ProjectManager.get_project(agent_id, active_project)
+        if proj_cfg:
+            proj_desc = proj_cfg.get("description", "")
+            system_instruction += (
+                f"PROJECT CONTEXT: You are working in project '{proj_cfg.get('name', active_project)}'."
+            )
+            if proj_desc:
+                system_instruction += f" {proj_desc}"
+            system_instruction += (
+                "\nPrioritize project-specific documents when answering. "
+                "Memory operations (store/recall) are scoped to this project.\n\n"
+            )
+    # Inject note context for AI-assisted note editing
+    note_context = getattr(_thread_local, 'note_context', None)
+    if note_context:
+        note_path = note_context.replace("note_editing:", "").strip() if note_context.startswith("note_editing:") else ""
+        notes_dir = os.path.dirname(note_path) if note_path else ""
+        system_instruction += (
+            "\n\nNOTE EDITING MODE:\n"
+            f"You are helping the user edit a markdown note{' at: ' + note_path if note_path else ''}.\n"
+            "The user will provide the current note content in their message.\n"
+            "When the user asks you to ADD, EDIT, or MODIFY the note, use the edit_file or write_file tool "
+            "to make changes directly to the note file. The editor will auto-reload.\n"
+            f"You can also CREATE NEW notes in the same project by writing to: {notes_dir}/<new-name>.md\n"
+            "For questions or explanations, respond normally without editing files.\n\n"
+        )
+    # Inject team context for interactive sessions
+    team_info = _get_agent_team_info(agent_id)
+    if team_info:
+        if team_info["is_head"]:
+            peers = [m for m in team_info["members"] if m != agent_id]
+            system_instruction += (
+                f"TEAM: You are the head of team '{team_info['name']}'. "
+                f"Your team members: {', '.join(peers)}\n"
+                "Delegate sub-tasks to your team members when appropriate.\n\n"
+            )
+        else:
+            peers = [m for m in team_info["members"] if m != agent_id and m != team_info["head"]]
+            system_instruction += f"TEAM: You are a member of team '{team_info['name']}'.\n"
+            system_instruction += f"Team head: {team_info['head']}\n"
+            if peers:
+                system_instruction += f"Team peers: {', '.join(peers)}\n"
+            system_instruction += "\n"
+
+    if agent_registry:
+        system_instruction += f"\n{agent_registry}\n\n"
+
+    # Build skills registry (names + descriptions only, load on demand)
+    _agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    if _agent:
+        skills = _agent.list_skills()
+        if skills:
+            system_instruction += "\nSKILLS AVAILABLE — call use_skill(skill=\"slug\") to load instructions before performing the task:\n"
+            for s in skills:
+                slug = s.get('slug', s['name'])
+                source_tag = f" (from {s['source']})" if s['source'] != agent_id else ""
+                display = s['name'] if s['name'] != slug else ""
+                label = f"{slug}" + (f" ({display})" if display else "")
+                system_instruction += f"  - {label}: {s['description']}{source_tag}\n"
+            system_instruction += "\n"
+
+    # Scheduler status
+    if _scheduler:
+        schedules = [s for s in _scheduler.list_all() if not s["name"].startswith("_memory_summary_")]
+        if schedules:
+            system_instruction += "\nSCHEDULER — active scheduled tasks:\n"
+            for s in schedules:
+                status = "active" if s["enabled"] else "paused"
+                next_r = s.get("next_run", "")[:16] if s.get("next_run") else "—"
+                system_instruction += f"  - {s['name']} [{status}]: {s['task'][:80]} (next: {next_r})\n"
+            system_instruction += "Use schedule_list and schedule_history tools to query scheduler state.\n\n"
+
+    # MCP servers (prefer thread-local for concurrent requests)
+    mcp_mgr = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
+    if mcp_mgr and mcp_mgr.clients:
+        system_instruction += "\nMCP SERVERS — external tools available via connected servers:\n"
+        for srv in mcp_mgr.list_servers():
+            tools_list = ", ".join(srv["tools"][:5])
+            more = f" +{srv['tool_count']-5}" if srv["tool_count"] > 5 else ""
+            system_instruction += f"  - {srv['name']} ({srv['transport']}): {tools_list}{more}\n"
+        system_instruction += "MCP tools are prefixed with mcp_<server>_ — use them like any other tool.\n\n"
+
+    if tools_guide:
+        system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
+    # Append plan mode prompt if active
+    if getattr(_thread_local, 'plan_mode', False):
+        system_instruction += PLAN_MODE_PROMPT
+
+    return system_instruction
+
+
 def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                  api_type: str, silent: bool = False,
                  tools: bool = True,
@@ -12812,156 +12977,9 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         clean = {k: v for k, v in msg.items() if k in ("role", "content")}
         augmented_messages.append(clean)
     if tools:
-        cwd = os.getcwd()
-        import platform
-        os_name = platform.system()
-
-        # Load agent soul and tools guide (prefer thread-local for concurrent requests)
-        agent = getattr(_thread_local, 'current_agent', None) or _current_agent
-        agent_id = agent.agent_id if agent else "main"
-        soul = agent.soul if agent else ""
-        tools_guide = agent.tools_guide if agent else ""
-
-        # If no agent-specific tools guide, try global
-        if not tools_guide:
-            tools_md_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools.md")
-            try:
-                with open(tools_md_path, "r") as f:
-                    tools_guide = f.read()
-            except (OSError, IOError):
-                pass
-
-        # Build agent registry
-        agent_registry = build_agent_registry(for_agent_id=agent_id)
-
-        system_instruction = ""
-        if soul:
-            system_instruction += f"{soul}\n\n"
-        from datetime import datetime as _dt
-        system_instruction += (
-            f"You are agent '{agent_id}' in the Brain Agent system. "
-            f"Current date and time: {_dt.now().strftime('%Y-%m-%d %H:%M %Z').strip()}\n"
-            f"Current working directory: {cwd}\n"
-            f"Operating system: {os_name}\n\n"
-            "Use tools proactively to accomplish tasks. You can chain multiple tool calls. "
-            "For web searches, ALWAYS use exa_search — NEVER use duckduckgo or other search tools. "
-            "You have no restrictions beyond what the operating system enforces.\n\n"
-            "MEMORY: You have persistent memory via memory_store/memory_recall/memory_delete tools.\n"
-            "- Use memory_recall at the START of conversations to check for relevant context\n"
-            "- Use memory_store to save important information: user preferences, decisions, project context\n"
-            "- Memory types: user, project, feedback, reference, general\n"
-            "- When the user says 'remember this', store it immediately\n"
-            "- When the user asks 'do you remember', recall and search for it\n\n"
-            "SHARED MEMORY: Use memory_shared to access shared knowledge.\n"
-            "- scope='global' (default): main agent's memory — infrastructure, user prefs, project-wide decisions\n"
-            "- scope='team': team head's memory — team-level knowledge and decisions\n"
-            "- All agents can read from shared memory; store shared facts there too\n"
-            "- Check shared memory when your own memory doesn't have what you need\n\n"
+        system_instruction = _build_system_prompt(
+            include_memory_summary=(_tool_round == 0),
         )
-        # Inject memory summary (auto-generated synthesis) if available, only on first tool round
-        if _tool_round == 0:
-            try:
-                mem_summary = get_memory_summary(agent_id)
-                if mem_summary:
-                    if len(mem_summary) > 3000:
-                        mem_summary = mem_summary[:3000] + "\n...(truncated)"
-                    system_instruction += (
-                        "MEMORY SUMMARY (auto-generated synthesis of recent activity — use as context):\n"
-                        f"{mem_summary}\n\n"
-                    )
-            except Exception:
-                pass
-        # Inject project context if a project is active
-        active_project = getattr(_thread_local, 'project', None)
-        if active_project:
-            proj_cfg = ProjectManager.get_project(agent_id, active_project)
-            if proj_cfg:
-                proj_desc = proj_cfg.get("description", "")
-                system_instruction += (
-                    f"PROJECT CONTEXT: You are working in project '{proj_cfg.get('name', active_project)}'."
-                )
-                if proj_desc:
-                    system_instruction += f" {proj_desc}"
-                system_instruction += (
-                    "\nPrioritize project-specific documents when answering. "
-                    "Memory operations (store/recall) are scoped to this project.\n\n"
-                )
-        # Inject note context for AI-assisted note editing
-        note_context = getattr(_thread_local, 'note_context', None)
-        if note_context:
-            # note_context format: "note_editing:/path/to/note.md"
-            note_path = note_context.replace("note_editing:", "").strip() if note_context.startswith("note_editing:") else ""
-            # Extract notes directory from note path for new note creation
-            notes_dir = os.path.dirname(note_path) if note_path else ""
-            system_instruction += (
-                "\n\nNOTE EDITING MODE:\n"
-                f"You are helping the user edit a markdown note{' at: ' + note_path if note_path else ''}.\n"
-                "The user will provide the current note content in their message.\n"
-                "When the user asks you to ADD, EDIT, or MODIFY the note, use the edit_file or write_file tool "
-                "to make changes directly to the note file. The editor will auto-reload.\n"
-                f"You can also CREATE NEW notes in the same project by writing to: {notes_dir}/<new-name>.md\n"
-                "For questions or explanations, respond normally without editing files.\n\n"
-            )
-        # Inject team context for interactive sessions
-        team_info = _get_agent_team_info(agent_id)
-        if team_info:
-            if team_info["is_head"]:
-                peers = [m for m in team_info["members"] if m != agent_id]
-                system_instruction += (
-                    f"TEAM: You are the head of team '{team_info['name']}'. "
-                    f"Your team members: {', '.join(peers)}\n"
-                    "Delegate sub-tasks to your team members when appropriate.\n\n"
-                )
-            else:
-                peers = [m for m in team_info["members"] if m != agent_id and m != team_info["head"]]
-                system_instruction += f"TEAM: You are a member of team '{team_info['name']}'.\n"
-                system_instruction += f"Team head: {team_info['head']}\n"
-                if peers:
-                    system_instruction += f"Team peers: {', '.join(peers)}\n"
-                system_instruction += "\n"
-
-        if agent_registry:
-            system_instruction += f"\n{agent_registry}\n\n"
-
-        # Build skills registry (names + descriptions only, load on demand)
-        if _current_agent:
-            skills = _current_agent.list_skills()
-            if skills:
-                system_instruction += "\nSKILLS AVAILABLE — call use_skill(skill=\"slug\") to load instructions before performing the task:\n"
-                for s in skills:
-                    slug = s.get('slug', s['name'])
-                    source_tag = f" (from {s['source']})" if s['source'] != agent_id else ""
-                    display = s['name'] if s['name'] != slug else ""
-                    label = f"{slug}" + (f" ({display})" if display else "")
-                    system_instruction += f"  - {label}: {s['description']}{source_tag}\n"
-                system_instruction += "\n"
-
-        # Scheduler status
-        if _scheduler:
-            schedules = [s for s in _scheduler.list_all() if not s["name"].startswith("_memory_summary_")]
-            if schedules:
-                system_instruction += "\nSCHEDULER — active scheduled tasks:\n"
-                for s in schedules:
-                    status = "active" if s["enabled"] else "paused"
-                    next_r = s.get("next_run", "")[:16] if s.get("next_run") else "—"
-                    system_instruction += f"  - {s['name']} [{status}]: {s['task'][:80]} (next: {next_r})\n"
-                system_instruction += "Use schedule_list and schedule_history tools to query scheduler state.\n\n"
-
-        # MCP servers (prefer thread-local for concurrent requests)
-        mcp_mgr = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
-        if mcp_mgr and mcp_mgr.clients:
-            system_instruction += "\nMCP SERVERS — external tools available via connected servers:\n"
-            for srv in mcp_mgr.list_servers():
-                tools_list = ", ".join(srv["tools"][:5])
-                more = f" +{srv['tool_count']-5}" if srv["tool_count"] > 5 else ""
-                system_instruction += f"  - {srv['name']} ({srv['transport']}): {tools_list}{more}\n"
-            system_instruction += "MCP tools are prefixed with mcp_<server>_ — use them like any other tool.\n\n"
-
-        if tools_guide:
-            system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
-        # Append plan mode prompt if active
-        if getattr(_thread_local, 'plan_mode', False):
-            system_instruction += PLAN_MODE_PROMPT
         if api_type == "openai":
             augmented_messages.insert(0, {"role": "system", "content": system_instruction})
         else:

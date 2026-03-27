@@ -21,14 +21,35 @@ This file provides guidance to Claude Code when working with this repository.
 brain.py (gateway)
   ├── server.py (daemon on port 8420, launchd managed)
   │   ├── claude_cli.py (engine: 20+ tools, agents, memory, scheduler)
+  │   ├── sdk_backend.py (Agent SDK proxy — provider env + sidecar SSE proxy)
   │   ├── SQLite: chats.db, scheduler.db
   │   └── MCP server connections
+  ├── sdk_sidecar.py (daemon on port 8421, Agent SDK streaming)
+  │   └── Runs claude_agent_sdk.query() in a clean process (no claude_cli import)
   ├── qmd mcp --http (daemon on port 8181, hybrid memory search)
   │   └── Collections: one per agent → agents/<name>/*.md
   ├── tui.py (terminal client)
   ├── telegram.py (Telegram client)
   └── web/index.html (browser client)
 ```
+
+### Agent SDK (Agentic Loop)
+
+All agents use the Anthropic Agent SDK (Claude Code CLI) as the agentic loop by default.
+The SDK provides built-in tools (Read, Write, Edit, Bash, Grep, Glob, WebFetch, WebSearch),
+context management, and token-efficient file operations.
+
+- `sdk_sidecar.py`: Lean process on port 8421 — runs SDK queries with real-time SSE streaming
+- `sdk_backend.py`: Provider env var builder + SSE proxy between server and sidecar
+- Must NOT import `claude_cli` in the sidecar — its module side-effects break anyio subprocess streaming
+- Server builds system prompt and provider env using `claude_cli`, then hands off to sidecar
+- Opt out per agent: `"agent_sdk": {"enabled": false}` in agent.json falls back to custom loop
+- SDK badge shown in web UI status bar and message footers
+
+Provider routing for SDK (env vars per provider):
+- `cliproxyapi`: Claude models (Max subscription OAuth) + Gemini, Qwen — `ANTHROPIC_BASE_URL=http://127.0.0.1:8317`
+- `omlx`: Local Crow models — `ANTHROPIC_BASE_URL=http://127.0.0.1:8000`
+- `minimax`: MiniMax M2.5/M2.7 — `ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic`
 
 ### Multi-Provider Routing
 

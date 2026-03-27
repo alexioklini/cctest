@@ -2350,6 +2350,7 @@ tailwind.config = {
       <span id="status-agent" class="text-agent font-medium"></span>
       <span class="text-text-muted">|</span>
       <span id="status-model" class="text-model mono font-medium"></span>
+      <span id="status-sdk-badge" style="display:none;font-size:9px;padding:1px 5px;border-radius:3px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;font-weight:600;letter-spacing:0.5px">SDK</span>
       <span class="text-text-muted">|</span>
       <span id="status-tokens" class="mono"></span>
       <span id="status-context" class="flex items-center gap-1.5" style="margin-left:auto">
@@ -2857,7 +2858,7 @@ async function loadInitialData() {
 // ─── Rendering: Models ──────────────────────────────────────
 function renderModelSelector() {
   dom.modelSelector.innerHTML = '';
-  const allModels = getAllProviderModels();
+  let allModels = getAllProviderModels();
   if (allModels.length === 0) {
     dom.modelSelector.innerHTML = '<option value="">No models</option>';
     return;
@@ -3142,6 +3143,7 @@ function selectAgent(agentName) {
   // Load projects for this agent
   loadAgentProjects(agentName);
   renderAgentCards();
+  renderModelSelector();
   updateChatArea();
 }
 
@@ -3534,6 +3536,7 @@ window.newChatSession = function() {
     streaming: false,
     totalTokens: 0,
   };
+  renderModelSelector();
   renderSessionBar();
   renderMessages();
   updateStatusBar();
@@ -4536,6 +4539,7 @@ window.loadSession = async function(sessionId) {
         if (m.metadata.original_model) msg.fallbackNotice = `Used fallback: ${m.metadata.model} (primary ${m.metadata.original_model} unavailable)`;
         if (m.metadata.partial) msg.partial = true;
         if (m.metadata.thinking) msg.thinking = m.metadata.thinking;
+        if (m.metadata.sdk) msg.sdk = true;
       }
       return msg;
     });
@@ -4784,7 +4788,7 @@ function renderMessage(msg, idx, container) {
       <div class="msg-content">${content}</div>
       ${filesHtml}
       ${msg.fallbackNotice ? `<div class="text-[10px] text-warning mt-1 flex items-center gap-1"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>${esc(msg.fallbackNotice)}</div>` : ''}
-      ${msg.tokens ? `<div class="text-[10px] text-text-muted mt-2 mono flex items-center gap-1.5">${msg.model ? modelIcon(msg.model) + ' ' + esc(msg.model) + '  ·  ' : ''}<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>${msg.tokens} tokens${msg.cost != null ? '  ·  $' + msg.cost.toFixed(2) : ''}</div>` : ''}
+      ${msg.tokens ? `<div class="text-[10px] text-text-muted mt-2 mono flex items-center gap-1.5">${msg.model ? modelIcon(msg.model) + ' ' + esc(msg.model) + '  ·  ' : ''}${msg.sdk ? '<span style="font-size:8px;padding:0px 4px;border-radius:2px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;font-weight:600;letter-spacing:0.5px">SDK</span>  ·  ' : ''}<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>${msg.tokens} tokens${msg.cost != null ? '  ·  $' + msg.cost.toFixed(2) : ''}</div>` : ''}
     </div>`;
   } else if (msg.role === 'system') {
     div.className += ' flex justify-center';
@@ -5088,7 +5092,8 @@ async function sendMessage() {
   const spinnerElapsed = document.getElementById('spinner-elapsed');
   if (spinnerBar) spinnerBar.classList.remove('hidden');
   const spinnerModel = document.getElementById('spinner-model');
-  if (spinnerModel) spinnerModel.textContent = chat.model || '';
+  const _agentInfo = (state.agents || []).find(a => (a.id || a.name) === chat.agent);
+  if (spinnerModel) spinnerModel.textContent = (chat.model || '') + (_agentInfo?.agent_sdk ? ' [SDK]' : '');
   if (spinnerLabel) spinnerLabel.textContent = 'Thinking...';
   const spinnerStart = Date.now();
   let toolCallCount = 0;
@@ -5186,6 +5191,7 @@ async function sendMessage() {
         assistantMsg.cost = d.cost || null;
         chat.totalTokens += d.tokens || 0;
         if (d.cost != null) chat.sessionCost = d.cost;
+        if (d.sdk) { chat.sdk = true; assistantMsg.sdk = true; }
         if (d.fallback_model) {
           assistantMsg.fallbackNotice = `Using fallback: ${d.fallback_model} (primary ${d.original_model || d.model} unavailable)`;
           assistantMsg.model = d.fallback_model;
@@ -5278,6 +5284,10 @@ function updateStatusBar() {
   const agentLabel = chat?.agent || '';
   dom.statusAgent.textContent = agentLabel;
   dom.statusModel.textContent = chat?.model || '';
+  const sdkBadge = document.getElementById('status-sdk-badge');
+  const agentInfo = (state.agents || []).find(a => (a.id || a.name) === agentLabel);
+  const isSDK = chat?.sdk || agentInfo?.agent_sdk;
+  if (sdkBadge) sdkBadge.style.display = isSDK ? 'inline' : 'none';
   const costStr = chat?.sessionCost != null ? ` · $${chat.sessionCost.toFixed(2)}` : '';
   dom.statusTokens.textContent = chat?.totalTokens ? `${chat.totalTokens} tokens${costStr}` : '';
   dom.statusSession.textContent = chat?.sessionId ? `${chat.sessionId.substring(0, 8)}` : '';
@@ -5375,6 +5385,7 @@ window.manualCompact = async function() {
           if (m.metadata.tokens) msg.tokens = m.metadata.tokens;
           if (m.metadata.tools) msg.tools = m.metadata.tools;
           if (m.metadata.thinking) msg.thinking = m.metadata.thinking;
+          if (m.metadata.sdk) msg.sdk = true;
         }
         return msg;
       });

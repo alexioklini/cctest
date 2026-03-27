@@ -1,0 +1,15 @@
+{
+  "description": "Coding Agent",
+  "model": "MiniMax-M2.7",
+  "display_name": "Black Widow",
+  "avatar": "bard",
+  "memory_summary": {
+    "enabled": true,
+    "paused": false,
+    "frequency": "every 24h",
+    "start_time": "03:00"
+  },
+  "autodream": {
+    "model": "claude-haiku-4-5-20251001"
+  }
+}

@@ -2,11 +2,13 @@
 """Brain Agent Server — HTTP API daemon for multi-frontend access."""
 
 import argparse
+import asyncio
 import json
 import os
 import queue
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -489,6 +491,7 @@ class Session:
         self.project: str | None = None  # Active project name (for scoped chat)
         self.note_context: str | None = None  # Note content for AI-assisted editing
         self.summary: str = ""  # LLM-generated chat summary for sidebar
+        self.sdk_session_id: str | None = None  # Agent SDK session ID for resume
         self._last_summary_at = 0  # Token count at last continuous summary
 
         self.agent = engine.AgentConfig(agent_id)
@@ -615,6 +618,8 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 
 class BrainAgentHandler(BaseHTTPRequestHandler):
     """HTTP request handler for Brain Agent API."""
+    # Disable write buffering for real-time SSE streaming
+    wbufsize = 0
 
     def log_message(self, format, *args):
         """Log requests to stdout."""
@@ -1406,6 +1411,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         session.add_message("user", user_content)
 
         # SSE streaming setup (start early so we can send compaction events)
+        # Disable Nagle's algorithm for real-time SSE delivery
+        self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -1413,48 +1420,53 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
 
-        # Check context and compact (with SSE progress)
-        engine._thread_local.current_session_id = session.id
-        estimated = engine._estimate_conversation_tokens(session.messages)
-        ctx_cfg = engine._context_manager.get_config() if engine._context_manager else {}
-        threshold_pct = ctx_cfg.get("compact_threshold", 0.75) if ctx_cfg.get("enabled") else engine.COMPACT_THRESHOLD
-        pre_compact_pct = 0
-        if estimated >= int(session.max_context * threshold_pct):
-            pre_compact_pct = int(estimated / session.max_context * 100)
-            sse_line = f"event: compacting\ndata: {json.dumps({'pct': pre_compact_pct, 'tokens': estimated, 'max_tokens': session.max_context})}\n\n"
-            try:
-                self.wfile.write(sse_line.encode("utf-8"))
-                self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
-                pass
+        # Check if this agent uses the Agent SDK backend
+        # Default: SDK enabled for all agents. Opt out with agent_sdk.enabled: false
+        _agent_sdk_cfg = session.agent.config.get("agent_sdk", {})
+        _use_sdk = _agent_sdk_cfg.get("enabled", True)  # default ON
 
-        session.messages, was_compacted = engine._check_and_compact(
-            session.messages, session.model, session.api_key,
-            session.base_url, session.api_type,
-            max_tokens=session.max_context,
-            session_id=session.id,
-        )
-        if was_compacted:
-            new_est = engine._estimate_conversation_tokens(session.messages)
-            new_pct = int(new_est / session.max_context * 100)
-            sse_line = f"event: compacted\ndata: {json.dumps({'pct': new_pct, 'tokens': new_est, 'old_pct': pre_compact_pct})}\n\n"
-            try:
-                self.wfile.write(sse_line.encode("utf-8"))
-                self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
-                pass
+        # Check context and compact (with SSE progress) — skip for SDK agents
+        engine._thread_local.current_session_id = session.id
+        if not _use_sdk:
+            estimated = engine._estimate_conversation_tokens(session.messages)
+            ctx_cfg = engine._context_manager.get_config() if engine._context_manager else {}
+            threshold_pct = ctx_cfg.get("compact_threshold", 0.75) if ctx_cfg.get("enabled") else engine.COMPACT_THRESHOLD
+            pre_compact_pct = 0
+            if estimated >= int(session.max_context * threshold_pct):
+                pre_compact_pct = int(estimated / session.max_context * 100)
+                sse_line = f"event: compacting\ndata: {json.dumps({'pct': pre_compact_pct, 'tokens': estimated, 'max_tokens': session.max_context})}\n\n"
+                try:
+                    self.wfile.write(sse_line.encode("utf-8"))
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+            session.messages, was_compacted = engine._check_and_compact(
+                session.messages, session.model, session.api_key,
+                session.base_url, session.api_type,
+                max_tokens=session.max_context,
+                session_id=session.id,
+            )
+            if was_compacted:
+                new_est = engine._estimate_conversation_tokens(session.messages)
+                new_pct = int(new_est / session.max_context * 100)
+                sse_line = f"event: compacted\ndata: {json.dumps({'pct': new_pct, 'tokens': new_est, 'old_pct': pre_compact_pct})}\n\n"
+                try:
+                    self.wfile.write(sse_line.encode("utf-8"))
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
 
         event_queue = queue.Queue()
         created_files = []
         _partial_reply = []  # accumulate text deltas for partial response recovery
         _partial_tools = []  # accumulate tool calls
         _partial_thinking = []  # accumulate thinking blocks
-
         def event_callback(event_type, data):
-            if event_type == "file_created":
-                created_files.append(data)
-            elif event_type == "text_delta":
+            if event_type == "text_delta":
                 _partial_reply.append(data.get("text", ""))
+            elif event_type == "file_created":
+                created_files.append(data)
             elif event_type == "thinking_delta":
                 _partial_thinking.append(data.get("text", ""))
             elif event_type == "tool_call":
@@ -1526,29 +1538,43 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             _msg_count_before = len(session.messages)
 
             try:
-                # Use detected purpose from auto-resolve, or fall back to agent's fixed purpose
-                purpose = session.agent.config.get("model_purpose")
-                if not purpose and session.agent.config.get("model") == "auto":
-                    purpose = engine.classify_task_purpose(message)
-                inf_params = engine.get_inference_params(session.model, purpose)
-                # Apply thinking level from request
-                if thinking_level and thinking_level != "none":
-                    _THINKING_BUDGETS = {"low": 2048, "medium": 8192, "high": 32768}
-                    inf_params["thinking"] = True
-                    inf_params["thinking_budget"] = _THINKING_BUDGETS.get(thinking_level, 8192)
-                elif thinking_level == "none":
-                    inf_params.pop("thinking", None)
-                    inf_params.pop("thinking_budget", None)
-                reply = engine.send_message_with_fallback(
-                    session.messages, session.model, session.api_key,
-                    session.base_url, session.api_type,
-                    silent=True, escape_watcher=session.cancel_token,
-                    event_callback=event_callback,
-                    provider_resolver=handler_self._resolve_provider,
-                    inference_params=inf_params,
-                    purpose=purpose,
-                    session_id=sid,
-                )
+                if _use_sdk:
+                    # --- Agent SDK backend ---
+                    # Run SDK in a subprocess to get true streaming (anyio needs
+                    # a clean event loop context for subprocess I/O to work properly)
+                    import sdk_backend
+                    reply = sdk_backend.sdk_query_sync(
+                        session=session,
+                        message=message,
+                        event_callback=event_callback,
+                        cancel_token=session.cancel_token,
+                        thinking_level=thinking_level,
+                    )
+                else:
+                    # --- Standard backend ---
+                    # Use detected purpose from auto-resolve, or fall back to agent's fixed purpose
+                    purpose = session.agent.config.get("model_purpose")
+                    if not purpose and session.agent.config.get("model") == "auto":
+                        purpose = engine.classify_task_purpose(message)
+                    inf_params = engine.get_inference_params(session.model, purpose)
+                    # Apply thinking level from request
+                    if thinking_level and thinking_level != "none":
+                        _THINKING_BUDGETS = {"low": 2048, "medium": 8192, "high": 32768}
+                        inf_params["thinking"] = True
+                        inf_params["thinking_budget"] = _THINKING_BUDGETS.get(thinking_level, 8192)
+                    elif thinking_level == "none":
+                        inf_params.pop("thinking", None)
+                        inf_params.pop("thinking_budget", None)
+                    reply = engine.send_message_with_fallback(
+                        session.messages, session.model, session.api_key,
+                        session.base_url, session.api_type,
+                        silent=True, escape_watcher=session.cancel_token,
+                        event_callback=event_callback,
+                        provider_resolver=handler_self._resolve_provider,
+                        inference_params=inf_params,
+                        purpose=purpose,
+                        session_id=sid,
+                    )
                 if reply:
                     # Compute cost before saving
                     session_cost = None
@@ -1575,6 +1601,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     thinking_text = "".join(_partial_thinking).strip()
                     if thinking_text:
                         msg_metadata["thinking"] = thinking_text
+                    if _use_sdk:
+                        msg_metadata["sdk"] = True
                     session.add_message("assistant", reply, metadata=msg_metadata or None)
                     done_data = {
                         "text": reply,
@@ -1591,6 +1619,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     # Include file attachments
                     if created_files:
                         done_data["files"] = created_files
+                    # Mark SDK backend usage
+                    if _use_sdk:
+                        done_data["sdk"] = True
                     event_queue.put(("done", done_data))
 
                     # Continuous session summarization: refresh memory summary at token thresholds
@@ -1696,6 +1727,117 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 engine._thread_local.memory_store = None
                 engine._thread_local.plan_mode = False
                 event_queue.put(None)  # sentinel
+
+        # SDK path: proxy to sidecar process for real-time streaming
+        # (claude_cli import side-effects break anyio subprocess streaming)
+        if _use_sdk:
+            import sdk_backend
+
+            # Build context using claude_cli
+            engine._thread_local.memory_store = session.memory
+            agent_config = engine.AgentConfig(session.agent_id)
+            engine._thread_local.current_agent = agent_config
+            engine._thread_local.project = session.project if hasattr(session, 'project') else None
+            engine._thread_local.note_context = getattr(session, 'note_context', None)
+            system_prompt = engine._build_system_prompt(include_memory_summary=True)
+            model = session.model or "claude-sonnet-4-6"
+            provider_env = sdk_backend.build_provider_env(model)
+            sdk_cfg = agent_config.config.get("agent_sdk", {})
+
+            # External MCP configs
+            mcp_configs = {}
+            mcp_path = os.path.join(engine.AGENTS_DIR, session.agent_id, "mcp.json")
+            if os.path.isfile(mcp_path):
+                try:
+                    with open(mcp_path) as f:
+                        mcp_json = json.load(f)
+                    for name, entry in (mcp_json.get("mcpServers", mcp_json) if isinstance(mcp_json, dict) else {}).items():
+                        if isinstance(entry, dict) and entry.get("command"):
+                            cfg_entry = {"type": "stdio", "command": entry["command"], "args": entry.get("args", [])}
+                            if entry.get("env"):
+                                cfg_entry["env"] = entry["env"]
+                            mcp_configs[name] = cfg_entry
+                except Exception:
+                    pass
+
+            payload = json.dumps({
+                "message": message,
+                "model": model,
+                "system_prompt": system_prompt,
+                "provider_env": provider_env,
+                "sdk_cfg": dict(sdk_cfg),
+                "sdk_session_id": session.sdk_session_id,
+                "thinking_level": thinking_level,
+                "mcp_configs": mcp_configs,
+                "cwd": os.getcwd(),
+            }).encode()
+
+            try:
+                # Proxy SSE from sidecar directly to client wfile
+                r = sdk_backend.proxy_sidecar_sse(payload, self.wfile, event_callback)
+                reply = r.get("text", "")
+                session.sdk_session_id = r.get("sdk_session_id")
+
+                if reply:
+                    # Log cost
+                    try:
+                        engine._log_call_cost(model=model, tokens_in=r.get("tokens_in", 0),
+                                              tokens_out=r.get("tokens_out", 0), session_id=sid)
+                    except Exception:
+                        pass
+
+                    # Save message
+                    session_cost = None
+                    if engine._cost_tracker:
+                        try:
+                            sc = engine._cost_tracker.get_session_cost(sid)
+                            session_cost = round(sc.get("cost", 0.0), 4)
+                        except Exception:
+                            pass
+                    msg_metadata = {"model": model, "sdk": True,
+                                    "tokens": r.get("tokens_in", 0) + r.get("tokens_out", 0)}
+                    if session_cost is not None:
+                        msg_metadata["cost"] = session_cost
+                    if r.get("tools"):
+                        msg_metadata["tools"] = r["tools"]
+                    session.add_message("assistant", reply, metadata=msg_metadata)
+
+                    # Done event
+                    done_data = {"text": reply, "tokens": r.get("tokens_in", 0) + r.get("tokens_out", 0),
+                                 "model": model, "sdk": True}
+                    if session_cost is not None:
+                        done_data["cost"] = session_cost
+                    try:
+                        self.wfile.write(f"event: done\ndata: {json.dumps(done_data)}\n\n".encode())
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+
+                    # Post-response hooks
+                    try:
+                        token_count = engine._estimate_conversation_tokens(session.messages)
+                        if token_count >= getattr(session, '_last_summary_at', 0) + 5000 or \
+                           (getattr(session, '_last_summary_at', 0) == 0 and token_count >= 10000):
+                            session._last_summary_at = token_count
+                            engine.trigger_memory_summary_refresh(session.agent_id)
+                    except Exception:
+                        pass
+                    if hasattr(engine, '_auto_memory_extract'):
+                        try:
+                            auto_cfg = agent_config.config.get("auto_memory", {})
+                            if auto_cfg.get("enabled", True) and len(message) >= auto_cfg.get("min_message_length", 20):
+                                threading.Thread(target=engine._auto_memory_extract,
+                                                 args=(session.agent_id, message, reply[:1000]), daemon=True).start()
+                        except Exception:
+                            pass
+
+            except Exception as e:
+                try:
+                    self.wfile.write(f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n".encode())
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+            return
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()
