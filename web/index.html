@@ -2852,6 +2852,11 @@ async function loadInitialData() {
     const agentsSect = document.getElementById('sb-agents-section');
     if (agentsSect) agentsSect.classList.add('collapsed');
   }
+  // Auto-select first agent on mobile if none selected
+  if (!state.activeAgentId && state.agents.length > 0 && window.innerWidth < 768) {
+    const firstAgent = getAgentName(state.agents.find(a => getAgentName(a) === 'main') || state.agents[0]);
+    selectAgent(firstAgent);
+  }
   updateChatArea();
 }
 
@@ -4605,12 +4610,14 @@ window.toggleShowArchived = async function() {
 function updateChatArea() {
   const chat = state.activeChat;
   if (!chat) {
-    // No agent selected
-    dom.chatTopBar.style.display = 'none';
+    // No agent selected — keep top bar visible on mobile for hamburger menu
+    const isMobile = window.innerWidth < 768;
+    dom.chatTopBar.style.display = isMobile ? '' : 'none';
     dom.sessionBar.style.display = 'none';
     dom.projectContextBar.style.display = 'none';
     dom.chatInputArea.style.display = 'none';
-    dom.chatMessages.innerHTML = '<div class="flex items-center justify-center h-full text-text-muted text-sm font-body">Select an agent to start chatting</div>';
+    dom.chatMessages.innerHTML = '<div class="flex items-center justify-center h-full text-text-muted text-sm font-body">' +
+      (isMobile ? 'Tap ☰ to select an agent' : 'Select an agent to start chatting') + '</div>';
     updateStatusBar();
     return;
   }
