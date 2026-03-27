@@ -58,6 +58,8 @@ class SidecarHandler(BaseHTTPRequestHandler):
         from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
         from claude_agent_sdk.types import StreamEvent
 
+        self._cancelled = False  # Set by _sse on broken pipe
+
         message = body.get("message", "")
         model = body.get("model", "claude-sonnet-4-6")
         system_prompt = body.get("system_prompt", "")
@@ -92,6 +94,8 @@ class SidecarHandler(BaseHTTPRequestHandler):
 
         try:
             async for event in query(prompt=message, options=options):
+                if self._cancelled:
+                    break
                 if isinstance(event, StreamEvent):
                     raw = event.event
                     evt_type = raw.get("type", "")
@@ -133,7 +137,7 @@ class SidecarHandler(BaseHTTPRequestHandler):
             self.wfile.write(f"event: {event_type}\ndata: {json.dumps(data)}\n\n".encode())
             self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):
-            pass
+            self._cancelled = True
 
 
 class ThreadedServer(ThreadingMixIn, HTTPServer):
