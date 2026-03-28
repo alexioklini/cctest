@@ -54,6 +54,58 @@ class SidecarHandler(BaseHTTPRequestHandler):
         t.start()
         t.join()
 
+    def _build_sdk_hooks(self, server_url, agent_id):
+        """Build SDK hook callbacks that call the server's /v1/hooks/run endpoint."""
+        from claude_agent_sdk import HookMatcher
+        import urllib.request
+
+        def _call_hooks_endpoint(hook_type, tool_name, args, result=None):
+            """Synchronous HTTP call to server hook endpoint."""
+            payload = json.dumps({
+                "agent_id": agent_id,
+                "hook_type": hook_type,
+                "tool_name": tool_name,
+                "args": args,
+                "result": result or "",
+            }).encode()
+            try:
+                req = urllib.request.Request(
+                    f"{server_url}/v1/hooks/run",
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                resp = urllib.request.urlopen(req, timeout=10)
+                return json.loads(resp.read())
+            except Exception:
+                return {}
+
+        async def pre_hook(hook_input, tool_name, context):
+            """PreToolUse hook — calls server to check if tool should be blocked."""
+            import asyncio
+            args = hook_input.get("tool_input", {})
+            resp = await asyncio.get_event_loop().run_in_executor(
+                None, _call_hooks_endpoint, "pre", tool_name or "", args)
+            blocked = resp.get("blocked")
+            if blocked:
+                return {"decision": "block", "reason": blocked}
+            return {}
+
+        async def post_hook(hook_input, tool_name, context):
+            """PostToolUse hook — calls server for post-processing."""
+            import asyncio
+            args = hook_input.get("tool_input", {})
+            result = hook_input.get("tool_response", "")
+            if isinstance(result, (dict, list)):
+                result = json.dumps(result)
+            await asyncio.get_event_loop().run_in_executor(
+                None, _call_hooks_endpoint, "post", tool_name or "", args, str(result)[:51200])
+            return {}
+
+        return {
+            "PreToolUse": [HookMatcher(matcher="*", hooks=[pre_hook], timeout=15.0)],
+            "PostToolUse": [HookMatcher(matcher="*", hooks=[post_hook], timeout=15.0)],
+        }
+
     def _build_brain_mcp(self, tool_defs, server_url, agent_id, session_id):
         """Build an in-process MCP server with tools that call back to the main server."""
         from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server
@@ -111,6 +163,8 @@ class SidecarHandler(BaseHTTPRequestHandler):
         session_id = body.get("session_id")
         allowed_tools = body.get("allowed_tools")
 
+        hooks_enabled = body.get("hooks_enabled", False)
+
         # Build MCP servers: brain_agent (custom tools) + external (from mcp.json)
         mcp_servers = dict(mcp_configs) if mcp_configs else {}
         if tool_defs:
@@ -129,6 +183,13 @@ class SidecarHandler(BaseHTTPRequestHandler):
         )
         if allowed_tools:
             opts_kwargs["allowed_tools"] = allowed_tools
+
+        # Register SDK hooks that call back to server's /v1/hooks/run
+        if hooks_enabled and server_url:
+            sdk_hooks = self._build_sdk_hooks(server_url, agent_id)
+            if sdk_hooks:
+                opts_kwargs["hooks"] = sdk_hooks
+
         options = ClaudeAgentOptions(**opts_kwargs)
         if sdk_session_id:
             options.resume = sdk_session_id

@@ -1891,6 +1891,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             if workflow_tools:
                 allowed_tools = list(workflow_tools)
 
+            # Check if agent has hooks enabled
+            hooks_enabled = False
+            hooks_cfg = agent_config.config.get("hooks", {})
+            if hooks_cfg.get("enabled") and hooks_cfg.get("scripts"):
+                hooks_enabled = True
+
             server_port = server_config.get("port", 8420)
             payload = json.dumps({
                 "message": message,
@@ -1907,6 +1913,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "cwd": os.getcwd(),
                 "tool_defs": tool_defs,
                 "server_url": f"http://127.0.0.1:{server_port}",
+                "hooks_enabled": hooks_enabled,
             }).encode()
 
             # Tracing spans

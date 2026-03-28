@@ -45,6 +45,12 @@ context management, and token-efficient file operations.
 - Server builds system prompt and provider env using `claude_cli`, then hands off to sidecar
 - Opt out per agent: `"agent_sdk": {"enabled": false}` in agent.json falls back to custom loop
 - SDK badge shown in web UI status bar and message footers
+- All paths route through SDK: web UI, TUI interactive, CLI one-shot, scheduled tasks, `_run_delegate` (both tools=True and tools=False)
+- TUI tracks `sdk_session_id` across turns for conversation resume; cancellation via escape watcher closes sidecar socket
+- `query_sync` accepts `tool_defs`, `server_url`, `agent_id`, `session_id`, `cancel_fn`, `sdk_session_id`, `return_metadata`
+- SDK hooks: `_build_sdk_hooks()` registers PreToolUse/PostToolUse callbacks that call `/v1/hooks/run` via HTTP
+- Server passes `hooks_enabled: true` in sidecar payload when agent has hook scripts configured
+- All SDK paths fall back to direct API if sidecar is unavailable
 
 Provider routing for SDK (env vars per provider):
 - `cliproxyapi`: Claude models (Max subscription OAuth) + Gemini, Qwen — `ANTHROPIC_BASE_URL=http://127.0.0.1:8317`

@@ -12,16 +12,16 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
        │                │                │
        └────────────────┼────────────────┘
                         │ HTTP/SSE
-                ┌───────┴───────┐
-                │   server.py   │  ← always-running daemon
-                │  ┌──────────┐ │
-                │  │Scheduler │ │──▶ LLM API (oMLX / Claude)
-                │  │Memory    │ │──▶ QMD (hybrid search, port 8181)
-                │  │          │ │──▶ MCP servers
-                │  │MCP       │ │──▶ Gmail, Exa, tools
-                │  │Sessions  │ │
-                │  └──────────┘ │
-                └───────────────┘
+                ┌───────┴───────┐     ┌──────────────────┐
+                │   server.py   │────▶│  sdk_sidecar.py  │
+                │  ┌──────────┐ │     │  (Agent SDK on   │
+                │  │Scheduler │ │     │   port 8421)     │
+                │  │Memory    │ │     └────────┬─────────┘
+                │  │MCP       │ │              │
+                │  │Sessions  │ │              ▼
+                │  │Hooks     │ │     LLM API (oMLX / Claude)
+                │  └──────────┘ │──▶ QMD (hybrid search, port 8181)
+                └───────────────┘──▶ MCP servers, Gmail, Exa, tools
 ```
 
 ## Features
@@ -363,6 +363,7 @@ Each task runs with a specified agent and model in its own context. Results stor
 
 | Version | Date | Changes |
 |---|---|---|
+| 5.0.0 | 2026-03-28 | Full SDK migration: all paths (Web UI, TUI, CLI one-shot, scheduled tasks, _run_delegate) route through Agent SDK sidecar. SDK hook wiring (PreToolUse/PostToolUse → /v1/hooks/run). query_sync extended with tool_defs, cancel support, session resume. Graceful fallback to direct API when sidecar unavailable |
 | 4.2.0 | 2026-03-23 | Code graph: LLM node summaries, architecture layers, guided tours, code_graph_enhance tool. Lossless compaction with compacted flag, context fill indicator, manual compact, LCM footer |
 | 4.1.0 | 2026-03-23 | Chat stability: session corruption fix, partial response preservation, metadata persistence, thinking level control, extended thinking, model display, remote node badges, resizable sidebars |
 | 4.0.0 | 2026-03-23 | Universal File Intelligence (XLSX/PPTX/CSV/image/SVG, read/write/edit document tools) + Code Structure Graph (Tree-sitter AST, 14 languages, blast-radius analysis) |

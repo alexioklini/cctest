@@ -232,17 +232,29 @@ def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None) -> dict:
 
 
 def query_sync(prompt: str, model: str, system_prompt: str = "",
-               max_turns: int = 1) -> str | None:
+               max_turns: int = 1, tool_defs: list[dict] | None = None,
+               server_url: str = "http://127.0.0.1:8420",
+               agent_id: str = "main", session_id: str | None = None,
+               cancel_fn=None, sdk_session_id: str | None = None,
+               return_metadata: bool = False):
     """Send a simple LLM query through the sidecar and return the text response.
 
     For background tasks that need an LLM call but no streaming.
     Does NOT import claude_cli — safe to call from anywhere.
+
+    When tool_defs is provided, the sidecar registers them as an MCP server
+    and allows multi-turn tool loops (max_turns controls the limit).
+
+    cancel_fn: optional callable returning True to abort (closes socket).
+    sdk_session_id: resume a prior SDK session.
+    return_metadata: if True, returns dict with text, sdk_session_id, tokens, cost.
+                     if False, returns str | None (backwards compatible).
     """
     provider_env = build_provider_env(model)
     if not provider_env:
         return None
 
-    payload = json.dumps({
+    body = {
         "message": prompt,
         "model": model,
         "system_prompt": system_prompt,
@@ -250,7 +262,22 @@ def query_sync(prompt: str, model: str, system_prompt: str = "",
         "sdk_cfg": {"max_turns": max_turns, "permission_mode": "bypassPermissions"},
         "mcp_configs": {},
         "cwd": os.getcwd(),
-    }).encode()
+    }
+    if tool_defs:
+        body["tool_defs"] = tool_defs
+        body["server_url"] = server_url
+        body["agent_id"] = agent_id
+        if session_id:
+            body["session_id"] = session_id
+    if sdk_session_id:
+        body["sdk_session_id"] = sdk_session_id
+
+    payload = json.dumps(body).encode()
+
+    def _result(text, meta=None):
+        if return_metadata:
+            return meta or {"text": text}
+        return text
 
     try:
         sock = socket.create_connection((SIDECAR_URL, SIDECAR_PORT), timeout=300)
@@ -278,6 +305,11 @@ def query_sync(prompt: str, model: str, system_prompt: str = "",
         full_text = ""
         sse_buf = b""
         while True:
+            # Check cancel
+            if cancel_fn and cancel_fn():
+                sock.close()
+                return None
+
             try:
                 data = sock.recv(4096)
             except socket.timeout:
@@ -304,11 +336,19 @@ def query_sync(prompt: str, model: str, system_prompt: str = "",
                     full_text += evt_data.get("text", "")
                 elif evt_type == "_result" and evt_data:
                     sock.close()
-                    return evt_data.get("text", "") or full_text
+                    text = evt_data.get("text", "") or full_text
+                    return _result(text, {
+                        "text": text,
+                        "sdk_session_id": evt_data.get("sdk_session_id"),
+                        "tokens_in": evt_data.get("tokens_in", 0),
+                        "tokens_out": evt_data.get("tokens_out", 0),
+                        "cost": evt_data.get("cost", 0),
+                        "tools": evt_data.get("tools", []),
+                    })
                 elif evt_type == "error" and evt_data:
                     sock.close()
                     return None
         sock.close()
-        return full_text or None
+        return _result(full_text, {"text": full_text}) if full_text else None
     except Exception:
         return None

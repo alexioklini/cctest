@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "4.5.0"
+VERSION = "5.0.0"
 VERSION_DATE = "2026-03-27"
 CHANGELOG = [
+    ("5.0.0", "2026-03-28", "Full SDK migration — all paths now route through the Agent SDK sidecar: Web UI, TUI interactive, CLI one-shot, scheduled tasks, and _run_delegate (both tools=True and tools=False). SDK hook wiring: PreToolUse/PostToolUse callbacks call /v1/hooks/run for pre-blocking and post-processing. query_sync extended with tool_defs, cancel support, sdk_session_id resume, and return_metadata. TUI tracks SDK sessions across conversation turns. All paths gracefully fall back to direct API when sidecar is unavailable."),
     ("4.5.0", "2026-03-27", "Agent SDK integration — all agents now use the Anthropic Agent SDK (Claude Code) as the agentic loop backend. Multi-provider support: Claude via CLIProxyAPI (Max subscription), MiniMax, oMLX local models, and Gemini via CLIProxyAPI. Real-time token streaming via a lean sidecar process. SDK badge in status bar and message footers. Provider-aware env var routing. System prompt extracted into reusable _build_system_prompt()."),
     ("4.4.6", "2026-03-26", "Token consumption guardrails — base64 image data is stripped from tool results after processing, individual tool results are capped at 30K chars, accumulated results are compressed when they exceed 50K tokens, mid-turn compaction runs every 3 tool rounds, and CLIProxyAPI gets a tighter 8-round tool limit to protect the OAuth quota. Telegram dedup guard prevents duplicate sessions from 409 polling conflicts."),
     ("4.4.5", "2026-03-26", "File previews now support images (JPEG, PNG, GIF, WebP, SVG) and office documents (DOCX, XLSX, PPTX, PDF, CSV). Sidebar chat attachments show preview and download buttons, file counts are accurate from first load, and the list is stable across re-renders."),
@@ -6844,31 +6845,56 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
     Routes through the SDK sidecar when available (better context management).
     Falls back to direct API call if sidecar is not running.
     """
-    # Try SDK sidecar first (if running and not tools=True which needs MCP)
-    # For simple no-tool calls, query_sync is a clean replacement
-    if not tools:
-        try:
-            import sdk_backend
-            if sdk_backend.is_sidecar_running():
-                # Extract prompt from messages
-                prompt = ""
-                for m in messages:
-                    if m.get("role") == "user":
-                        content = m.get("content", "")
-                        if isinstance(content, str):
-                            prompt = content
-                        elif isinstance(content, list):
-                            for b in content:
-                                if isinstance(b, dict) and b.get("type") == "text":
-                                    prompt += b.get("text", "")
-                if prompt:
-                    result = sdk_backend.query_sync(
-                        prompt=prompt, model=model,
-                        system_prompt=system_prompt, max_turns=1)
-                    if result is not None:
-                        return result
-        except Exception:
-            pass  # Fall through to direct API call
+    # Try SDK sidecar first — routes both tools=True and tools=False
+    try:
+        import sdk_backend
+        if sdk_backend.is_sidecar_running():
+            # Extract prompt from messages
+            prompt = ""
+            for m in messages:
+                if m.get("role") == "user":
+                    content = m.get("content", "")
+                    if isinstance(content, str):
+                        prompt = content
+                    elif isinstance(content, list):
+                        for b in content:
+                            if isinstance(b, dict) and b.get("type") == "text":
+                                prompt += b.get("text", "")
+            if prompt:
+                kwargs = dict(
+                    prompt=prompt, model=model,
+                    system_prompt=system_prompt,
+                    max_turns=1 if not tools else MAX_DELEGATE_TOOL_ROUNDS,
+                )
+                if tools:
+                    # Build tool defs for sidecar MCP server
+                    # Skip SDK-native tools that the sidecar already has
+                    _SDK_NATIVE = {"read_file", "write_file", "edit_file",
+                                   "list_directory", "search_files",
+                                   "execute_command", "web_fetch"}
+                    tool_defs = []
+                    for td in TOOL_DEFINITIONS:
+                        if td["name"] in _SDK_NATIVE:
+                            continue
+                        if td["name"] not in TOOL_DISPATCH:
+                            continue
+                        desc = td["description"]
+                        if isinstance(desc, tuple):
+                            desc = " ".join(desc)
+                        tool_defs.append({
+                            "name": td["name"],
+                            "description": desc[:1000],
+                            "input_schema": td["input_schema"],
+                        })
+                    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+                    agent_id = agent.agent_id if agent else "main"
+                    kwargs["tool_defs"] = tool_defs
+                    kwargs["agent_id"] = agent_id
+                result = sdk_backend.query_sync(**kwargs)
+                if result is not None:
+                    return result
+    except Exception:
+        pass  # Fall through to direct API call
 
     # Store memory in thread-local so tool_memory_* can find it
     if memory_store:
@@ -13794,10 +13820,51 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    messages = [{"role": "user", "content": args.message}]
-    reply = send_message_with_fallback(
-        messages, args.model, args.api_key, args.base_url, args.api_type,
-        silent=True)
+    # Try SDK sidecar first for consistent tool loop
+    reply = None
+    try:
+        import sdk_backend
+        if sdk_backend.is_sidecar_running():
+            # Set up agent context for system prompt
+            agent_cfg = AgentConfig(args.agent)
+            _thread_local.current_agent = agent_cfg
+            _thread_local.memory_store = MemoryStore(args.agent)
+            system_prompt = _build_system_prompt(include_memory_summary=True)
+            provider_env = sdk_backend.build_provider_env(args.model)
+
+            # Build tool defs for sidecar MCP
+            tool_defs = []
+            for td in TOOL_DEFINITIONS:
+                if td["name"] in ("read_file", "write_file", "edit_file",
+                                   "list_directory", "search_files", "execute_command",
+                                   "web_fetch"):
+                    continue  # SDK has native equivalents
+                if td["name"] not in TOOL_DISPATCH:
+                    continue
+                desc = td["description"]
+                if isinstance(desc, tuple):
+                    desc = " ".join(desc)
+                tool_defs.append({
+                    "name": td["name"],
+                    "description": desc[:1000],
+                    "input_schema": td["input_schema"],
+                })
+
+            reply = sdk_backend.query_sync(
+                prompt=args.message, model=args.model,
+                system_prompt=system_prompt, max_turns=30,
+                tool_defs=tool_defs,
+                agent_id=args.agent,
+            )
+    except Exception:
+        pass  # Fall through to direct API
+
+    # Fallback: direct API call
+    if reply is None:
+        messages = [{"role": "user", "content": args.message}]
+        reply = send_message_with_fallback(
+            messages, args.model, args.api_key, args.base_url, args.api_type,
+            silent=True)
     if reply:
         print(render_markdown(reply))
 
@@ -14299,6 +14366,9 @@ def _run_interactive(args):
     _delegate_api_type = args.api_type
     _delegate_fallback_model = args.model
 
+    # SDK session tracking (for resume across turns)
+    _run_interactive._sdk_sid = None
+
     # Initialize agent
     current_model, _ = _switch_agent(args.agent, args)
 
@@ -14541,10 +14611,59 @@ def _run_interactive(args):
             escape_watcher.start()
 
             cancelled = False
+            reply = None
             try:
-                reply = send_message_with_fallback(
-                    history, current_model, args.api_key, args.base_url,
-                    args.api_type, silent=True, escape_watcher=escape_watcher)
+                # Try SDK sidecar first
+                _sdk_ok = False
+                try:
+                    import sdk_backend
+                    if sdk_backend.is_sidecar_running():
+                        system_prompt = _build_system_prompt(include_memory_summary=True)
+                        # Build tool defs (skip SDK-native tools)
+                        _SDK_NATIVE = {"read_file", "write_file", "edit_file",
+                                       "list_directory", "search_files",
+                                       "execute_command", "web_fetch"}
+                        tool_defs = []
+                        for td in TOOL_DEFINITIONS:
+                            if td["name"] in _SDK_NATIVE or td["name"] not in TOOL_DISPATCH:
+                                continue
+                            desc = td["description"]
+                            if isinstance(desc, tuple):
+                                desc = " ".join(desc)
+                            tool_defs.append({
+                                "name": td["name"],
+                                "description": desc[:1000],
+                                "input_schema": td["input_schema"],
+                            })
+                        agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+                        agent_id = agent.agent_id if agent else "main"
+
+                        meta = sdk_backend.query_sync(
+                            prompt=message, model=current_model,
+                            system_prompt=system_prompt, max_turns=30,
+                            tool_defs=tool_defs,
+                            agent_id=agent_id,
+                            cancel_fn=lambda: escape_watcher.cancelled,
+                            sdk_session_id=getattr(_run_interactive, '_sdk_sid', None),
+                            return_metadata=True,
+                        )
+                        if meta is not None:
+                            reply = meta.get("text")
+                            # Track SDK session for resume on next turn
+                            if meta.get("sdk_session_id"):
+                                _run_interactive._sdk_sid = meta["sdk_session_id"]
+                            _sdk_ok = True
+                        elif escape_watcher.cancelled:
+                            cancelled = True
+                            _sdk_ok = True
+                except Exception:
+                    pass  # Fall through to direct API
+
+                # Fallback: direct API call
+                if not _sdk_ok and not cancelled:
+                    reply = send_message_with_fallback(
+                        history, current_model, args.api_key, args.base_url,
+                        args.api_type, silent=True, escape_watcher=escape_watcher)
             except TaskCancelled:
                 cancelled = True
                 reply = None
