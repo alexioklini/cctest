@@ -106,12 +106,15 @@ def is_sidecar_running() -> bool:
         return False
 
 
-def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None) -> dict:
+def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None, raw_socket=None) -> dict:
     """Connect to sidecar, send query, proxy SSE to wfile, return metadata.
 
     Reads SSE events from the sidecar and writes them directly to the client's
     wfile for real-time streaming. Also parses events to extract metadata
     (text, tokens, cost, etc.) for DB storage.
+
+    raw_socket: if provided, write SSE bytes directly to this socket (bypasses
+    wfile buffering for true real-time streaming).
 
     Returns dict with: text, sdk_session_id, tokens_in, tokens_out, cost, tools
     """
@@ -180,8 +183,11 @@ def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None) -> dict:
             if evt_type in ("text_delta", "thinking_delta", "tool_call", "tool_result"):
                 sse_out = block_bytes + b"\n\n"
                 try:
-                    wfile.write(sse_out)
-                    wfile.flush()
+                    if raw_socket:
+                        raw_socket.sendall(sse_out)
+                    else:
+                        wfile.write(sse_out)
+                        wfile.flush()
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     _client_gone = True
                     # Client gone — close sidecar connection and return immediately
