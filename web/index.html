@@ -452,7 +452,7 @@ tailwind.config = {
     box-shadow: 0 -2px 8px rgba(0,0,0,0.04);
   }
   .chat-input-wrapper {
-    background: var(--color-base);
+    background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: 0.75rem;
     box-shadow: 0 2px 12px var(--color-input-shadow);
@@ -460,8 +460,8 @@ tailwind.config = {
     padding: 8px 12px !important;
   }
   .chat-input-wrapper:focus-within {
-    border-color: var(--color-accent);
-    box-shadow: 0 2px 16px rgba(232,93,4,0.10);
+    border-color: var(--color-text-muted);
+    box-shadow: 0 2px 20px var(--color-input-shadow);
   }
 
   /* Slash command popup */
@@ -1097,7 +1097,7 @@ tailwind.config = {
     min-width: 52px;
     max-width: 500px;
     height: 100vh;
-    background: linear-gradient(180deg, var(--color-sidebar, var(--color-surface)) 0%, var(--color-base) 100%);
+    background: var(--color-sidebar, var(--color-surface));
     border-right: 1px solid var(--color-border);
     display: flex;
     flex-direction: column;
@@ -2275,7 +2275,7 @@ tailwind.config = {
         <div class="flex items-center justify-center h-full text-text-muted text-sm font-body">Select an agent to start chatting</div>
       </div>
       <!-- Input area -->
-      <div id="chat-input-area" class="flex-shrink-0 px-3 pb-4 pt-2">
+      <div id="chat-input-area" class="flex-shrink-0 px-3 pb-3 pt-2" style="border-top:1px solid var(--color-border)">
         <div class="max-w-[900px] mx-auto" style="position:relative">
           <div id="slash-popup" class="slash-popup" style="display:none"></div>
           <div id="image-preview-area" class="flex gap-2 flex-wrap mb-1" style="display:none"></div>
@@ -4763,7 +4763,7 @@ function renderMessages() {
     return;
   }
   const container = document.createElement('div');
-  container.className = 'max-w-[900px] mx-auto space-y-3';
+  container.className = 'max-w-[900px] mx-auto space-y-2';
   dom.chatMessages.appendChild(container);
   chat.messages.forEach((msg, i) => renderMessage(msg, i, container));
   scrollToBottom();
@@ -4780,7 +4780,7 @@ function renderMessage(msg, idx, container) {
     const imagesHtml = (msg.images || []).map(img =>
       `<img src="data:${img.media_type};base64,${img.data}" style="max-width:300px;max-height:200px;border-radius:8px;margin-bottom:6px;cursor:pointer" onclick="window.open(this.src,'_blank')">`
     ).join('');
-    div.innerHTML = `<div class="user-msg max-w-[75%] bg-surface-light rounded-2xl rounded-tr-md px-4 py-2.5 text-sm text-text-primary msg-content">${imagesHtml}${marked.parse(msg.content)}</div>`;
+    div.innerHTML = `<div class="user-msg max-w-[75%] rounded-2xl rounded-tr-md px-4 py-2.5 text-sm text-text-primary msg-content" style="background:var(--color-surface-light);border:1px solid var(--color-user-border)">${imagesHtml}${marked.parse(msg.content)}</div>`;
   } else if (msg.role === 'assistant') {
     div.className += ' flex justify-start';
     const toolCount = (msg.tools || []).length;
@@ -4804,7 +4804,7 @@ function renderMessage(msg, idx, container) {
       <summary style="padding:6px 10px;font-size:10px;color:#a78bfa;cursor:pointer;user-select:none;font-family:'IBM Plex Mono',monospace">Thinking (${msg.thinking.length.toLocaleString()} chars)</summary>
       <div style="padding:4px 10px 8px;font-size:11px;color:var(--color-text-secondary);white-space:pre-wrap;max-height:300px;overflow-y:auto;font-family:'IBM Plex Mono',monospace;line-height:1.5">${esc(msg.thinking)}</div>
     </details>` : '';
-    div.innerHTML = `<div class="assistant-msg pl-3 text-sm text-text-primary">
+    div.innerHTML = `<div class="assistant-msg pl-3 text-sm text-text-primary" style="border-left:2px solid var(--color-assistant-border)">
       ${toolsHtml}
       ${thinkingHtml}
       ${spinnerHtml}
