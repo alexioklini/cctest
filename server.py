@@ -2045,17 +2045,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 import time as _time
                 _t0 = _time.time()
 
-                _write_times = []
-                _poll_log = []
                 while _time.time() - _t0 < 300:
                     _resp = json.loads(_urlreq.urlopen(
                         f"{_base}/events/{_qid}?after={_after}", timeout=10).read())
-                    _poll_log.append((_time.time() - _t0, len(_resp.get("events", [])), _resp.get("done", False)))
                     for _ev in _resp["events"]:
                         _et = _ev["event"]
                         _ed = _ev["data"]
                         if _et in ("text_delta", "thinking_delta", "tool_call", "tool_result"):
-                            _write_times.append((_time.time() - _t0, _et))
                             self.wfile.write(f"event: {_et}\ndata: {json.dumps(_ed)}\n\n".encode())
                             self.wfile.flush()
                         if _et == "text_delta":
@@ -2087,15 +2083,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
                 if not r.get("text") and _full_text:
                     r["text"] = _full_text
-                # Log poll and write timing to stderr
-                import sys as _sys
-                _polls_with_events = [(t, n, d) for t, n, d in _poll_log if n > 0]
-                print(f"[server] qid={_qid} {len(_poll_log)} polls, {len(_polls_with_events)} had events", file=_sys.stderr, flush=True)
-                for _pt, _pn, _pd in _poll_log:
-                    if _pn > 0 or _pd:
-                        print(f"  poll {_pt:.2f}s: {_pn} events, done={_pd}", file=_sys.stderr, flush=True)
-                if _write_times:
-                    print(f"  writes: {len(_write_times)}, first={_write_times[0][0]:.2f}s last={_write_times[-1][0]:.2f}s spread={_write_times[-1][0]-_write_times[0][0]:.2f}s", file=_sys.stderr, flush=True)
             except Exception as e:
                 r = {}
                 try:
