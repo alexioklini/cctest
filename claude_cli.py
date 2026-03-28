@@ -14984,6 +14984,32 @@ def _run_interactive(args):
                 _draw_status_bar(current_model, history, args.max_context)
                 continue
 
+            # Custom slash commands (from agent's commands.json)
+            if message.strip().startswith("/"):
+                cmd_name = message.strip().split()[0][1:].lower()  # strip / and get first word
+                cmd_args = message.strip()[len(cmd_name)+2:].strip()  # rest after /name
+                agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+                if agent:
+                    for cmd in agent.load_commands():
+                        if (cmd.get("name", "").lower() == cmd_name or
+                                cmd.get("slug", "").lower() == cmd_name):
+                            # Expand template with args
+                            template = cmd.get("prompt", cmd.get("template", ""))
+                            if "{{" in template and cmd_args:
+                                # Simple {{variable}} substitution
+                                import re as _re
+                                vars_in_template = _re.findall(r'\{\{(\w+)\}\}', template)
+                                if vars_in_template:
+                                    message = template.replace("{{" + vars_in_template[0] + "}}", cmd_args)
+                                else:
+                                    message = template + " " + cmd_args
+                            elif cmd_args:
+                                message = template + " " + cmd_args
+                            else:
+                                message = template
+                            print(f"  {DIM}Running /{cmd_name}{RESET}")
+                            break
+
             if not message.strip():
                 continue
 
