@@ -2979,7 +2979,17 @@ def scan_claude_code_skills() -> list[dict]:
                         "enabled": True,
                     })
 
-    return results
+    # Deduplicate: same skill name across plugins → keep first occurrence
+    seen_names = {}
+    deduped = []
+    for s in results:
+        key = (s["name"], s["type"])
+        if key in seen_names:
+            continue
+        seen_names[key] = True
+        deduped.append(s)
+
+    return deduped
 
 
 def list_agents() -> list[str]:
