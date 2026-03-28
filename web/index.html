@@ -6302,6 +6302,39 @@ variables:
     } catch (e) {
       el.innerHTML = `<div class="text-error text-sm">Error loading memory summary: ${esc(e.message)}</div>`;
     }
+  } else if (tab === 'commands') {
+    try {
+      const cmdsData = await API.get(`/v1/agents/${encodeURIComponent(agentName)}/commands`);
+      const commands = cmdsData.commands || cmdsData || [];
+      let cmdHtml = '';
+      if (!commands.length) {
+        cmdHtml = '<div class="text-text-muted text-sm py-3">No custom commands. Add slash commands below.</div>';
+      } else {
+        for (const cmd of commands) {
+          cmdHtml += `
+            <div class="glass-card flex items-center gap-3 px-4 py-3 text-sm">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <span class="text-accent mono font-semibold">/${esc(cmd.name || cmd.slug || '')}</span>
+                </div>
+                <div class="text-text-muted text-[11px] mt-0.5">${esc((cmd.description || cmd.prompt || '').slice(0, 100))}</div>
+              </div>
+              <button class="text-[11px] text-error hover:text-red-300 px-2 py-1 rounded hover:bg-error/10" onclick="removeAgentCommand('${esc(agentName)}','${esc(cmd.name || cmd.slug || '')}')">Remove</button>
+            </div>`;
+        }
+      }
+      el.innerHTML = `
+        <div class="space-y-4">
+          <div class="flex items-center justify-between">
+            <h3 class="section-header text-sm">Custom Slash Commands</h3>
+            <button class="btn-primary text-xs px-3 py-1.5 rounded-lg font-display" onclick="showAddCommand('${esc(agentName)}')">+ Add Command</button>
+          </div>
+          <div id="agent-cmd-list" class="space-y-2">${cmdHtml}</div>
+          <div id="agent-cmd-form"></div>
+        </div>`;
+    } catch (e) {
+      el.innerHTML = `<div class="text-error text-sm">Error: ${esc(e.message)}</div>`;
+    }
   } else if (tab === 'graph') {
     // Close config modal and open full-screen knowledge map
     document.getElementById('config-modal')?.remove();
@@ -7965,6 +7998,54 @@ window.removeAgentMcp = async function(agentName, serverName) {
     await API.writeAgentFile(agentName, 'mcp.json', JSON.stringify(mcp, null, 2));
     showToast(`Removed ${serverName}`);
     loadConfigTabContent('mcp', agentName);
+  } catch (e) { showToast(e.message, true); }
+};
+
+// --- Commands management ---
+window.showAddCommand = function(agentName) {
+  const form = document.getElementById('agent-cmd-form');
+  if (!form) return;
+  form.innerHTML = `
+    <div class="glass-card p-4 space-y-3">
+      <h4 class="text-sm font-semibold text-text-primary">Add Slash Command</h4>
+      <div>
+        <label class="text-[10px] text-text-muted uppercase tracking-wider">Name (without /)</label>
+        <input id="acmd-name" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm mono mt-1" placeholder="greet">
+      </div>
+      <div>
+        <label class="text-[10px] text-text-muted uppercase tracking-wider">Prompt template</label>
+        <textarea id="acmd-prompt" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm mt-1" rows="4" placeholder="Say hello to {{name}} in a friendly way"></textarea>
+        <div class="text-[9px] text-text-muted mt-1">Use {{variable}} for user-provided values</div>
+      </div>
+      <div class="flex gap-2">
+        <button class="btn-primary text-xs px-4 py-1.5 rounded-lg" onclick="doAddCommand('${esc(agentName)}')">Add</button>
+        <button class="btn-secondary text-xs px-4 py-1.5 rounded-lg" onclick="document.getElementById('agent-cmd-form').innerHTML=''">Cancel</button>
+      </div>
+    </div>`;
+};
+
+window.doAddCommand = async function(agentName) {
+  const name = document.getElementById('acmd-name')?.value?.trim();
+  const prompt = document.getElementById('acmd-prompt')?.value?.trim();
+  if (!name || !prompt) { showToast('Name and prompt required', true); return; }
+  try {
+    const cmdsData = await API.get(`/v1/agents/${encodeURIComponent(agentName)}/commands`);
+    const commands = cmdsData.commands || cmdsData || [];
+    commands.push({ name, prompt });
+    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/commands`, { commands });
+    showToast(`Added /${name}`);
+    loadConfigTabContent('commands', agentName);
+  } catch (e) { showToast(e.message, true); }
+};
+
+window.removeAgentCommand = async function(agentName, cmdName) {
+  if (!confirm(`Remove command /${cmdName}?`)) return;
+  try {
+    const cmdsData = await API.get(`/v1/agents/${encodeURIComponent(agentName)}/commands`);
+    const commands = (cmdsData.commands || cmdsData || []).filter(c => (c.name || c.slug) !== cmdName);
+    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/commands`, { commands });
+    showToast(`Removed /${cmdName}`);
+    loadConfigTabContent('commands', agentName);
   } catch (e) { showToast(e.message, true); }
 };
 
