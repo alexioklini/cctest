@@ -2033,7 +2033,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
             try:
                 # Proxy SSE from sidecar to client via http.client
-                r = sdk_backend.proxy_sidecar_sse(payload, self.wfile, event_callback)
+                r = sdk_backend.proxy_sidecar_sse(payload, self.wfile, event_callback,
+                                                   raw_socket=self.connection)
 
                 # Model fallback: if SDK returned error and no text, retry with fallback
                 if not r.get("text") and not "".join(_partial_reply).strip():
