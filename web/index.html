@@ -6323,14 +6323,45 @@ variables:
             </div>`;
         }
       }
+      // Load Claude Code commands
+      let ccCmdHtml = '';
+      try {
+        const ccRes = await fetch(`${BASE_URL}/v1/skills/claude-code?agent=${encodeURIComponent(agentName)}`);
+        const ccData = await ccRes.json();
+        const ccCmds = (ccData.skills || []).filter(s => s.type === 'command' || s.type === 'user-command');
+        if (ccCmds.length) {
+          for (const cc of ccCmds) {
+            const typeBadge = cc.type === 'user-command'
+              ? '<span class="text-[9px] px-1 py-0.5 rounded bg-green-500/20 text-green-300">user</span>'
+              : '<span class="text-[9px] px-1 py-0.5 rounded bg-purple-500/20 text-purple-300">' + esc(cc.plugin || 'plugin') + '</span>';
+            ccCmdHtml += `
+              <div class="glass-card flex items-center gap-3 px-4 py-2.5 text-sm">
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2">
+                    <span class="text-text-primary mono font-medium">/${esc(cc.name || cc.slug)}</span>
+                    ${typeBadge}
+                  </div>
+                  ${cc.description ? `<div class="text-text-muted text-[11px] mt-0.5 truncate">${esc(cc.description.slice(0,120))}</div>` : ''}
+                </div>
+              </div>`;
+          }
+        }
+      } catch {}
+
       el.innerHTML = `
-        <div class="space-y-4">
-          <div class="flex items-center justify-between">
-            <h3 class="section-header text-sm">Custom Slash Commands</h3>
-            <button class="btn-primary text-xs px-3 py-1.5 rounded-lg font-display" onclick="showAddCommand('${esc(agentName)}')">+ Add Command</button>
+        <div class="space-y-6">
+          <div>
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="section-header text-sm">Agent Commands</h3>
+              <button class="btn-primary text-xs px-3 py-1.5 rounded-lg font-display" onclick="showAddCommand('${esc(agentName)}')">+ Add Command</button>
+            </div>
+            <div id="agent-cmd-list" class="space-y-2">${cmdHtml || '<div class="text-text-muted text-sm py-2">No custom commands.</div>'}</div>
+            <div id="agent-cmd-form"></div>
           </div>
-          <div id="agent-cmd-list" class="space-y-2">${cmdHtml}</div>
-          <div id="agent-cmd-form"></div>
+          ${ccCmdHtml ? `<div>
+            <h3 class="section-header text-sm mb-3">Claude Code Commands</h3>
+            <div class="space-y-2">${ccCmdHtml}</div>
+          </div>` : ''}
         </div>`;
     } catch (e) {
       el.innerHTML = `<div class="text-error text-sm">Error: ${esc(e.message)}</div>`;
