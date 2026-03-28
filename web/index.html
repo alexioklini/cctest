@@ -298,11 +298,17 @@ tailwind.config = {
   #chat-top-bar .text-text-muted { color: rgba(255,255,255,0.5); }
   #chat-top-bar select { background: rgba(255,255,255,0.1); color: #fff; border-color: rgba(255,255,255,0.2); }
 
-  /* Slack-style rounded corners — chat area inset with rounded corners */
+  /* Rounded corners — outer app frame */
+  #app {
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  /* Rounded corners — inner chat panel (inset card) */
   #center-content {
     border-radius: 8px;
     overflow: hidden;
-    margin: 0;
+    margin: 4px 4px 4px 0;
   }
   #chat-top-bar {
     border-top-left-radius: 8px;
