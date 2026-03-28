@@ -106,93 +106,47 @@ def is_sidecar_running() -> bool:
         return False
 
 
-def _send_chunk(sock, data: bytes):
-    """Send data as an HTTP chunked transfer encoding frame."""
-    chunk = f"{len(data):x}\r\n".encode() + data + b"\r\n"
-    sock.sendall(chunk)
-
-
-def _send_chunk_end(sock):
-    """Send the zero-length terminating chunk."""
-    sock.sendall(b"0\r\n\r\n")
-
-
 def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None, raw_socket=None) -> dict:
-    """Connect to sidecar, send query, proxy SSE to wfile, return metadata.
+    """Connect to sidecar via http.client, stream SSE to client in real-time.
 
-    Reads SSE events from the sidecar and writes them directly to the client's
-    wfile for real-time streaming. Also parses events to extract metadata
-    (text, tokens, cost, etc.) for DB storage.
-
-    raw_socket: if provided, write SSE bytes directly to this socket (bypasses
-    wfile buffering for true real-time streaming).
+    Uses http.client.HTTPConnection for proper HTTP streaming instead of
+    raw sockets. Reads the response body line-by-line for immediate delivery.
 
     Returns dict with: text, sdk_session_id, tokens_in, tokens_out, cost, tools
     """
+    import http.client
+
     result = {"text": "", "sdk_session_id": None, "tokens_in": 0,
               "tokens_out": 0, "cost": 0.0, "tools": []}
 
-    sock = socket.create_connection((SIDECAR_URL, SIDECAR_PORT), timeout=300)
-    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-    # Small receive buffer forces the kernel to wake us on each packet
-    # instead of coalescing into one large read
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 256)
-    sock.setblocking(False)
+    conn = http.client.HTTPConnection(SIDECAR_URL, SIDECAR_PORT, timeout=300)
+    conn.request("POST", "/query", body=payload,
+                 headers={"Content-Type": "application/json"})
+    resp = conn.getresponse()
 
-    # Send HTTP request
-    http_req = (
-        f"POST /query HTTP/1.1\r\n"
-        f"Host: {SIDECAR_URL}:{SIDECAR_PORT}\r\n"
-        f"Content-Type: application/json\r\n"
-        f"Content-Length: {len(payload)}\r\n"
-        f"\r\n"
-    ).encode() + payload
-    sock.setblocking(True)
-    sock.sendall(http_req)
-    sock.setblocking(False)
-
-    # Read HTTP response headers (blocking — headers are small and fast)
-    import select
-    header_buf = b""
-    while b"\r\n\r\n" not in header_buf:
-        select.select([sock], [], [], 30)
-        try:
-            b = sock.recv(1)
-        except BlockingIOError:
-            continue
-        if not b:
-            break
-        header_buf += b
-
-    # Read SSE body — use select() for immediate detection of available data
     full_text = ""
     tool_calls = []
-    sse_buf = b""
     _client_gone = False
-    while True:
-        # Use select() for precise timing — returns as soon as data is available
-        ready, _, _ = select.select([sock], [], [], 5.0)
-        if not ready:
-            if _client_gone:
-                break
-            continue  # Keep waiting — sidecar may be executing tools
-        try:
-            data = sock.recv(4096)
-        except (BlockingIOError, OSError):
-            break
-        if not data:
-            break
-        sse_buf += data
+    sse_buf = ""
 
-        # Forward complete SSE blocks to client
-        while b"\n\n" in sse_buf:
-            block_bytes, sse_buf = sse_buf.split(b"\n\n", 1)
-            block_str = block_bytes.decode("utf-8", errors="replace").strip()
+    # Read response body in small chunks for streaming
+    while True:
+        chunk = resp.read(256)
+        if not chunk:
+            break
+        sse_buf += chunk.decode("utf-8", errors="replace")
+
+        # Process complete SSE blocks
+        while "\n\n" in sse_buf:
+            block, sse_buf = sse_buf.split("\n\n", 1)
+            block = block.strip()
+            if not block:
+                continue
 
             # Parse SSE event
             evt_type = ""
             evt_data = None
-            for line in block_str.split("\n"):
+            for line in block.split("\n"):
                 if line.startswith("event: "):
                     evt_type = line[7:].strip()
                 elif line.startswith("data: "):
@@ -201,44 +155,30 @@ def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None, raw_socket=Non
                     except json.JSONDecodeError:
                         pass
 
-            # Forward streaming events to client
+            # Forward streaming events to client immediately
             if evt_type in ("text_delta", "thinking_delta", "tool_call", "tool_result"):
-                sse_out = block_bytes + b"\n\n"
-                try:
-                    if raw_socket:
-                        raw_socket.sendall(sse_out)
-                    else:
-                        wfile.write(sse_out)
-                        wfile.flush()
-                except (BrokenPipeError, ConnectionResetError, OSError):
-                    _client_gone = True
-                    # Client gone — close sidecar connection and return immediately
+                sse_out = (block + "\n\n").encode("utf-8")
+                if not _client_gone:
                     try:
-                        sock.close()
-                    except Exception:
-                        pass
-                    if not result["text"] and full_text:
-                        result["text"] = full_text
-                    if not result["tools"] and tool_calls:
-                        result["tools"] = tool_calls
-                    return result
+                        if raw_socket:
+                            raw_socket.sendall(sse_out)
+                        else:
+                            wfile.write(sse_out)
+                            wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError, OSError):
+                        _client_gone = True
                 if event_callback and evt_data:
                     event_callback(evt_type, evt_data)
 
-            # Collect metadata from _result and stop reading
+            # Collect metadata
             if evt_type == "_result" and evt_data:
-                result["text"] = evt_data.get("text", "")
+                result["text"] = evt_data.get("text", "") or full_text
                 result["sdk_session_id"] = evt_data.get("sdk_session_id")
                 result["tokens_in"] = evt_data.get("tokens_in", 0)
                 result["tokens_out"] = evt_data.get("tokens_out", 0)
                 result["cost"] = evt_data.get("cost", 0)
-                result["tools"] = evt_data.get("tools", [])
-                sock.close()
-                # Use accumulated text if _result didn't provide it
-                if not result["text"] and full_text:
-                    result["text"] = full_text
-                if not result["tools"] and tool_calls:
-                    result["tools"] = tool_calls
+                result["tools"] = evt_data.get("tools", []) or tool_calls
+                conn.close()
                 return result
             elif evt_type == "text_delta" and evt_data:
                 full_text += evt_data.get("text", "")
@@ -248,14 +188,11 @@ def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None, raw_socket=Non
                 if event_callback:
                     event_callback("error", evt_data)
 
-    sock.close()
-
-    # Use accumulated text if _result didn't provide it
+    conn.close()
     if not result["text"] and full_text:
         result["text"] = full_text
     if not result["tools"] and tool_calls:
         result["tools"] = tool_calls
-
     return result
 
 
