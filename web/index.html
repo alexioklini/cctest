@@ -230,6 +230,10 @@ tailwind.config = {
   .msg-content th, .msg-content td { border: 1px solid var(--color-border); padding: 0.4em 0.8em; }
   .msg-content th { background: var(--color-surface-light); font-weight: 500; }
 
+  /* Slack-style message hover */
+  .slack-msg { transition: background 0.1s ease; }
+  .slack-msg:hover { background: var(--color-surface); }
+
   /* Tool blocks */
   .tool-block {
     border-left: 3px solid var(--color-accent);
@@ -4775,14 +4779,25 @@ function renderMessage(msg, idx, container) {
   div.className = 'fade-in';
   div.dataset.idx = idx;
 
+  // Slack-style: left-aligned, name header, no bubbles, hover highlight
+  const _agentName = state.activeChat?.agent || 'main';
+  const _agentInfo = state.agents?.find(a => (a.id || a) === _agentName);
+  const _ts = msg.ts ? new Date(msg.ts).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+
   if (msg.role === 'user') {
-    div.className += ' flex justify-end';
+    div.className += ' slack-msg px-3 py-1.5 -mx-3 rounded';
     const imagesHtml = (msg.images || []).map(img =>
       `<img src="data:${img.media_type};base64,${img.data}" style="max-width:300px;max-height:200px;border-radius:8px;margin-bottom:6px;cursor:pointer" onclick="window.open(this.src,'_blank')">`
     ).join('');
-    div.innerHTML = `<div class="user-msg max-w-[75%] rounded-2xl rounded-tr-md px-4 py-2.5 text-sm text-text-primary msg-content" style="background:var(--color-surface-light);border:1px solid var(--color-user-border)">${imagesHtml}${marked.parse(msg.content)}</div>`;
+    div.innerHTML = `<div>
+      <div class="flex items-baseline gap-2 mb-0.5">
+        <span class="font-display font-semibold text-[13px]" style="color:var(--color-accent)">You</span>
+        ${_ts ? `<span class="text-[10px] text-text-muted">${_ts}</span>` : ''}
+      </div>
+      <div class="text-sm text-text-primary msg-content">${imagesHtml}${marked.parse(msg.content)}</div>
+    </div>`;
   } else if (msg.role === 'assistant') {
-    div.className += ' flex justify-start';
+    div.className += ' slack-msg px-3 py-1.5 -mx-3 rounded';
     const toolCount = (msg.tools || []).length;
     const toolsHtml = showToolCalls
       ? (msg.tools || []).map(t => renderToolBlock(t)).join('')
@@ -4804,14 +4819,19 @@ function renderMessage(msg, idx, container) {
       <summary style="padding:6px 10px;font-size:10px;color:#a78bfa;cursor:pointer;user-select:none;font-family:'IBM Plex Mono',monospace">Thinking (${msg.thinking.length.toLocaleString()} chars)</summary>
       <div style="padding:4px 10px 8px;font-size:11px;color:var(--color-text-secondary);white-space:pre-wrap;max-height:300px;overflow-y:auto;font-family:'IBM Plex Mono',monospace;line-height:1.5">${esc(msg.thinking)}</div>
     </details>` : '';
-    div.innerHTML = `<div class="assistant-msg pl-3 text-sm text-text-primary" style="border-left:2px solid var(--color-assistant-border)">
+    const _displayName = _agentInfo?.display_name || _agentInfo?.id || _agentName;
+    const metaHtml = msg.tokens ? `<span class="text-[10px] text-text-muted mono ml-2">${msg.model ? esc(msg.model) : ''}${msg.sdk ? ' · SDK' : ''} · ${msg.tokens} tok${msg.cost != null ? ' · $' + msg.cost.toFixed(2) : ''}</span>` : '';
+    div.innerHTML = `<div>
+      <div class="flex items-baseline gap-2 mb-0.5">
+        <span class="font-display font-semibold text-[13px]" style="color:var(--color-agent)">${esc(_displayName)}</span>
+        ${metaHtml}
+      </div>
       ${toolsHtml}
       ${thinkingHtml}
       ${spinnerHtml}
-      <div class="msg-content">${content}</div>
+      <div class="text-sm text-text-primary msg-content">${content}</div>
       ${filesHtml}
       ${msg.fallbackNotice ? `<div class="text-[10px] text-warning mt-1 flex items-center gap-1"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>${esc(msg.fallbackNotice)}</div>` : ''}
-      ${msg.tokens ? `<div class="text-[10px] text-text-muted mt-2 mono flex items-center gap-1.5">${msg.model ? modelIcon(msg.model) + ' ' + esc(msg.model) + '  ·  ' : ''}${msg.sdk ? '<span style="font-size:8px;padding:0px 4px;border-radius:2px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;font-weight:600;letter-spacing:0.5px">SDK</span>  ·  ' : ''}<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>${msg.tokens} tokens${msg.cost != null ? '  ·  $' + msg.cost.toFixed(2) : ''}</div>` : ''}
     </div>`;
   } else if (msg.role === 'system') {
     div.className += ' flex justify-center';
