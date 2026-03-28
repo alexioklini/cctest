@@ -294,14 +294,24 @@ tailwind.config = {
   #chat-top-bar .text-text-muted { color: rgba(255,255,255,0.5); }
   #chat-top-bar select { background: rgba(255,255,255,0.1); color: #fff; border-color: rgba(255,255,255,0.2); }
 
-  /* Footer status bar — sidebar background */
-  #chat-area > footer {
-    background: var(--color-sidebar) !important;
-    color: rgba(255,255,255,0.7) !important;
-    border-top: 1px solid rgba(255,255,255,0.1) !important;
+  /* Slack-style rounded corners — chat area has rounded top-left */
+  #center-content {
+    border-top-left-radius: 8px;
+    overflow: hidden;
+    margin-top: 0;
   }
-  #chat-area > footer * { color: rgba(255,255,255,0.7); }
-  #chat-area > footer .text-agent, #chat-area > footer .text-model { color: rgba(255,255,255,0.9); }
+  #chat-top-bar {
+    border-top-left-radius: 8px;
+  }
+
+  /* Footer status bar — sidebar background */
+  #chat-status-bar {
+    background: var(--color-sidebar);
+    color: rgba(255,255,255,0.7);
+    border-top: 1px solid rgba(255,255,255,0.1);
+  }
+  #chat-status-bar * { color: rgba(255,255,255,0.7); }
+  #chat-status-bar .text-agent, #chat-status-bar .text-model { color: rgba(255,255,255,0.9); }
 
   /* Sidebar chat search — Slack-like */
   .sb-chat-search {
@@ -2447,7 +2457,7 @@ tailwind.config = {
   </div>
 
     <!-- FOOTER STATUS BAR (consolidated) -->
-    <footer class="flex items-center px-5 bg-surface/70 border-t border-border text-[11px] text-text-muted flex-shrink-0 backdrop-blur-sm gap-3" style="height:28px">
+    <footer id="chat-status-bar" class="flex items-center px-5 text-[11px] flex-shrink-0 gap-3" style="height:28px">
       <span id="status-agent" class="text-agent font-medium"></span>
       <span class="text-text-muted">|</span>
       <span id="status-model" class="text-model mono font-medium"></span>
