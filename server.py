@@ -831,6 +831,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_cc_browse()
         elif path == "/v1/skills/claude-code/install":
             self._handle_cc_install()
+        elif path == "/v1/settings/commands":
+            self._handle_settings_commands()
         elif path == "/v1/restart":
             self._handle_restart()
         elif path == "/v1/services/qmd":
@@ -1148,6 +1150,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             "sessions": len(sessions.list_all()),
             "scheduler_tasks": len(engine._scheduler.list_all()) if engine._scheduler else 0,
             "changelog": [{"version": v, "date": d, "changes": c} for v, d, c in engine.CHANGELOG],
+            "disabled_commands": server_config.get("disabled_commands", []),
         })
 
     def _handle_list_agents(self):
@@ -5044,6 +5047,34 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         stats = engine._context_manager.get_stats(session_id)
         self._send_json(stats)
 
+    def _handle_settings_commands(self):
+        """POST /v1/settings/commands — enable/disable a built-in slash command."""
+        body = self._read_json()
+        name = body.get("name", "")
+        enabled = body.get("enabled", True)
+        if not name:
+            self._send_json({"error": "name required"}, 400)
+            return
+        disabled = server_config.get("disabled_commands", [])
+        if enabled and name in disabled:
+            disabled.remove(name)
+        elif not enabled and name not in disabled:
+            disabled.append(name)
+        server_config["disabled_commands"] = disabled
+        # Persist to config.json
+        try:
+            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+            config = {}
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    config = json.load(f)
+            config["disabled_commands"] = disabled
+            with open(config_path, "w") as f:
+                json.dump(config, f, indent=2)
+        except Exception:
+            pass
+        self._send_json({"status": "ok", "disabled_commands": disabled})
+
     def _handle_restart(self):
         """POST /v1/restart — restart the server process."""
         self._send_json({"status": "restarting"})
@@ -6030,7 +6061,8 @@ def main():
     parser.add_argument("--max-context", type=int, default=file_config.get("max_context", 131072))
     args = parser.parse_args()
 
-    # Store all providers for multi-provider support
+    # Store all providers and settings
+    server_config["disabled_commands"] = file_config.get("disabled_commands", [])
     server_config["providers"] = providers
     server_config["api_key"] = args.api_key
     server_config["base_url"] = args.base_url

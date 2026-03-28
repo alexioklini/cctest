@@ -2814,6 +2814,7 @@ async function checkConnection() {
     const info = await API.getStatus();
     state.connected = true;
     state.serverInfo = info;
+    state._disabledCommands = info.disabled_commands || [];
     dom.connDot.className = 'w-2 h-2 rounded-full bg-success breathing-dot';
     dom.connLabel.textContent = `v${info.version || '?'}`;
     dom.serverUrl.textContent = BASE_URL;
@@ -8327,7 +8328,7 @@ function openSettingsModal() {
   modal.id = 'settings-modal';
   modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
   const stabs = [
-    {group: 'System', items: [{id:'server', label:'Server'}, {id:'qmd', label:'QMD'}, {id:'tools', label:'Tools'}, {id:'context', label:'Context'}, {id:'providers', label:'Providers'}, {id:'models', label:'Models'}]},
+    {group: 'System', items: [{id:'server', label:'Server'}, {id:'qmd', label:'QMD'}, {id:'tools', label:'Tools'}, {id:'commands', label:'Commands'}, {id:'context', label:'Context'}, {id:'providers', label:'Providers'}, {id:'models', label:'Models'}]},
     {group: 'Agents', items: [{id:'teams', label:'Teams'}, {id:'channels', label:'Channels'}, {id:'nodes', label:'Nodes'}, {id:'mcp', label:'MCP'}]},
     {group: 'Monitoring', items: [{id:'memory-health', label:'Memory'}, {id:'costs', label:'Costs'}, {id:'traces', label:'Traces'}, {id:'audit', label:'Audit'}, {id:'notifications', label:'Notifications'}]},
     {group: 'Data', items: [{id:'backup', label:'Backup'}]},
@@ -8381,6 +8382,7 @@ async function loadSettingsTab() {
     else if (_settingsTab === 'traces') await renderTracesTab(el);
     else if (_settingsTab === 'audit') await renderAuditTab(el);
     else if (_settingsTab === 'mcp') await renderMcpTab(el);
+    else if (_settingsTab === 'commands') await renderCommandsSettingsTab(el);
     else if (_settingsTab === 'backup') await renderBackupTab(el);
     else if (_settingsTab === 'notifications') await renderNotificationsTab(el);
     else if (_settingsTab === 'memory-health') await renderMemoryHealthTab(el);
@@ -10172,6 +10174,72 @@ window.exportAuditCSV = function() {
   a.click();
 };
 
+// ─── Commands Settings Tab ────────────────────────────────────
+async function renderCommandsSettingsTab(el) {
+  // Load disabled commands from server config
+  let disabledCmds = [];
+  try {
+    const statusData = await API.getStatus();
+    disabledCmds = statusData.disabled_commands || [];
+  } catch {}
+
+  // Built-in commands
+  let builtinHtml = '';
+  for (const sc of slashCommands) {
+    const name = sc.cmd.slice(1); // remove /
+    const disabled = disabledCmds.includes(name);
+    builtinHtml += `
+      <div class="flex items-center gap-3 px-4 py-2 text-sm ${disabled ? 'opacity-50' : ''}">
+        <label class="relative inline-flex items-center cursor-pointer flex-shrink-0">
+          <input type="checkbox" class="sr-only peer" ${!disabled ? 'checked' : ''}
+            onchange="toggleBuiltinCommand('${esc(name)}', this.checked)">
+          <div class="w-8 h-4 bg-surface-lighter peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-text-muted after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-accent peer-checked:after:bg-white"></div>
+        </label>
+        <span class="mono text-accent font-medium">${esc(sc.cmd)}</span>
+        <span class="text-text-muted text-[11px]">${esc(sc.desc)}</span>
+      </div>`;
+  }
+
+  // Claude Code commands
+  let ccHtml = '';
+  try {
+    const ccRes = await fetch(`${BASE_URL}/v1/skills/claude-code?agent=main`);
+    const ccData = await ccRes.json();
+    const ccCmds = (ccData.skills || []).filter(s => s.type === 'command' || s.type === 'user-command');
+    for (const cc of ccCmds) {
+      const badge = cc.type === 'user-command'
+        ? '<span class="text-[9px] px-1 py-0.5 rounded bg-green-500/20 text-green-300">user</span>'
+        : '<span class="text-[9px] px-1 py-0.5 rounded bg-purple-500/20 text-purple-300">' + esc(cc.plugin || 'plugin') + '</span>';
+      ccHtml += `
+        <div class="flex items-center gap-3 px-4 py-2 text-sm">
+          <span class="mono text-text-primary font-medium">/${esc(cc.name || cc.slug)}</span>
+          ${badge}
+          <span class="text-text-muted text-[11px] truncate">${esc((cc.description || '').slice(0,80))}</span>
+        </div>`;
+    }
+  } catch {}
+
+  el.innerHTML = `
+    <div class="space-y-6">
+      <div class="glass-card p-6">
+        <h3 class="section-header text-sm mb-4">Built-in Slash Commands</h3>
+        <div class="text-[10px] text-text-muted mb-3">Toggle commands on/off. Disabled commands won't appear in the slash command popup.</div>
+        <div class="space-y-1">${builtinHtml}</div>
+      </div>
+      ${ccHtml ? `<div class="glass-card p-6">
+        <h3 class="section-header text-sm mb-4">Claude Code Commands</h3>
+        <div class="space-y-1">${ccHtml}</div>
+      </div>` : ''}
+    </div>`;
+}
+
+window.toggleBuiltinCommand = async function(name, enabled) {
+  try {
+    await API.post('/v1/settings/commands', { name, enabled });
+    showToast(`/${name} ${enabled ? 'enabled' : 'disabled'}`);
+  } catch (e) { showToast(e.message, true); }
+};
+
 // ─── MCP Settings Tab ────────────────────────────────────────
 async function renderMcpTab(el) {
   try {
@@ -11247,7 +11315,8 @@ function slashShow(filter) {
     action: () => { dom.chatInput.value = '/' + c.name + ' '; },
     custom: true,
   }));
-  const allCommands = [...slashCommands, ...agentCmds];
+  const disabledCmds = state._disabledCommands || [];
+  const allCommands = [...slashCommands.filter(c => !disabledCmds.includes(c.cmd.slice(1))), ...agentCmds];
   slashPopup.filtered = q
     ? allCommands.filter(c => c.cmd.slice(1).startsWith(q) || c.desc.toLowerCase().includes(q))
     : [...allCommands];
