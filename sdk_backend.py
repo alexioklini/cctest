@@ -134,6 +134,10 @@ def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None, raw_socket=Non
 
     sock = socket.create_connection((SIDECAR_URL, SIDECAR_PORT), timeout=300)
     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    # Small receive buffer forces the kernel to wake us on each packet
+    # instead of coalescing into one large read
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 256)
+    sock.setblocking(False)
 
     # Send HTTP request
     http_req = (
@@ -143,30 +147,38 @@ def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None, raw_socket=Non
         f"Content-Length: {len(payload)}\r\n"
         f"\r\n"
     ).encode() + payload
+    sock.setblocking(True)
     sock.sendall(http_req)
+    sock.setblocking(False)
 
-    # Read HTTP response headers
+    # Read HTTP response headers (blocking — headers are small and fast)
+    import select
     header_buf = b""
     while b"\r\n\r\n" not in header_buf:
-        b = sock.recv(1)
+        select.select([sock], [], [], 30)
+        try:
+            b = sock.recv(1)
+        except BlockingIOError:
+            continue
         if not b:
             break
         header_buf += b
 
-    # Read SSE body — recv small chunks for low latency
-    sock.settimeout(5)  # 5s timeout per recv to detect stalls
+    # Read SSE body — use select() for immediate detection of available data
     full_text = ""
     tool_calls = []
     sse_buf = b""
     _client_gone = False
     while True:
-        try:
-            data = sock.recv(512)
-        except socket.timeout:
+        # Use select() for precise timing — returns as soon as data is available
+        ready, _, _ = select.select([sock], [], [], 5.0)
+        if not ready:
             if _client_gone:
-                break  # Client disconnected, stop proxying
+                break
             continue  # Keep waiting — sidecar may be executing tools
-        except OSError:
+        try:
+            data = sock.recv(4096)
+        except (BlockingIOError, OSError):
             break
         if not data:
             break
@@ -189,12 +201,12 @@ def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None, raw_socket=Non
                     except json.JSONDecodeError:
                         pass
 
-            # Forward streaming events to client (chunked encoding for HTTP/1.1)
+            # Forward streaming events to client
             if evt_type in ("text_delta", "thinking_delta", "tool_call", "tool_result"):
                 sse_out = block_bytes + b"\n\n"
                 try:
                     if raw_socket:
-                        _send_chunk(raw_socket, sse_out)
+                        raw_socket.sendall(sse_out)
                     else:
                         wfile.write(sse_out)
                         wfile.flush()

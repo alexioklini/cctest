@@ -46,13 +46,16 @@ class SidecarHandler(BaseHTTPRequestHandler):
         self.send_header("Connection", "keep-alive")
         self.end_headers()
 
-        def _run():
-            import asyncio
-            asyncio.run(self._stream(body))
-
-        t = threading.Thread(target=_run, daemon=True)
-        t.start()
-        t.join()
+        # Run async stream directly in the handler thread.
+        # Using a fresh event loop avoids anyio cancel scope issues
+        # that occur when nesting asyncio.run() inside threads.
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(self._stream(body))
+        finally:
+            loop.close()
 
     def _build_sdk_hooks(self, server_url, agent_id):
         """Build SDK hook callbacks per SDK docs: (input_data, tool_use_id, context).
@@ -208,17 +211,9 @@ class SidecarHandler(BaseHTTPRequestHandler):
         for srv_name in mcp_servers:
             effective_allowed.append(f"mcp__{srv_name}__*")
 
-        # Use claude_code preset with our system prompt appended (per SDK docs)
-        # This preserves Claude Code's built-in safety, tool instructions, and coding guidelines
-        sdk_system_prompt = {
-            "type": "preset",
-            "preset": "claude_code",
-            "append": system_prompt,
-        } if system_prompt else {"type": "preset", "preset": "claude_code"}
-
         opts_kwargs = dict(
             model=model,
-            system_prompt=sdk_system_prompt,
+            system_prompt=system_prompt,
             mcp_servers=mcp_servers,
             permission_mode=sdk_cfg.get("permission_mode", "bypassPermissions"),
             max_turns=sdk_cfg.get("max_turns", 30),
@@ -263,9 +258,18 @@ class SidecarHandler(BaseHTTPRequestHandler):
 
         full_text = ""
         tool_calls = []
+        import time as _t
+        _t0 = _t.monotonic()
+        _evt_count = 0
 
         try:
             async for event in query(prompt=message, options=options):
+                _evt_count += 1
+                _elapsed = _t.monotonic() - _t0
+                if isinstance(event, StreamEvent) and _evt_count <= 5:
+                    print(f"[sidecar] event#{_evt_count} at {_elapsed:.3f}s type={event.event.get('type','?')}", file=sys.stderr, flush=True)
+                elif isinstance(event, ResultMessage) and _evt_count <= 3:
+                    print(f"[sidecar] ResultMessage at {_elapsed:.3f}s", file=sys.stderr, flush=True)
                 if self._cancelled:
                     break
                 if isinstance(event, StreamEvent):
@@ -306,8 +310,11 @@ class SidecarHandler(BaseHTTPRequestHandler):
 
     def _sse(self, event_type, data):
         try:
-            self.wfile.write(f"event: {event_type}\ndata: {json.dumps(data)}\n\n".encode())
+            payload = f"event: {event_type}\ndata: {json.dumps(data)}\n\n".encode()
+            self.wfile.write(payload)
             self.wfile.flush()
+            # Also push at the TCP level to ensure immediate delivery
+            self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except (BrokenPipeError, ConnectionResetError, OSError):
             self._cancelled = True
 

@@ -618,8 +618,8 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 
 class BrainAgentHandler(BaseHTTPRequestHandler):
     """HTTP request handler for Brain Agent API."""
-    # HTTP/1.1 for chunked transfer encoding (required for real-time SSE streaming)
-    protocol_version = "HTTP/1.1"
+    # NOTE: Deliberately using HTTP/1.0 — SSE streaming works because we write
+    # directly to the raw TCP socket (self.connection.sendall) with TCP_NODELAY.
     # Disable write buffering for real-time SSE streaming
     wbufsize = 0
 
@@ -1594,10 +1594,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "keep-alive")
-        self.send_header("Transfer-Encoding", "chunked")
         self.send_header("X-Accel-Buffering", "no")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
+        self.wfile.flush()  # Ensure headers are pushed before streaming
 
         # Check if this agent uses the Agent SDK backend
         # Default: SDK enabled for all agents. Opt out with agent_sdk.enabled: false
@@ -1918,7 +1918,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     allowed, reason, _ = engine._rate_limiter.check(session.agent_id)
                     if not allowed:
                         try:
-                            sdk_backend._send_chunk(self.connection, f"event: error\ndata: {json.dumps({'message': f'Rate limited: {reason}'})}\n\n".encode())
+                            self.connection.sendall(f"event: error\ndata: {json.dumps({'message': f'Rate limited: {reason}'})}\n\n".encode())
                         except (BrokenPipeError, ConnectionResetError):
                             pass
                         return
@@ -2048,7 +2048,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                             fb_payload["provider_env"] = fb_env
                             fb_payload = json.dumps(fb_payload).encode()
                             try:
-                                sdk_backend._send_chunk(self.connection, f"event: fallback\ndata: {json.dumps({'from': model, 'to': fallback_model})}\n\n".encode())
+                                self.connection.sendall(f"event: fallback\ndata: {json.dumps({'from': model, 'to': fallback_model})}\n\n".encode())
                             except (BrokenPipeError, ConnectionResetError):
                                 pass
                             r = sdk_backend.proxy_sidecar_sse(fb_payload, self.wfile, event_callback,
@@ -2057,7 +2057,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 r = {}
                 try:
-                    sdk_backend._send_chunk(self.connection, f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n".encode())
+                    self.connection.sendall(f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n".encode())
                 except (BrokenPipeError, ConnectionResetError):
                     pass
 
@@ -2098,8 +2098,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     done_data["cost"] = session_cost
                 try:
                     done_bytes = f"event: done\ndata: {json.dumps(done_data)}\n\n".encode()
-                    sdk_backend._send_chunk(self.connection, done_bytes)
-                    sdk_backend._send_chunk_end(self.connection)
+                    self.connection.sendall(done_bytes)
+                    
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     pass
 
@@ -2181,13 +2181,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     if not t.is_alive() and event_queue.empty():
                         try:
                             sse_err = f'event: error\ndata: {json.dumps({"message": "Server worker terminated unexpectedly"})}\n\n'
-                            sdk_backend._send_chunk(self.connection, sse_err.encode("utf-8"))
+                            self.connection.sendall(sse_err.encode("utf-8"))
                         except (BrokenPipeError, ConnectionResetError, OSError):
                             pass
                         break
                     # Send keepalive comment to prevent browser timeout
                     try:
-                        sdk_backend._send_chunk(self.connection, b": keepalive\n\n")
+                        self.connection.sendall(b": keepalive\n\n")
                     except (BrokenPipeError, ConnectionResetError, OSError):
                         break
                     continue
@@ -2195,12 +2195,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     break
                 event_type, data = event
                 sse_line = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
-                sdk_backend._send_chunk(self.connection, sse_line.encode("utf-8"))
-            # Send terminal chunk
-            try:
-                sdk_backend._send_chunk_end(self.connection)
-            except (BrokenPipeError, ConnectionResetError, OSError):
-                pass
+                self.connection.sendall(sse_line.encode("utf-8"))
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
 
@@ -6349,9 +6344,10 @@ def main():
         if sdk_backend.is_sidecar_running():
             print("SDK sidecar: already running on port 8421")
             return
+        _sidecar_log = open(os.path.expanduser("~/.brain-agent/sidecar.log"), "a")
         _sdk_sidecar_process = _sp.Popen(
             [sys.executable, "-u", sidecar_script],
-            stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+            stdout=_sp.DEVNULL, stderr=_sidecar_log,
             cwd=os.path.dirname(os.path.abspath(__file__)),
         )
         # Wait for it to be ready
