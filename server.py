@@ -618,6 +618,9 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 
 class BrainAgentHandler(BaseHTTPRequestHandler):
     """HTTP request handler for Brain Agent API."""
+    # HTTP/1.1 required for real-time SSE streaming — HTTP/1.0 causes browsers
+    # to buffer the entire response until the connection closes
+    protocol_version = "HTTP/1.1"
     # Disable write buffering for real-time SSE streaming
     wbufsize = 0
 
