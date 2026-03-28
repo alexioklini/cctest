@@ -107,9 +107,32 @@ class SidecarHandler(BaseHTTPRequestHandler):
         }
 
     def _build_brain_mcp(self, tool_defs, server_url, agent_id, session_id):
-        """Build an in-process MCP server with tools that call back to the main server."""
-        from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server
-        import urllib.request
+        """Build an in-process MCP server with tools that call back to the main server.
+
+        Uses the @tool decorator pattern from the SDK docs with proper async HTTP
+        calls (aiohttp/asyncio) to avoid blocking the event loop during tool execution.
+        """
+        from claude_agent_sdk import tool, create_sdk_mcp_server
+        import asyncio
+
+        async def _call_server_async(name, args, url=server_url, aid=agent_id, sid=session_id):
+            """Non-blocking HTTP call to the main server's /v1/tools/call endpoint."""
+            payload = json.dumps({
+                "name": name, "args": args,
+                "agent_id": aid, "session_id": sid,
+            }).encode()
+            # Use asyncio to run the HTTP call in a thread pool (non-blocking)
+            loop = asyncio.get_event_loop()
+            def _sync_call():
+                import urllib.request
+                req = urllib.request.Request(
+                    f"{url}/v1/tools/call",
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                resp = urllib.request.urlopen(req, timeout=120)
+                return json.loads(resp.read())
+            return await loop.run_in_executor(None, _sync_call)
 
         tools = []
         for td in tool_defs:
@@ -117,29 +140,17 @@ class SidecarHandler(BaseHTTPRequestHandler):
             desc = td.get("description", "")
             schema = td.get("input_schema", {"type": "object", "properties": {}})
 
-            async def _handler(args, _name=name, _url=server_url, _aid=agent_id, _sid=session_id):
-                """Call the main server's /v1/tools/call endpoint."""
-                payload = json.dumps({
-                    "name": _name, "args": args,
-                    "agent_id": _aid, "session_id": _sid,
-                }).encode()
+            # Use @tool decorator as recommended by SDK docs
+            @tool(name, desc[:1000], schema)
+            async def _handler(args, _name=name):
                 try:
-                    req = urllib.request.Request(
-                        f"{_url}/v1/tools/call",
-                        data=payload,
-                        headers={"Content-Type": "application/json"},
-                    )
-                    resp = urllib.request.urlopen(req, timeout=120)
-                    data = json.loads(resp.read())
+                    data = await _call_server_async(_name, args)
                     result_text = data.get("result", data.get("error", "No result"))
                     return {"content": [{"type": "text", "text": str(result_text)}]}
                 except Exception as e:
                     return {"content": [{"type": "text", "text": f"Tool error: {e}"}], "is_error": True}
 
-            tools.append(SdkMcpTool(
-                name=name, description=desc[:1000],
-                input_schema=schema, handler=_handler,
-            ))
+            tools.append(_handler)
 
         return create_sdk_mcp_server("brain_agent", "1.0", tools=tools)
 
@@ -171,6 +182,11 @@ class SidecarHandler(BaseHTTPRequestHandler):
             brain_mcp = self._build_brain_mcp(tool_defs, server_url, agent_id, session_id)
             mcp_servers["brain_agent"] = brain_mcp
 
+        # Build allowed_tools: always include MCP tools (as per SDK docs)
+        effective_allowed = list(allowed_tools) if allowed_tools else []
+        for srv_name in mcp_servers:
+            effective_allowed.append(f"mcp__{srv_name}__*")
+
         opts_kwargs = dict(
             model=model,
             system_prompt=system_prompt,
@@ -181,8 +197,8 @@ class SidecarHandler(BaseHTTPRequestHandler):
             cwd=body.get("cwd", os.getcwd()),
             include_partial_messages=True,
         )
-        if allowed_tools:
-            opts_kwargs["allowed_tools"] = allowed_tools
+        if effective_allowed:
+            opts_kwargs["allowed_tools"] = effective_allowed
 
         # Register SDK hooks that call back to server's /v1/hooks/run
         if hooks_enabled and server_url:
