@@ -2019,9 +2019,28 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                                 cc_plugin_paths.append(plugin_root)
                                 seen_plugins.add(plugin_key)
 
+            # Always include conversation history in the prompt.
+            # The SDK's resume may fail silently (stale session, sidecar restart,
+            # old chats). History in the prompt ensures the LLM always has context.
+            # When resume succeeds, the SDK has its own context too — redundant but safe.
+            sdk_prompt = message
+            prior_msgs = session.messages[:-1]  # exclude the just-added user message
+            if prior_msgs:
+                parts = []
+                for m in prior_msgs[-20:]:  # last 20 turns
+                    role = m.get("role", "")
+                    content = m.get("content", "")
+                    if isinstance(content, list):
+                        content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
+                    if content:
+                        label = "Human" if role == "user" else "Assistant"
+                        parts.append(f"{label}: {content[:2000]}")
+                if parts:
+                    sdk_prompt = "Conversation so far:\n\n" + "\n\n".join(parts) + f"\n\nHuman: {message}"
+
             server_port = server_config.get("port", 8420)
             payload = json.dumps({
-                "message": message,
+                "message": sdk_prompt,
                 "model": model,
                 "system_prompt": system_prompt,
                 "agent_id": session.agent_id,
