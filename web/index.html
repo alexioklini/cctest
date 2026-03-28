@@ -5315,7 +5315,13 @@ function updateStatusBar() {
   const compactBtn = document.getElementById('status-compact-btn');
 
   if (ctxLabel && ctxBar && ctxFill) {
-    if (chat && chat.messages && chat.messages.length > 0) {
+    if (isSDK) {
+      // SDK handles its own context — hide LCM controls
+      ctxLabel.textContent = '';
+      ctxBar.style.display = 'none';
+      if (compactBtn) compactBtn.style.display = 'none';
+      if (lcmBadge) lcmBadge.style.display = 'none';
+    } else if (chat && chat.messages && chat.messages.length > 0) {
       const est = _estimateTokens(chat.messages);
       const modelCfg = (state.modelsConfig || {})[chat.model] || {};
       const maxCtx = modelCfg.max_context || 131072;
@@ -5328,6 +5334,7 @@ function updateStatusBar() {
       ctxFill.style.background = pct >= 75 ? '#ef4444' : pct >= 50 ? '#f59e0b' : '#4ade80';
       ctxLabel.style.color = pct >= 75 ? '#ef4444' : pct >= 50 ? '#f59e0b' : 'var(--color-text-muted)';
       if (compactBtn) compactBtn.style.display = chat.sessionId && chat.messages.length > 4 ? '' : 'none';
+      if (lcmBadge) lcmBadge.style.display = '';
     } else {
       ctxLabel.textContent = '';
       ctxBar.style.display = 'none';
@@ -5335,11 +5342,10 @@ function updateStatusBar() {
     }
   }
 
-  // LCM badge
-  if (lcmBadge) {
+  // LCM badge (only for non-SDK sessions)
+  if (lcmBadge && !isSDK) {
     const lcmOn = state._lcmEnabled;
     if (lcmOn === undefined) {
-      // Fetch once
       API.get('/v1/context/config').then(cfg => {
         state._lcmEnabled = cfg.enabled !== false;
         _updateLcmBadge();
