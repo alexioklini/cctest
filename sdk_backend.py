@@ -107,57 +107,59 @@ def is_sidecar_running() -> bool:
 
 
 def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None, raw_socket=None) -> dict:
-    """Connect to sidecar via http.client, stream SSE to client in real-time.
+    """Start a query on the sidecar REST API and poll for events.
 
-    Uses http.client.HTTPConnection for proper HTTP streaming instead of
-    raw sockets. Reads the response body line-by-line for immediate delivery.
+    1. POST /query with payload → get query_id
+    2. Poll GET /events/{query_id}?after=N every 50ms
+    3. Forward each event to the client immediately via raw_socket or wfile
 
     Returns dict with: text, sdk_session_id, tokens_in, tokens_out, cost, tools
     """
-    import http.client
+    import time
+    import urllib.request
 
     result = {"text": "", "sdk_session_id": None, "tokens_in": 0,
               "tokens_out": 0, "cost": 0.0, "tools": []}
+    base = f"http://{SIDECAR_URL}:{SIDECAR_PORT}"
 
-    conn = http.client.HTTPConnection(SIDECAR_URL, SIDECAR_PORT, timeout=300)
-    conn.request("POST", "/query", body=payload,
-                 headers={"Content-Type": "application/json"})
-    resp = conn.getresponse()
+    # Step 1: Start query
+    try:
+        req = urllib.request.Request(f"{base}/query", data=payload,
+                                     headers={"Content-Type": "application/json"})
+        resp = urllib.request.urlopen(req, timeout=10)
+        query_id = json.loads(resp.read()).get("query_id")
+    except Exception as e:
+        return {"text": "", "error": str(e)}
 
+    if not query_id:
+        return {"text": "", "error": "No query_id returned"}
+
+    # Step 2: Poll for events
     full_text = ""
     tool_calls = []
+    after = 0
     _client_gone = False
-    sse_buf = ""
+    start = time.monotonic()
 
-    # Read response body in small chunks for streaming
-    while True:
-        chunk = resp.read(256)
-        if not chunk:
-            break
-        sse_buf += chunk.decode("utf-8", errors="replace")
+    while time.monotonic() - start < 300:  # 5 min timeout
+        try:
+            url = f"{base}/events/{query_id}?after={after}"
+            resp = urllib.request.urlopen(url, timeout=10)
+            data = json.loads(resp.read())
+        except Exception:
+            time.sleep(0.1)
+            continue
 
-        # Process complete SSE blocks
-        while "\n\n" in sse_buf:
-            block, sse_buf = sse_buf.split("\n\n", 1)
-            block = block.strip()
-            if not block:
-                continue
+        events = data.get("events", [])
+        done = data.get("done", False)
 
-            # Parse SSE event
-            evt_type = ""
-            evt_data = None
-            for line in block.split("\n"):
-                if line.startswith("event: "):
-                    evt_type = line[7:].strip()
-                elif line.startswith("data: "):
-                    try:
-                        evt_data = json.loads(line[6:])
-                    except json.JSONDecodeError:
-                        pass
+        # Forward each event to the client
+        for ev in events:
+            evt_type = ev.get("event", "")
+            evt_data = ev.get("data", {})
 
-            # Forward streaming events to client immediately
             if evt_type in ("text_delta", "thinking_delta", "tool_call", "tool_result"):
-                sse_out = (block + "\n\n").encode("utf-8")
+                sse_out = f"event: {evt_type}\ndata: {json.dumps(evt_data)}\n\n".encode()
                 if not _client_gone:
                     try:
                         if raw_socket:
@@ -167,10 +169,9 @@ def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None, raw_socket=Non
                             wfile.flush()
                     except (BrokenPipeError, ConnectionResetError, OSError):
                         _client_gone = True
-                if event_callback and evt_data:
+                if event_callback:
                     event_callback(evt_type, evt_data)
 
-            # Collect metadata
             if evt_type == "_result" and evt_data:
                 result["text"] = evt_data.get("text", "") or full_text
                 result["sdk_session_id"] = evt_data.get("sdk_session_id")
@@ -178,7 +179,6 @@ def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None, raw_socket=Non
                 result["tokens_out"] = evt_data.get("tokens_out", 0)
                 result["cost"] = evt_data.get("cost", 0)
                 result["tools"] = evt_data.get("tools", []) or tool_calls
-                conn.close()
                 return result
             elif evt_type == "text_delta" and evt_data:
                 full_text += evt_data.get("text", "")
@@ -188,7 +188,25 @@ def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None, raw_socket=Non
                 if event_callback:
                     event_callback("error", evt_data)
 
-    conn.close()
+        after = data.get("next", after)
+
+        if done:
+            break
+
+        # Send keepalive comment to prevent browser buffering
+        if not _client_gone:
+            try:
+                if raw_socket:
+                    raw_socket.sendall(b": keepalive\n\n")
+                else:
+                    wfile.write(b": keepalive\n\n")
+                    wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                _client_gone = True
+
+        # Poll interval: 50ms for responsiveness
+        time.sleep(0.05)
+
     if not result["text"] and full_text:
         result["text"] = full_text
     if not result["tools"] and tool_calls:

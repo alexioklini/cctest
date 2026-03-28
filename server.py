@@ -1918,7 +1918,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     allowed, reason, _ = engine._rate_limiter.check(session.agent_id)
                     if not allowed:
                         try:
-                            self.connection.sendall(f"event: error\ndata: {json.dumps({'message': f'Rate limited: {reason}'})}\n\n".encode())
+                            self.wfile.write(f"event: error\ndata: {json.dumps({'message': f'Rate limited: {reason}'})}\n\n".encode()); self.wfile.flush()
                         except (BrokenPipeError, ConnectionResetError):
                             pass
                         return
@@ -2033,8 +2033,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
             try:
                 # Proxy SSE from sidecar to client via http.client
-                r = sdk_backend.proxy_sidecar_sse(payload, self.wfile, event_callback,
-                                                   raw_socket=self.connection)
+                r = sdk_backend.proxy_sidecar_sse(payload, self.wfile, event_callback)
 
                 # Model fallback: if SDK returned error and no text, retry with fallback
                 if not r.get("text") and not "".join(_partial_reply).strip():
@@ -2047,7 +2046,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                             fb_payload["provider_env"] = fb_env
                             fb_payload = json.dumps(fb_payload).encode()
                             try:
-                                self.connection.sendall(f"event: fallback\ndata: {json.dumps({'from': model, 'to': fallback_model})}\n\n".encode())
+                                self.wfile.write(f"event: fallback\ndata: {json.dumps({'from': model, 'to': fallback_model})}\n\n".encode()); self.wfile.flush()
                             except (BrokenPipeError, ConnectionResetError):
                                 pass
                             r = sdk_backend.proxy_sidecar_sse(fb_payload, self.wfile, event_callback,
@@ -2056,7 +2055,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 r = {}
                 try:
-                    self.connection.sendall(f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n".encode())
+                    self.wfile.write(f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n".encode()); self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError):
                     pass
 
@@ -2097,7 +2096,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     done_data["cost"] = session_cost
                 try:
                     done_bytes = f"event: done\ndata: {json.dumps(done_data)}\n\n".encode()
-                    self.connection.sendall(done_bytes)
+                    self.wfile.write(done_bytes); self.wfile.flush()
                     
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     pass
@@ -2180,13 +2179,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     if not t.is_alive() and event_queue.empty():
                         try:
                             sse_err = f'event: error\ndata: {json.dumps({"message": "Server worker terminated unexpectedly"})}\n\n'
-                            self.connection.sendall(sse_err.encode("utf-8"))
+                            self.wfile.write(sse_err.encode("utf-8")); self.wfile.flush()
                         except (BrokenPipeError, ConnectionResetError, OSError):
                             pass
                         break
                     # Send keepalive comment to prevent browser timeout
                     try:
-                        self.connection.sendall(b": keepalive\n\n")
+                        self.wfile.write(b": keepalive\n\n"); self.wfile.flush()
                     except (BrokenPipeError, ConnectionResetError, OSError):
                         break
                     continue
@@ -2194,7 +2193,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     break
                 event_type, data = event
                 sse_line = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
-                self.connection.sendall(sse_line.encode("utf-8"))
+                self.wfile.write(sse_line.encode("utf-8")); self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
 

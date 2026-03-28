@@ -16,46 +16,99 @@ from socketserver import ThreadingMixIn
 SIDECAR_PORT = int(os.environ.get("SDK_SIDECAR_PORT", "8421"))
 
 
+# In-memory store for active queries: query_id → {"events": [...], "done": bool}
+_queries = {}
+_queries_lock = threading.Lock()
+_query_counter = 0
+
+
 class SidecarHandler(BaseHTTPRequestHandler):
     wbufsize = 0
 
     def log_message(self, format, *args):
         pass
 
+    def _json_response(self, data, status=200):
+        body = json.dumps(data).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
-        if self.path == "/health":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(b'{"status":"ok"}')
+        path = self.path.split("?")[0]
+
+        if path == "/health":
+            self._json_response({"status": "ok"})
+
+        elif path.startswith("/events/"):
+            # GET /events/{query_id}?after={index} — poll for new events
+            query_id = path.split("/events/")[1]
+            params = {}
+            if "?" in self.path:
+                for kv in self.path.split("?")[1].split("&"):
+                    if "=" in kv:
+                        k, v = kv.split("=", 1)
+                        params[k] = v
+            after = int(params.get("after", 0))
+
+            with _queries_lock:
+                q = _queries.get(query_id)
+            if not q:
+                self._json_response({"error": "query not found"}, 404)
+                return
+
+            events = q["events"][after:]
+            self._json_response({
+                "events": events,
+                "next": after + len(events),
+                "done": q["done"],
+            })
+
         else:
             self.send_error(404)
 
     def do_POST(self):
-        if self.path != "/query":
+        path = self.path.split("?")[0]
+
+        if path == "/query":
+            # POST /query — start a new query, return query_id immediately
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length)) if length else {}
+
+            global _query_counter
+            with _queries_lock:
+                _query_counter += 1
+                query_id = f"q{_query_counter}"
+                _queries[query_id] = {"events": [], "done": False}
+
+            # Run the SDK query in a background thread
+            def _run():
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(self._stream(body, query_id))
+                finally:
+                    loop.close()
+
+            threading.Thread(target=_run, daemon=True).start()
+
+            self._json_response({"query_id": query_id})
+
+        elif path.startswith("/cancel/"):
+            query_id = path.split("/cancel/")[1]
+            with _queries_lock:
+                q = _queries.get(query_id)
+            if q:
+                q["done"] = True
+                self._json_response({"status": "cancelled"})
+            else:
+                self._json_response({"error": "query not found"}, 404)
+
+        else:
             self.send_error(404)
-            return
-
-        length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(length)) if length else {}
-
-        self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.end_headers()
-
-        # Run async stream directly in the handler thread.
-        # Using a fresh event loop avoids anyio cancel scope issues
-        # that occur when nesting asyncio.run() inside threads.
-        import asyncio
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(self._stream(body))
-        finally:
-            loop.close()
 
     def _build_sdk_hooks(self, server_url, agent_id):
         """Build SDK hook callbacks per SDK docs: (input_data, tool_use_id, context).
@@ -169,11 +222,12 @@ class SidecarHandler(BaseHTTPRequestHandler):
 
         return create_sdk_mcp_server("brain_agent", "1.0", tools=tools)
 
-    async def _stream(self, body):
+    async def _stream(self, body, query_id=None):
         from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
         from claude_agent_sdk.types import StreamEvent
 
-        self._cancelled = False  # Set by _sse on broken pipe
+        self._cancelled = False
+        self._query_id = query_id
 
         message = body.get("message", "")
         model = body.get("model", "claude-sonnet-4-6")
@@ -258,18 +312,15 @@ class SidecarHandler(BaseHTTPRequestHandler):
 
         full_text = ""
         tool_calls = []
-        import time as _t
-        _t0 = _t.monotonic()
-        _evt_count = 0
 
         try:
             async for event in query(prompt=message, options=options):
-                _evt_count += 1
-                _elapsed = _t.monotonic() - _t0
-                if isinstance(event, StreamEvent) and _evt_count <= 5:
-                    print(f"[sidecar] event#{_evt_count} at {_elapsed:.3f}s type={event.event.get('type','?')}", file=sys.stderr, flush=True)
-                elif isinstance(event, ResultMessage) and _evt_count <= 3:
-                    print(f"[sidecar] ResultMessage at {_elapsed:.3f}s", file=sys.stderr, flush=True)
+                # Check if cancelled via REST API
+                if self._query_id:
+                    with _queries_lock:
+                        q = _queries.get(self._query_id)
+                    if q and q["done"]:
+                        break
                 if self._cancelled:
                     break
                 if isinstance(event, StreamEvent):
@@ -307,16 +358,23 @@ class SidecarHandler(BaseHTTPRequestHandler):
                     })
         except Exception as e:
             self._sse("error", {"message": str(e)})
+        finally:
+            # Ensure query is marked done even if no _result event was sent
+            if self._query_id:
+                with _queries_lock:
+                    q = _queries.get(self._query_id)
+                    if q:
+                        q["done"] = True
 
     def _sse(self, event_type, data):
-        try:
-            payload = f"event: {event_type}\ndata: {json.dumps(data)}\n\n".encode()
-            self.wfile.write(payload)
-            self.wfile.flush()
-            # Also push at the TCP level to ensure immediate delivery
-            self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        except (BrokenPipeError, ConnectionResetError, OSError):
-            self._cancelled = True
+        """Store event in the query's event list for REST polling."""
+        if self._query_id:
+            with _queries_lock:
+                q = _queries.get(self._query_id)
+                if q:
+                    q["events"].append({"event": event_type, "data": data})
+                    if event_type in ("_result", "error"):
+                        q["done"] = True
 
 
 class ThreadedServer(ThreadingMixIn, HTTPServer):
