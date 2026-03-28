@@ -7219,7 +7219,7 @@ async function loadCCSkills(agentName) {
   const container = document.getElementById('cc-skills-list');
   if (!container) return;
   try {
-    const res = await fetch(`${API_BASE}/skills/claude-code?agent=${encodeURIComponent(agentName)}`);
+    const res = await fetch(`${BASE_URL}/v1/skills/claude-code?agent=${encodeURIComponent(agentName)}`);
     const data = await res.json();
     const skills = data.skills || [];
     if (skills.length === 0) {
@@ -7272,7 +7272,7 @@ async function loadCCSkills(agentName) {
 
 window.toggleCCSkill = async function(agentName, slug, enabled) {
   try {
-    const res = await fetch(`${API_BASE}/skills/claude-code`, {
+    const res = await fetch(`${BASE_URL}/v1/skills/claude-code`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ agent: agentName, slug, enabled })
