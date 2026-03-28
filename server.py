@@ -1948,6 +1948,24 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             engine._thread_local.project = session.project if hasattr(session, 'project') else None
             engine._thread_local.note_context = getattr(session, 'note_context', None)
             system_prompt = engine._build_system_prompt(include_memory_summary=True)
+
+            # Inject conversation history so the LLM sees prior turns
+            # (SDK session may be lost on sidecar restart or new sessions)
+            prior_msgs = session.messages[:-1]  # exclude the just-added user message
+            if prior_msgs:
+                history_lines = []
+                for m in prior_msgs:
+                    role = m.get("role", "")
+                    content = m.get("content", "")
+                    if isinstance(content, list):
+                        content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
+                    if content:
+                        # Cap each message to avoid blowing up context
+                        history_lines.append(f"[{role}]: {content[:2000]}")
+                if history_lines:
+                    history_block = "\n".join(history_lines[-30:])  # last 30 messages max
+                    system_prompt += f"\n\n## Conversation History\n{history_block}"
+
             model = session.model or "claude-sonnet-4-6"
             provider_env = sdk_backend.build_provider_env(model)
             sdk_cfg = agent_config.config.get("agent_sdk", {})
