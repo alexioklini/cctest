@@ -1953,12 +1953,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             provider_env = sdk_backend.build_provider_env(model)
             sdk_cfg = agent_config.config.get("agent_sdk", {})
 
-            # External MCP configs
+            # External MCP configs — inherit main's, then merge agent's own
             mcp_configs = {}
-            mcp_path = os.path.join(engine.AGENTS_DIR, session.agent_id, "mcp.json")
-            if os.path.isfile(mcp_path):
+            def _load_mcp_file(path):
+                if not os.path.isfile(path):
+                    return
                 try:
-                    with open(mcp_path) as f:
+                    with open(path) as f:
                         mcp_json = json.load(f)
                     for name, entry in (mcp_json.get("mcpServers", mcp_json) if isinstance(mcp_json, dict) else {}).items():
                         if isinstance(entry, dict) and entry.get("command"):
@@ -1968,6 +1969,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                             mcp_configs[name] = cfg_entry
                 except Exception:
                     pass
+
+            # Load main's MCP servers first (global), then agent's own (override)
+            if session.agent_id != "main":
+                _load_mcp_file(os.path.join(engine.AGENTS_DIR, "main", "mcp.json"))
+            _load_mcp_file(os.path.join(engine.AGENTS_DIR, session.agent_id, "mcp.json"))
 
             # Build tool definitions for sidecar MCP server
             tool_defs = []
