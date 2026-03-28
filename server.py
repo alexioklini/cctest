@@ -2019,24 +2019,36 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                                 cc_plugin_paths.append(plugin_root)
                                 seen_plugins.add(plugin_key)
 
-            # Always include conversation history in the prompt.
-            # The SDK's resume may fail silently (stale session, sidecar restart,
-            # old chats). History in the prompt ensures the LLM always has context.
-            # When resume succeeds, the SDK has its own context too — redundant but safe.
+            # Check if SDK session can be resumed (transcript exists on disk)
+            # If not, inject conversation history into the prompt as fallback
             sdk_prompt = message
-            prior_msgs = session.messages[:-1]  # exclude the just-added user message
-            if prior_msgs:
-                parts = []
-                for m in prior_msgs[-20:]:  # last 20 turns
-                    role = m.get("role", "")
-                    content = m.get("content", "")
-                    if isinstance(content, list):
-                        content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
-                    if content:
-                        label = "Human" if role == "user" else "Assistant"
-                        parts.append(f"{label}: {content[:2000]}")
-                if parts:
-                    sdk_prompt = "Conversation so far:\n\n" + "\n\n".join(parts) + f"\n\nHuman: {message}"
+            _can_resume = False
+            if session.sdk_session_id:
+                # Verify the SDK transcript still exists
+                _transcript_dir = os.path.expanduser("~/.claude/projects")
+                if os.path.isdir(_transcript_dir):
+                    # SDK stores transcripts as session_id.json files
+                    for _root, _dirs, _files in os.walk(_transcript_dir):
+                        if any(session.sdk_session_id in f for f in _files):
+                            _can_resume = True
+                            break
+
+            if not _can_resume:
+                # SDK session lost — inject history into prompt
+                session.sdk_session_id = None  # clear stale ID
+                prior_msgs = session.messages[:-1]
+                if prior_msgs:
+                    parts = []
+                    for m in prior_msgs[-20:]:
+                        role = m.get("role", "")
+                        content = m.get("content", "")
+                        if isinstance(content, list):
+                            content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
+                        if content:
+                            label = "Human" if role == "user" else "Assistant"
+                            parts.append(f"{label}: {content[:2000]}")
+                    if parts:
+                        sdk_prompt = "Conversation so far:\n\n" + "\n\n".join(parts) + f"\n\nHuman: {message}"
 
             server_port = server_config.get("port", 8420)
             payload = json.dumps({
