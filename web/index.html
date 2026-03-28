@@ -312,6 +312,7 @@ tailwind.config = {
     display: flex;
     flex-direction: column;
     background: var(--color-base);
+    margin: 0 5px;
   }
 
   /* Footer status bar — sidebar gradient */
@@ -2343,7 +2344,7 @@ tailwind.config = {
   <!-- MAIN CONTENT -->
   <div id="center-content" class="flex-1 flex flex-col overflow-hidden min-w-0">
     <!-- CHAT AREA (fills remaining) -->
-    <div id="chat-area" class="flex-1 flex flex-col overflow-hidden">
+    <div id="chat-area" class="flex-1 flex flex-col overflow-hidden" style="background:var(--color-sidebar)">
       <!-- Chat top bar -->
       <div id="chat-top-bar" class="flex items-center bg-surface/50 flex-shrink-0 px-3 gap-3" style="min-height:48px;padding:0 16px;box-shadow:none;border-bottom:1px solid var(--color-border)">
         <button id="mobile-hamburger" onclick="openMobileSidebar()" title="Open sidebar">
