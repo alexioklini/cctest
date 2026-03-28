@@ -148,7 +148,6 @@ def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None, raw_socket=Non
     tool_calls = []
     sse_buf = b""
     _client_gone = False
-
     while True:
         try:
             data = sock.recv(512)
