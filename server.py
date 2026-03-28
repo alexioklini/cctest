@@ -2066,14 +2066,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     tokens_in=r.get("tokens_in", 0), tokens_out=r.get("tokens_out", 0))
 
             # Audit logging for tool calls
-            if engine._audit_logger and _partial_tools:
+            if engine._audit_log and _partial_tools:
                 for tc in _partial_tools:
                     try:
-                        engine._audit_logger.log("tool_call", {
-                            "agent": session.agent_id, "session": sid,
-                            "tool": tc.get("name"), "args": tc.get("args"),
-                            "result": tc.get("result", "")[:200], "sdk": True,
-                        })
+                        engine._audit_log.log_action(
+                            agent=session.agent_id, action_type="tool_call",
+                            tool_name=tc.get("name", ""),
+                            args=tc.get("args"), result=str(tc.get("result", ""))[:200],
+                            session_id=sid,
+                        )
                     except Exception:
                         pass
             return
