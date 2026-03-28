@@ -5078,10 +5078,28 @@ function scrollToBottom() {
 async function sendMessage() {
   const chat = state.activeChat;
   if (!chat || chat.streaming) return;
-  const text = dom.chatInput.value.trim();
+  let text = dom.chatInput.value.trim();
   if (!text && _pendingImages.length === 0) return;
   dom.chatInput.value = '';
   dom.chatInput.style.height = 'auto';
+
+  // Expand custom slash commands: /name args → template with {{var}} replaced
+  if (text.startsWith('/') && state.activeAgentId) {
+    const parts = text.split(/\s+/);
+    const cmdName = parts[0].slice(1).toLowerCase();
+    const cmdArgs = parts.slice(1).join(' ');
+    const agentCmds = customCommands[state.activeAgentId] || [];
+    const matched = agentCmds.find(c => (c.name || '').toLowerCase() === cmdName);
+    if (matched) {
+      const template = matched.prompt || matched.template || '';
+      if (template) {
+        const varMatch = template.match(/\{\{(\w+)\}\}/);
+        text = varMatch && cmdArgs
+          ? template.replace(`{{${varMatch[1]}}}`, cmdArgs)
+          : cmdArgs ? template + ' ' + cmdArgs : template;
+      }
+    }
+  }
 
   // Capture pending images
   const images = _pendingImages.length > 0 ? [..._pendingImages] : null;
