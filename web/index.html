@@ -42,23 +42,23 @@ tailwind.config = {
   /* ── Light theme ── */
   :root, [data-theme="light"] {
     --color-base: #ffffff;
-    --color-surface: #f4f4f8;
-    --color-surface-light: #ebebf0;
-    --color-surface-lighter: #e0e0e8;
-    --color-border: #d0d0dc;
-    --color-sidebar: #f4f4f8;
+    --color-surface: #f8f8f8;
+    --color-surface-light: #f0f0f0;
+    --color-surface-lighter: #e8e8e8;
+    --color-border: #dddddd;
+    --color-sidebar: #3f0e40;
     --color-text-primary: #1a1a24;
     --color-text-secondary: #5a5a6e;
     --color-text-muted: #8a8a9a;
     --color-accent: #e85d04;
     --color-agent: #7c3aed;
     --color-model: #0284c7;
-    --color-code-bg: #f4f4f8;
+    --color-code-bg: #f8f8f8;
     --color-code-text: #1a1a24;
     --color-user-border: rgba(232,93,4,0.4);
     --color-user-shadow: rgba(232,93,4,0.06);
     --color-assistant-border: rgba(124,58,237,0.3);
-    --color-inline-code-bg: #ebebf0;
+    --color-inline-code-bg: #f0f0f0;
     --color-tool-bg: rgba(235,235,240,0.7);
     --color-tool-hover-bg: rgba(224,224,232,0.5);
     --color-modal-bg: #ffffff;
@@ -68,44 +68,67 @@ tailwind.config = {
     --color-header-gradient-2: rgba(232,93,4,0.03);
     --color-header-gradient-3: rgba(2,132,199,0.02);
     --color-input-shadow: rgba(0,0,0,0.06);
-    --color-scrollbar: #d0d0dc;
+    --color-scrollbar: #dddddd;
     --color-scrollbar-hover: #b0b0be;
-    --noise-opacity: 0.012;
+    --noise-opacity: 0;
   }
 
   /* ── Dark theme (default) ── */
   [data-theme="dark"] {
-    --color-base: #09090f;
-    --color-surface: #0f0f1a;
-    --color-surface-light: #161625;
-    --color-surface-lighter: #1e1e32;
-    --color-border: #252540;
-    --color-sidebar: #0a0a14;
-    --color-text-primary: #e4e4ec;
-    --color-text-secondary: #8888a0;
-    --color-text-muted: #555568;
+    --color-base: #1a1d21;
+    --color-surface: #1a1d21;
+    --color-surface-light: #222529;
+    --color-surface-lighter: #2c2d31;
+    --color-border: #35363a;
+    --color-sidebar: #19171d;
+    --color-text-primary: #d1d2d3;
+    --color-text-secondary: #ababad;
+    --color-text-muted: #6b6c6f;
     --color-accent: #e85d04;
-    --color-agent: #8b5cf6;
-    --color-model: #38bdf8;
-    --color-code-bg: #0f0f1a;
-    --color-code-text: #e4e4ec;
-    --color-user-border: rgba(232,93,4,0.5);
-    --color-user-shadow: rgba(232,93,4,0.08);
-    --color-assistant-border: rgba(139,92,246,0.35);
-    --color-inline-code-bg: #161625;
-    --color-tool-bg: rgba(15,15,26,0.7);
-    --color-tool-hover-bg: rgba(22,22,37,0.5);
-    --color-modal-bg: #0f0f1a;
+    --color-agent: #36c5f0;
+    --color-model: #2eb67d;
+    --color-code-bg: #1a1d21;
+    --color-code-text: #d1d2d3;
+    --color-user-border: rgba(232,93,4,0.3);
+    --color-user-shadow: rgba(0,0,0,0.2);
+    --color-assistant-border: rgba(54,197,240,0.3);
+    --color-inline-code-bg: #222529;
+    --color-tool-bg: rgba(34,37,41,0.7);
+    --color-tool-hover-bg: rgba(44,45,49,0.5);
+    --color-modal-bg: #1a1d21;
     --color-modal-overlay: rgba(0,0,0,0.7);
-    --color-toast-bg: rgba(15,15,26,0.95);
-    --color-header-gradient-1: rgba(139,92,246,0.06);
+    --color-toast-bg: rgba(26,29,33,0.95);
+    --color-header-gradient-1: rgba(54,197,240,0.06);
     --color-header-gradient-2: rgba(232,93,4,0.04);
-    --color-header-gradient-3: rgba(56,189,248,0.03);
-    --color-input-shadow: rgba(0,0,0,0.4);
-    --color-scrollbar: #252540;
-    --color-scrollbar-hover: #353558;
-    --noise-opacity: 0.02;
+    --color-header-gradient-3: rgba(46,182,125,0.03);
+    --color-input-shadow: rgba(0,0,0,0.2);
+    --color-scrollbar: #35363a;
+    --color-scrollbar-hover: #4a4b4f;
+    --noise-opacity: 0;
   }
+
+  /* Light theme: purple sidebar with white text (Slack style) */
+  [data-theme="light"] #sidebar { color: #fff; }
+  [data-theme="light"] #sidebar .text-text-primary { color: #fff; }
+  [data-theme="light"] #sidebar .text-text-secondary { color: rgba(255,255,255,0.7); }
+  [data-theme="light"] #sidebar .text-text-muted { color: rgba(255,255,255,0.5); }
+  [data-theme="light"] #sidebar .sb-section-header { color: rgba(255,255,255,0.7); }
+  [data-theme="light"] #sidebar .sb-section-content { color: #fff; }
+  [data-theme="light"] #sidebar .border-border { border-color: rgba(255,255,255,0.15); }
+  [data-theme="light"] #sidebar .bg-surface-light { background: rgba(255,255,255,0.1); }
+  [data-theme="light"] #sidebar .sidebar-header { border-color: rgba(255,255,255,0.15); }
+  [data-theme="light"] #sidebar .sidebar-brand-text { color: #fff; }
+  [data-theme="light"] #sidebar .sb-footer button { color: rgba(255,255,255,0.7); }
+  [data-theme="light"] #sidebar .sb-footer button:hover { color: #fff; }
+  [data-theme="light"] #sidebar input { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.15); color: #fff; }
+  [data-theme="light"] #sidebar input::placeholder { color: rgba(255,255,255,0.4); }
+  [data-theme="light"] #sidebar .sb-agent-item .sb-agent-name { color: #fff; }
+  [data-theme="light"] #sidebar .sb-session-item .sb-sess-title { color: rgba(255,255,255,0.85); }
+  [data-theme="light"] #sidebar .sb-session-item .sb-sess-date { color: rgba(255,255,255,0.4); }
+  [data-theme="light"] #sidebar .sb-agent-item:hover { background: rgba(255,255,255,0.08); }
+  [data-theme="light"] #sidebar .sb-session-item:hover { background: rgba(255,255,255,0.08); }
+  [data-theme="light"] #sidebar .sb-agent-item.active { background: rgba(255,255,255,0.15); }
+  [data-theme="light"] #sidebar .sb-session-item.active { background: rgba(255,255,255,0.15); }
 
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; font-family: 'IBM Plex Sans', sans-serif; font-size: 14px; color: var(--color-text-primary); }
@@ -236,9 +259,9 @@ tailwind.config = {
 
   /* Tool blocks */
   .tool-block {
-    border-left: 3px solid var(--color-accent);
+    border-left: 2px solid var(--color-accent);
     background: var(--color-tool-bg);
-    border-radius: 0 0.5rem 0.5rem 0;
+    border-radius: 0 4px 4px 0;
     backdrop-filter: blur(4px);
     transition: background 0.15s ease;
   }
@@ -355,13 +378,13 @@ tailwind.config = {
 
   /* Buttons */
   .btn-primary {
-    background: linear-gradient(135deg, #e85d04, #f97316);
+    background: #007a5a;
     color: #ffffff;
     font-weight: 600;
     transition: all 0.15s ease;
-    box-shadow: 0 2px 8px rgba(232,93,4,0.15);
+    box-shadow: none;
   }
-  .btn-primary:hover { box-shadow: 0 4px 16px rgba(232,93,4,0.3); transform: translateY(-1px); }
+  .btn-primary:hover { background: #148567; box-shadow: none; transform: translateY(-1px); }
   .btn-primary:active { transform: translateY(0); }
   .btn-secondary {
     background: var(--color-surface-light);
@@ -456,16 +479,16 @@ tailwind.config = {
     box-shadow: 0 -2px 8px rgba(0,0,0,0.04);
   }
   .chat-input-wrapper {
-    background: var(--color-surface);
+    background: var(--color-surface-light);
     border: 1px solid var(--color-border);
-    border-radius: 0.75rem;
-    box-shadow: 0 2px 12px var(--color-input-shadow);
+    border-radius: 8px;
+    box-shadow: none;
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
     padding: 8px 12px !important;
   }
   .chat-input-wrapper:focus-within {
     border-color: var(--color-text-muted);
-    box-shadow: 0 2px 20px var(--color-input-shadow);
+    box-shadow: 0 0 0 1px var(--color-text-muted);
   }
 
   /* Slash command popup */
@@ -542,12 +565,12 @@ tailwind.config = {
   .glass-card {
     background: var(--color-surface);
     border: 1px solid var(--color-border);
-    border-radius: 0.5rem;
+    border-radius: 4px;
     transition: all 0.15s ease;
   }
   .glass-card:hover {
     background: var(--color-surface-light);
-    border-color: var(--color-scrollbar-hover);
+    border-color: var(--color-border);
   }
 
   /* User message glow */
@@ -1200,17 +1223,18 @@ tailwind.config = {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 10px;
+    padding: 3px 10px;
     cursor: pointer;
     transition: background 0.15s;
     position: relative;
     border-left: 3px solid transparent;
+    line-height: 1.4;
   }
   .sb-agent-item:hover {
     background: var(--color-surface-light);
   }
   .sb-agent-item.active {
-    background: rgba(232,93,4,0.06);
+    background: rgba(232,93,4,0.08);
     border-left-color: var(--color-accent);
   }
   .sb-agent-item .sb-agent-avatar {
@@ -1224,20 +1248,15 @@ tailwind.config = {
   }
   .sb-agent-item .sb-agent-name {
     font-family: 'Outfit', sans-serif;
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 14px;
+    font-weight: 500;
     color: var(--color-text-primary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .sb-agent-item .sb-agent-meta {
-    font-size: 10px;
-    color: var(--color-text-muted);
-    font-family: 'IBM Plex Mono', monospace;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    display: none;
   }
   .sb-agent-item .sb-agent-status-dot {
     width: 6px;
@@ -1481,12 +1500,12 @@ tailwind.config = {
   .sb-session-item {
     display: flex;
     align-items: center;
-    gap: 5px;
-    padding: 4px 10px;
+    gap: 4px;
+    padding: 2px 10px 2px 20px;
     cursor: pointer;
     transition: background 0.15s;
     border-left: 3px solid transparent;
-    font-size: 11px;
+    font-size: 13px;
   }
   .sb-session-item:hover {
     background: var(--color-surface-light);
@@ -2243,7 +2262,7 @@ tailwind.config = {
     <!-- CHAT AREA (fills remaining) -->
     <div id="chat-area" class="flex-1 flex flex-col overflow-hidden bg-base">
       <!-- Chat top bar -->
-      <div id="chat-top-bar" class="flex items-center bg-surface/50 flex-shrink-0 px-3 gap-3" style="min-height:38px;box-shadow:0 1px 3px rgba(0,0,0,0.06);border-bottom:none">
+      <div id="chat-top-bar" class="flex items-center bg-surface/50 flex-shrink-0 px-3 gap-3" style="min-height:48px;padding:0 16px;box-shadow:none;border-bottom:1px solid var(--color-border)">
         <button id="mobile-hamburger" onclick="openMobileSidebar()" title="Open sidebar">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
