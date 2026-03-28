@@ -2325,7 +2325,7 @@ tailwind.config = {
       <button id="btn-activity-toggle" title="Live Activity">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
       </button>
-      <button id="btn-scheduler-dashboard" title="Scheduler Dashboard" style="font-size:14px">&#9201;</button>
+      <button id="btn-scheduler-dashboard" title="Scheduler Dashboard"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></button>
       <button id="btn-notifications" title="Notifications" onclick="toggleNotificationDropdown()" style="position:relative">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
         <span id="notif-badge" class="hidden" style="position:absolute;top:-4px;right:-4px;background:#f87171;color:#fff;font-size:9px;font-weight:700;min-width:14px;height:14px;border-radius:7px;display:flex;align-items:center;justify-content:center;padding:0 3px">0</span>
@@ -2390,12 +2390,12 @@ tailwind.config = {
           <div id="image-preview-area" class="flex gap-2 flex-wrap mb-1" style="display:none"></div>
           <div class="chat-input-wrapper flex items-end gap-2 p-2">
             <input type="file" id="image-file-input" accept="image/png,image/jpeg,image/gif,image/webp" multiple style="display:none" onchange="handleImageFiles(this.files)">
-            <button id="btn-attach" title="Attach image" style="padding:6px 10px;border-radius:8px;font-size:14px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;align-self:flex-end;" onclick="document.getElementById('image-file-input').click()">&#x1F4CE;</button>
+            <button id="btn-attach" title="Attach image" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;align-self:flex-end;" onclick="document.getElementById('image-file-input').click()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
             <textarea id="chat-input" class="flex-1 bg-transparent border-none px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none font-body" rows="2" placeholder="Type a message... (Ctrl+Enter to send)" style="box-shadow:none !important;"></textarea>
             <button id="btn-thinking" title="Thinking level (click to cycle)" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="cycleThinkingLevel()"><span id="thinking-level-label">Think</span></button>
             <button id="btn-plan-mode" title="Toggle Plan Mode (read-only)" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="togglePlanMode()">Plan</button>
-            <button id="btn-toggle-tools" title="Toggle tool call visibility" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="toggleToolCalls()">🔧</button>
-            <button id="btn-refine" title="Refine message with AI" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="refineMessage()">&#x2728;</button>
+            <button id="btn-toggle-tools" title="Toggle tool call visibility" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="toggleToolCalls()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></button>
+            <button id="btn-refine" title="Refine message with AI" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;align-self:flex-end;" onclick="refineMessage()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></button>
             <button id="btn-send" class="btn-primary px-5 py-2 rounded-xl text-sm flex items-center gap-2 self-end font-display font-semibold">
               Send
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
@@ -2436,7 +2436,7 @@ tailwind.config = {
           <div id="note-ai-messages"></div>
           <div id="note-ai-input-area">
             <textarea id="note-ai-input" placeholder="Ask about this note or request edits..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendNoteAiMessage()}"></textarea>
-            <button onclick="refineNoteAiInput()" title="Refine with AI (✨)" style="padding:6px 8px;border-radius:8px;border:none;background:transparent;color:var(--color-text-muted);cursor:pointer;font-size:13px;flex-shrink:0">&#10024;</button>
+            <button onclick="refineNoteAiInput()" title="Refine with AI" style="padding:6px 8px;border-radius:8px;border:none;background:transparent;color:var(--color-text-muted);cursor:pointer;flex-shrink:0"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></button>
             <button class="note-ai-send-btn" onclick="sendNoteAiMessage()" title="Send">
               <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M15.854.146a.5.5 0 0 1 .11.54l-5.819 14.547a.75.75 0 0 1-1.329.124l-3.178-4.995L.643 7.184a.75.75 0 0 1 .124-1.33L15.314.037a.5.5 0 0 1 .54.11ZM6.636 10.07l2.761 4.338L14.13 2.576zm6.787-8.201L1.591 6.602l4.339 2.76z"/></svg>
             </button>
@@ -3104,9 +3104,9 @@ function buildSidebarAgentItem(a, i) {
     </div>
     <span class="sb-agent-status-dot" style="background:${dotColor};${dotStyle}"></span>
     <span class="sb-agent-actions">
-      <button class="btn-cfg-card" title="Configure">&#9881;</button>
+      <button class="btn-cfg-card" title="Configure"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
       ${!isMain ? `<button class="btn-pause-card" title="${isPaused ? 'Resume' : 'Pause'}">${isPaused ? '&#9654;' : '&#9208;'}</button>` : ''}
-      ${!isMain ? `<button class="btn-delete-card" title="Delete">&#128465;</button>` : ''}
+      ${!isMain ? `<button class="btn-delete-card" title="Delete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>` : ''}
     </span>
   `;
   item.onclick = (e) => {
@@ -3363,10 +3363,10 @@ function renderSidebarSession(s, currentSessionId) {
     </div>
     <span class="sb-agent-actions">
       ${isArchived
-        ? `<button onclick="event.stopPropagation();sessionAction('unarchive','${esc(s.id)}')" title="Unarchive">&#128194;</button>`
-        : `<button onclick="event.stopPropagation();sessionAction('archive','${esc(s.id)}')" title="Archive">&#128230;</button>`
+        ? `<button onclick="event.stopPropagation();sessionAction('unarchive','${esc(s.id)}')" title="Unarchive"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg></button>`
+        : `<button onclick="event.stopPropagation();sessionAction('archive','${esc(s.id)}')" title="Archive"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg></button>`
       }
-      <button onclick="event.stopPropagation();sessionAction('delete','${esc(s.id)}')" title="Delete">&#128465;</button>
+      <button onclick="event.stopPropagation();sessionAction('delete','${esc(s.id)}')" title="Delete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
     </span>
   </div>`;
   // Attachment collapsible section
@@ -3928,8 +3928,8 @@ async function renderProjectPanelChats(agentId, projectName) {
         <div class="sb-agent-meta">${truncSummary ? esc(truncSummary) : `${count} messages \u00b7 ${timeStr}`}${idxBadge}</div>
       </div>
       <span class="sb-agent-actions">
-        <button onclick="event.stopPropagation();sessionAction('archive','${esc(s.id)}')" title="Archive">&#128230;</button>
-        <button onclick="event.stopPropagation();sessionAction('delete','${esc(s.id)}')" title="Delete">&#128465;</button>
+        <button onclick="event.stopPropagation();sessionAction('archive','${esc(s.id)}')" title="Archive"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg></button>
+        <button onclick="event.stopPropagation();sessionAction('delete','${esc(s.id)}')" title="Delete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
       </span>
     </div>`;
   });
@@ -4003,7 +4003,7 @@ async function renderProjectPanelNotes(agentId, projectName) {
         <span style="font-size:10px">&#128196;</span>
         <span class="pp-note-name" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(n.name || n.path)}</span>
         <button class="pp-item-delete" onclick="event.stopPropagation();ppRenameNote('${esc(n.path)}',this)" title="Rename" style="font-size:9px">&#9998;</button>
-        <button class="pp-item-delete" onclick="event.stopPropagation();ppDeleteNote('${esc(n.path)}')" title="Delete">&#128465;</button>
+        <button class="pp-item-delete" onclick="event.stopPropagation();ppDeleteNote('${esc(n.path)}')" title="Delete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
       </div>`;
     });
 
@@ -4045,7 +4045,7 @@ async function renderProjectPanelDocs(agentId, projectName) {
       dom.ppDocuments.innerHTML = filtered.map(d => {
         const name = d.name || d.source || d.hash || 'Document';
         const hash = d.hash || d.source_hash || '';
-        return `<div class="pp-doc-item"><span style="font-size:10px">&#128209;</span> <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span>${hash ? `<button class="pp-item-delete" onclick="ppDeleteDoc('${esc(hash)}')" title="Delete">&#128465;</button>` : ''}</div>`;
+        return `<div class="pp-doc-item"><span style="font-size:10px">&#128209;</span> <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span>${hash ? `<button class="pp-item-delete" onclick="ppDeleteDoc('${esc(hash)}')" title="Delete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>` : ''}</div>`;
       }).join('');
     }
 
@@ -4115,7 +4115,7 @@ async function renderProjectPanelFolders(agentId, projectName) {
     } else {
       dom.ppFolders.innerHTML = filtered.map(f => {
         const path = f.path || f;
-        return `<div class="pp-doc-item"><span style="font-size:10px">&#128193;</span> <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(path)}</span><button class="pp-item-delete" onclick="ppDeleteFolder('${esc(path)}')" title="Remove">&#128465;</button></div>`;
+        return `<div class="pp-doc-item"><span style="font-size:10px">&#128193;</span> <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(path)}</span><button class="pp-item-delete" onclick="ppDeleteFolder('${esc(path)}')" title="Remove"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>`;
       }).join('');
     }
 
@@ -9152,7 +9152,7 @@ window.toggleQmdDocs = async function(collection) {
             <span class="w-[100px] text-right text-[10px] text-text-muted mono shrink-0">${modDate}</span>
             <span class="w-[100px] text-right text-[10px] text-text-muted mono shrink-0">${embedDate}</span>
             <span class="w-[60px] flex justify-center shrink-0"><span class="inline-block w-2 h-2 rounded-full ${statusDot}" title="${statusTitle}"></span></span>
-            <button class="text-text-muted hover:text-accent text-[10px] ml-1 transition-colors shrink-0" onclick="viewQmdFile('${esc(collection)}','${esc(f.name)}')" title="View">&#x1F441;</button>
+            <button class="text-text-muted hover:text-accent text-[10px] ml-1 transition-colors shrink-0" onclick="viewQmdFile('${esc(collection)}','${esc(f.name)}')" title="View"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
           </div>`;
         }).join('')}
       </div>`;
