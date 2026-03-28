@@ -5785,7 +5785,6 @@ async function loadConfigTabContent(tab, agentName) {
         <div id="agent-mcp-list" class="space-y-2">${serverCards}</div>
         <div id="agent-mcp-add-form"></div>
       </div>`;
-    }
   } else if (tab === 'hooks') {
     try {
       const hooksData = await API.get(`/v1/agents/${encodeURIComponent(agentName)}/hooks`);
