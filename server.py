@@ -1620,11 +1620,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         _agent_sdk_cfg = session.agent.config.get("agent_sdk", {})
         _use_sdk = _agent_sdk_cfg.get("enabled", True)  # default ON
 
-        # Check context and compact (with SSE progress)
-        # Runs for both SDK and non-SDK agents — SDK agents need compacted
-        # session.messages as fallback when sdk_session_id is lost
+        # Check context and compact (with SSE progress) — skip for SDK agents
+        # SDK manages its own context via session resume + internal compaction
         engine._thread_local.current_session_id = session.id
-        if True:
+        if not _use_sdk:
             estimated = engine._estimate_conversation_tokens(session.messages)
             ctx_cfg = engine._context_manager.get_config() if engine._context_manager else {}
             threshold_pct = ctx_cfg.get("compact_threshold", 0.75) if ctx_cfg.get("enabled") else engine.COMPACT_THRESHOLD
@@ -2020,26 +2019,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                                 cc_plugin_paths.append(plugin_root)
                                 seen_plugins.add(plugin_key)
 
-            # Build prompt: include conversation history when not resuming an SDK session
-            # (SDK session may be lost on sidecar restart or for old chats)
-            sdk_prompt = message
-            prior_msgs = session.messages[:-1]  # exclude the just-added user message
-            if prior_msgs and not session.sdk_session_id:
-                history_parts = []
-                for m in prior_msgs[-30:]:  # last 30 messages
-                    role = m.get("role", "")
-                    content = m.get("content", "")
-                    if isinstance(content, list):
-                        content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
-                    if content:
-                        label = "Human" if role == "user" else "Assistant"
-                        history_parts.append(f"{label}: {content[:3000]}")
-                if history_parts:
-                    sdk_prompt = "Here is our conversation so far:\n\n" + "\n\n".join(history_parts) + f"\n\nHuman: {message}"
-
             server_port = server_config.get("port", 8420)
             payload = json.dumps({
-                "message": sdk_prompt,
+                "message": message,
                 "model": model,
                 "system_prompt": system_prompt,
                 "agent_id": session.agent_id,
