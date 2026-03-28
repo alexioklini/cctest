@@ -5083,7 +5083,7 @@ async function sendMessage() {
   dom.chatInput.value = '';
   dom.chatInput.style.height = 'auto';
 
-  // Expand custom slash commands: /name args → template with {{var}} replaced
+  // Expand custom slash commands (both Brain Agent {{var}} and Claude Code $ARGUMENTS + !`cmd`)
   if (text.startsWith('/') && state.activeAgentId) {
     const parts = text.split(/\s+/);
     const cmdName = parts[0].slice(1).toLowerCase();
@@ -5091,12 +5091,21 @@ async function sendMessage() {
     const agentCmds = customCommands[state.activeAgentId] || [];
     const matched = agentCmds.find(c => (c.name || '').toLowerCase() === cmdName);
     if (matched) {
-      const template = matched.prompt || matched.template || '';
-      if (template) {
-        const varMatch = template.match(/\{\{(\w+)\}\}/);
-        text = varMatch && cmdArgs
-          ? template.replace(`{{${varMatch[1]}}}`, cmdArgs)
-          : cmdArgs ? template + ' ' + cmdArgs : template;
+      try {
+        // Server-side expansion handles !`command` interpolation
+        const res = await API.post('/v1/commands/expand', {
+          agent: state.activeAgentId, command: cmdName, args: cmdArgs
+        });
+        if (res.text) text = res.text;
+      } catch {
+        // Fallback: simple client-side expansion
+        const template = matched.prompt || matched.template || '';
+        if (template) {
+          const varMatch = template.match(/\{\{(\w+)\}\}/);
+          text = varMatch && cmdArgs
+            ? template.replace(`{{${varMatch[1]}}}`, cmdArgs)
+            : cmdArgs ? template + ' ' + cmdArgs : template;
+        }
       }
     }
   }

@@ -831,6 +831,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_cc_browse()
         elif path == "/v1/skills/claude-code/install":
             self._handle_cc_install()
+        elif path == "/v1/commands/expand":
+            self._handle_expand_command()
         elif path == "/v1/settings/commands":
             self._handle_settings_commands()
         elif path == "/v1/restart":
@@ -5046,6 +5048,27 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             return
         stats = engine._context_manager.get_stats(session_id)
         self._send_json(stats)
+
+    def _handle_expand_command(self):
+        """POST /v1/commands/expand — expand a custom command template.
+        Body: {agent, command, args}
+        Returns: {text: "expanded prompt"}
+        """
+        body = self._read_json()
+        agent_id = body.get("agent", "main")
+        cmd_name = body.get("command", "")
+        cmd_args = body.get("args", "")
+        if not cmd_name:
+            self._send_json({"error": "command name required"}, 400)
+            return
+        agent_cfg = engine.AgentConfig(agent_id)
+        for cmd in agent_cfg.load_commands():
+            if (cmd.get("name", "").lower() == cmd_name.lower() or
+                    cmd.get("slug", "").lower() == cmd_name.lower()):
+                expanded = engine.AgentConfig.expand_command(cmd, cmd_args)
+                self._send_json({"text": expanded, "format": cmd.get("_format", "brain")})
+                return
+        self._send_json({"error": f"Command '{cmd_name}' not found"}, 404)
 
     def _handle_settings_commands(self):
         """POST /v1/settings/commands — enable/disable a built-in slash command."""

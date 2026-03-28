@@ -2700,20 +2700,119 @@ Adapt your behavior to the tasks you are given.
         return os.path.join(self.dir, "mcp.json")
 
     def load_commands(self) -> list[dict]:
-        """Load custom slash commands from commands.json."""
+        """Load custom slash commands from commands.json + .claude/commands/*.md.
+
+        Supports both Brain Agent format (JSON) and Claude Code format (markdown
+        with YAML frontmatter, $ARGUMENTS, !`command` interpolation).
+        """
+        commands = []
+
+        # 1. Brain Agent format: commands.json
         path = os.path.join(self.dir, "commands.json")
         try:
             with open(path, "r") as f:
                 data = json.load(f)
-                return data if isinstance(data, list) else []
+                if isinstance(data, list):
+                    for cmd in data:
+                        cmd["_format"] = "brain"
+                    commands.extend(data)
         except (OSError, json.JSONDecodeError):
-            return []
+            pass
+
+        # 2. Claude Code format: .claude/commands/*.md and agent commands/ dir
+        for cmd_dir in [
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), ".claude", "commands"),
+            os.path.join(self.dir, "commands"),
+        ]:
+            if not os.path.isdir(cmd_dir):
+                continue
+            for fname in sorted(os.listdir(cmd_dir)):
+                if not fname.endswith(".md"):
+                    continue
+                fpath = os.path.join(cmd_dir, fname)
+                if os.path.islink(fpath):
+                    fpath = os.path.realpath(fpath)
+                if not os.path.isfile(fpath):
+                    continue
+                try:
+                    with open(fpath, "r") as f:
+                        raw = f.read()
+                    # Parse YAML frontmatter
+                    fm = {}
+                    body = raw
+                    fm_match = re.match(r'^---\s*\n(.*?)\n---\s*\n(.*)$', raw, re.DOTALL)
+                    if fm_match:
+                        for line in fm_match.group(1).split("\n"):
+                            if ":" in line:
+                                k, v = line.split(":", 1)
+                                fm[k.strip()] = v.strip().strip('"').strip("'")
+                        body = fm_match.group(2).strip()
+                    cmd_name = fname[:-3]  # strip .md
+                    # Skip if already defined in commands.json (brain format takes priority)
+                    if any(c.get("name") == cmd_name for c in commands):
+                        continue
+                    commands.append({
+                        "name": cmd_name,
+                        "description": fm.get("description", ""),
+                        "prompt": body,
+                        "allowed_tools": fm.get("allowed-tools", ""),
+                        "_format": "claude-code",
+                        "_path": fpath,
+                    })
+                except OSError:
+                    continue
+
+        return commands
 
     def save_commands(self, commands: list[dict]):
-        """Save custom slash commands to commands.json."""
+        """Save custom slash commands to commands.json (Brain Agent format only)."""
         path = os.path.join(self.dir, "commands.json")
+        # Only save brain-format commands
+        brain_cmds = [c for c in commands if c.get("_format") != "claude-code"]
+        # Strip internal fields
+        clean = [{k: v for k, v in c.items() if not k.startswith("_")} for c in brain_cmds]
         with open(path, "w") as f:
-            json.dump(commands, f, indent=2)
+            json.dump(clean, f, indent=2)
+
+    @staticmethod
+    def expand_command(cmd: dict, args: str = "") -> str:
+        """Expand a command template with arguments and dynamic content.
+
+        Supports both formats:
+        - Brain Agent: {{variable}} substitution
+        - Claude Code: $ARGUMENTS substitution + !`command` interpolation
+        """
+        template = cmd.get("prompt", cmd.get("template", ""))
+        fmt = cmd.get("_format", "brain")
+
+        if fmt == "claude-code":
+            # Replace $ARGUMENTS with user args
+            result = template.replace("$ARGUMENTS", args)
+
+            # Interpolate !`command` — runs shell command and injects output
+            import subprocess
+            def _run_interpolation(match):
+                shell_cmd = match.group(1)
+                try:
+                    proc = subprocess.run(
+                        shell_cmd, shell=True, capture_output=True, text=True,
+                        timeout=10, cwd=os.getcwd(),
+                        env={**os.environ, "TERM": "dumb"},
+                    )
+                    return proc.stdout.strip()
+                except Exception as e:
+                    return f"(error: {e})"
+
+            result = re.sub(r'!`([^`]+)`', _run_interpolation, result)
+            return result
+
+        else:
+            # Brain Agent: {{variable}} substitution
+            if "{{" in template and args:
+                var_match = re.search(r'\{\{(\w+)\}\}', template)
+                if var_match:
+                    return template.replace("{{" + var_match.group(1) + "}}", args)
+            return template + (" " + args if args else "")
 
     def list_skills(self) -> list[dict]:
         """List all skills for this agent (own + main's global skills)."""
@@ -14984,29 +15083,16 @@ def _run_interactive(args):
                 _draw_status_bar(current_model, history, args.max_context)
                 continue
 
-            # Custom slash commands (from agent's commands.json)
+            # Custom slash commands (from agent's commands.json + .claude/commands/*.md)
             if message.strip().startswith("/"):
-                cmd_name = message.strip().split()[0][1:].lower()  # strip / and get first word
-                cmd_args = message.strip()[len(cmd_name)+2:].strip()  # rest after /name
+                cmd_name = message.strip().split()[0][1:].lower()
+                cmd_args = message.strip()[len(cmd_name)+2:].strip()
                 agent = getattr(_thread_local, 'current_agent', None) or _current_agent
                 if agent:
                     for cmd in agent.load_commands():
                         if (cmd.get("name", "").lower() == cmd_name or
                                 cmd.get("slug", "").lower() == cmd_name):
-                            # Expand template with args
-                            template = cmd.get("prompt", cmd.get("template", ""))
-                            if "{{" in template and cmd_args:
-                                # Simple {{variable}} substitution
-                                import re as _re
-                                vars_in_template = _re.findall(r'\{\{(\w+)\}\}', template)
-                                if vars_in_template:
-                                    message = template.replace("{{" + vars_in_template[0] + "}}", cmd_args)
-                                else:
-                                    message = template + " " + cmd_args
-                            elif cmd_args:
-                                message = template + " " + cmd_args
-                            else:
-                                message = template
+                            message = AgentConfig.expand_command(cmd, cmd_args)
                             print(f"  {DIM}Running /{cmd_name}{RESET}")
                             break
 
