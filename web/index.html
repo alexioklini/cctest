@@ -298,14 +298,19 @@ tailwind.config = {
   #chat-top-bar .text-text-muted { color: rgba(255,255,255,0.5); }
   #chat-top-bar select { background: rgba(255,255,255,0.1); color: #fff; border-color: rgba(255,255,255,0.2); }
 
-  /* Slack-style rounded corners — chat area has rounded top-left */
+  /* Slack-style rounded corners — chat area inset with rounded corners */
   #center-content {
-    border-top-left-radius: 8px;
+    border-radius: 8px;
     overflow: hidden;
-    margin-top: 0;
+    margin: 0;
   }
   #chat-top-bar {
     border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+  }
+  #chat-status-bar {
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
   }
 
   /* Footer status bar — sidebar gradient */
