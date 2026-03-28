@@ -2032,26 +2032,67 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     agent=session.agent_id, model=model, session_id=sid)
 
             try:
-                # Proxy SSE from sidecar to client via http.client
-                r = sdk_backend.proxy_sidecar_sse(payload, self.wfile, event_callback)
+                # Inline REST polling — identical to working mini server code
+                import urllib.request as _urlreq
+                _base = f"http://{sdk_backend.SIDECAR_URL}:{sdk_backend.SIDECAR_PORT}"
+                _req = _urlreq.Request(f"{_base}/query", data=payload,
+                                        headers={"Content-Type": "application/json"})
+                _qid = json.loads(_urlreq.urlopen(_req, timeout=10).read()).get("query_id")
 
-                # Model fallback: if SDK returned error and no text, retry with fallback
-                if not r.get("text") and not "".join(_partial_reply).strip():
-                    fallback_model = agent_config.config.get("model_fallback")
-                    if fallback_model and fallback_model != model:
-                        fb_env = sdk_backend.build_provider_env(fallback_model)
-                        if fb_env:
-                            fb_payload = json.loads(payload)
-                            fb_payload["model"] = fallback_model
-                            fb_payload["provider_env"] = fb_env
-                            fb_payload = json.dumps(fb_payload).encode()
-                            try:
-                                self.wfile.write(f"event: fallback\ndata: {json.dumps({'from': model, 'to': fallback_model})}\n\n".encode()); self.wfile.flush()
-                            except (BrokenPipeError, ConnectionResetError):
-                                pass
-                            r = sdk_backend.proxy_sidecar_sse(fb_payload, self.wfile, event_callback,
-                                                                       raw_socket=self.connection)
-                            model = fallback_model
+                r = {"text": "", "sdk_session_id": None, "tokens_in": 0,
+                     "tokens_out": 0, "cost": 0.0, "tools": []}
+                _after = 0
+                _full_text = ""
+                _tool_calls_list = []
+                import time as _time
+                _t0 = _time.time()
+
+                _write_times = []
+                while _time.time() - _t0 < 300:
+                    _resp = json.loads(_urlreq.urlopen(
+                        f"{_base}/events/{_qid}?after={_after}", timeout=10).read())
+                    for _ev in _resp["events"]:
+                        _et = _ev["event"]
+                        _ed = _ev["data"]
+                        if _et in ("text_delta", "thinking_delta", "tool_call", "tool_result"):
+                            _write_times.append((_time.time() - _t0, _et))
+                            self.wfile.write(f"event: {_et}\ndata: {json.dumps(_ed)}\n\n".encode())
+                            self.wfile.flush()
+                        if _et == "text_delta":
+                            _full_text += _ed.get("text", "")
+                            _partial_reply.append(_ed.get("text", ""))
+                        elif _et == "tool_call":
+                            _tool_calls_list.append(_ed)
+                            _partial_tools.append({"name": _ed.get("name", ""), "args": _ed.get("args", {})})
+                        elif _et == "_result":
+                            r = {
+                                "text": _ed.get("text", "") or _full_text,
+                                "sdk_session_id": _ed.get("sdk_session_id"),
+                                "tokens_in": _ed.get("tokens_in", 0),
+                                "tokens_out": _ed.get("tokens_out", 0),
+                                "cost": _ed.get("cost", 0),
+                                "tools": _ed.get("tools", []) or _tool_calls_list,
+                            }
+                            break
+                    _after = _resp.get("next", _after)
+                    if _resp.get("done"):
+                        break
+                    # Keepalive + poll interval
+                    # Use 500ms interval to reduce GIL contention on the sidecar
+                    # (frequent polling spawns threads on the sidecar that compete
+                    # with the SDK's async event loop for the GIL)
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+                    _time.sleep(0.5)
+
+                if not r.get("text") and _full_text:
+                    r["text"] = _full_text
+                # Log write timing to stderr
+                if _write_times:
+                    import sys as _sys
+                    print(f"[server] {len(_write_times)} writes, first={_write_times[0][0]:.2f}s last={_write_times[-1][0]:.2f}s spread={_write_times[-1][0]-_write_times[0][0]:.2f}s", file=_sys.stderr, flush=True)
+                    for _wt, _we in _write_times[:3]:
+                        print(f"  {_wt:.3f}s {_we}", file=_sys.stderr, flush=True)
             except Exception as e:
                 r = {}
                 try:
