@@ -5658,7 +5658,7 @@ async function loadConfigTabContent(tab, agentName) {
             </div>
           </div>
 
-          <!-- Claude Code Skills -->
+          <!-- Claude Code Skills (installed) -->
           <div>
             <h3 class="section-header text-sm mb-3">Claude Code Skills</h3>
             <div id="cc-skills-list" class="space-y-2">
@@ -5666,7 +5666,20 @@ async function loadConfigTabContent(tab, agentName) {
             </div>
           </div>
 
-          <!-- Browse & Install -->
+          <!-- Browse CC Plugins -->
+          <div>
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="section-header text-sm">Browse Claude Code Plugins</h3>
+              <span class="text-[10px] text-text-muted">119 plugins from Anthropic marketplace</span>
+            </div>
+            <div class="flex items-center gap-2 mb-3">
+              <input id="cc-plugin-search" class="flex-1 bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted" placeholder="Search Claude Code plugins...">
+              <button class="btn-primary text-xs px-4 py-2 rounded-lg font-display" onclick="browseCCPlugins('${esc(agentName)}')">Search</button>
+            </div>
+            <div id="cc-plugin-results" class="space-y-2"></div>
+          </div>
+
+          <!-- Browse & Install OpenClaw -->
           <div>
             <div class="flex items-center justify-between mb-3">
               <h3 class="section-header text-sm">Browse OpenClaw Repository</h3>
@@ -7282,6 +7295,72 @@ window.toggleCCSkill = async function(agentName, slug, enabled) {
     showToast(`${slug} ${enabled ? 'enabled' : 'disabled'}`);
   } catch (e) {
     showToast(`Error: ${e.message}`, true);
+  }
+};
+
+// ─── CC Plugin Browse & Install ──────────────────────────────
+window.browseCCPlugins = async function(agentName) {
+  const query = document.getElementById('cc-plugin-search')?.value?.trim() || '';
+  const container = document.getElementById('cc-plugin-results');
+  if (!container) return;
+  container.innerHTML = '<div class="text-text-muted text-sm py-2">Searching...</div>';
+  try {
+    const res = await fetch(`${BASE_URL}/v1/skills/claude-code/browse`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ query })
+    });
+    const data = await res.json();
+    const plugins = data.plugins || [];
+    if (plugins.length === 0) {
+      container.innerHTML = '<div class="text-text-muted text-sm py-2">No plugins found.</div>';
+      return;
+    }
+    container.innerHTML = plugins.map(p => {
+      const catBadge = p.category ? `<span class="text-[9px] px-1.5 py-0.5 rounded bg-surface-lighter text-text-muted">${esc(p.category)}</span>` : '';
+      const installBtn = p.installed
+        ? `<span class="text-[10px] text-green-400 font-medium px-2">Installed</span>`
+        : `<button class="text-[11px] text-accent hover:text-accent-hover font-medium px-3 py-1 rounded hover:bg-accent/10 transition-colors"
+            onclick="installCCPlugin('${esc(p.name)}','${esc(p.marketplace)}','${esc(agentName)}',this)">Install</button>`;
+      return `
+        <div class="glass-card flex items-center gap-3 px-4 py-2.5 text-sm">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="text-text-primary font-display font-medium text-[13px]">${esc(p.name)}</span>
+              ${catBadge}
+              <span class="text-[9px] px-1 py-0.5 rounded bg-purple-500/20 text-purple-300">${esc(p.marketplace.replace('claude-plugins-',''))}</span>
+            </div>
+            <div class="text-text-muted text-[11px] mt-0.5">${esc((p.description || '').slice(0,150))}</div>
+          </div>
+          <div class="flex-shrink-0">${installBtn}</div>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    container.innerHTML = `<div class="text-error text-sm">Error: ${esc(e.message)}</div>`;
+  }
+};
+
+window.installCCPlugin = async function(pluginName, marketplace, agentName, btn) {
+  if (btn) { btn.textContent = 'Installing...'; btn.disabled = true; }
+  try {
+    const res = await fetch(`${BASE_URL}/v1/skills/claude-code/install`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ plugin: pluginName, marketplace })
+    });
+    const data = await res.json();
+    if (data.error) {
+      showToast(data.error, true);
+      if (btn) { btn.textContent = 'Install'; btn.disabled = false; }
+      return;
+    }
+    showToast(`${pluginName} installed`);
+    if (btn) { btn.textContent = 'Installed'; btn.className = 'text-[10px] text-green-400 font-medium px-2'; }
+    // Refresh the CC skills list
+    loadCCSkills(agentName);
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+    if (btn) { btn.textContent = 'Install'; btn.disabled = false; }
   }
 };
 

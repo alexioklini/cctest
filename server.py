@@ -823,6 +823,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_remove_skill()
         elif path == "/v1/skills/claude-code":
             self._handle_cc_skills_manage()
+        elif path == "/v1/skills/claude-code/browse":
+            self._handle_cc_browse()
+        elif path == "/v1/skills/claude-code/install":
+            self._handle_cc_install()
         elif path == "/v1/restart":
             self._handle_restart()
         elif path == "/v1/services/qmd":
@@ -3621,6 +3625,27 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
         self._send_json({"status": "ok", "agent": agent_id, "slug": slug,
                          "enabled": enabled, "claude_code_skills": cc_skills})
+
+    def _handle_cc_browse(self):
+        """POST /v1/skills/claude-code/browse — search CC plugin marketplace.
+        Body: {query}"""
+        body = self._read_json()
+        query = body.get("query", "")
+        plugins = engine.browse_claude_code_plugins(query)
+        self._send_json({"plugins": plugins, "count": len(plugins)})
+
+    def _handle_cc_install(self):
+        """POST /v1/skills/claude-code/install — install a CC plugin.
+        Body: {plugin, marketplace}"""
+        body = self._read_json()
+        plugin_name = body.get("plugin", "")
+        marketplace = body.get("marketplace", "claude-plugins-official")
+        if not plugin_name:
+            self._send_json({"error": "plugin name required"}, 400)
+            return
+        result = engine.install_claude_code_plugin(plugin_name, marketplace)
+        status = 200 if "status" in result else 500
+        self._send_json(result, status)
 
     # --- Service Management ---
 

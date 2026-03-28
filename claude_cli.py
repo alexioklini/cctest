@@ -2992,6 +2992,213 @@ def scan_claude_code_skills() -> list[dict]:
     return deduped
 
 
+def browse_claude_code_plugins(query: str = "") -> list[dict]:
+    """Browse available Claude Code plugins from local marketplace manifests.
+
+    Returns list of dicts with: name, description, category, marketplace, source, homepage, installed
+    """
+    home = os.path.expanduser("~")
+    claude_dir = os.path.join(home, ".claude")
+    results = []
+
+    # Read installed_plugins.json to check install state
+    installed_keys = set()
+    try:
+        with open(os.path.join(claude_dir, "plugins", "installed_plugins.json")) as f:
+            data = json.load(f)
+            installed_keys = set(data.get("plugins", {}).keys())
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    # Scan all marketplace manifests
+    mp_dir = os.path.join(claude_dir, "plugins", "marketplaces")
+    if not os.path.isdir(mp_dir):
+        return results
+
+    for mp_name in sorted(os.listdir(mp_dir)):
+        manifest_path = os.path.join(mp_dir, mp_name, ".claude-plugin", "marketplace.json")
+        if not os.path.isfile(manifest_path):
+            continue
+        try:
+            with open(manifest_path) as f:
+                manifest = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        for plugin in manifest.get("plugins", []):
+            name = plugin.get("name", "")
+            description = plugin.get("description", "")
+            # Filter by query
+            if query:
+                q = query.lower()
+                if q not in name.lower() and q not in description.lower():
+                    continue
+
+            plugin_key = f"{name}@{mp_name}"
+            results.append({
+                "name": name,
+                "description": description,
+                "category": plugin.get("category", ""),
+                "marketplace": mp_name,
+                "homepage": plugin.get("homepage", ""),
+                "source": plugin.get("source", {}),
+                "installed": plugin_key in installed_keys,
+            })
+
+    return results
+
+
+def install_claude_code_plugin(plugin_name: str, marketplace: str = "claude-plugins-official") -> dict:
+    """Install a Claude Code plugin from a marketplace.
+
+    Uses `claude plugins add` CLI if available, otherwise clones from git source.
+    Returns dict with status/error.
+    """
+    import subprocess
+    import shutil
+
+    home = os.path.expanduser("~")
+    claude_dir = os.path.join(home, ".claude")
+
+    # Find the plugin in the marketplace manifest
+    manifest_path = os.path.join(claude_dir, "plugins", "marketplaces", marketplace,
+                                  ".claude-plugin", "marketplace.json")
+    if not os.path.isfile(manifest_path):
+        return {"error": f"Marketplace '{marketplace}' not found"}
+
+    try:
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        return {"error": f"Failed to read manifest: {e}"}
+
+    plugin_info = None
+    for p in manifest.get("plugins", []):
+        if p.get("name") == plugin_name:
+            plugin_info = p
+            break
+    if not plugin_info:
+        return {"error": f"Plugin '{plugin_name}' not found in {marketplace}"}
+
+    # Try using claude CLI first
+    claude_bin = shutil.which("claude")
+    if claude_bin:
+        try:
+            result = subprocess.run(
+                [claude_bin, "plugins", "add", f"{plugin_name}@{marketplace}"],
+                capture_output=True, text=True, timeout=60,
+                env={**os.environ, "TERM": "dumb"},
+            )
+            if result.returncode == 0:
+                return {"status": "installed", "plugin": plugin_name, "marketplace": marketplace,
+                        "method": "claude-cli"}
+        except (subprocess.TimeoutExpired, OSError):
+            pass  # Fall through to manual install
+
+    # Manual install: clone from git source
+    source = plugin_info.get("source", {})
+    if isinstance(source, str):
+        # Local source (relative path in marketplace)
+        src_dir = os.path.join(claude_dir, "plugins", "marketplaces", marketplace, source)
+        if os.path.isdir(src_dir):
+            # Copy to cache
+            cache_dir = os.path.join(claude_dir, "plugins", "cache", marketplace,
+                                      plugin_name, "local")
+            os.makedirs(cache_dir, exist_ok=True)
+            shutil.copytree(src_dir, cache_dir, dirs_exist_ok=True)
+            # Register in installed_plugins.json
+            _register_cc_plugin(plugin_name, marketplace, cache_dir)
+            return {"status": "installed", "plugin": plugin_name, "marketplace": marketplace,
+                    "method": "copy", "path": cache_dir}
+        return {"error": f"Local source '{source}' not found"}
+
+    elif isinstance(source, dict):
+        git_url = source.get("url", "")
+        if not git_url:
+            return {"error": "No git URL in plugin source"}
+
+        # Clone to cache
+        cache_dir = os.path.join(claude_dir, "plugins", "cache", marketplace,
+                                  plugin_name, "latest")
+        if os.path.isdir(cache_dir):
+            shutil.rmtree(cache_dir)
+        os.makedirs(os.path.dirname(cache_dir), exist_ok=True)
+
+        try:
+            # For git-subdir sources, clone then extract subdir
+            subdir = source.get("path", "")
+            ref = source.get("ref", "main")
+
+            result = subprocess.run(
+                ["git", "clone", "--depth", "1", "--branch", ref,
+                 git_url if git_url.endswith(".git") else f"https://github.com/{git_url}.git",
+                 cache_dir],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode != 0:
+                return {"error": f"git clone failed: {result.stderr[:200]}"}
+
+            # If subdir specified, move it up
+            if subdir:
+                subdir_path = os.path.join(cache_dir, subdir)
+                if os.path.isdir(subdir_path):
+                    import tempfile
+                    tmp = tempfile.mkdtemp()
+                    shutil.copytree(subdir_path, os.path.join(tmp, plugin_name), dirs_exist_ok=True)
+                    shutil.rmtree(cache_dir)
+                    shutil.copytree(os.path.join(tmp, plugin_name), cache_dir, dirs_exist_ok=True)
+                    shutil.rmtree(tmp)
+
+            _register_cc_plugin(plugin_name, marketplace, cache_dir)
+            return {"status": "installed", "plugin": plugin_name, "marketplace": marketplace,
+                    "method": "git", "path": cache_dir}
+
+        except (subprocess.TimeoutExpired, OSError) as e:
+            return {"error": f"Install failed: {e}"}
+
+    return {"error": "Unknown source format"}
+
+
+def _register_cc_plugin(plugin_name: str, marketplace: str, install_path: str):
+    """Register a plugin in ~/.claude/plugins/installed_plugins.json."""
+    import datetime
+    home = os.path.expanduser("~")
+    ip_path = os.path.join(home, ".claude", "plugins", "installed_plugins.json")
+
+    try:
+        with open(ip_path) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        data = {"version": 2, "plugins": {}}
+
+    plugin_key = f"{plugin_name}@{marketplace}"
+    now = datetime.datetime.utcnow().isoformat() + "Z"
+    data["plugins"][plugin_key] = [{
+        "scope": "user",
+        "installPath": install_path,
+        "version": "latest",
+        "installedAt": now,
+        "lastUpdated": now,
+        "isLocal": True,
+    }]
+
+    with open(ip_path, "w") as f:
+        json.dump(data, f, indent=4)
+
+    # Also enable in settings.json
+    settings_path = os.path.join(home, ".claude", "settings.json")
+    try:
+        with open(settings_path) as f:
+            settings = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        settings = {}
+    if "enabledPlugins" not in settings:
+        settings["enabledPlugins"] = {}
+    settings["enabledPlugins"][plugin_key] = True
+    with open(settings_path, "w") as f:
+        json.dump(settings, f, indent=4)
+
+
 def list_agents() -> list[str]:
     """List all available agent IDs."""
     if not os.path.isdir(AGENTS_DIR):
