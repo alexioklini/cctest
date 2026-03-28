@@ -55,12 +55,17 @@ class SidecarHandler(BaseHTTPRequestHandler):
         t.join()
 
     def _build_sdk_hooks(self, server_url, agent_id):
-        """Build SDK hook callbacks that call the server's /v1/hooks/run endpoint."""
+        """Build SDK hook callbacks per SDK docs: (input_data, tool_use_id, context).
+
+        PreToolUse: calls server to check if tool should be blocked.
+        PostToolUse: fire-and-forget audit call (async mode, non-blocking).
+        """
         from claude_agent_sdk import HookMatcher
-        import urllib.request
+        import asyncio
 
         def _call_hooks_endpoint(hook_type, tool_name, args, result=None):
             """Synchronous HTTP call to server hook endpoint."""
+            import urllib.request
             payload = json.dumps({
                 "agent_id": agent_id,
                 "hook_type": hook_type,
@@ -79,31 +84,38 @@ class SidecarHandler(BaseHTTPRequestHandler):
             except Exception:
                 return {}
 
-        async def pre_hook(hook_input, tool_name, context):
-            """PreToolUse hook — calls server to check if tool should be blocked."""
-            import asyncio
-            args = hook_input.get("tool_input", {})
+        async def pre_hook(input_data, tool_use_id, context):
+            """PreToolUse hook — correct signature per SDK docs."""
+            tool_name = input_data.get("tool_name", "")
+            args = input_data.get("tool_input", {})
             resp = await asyncio.get_event_loop().run_in_executor(
-                None, _call_hooks_endpoint, "pre", tool_name or "", args)
+                None, _call_hooks_endpoint, "pre", tool_name, args)
             blocked = resp.get("blocked")
             if blocked:
-                return {"decision": "block", "reason": blocked}
+                return {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": blocked,
+                    }
+                }
             return {}
 
-        async def post_hook(hook_input, tool_name, context):
-            """PostToolUse hook — calls server for post-processing."""
-            import asyncio
-            args = hook_input.get("tool_input", {})
-            result = hook_input.get("tool_response", "")
+        async def post_hook(input_data, tool_use_id, context):
+            """PostToolUse hook — fire-and-forget (async mode per SDK docs)."""
+            tool_name = input_data.get("tool_name", "")
+            args = input_data.get("tool_input", {})
+            result = input_data.get("tool_response", "")
             if isinstance(result, (dict, list)):
                 result = json.dumps(result)
-            await asyncio.get_event_loop().run_in_executor(
-                None, _call_hooks_endpoint, "post", tool_name or "", args, str(result)[:51200])
-            return {}
+            # Fire-and-forget: don't block the agent loop for audit logging
+            asyncio.get_event_loop().run_in_executor(
+                None, _call_hooks_endpoint, "post", tool_name, args, str(result)[:51200])
+            return {"async_": True}
 
         return {
-            "PreToolUse": [HookMatcher(matcher="*", hooks=[pre_hook], timeout=15.0)],
-            "PostToolUse": [HookMatcher(matcher="*", hooks=[post_hook], timeout=15.0)],
+            "PreToolUse": [HookMatcher(matcher=None, hooks=[pre_hook], timeout=15.0)],
+            "PostToolUse": [HookMatcher(matcher=None, hooks=[post_hook], timeout=15.0)],
         }
 
     def _build_brain_mcp(self, tool_defs, server_url, agent_id, session_id):
@@ -187,13 +199,26 @@ class SidecarHandler(BaseHTTPRequestHandler):
         for srv_name in mcp_servers:
             effective_allowed.append(f"mcp__{srv_name}__*")
 
+        # Use claude_code preset with our system prompt appended (per SDK docs)
+        # This preserves Claude Code's built-in safety, tool instructions, and coding guidelines
+        sdk_system_prompt = {
+            "type": "preset",
+            "preset": "claude_code",
+            "append": system_prompt,
+        } if system_prompt else {"type": "preset", "preset": "claude_code"}
+
         opts_kwargs = dict(
             model=model,
-            system_prompt=system_prompt,
+            system_prompt=sdk_system_prompt,
             mcp_servers=mcp_servers,
             permission_mode=sdk_cfg.get("permission_mode", "bypassPermissions"),
             max_turns=sdk_cfg.get("max_turns", 30),
-            env=provider_env,
+            env={
+                **provider_env,
+                # Disable tool search for moderate tool sets (<30 tools)
+                # Avoids extra search round-trip per turn
+                "ENABLE_TOOL_SEARCH": "auto",
+            },
             cwd=body.get("cwd", os.getcwd()),
             include_partial_messages=True,
         )
