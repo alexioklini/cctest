@@ -254,8 +254,71 @@ tailwind.config = {
   .msg-content th { background: var(--color-surface-light); font-weight: 500; }
 
   /* Slack-style message hover */
-  .slack-msg { transition: background 0.1s ease; }
+  .slack-msg { transition: background 0.1s ease; position: relative; }
   .slack-msg:hover { background: var(--color-surface); }
+  .slack-msg .msg-actions {
+    display: none;
+    position: absolute;
+    top: -8px;
+    right: 8px;
+    background: var(--color-surface-lighter);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    padding: 2px;
+    gap: 1px;
+    z-index: 5;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+  }
+  .slack-msg:hover .msg-actions { display: flex; }
+  .slack-msg .msg-actions button {
+    padding: 4px 6px;
+    border-radius: 4px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--color-text-secondary);
+    line-height: 1;
+  }
+  .slack-msg .msg-actions button:hover {
+    background: var(--color-surface-light);
+    color: var(--color-text-primary);
+  }
+
+  /* Top bar — sidebar background */
+  #chat-top-bar {
+    background: var(--color-sidebar) !important;
+    border-bottom: 1px solid rgba(255,255,255,0.1) !important;
+  }
+  #chat-top-bar * { color: #fff; }
+  #chat-top-bar .text-text-muted { color: rgba(255,255,255,0.5); }
+  #chat-top-bar select { background: rgba(255,255,255,0.1); color: #fff; border-color: rgba(255,255,255,0.2); }
+
+  /* Footer status bar — sidebar background */
+  #chat-area > footer {
+    background: var(--color-sidebar) !important;
+    color: rgba(255,255,255,0.7) !important;
+    border-top: 1px solid rgba(255,255,255,0.1) !important;
+  }
+  #chat-area > footer * { color: rgba(255,255,255,0.7); }
+  #chat-area > footer .text-agent, #chat-area > footer .text-model { color: rgba(255,255,255,0.9); }
+
+  /* Sidebar chat search — Slack-like */
+  .sb-chat-search {
+    width: 100%;
+    padding: 4px 8px;
+    border-radius: 5px;
+    border: 1px solid rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.9);
+    font-size: 11px;
+    outline: none;
+    font-family: 'IBM Plex Mono', monospace;
+    height: 26px;
+    box-sizing: border-box;
+  }
+  .sb-chat-search::placeholder { color: rgba(255,255,255,0.35); }
+  .sb-chat-search:focus { border-color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.12); }
 
   /* Tool blocks */
   .tool-block {
@@ -1511,8 +1574,8 @@ tailwind.config = {
     background: var(--color-surface-light);
   }
   .sb-session-item.active {
-    background: rgba(232,93,4,0.06);
-    border-left-color: var(--color-accent);
+    background: rgba(255,255,255,0.1);
+    border-left: 2px solid var(--color-accent);
     font-weight: 500;
   }
   .sb-session-item .sb-sess-title {
@@ -1732,7 +1795,7 @@ tailwind.config = {
     display: flex;
     align-items: center;
     gap: 1px;
-    padding: 4px 6px;
+    padding: 6px 8px;
     border-top: 1px solid var(--color-border);
     flex-shrink: 0;
   }
@@ -4808,12 +4871,19 @@ function renderMessage(msg, idx, container) {
     const imagesHtml = (msg.images || []).map(img =>
       `<img src="data:${img.media_type};base64,${img.data}" style="max-width:300px;max-height:200px;border-radius:8px;margin-bottom:6px;cursor:pointer" onclick="window.open(this.src,'_blank')">`
     ).join('');
-    div.innerHTML = `<div>
-      <div class="flex items-baseline gap-2 mb-0.5">
-        <span class="font-display font-semibold text-[13px]" style="color:var(--color-accent)">You</span>
-        ${_ts ? `<span class="text-[10px] text-text-muted">${_ts}</span>` : ''}
+    div.innerHTML = `<div class="flex gap-2.5">
+      <div style="width:28px;height:28px;border-radius:4px;background:#e85d04;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:12px;font-weight:700;color:#fff;margin-top:2px">Y</div>
+      <div class="flex-1">
+        <div class="flex items-baseline gap-2 mb-0.5">
+          <span class="font-display font-semibold text-[13px]" style="color:var(--color-accent)">You</span>
+          ${_ts ? `<span class="text-[10px] text-text-muted">${_ts}</span>` : ''}
+        </div>
+        <div class="text-sm text-text-primary msg-content">${imagesHtml}${marked.parse(msg.content)}</div>
       </div>
-      <div class="text-sm text-text-primary msg-content">${imagesHtml}${marked.parse(msg.content)}</div>
+      <div class="msg-actions">
+        <button onclick="navigator.clipboard.writeText(state.activeChat.messages[${idx}]?.content||'')" title="Copy">\u{1F4CB}</button>
+        <button onclick="if(confirm('Delete this message?')){state.activeChat.messages.splice(${idx},1);renderChat()}" title="Delete">\u{1F5D1}</button>
+      </div>
     </div>`;
   } else if (msg.role === 'assistant') {
     div.className += ' slack-msg px-3 py-1.5 -mx-3 rounded';
@@ -4839,18 +4909,26 @@ function renderMessage(msg, idx, container) {
       <div style="padding:4px 10px 8px;font-size:11px;color:var(--color-text-secondary);white-space:pre-wrap;max-height:300px;overflow-y:auto;font-family:'IBM Plex Mono',monospace;line-height:1.5">${esc(msg.thinking)}</div>
     </details>` : '';
     const _displayName = _agentInfo?.display_name || _agentInfo?.id || _agentName;
+    const _avatarLetter = _displayName.charAt(0).toUpperCase();
     const metaHtml = msg.tokens ? `<span class="text-[10px] text-text-muted mono ml-2">${msg.model ? esc(msg.model) : ''}${msg.sdk ? ' · SDK' : ''} · ${msg.tokens} tok${msg.cost != null ? ' · $' + msg.cost.toFixed(2) : ''}</span>` : '';
-    div.innerHTML = `<div>
-      <div class="flex items-baseline gap-2 mb-0.5">
-        <span class="font-display font-semibold text-[13px]" style="color:var(--color-agent)">${esc(_displayName)}</span>
-        ${metaHtml}
+    div.innerHTML = `<div class="flex gap-2.5">
+      <div style="width:28px;height:28px;border-radius:4px;background:#36c5f0;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:12px;font-weight:700;color:#fff;margin-top:2px">${_avatarLetter}</div>
+      <div class="flex-1">
+        <div class="flex items-baseline gap-2 mb-0.5">
+          <span class="font-display font-semibold text-[13px]" style="color:var(--color-agent)">${esc(_displayName)}</span>
+          ${metaHtml}
+        </div>
+        ${toolsHtml}
+        ${thinkingHtml}
+        ${spinnerHtml}
+        <div class="text-sm text-text-primary msg-content">${content}</div>
+        ${filesHtml}
+        ${msg.fallbackNotice ? `<div class="text-[10px] text-warning mt-1 flex items-center gap-1"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>${esc(msg.fallbackNotice)}</div>` : ''}
       </div>
-      ${toolsHtml}
-      ${thinkingHtml}
-      ${spinnerHtml}
-      <div class="text-sm text-text-primary msg-content">${content}</div>
-      ${filesHtml}
-      ${msg.fallbackNotice ? `<div class="text-[10px] text-warning mt-1 flex items-center gap-1"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>${esc(msg.fallbackNotice)}</div>` : ''}
+      <div class="msg-actions">
+        <button onclick="navigator.clipboard.writeText(state.activeChat.messages[${idx}]?.content||'')" title="Copy">\u{1F4CB}</button>
+        <button onclick="if(confirm('Delete this message?')){state.activeChat.messages.splice(${idx},1);renderChat()}" title="Delete">\u{1F5D1}</button>
+      </div>
     </div>`;
   } else if (msg.role === 'system') {
     div.className += ' flex justify-center';
