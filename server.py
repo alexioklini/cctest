@@ -1948,24 +1948,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             engine._thread_local.project = session.project if hasattr(session, 'project') else None
             engine._thread_local.note_context = getattr(session, 'note_context', None)
             system_prompt = engine._build_system_prompt(include_memory_summary=True)
-
-            # Inject conversation history so the LLM sees prior turns
-            # (SDK session may be lost on sidecar restart or new sessions)
-            prior_msgs = session.messages[:-1]  # exclude the just-added user message
-            if prior_msgs:
-                history_lines = []
-                for m in prior_msgs:
-                    role = m.get("role", "")
-                    content = m.get("content", "")
-                    if isinstance(content, list):
-                        content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
-                    if content:
-                        # Cap each message to avoid blowing up context
-                        history_lines.append(f"[{role}]: {content[:2000]}")
-                if history_lines:
-                    history_block = "\n".join(history_lines[-30:])  # last 30 messages max
-                    system_prompt += f"\n\n## Conversation History\n{history_block}"
-
             model = session.model or "claude-sonnet-4-6"
             provider_env = sdk_backend.build_provider_env(model)
             sdk_cfg = agent_config.config.get("agent_sdk", {})
@@ -2036,9 +2018,26 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                                 cc_plugin_paths.append(plugin_root)
                                 seen_plugins.add(plugin_key)
 
+            # Build prompt: include conversation history when not resuming an SDK session
+            # (SDK session may be lost on sidecar restart or for old chats)
+            sdk_prompt = message
+            prior_msgs = session.messages[:-1]  # exclude the just-added user message
+            if prior_msgs and not session.sdk_session_id:
+                history_parts = []
+                for m in prior_msgs[-30:]:  # last 30 messages
+                    role = m.get("role", "")
+                    content = m.get("content", "")
+                    if isinstance(content, list):
+                        content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
+                    if content:
+                        label = "Human" if role == "user" else "Assistant"
+                        history_parts.append(f"{label}: {content[:3000]}")
+                if history_parts:
+                    sdk_prompt = "Here is our conversation so far:\n\n" + "\n\n".join(history_parts) + f"\n\nHuman: {message}"
+
             server_port = server_config.get("port", 8420)
             payload = json.dumps({
-                "message": message,
+                "message": sdk_prompt,
                 "model": model,
                 "system_prompt": system_prompt,
                 "agent_id": session.agent_id,
