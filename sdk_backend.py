@@ -220,19 +220,16 @@ def query_sync(prompt: str, model: str, system_prompt: str = "",
                agent_id: str = "main", session_id: str | None = None,
                cancel_fn=None, sdk_session_id: str | None = None,
                return_metadata: bool = False):
-    """Send a simple LLM query through the sidecar and return the text response.
+    """Send a query through the sidecar REST API and return the text response.
 
-    For background tasks that need an LLM call but no streaming.
+    Uses the same REST polling approach as proxy_sidecar_sse:
+    POST /query → poll GET /events/{id}?after=N
+
     Does NOT import claude_cli — safe to call from anywhere.
-
-    When tool_defs is provided, the sidecar registers them as an MCP server
-    and allows multi-turn tool loops (max_turns controls the limit).
-
-    cancel_fn: optional callable returning True to abort (closes socket).
-    sdk_session_id: resume a prior SDK session.
-    return_metadata: if True, returns dict with text, sdk_session_id, tokens, cost.
-                     if False, returns str | None (backwards compatible).
     """
+    import time
+    import urllib.request
+
     provider_env = build_provider_env(model)
     if not provider_env:
         return None
@@ -256,6 +253,7 @@ def query_sync(prompt: str, model: str, system_prompt: str = "",
         body["sdk_session_id"] = sdk_session_id
 
     payload = json.dumps(body).encode()
+    base = f"http://{SIDECAR_URL}:{SIDECAR_PORT}"
 
     def _result(text, meta=None):
         if return_metadata:
@@ -263,62 +261,40 @@ def query_sync(prompt: str, model: str, system_prompt: str = "",
         return text
 
     try:
-        sock = socket.create_connection((SIDECAR_URL, SIDECAR_PORT), timeout=300)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        # Start query
+        req = urllib.request.Request(f"{base}/query", data=payload,
+                                     headers={"Content-Type": "application/json"})
+        resp = urllib.request.urlopen(req, timeout=10)
+        query_id = json.loads(resp.read()).get("query_id")
+        if not query_id:
+            return None
 
-        http_req = (
-            f"POST /query HTTP/1.1\r\n"
-            f"Host: {SIDECAR_URL}:{SIDECAR_PORT}\r\n"
-            f"Content-Type: application/json\r\n"
-            f"Content-Length: {len(payload)}\r\n"
-            f"\r\n"
-        ).encode() + payload
-        sock.sendall(http_req)
-
-        # Read headers
-        header_buf = b""
-        while b"\r\n\r\n" not in header_buf:
-            b = sock.recv(1)
-            if not b:
-                break
-            header_buf += b
-
-        # Read SSE body — just collect text and wait for _result
-        sock.settimeout(5)
+        # Poll for events
         full_text = ""
-        sse_buf = b""
-        while True:
-            # Check cancel
+        after = 0
+        start = time.monotonic()
+        while time.monotonic() - start < 300:
             if cancel_fn and cancel_fn():
-                sock.close()
+                try:
+                    urllib.request.urlopen(f"{base}/cancel/{query_id}", timeout=5)
+                except Exception:
+                    pass
                 return None
 
             try:
-                data = sock.recv(4096)
-            except socket.timeout:
+                resp = urllib.request.urlopen(
+                    f"{base}/events/{query_id}?after={after}", timeout=10)
+                data = json.loads(resp.read())
+            except Exception:
+                time.sleep(0.2)
                 continue
-            except OSError:
-                break
-            if not data:
-                break
-            sse_buf += data
-            while b"\n\n" in sse_buf:
-                block_bytes, sse_buf = sse_buf.split(b"\n\n", 1)
-                block_str = block_bytes.decode("utf-8", errors="replace").strip()
-                evt_type = ""
-                evt_data = None
-                for line in block_str.split("\n"):
-                    if line.startswith("event: "):
-                        evt_type = line[7:].strip()
-                    elif line.startswith("data: "):
-                        try:
-                            evt_data = json.loads(line[6:])
-                        except json.JSONDecodeError:
-                            pass
+
+            for ev in data.get("events", []):
+                evt_type = ev.get("event", "")
+                evt_data = ev.get("data", {})
                 if evt_type == "text_delta" and evt_data:
                     full_text += evt_data.get("text", "")
                 elif evt_type == "_result" and evt_data:
-                    sock.close()
                     text = evt_data.get("text", "") or full_text
                     return _result(text, {
                         "text": text,
@@ -328,10 +304,14 @@ def query_sync(prompt: str, model: str, system_prompt: str = "",
                         "cost": evt_data.get("cost", 0),
                         "tools": evt_data.get("tools", []),
                     })
-                elif evt_type == "error" and evt_data:
-                    sock.close()
+                elif evt_type == "error":
                     return None
-        sock.close()
+
+            after = data.get("next", after)
+            if data.get("done"):
+                break
+            time.sleep(0.2)
+
         return _result(full_text, {"text": full_text}) if full_text else None
     except Exception:
         return None
