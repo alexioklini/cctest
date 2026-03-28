@@ -1980,11 +1980,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             if workflow_tools:
                 allowed_tools = list(workflow_tools)
 
-            # Check if agent has hooks enabled
+            # SDK hooks disabled — they cause the SDK to buffer all streaming events.
+            # Hook functionality is handled server-side via /v1/tools/call dispatch instead.
             hooks_enabled = False
-            hooks_cfg = agent_config.config.get("hooks", {})
-            if hooks_cfg.get("enabled") and hooks_cfg.get("scripts"):
-                hooks_enabled = True
 
             # Resolve enabled Claude Code plugin paths for SDK
             cc_plugin_paths = []
@@ -2048,9 +2046,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 _t0 = _time.time()
 
                 _write_times = []
+                _poll_log = []
                 while _time.time() - _t0 < 300:
                     _resp = json.loads(_urlreq.urlopen(
                         f"{_base}/events/{_qid}?after={_after}", timeout=10).read())
+                    _poll_log.append((_time.time() - _t0, len(_resp.get("events", [])), _resp.get("done", False)))
                     for _ev in _resp["events"]:
                         _et = _ev["event"]
                         _ed = _ev["data"]
@@ -2087,12 +2087,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
                 if not r.get("text") and _full_text:
                     r["text"] = _full_text
-                # Log write timing to stderr
+                # Log poll and write timing to stderr
+                import sys as _sys
+                _polls_with_events = [(t, n, d) for t, n, d in _poll_log if n > 0]
+                print(f"[server] qid={_qid} {len(_poll_log)} polls, {len(_polls_with_events)} had events", file=_sys.stderr, flush=True)
+                for _pt, _pn, _pd in _poll_log:
+                    if _pn > 0 or _pd:
+                        print(f"  poll {_pt:.2f}s: {_pn} events, done={_pd}", file=_sys.stderr, flush=True)
                 if _write_times:
-                    import sys as _sys
-                    print(f"[server] {len(_write_times)} writes, first={_write_times[0][0]:.2f}s last={_write_times[-1][0]:.2f}s spread={_write_times[-1][0]-_write_times[0][0]:.2f}s", file=_sys.stderr, flush=True)
-                    for _wt, _we in _write_times[:3]:
-                        print(f"  {_wt:.3f}s {_we}", file=_sys.stderr, flush=True)
+                    print(f"  writes: {len(_write_times)}, first={_write_times[0][0]:.2f}s last={_write_times[-1][0]:.2f}s spread={_write_times[-1][0]-_write_times[0][0]:.2f}s", file=_sys.stderr, flush=True)
             except Exception as e:
                 r = {}
                 try:
