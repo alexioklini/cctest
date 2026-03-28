@@ -369,10 +369,11 @@ class SidecarHandler(BaseHTTPRequestHandler):
     def _sse(self, event_type, data):
         """Store event in the query's event list for REST polling."""
         if self._query_id:
+            import time as _t
             with _queries_lock:
                 q = _queries.get(self._query_id)
                 if q:
-                    q["events"].append({"event": event_type, "data": data})
+                    q["events"].append({"event": event_type, "data": data, "_t": _t.time()})
                     if event_type in ("_result", "error"):
                         q["done"] = True
 

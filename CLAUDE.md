@@ -20,11 +20,14 @@ This file provides guidance to Claude Code when working with this repository.
 ```
 brain.py (gateway)
   ├── server.py (daemon on port 8420, launchd managed)
-  │   ├── claude_cli.py (engine: 20+ tools, agents, memory, scheduler)
-  │   ├── sdk_backend.py (Agent SDK proxy — provider env + sidecar SSE proxy)
+  │   ├── claude_cli.py (engine: 30+ tools, agents, memory, scheduler)
+  │   ├── sdk_backend.py (REST polling proxy to sidecar)
+  │   ├── /mcp endpoint (MCP JSON-RPC: tools/list, tools/call with hooks)
   │   ├── SQLite: chats.db, scheduler.db
   │   └── MCP server connections
-  ├── sdk_sidecar.py (daemon on port 8421, Agent SDK streaming)
+  ├── sdk_sidecar.py (REST API on port 8421, Agent SDK)
+  │   ├── POST /query → start query, returns query_id
+  │   ├── GET /events/{id}?after=N → poll for new events
   │   └── Runs claude_agent_sdk.query() in a clean process (no claude_cli import)
   ├── qmd mcp --http (daemon on port 8181, hybrid memory search)
   │   └── Collections: one per agent → agents/<name>/*.md
@@ -39,18 +42,18 @@ All agents use the Anthropic Agent SDK (Claude Code CLI) as the agentic loop by 
 The SDK provides built-in tools (Read, Write, Edit, Bash, Grep, Glob, WebFetch, WebSearch),
 context management, and token-efficient file operations.
 
-- `sdk_sidecar.py`: Lean process on port 8421 — runs SDK queries with real-time SSE streaming
-- `sdk_backend.py`: Provider env var builder + SSE proxy between server and sidecar
+- `sdk_sidecar.py`: REST API on port 8421 — POST /query starts a query, GET /events/{id} polls for events
+- `sdk_backend.py`: Provider env var builder + REST polling proxy (50ms interval with keepalive comments)
 - Must NOT import `claude_cli` in the sidecar — its module side-effects break anyio subprocess streaming
-- Server builds system prompt and provider env using `claude_cli`, then hands off to sidecar
+- Server builds system prompt and provider env using `claude_cli`, then hands off to sidecar via REST
+- `/mcp` endpoint on server: MCP JSON-RPC (initialize, tools/list, tools/call) — sidecar's SDK connects here for custom tools
+- Hooks run server-side in `/mcp` tools/call handler (SDK hook registration causes streaming to buffer — never pass `hooks_enabled: true`)
 - Opt out per agent: `"agent_sdk": {"enabled": false}` in agent.json falls back to custom loop
 - SDK badge shown in web UI status bar and message footers
-- All paths route through SDK: web UI, TUI interactive, CLI one-shot, scheduled tasks, `_run_delegate` (both tools=True and tools=False)
-- TUI tracks `sdk_session_id` across turns for conversation resume; cancellation via escape watcher closes sidecar socket
+- All paths route through SDK: web UI, TUI interactive, CLI one-shot, scheduled tasks, `_run_delegate`
 - `query_sync` accepts `tool_defs`, `server_url`, `agent_id`, `session_id`, `cancel_fn`, `sdk_session_id`, `return_metadata`
-- SDK hooks: `_build_sdk_hooks()` registers PreToolUse/PostToolUse callbacks that call `/v1/hooks/run` via HTTP
-- Server passes `hooks_enabled: true` in sidecar payload when agent has hook scripts configured
 - All SDK paths fall back to direct API if sidecar is unavailable
+- Claude Code skills: `scan_claude_code_skills()` discovers plugins from `~/.claude`, GUI toggle per agent, `SdkPluginConfig` for SDK loading
 
 Provider routing for SDK (env vars per provider):
 - `cliproxyapi`: Claude models (Max subscription OAuth) + Gemini, Qwen — `ANTHROPIC_BASE_URL=http://127.0.0.1:8317`
