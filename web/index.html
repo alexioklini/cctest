@@ -47,6 +47,8 @@ tailwind.config = {
     --color-surface-lighter: #e8e8e8;
     --color-border: #dddddd;
     --color-sidebar: #3f0e40;
+    --color-sidebar-gradient-start: #4a154b;
+    --color-sidebar-gradient-end: #350d36;
     --color-text-primary: #1a1a24;
     --color-text-secondary: #5a5a6e;
     --color-text-muted: #8a8a9a;
@@ -81,6 +83,8 @@ tailwind.config = {
     --color-surface-lighter: #2c2d31;
     --color-border: #35363a;
     --color-sidebar: #19171d;
+    --color-sidebar-gradient-start: #24182a;
+    --color-sidebar-gradient-end: #14171d;
     --color-text-primary: #d1d2d3;
     --color-text-secondary: #ababad;
     --color-text-muted: #6b6c6f;
@@ -285,9 +289,9 @@ tailwind.config = {
     color: var(--color-text-primary);
   }
 
-  /* Top bar — sidebar background */
+  /* Top bar — sidebar gradient */
   #chat-top-bar {
-    background: var(--color-sidebar) !important;
+    background: var(--color-sidebar-gradient-end, var(--color-sidebar)) !important;
     border-bottom: 1px solid rgba(255,255,255,0.1) !important;
   }
   #chat-top-bar * { color: #fff; }
@@ -304,9 +308,9 @@ tailwind.config = {
     border-top-left-radius: 8px;
   }
 
-  /* Footer status bar — sidebar background */
+  /* Footer status bar — sidebar gradient */
   #chat-status-bar {
-    background: var(--color-sidebar);
+    background: var(--color-sidebar-gradient-end, var(--color-sidebar));
     color: rgba(255,255,255,0.7);
     border-top: 1px solid rgba(255,255,255,0.1);
   }
@@ -1197,8 +1201,8 @@ tailwind.config = {
     min-width: 52px;
     max-width: 500px;
     height: 100vh;
-    background: var(--color-sidebar, var(--color-surface));
-    border-right: 1px solid var(--color-border);
+    background: linear-gradient(150deg, var(--color-sidebar-gradient-start, var(--color-sidebar)) 0%, var(--color-sidebar, var(--color-surface)) 40%, var(--color-sidebar-gradient-end, var(--color-sidebar)) 100%);
+    border-right: none;
     display: flex;
     flex-direction: column;
     overflow-y: auto;
