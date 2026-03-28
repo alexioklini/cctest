@@ -2077,6 +2077,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         )
                     except Exception:
                         pass
+
+            # Close connection — SDK path streams directly, must signal end
+            try:
+                self.close_connection = True
+            except Exception:
+                pass
             return
 
         t = threading.Thread(target=worker, daemon=True)
