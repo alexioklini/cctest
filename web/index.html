@@ -5610,6 +5610,18 @@ async function loadConfigTabContent(tab, agentName) {
               </div>
             </div>
           </div>
+          <div class="border border-border rounded-xl p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <label class="text-[11px] text-text-secondary font-medium block uppercase tracking-wider">Agent SDK (Claude Code)</label>
+                <div class="text-[10px] text-text-muted mt-0.5">Use Anthropic Agent SDK as the agentic loop with built-in tools (Read, Write, Bash, etc.)</div>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="cfg-sdk-enabled" class="sr-only peer" ${(parsed.agent_sdk?.enabled !== false) ? 'checked' : ''}>
+                <div class="w-9 h-5 bg-surface-lighter rounded-full peer peer-checked:bg-accent/70 transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+              </label>
+            </div>
+          </div>
           <div>
             <label class="text-[11px] text-text-secondary font-medium block mb-1.5 uppercase tracking-wider">Raw JSON</label>
             <textarea id="cfg-raw-json" class="w-full bg-surface-light border border-border rounded-xl px-5 py-4 text-sm text-text-primary mono focus:border-accent transition-colors" rows="10">${esc(typeof content === 'string' ? content : JSON.stringify(content, null, 2))}</textarea>
@@ -7731,6 +7743,12 @@ window.saveAgentSettings = async function(agentName) {
     // Remove legacy max_context from agent config (now a model-level property)
     delete parsed.max_context;
     if (avatarVal) parsed.avatar = avatarVal;
+    // Sync Agent SDK setting
+    const sdkEnabled = $('#cfg-sdk-enabled')?.checked;
+    if (sdkEnabled !== undefined) {
+      if (!parsed.agent_sdk) parsed.agent_sdk = {};
+      parsed.agent_sdk.enabled = sdkEnabled;
+    }
     // Sync memory_summary settings
     const msEnabled = $('#cfg-memsummary-enabled')?.checked;
     if (msEnabled !== undefined) {
