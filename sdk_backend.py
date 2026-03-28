@@ -106,6 +106,17 @@ def is_sidecar_running() -> bool:
         return False
 
 
+def _send_chunk(sock, data: bytes):
+    """Send data as an HTTP chunked transfer encoding frame."""
+    chunk = f"{len(data):x}\r\n".encode() + data + b"\r\n"
+    sock.sendall(chunk)
+
+
+def _send_chunk_end(sock):
+    """Send the zero-length terminating chunk."""
+    sock.sendall(b"0\r\n\r\n")
+
+
 def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None, raw_socket=None) -> dict:
     """Connect to sidecar, send query, proxy SSE to wfile, return metadata.
 
@@ -178,12 +189,12 @@ def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None, raw_socket=Non
                     except json.JSONDecodeError:
                         pass
 
-            # Forward streaming events to client
+            # Forward streaming events to client (chunked encoding for HTTP/1.1)
             if evt_type in ("text_delta", "thinking_delta", "tool_call", "tool_result"):
                 sse_out = block_bytes + b"\n\n"
                 try:
                     if raw_socket:
-                        raw_socket.sendall(sse_out)
+                        _send_chunk(raw_socket, sse_out)
                     else:
                         wfile.write(sse_out)
                         wfile.flush()

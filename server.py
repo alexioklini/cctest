@@ -618,6 +618,8 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 
 class BrainAgentHandler(BaseHTTPRequestHandler):
     """HTTP request handler for Brain Agent API."""
+    # HTTP/1.1 for chunked transfer encoding (required for real-time SSE streaming)
+    protocol_version = "HTTP/1.1"
     # Disable write buffering for real-time SSE streaming
     wbufsize = 0
 
@@ -781,7 +783,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path.split("?")[0]
 
-        if path == "/v1/sessions":
+        if path == "/mcp":
+            self._handle_mcp_jsonrpc()
+        elif path == "/v1/sessions":
             self._handle_create_session()
         elif path == "/v1/chat":
             self._handle_chat()
@@ -968,6 +972,82 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         "context_search", "context_detail", "context_recall",
         "mcp_connect", "mcp_disconnect", "mcp_servers",
     }
+
+    def _handle_mcp_jsonrpc(self):
+        """POST /mcp — MCP Streamable HTTP endpoint (JSON-RPC).
+
+        Speaks the MCP protocol so the SDK can use this as an HTTP MCP server.
+        This avoids in-process MCP (which causes SDK to buffer streaming).
+        """
+        body = self._read_json()
+        msg_id = body.get("id")
+        method = body.get("method", "")
+        params = body.get("params", {})
+
+        if method == "initialize":
+            self._send_json({
+                "jsonrpc": "2.0", "id": msg_id,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {"listChanged": False}},
+                    "serverInfo": {"name": "brain_agent", "version": "1.0"},
+                },
+            })
+        elif method == "notifications/initialized":
+            # No response needed for notifications
+            self._send_json({"jsonrpc": "2.0", "id": msg_id, "result": {}})
+        elif method == "tools/list":
+            tools = []
+            for td in engine.TOOL_DEFINITIONS:
+                if td["name"] in self._SDK_NATIVE_TOOLS:
+                    continue
+                if td["name"] not in engine.TOOL_DISPATCH:
+                    continue
+                desc = td["description"]
+                if isinstance(desc, tuple):
+                    desc = " ".join(desc)
+                tools.append({
+                    "name": td["name"],
+                    "description": desc[:1000],
+                    "inputSchema": td["input_schema"],
+                })
+            self._send_json({"jsonrpc": "2.0", "id": msg_id, "result": {"tools": tools}})
+        elif method == "tools/call":
+            tool_name = params.get("name", "")
+            tool_args = params.get("arguments", {})
+            # Extract agent_id/session_id from request headers or use defaults
+            agent_id = self.headers.get("X-Agent-Id", "main")
+            session_id = self.headers.get("X-Session-Id")
+
+            if not tool_name or tool_name not in engine.TOOL_DISPATCH:
+                self._send_json({"jsonrpc": "2.0", "id": msg_id,
+                                  "error": {"code": -32601, "message": f"Unknown tool: {tool_name}"}})
+                return
+            try:
+                agent_config = engine.AgentConfig(agent_id)
+                engine._thread_local.current_agent = agent_config
+                engine._thread_local.memory_store = engine.MemoryStore(
+                    agent_id, base_dir=agent_config.memory_dir)
+                engine._thread_local.mcp_manager = engine._mcp_manager
+                if session_id:
+                    engine._thread_local.session_id = session_id
+                    engine._thread_local.current_session_id = session_id
+                result = engine.TOOL_DISPATCH[tool_name](tool_args)
+                self._send_json({"jsonrpc": "2.0", "id": msg_id,
+                                  "result": {"content": [{"type": "text", "text": str(result)}]}})
+            except Exception as e:
+                self._send_json({"jsonrpc": "2.0", "id": msg_id,
+                                  "result": {"content": [{"type": "text", "text": f"Error: {e}"}],
+                                              "isError": True}})
+        elif method == "ping":
+            self._send_json({"jsonrpc": "2.0", "id": msg_id, "result": {}})
+        else:
+            if msg_id is not None:
+                self._send_json({"jsonrpc": "2.0", "id": msg_id,
+                                  "error": {"code": -32601, "message": f"Unknown method: {method}"}})
+            else:
+                self.send_response(204)
+                self.end_headers()
 
     def _handle_tools_list(self):
         """GET /v1/tools/list — return tool schemas for MCP registration."""
@@ -1514,6 +1594,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "keep-alive")
+        self.send_header("Transfer-Encoding", "chunked")
         self.send_header("X-Accel-Buffering", "no")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
@@ -1837,7 +1918,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     allowed, reason, _ = engine._rate_limiter.check(session.agent_id)
                     if not allowed:
                         try:
-                            self.connection.sendall(f"event: error\ndata: {json.dumps({'message': f'Rate limited: {reason}'})}\n\n".encode())
+                            sdk_backend._send_chunk(self.connection, f"event: error\ndata: {json.dumps({'message': f'Rate limited: {reason}'})}\n\n".encode())
                         except (BrokenPipeError, ConnectionResetError):
                             pass
                         return
@@ -1967,7 +2048,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                             fb_payload["provider_env"] = fb_env
                             fb_payload = json.dumps(fb_payload).encode()
                             try:
-                                self.connection.sendall(f"event: fallback\ndata: {json.dumps({'from': model, 'to': fallback_model})}\n\n".encode())
+                                sdk_backend._send_chunk(self.connection, f"event: fallback\ndata: {json.dumps({'from': model, 'to': fallback_model})}\n\n".encode())
                             except (BrokenPipeError, ConnectionResetError):
                                 pass
                             r = sdk_backend.proxy_sidecar_sse(fb_payload, self.wfile, event_callback,
@@ -1976,7 +2057,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 r = {}
                 try:
-                    self.connection.sendall(f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n".encode())
+                    sdk_backend._send_chunk(self.connection, f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n".encode())
                 except (BrokenPipeError, ConnectionResetError):
                     pass
 
@@ -2017,7 +2098,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     done_data["cost"] = session_cost
                 try:
                     done_bytes = f"event: done\ndata: {json.dumps(done_data)}\n\n".encode()
-                    self.connection.sendall(done_bytes)
+                    sdk_backend._send_chunk(self.connection, done_bytes)
+                    sdk_backend._send_chunk_end(self.connection)
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     pass
 
@@ -2089,7 +2171,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         t = threading.Thread(target=worker, daemon=True)
         t.start()
 
-        # Stream events to client with keepalive
+        # Stream events to client with keepalive (chunked encoding for HTTP/1.1)
         try:
             while True:
                 try:
@@ -2099,25 +2181,27 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     if not t.is_alive() and event_queue.empty():
                         try:
                             sse_err = f'event: error\ndata: {json.dumps({"message": "Server worker terminated unexpectedly"})}\n\n'
-                            self.wfile.write(sse_err.encode("utf-8"))
-                            self.wfile.flush()
-                        except (BrokenPipeError, ConnectionResetError):
+                            sdk_backend._send_chunk(self.connection, sse_err.encode("utf-8"))
+                        except (BrokenPipeError, ConnectionResetError, OSError):
                             pass
                         break
                     # Send keepalive comment to prevent browser timeout
                     try:
-                        self.wfile.write(b": keepalive\n\n")
-                        self.wfile.flush()
-                    except (BrokenPipeError, ConnectionResetError):
+                        sdk_backend._send_chunk(self.connection, b": keepalive\n\n")
+                    except (BrokenPipeError, ConnectionResetError, OSError):
                         break
                     continue
                 if event is None:
                     break
                 event_type, data = event
                 sse_line = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
-                self.wfile.write(sse_line.encode("utf-8"))
-                self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError):
+                sdk_backend._send_chunk(self.connection, sse_line.encode("utf-8"))
+            # Send terminal chunk
+            try:
+                sdk_backend._send_chunk_end(self.connection)
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+        except (BrokenPipeError, ConnectionResetError, OSError):
             pass
 
     def _handle_list_schedule(self):

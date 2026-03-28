@@ -188,11 +188,20 @@ class SidecarHandler(BaseHTTPRequestHandler):
 
         hooks_enabled = body.get("hooks_enabled", False)
 
-        # Build MCP servers: brain_agent (custom tools) + external (from mcp.json)
+        # Build MCP servers: brain_agent (HTTP MCP for streaming) + external (from mcp.json)
         mcp_servers = dict(mcp_configs) if mcp_configs else {}
         if tool_defs:
-            brain_mcp = self._build_brain_mcp(tool_defs, server_url, agent_id, session_id)
-            mcp_servers["brain_agent"] = brain_mcp
+            # Use HTTP MCP transport: connects to main server's /mcp endpoint.
+            # This enables real-time streaming — in-process MCP (create_sdk_mcp_server)
+            # causes the SDK to buffer all events until the turn completes.
+            mcp_servers["brain_agent"] = {
+                "type": "http",
+                "url": f"{server_url}/mcp",
+                "headers": {
+                    "X-Agent-Id": agent_id,
+                    "X-Session-Id": session_id or "",
+                },
+            }
 
         # Build allowed_tools: always include MCP tools (as per SDK docs)
         effective_allowed = list(allowed_tools) if allowed_tools else []
@@ -215,9 +224,10 @@ class SidecarHandler(BaseHTTPRequestHandler):
             max_turns=sdk_cfg.get("max_turns", 30),
             env={
                 **provider_env,
-                # Disable tool search for moderate tool sets (<30 tools)
-                # Avoids extra search round-trip per turn
-                "ENABLE_TOOL_SEARCH": "auto",
+                # Disable tool search — loads all tool defs into context directly.
+                # With ~24 tools this is faster than searching, and avoids the
+                # search round-trip that may block streaming.
+                "ENABLE_TOOL_SEARCH": "false",
             },
             cwd=body.get("cwd", os.getcwd()),
             include_partial_messages=True,
