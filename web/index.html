@@ -5720,23 +5720,71 @@ async function loadConfigTabContent(tab, agentName) {
       el.innerHTML = `<div class="text-error text-sm">Error loading skills: ${esc(e.message)}</div>`;
     }
   } else if (tab === 'mcp') {
+    // Load agent's mcp.json + main's (for inheritance display)
+    let agentMcp = {}, mainMcp = {};
     try {
       const res = await API.getAgentFile(agentName, 'mcp.json');
-      const content = typeof res === 'string' ? res : (res.content || JSON.stringify(res, null, 2));
-      el.innerHTML = `
-        <div class="space-y-4">
-          <h3 class="section-header text-sm">MCP Servers (mcp.json)</h3>
-          <textarea id="mcp-editor" class="w-full bg-surface-light border border-border rounded-xl px-5 py-4 text-sm text-text-primary mono focus:border-accent transition-colors" rows="15">${esc(typeof content === 'string' ? content : JSON.stringify(content, null, 2))}</textarea>
-          <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="saveMcpConfig('${esc(agentName)}')">Save MCP Config</button>
-        </div>`;
-    } catch (e) {
-      el.innerHTML = `
-        <div class="space-y-4">
-          <h3 class="section-header text-sm">MCP Servers (mcp.json)</h3>
-          <p class="text-text-muted text-sm">No mcp.json found. Create one below:</p>
-          <textarea id="mcp-editor" class="w-full bg-surface-light border border-border rounded-xl px-5 py-4 text-sm text-text-primary mono focus:border-accent transition-colors" rows="15">${esc(JSON.stringify({ servers: [] }, null, 2))}</textarea>
-          <button class="btn-primary px-5 py-2 rounded-xl text-sm font-display" onclick="saveMcpConfig('${esc(agentName)}')">Save MCP Config</button>
-        </div>`;
+      const raw = typeof res === 'string' ? res : (res.content || JSON.stringify(res));
+      agentMcp = JSON.parse(raw);
+      if (agentMcp.mcpServers) agentMcp = agentMcp.mcpServers;
+    } catch {}
+    if (agentName !== 'main') {
+      try {
+        const res = await API.getAgentFile('main', 'mcp.json');
+        const raw = typeof res === 'string' ? res : (res.content || JSON.stringify(res));
+        mainMcp = JSON.parse(raw);
+        if (mainMcp.mcpServers) mainMcp = mainMcp.mcpServers;
+      } catch {}
+    }
+
+    // Merge: main (inherited) + agent (own, overrides)
+    const allServers = {};
+    for (const [name, cfg] of Object.entries(mainMcp)) {
+      allServers[name] = { ...cfg, _source: 'main' };
+    }
+    for (const [name, cfg] of Object.entries(agentMcp)) {
+      allServers[name] = { ...cfg, _source: agentName };
+    }
+
+    let serverCards = '';
+    if (!Object.keys(allServers).length) {
+      serverCards = '<div class="text-text-muted text-sm py-3">No MCP servers configured.</div>';
+    } else {
+      for (const [name, cfg] of Object.entries(allServers)) {
+        const inherited = cfg._source === 'main' && agentName !== 'main';
+        const badge = inherited
+          ? '<span class="text-[9px] px-1.5 py-0.5 rounded bg-surface-lighter text-text-muted">inherited from main</span>'
+          : '<span class="text-[9px] px-1.5 py-0.5 rounded bg-accent/20 text-accent">local</span>';
+        const transport = cfg.transport || cfg.type || (cfg.command ? 'stdio' : cfg.url ? 'sse' : '?');
+        const target = cfg.command ? `${cfg.command} ${(cfg.args||[]).join(' ')}` : cfg.url || '';
+        const removeBtn = !inherited
+          ? `<button class="text-[11px] text-error hover:text-red-300 px-2 py-1 rounded hover:bg-error/10" onclick="removeAgentMcp('${esc(agentName)}','${esc(name)}')">Remove</button>`
+          : '';
+        serverCards += `
+          <div class="glass-card flex items-center gap-3 px-4 py-3 text-sm">
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="text-text-primary font-display font-semibold">${esc(name)}</span>
+                <span class="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">${esc(transport)}</span>
+                ${badge}
+              </div>
+              <div class="text-text-muted text-[11px] mt-0.5 mono truncate">${esc(target.slice(0,80))}</div>
+            </div>
+            <div class="flex items-center gap-1 flex-shrink-0">${removeBtn}</div>
+          </div>`;
+      }
+    }
+
+    el.innerHTML = `
+      <div class="space-y-4">
+        <div class="flex items-center justify-between">
+          <h3 class="section-header text-sm">MCP Servers</h3>
+          <button class="btn-primary text-xs px-3 py-1.5 rounded-lg font-display" onclick="showAgentMcpAdd('${esc(agentName)}')">+ Add Server</button>
+        </div>
+        ${agentName !== 'main' ? '<div class="text-[10px] text-text-muted">Inherits servers from main. Add agent-specific servers below.</div>' : ''}
+        <div id="agent-mcp-list" class="space-y-2">${serverCards}</div>
+        <div id="agent-mcp-add-form"></div>
+      </div>`;
     }
   } else if (tab === 'hooks') {
     try {
@@ -7831,6 +7879,94 @@ window.saveMcpConfig = async function(agentName) {
   } catch (e) {
     showToast(`Error: ${e.message}`, true);
   }
+};
+
+window.showAgentMcpAdd = function(agentName) {
+  const form = document.getElementById('agent-mcp-add-form');
+  if (!form) return;
+  form.innerHTML = `
+    <div class="glass-card p-4 space-y-3">
+      <h4 class="text-sm font-semibold text-text-primary">Add MCP Server</h4>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="text-[10px] text-text-muted uppercase tracking-wider">Name</label>
+          <input id="amcp-name" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm mt-1" placeholder="github">
+        </div>
+        <div>
+          <label class="text-[10px] text-text-muted uppercase tracking-wider">Transport</label>
+          <select id="amcp-transport" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm mt-1" onchange="document.getElementById('amcp-url-label').textContent = this.value === 'stdio' ? 'Command' : 'URL'">
+            <option value="stdio">stdio (command)</option>
+            <option value="sse">SSE (HTTP)</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label id="amcp-url-label" class="text-[10px] text-text-muted uppercase tracking-wider">Command</label>
+        <input id="amcp-url" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm mono mt-1" placeholder="npx -y @modelcontextprotocol/server-github">
+      </div>
+      <div>
+        <label class="text-[10px] text-text-muted uppercase tracking-wider">Args (space-separated, for stdio)</label>
+        <input id="amcp-args" class="w-full bg-surface-light border border-border rounded-lg px-3 py-2 text-sm mono mt-1" placeholder="">
+      </div>
+      <div class="flex gap-2">
+        <button class="btn-primary text-xs px-4 py-1.5 rounded-lg" onclick="doAgentMcpAdd('${esc(agentName)}')">Add</button>
+        <button class="btn-secondary text-xs px-4 py-1.5 rounded-lg" onclick="document.getElementById('agent-mcp-add-form').innerHTML=''">Cancel</button>
+      </div>
+    </div>`;
+};
+
+window.doAgentMcpAdd = async function(agentName) {
+  const name = document.getElementById('amcp-name')?.value?.trim();
+  const transport = document.getElementById('amcp-transport')?.value;
+  const url = document.getElementById('amcp-url')?.value?.trim();
+  const argsStr = document.getElementById('amcp-args')?.value?.trim();
+  if (!name || !url) { showToast('Name and command/URL required', true); return; }
+
+  // Load existing mcp.json
+  let mcp = {};
+  try {
+    const res = await API.getAgentFile(agentName, 'mcp.json');
+    const raw = typeof res === 'string' ? res : (res.content || '{}');
+    mcp = JSON.parse(raw);
+  } catch {}
+
+  if (!mcp.mcpServers) mcp = { mcpServers: mcp };
+  if (!mcp.mcpServers) mcp.mcpServers = {};
+
+  if (transport === 'stdio') {
+    const parts = url.split(/\s+/);
+    const cmd = parts[0];
+    const args = parts.slice(1);
+    if (argsStr) args.push(...argsStr.split(/\s+/));
+    mcp.mcpServers[name] = { command: cmd, args };
+  } else {
+    mcp.mcpServers[name] = { transport: 'sse', url };
+  }
+
+  try {
+    await API.writeAgentFile(agentName, 'mcp.json', JSON.stringify(mcp, null, 2));
+    showToast(`Added ${name}`);
+    loadConfigTabContent('mcp', agentName);
+  } catch (e) { showToast(e.message, true); }
+};
+
+window.removeAgentMcp = async function(agentName, serverName) {
+  if (!confirm(`Remove MCP server "${serverName}"?`)) return;
+  let mcp = {};
+  try {
+    const res = await API.getAgentFile(agentName, 'mcp.json');
+    const raw = typeof res === 'string' ? res : (res.content || '{}');
+    mcp = JSON.parse(raw);
+  } catch {}
+
+  if (mcp.mcpServers) delete mcp.mcpServers[serverName];
+  else delete mcp[serverName];
+
+  try {
+    await API.writeAgentFile(agentName, 'mcp.json', JSON.stringify(mcp, null, 2));
+    showToast(`Removed ${serverName}`);
+    loadConfigTabContent('mcp', agentName);
+  } catch (e) { showToast(e.message, true); }
 };
 
 // --- Hooks management ---
