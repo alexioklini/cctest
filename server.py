@@ -1620,9 +1620,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         _agent_sdk_cfg = session.agent.config.get("agent_sdk", {})
         _use_sdk = _agent_sdk_cfg.get("enabled", True)  # default ON
 
-        # Check context and compact (with SSE progress) — skip for SDK agents
+        # Check context and compact (with SSE progress)
+        # Runs for both SDK and non-SDK agents — SDK agents need compacted
+        # session.messages as fallback when sdk_session_id is lost
         engine._thread_local.current_session_id = session.id
-        if not _use_sdk:
+        if True:
             estimated = engine._estimate_conversation_tokens(session.messages)
             ctx_cfg = engine._context_manager.get_config() if engine._context_manager else {}
             threshold_pct = ctx_cfg.get("compact_threshold", 0.75) if ctx_cfg.get("enabled") else engine.COMPACT_THRESHOLD
