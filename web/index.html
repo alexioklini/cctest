@@ -312,7 +312,7 @@ tailwind.config = {
     display: flex;
     flex-direction: column;
     background: var(--color-base);
-    margin: 0 5px;
+    margin: 0 10px;
   }
 
   /* Footer status bar — sidebar gradient */
@@ -4905,8 +4905,8 @@ function renderMessage(msg, idx, container) {
         <div class="text-sm text-text-primary msg-content">${imagesHtml}${marked.parse(msg.content)}</div>
       </div>
       <div class="msg-actions">
-        <button onclick="navigator.clipboard.writeText(state.activeChat.messages[${idx}]?.content||'')" title="Copy">\u{1F4CB}</button>
-        <button onclick="if(confirm('Delete this message?')){state.activeChat.messages.splice(${idx},1);renderChat()}" title="Delete">\u{1F5D1}</button>
+        <button onclick="navigator.clipboard.writeText(state.activeChat.messages[${idx}]?.content||'');this.innerHTML='<svg width=\\'14\\' height=\\'14\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'#4ade80\\' stroke-width=\\'2\\'><polyline points=\\'20 6 9 17 4 12\\'/></svg>';setTimeout(()=>this.innerHTML='<svg width=\\'14\\' height=\\'14\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'2\\'><rect x=\\'9\\' y=\\'9\\' width=\\'13\\' height=\\'13\\' rx=\\'2\\'/><path d=\\'M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1\\'/></svg>',1500)" title="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+        <button onclick="if(confirm('Delete this message?')){state.activeChat.messages.splice(${idx},1);renderMessages()}" title="Delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
       </div>
     </div>`;
   } else if (msg.role === 'assistant') {
@@ -4950,8 +4950,8 @@ function renderMessage(msg, idx, container) {
         ${msg.fallbackNotice ? `<div class="text-[10px] text-warning mt-1 flex items-center gap-1"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>${esc(msg.fallbackNotice)}</div>` : ''}
       </div>
       <div class="msg-actions">
-        <button onclick="navigator.clipboard.writeText(state.activeChat.messages[${idx}]?.content||'')" title="Copy">\u{1F4CB}</button>
-        <button onclick="if(confirm('Delete this message?')){state.activeChat.messages.splice(${idx},1);renderChat()}" title="Delete">\u{1F5D1}</button>
+        <button onclick="navigator.clipboard.writeText(state.activeChat.messages[${idx}]?.content||'');this.innerHTML='<svg width=\\'14\\' height=\\'14\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'#4ade80\\' stroke-width=\\'2\\'><polyline points=\\'20 6 9 17 4 12\\'/></svg>';setTimeout(()=>this.innerHTML='<svg width=\\'14\\' height=\\'14\\' viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'2\\'><rect x=\\'9\\' y=\\'9\\' width=\\'13\\' height=\\'13\\' rx=\\'2\\'/><path d=\\'M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1\\'/></svg>',1500)" title="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+        <button onclick="if(confirm('Delete this message?')){state.activeChat.messages.splice(${idx},1);renderMessages()}" title="Delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
       </div>
     </div>`;
   } else if (msg.role === 'system') {
