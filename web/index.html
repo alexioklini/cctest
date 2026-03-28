@@ -304,11 +304,14 @@ tailwind.config = {
     overflow: hidden;
   }
 
-  /* Chat content area (messages + input) — rounded on all 4 sides */
-  #chat-area {
+  /* Chat content (messages + input) — rounded card inside the frame */
+  #chat-content-rounded {
     border-radius: 8px;
     overflow: hidden;
-    margin: 4px 4px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--color-base);
   }
 
   /* Footer status bar — sidebar gradient */
@@ -2340,7 +2343,7 @@ tailwind.config = {
   <!-- MAIN CONTENT -->
   <div id="center-content" class="flex-1 flex flex-col overflow-hidden min-w-0">
     <!-- CHAT AREA (fills remaining) -->
-    <div id="chat-area" class="flex-1 flex flex-col overflow-hidden bg-base">
+    <div id="chat-area" class="flex-1 flex flex-col overflow-hidden">
       <!-- Chat top bar -->
       <div id="chat-top-bar" class="flex items-center bg-surface/50 flex-shrink-0 px-3 gap-3" style="min-height:48px;padding:0 16px;box-shadow:none;border-bottom:1px solid var(--color-border)">
         <button id="mobile-hamburger" onclick="openMobileSidebar()" title="Open sidebar">
@@ -2373,6 +2376,8 @@ tailwind.config = {
       </div>
       <!-- Project context bar -->
       <div id="project-context-bar" class="sb-project-context-bar" style="display:none"></div>
+      <!-- Rounded content area (messages + input) -->
+      <div id="chat-content-rounded">
       <!-- Messages -->
       <div id="chat-messages" class="flex-1 overflow-y-auto px-6 py-4">
         <div class="flex items-center justify-center h-full text-text-muted text-sm font-body">Select an agent to start chatting</div>
@@ -2397,6 +2402,7 @@ tailwind.config = {
           </div>
         </div>
       </div>
+      </div><!-- close #chat-content-rounded -->
     </div>
 
     <!-- NOTE EDITOR VIEW (hidden by default, replaces chat when active) -->
