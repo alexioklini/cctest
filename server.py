@@ -1032,7 +1032,23 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 if session_id:
                     engine._thread_local.session_id = session_id
                     engine._thread_local.current_session_id = session_id
+
+                # Pre-hooks: check if tool should be blocked
+                runner = engine._get_hook_runner(agent_id)
+                if runner:
+                    blocked = runner.run_pre_hooks(tool_name, tool_args)
+                    if blocked:
+                        self._send_json({"jsonrpc": "2.0", "id": msg_id,
+                                          "result": {"content": [{"type": "text", "text": f"Blocked by hook: {blocked}"}],
+                                                      "isError": True}})
+                        return
+
                 result = engine.TOOL_DISPATCH[tool_name](tool_args)
+
+                # Post-hooks: audit/transform
+                if runner:
+                    result = runner.run_post_hooks(tool_name, tool_args, str(result)[:51200])
+
                 self._send_json({"jsonrpc": "2.0", "id": msg_id,
                                   "result": {"content": [{"type": "text", "text": str(result)}]}})
             except Exception as e:
