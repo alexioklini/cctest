@@ -165,22 +165,11 @@ class SidecarHandler(BaseHTTPRequestHandler):
 
         hooks_enabled = body.get("hooks_enabled", False)
 
-        # Build MCP servers: brain_agent (stdio bridge for streaming) + external (from mcp.json)
+        # Build MCP servers: brain_agent (custom tools) + external (from mcp.json)
         mcp_servers = dict(mcp_configs) if mcp_configs else {}
         if tool_defs:
-            # Use stdio MCP bridge instead of in-process MCP to enable real-time streaming
-            # (in-process MCP causes the SDK to buffer the entire response)
-            bridge_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_bridge.py")
-            bridge_args = [sys.executable, bridge_script,
-                           "--server-url", server_url,
-                           "--agent-id", agent_id]
-            if session_id:
-                bridge_args.extend(["--session-id", session_id])
-            mcp_servers["brain_agent"] = {
-                "type": "stdio",
-                "command": bridge_args[0],
-                "args": bridge_args[1:],
-            }
+            brain_mcp = self._build_brain_mcp(tool_defs, server_url, agent_id, session_id)
+            mcp_servers["brain_agent"] = brain_mcp
 
         opts_kwargs = dict(
             model=model,
