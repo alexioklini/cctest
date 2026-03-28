@@ -5658,10 +5658,18 @@ async function loadConfigTabContent(tab, agentName) {
             </div>
           </div>
 
+          <!-- Claude Code Skills -->
+          <div>
+            <h3 class="section-header text-sm mb-3">Claude Code Skills</h3>
+            <div id="cc-skills-list" class="space-y-2">
+              <div class="text-text-muted text-sm py-2">Loading...</div>
+            </div>
+          </div>
+
           <!-- Browse & Install -->
           <div>
             <div class="flex items-center justify-between mb-3">
-              <h3 class="section-header text-sm">Browse Skills Repository</h3>
+              <h3 class="section-header text-sm">Browse OpenClaw Repository</h3>
             </div>
             <div class="flex items-center gap-2 mb-3">
               <input id="skill-search" class="flex-1 bg-surface-light border border-border rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted" placeholder="Search skills...">
@@ -5681,6 +5689,8 @@ async function loadConfigTabContent(tab, agentName) {
             <div id="skill-browse-results" class="space-y-2"></div>
           </div>
         </div>`;
+      // Load CC skills asynchronously
+      loadCCSkills(agentName);
     } catch (e) {
       el.innerHTML = `<div class="text-error text-sm">Error loading skills: ${esc(e.message)}</div>`;
     }
@@ -7199,6 +7209,77 @@ window.submitScheduleTask = async function() {
     showToast(editingName ? 'Task updated' : 'Task created');
     cancelScheduleEdit();
     loadConfigTabContent('schedule', state.configAgent);
+  } catch (e) {
+    showToast(`Error: ${e.message}`, true);
+  }
+};
+
+// ─── Claude Code Skills ──────────────────────────────────────
+async function loadCCSkills(agentName) {
+  const container = document.getElementById('cc-skills-list');
+  if (!container) return;
+  try {
+    const res = await fetch(`${API_BASE}/skills/claude-code?agent=${encodeURIComponent(agentName)}`);
+    const data = await res.json();
+    const skills = data.skills || [];
+    if (skills.length === 0) {
+      container.innerHTML = '<div class="text-text-muted text-sm py-2">No Claude Code skills found. Install plugins via <code>claude plugins</code> in Claude Code CLI.</div>';
+      return;
+    }
+    // Group by plugin
+    const groups = {};
+    for (const s of skills) {
+      const key = s.plugin || '(user)';
+      if (!groups[key]) groups[key] = { marketplace: s.marketplace, skills: [] };
+      groups[key].skills.push(s);
+    }
+    let html = '';
+    for (const [plugin, group] of Object.entries(groups)) {
+      const mpBadge = group.marketplace ? `<span class="text-[9px] px-1 py-0.5 rounded bg-purple-500/20 text-purple-300">${esc(group.marketplace)}</span>` : '';
+      html += `<div class="mb-3">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="text-xs font-display font-semibold text-text-secondary">${esc(plugin)}</span>
+          ${mpBadge}
+        </div>`;
+      for (const s of group.skills) {
+        const checked = s.agent_enabled ? 'checked' : '';
+        const typeBadge = s.type === 'command' ? '<span class="text-[9px] px-1 py-0.5 rounded bg-blue-500/20 text-blue-300">cmd</span>' :
+                          s.type === 'user-command' ? '<span class="text-[9px] px-1 py-0.5 rounded bg-green-500/20 text-green-300">user</span>' :
+                          '<span class="text-[9px] px-1 py-0.5 rounded bg-accent/20 text-accent">skill</span>';
+        html += `
+          <div class="glass-card flex items-center gap-3 px-4 py-2.5 text-sm">
+            <label class="relative inline-flex items-center cursor-pointer flex-shrink-0">
+              <input type="checkbox" class="sr-only peer" ${checked}
+                onchange="toggleCCSkill('${esc(agentName)}','${esc(s.slug)}',this.checked)">
+              <div class="w-8 h-4 bg-surface-lighter peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-text-muted after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-accent peer-checked:after:bg-white"></div>
+            </label>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="text-text-primary font-display font-medium text-[13px]">${esc(s.name)}</span>
+                ${typeBadge}
+              </div>
+              ${s.description ? `<div class="text-text-muted text-[11px] mt-0.5 truncate">${esc(s.description.slice(0,120))}</div>` : ''}
+            </div>
+          </div>`;
+      }
+      html += '</div>';
+    }
+    container.innerHTML = html;
+  } catch (e) {
+    container.innerHTML = `<div class="text-error text-sm">Error loading CC skills: ${esc(e.message)}</div>`;
+  }
+}
+
+window.toggleCCSkill = async function(agentName, slug, enabled) {
+  try {
+    const res = await fetch(`${API_BASE}/skills/claude-code`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ agent: agentName, slug, enabled })
+    });
+    const data = await res.json();
+    if (data.error) { showToast(data.error, true); return; }
+    showToast(`${slug} ${enabled ? 'enabled' : 'disabled'}`);
   } catch (e) {
     showToast(`Error: ${e.message}`, true);
   }

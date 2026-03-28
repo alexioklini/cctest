@@ -2803,6 +2803,185 @@ Adapt your behavior to the tasks you are given.
         return raw.strip()
 
 
+def scan_claude_code_skills() -> list[dict]:
+    """Discover Claude Code skills/plugins from ~/.claude.
+
+    Scans three sources:
+    1. Plugin skills — cached plugins with SKILL.md files
+    2. Plugin commands — marketplace plugin commands (slash commands)
+    3. User commands — ~/.claude/commands/ markdown files
+
+    Returns list of dicts with: name, slug, description, source, type, path, plugin, marketplace, enabled
+    """
+    home = os.path.expanduser("~")
+    claude_dir = os.path.join(home, ".claude")
+    results = []
+
+    # Read installed_plugins.json to get install paths
+    installed = {}
+    try:
+        with open(os.path.join(claude_dir, "plugins", "installed_plugins.json")) as f:
+            data = json.load(f)
+            installed = data.get("plugins", {})
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    # Read settings.json for enabled state
+    enabled_plugins = {}
+    try:
+        with open(os.path.join(claude_dir, "settings.json")) as f:
+            settings = json.load(f)
+            enabled_plugins = settings.get("enabledPlugins", {})
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    # 1. Plugin skills — scan installed plugin cache dirs for skills/*/SKILL.md
+    for plugin_key, installs in installed.items():
+        if not installs:
+            continue
+        install = installs[0]  # Use first (latest) install
+        install_path = install.get("installPath", "")
+        if not os.path.isdir(install_path):
+            continue
+
+        plugin_name = plugin_key.split("@")[0] if "@" in plugin_key else plugin_key
+        marketplace = plugin_key.split("@")[1] if "@" in plugin_key else ""
+        is_enabled = enabled_plugins.get(plugin_key, False)
+
+        skills_dir = os.path.join(install_path, "skills")
+        if os.path.isdir(skills_dir):
+            for skill_name in sorted(os.listdir(skills_dir)):
+                skill_file = os.path.join(skills_dir, skill_name, "SKILL.md")
+                if not os.path.isfile(skill_file):
+                    continue
+                # Parse frontmatter for name/description
+                try:
+                    with open(skill_file) as f:
+                        raw = f.read(4096)
+                    fm_match = re.match(r'^---\s*\n(.*?)\n---\s*\n', raw, re.DOTALL)
+                    fm = {}
+                    if fm_match:
+                        for line in fm_match.group(1).split("\n"):
+                            if ":" in line:
+                                k, v = line.split(":", 1)
+                                fm[k.strip()] = v.strip().strip('"').strip("'")
+                except OSError:
+                    fm = {}
+
+                results.append({
+                    "name": fm.get("name", skill_name),
+                    "slug": f"{plugin_name}:{skill_name}",
+                    "description": fm.get("description", ""),
+                    "source": "claude-code",
+                    "type": "skill",
+                    "path": skill_file,
+                    "plugin": plugin_name,
+                    "marketplace": marketplace,
+                    "enabled": is_enabled,
+                })
+
+        # 2. Plugin commands — commands/*.md in the marketplace plugin dir
+        # Find commands in the marketplace source (not cache)
+        for mp_dir in ["claude-plugins-official", "anthropic-agent-skills"]:
+            cmd_dir = os.path.join(claude_dir, "plugins", "marketplaces", mp_dir, "plugins", plugin_name, "commands")
+            if os.path.isdir(cmd_dir):
+                for cmd_file in sorted(os.listdir(cmd_dir)):
+                    if not cmd_file.endswith(".md"):
+                        continue
+                    cmd_path = os.path.join(cmd_dir, cmd_file)
+                    cmd_name = cmd_file[:-3]  # strip .md
+                    # Parse frontmatter
+                    try:
+                        with open(cmd_path) as f:
+                            raw = f.read(4096)
+                        fm_match = re.match(r'^---\s*\n(.*?)\n---\s*\n', raw, re.DOTALL)
+                        fm = {}
+                        if fm_match:
+                            for line in fm_match.group(1).split("\n"):
+                                if ":" in line:
+                                    k, v = line.split(":", 1)
+                                    fm[k.strip()] = v.strip().strip('"').strip("'")
+                    except OSError:
+                        fm = {}
+
+                    results.append({
+                        "name": fm.get("name", cmd_name),
+                        "slug": f"{plugin_name}:{cmd_name}",
+                        "description": fm.get("description", ""),
+                        "source": "claude-code",
+                        "type": "command",
+                        "path": cmd_path,
+                        "plugin": plugin_name,
+                        "marketplace": mp_dir,
+                        "enabled": is_enabled,
+                    })
+
+    # 3. User commands — ~/.claude/commands/*.md
+    user_cmd_dir = os.path.join(claude_dir, "commands")
+    if os.path.isdir(user_cmd_dir):
+        for entry in sorted(os.listdir(user_cmd_dir)):
+            if entry.startswith("."):
+                continue
+            entry_path = os.path.join(user_cmd_dir, entry)
+            if os.path.islink(entry_path):
+                # Resolve symlink
+                entry_path = os.path.realpath(entry_path)
+            if os.path.isfile(entry_path) and entry_path.endswith(".md"):
+                cmd_name = entry[:-3]
+                try:
+                    with open(entry_path) as f:
+                        raw = f.read(4096)
+                    fm_match = re.match(r'^---\s*\n(.*?)\n---\s*\n', raw, re.DOTALL)
+                    fm = {}
+                    if fm_match:
+                        for line in fm_match.group(1).split("\n"):
+                            if ":" in line:
+                                k, v = line.split(":", 1)
+                                fm[k.strip()] = v.strip().strip('"').strip("'")
+                except OSError:
+                    fm = {}
+                results.append({
+                    "name": fm.get("name", cmd_name),
+                    "slug": cmd_name,
+                    "description": fm.get("description", ""),
+                    "source": "claude-code",
+                    "type": "user-command",
+                    "path": entry_path,
+                    "plugin": "",
+                    "marketplace": "",
+                    "enabled": True,  # User commands are always enabled
+                })
+            elif os.path.isdir(entry_path):
+                # Directory with SKILL.md
+                skill_file = os.path.join(entry_path, "SKILL.md")
+                if os.path.isfile(skill_file):
+                    try:
+                        with open(skill_file) as f:
+                            raw = f.read(4096)
+                        fm_match = re.match(r'^---\s*\n(.*?)\n---\s*\n', raw, re.DOTALL)
+                        fm = {}
+                        if fm_match:
+                            for line in fm_match.group(1).split("\n"):
+                                if ":" in line:
+                                    k, v = line.split(":", 1)
+                                    fm[k.strip()] = v.strip().strip('"').strip("'")
+                    except OSError:
+                        fm = {}
+                    results.append({
+                        "name": fm.get("name", entry),
+                        "slug": entry,
+                        "description": fm.get("description", ""),
+                        "source": "claude-code",
+                        "type": "user-skill",
+                        "path": skill_file,
+                        "plugin": "",
+                        "marketplace": "",
+                        "enabled": True,
+                    })
+
+    return results
+
+
 def list_agents() -> list[str]:
     """List all available agent IDs."""
     if not os.path.isdir(AGENTS_DIR):

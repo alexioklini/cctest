@@ -748,6 +748,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_agent_graph_stats(path)
         elif path.startswith("/v1/agents/") and path.endswith("/graph"):
             self._handle_agent_graph(path)
+        elif path == "/v1/skills/claude-code":
+            self._handle_cc_skills_list()
         elif path == "/v1/notifications":
             self._handle_notifications_list()
         elif path == "/v1/notifications/unread":
@@ -819,6 +821,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_cancel_scheduled()
         elif path == "/v1/skills/remove":
             self._handle_remove_skill()
+        elif path == "/v1/skills/claude-code":
+            self._handle_cc_skills_manage()
         elif path == "/v1/restart":
             self._handle_restart()
         elif path == "/v1/services/qmd":
@@ -1897,6 +1901,24 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             if hooks_cfg.get("enabled") and hooks_cfg.get("scripts"):
                 hooks_enabled = True
 
+            # Resolve enabled Claude Code plugin paths for SDK
+            cc_plugin_paths = []
+            cc_skill_slugs = agent_config.config.get("claude_code_skills", [])
+            if cc_skill_slugs:
+                all_cc = engine.scan_claude_code_skills()
+                # Build slug → install_path mapping (deduplicate by plugin)
+                seen_plugins = set()
+                for skill in all_cc:
+                    if skill["slug"] in cc_skill_slugs and skill.get("plugin"):
+                        plugin_key = skill["plugin"]
+                        if plugin_key not in seen_plugins:
+                            # Get plugin install path (parent of skills/ dir)
+                            skill_path = skill.get("path", "")
+                            if "/skills/" in skill_path:
+                                plugin_root = skill_path[:skill_path.index("/skills/")]
+                                cc_plugin_paths.append(plugin_root)
+                                seen_plugins.add(plugin_key)
+
             server_port = server_config.get("port", 8420)
             payload = json.dumps({
                 "message": message,
@@ -1914,6 +1936,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "tool_defs": tool_defs,
                 "server_url": f"http://127.0.0.1:{server_port}",
                 "hooks_enabled": hooks_enabled,
+                "cc_plugin_paths": cc_plugin_paths,
             }).encode()
 
             # Tracing spans
@@ -3553,6 +3576,51 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "removed", "skill": skill_name, "agent": agent_id})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
+
+    def _handle_cc_skills_list(self):
+        """GET /v1/skills/claude-code — list all Claude Code skills/plugins."""
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        agent_id = query.get("agent", ["main"])[0]
+
+        # Get all CC skills from the scanner
+        all_skills = engine.scan_claude_code_skills()
+
+        # Get agent's enabled CC skills list
+        agent_cfg = engine.AgentConfig(agent_id)
+        agent_cc = agent_cfg.config.get("claude_code_skills", [])
+
+        # Annotate with per-agent enabled state
+        for skill in all_skills:
+            skill["agent_enabled"] = skill["slug"] in agent_cc
+
+        self._send_json({"skills": all_skills, "agent": agent_id})
+
+    def _handle_cc_skills_manage(self):
+        """POST /v1/skills/claude-code — enable/disable CC skill for an agent.
+        Body: {agent, slug, enabled}"""
+        body = self._read_json()
+        agent_id = body.get("agent", "main")
+        slug = body.get("slug", "")
+        enabled = body.get("enabled", True)
+
+        if not slug:
+            self._send_json({"error": "slug required"}, 400)
+            return
+
+        agent_cfg = engine.AgentConfig(agent_id)
+        config = dict(agent_cfg.config)
+        cc_skills = list(config.get("claude_code_skills", []))
+
+        if enabled and slug not in cc_skills:
+            cc_skills.append(slug)
+        elif not enabled and slug in cc_skills:
+            cc_skills.remove(slug)
+
+        config["claude_code_skills"] = cc_skills
+        agent_cfg.save_config(config)
+
+        self._send_json({"status": "ok", "agent": agent_id, "slug": slug,
+                         "enabled": enabled, "claude_code_skills": cc_skills})
 
     # --- Service Management ---
 

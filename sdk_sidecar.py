@@ -190,6 +190,15 @@ class SidecarHandler(BaseHTTPRequestHandler):
             if sdk_hooks:
                 opts_kwargs["hooks"] = sdk_hooks
 
+        # Load Claude Code plugins (skills/commands from ~/.claude)
+        cc_plugin_paths = body.get("cc_plugin_paths", [])
+        if cc_plugin_paths:
+            from claude_agent_sdk import SdkPluginConfig
+            opts_kwargs["plugins"] = [
+                SdkPluginConfig(type="local", path=p)
+                for p in cc_plugin_paths if os.path.isdir(p)
+            ]
+
         options = ClaudeAgentOptions(**opts_kwargs)
         if sdk_session_id:
             options.resume = sdk_session_id
