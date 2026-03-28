@@ -363,7 +363,7 @@ Each task runs with a specified agent and model in its own context. Results stor
 
 | Version | Date | Changes |
 |---|---|---|
-| 5.0.0 | 2026-03-28 | Full SDK migration: all paths (Web UI, TUI, CLI one-shot, scheduled tasks, _run_delegate) route through Agent SDK sidecar. SDK hook wiring (PreToolUse/PostToolUse → /v1/hooks/run). query_sync extended with tool_defs, cancel support, session resume. Graceful fallback to direct API when sidecar unavailable |
+| 5.0.0 | 2026-03-28 | Full SDK migration complete — closed all gaps: HTTP MCP server (24 custom tools via /v1/tools/call), chat summary + transcript indexing for SDK path, file change watcher (QMD reindex on SDK writes), rate limiting + model fallback + plan mode/workflow restrictions, trace spans + audit logging, all background tasks route through SDK, SDK hook wiring (PreToolUse/PostToolUse → /v1/hooks/run), TUI + CLI one-shot + scheduled tasks route through sidecar with graceful direct-API fallback |
 | 4.2.0 | 2026-03-23 | Code graph: LLM node summaries, architecture layers, guided tours, code_graph_enhance tool. Lossless compaction with compacted flag, context fill indicator, manual compact, LCM footer |
 | 4.1.0 | 2026-03-23 | Chat stability: session corruption fix, partial response preservation, metadata persistence, thinking level control, extended thinking, model display, remote node badges, resizable sidebars |
 | 4.0.0 | 2026-03-23 | Universal File Intelligence (XLSX/PPTX/CSV/image/SVG, read/write/edit document tools) + Code Structure Graph (Tree-sitter AST, 14 languages, blast-radius analysis) |
