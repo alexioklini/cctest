@@ -54,6 +54,43 @@ class SidecarHandler(BaseHTTPRequestHandler):
         t.start()
         t.join()
 
+    def _build_brain_mcp(self, tool_defs, server_url, agent_id, session_id):
+        """Build an in-process MCP server with tools that call back to the main server."""
+        from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server
+        import urllib.request
+
+        tools = []
+        for td in tool_defs:
+            name = td["name"]
+            desc = td.get("description", "")
+            schema = td.get("input_schema", {"type": "object", "properties": {}})
+
+            async def _handler(args, _name=name, _url=server_url, _aid=agent_id, _sid=session_id):
+                """Call the main server's /v1/tools/call endpoint."""
+                payload = json.dumps({
+                    "name": _name, "args": args,
+                    "agent_id": _aid, "session_id": _sid,
+                }).encode()
+                try:
+                    req = urllib.request.Request(
+                        f"{_url}/v1/tools/call",
+                        data=payload,
+                        headers={"Content-Type": "application/json"},
+                    )
+                    resp = urllib.request.urlopen(req, timeout=120)
+                    data = json.loads(resp.read())
+                    result_text = data.get("result", data.get("error", "No result"))
+                    return {"content": [{"type": "text", "text": str(result_text)}]}
+                except Exception as e:
+                    return {"content": [{"type": "text", "text": f"Tool error: {e}"}], "is_error": True}
+
+            tools.append(SdkMcpTool(
+                name=name, description=desc[:1000],
+                input_schema=schema, handler=_handler,
+            ))
+
+        return create_sdk_mcp_server("brain_agent", "1.0", tools=tools)
+
     async def _stream(self, body):
         from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
         from claude_agent_sdk.types import StreamEvent
@@ -68,17 +105,31 @@ class SidecarHandler(BaseHTTPRequestHandler):
         sdk_session_id = body.get("sdk_session_id")
         thinking_level = body.get("thinking_level")
         mcp_configs = body.get("mcp_configs", {})
+        tool_defs = body.get("tool_defs", [])
+        server_url = body.get("server_url", "http://127.0.0.1:8420")
+        agent_id = body.get("agent_id", "main")
+        session_id = body.get("session_id")
+        allowed_tools = body.get("allowed_tools")
 
-        options = ClaudeAgentOptions(
+        # Build MCP servers: brain_agent (custom tools) + external (from mcp.json)
+        mcp_servers = dict(mcp_configs) if mcp_configs else {}
+        if tool_defs:
+            brain_mcp = self._build_brain_mcp(tool_defs, server_url, agent_id, session_id)
+            mcp_servers["brain_agent"] = brain_mcp
+
+        opts_kwargs = dict(
             model=model,
             system_prompt=system_prompt,
-            mcp_servers=mcp_configs if mcp_configs else {},
+            mcp_servers=mcp_servers,
             permission_mode=sdk_cfg.get("permission_mode", "bypassPermissions"),
             max_turns=sdk_cfg.get("max_turns", 30),
             env=provider_env,
             cwd=body.get("cwd", os.getcwd()),
             include_partial_messages=True,
         )
+        if allowed_tools:
+            opts_kwargs["allowed_tools"] = allowed_tools
+        options = ClaudeAgentOptions(**opts_kwargs)
         if sdk_session_id:
             options.resume = sdk_session_id
 

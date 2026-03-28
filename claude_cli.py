@@ -6839,7 +6839,37 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
                   inference_params: dict | None = None,
                   tools: bool = True) -> str | None:
     """Run a delegated task in a fresh context. Returns the final text response.
-    Thread-safe: uses thread-local storage for memory instead of swapping globals."""
+    Thread-safe: uses thread-local storage for memory instead of swapping globals.
+
+    Routes through the SDK sidecar when available (better context management).
+    Falls back to direct API call if sidecar is not running.
+    """
+    # Try SDK sidecar first (if running and not tools=True which needs MCP)
+    # For simple no-tool calls, query_sync is a clean replacement
+    if not tools:
+        try:
+            import sdk_backend
+            if sdk_backend.is_sidecar_running():
+                # Extract prompt from messages
+                prompt = ""
+                for m in messages:
+                    if m.get("role") == "user":
+                        content = m.get("content", "")
+                        if isinstance(content, str):
+                            prompt = content
+                        elif isinstance(content, list):
+                            for b in content:
+                                if isinstance(b, dict) and b.get("type") == "text":
+                                    prompt += b.get("text", "")
+                if prompt:
+                    result = sdk_backend.query_sync(
+                        prompt=prompt, model=model,
+                        system_prompt=system_prompt, max_turns=1)
+                    if result is not None:
+                        return result
+        except Exception:
+            pass  # Fall through to direct API call
+
     # Store memory in thread-local so tool_memory_* can find it
     if memory_store:
         _thread_local.memory_store = memory_store

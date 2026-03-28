@@ -229,3 +229,86 @@ def proxy_sidecar_sse(payload: bytes, wfile, event_callback=None) -> dict:
         result["tools"] = tool_calls
 
     return result
+
+
+def query_sync(prompt: str, model: str, system_prompt: str = "",
+               max_turns: int = 1) -> str | None:
+    """Send a simple LLM query through the sidecar and return the text response.
+
+    For background tasks that need an LLM call but no streaming.
+    Does NOT import claude_cli — safe to call from anywhere.
+    """
+    provider_env = build_provider_env(model)
+    if not provider_env:
+        return None
+
+    payload = json.dumps({
+        "message": prompt,
+        "model": model,
+        "system_prompt": system_prompt,
+        "provider_env": provider_env,
+        "sdk_cfg": {"max_turns": max_turns, "permission_mode": "bypassPermissions"},
+        "mcp_configs": {},
+        "cwd": os.getcwd(),
+    }).encode()
+
+    try:
+        sock = socket.create_connection((SIDECAR_URL, SIDECAR_PORT), timeout=300)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+        http_req = (
+            f"POST /query HTTP/1.1\r\n"
+            f"Host: {SIDECAR_URL}:{SIDECAR_PORT}\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: {len(payload)}\r\n"
+            f"\r\n"
+        ).encode() + payload
+        sock.sendall(http_req)
+
+        # Read headers
+        header_buf = b""
+        while b"\r\n\r\n" not in header_buf:
+            b = sock.recv(1)
+            if not b:
+                break
+            header_buf += b
+
+        # Read SSE body — just collect text and wait for _result
+        sock.settimeout(5)
+        full_text = ""
+        sse_buf = b""
+        while True:
+            try:
+                data = sock.recv(4096)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            if not data:
+                break
+            sse_buf += data
+            while b"\n\n" in sse_buf:
+                block_bytes, sse_buf = sse_buf.split(b"\n\n", 1)
+                block_str = block_bytes.decode("utf-8", errors="replace").strip()
+                evt_type = ""
+                evt_data = None
+                for line in block_str.split("\n"):
+                    if line.startswith("event: "):
+                        evt_type = line[7:].strip()
+                    elif line.startswith("data: "):
+                        try:
+                            evt_data = json.loads(line[6:])
+                        except json.JSONDecodeError:
+                            pass
+                if evt_type == "text_delta" and evt_data:
+                    full_text += evt_data.get("text", "")
+                elif evt_type == "_result" and evt_data:
+                    sock.close()
+                    return evt_data.get("text", "") or full_text
+                elif evt_type == "error" and evt_data:
+                    sock.close()
+                    return None
+        sock.close()
+        return full_text or None
+    except Exception:
+        return None

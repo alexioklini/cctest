@@ -655,7 +655,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0]
 
-        if path == "/v1/status":
+        if path == "/v1/tools/list":
+            self._handle_tools_list()
+        elif path == "/v1/status":
             self._handle_status()
         elif path == "/v1/agents":
             self._handle_list_agents()
@@ -803,6 +805,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_test_provider()
         elif path == "/v1/models/config":
             self._handle_models_config_save()
+        elif path == "/v1/tools/call":
+            self._handle_tools_call()
+        elif path == "/v1/hooks/run":
+            self._handle_hooks_run()
         elif path == "/v1/skills/browse":
             self._handle_browse_skills()
         elif path == "/v1/skills/install":
@@ -944,6 +950,89 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Session-ID")
         self.end_headers()
+
+    # --- Tool MCP Endpoints (for SDK sidecar) ---
+
+    # Tools the SDK handles natively — don't expose these
+    _SDK_NATIVE_TOOLS = {
+        "read_file", "write_file", "edit_file", "list_directory", "search_files",
+        "execute_command", "web_fetch", "git_command", "github_command",
+        "context_search", "context_detail", "context_recall",
+        "mcp_connect", "mcp_disconnect", "mcp_servers",
+    }
+
+    def _handle_tools_list(self):
+        """GET /v1/tools/list — return tool schemas for MCP registration."""
+        tools = []
+        for td in engine.TOOL_DEFINITIONS:
+            if td["name"] in self._SDK_NATIVE_TOOLS:
+                continue
+            if td["name"] not in engine.TOOL_DISPATCH:
+                continue
+            desc = td["description"]
+            if isinstance(desc, tuple):
+                desc = " ".join(desc)
+            tools.append({
+                "name": td["name"],
+                "description": desc[:1000],
+                "input_schema": td["input_schema"],
+            })
+        self._send_json({"tools": tools})
+
+    def _handle_tools_call(self):
+        """POST /v1/tools/call — execute a Brain Agent tool (for SDK sidecar MCP)."""
+        body = self._read_json()
+        tool_name = body.get("name", "")
+        tool_args = body.get("args", {})
+        agent_id = body.get("agent_id", "main")
+        session_id = body.get("session_id")
+
+        if not tool_name or tool_name not in engine.TOOL_DISPATCH:
+            self._send_json({"error": f"Unknown tool: {tool_name}"}, 404)
+            return
+
+        # Set up thread-local context for the tool
+        try:
+            agent_config = engine.AgentConfig(agent_id)
+            engine._thread_local.current_agent = agent_config
+            engine._thread_local.memory_store = engine.MemoryStore(
+                agent_id, base_dir=agent_config.memory_dir)
+            engine._thread_local.mcp_manager = engine._mcp_manager
+            if session_id:
+                engine._thread_local.session_id = session_id
+                engine._thread_local.current_session_id = session_id
+
+            result = engine.TOOL_DISPATCH[tool_name](tool_args)
+            self._send_json({"result": result})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+        finally:
+            engine._thread_local.current_agent = None
+            engine._thread_local.memory_store = None
+
+    def _handle_hooks_run(self):
+        """POST /v1/hooks/run — execute hook scripts (for SDK sidecar).
+        Accepts: {agent_id, hook_type, tool_name, args, result}
+        hook_type: 'pre' or 'post'"""
+        body = self._read_json()
+        agent_id = body.get("agent_id", "main")
+        hook_type = body.get("hook_type", "pre")
+        tool_name = body.get("tool_name", "")
+        args = body.get("args", {})
+        result = body.get("result", "")
+
+        try:
+            runner = engine._get_hook_runner(agent_id)
+            if hook_type == "pre":
+                blocked = runner.run_pre_hooks(tool_name, args)
+                self._send_json({"blocked": blocked})
+            elif hook_type == "post":
+                modified = runner.run_post_hooks(tool_name, args, result)
+                self._send_json({"result": modified})
+            else:
+                self._send_json({"error": f"Unknown hook_type: {hook_type}"}, 400)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
 
     # --- Handlers ---
 
@@ -1733,6 +1822,20 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         if _use_sdk:
             import sdk_backend
 
+            # Rate limiting pre-check
+            if engine._rate_limiter:
+                try:
+                    allowed, reason, _ = engine._rate_limiter.check(session.agent_id)
+                    if not allowed:
+                        try:
+                            self.wfile.write(f"event: error\ndata: {json.dumps({'message': f'Rate limited: {reason}'})}\n\n".encode())
+                            self.wfile.flush()
+                        except (BrokenPipeError, ConnectionResetError):
+                            pass
+                        return
+                except Exception:
+                    pass
+
             # Build context using claude_cli
             engine._thread_local.memory_store = session.memory
             agent_config = engine.AgentConfig(session.agent_id)
@@ -1760,21 +1863,80 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
 
+            # Build tool definitions for sidecar MCP server
+            tool_defs = []
+            for td in engine.TOOL_DEFINITIONS:
+                if td["name"] in BrainAgentHandler._SDK_NATIVE_TOOLS:
+                    continue
+                if td["name"] not in engine.TOOL_DISPATCH:
+                    continue
+                desc = td["description"]
+                if isinstance(desc, tuple):
+                    desc = " ".join(desc)
+                tool_defs.append({
+                    "name": td["name"],
+                    "description": desc[:1000],
+                    "input_schema": td["input_schema"],
+                })
+
+            # Plan mode / workflow tool restrictions → SDK allowed_tools
+            allowed_tools = None
+            if chat_mode == "plan":
+                # Plan mode: read-only tools only
+                allowed_tools = ["Read", "Grep", "Glob", "WebSearch", "WebFetch",
+                                 "memory_recall", "memory_shared", "task_status",
+                                 "schedule_list", "schedule_history", "list_nodes",
+                                 "use_skill", "read_document", "code_graph_query"]
+            workflow_tools = getattr(engine._thread_local, 'workflow_allowed_tools', None)
+            if workflow_tools:
+                allowed_tools = list(workflow_tools)
+
+            server_port = server_config.get("port", 8420)
             payload = json.dumps({
                 "message": message,
                 "model": model,
                 "system_prompt": system_prompt,
+                "agent_id": session.agent_id,
+                "session_id": sid,
                 "provider_env": provider_env,
                 "sdk_cfg": dict(sdk_cfg),
                 "sdk_session_id": session.sdk_session_id,
                 "thinking_level": thinking_level,
                 "mcp_configs": mcp_configs,
+                "allowed_tools": allowed_tools,
                 "cwd": os.getcwd(),
+                "tool_defs": tool_defs,
+                "server_url": f"http://127.0.0.1:{server_port}",
             }).encode()
+
+            # Tracing spans
+            _request_span = None
+            if engine._trace_manager:
+                _request_span = engine._trace_manager.start_span(
+                    "request", message[:60] or "user message",
+                    agent=session.agent_id, model=model, session_id=sid)
 
             try:
                 # Proxy SSE from sidecar directly to client wfile
                 r = sdk_backend.proxy_sidecar_sse(payload, self.wfile, event_callback)
+
+                # Model fallback: if SDK returned error and no text, retry with fallback
+                if not r.get("text") and not "".join(_partial_reply).strip():
+                    fallback_model = agent_config.config.get("model_fallback")
+                    if fallback_model and fallback_model != model:
+                        fb_env = sdk_backend.build_provider_env(fallback_model)
+                        if fb_env:
+                            fb_payload = json.loads(payload)
+                            fb_payload["model"] = fallback_model
+                            fb_payload["provider_env"] = fb_env
+                            fb_payload = json.dumps(fb_payload).encode()
+                            try:
+                                self.wfile.write(f"event: fallback\ndata: {json.dumps({'from': model, 'to': fallback_model})}\n\n".encode())
+                                self.wfile.flush()
+                            except (BrokenPipeError, ConnectionResetError):
+                                pass
+                            r = sdk_backend.proxy_sidecar_sse(fb_payload, self.wfile, event_callback)
+                            model = fallback_model
             except Exception as e:
                 r = {}
                 try:
@@ -1826,6 +1988,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
                 # Post-response hooks (only for complete responses)
                 if not is_partial:
+                    # Memory summary refresh
                     try:
                         token_count = engine._estimate_conversation_tokens(session.messages)
                         if token_count >= getattr(session, '_last_summary_at', 0) + 5000 or \
@@ -1834,6 +1997,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                             engine.trigger_memory_summary_refresh(session.agent_id)
                     except Exception:
                         pass
+                    # Auto-memory extraction
                     if hasattr(engine, '_auto_memory_extract'):
                         try:
                             auto_cfg = agent_config.config.get("auto_memory", {})
@@ -1842,6 +2006,42 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                                                  args=(session.agent_id, message, reply[:1000]), daemon=True).start()
                         except Exception:
                             pass
+                    # Chat summary generation (for sidebar)
+                    try:
+                        if len(session.messages) >= 2 and not session.summary:
+                            threading.Thread(
+                                target=_generate_chat_summary, args=(session,),
+                                daemon=True, name=f"chat_summary_{sid}").start()
+                    except Exception:
+                        pass
+                    # Transcript indexing (for content search)
+                    try:
+                        msg_count = len(session.messages)
+                        if msg_count >= 4 and (msg_count % 4 == 0 or not os.path.isdir(
+                                os.path.join(engine.AGENTS_DIR, session.agent_id, "chats-indexed"))):
+                            threading.Thread(
+                                target=_index_chat_transcript, args=(session,),
+                                daemon=True, name=f"chat_index_{sid}").start()
+                    except Exception:
+                        pass
+
+            # End tracing span
+            if engine._trace_manager and _request_span:
+                engine._trace_manager.end_span(
+                    _request_span, status="ok" if reply else "error",
+                    tokens_in=r.get("tokens_in", 0), tokens_out=r.get("tokens_out", 0))
+
+            # Audit logging for tool calls
+            if engine._audit_logger and _partial_tools:
+                for tc in _partial_tools:
+                    try:
+                        engine._audit_logger.log("tool_call", {
+                            "agent": session.agent_id, "session": sid,
+                            "tool": tc.get("name"), "args": tc.get("args"),
+                            "result": tc.get("result", "")[:200], "sdk": True,
+                        })
+                    except Exception:
+                        pass
             return
 
         t = threading.Thread(target=worker, daemon=True)
@@ -5985,6 +6185,45 @@ def main():
 
     threading.Thread(target=_start_sdk_sidecar, daemon=True, name="sdk-sidecar-start").start()
     threading.Thread(target=_sdk_sidecar_watchdog, daemon=True, name="sdk-sidecar-watchdog").start()
+
+    # File change watcher for SDK — detect file writes that bypass _after_file_write
+    _file_mtimes: dict[str, float] = {}
+
+    def _file_change_watcher():
+        """Poll agent dirs for .md file changes and trigger post-write pipeline.
+        Catches files created/modified by the SDK subprocess which bypasses _after_file_write."""
+        import glob as _glob
+        # Initial scan
+        for agent_id in engine.list_agents():
+            agent_dir = os.path.join(engine.AGENTS_DIR, agent_id)
+            for path in _glob.glob(os.path.join(agent_dir, "*.md")):
+                try:
+                    _file_mtimes[path] = os.path.getmtime(path)
+                except OSError:
+                    pass
+        while True:
+            time.sleep(10)  # Check every 10 seconds
+            try:
+                for agent_id in engine.list_agents():
+                    agent_dir = os.path.join(engine.AGENTS_DIR, agent_id)
+                    for path in _glob.glob(os.path.join(agent_dir, "*.md")):
+                        try:
+                            mtime = os.path.getmtime(path)
+                        except OSError:
+                            continue
+                        prev = _file_mtimes.get(path)
+                        if prev is None or mtime > prev:
+                            _file_mtimes[path] = mtime
+                            if prev is not None:
+                                # File was modified — trigger post-write pipeline
+                                try:
+                                    engine._after_file_write(path, action="modified", agent_id=agent_id)
+                                except Exception:
+                                    pass
+            except Exception:
+                pass
+
+    threading.Thread(target=_file_change_watcher, daemon=True, name="file-change-watcher").start()
 
     # Start enabled messaging channels
     def _start_channels():
