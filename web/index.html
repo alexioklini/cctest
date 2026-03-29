@@ -39,89 +39,90 @@ tailwind.config = {
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap');
 
-  /* ── Light theme ── */
+  /* ── Light theme (Mission Control palette) ── */
   :root, [data-theme="light"] {
-    --color-base: #ffffff;
-    --color-surface: #f8f8f8;
-    --color-surface-light: #f0f0f0;
-    --color-surface-lighter: #e8e8e8;
-    --color-border: #dddddd;
-    --color-sidebar: #3f0e40;
-    --color-sidebar-gradient-start: #4a154b;
-    --color-sidebar-gradient-end: #350d36;
-    --color-text-primary: #1a1a24;
-    --color-text-secondary: #5a5a6e;
-    --color-text-muted: #8a8a9a;
-    --color-accent: #e85d04;
-    --color-agent: #7c3aed;
-    --color-model: #0284c7;
-    --color-code-bg: #f8f8f8;
-    --color-code-text: #1a1a24;
-    --color-user-border: rgba(232,93,4,0.4);
-    --color-user-shadow: rgba(232,93,4,0.06);
-    --color-assistant-border: rgba(124,58,237,0.3);
-    --color-inline-code-bg: #f0f0f0;
-    --color-tool-bg: rgba(235,235,240,0.7);
-    --color-tool-hover-bg: rgba(224,224,232,0.5);
-    --color-modal-bg: #ffffff;
-    --color-modal-overlay: rgba(0,0,0,0.25);
-    --color-toast-bg: rgba(255,255,255,0.95);
-    --color-header-gradient-1: rgba(124,58,237,0.04);
-    --color-header-gradient-2: rgba(232,93,4,0.03);
-    --color-header-gradient-3: rgba(2,132,199,0.02);
-    --color-input-shadow: rgba(0,0,0,0.06);
-    --color-scrollbar: #dddddd;
-    --color-scrollbar-hover: #b0b0be;
+    --color-base: #e5e8ed;
+    --color-surface: #f3f4f7;
+    --color-surface-light: #eceef2;
+    --color-surface-lighter: #e0e3e8;
+    --color-border: #d5d8de;
+    --color-sidebar: #090d19;
+    --color-sidebar-gradient-start: #0e1220;
+    --color-sidebar-gradient-end: #060a14;
+    --color-text-primary: #1a1c24;
+    --color-text-secondary: #5a5d66;
+    --color-text-muted: #8e9099;
+    --color-accent: #e87820;
+    --color-agent: #2864dc;
+    --color-model: #2ea060;
+    --color-code-bg: #f3f4f7;
+    --color-code-text: #1a1c24;
+    --color-user-border: rgba(232,120,32,0.3);
+    --color-user-shadow: rgba(232,120,32,0.06);
+    --color-assistant-border: rgba(40,100,220,0.25);
+    --color-inline-code-bg: #eceef2;
+    --color-tool-bg: rgba(220,224,230,0.6);
+    --color-tool-hover-bg: rgba(210,214,220,0.6);
+    --color-modal-bg: #f3f4f7;
+    --color-modal-overlay: rgba(9,13,25,0.4);
+    --color-toast-bg: rgba(243,244,247,0.97);
+    --color-header-gradient-1: rgba(40,100,220,0.03);
+    --color-header-gradient-2: rgba(232,120,32,0.02);
+    --color-header-gradient-3: rgba(46,160,96,0.02);
+    --color-input-shadow: rgba(9,13,25,0.06);
+    --color-scrollbar: #d0d3d8;
+    --color-scrollbar-hover: #b8bcc2;
     --noise-opacity: 0;
   }
 
-  /* ── Dark theme (default) ── */
+  /* ── Dark theme (Mission Control dark) ── */
   [data-theme="dark"] {
-    --color-base: #1a1d21;
-    --color-surface: #1a1d21;
-    --color-surface-light: #222529;
-    --color-surface-lighter: #2c2d31;
-    --color-border: #35363a;
-    --color-sidebar: #19171d;
-    --color-sidebar-gradient-start: #24182a;
-    --color-sidebar-gradient-end: #14171d;
-    --color-text-primary: #d1d2d3;
-    --color-text-secondary: #ababad;
-    --color-text-muted: #6b6c6f;
-    --color-accent: #e85d04;
-    --color-agent: #36c5f0;
-    --color-model: #2eb67d;
-    --color-code-bg: #1a1d21;
-    --color-code-text: #d1d2d3;
-    --color-user-border: rgba(232,93,4,0.3);
-    --color-user-shadow: rgba(0,0,0,0.2);
-    --color-assistant-border: rgba(54,197,240,0.3);
-    --color-inline-code-bg: #222529;
-    --color-tool-bg: rgba(34,37,41,0.7);
-    --color-tool-hover-bg: rgba(44,45,49,0.5);
-    --color-modal-bg: #1a1d21;
+    --color-base: #0f1218;
+    --color-surface: #141820;
+    --color-surface-light: #181c24;
+    --color-surface-lighter: #1e222c;
+    --color-border: #2a2e38;
+    --color-sidebar: #090d19;
+    --color-sidebar-gradient-start: #0e1220;
+    --color-sidebar-gradient-end: #060a14;
+    --color-text-primary: #d1d2d6;
+    --color-text-secondary: #9a9ca4;
+    --color-text-muted: #5e6068;
+    --color-accent: #e87820;
+    --color-agent: #4a90f0;
+    --color-model: #3cc07a;
+    --color-code-bg: #141820;
+    --color-code-text: #d1d2d6;
+    --color-user-border: rgba(232,120,32,0.3);
+    --color-user-shadow: rgba(0,0,0,0.3);
+    --color-assistant-border: rgba(74,144,240,0.25);
+    --color-inline-code-bg: #1e222c;
+    --color-tool-bg: rgba(24,28,36,0.8);
+    --color-tool-hover-bg: rgba(30,34,44,0.6);
+    --color-modal-bg: #181c24;
     --color-modal-overlay: rgba(0,0,0,0.7);
-    --color-toast-bg: rgba(26,29,33,0.95);
-    --color-header-gradient-1: rgba(54,197,240,0.06);
-    --color-header-gradient-2: rgba(232,93,4,0.04);
-    --color-header-gradient-3: rgba(46,182,125,0.03);
-    --color-input-shadow: rgba(0,0,0,0.2);
-    --color-scrollbar: #35363a;
-    --color-scrollbar-hover: #4a4b4f;
+    --color-toast-bg: rgba(20,24,32,0.95);
+    --color-header-gradient-1: rgba(74,144,240,0.04);
+    --color-header-gradient-2: rgba(232,120,32,0.03);
+    --color-header-gradient-3: rgba(60,192,122,0.02);
+    --color-input-shadow: rgba(0,0,0,0.3);
+    --color-scrollbar: #2a2e38;
+    --color-scrollbar-hover: #3a3e48;
     --noise-opacity: 0;
   }
 
   /* Light theme: purple sidebar with white text (Slack style) */
-  [data-theme="light"] #sidebar { color: #fff; }
-  [data-theme="light"] #sidebar .text-text-primary { color: #fff; }
-  [data-theme="light"] #sidebar .text-text-secondary { color: rgba(255,255,255,0.7); }
-  [data-theme="light"] #sidebar .text-text-muted { color: rgba(255,255,255,0.5); }
-  [data-theme="light"] #sidebar .sb-section-header { color: rgba(255,255,255,0.7); }
-  [data-theme="light"] #sidebar .sb-section-content { color: #fff; }
+  [data-theme="light"] #sidebar { color: rgba(255,255,255,0.85); }
+  [data-theme="light"] #sidebar .text-text-primary { color: rgba(255,255,255,0.85); }
+  [data-theme="light"] #sidebar .text-text-secondary { color: rgba(255,255,255,0.75); }
+  [data-theme="light"] #sidebar .text-text-muted { color: rgba(255,255,255,0.6); }
+  [data-theme="light"] #sidebar .sb-agent-name span[style*="color:var(--color-text-muted)"] { color: rgba(255,255,255,0.6) !important; }
+  [data-theme="light"] #sidebar .sb-section-header { color: rgba(255,255,255,0.75); }
+  [data-theme="light"] #sidebar .sb-section-content { color: rgba(255,255,255,0.85); }
   [data-theme="light"] #sidebar .border-border { border-color: rgba(255,255,255,0.15); }
   [data-theme="light"] #sidebar .bg-surface-light { background: rgba(255,255,255,0.1); }
   [data-theme="light"] #sidebar .sidebar-header { border-color: rgba(255,255,255,0.15); }
-  [data-theme="light"] #sidebar .sidebar-brand-text { color: #fff; }
+  [data-theme="light"] #sidebar .sidebar-brand-text { color: rgba(255,255,255,0.9); }
   [data-theme="light"] #sidebar .sb-footer button { color: rgba(255,255,255,0.7); }
   [data-theme="light"] #sidebar .sb-footer button:hover { color: #fff; }
   [data-theme="light"] #sidebar input { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.15); color: #fff; }
@@ -294,9 +295,9 @@ tailwind.config = {
     background: var(--color-sidebar-gradient-end, var(--color-sidebar)) !important;
     border-bottom: 1px solid rgba(255,255,255,0.1) !important;
   }
-  #chat-top-bar * { color: #fff; }
-  #chat-top-bar .text-text-muted { color: rgba(255,255,255,0.5); }
-  #chat-top-bar select { background: rgba(255,255,255,0.1); color: #fff; border-color: rgba(255,255,255,0.2); }
+  #chat-top-bar * { color: rgba(255,255,255,0.85); }
+  #chat-top-bar .text-text-muted { color: rgba(255,255,255,0.55); }
+  #chat-top-bar select { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); border-color: rgba(255,255,255,0.2); }
 
   /* Rounded corners — outer app frame */
   #app {
@@ -462,13 +463,13 @@ tailwind.config = {
 
   /* Buttons */
   .btn-primary {
-    background: #007a5a;
+    background: var(--color-sidebar, #090d19);
     color: #ffffff;
     font-weight: 600;
     transition: all 0.15s ease;
     box-shadow: none;
   }
-  .btn-primary:hover { background: #148567; box-shadow: none; transform: translateY(-1px); }
+  .btn-primary:hover { background: #141825; box-shadow: none; transform: translateY(-1px); }
   .btn-primary:active { transform: translateY(0); }
   .btn-secondary {
     background: var(--color-surface-light);
@@ -1333,7 +1334,7 @@ tailwind.config = {
   .sb-agent-item .sb-agent-name {
     font-family: 'Outfit', sans-serif;
     font-size: 14px;
-    font-weight: 500;
+    font-weight: 400;
     color: var(--color-text-primary);
     white-space: nowrap;
     overflow: hidden;
@@ -1389,7 +1390,7 @@ tailwind.config = {
   /* Team group in sidebar */
   .sb-team-group {
     margin: 6px 8px;
-    border: 1px solid var(--color-border);
+    border: none;
     border-radius: 8px;
     padding: 4px 0;
     background: color-mix(in srgb, var(--color-surface) 50%, transparent);
@@ -1413,10 +1414,9 @@ tailwind.config = {
   }
   /* Standalone separator */
   .sb-standalone-separator {
-    height: 1px;
-    background: var(--color-border);
-    margin: 6px 12px;
-    opacity: 0.5;
+    height: 0;
+    background: none;
+    margin: 2px 0;
   }
   #sidebar.collapsed .sb-team-group {
     border: none;
@@ -1531,9 +1531,9 @@ tailwind.config = {
 
   /* Sidebar divider */
   .sb-divider {
-    height: 1px;
-    background: var(--color-border);
-    margin: 4px 12px;
+    height: 0;
+    background: none;
+    margin: 2px 0;
   }
   #sidebar.collapsed .sb-divider {
     margin: 4px 6px;
@@ -1642,7 +1642,7 @@ tailwind.config = {
     justify-content: space-between;
     padding: 3px 10px;
     font-size: 8px;
-    font-weight: 700;
+    font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 1.2px;
     color: var(--color-text-muted);
@@ -2245,6 +2245,727 @@ tailwind.config = {
   @media (max-width: 768px) {
     #project-panel { display: none !important; }
   }
+
+  /* ── Mission Control / Cockpit ── */
+  /* Cockpit uses its own color palette matching the reference screenshot:
+     Dark navy top bar, light cool-gray body, white cards, specific accents */
+  .cockpit-root {
+    --cp-navy: #090d19;
+    --cp-navy-light: #141825;
+    --cp-body: #e5e8ed;
+    --cp-card: #f3f4f7;
+    --cp-card-white: #ffffff;
+    --cp-border: #d5d8de;
+    --cp-border-light: #e2e5ea;
+    --cp-text: #1a1c24;
+    --cp-text-secondary: #5a5d66;
+    --cp-text-muted: #8e9099;
+    --cp-accent: #e87820;
+    --cp-green: #2ea060;
+    --cp-purple: #6a50b4;
+    --cp-blue: #2864dc;
+    --cp-red: #dc3545;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    background: var(--cp-body);
+    overflow: hidden;
+    font-family: 'IBM Plex Sans', sans-serif;
+    color: var(--cp-text);
+  }
+  [data-theme="dark"] .cockpit-root {
+    --cp-body: #0f1218;
+    --cp-card: #181c24;
+    --cp-card-white: #1e222c;
+    --cp-border: #2a2e38;
+    --cp-border-light: #2a2e38;
+    --cp-text: #d1d2d6;
+    --cp-text-secondary: #9a9ca4;
+    --cp-text-muted: #5e6068;
+  }
+  #cockpit-top-bar {
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    height: 52px;
+    background: var(--cp-navy);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    flex-shrink: 0;
+    gap: 16px;
+  }
+  .cockpit-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  .cockpit-brand-icon {
+    width: 28px; height: 28px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #e87820, #f59e0b);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .cockpit-brand-title {
+    font-family: 'Outfit', sans-serif;
+    font-size: 16px;
+    font-weight: 700;
+    color: #ffffff;
+    letter-spacing: -0.3px;
+  }
+  .cockpit-tabs {
+    display: flex;
+    gap: 2px;
+    margin-left: 24px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 8px;
+    padding: 3px;
+  }
+  .cockpit-tab {
+    padding: 5px 14px;
+    font-size: 12px;
+    font-weight: 500;
+    font-family: 'IBM Plex Sans', sans-serif;
+    color: rgba(255,255,255,0.45);
+    border: none;
+    background: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .cockpit-tab:hover { color: rgba(255,255,255,0.8); }
+  .cockpit-tab.active {
+    background: var(--cp-accent);
+    color: #ffffff;
+    font-weight: 600;
+  }
+  .cockpit-status {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .cockpit-status-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .cockpit-status-badge.ok {
+    background: rgba(46,160,96,0.15);
+    color: var(--cp-green);
+    border: 1px solid rgba(46,160,96,0.3);
+  }
+  .cockpit-status-badge.error {
+    background: rgba(220,53,69,0.15);
+    color: var(--cp-red);
+    border: 1px solid rgba(220,53,69,0.3);
+  }
+  .cockpit-last-updated {
+    font-size: 10px;
+    color: rgba(255,255,255,0.35);
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .cockpit-footer-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 24px;
+    height: 32px;
+    border-top: 1px solid var(--cp-border);
+    background: var(--cp-card);
+    flex-shrink: 0;
+  }
+  .cockpit-footer-bar button {
+    background: none;
+    border: none;
+    color: var(--cp-text-muted);
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: 'IBM Plex Mono', monospace;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .cockpit-footer-bar button:hover {
+    color: var(--cp-text);
+    background: var(--cp-border-light);
+  }
+
+  #cockpit-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  #cockpit-body::-webkit-scrollbar { width: 6px; }
+  #cockpit-body::-webkit-scrollbar-thumb { background: var(--cp-border); border-radius: 3px; }
+
+  .cockpit-page-header {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .cockpit-page-title {
+    font-family: 'Outfit', sans-serif;
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--cp-text);
+  }
+  .cockpit-page-subtitle {
+    font-size: 13px;
+    color: var(--cp-text-muted);
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
+  .cockpit-section-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--cp-text-muted);
+    margin-bottom: 12px;
+  }
+
+  #cockpit-agent-cards {
+    display: flex;
+    gap: 16px;
+    overflow-x: auto;
+    padding-bottom: 8px;
+    flex-wrap: nowrap;
+  }
+  #cockpit-agent-cards::-webkit-scrollbar { height: 4px; }
+  #cockpit-agent-cards::-webkit-scrollbar-thumb { background: var(--cp-border); border-radius: 2px; }
+
+  .cockpit-card {
+    min-width: 340px;
+    max-width: 400px;
+    background: var(--cp-card-white);
+    border: 1px solid var(--cp-border-light);
+    border-radius: 12px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .cockpit-card:hover {
+    border-color: var(--cp-blue);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+  }
+  .cockpit-card-accent {
+    height: 4px;
+    flex-shrink: 0;
+  }
+  .cockpit-card-body {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .cockpit-card-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .cockpit-card-avatar {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border: 2px solid var(--cp-border-light);
+  }
+  .cockpit-card-avatar img,
+  .cockpit-card-avatar > div {
+    border-radius: 50% !important;
+  }
+  .cockpit-card-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .cockpit-card-name-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .cockpit-card-name {
+    font-family: 'Outfit', sans-serif;
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--cp-text);
+    line-height: 1.2;
+  }
+  .cockpit-card-agent-badge {
+    font-size: 9px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: var(--cp-navy);
+    color: #ffffff;
+    font-weight: 600;
+    font-family: 'IBM Plex Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .cockpit-card-subtitle {
+    font-size: 12px;
+    color: var(--cp-text-secondary);
+    margin-top: 2px;
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
+  .cockpit-card-chevron {
+    color: var(--cp-text-muted);
+    font-size: 18px;
+    flex-shrink: 0;
+    cursor: pointer;
+  }
+  .cockpit-card-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    border-top: 1px solid var(--cp-border-light);
+    font-size: 11px;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--cp-text-muted);
+  }
+  .cockpit-card-meta-label {
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    font-size: 10px;
+    color: var(--cp-text-muted);
+  }
+  .cockpit-card-meta-value {
+    color: var(--cp-text-secondary);
+  }
+  .cockpit-card-role {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(106,80,180,0.1);
+    color: var(--cp-purple);
+    font-weight: 500;
+    font-family: 'IBM Plex Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .cockpit-card-model {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(40,100,220,0.08);
+    color: var(--cp-blue);
+    font-weight: 500;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .cockpit-status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .cockpit-status-dot.live {
+    background: var(--cp-green);
+    box-shadow: 0 0 6px rgba(46,160,96,0.5);
+    animation: breathe 1.5s ease-in-out infinite;
+  }
+  .cockpit-status-dot.idle { background: var(--cp-text-muted); }
+  .cockpit-status-dot.error { background: var(--cp-red); box-shadow: 0 0 6px rgba(220,53,69,0.5); }
+  .cockpit-status-dot.paused { background: #e8a020; }
+
+  .cockpit-status-label {
+    font-size: 10px;
+    font-weight: 600;
+    font-family: 'IBM Plex Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+  .cockpit-status-label.live { color: var(--cp-green); background: rgba(46,160,96,0.1); }
+  .cockpit-status-label.idle { color: var(--cp-text-muted); background: var(--cp-card); }
+  .cockpit-status-label.error { color: var(--cp-red); background: rgba(220,53,69,0.1); }
+  .cockpit-status-label.paused { color: #e8a020; background: rgba(232,160,32,0.1); }
+
+  .cockpit-card-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 2px;
+  }
+  .cockpit-card-btn {
+    flex: 1;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--cp-border);
+    background: transparent;
+    color: var(--cp-text-secondary);
+    font-size: 11px;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+  }
+  .cockpit-card-btn:hover {
+    border-color: var(--cp-blue);
+    color: var(--cp-blue);
+    background: rgba(40,100,220,0.05);
+  }
+  .cockpit-card-btn.primary {
+    background: rgba(40,100,220,0.08);
+    border-color: rgba(40,100,220,0.25);
+    color: var(--cp-blue);
+  }
+  .cockpit-card-btn.primary:hover {
+    background: rgba(40,100,220,0.14);
+  }
+
+  .cockpit-card-section {
+    border-top: 1px solid var(--cp-border-light);
+    padding-top: 8px;
+  }
+  .cockpit-card-section-title {
+    font-size: 10px;
+    font-weight: 600;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--cp-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }
+  .cockpit-task-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 4px 0;
+    font-size: 11px;
+    color: var(--cp-text-secondary);
+    line-height: 1.4;
+  }
+  .cockpit-task-item .task-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-top: 5px;
+  }
+  .cockpit-task-item .task-dot.scheduled { background: var(--cp-blue); }
+  .cockpit-task-item .task-dot.running { background: var(--cp-green); animation: breathe 1.5s ease-in-out infinite; }
+  .cockpit-task-item .task-dot.completed { background: var(--cp-text-muted); }
+  .cockpit-task-text {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cockpit-task-time {
+    font-size: 10px;
+    color: var(--cp-text-muted);
+    font-family: 'IBM Plex Mono', monospace;
+    flex-shrink: 0;
+  }
+
+  .cockpit-project-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    color: var(--cp-text-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .cockpit-project-item:hover {
+    background: var(--cp-card);
+    color: var(--cp-text);
+  }
+
+  .cockpit-card-section div[style*="overflow-y"]::-webkit-scrollbar { width: 3px; }
+  .cockpit-card-section div[style*="overflow-y"]::-webkit-scrollbar-thumb { background: var(--cp-border); border-radius: 2px; }
+
+  .cockpit-task-item .cp-hover-actions,
+  .cockpit-project-item .cp-hover-actions {
+    display: none;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+    margin-left: 4px;
+  }
+  .cockpit-task-item:hover .cp-hover-actions,
+  .cockpit-project-item:hover .cp-hover-actions { display: flex; }
+  .cockpit-task-item:hover .cockpit-task-time { display: none; }
+  .cp-hover-btn {
+    width: 20px; height: 20px;
+    border: none;
+    background: none;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--cp-text-muted);
+    transition: all 0.1s;
+    padding: 0;
+  }
+  .cp-hover-btn:hover { background: var(--cp-border-light); color: var(--cp-text); }
+  .cp-hover-btn.danger:hover { background: rgba(220,53,69,0.1); color: var(--cp-red); }
+
+  .cockpit-ctx-bar {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--cp-border-light);
+    overflow: hidden;
+  }
+  .cockpit-ctx-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.3s;
+  }
+  .cockpit-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--cp-text-muted);
+    font-family: 'IBM Plex Mono', monospace;
+    border-top: 1px solid var(--cp-border-light);
+    padding-top: 8px;
+  }
+
+  /* Cost feed table */
+  #cockpit-cost-feed {
+    background: var(--cp-card-white);
+    border: 1px solid var(--cp-border-light);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .cockpit-cost-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 18px 12px;
+  }
+  .cockpit-cost-header-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .cockpit-cost-header-left svg { color: var(--cp-text-muted); }
+  .cockpit-cost-title {
+    font-family: 'Outfit', sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--cp-text);
+  }
+  .cockpit-cost-subtitle {
+    font-size: 11px;
+    color: var(--cp-text-muted);
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
+  #cockpit-cost-feed table { width: 100%; border-collapse: collapse; }
+  #cockpit-cost-feed th {
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-size: 10px;
+    font-weight: 600;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--cp-text-muted);
+    padding: 10px 18px;
+    text-align: left;
+    background: var(--cp-card);
+    border-bottom: 1px solid var(--cp-border-light);
+    border-top: 1px solid var(--cp-border-light);
+  }
+  #cockpit-cost-feed td {
+    padding: 10px 18px;
+    font-size: 13px;
+    color: var(--cp-text-secondary);
+    border-bottom: 1px solid var(--cp-border-light);
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
+  #cockpit-cost-feed tr:last-child td { border-bottom: none; }
+  #cockpit-cost-feed tr:hover td { background: var(--cp-card); }
+  #cockpit-cost-feed .cost-agent {
+    color: var(--cp-text);
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  #cockpit-cost-feed .cost-model { color: var(--cp-text-secondary); font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
+  #cockpit-cost-feed .cost-amount { color: var(--cp-green); font-family: 'IBM Plex Mono', monospace; font-weight: 600; }
+  .cost-tokens-up { color: var(--cp-green); font-size: 11px; }
+  .cost-tokens-down { color: var(--cp-accent); font-size: 11px; }
+
+  /* Full-screen modals (chat + project) */
+  .fullscreen-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    background: var(--cp-body, #e5e8ed);
+    display: flex;
+    flex-direction: column;
+    animation: cockpitModalIn 0.25s ease-out;
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
+  [data-theme="dark"] .fullscreen-modal {
+    background: #0f1218;
+  }
+  @keyframes cockpitModalIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .fullscreen-modal-header {
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    height: 52px;
+    background: var(--cp-navy, #090d19);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    flex-shrink: 0;
+    gap: 12px;
+  }
+  .fullscreen-modal-close {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px;
+    padding: 6px 12px;
+    color: rgba(255,255,255,0.7);
+    cursor: pointer;
+    font-size: 12px;
+    font-family: 'IBM Plex Sans', sans-serif;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.15s;
+  }
+  .fullscreen-modal-close:hover {
+    background: rgba(255,255,255,0.1);
+    color: #ffffff;
+  }
+  .fullscreen-modal-title {
+    font-family: 'Outfit', sans-serif;
+    font-size: 15px;
+    font-weight: 600;
+    color: #ffffff;
+  }
+  /* Chat modal inner styling */
+  .fullscreen-modal select {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: rgba(255,255,255,0.8);
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 11px;
+    font-family: 'IBM Plex Mono', monospace;
+    outline: none;
+  }
+  .fullscreen-modal select:focus { border-color: rgba(255,255,255,0.3); }
+  .fullscreen-modal select option { background: #1a1d24; color: #d1d2d6; }
+  .fullscreen-modal .cockpit-card-btn {
+    border-color: rgba(255,255,255,0.15);
+    color: rgba(255,255,255,0.7);
+    background: rgba(255,255,255,0.06);
+    flex: none;
+  }
+  .fullscreen-modal .cockpit-card-btn:hover {
+    background: rgba(255,255,255,0.1);
+    color: #ffffff;
+    border-color: rgba(255,255,255,0.25);
+  }
+  /* Chat content area inside modal — clean white/light card */
+  .fm-chat-wrap {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    margin: 12px 16px 0;
+    border-radius: 14px 14px 0 0;
+    background: var(--cp-card-white, #ffffff);
+    border: 1px solid var(--cp-border-light, #e2e5ea);
+    border-bottom: none;
+  }
+  [data-theme="dark"] .fm-chat-wrap {
+    background: #1a1d24;
+    border-color: #2a2e38;
+  }
+  .fm-chat-wrap #modal-chat-messages {
+    background: transparent;
+    color: var(--cp-text, #1a1c24);
+  }
+  [data-theme="dark"] .fm-chat-wrap #modal-chat-messages {
+    color: #d1d2d6;
+  }
+  .fm-chat-wrap .chat-input-wrapper {
+    background: var(--cp-card-white, #ffffff);
+    border: 1px solid var(--cp-border-light, #e2e5ea);
+    border-radius: 14px;
+  }
+  [data-theme="dark"] .fm-chat-wrap .chat-input-wrapper {
+    background: #1e222c;
+    border-color: #2a2e38;
+  }
+  .fm-chat-wrap textarea {
+    color: var(--cp-text, #1a1c24);
+  }
+  [data-theme="dark"] .fm-chat-wrap textarea {
+    color: #d1d2d6;
+  }
+  /* Spinner bar in modal */
+  .fullscreen-modal .fm-spinner-bar {
+    background: var(--cp-card, #f3f4f7);
+    border-bottom: 1px solid var(--cp-border-light, #e2e5ea);
+    color: var(--cp-text-secondary, #5a5d66);
+  }
+  [data-theme="dark"] .fullscreen-modal .fm-spinner-bar {
+    background: #181c24;
+    border-color: #2a2e38;
+  }
+  /* Modal status bar */
+  .fm-status-bar {
+    height: 28px;
+    background: var(--cp-card, #f3f4f7);
+    border-top: 1px solid var(--cp-border-light, #e2e5ea);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 10px;
+    font-size: 11px;
+    font-family: 'IBM Plex Mono', monospace;
+    flex-shrink: 0;
+  }
+  [data-theme="dark"] .fm-status-bar {
+    background: #141820;
+    border-color: #2a2e38;
+  }
+  .fm-status-bar .text-agent { color: var(--cp-blue, #2864dc); }
+  .fm-status-bar .text-model { color: var(--cp-green, #2ea060); }
+  .fm-status-bar .text-text-muted { color: var(--cp-text-muted, #8e9099); }
+  .fm-status-bar .mono { color: var(--cp-text-muted, #8e9099); }
+
+  @media (max-width: 768px) {
+    .cockpit-card { min-width: 280px; }
+    #cockpit-body { padding: 12px; }
+    #cockpit-top-bar { padding: 0 12px; }
+    .cockpit-tabs { display: none; }
+  }
 </style>
 </head>
 <body class="bg-base">
@@ -2280,7 +3001,57 @@ tailwind.config = {
 
 <div id="sidebar-backdrop" onclick="closeMobileSidebar()"></div>
 
-<div id="app" class="flex h-screen">
+<!-- ═══ MISSION CONTROL / COCKPIT (default main screen) ═══ -->
+<div id="cockpit" class="cockpit-root">
+  <header id="cockpit-top-bar">
+    <div class="cockpit-brand">
+      <div class="cockpit-brand-icon">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0f0f1a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a8 8 0 0 0-8 8c0 3 1.5 5 3 6.5V20h10v-3.5c1.5-1.5 3-3.5 3-6.5a8 8 0 0 0-8-8z"/><path d="M10 20v2h4v-2"/><path d="M9 10h.01M15 10h.01"/></svg>
+      </div>
+      <span class="cockpit-brand-title">Mission Control</span>
+    </div>
+    <nav class="cockpit-tabs" id="cockpit-tabs">
+      <button class="cockpit-tab active" data-tab="heartbeat" onclick="switchCockpitTab('heartbeat')">Heartbeat</button>
+      <button class="cockpit-tab" data-tab="costs" onclick="switchCockpitTab('costs')">Costs</button>
+    </nav>
+    <div class="cockpit-status">
+      <span class="cockpit-status-badge ok" id="cockpit-sys-status">
+        <span style="width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0"></span>
+        System Operational
+      </span>
+      <span class="cockpit-last-updated" id="cockpit-last-updated">Last updated just now</span>
+    </div>
+  </header>
+  <div id="cockpit-body">
+    <div>
+      <div class="cockpit-page-header">
+        <span class="cockpit-page-title">Heartbeat</span>
+        <span class="cockpit-page-subtitle">Live Agent &amp; LLM Sessions</span>
+      </div>
+      <div id="cockpit-agent-cards"></div>
+    </div>
+    <div>
+      <div id="cockpit-cost-feed"></div>
+    </div>
+  </div>
+  <div class="cockpit-footer-bar">
+    <button id="cockpit-theme-toggle" onclick="toggleTheme()" title="Toggle theme">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      Theme
+    </button>
+    <button onclick="openSettingsModal()" title="Server Settings">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Settings
+    </button>
+    <button onclick="openKnowledgeMap()" title="Knowledge Map">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><circle cx="6" cy="18" r="3"/><line x1="8.5" y1="7.5" x2="15.5" y2="16.5"/><line x1="15.5" y1="7.5" x2="8.5" y2="16.5"/></svg>
+      Graph
+    </button>
+    <span style="margin-left:auto;font-size:10px;color:var(--color-text-muted);font-family:'IBM Plex Mono',monospace" id="cockpit-server-url"></span>
+  </div>
+</div>
+
+<div id="app" class="flex h-screen" style="display:none">
   <!-- SIDEBAR -->
   <aside id="sidebar">
     <div class="sidebar-header">
@@ -2724,7 +3495,7 @@ class API {
     }
     API._abortController = new AbortController();
 
-    const body = { session_id: sessionId, message };
+    const body = { session_id: sessionId, message, interactive: true };
     if (model) body.model = model;
     if (planModeActive) body.mode = 'plan';
     if (thinkingLevel && thinkingLevel !== 'none') body.thinking = thinkingLevel;
@@ -2864,6 +3635,17 @@ class AppState {
     this.projectNotes = [];
     this.noteAiSessionId = null;
     this.noteSaveTimer = null;
+    // Cockpit state
+    this.mainView = 'cockpit'; // 'cockpit'
+    this.cockpitSchedules = [];
+    this.cockpitRunning = [];
+    this.cockpitCosts = {};
+    this.cockpitCostsDaily = [];
+    this.cockpitServices = {};
+    this.cockpitScheduleHistory = [];
+    this.chatModalAgent = null;   // agent ID for open chat modal
+    this.projectModalAgent = null;
+    this.projectModalProject = null;
   }
 
   get activeChat() {
@@ -3307,6 +4089,40 @@ function renderProjectTabs() {
   renderSessionBar();
 }
 
+// Session cache in sessionStorage for fast cockpit loads
+const _SESSION_CACHE_KEY = 'cp-sessions-cache';
+const _SESSION_CACHE_TTL = 60000; // 1 minute
+
+function _getSessionCache() {
+  try {
+    const raw = sessionStorage.getItem(_SESSION_CACHE_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw);
+  } catch { return {}; }
+}
+
+function _setSessionCache(agentName, sessions) {
+  try {
+    const cache = _getSessionCache();
+    cache[agentName] = { sessions, ts: Date.now() };
+    sessionStorage.setItem(_SESSION_CACHE_KEY, JSON.stringify(cache));
+  } catch {}
+}
+
+function _loadSessionsFromCache() {
+  const cache = _getSessionCache();
+  for (const [agentName, data] of Object.entries(cache)) {
+    if (!state.agentSessions[agentName]) {
+      state.agentSessions[agentName] = { sessions: [], showArchived: false, loaded: false };
+    }
+    if (!state.agentSessions[agentName].loaded && data.sessions) {
+      state.agentSessions[agentName].sessions = data.sessions;
+      state.agentSessions[agentName].loaded = true;
+      state.agentSessions[agentName]._fromCache = true;
+    }
+  }
+}
+
 async function loadAgentSessions(agentName) {
   const entry = state.agentSessions[agentName] || { sessions: [], showArchived: false, loaded: false };
   state.agentSessions[agentName] = entry;
@@ -3315,8 +4131,10 @@ async function loadAgentSessions(agentName) {
     const res = await API.getSessionsForAgent(agentName, status);
     entry.sessions = res.sessions || [];
     entry.loaded = true;
+    delete entry._fromCache;
+    _setSessionCache(agentName, entry.sessions);
   } catch {
-    entry.sessions = [];
+    entry.sessions = entry.sessions || [];
     entry.loaded = true;
   }
   if (state.activeAgentId === agentName) {
@@ -5133,6 +5951,142 @@ function renderToolsSummary(tools) {
   </div>`;
 }
 
+function showUserInputRequest(chat, toolInput) {
+  const questions = toolInput.questions || [];
+  if (!questions.length) return;
+
+  // Build a question card in the chat area
+  const container = document.createElement('div');
+  container.className = 'user-input-request';
+  container.style.cssText = 'margin:12px 0;padding:16px;border:1px solid var(--color-accent);border-radius:12px;background:rgba(124,58,237,0.06)';
+
+  const answers = {};
+
+  questions.forEach((q, qi) => {
+    const qDiv = document.createElement('div');
+    qDiv.style.cssText = qi > 0 ? 'margin-top:14px' : '';
+
+    const label = document.createElement('div');
+    label.style.cssText = 'font-weight:600;font-size:13px;margin-bottom:8px;color:var(--color-text-primary)';
+    label.textContent = q.question;
+    qDiv.appendChild(label);
+
+    const options = q.options || [];
+    const optGroup = document.createElement('div');
+    optGroup.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px';
+
+    options.forEach((opt, oi) => {
+      const btn = document.createElement('button');
+      btn.className = 'option-btn';
+      btn.style.cssText = 'padding:6px 12px;border:1px solid var(--color-border);border-radius:8px;background:var(--color-surface-light);font-size:12px;cursor:pointer;transition:all 0.15s;color:var(--color-text-primary)';
+      btn.innerHTML = `<strong>${opt.label}</strong>${opt.description ? `<br><span style="font-size:11px;opacity:0.7">${opt.description}</span>` : ''}`;
+      btn.onclick = () => {
+        // Toggle selection
+        if (q.multiSelect) {
+          btn.dataset.selected = btn.dataset.selected === '1' ? '' : '1';
+          btn.style.borderColor = btn.dataset.selected === '1' ? 'var(--color-accent)' : 'var(--color-border)';
+          btn.style.background = btn.dataset.selected === '1' ? 'rgba(124,58,237,0.12)' : 'var(--color-surface-light)';
+          // Collect all selected
+          const selected = [...optGroup.querySelectorAll('[data-selected="1"]')].map(b => b.querySelector('strong')?.textContent);
+          answers[q.question] = selected.join(', ');
+        } else {
+          optGroup.querySelectorAll('button').forEach(b => {
+            b.dataset.selected = '';
+            b.style.borderColor = 'var(--color-border)';
+            b.style.background = 'var(--color-surface-light)';
+          });
+          btn.dataset.selected = '1';
+          btn.style.borderColor = 'var(--color-accent)';
+          btn.style.background = 'rgba(124,58,237,0.12)';
+          answers[q.question] = opt.label;
+        }
+      };
+      optGroup.appendChild(btn);
+    });
+    qDiv.appendChild(optGroup);
+
+    // Free-text alternative
+    const freeInput = document.createElement('input');
+    freeInput.type = 'text';
+    freeInput.placeholder = 'Or type your own answer...';
+    freeInput.style.cssText = 'width:100%;padding:6px 10px;border:1px solid var(--color-border);border-radius:8px;background:var(--color-surface);font-size:12px;color:var(--color-text-primary);box-sizing:border-box';
+    freeInput.oninput = () => {
+      if (freeInput.value.trim()) {
+        answers[q.question] = freeInput.value.trim();
+        optGroup.querySelectorAll('button').forEach(b => {
+          b.dataset.selected = '';
+          b.style.borderColor = 'var(--color-border)';
+          b.style.background = 'var(--color-surface-light)';
+        });
+      }
+    };
+    qDiv.appendChild(freeInput);
+    container.appendChild(qDiv);
+  });
+
+  // Submit button
+  const submitRow = document.createElement('div');
+  submitRow.style.cssText = 'margin-top:12px;display:flex;gap:8px';
+  const submitBtn = document.createElement('button');
+  submitBtn.textContent = 'Submit';
+  submitBtn.style.cssText = 'padding:8px 20px;border:none;border-radius:8px;background:var(--color-accent);color:#fff;font-size:13px;font-weight:600;cursor:pointer';
+  submitBtn.onclick = async () => {
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Submitting...';
+    try {
+      await fetch(`${BASE_URL}/v1/chat/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: chat.sessionId, answer: answers }),
+      });
+      // Replace the question card with a summary of answers
+      container.innerHTML = '';
+      const summary = document.createElement('div');
+      summary.style.cssText = 'padding:8px 12px;border-radius:8px;background:var(--color-surface-light);font-size:12px;color:var(--color-text-secondary)';
+      const parts = Object.entries(answers).map(([q, a]) => `<strong>${q}</strong>: ${a}`);
+      summary.innerHTML = parts.join('<br>') || '<em>No answers provided</em>';
+      container.appendChild(summary);
+      container.style.borderColor = 'var(--color-border)';
+      container.style.background = 'var(--color-surface-light)';
+      const spinnerLabel = document.getElementById('spinner-label');
+      if (spinnerLabel) spinnerLabel.textContent = 'Thinking...';
+    } catch (e) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Submit';
+    }
+  };
+  submitRow.appendChild(submitBtn);
+
+  const skipBtn = document.createElement('button');
+  skipBtn.textContent = 'Skip';
+  skipBtn.style.cssText = 'padding:8px 16px;border:1px solid var(--color-border);border-radius:8px;background:var(--color-surface-light);color:var(--color-text-secondary);font-size:13px;cursor:pointer';
+  skipBtn.onclick = async () => {
+    await fetch(`${BASE_URL}/v1/chat/answer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: chat.sessionId, answer: {} }),
+    });
+    container.remove();
+    const spinnerLabel = document.getElementById('spinner-label');
+    if (spinnerLabel) spinnerLabel.textContent = 'Thinking...';
+  };
+  submitRow.appendChild(skipBtn);
+  container.appendChild(submitRow);
+
+  // Insert into chat messages area
+  const messagesEl = dom.chatMessages.querySelector('.max-w-\\[900px\\]') || dom.chatMessages;
+  messagesEl.appendChild(container);
+  container.scrollIntoView({ behavior: 'smooth', block: 'end' });
+
+  // Also show notification badge
+  const badge = document.getElementById('notif-badge');
+  if (badge) {
+    const current = parseInt(badge.textContent || '0');
+    badge.textContent = current + 1;
+    badge.classList.remove('hidden');
+  }
+}
+
 function updateStreamingMessage(chat) {
   const msg = chat.messages[chat.messages.length - 1];
   if (!msg || msg.role !== 'assistant') return;
@@ -5340,6 +6294,10 @@ async function sendMessage() {
         const inlineLabel = document.getElementById('thinking-status');
         if (inlineLabel) inlineLabel.textContent = `${d.name}${nodeTarget}... (${toolCallCount})`;
         updateStreamingMessage(chat);
+      },
+      user_input_needed: (d) => {
+        if (spinnerLabel) spinnerLabel.textContent = 'Waiting for your input...';
+        showUserInputRequest(chat, d.tool_input || {});
       },
       tool_result: (d) => {
         const tool = assistantMsg.tools.find(t => t.name === d.name && t.result === undefined);
@@ -8429,7 +9387,7 @@ async function toggleNotificationDropdown() {
 
   const dd = document.createElement('div');
   dd.id = 'notif-dropdown';
-  dd.style.cssText = 'position:fixed;bottom:50px;left:60px;width:360px;max-height:400px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.3);z-index:9999;padding:8px 0';
+  dd.style.cssText = 'position:fixed;bottom:44px;left:60px;width:360px;max-height:calc(100vh - 60px);overflow-y:auto;background:var(--color-surface);border:1px solid var(--color-border);border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.3);z-index:9999;padding:8px 0';
 
   const sevIcon = (s) => s === 'critical' || s === 'error' ? '<span style="color:#f87171">!!</span>' : s === 'warning' ? '<span style="color:#ff8700">!</span>' : '<span style="color:#5f87ff">i</span>';
   const timeAgo = (ts) => {
@@ -8441,20 +9399,20 @@ async function toggleNotificationDropdown() {
   };
 
   if (notifs.length === 0) {
-    dd.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-muted);font-size:12px">No notifications</div>';
+    dd.innerHTML = '<div style="padding:16px;text-align:center;color:var(--color-text-muted);font-size:12px">No notifications</div>';
   } else {
     dd.innerHTML = `
-      <div style="padding:8px 12px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
-        <span style="font-size:12px;font-weight:600;color:var(--text-primary)">Notifications</span>
-        <button onclick="dismissAllNotifications()" style="font-size:10px;color:var(--text-muted);background:none;border:none;cursor:pointer">Clear all</button>
+      <div style="padding:8px 12px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--color-border)">
+        <span style="font-size:12px;font-weight:600;color:var(--color-text-primary)">Notifications</span>
+        <button onclick="dismissAllNotifications()" style="font-size:10px;color:var(--color-text-muted);background:none;border:none;cursor:pointer">Clear all</button>
       </div>
       ${notifs.slice(0, 20).map(n => `
-        <div class="notif-item" style="padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;gap:8px;align-items:flex-start" onclick="dismissNotification('${esc(n.id)}', this)">
+        <div class="notif-item" style="padding:10px 12px;border-bottom:1px solid var(--color-border);cursor:pointer;display:flex;gap:8px;align-items:flex-start" onclick="dismissNotification('${esc(n.id)}', this)">
           <div style="font-size:12px;flex-shrink:0;margin-top:2px">${sevIcon(n.severity)}</div>
           <div style="flex:1;min-width:0">
-            <div style="font-size:11px;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(n.title)}</div>
-            <div style="font-size:10px;color:var(--text-muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${esc(n.message)}</div>
-            <div style="font-size:9px;color:var(--text-muted);margin-top:3px">${n.agent ? esc(n.agent) + ' · ' : ''}${timeAgo(n.created_at)}</div>
+            <div style="font-size:11px;font-weight:600;color:var(--color-text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(n.title)}</div>
+            <div style="font-size:10px;color:var(--color-text-muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${esc(n.message)}</div>
+            <div style="font-size:9px;color:var(--color-text-muted);margin-top:3px">${n.agent ? esc(n.agent) + ' · ' : ''}${timeAgo(n.created_at)}</div>
           </div>
         </div>
       `).join('')}
@@ -11181,19 +12139,21 @@ function toggleToolCalls() {
 }
 
 function updateToolToggleButton() {
-  const btn = document.getElementById('btn-toggle-tools');
-  if (!btn) return;
-  if (showToolCalls) {
-    btn.style.background = 'transparent';
-    btn.style.color = 'var(--text-secondary)';
-    btn.style.borderColor = 'var(--border)';
-    btn.title = 'Hide tool calls';
-  } else {
-    btn.style.background = 'var(--color-accent)';
-    btn.style.color = '#fff';
-    btn.style.borderColor = 'var(--color-accent)';
-    btn.title = 'Show tool calls';
-  }
+  const btns = [document.getElementById('btn-toggle-tools'), document.getElementById('modal-btn-toggle-tools')];
+  btns.forEach(btn => {
+    if (!btn) return;
+    if (showToolCalls) {
+      btn.style.background = 'transparent';
+      btn.style.color = 'var(--cp-text-secondary, var(--text-secondary))';
+      btn.style.borderColor = 'var(--cp-border, var(--border))';
+      btn.title = 'Hide tool calls';
+    } else {
+      btn.style.background = 'var(--color-accent)';
+      btn.style.color = '#fff';
+      btn.style.borderColor = 'var(--color-accent)';
+      btn.title = 'Show tool calls';
+    }
+  });
 }
 
 // ─── Plan Mode ──────────────────────────────────────────────
@@ -11205,50 +12165,59 @@ function cycleThinkingLevel() {
   showToast(`Thinking: ${thinkingLevel === 'none' ? 'off' : thinkingLevel}`);
 }
 function _updateThinkingButton() {
-  const btn = document.getElementById('btn-thinking');
-  const label = document.getElementById('thinking-level-label');
-  if (!btn) return;
-  if (thinkingLevel !== 'none') {
-    btn.style.background = _THINKING_COLORS[thinkingLevel];
-    btn.style.color = '#fff';
-    btn.style.borderColor = _THINKING_COLORS[thinkingLevel];
-  } else {
-    btn.style.background = 'transparent';
-    btn.style.color = 'var(--text-secondary)';
-    btn.style.borderColor = 'var(--border)';
-  }
-  if (label) label.textContent = _THINKING_LABELS[thinkingLevel];
+  const btns = [
+    [document.getElementById('btn-thinking'), document.getElementById('thinking-level-label')],
+    [document.getElementById('modal-btn-thinking'), document.getElementById('modal-thinking-level-label')],
+  ];
+  btns.forEach(([btn, label]) => {
+    if (!btn) return;
+    if (thinkingLevel !== 'none') {
+      btn.style.background = _THINKING_COLORS[thinkingLevel];
+      btn.style.color = '#fff';
+      btn.style.borderColor = _THINKING_COLORS[thinkingLevel];
+    } else {
+      btn.style.background = 'transparent';
+      btn.style.color = 'var(--cp-text-secondary, var(--text-secondary))';
+      btn.style.borderColor = 'var(--cp-border, var(--border))';
+    }
+    if (label) label.textContent = _THINKING_LABELS[thinkingLevel];
+  });
 }
 _updateThinkingButton(); // init on load
 
 function togglePlanMode() {
   planModeActive = !planModeActive;
-  const btn = document.getElementById('btn-plan-mode');
-  if (planModeActive) {
-    btn.style.background = '#3b82f6';
-    btn.style.color = '#fff';
-    btn.style.borderColor = '#3b82f6';
-    btn.textContent = 'Plan ON';
-    showToast('Plan mode ON — read-only tools only');
-  } else {
-    btn.style.background = 'transparent';
-    btn.style.color = 'var(--text-secondary)';
-    btn.style.borderColor = 'var(--border)';
-    btn.textContent = 'Plan';
-    showToast('Plan mode OFF');
-  }
+  const btns = [document.getElementById('btn-plan-mode'), document.getElementById('modal-btn-plan-mode')];
+  btns.forEach(btn => {
+    if (!btn) return;
+    if (planModeActive) {
+      btn.style.background = '#3b82f6';
+      btn.style.color = '#fff';
+      btn.style.borderColor = '#3b82f6';
+      btn.textContent = 'Plan ON';
+    } else {
+      btn.style.background = 'transparent';
+      btn.style.color = 'var(--cp-text-secondary, var(--text-secondary))';
+      btn.style.borderColor = 'var(--cp-border, var(--border))';
+      btn.textContent = 'Plan';
+    }
+  });
+  showToast(planModeActive ? 'Plan mode ON — read-only tools only' : 'Plan mode OFF');
 }
 
 // ─── LLM Refine ─────────────────────────────────────────────
 async function refineMessage() {
   const text = dom.chatInput.value.trim();
   if (!text) { showToast('Type something to refine'); return; }
-  const btn = document.getElementById('btn-refine');
-  const originalHtml = btn.innerHTML;
-  // Show loading indicator
-  btn.innerHTML = '<span style="animation:spin 1s linear infinite;display:inline-block">&#10227;</span>';
-  btn.disabled = true;
-  btn.style.opacity = '0.6';
+  // Find the refine button — in modal or original
+  const btn = document.getElementById('modal-btn-refine') || document.getElementById('btn-refine');
+  const originalHtml = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.innerHTML = '<span style="animation:spin 1s linear infinite;display:inline-block">&#10227;</span> Refining...';
+    btn.disabled = true;
+    btn.style.opacity = '0.7';
+    btn.style.color = 'var(--cp-accent, var(--color-accent))';
+  }
   try {
     const chat = state.agentChats[state.activeAgentId];
     const res = await API.post('/v1/refine', {
@@ -11259,7 +12228,6 @@ async function refineMessage() {
     });
     if (res.error) { showToast('Refine error: ' + res.error); return; }
     const refined = res.refined || text;
-    // Auto-replace input — no approval needed
     dom.chatInput.value = refined;
     dom.chatInput.style.height = 'auto';
     dom.chatInput.style.height = dom.chatInput.scrollHeight + 'px';
@@ -11267,9 +12235,12 @@ async function refineMessage() {
   } catch (e) {
     showToast('Refine failed: ' + e.message);
   } finally {
-    btn.innerHTML = originalHtml;
-    btn.disabled = false;
-    btn.style.opacity = '';
+    if (btn) {
+      btn.innerHTML = originalHtml;
+      btn.disabled = false;
+      btn.style.opacity = '';
+      btn.style.color = '';
+    }
   }
 }
 
@@ -12371,21 +13342,825 @@ window.channelAction = async function(action, chId) {
   } catch(e) { showToast(e.message, 'error'); }
 };
 
+// ─── MISSION CONTROL / COCKPIT ──────────────────────────────
+
+let _cockpitPollInterval = null;
+let _cockpitLastUpdatedTime = Date.now();
+
+async function loadCockpitData() {
+  try {
+    const [activity, schedules, running, costs, services, schedHist] = await Promise.allSettled([
+      API.get('/v1/agents/activity'),
+      API.getSchedule(),
+      API.get('/v1/schedule/running'),
+      API.getCosts(24),
+      API.get('/v1/services'),
+      API.post('/v1/schedule', { action: 'history', limit: 20 }).catch(() => ({ history: [] })),
+    ]);
+    if (activity.status === 'fulfilled') {
+      state.agentActivity = activity.value.activity || {};
+      // Also mark streaming chats as active
+      for (const [aid, chat] of Object.entries(state.agentChats)) {
+        if (chat.streaming && !state.agentActivity[aid]) state.agentActivity[aid] = ['chat'];
+        else if (chat.streaming && state.agentActivity[aid] && !state.agentActivity[aid].includes('chat')) state.agentActivity[aid].unshift('chat');
+      }
+    }
+    if (schedules.status === 'fulfilled') {
+      state.cockpitSchedules = schedules.value.schedules || [];
+      if (schedules.value.running) state.cockpitRunning = schedules.value.running;
+    }
+    if (running.status === 'fulfilled') state.cockpitRunning = running.value.running || [];
+    if (costs.status === 'fulfilled') state.cockpitCosts = costs.value;
+    if (services.status === 'fulfilled') state.cockpitServices = services.value;
+    if (schedHist.status === 'fulfilled') state.cockpitScheduleHistory = schedHist.value.history || [];
+    _cockpitLastUpdatedTime = Date.now();
+    // Also load projects for all agents
+    for (const a of state.agents) {
+      const name = getAgentName(a);
+      if (!state.agentProjects[name]) loadAgentProjects(name);
+    }
+  } catch (e) { console.error('Cockpit data load error:', e); }
+}
+
+function startCockpitPolling() {
+  if (_cockpitPollInterval) return;
+  _cockpitPollInterval = setInterval(async () => {
+    // Don't poll while chat is streaming — it floods the server and blocks SSE
+    const anyStreaming = Object.values(state.agentChats).some(c => c.streaming);
+    if (anyStreaming || document.getElementById('chat-modal')) return;
+    await loadCockpitData();
+    renderCockpit();
+  }, 10000);
+}
+
+function stopCockpitPolling() {
+  if (_cockpitPollInterval) { clearInterval(_cockpitPollInterval); _cockpitPollInterval = null; }
+}
+
+function switchCockpitTab(tab) {
+  document.querySelectorAll('.cockpit-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  renderCockpitBody(tab);
+}
+
+function renderCockpit() {
+  renderCockpitTopBar();
+  const activeTab = document.querySelector('.cockpit-tab.active');
+  renderCockpitBody(activeTab?.dataset.tab || 'heartbeat');
+}
+
+function renderCockpitTopBar() {
+  const svc = state.cockpitServices;
+  const statusEl = document.getElementById('cockpit-sys-status');
+  const updatedEl = document.getElementById('cockpit-last-updated');
+  const urlEl = document.getElementById('cockpit-server-url');
+  if (statusEl) {
+    const serverOk = svc.server?.status === 'running';
+    const qmdOk = svc.qmd?.status === 'running';
+    const allOk = serverOk;
+    statusEl.className = 'cockpit-status-badge ' + (allOk ? 'ok' : 'error');
+    statusEl.innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0"></span> ${allOk ? 'System Operational' : 'System Issue'}`;
+  }
+  if (updatedEl) {
+    const ago = Math.round((Date.now() - _cockpitLastUpdatedTime) / 1000);
+    updatedEl.textContent = ago < 5 ? 'Last updated just now' : `Updated ${ago}s ago`;
+  }
+  if (urlEl) urlEl.textContent = BASE_URL;
+}
+
+function renderCockpitBody(tab) {
+  if (tab === 'costs') {
+    renderCockpitCostsView();
+  } else {
+    renderCockpitAgentCards();
+    renderCockpitCostFeed();
+  }
+}
+
+function renderCockpitAgentCards() {
+  const container = document.getElementById('cockpit-agent-cards');
+  if (!container) return;
+  container.innerHTML = '';
+
+  // Use same ordering as sidebar: main first, then teams, then standalone
+  const agentMap = {};
+  (state.agents || []).forEach(a => { agentMap[getAgentName(a)] = a; });
+  const teamStruct = state.teamStructure || {};
+  const teams = teamStruct.teams || {};
+  const teamIds = Object.keys(teams);
+  const inTeam = new Set();
+  teamIds.forEach(tid => {
+    (teams[tid].members || []).forEach(m => inTeam.add(getAgentName(m)));
+  });
+
+  const ordered = [];
+  // 1. main first
+  if (agentMap['main']) ordered.push(agentMap['main']);
+  // 2. teams: head then members
+  teamIds.forEach(tid => {
+    const team = teams[tid];
+    const headId = team.head || '';
+    const members = (team.members || []).map(m => getAgentName(m));
+    const sorted = [headId, ...members.filter(m => m !== headId)].filter(Boolean);
+    sorted.forEach(mid => { if (agentMap[mid]) ordered.push(agentMap[mid]); });
+  });
+  // 3. standalone (not main, not in team)
+  (state.agents || []).forEach(a => {
+    const name = getAgentName(a);
+    if (name !== 'main' && !inTeam.has(name) && !ordered.includes(a)) ordered.push(a);
+  });
+
+  ordered.forEach(a => {
+    container.appendChild(buildCockpitAgentCard(a));
+  });
+}
+
+// Agent accent colors — deterministic per agent index
+const _CARD_ACCENTS = ['#2ea060', '#e87820', '#6a50b4', '#2864dc', '#dc3545', '#0891b2', '#d946ef', '#ca8a04'];
+
+function buildCockpitAgentCard(agent) {
+  const name = getAgentName(agent);
+  const displayName = getAgentDisplayName(agent) || name;
+  const model = getAgentModel(agent);
+  const avatarId = getAgentAvatar(agent);
+  const desc = getAgentDesc(agent);
+  const isPaused = getAgentPaused(agent);
+  const activity = (state.agentActivity || {})[name] || [];
+  const isStreaming = state.agentChats[name]?.streaming;
+  const isActive = activity.length > 0 || isStreaming;
+
+  // Determine status
+  let statusClass = 'idle', statusLabel = 'Idle';
+  if (isPaused) { statusClass = 'paused'; statusLabel = 'Paused'; }
+  else if (isActive) { statusClass = 'live'; statusLabel = 'Live'; }
+
+  // Agent accent color
+  const agentIdx = state.agents.indexOf(agent);
+  const accentColor = _CARD_ACCENTS[agentIdx % _CARD_ACCENTS.length];
+
+  // Get agent schedules
+  const agentSchedules = (state.cockpitSchedules || []).filter(s => s.agent === name);
+  const nextSchedules = agentSchedules.filter(s => s.enabled && s.next_run).sort((a, b) => (a.next_run || '').localeCompare(b.next_run || ''));
+  const agentRunning = (state.cockpitRunning || []).filter(r => r.agent === name);
+
+  // All sessions for scrollable list
+  const sessions = state.agentSessions[name]?.sessions || [];
+
+  // Active session ID
+  const activeSession = state.agentChats[name]?.sessionId;
+  const activeSessionShort = activeSession ? activeSession.substring(0, 10) : '';
+
+  // Projects
+  const projects = state.agentProjects[name] || [];
+
+  // Cost
+  const costData = (state.cockpitCosts?.by_agent || []).find(c => c.agent === name);
+  const cost = costData ? costData.cost : 0;
+
+  // Short model name
+  const shortModel = model ? model.replace(/^claude-/, '').replace(/^anthropic\//, '').substring(0, 28) : 'no model';
+
+  // Team info
+  const agentTeams = (agent.teams || []);
+  const isTeamHead = agent.is_team_head || false;
+  const teamBadge = agentTeams.length > 0
+    ? agentTeams.map(t => `<span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(46,160,96,0.1);color:var(--cp-green);font-weight:600;font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.3px">${isTeamHead ? 'HEAD' : ''} ${esc(t.team_name || '')}</span>`).join('')
+    : '';
+
+  const card = document.createElement('div');
+  card.className = 'cockpit-card';
+  card.innerHTML = `
+    <div class="cockpit-card-accent" style="background:${accentColor}"></div>
+    <div class="cockpit-card-body">
+      <div class="cockpit-card-header">
+        <div class="cockpit-card-avatar" style="border-color:${accentColor}">${renderAvatar(avatarId, 40)}</div>
+        <div class="cockpit-card-info">
+          <div class="cockpit-card-name-row">
+            <span class="cockpit-card-name">${esc(displayName)}</span>
+            <span class="cockpit-card-agent-badge">${esc(name)}</span>
+            ${teamBadge}
+          </div>
+          <div class="cockpit-card-subtitle">${esc(desc || name)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:5px">
+          <span class="cockpit-status-dot ${statusClass}"></span>
+          <span class="cockpit-status-label ${statusClass}">${statusLabel}</span>
+        </div>
+      </div>
+
+      <div class="cockpit-card-meta">
+        <span class="cockpit-card-meta-label">SESSION</span>
+        <span class="cockpit-card-meta-value">${activeSessionShort || '—'}</span>
+        <span style="flex:1"></span>
+        <span class="cockpit-card-meta-label">LLM</span>
+        <span class="cockpit-card-meta-value">${esc(shortModel)}</span>
+      </div>
+
+      <div class="cockpit-card-actions">
+        <button class="cockpit-card-btn primary" onclick="openChatModal('${esc(name)}')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          New Chat
+        </button>
+        <button class="cockpit-card-btn" onclick="openConfigModal('${esc(name)}')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09"/></svg>
+          Config
+        </button>
+      </div>
+
+      ${agentRunning.length > 0 ? `
+      <div class="cockpit-card-section">
+        <div class="cockpit-card-section-title">Current Action</div>
+        ${agentRunning.map(r => `
+          <div class="cockpit-task-item">
+            <span class="task-dot running"></span>
+            <span class="cockpit-task-text">${esc(r.task || r.name || 'Running...')}</span>
+            ${r.started_at ? `<span class="cockpit-task-time">${relativeTime(new Date(r.started_at).getTime()/1000)}</span>` : ''}
+          </div>
+        `).join('')}
+      </div>` : ''}
+
+      ${nextSchedules.length > 0 ? `
+      <div class="cockpit-card-section">
+        <div class="cockpit-card-section-title">Next Action</div>
+        ${nextSchedules.slice(0, 2).map(s => `
+          <div class="cockpit-task-item">
+            <span class="task-dot scheduled"></span>
+            <span class="cockpit-task-text">${esc(s.name)}</span>
+            <span class="cockpit-task-time">${s.next_run ? relativeTime(new Date(s.next_run).getTime()/1000) : ''}</span>
+          </div>
+        `).join('')}
+      </div>` : ''}
+
+      ${sessions.length > 0 ? `
+      <div class="cockpit-card-section">
+        <div class="cockpit-card-section-title">Past Actions <span style="font-weight:400;opacity:0.6">${sessions.length}</span></div>
+        <div style="max-height:140px;overflow-y:auto;margin-right:-4px;padding-right:4px">
+          ${sessions.map(s => `
+            <div class="cockpit-task-item" style="cursor:pointer" onclick="openChatModal('${esc(name)}', '${s.id}')">
+              <span class="task-dot completed"></span>
+              <span class="cockpit-task-text">${esc(s.title || s.summary || s.id.substring(0, 8))}</span>
+              <span class="cockpit-task-time">${s.last_active ? relativeTime(s.last_active) : ''}</span>
+              <span class="cp-hover-actions">
+                <button class="cp-hover-btn" title="Archive" onclick="event.stopPropagation();cpSessionAction('archive','${s.id}','${esc(name)}')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg></button>
+                <button class="cp-hover-btn danger" title="Delete" onclick="event.stopPropagation();cpSessionAction('delete','${s.id}','${esc(name)}')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+              </span>
+            </div>
+          `).join('')}
+        </div>
+      </div>` : ''}
+
+      ${projects.length > 0 ? `
+      <div class="cockpit-card-section">
+        <div class="cockpit-card-section-title">Projects <span style="font-weight:400;opacity:0.6">${projects.length}</span></div>
+        ${projects.map(p => `
+          <div class="cockpit-project-item" onclick="openProjectModal('${esc(name)}', '${esc(p.name)}')">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            <span style="flex:1">${esc(p.name)}</span>
+            ${p.document_count ? `<span style="font-size:9px;color:var(--cp-text-muted)">${p.document_count} docs</span>` : ''}
+            <span class="cp-hover-actions">
+              <button class="cp-hover-btn danger" title="Delete project" onclick="event.stopPropagation();cpDeleteProject('${esc(name)}','${esc(p.name)}')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+            </span>
+          </div>
+        `).join('')}
+      </div>` : ''}
+
+      <div class="cockpit-card-footer">
+        <span style="display:flex;align-items:center;gap:4px">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          Context Window
+        </span>
+        <span style="display:flex;align-items:center;gap:4px">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          Cost $${cost.toFixed(4)}
+        </span>
+      </div>
+      <div class="cockpit-ctx-bar">
+        <div class="cockpit-ctx-bar-fill" style="width:0%;background:${accentColor}"></div>
+      </div>
+    </div>
+  `;
+  return card;
+}
+
+function renderCockpitCostFeed() {
+  const container = document.getElementById('cockpit-cost-feed');
+  if (!container) return;
+  const costs = state.cockpitCosts;
+  const byAgent = costs?.by_agent || [];
+
+  if (byAgent.length === 0) {
+    container.innerHTML = `<div style="padding:20px;text-align:center;color:var(--cp-text-muted);font-size:12px">No cost data in last 24h</div>`;
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="cockpit-cost-header">
+      <div class="cockpit-cost-header-left">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        <div>
+          <div class="cockpit-cost-title">Token Cost Feed</div>
+          <div class="cockpit-cost-subtitle">Live usage and cost across all active LLM sessions</div>
+        </div>
+      </div>
+    </div>
+    <table>
+      <thead><tr>
+        <th>Agent</th>
+        <th>Calls</th>
+        <th>Tokens</th>
+        <th>Cost</th>
+        <th>Model</th>
+      </tr></thead>
+      <tbody>
+        ${byAgent.map((c, i) => {
+          const agentObj = state.agents.find(a => getAgentName(a) === c.agent);
+          const avatarId = agentObj ? getAgentAvatar(agentObj) : 'captain';
+          const agentModel = agentObj ? getAgentModel(agentObj) : '';
+          const shortModel = agentModel ? agentModel.replace(/^claude-/, '').replace(/^anthropic\//, '').substring(0, 20) : '';
+          return `<tr>
+            <td class="cost-agent">${renderAvatar(avatarId, 20)} ${esc(c.agent)}</td>
+            <td>${c.calls || 0}</td>
+            <td><span class="cost-tokens-up">&uarr; ${_fmtTokens(c.tokens_in || 0)}</span> <span class="cost-tokens-down">&darr; ${_fmtTokens(c.tokens_out || 0)}</span></td>
+            <td class="cost-amount">$${(c.cost || 0).toFixed(4)}</td>
+            <td class="cost-model">${esc(shortModel)}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderCockpitCostsView() {
+  const body = document.getElementById('cockpit-body');
+  if (!body) return;
+  // Replace the body content with a detailed costs view
+  const costs = state.cockpitCosts;
+  const byAgent = costs?.by_agent || [];
+  const byModel = costs?.by_model || [];
+  body.innerHTML = `
+    <div>
+      <div class="cockpit-section-title">Cost by Agent (24h)</div>
+      <div id="cockpit-cost-feed">
+        <table>
+          <thead><tr><th>Agent</th><th>Calls</th><th>Tokens In</th><th>Tokens Out</th><th>Cost</th></tr></thead>
+          <tbody>
+            ${byAgent.map(c => `<tr>
+              <td class="cost-agent">${esc(c.agent)}</td>
+              <td>${c.calls || 0}</td>
+              <td>${_fmtTokens(c.tokens_in || 0)}</td>
+              <td>${_fmtTokens(c.tokens_out || 0)}</td>
+              <td class="cost-amount">$${(c.cost || 0).toFixed(4)}</td>
+            </tr>`).join('')}
+            <tr style="border-top:2px solid var(--color-border)">
+              <td style="font-weight:600;color:var(--color-text-primary)">Total</td>
+              <td style="font-weight:600">${costs?.total_calls || 0}</td>
+              <td style="font-weight:600">${_fmtTokens(costs?.total_tokens_in || 0)}</td>
+              <td style="font-weight:600">${_fmtTokens(costs?.total_tokens_out || 0)}</td>
+              <td class="cost-amount" style="font-weight:700">$${(costs?.total_cost || 0).toFixed(4)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div>
+      <div class="cockpit-section-title">Cost by Model (24h)</div>
+      <div id="cockpit-cost-feed" style="margin-top:0">
+        <table>
+          <thead><tr><th>Model</th><th>Calls</th><th>Cost</th></tr></thead>
+          <tbody>
+            ${byModel.map(c => `<tr>
+              <td class="cost-model">${esc(c.model)}</td>
+              <td>${c.calls || 0}</td>
+              <td class="cost-amount">$${(c.cost || 0).toFixed(4)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+// ─── Chat Modal ─────────────────────────────────────────────
+
+let _savedDomRefs = null;
+
+function openChatModal(agentName, sessionId) {
+  // If chat modal already open, close it first
+  closeChatModal(true);
+
+  state.chatModalAgent = agentName;
+  stopCockpitPolling(); // Pause polling while chatting to avoid server flooding
+
+  // Select the agent (sets up state.agentChats etc)
+  state.activeAgentId = agentName;
+  if (!state.agentChats[agentName]) {
+    const model = getDefaultModel(agentName);
+    state.agentChats[agentName] = { sessionId: null, agent: agentName, model, messages: [], streaming: false, totalTokens: 0 };
+  }
+  if (!state.agentSessions[agentName]) {
+    state.agentSessions[agentName] = { sessions: [], showArchived: false, loaded: false };
+  }
+  if (!state.agentSessions[agentName].loaded) loadAgentSessions(agentName);
+  loadCustomCommands(agentName);
+  loadAgentProjects(agentName);
+
+  const agent = state.agents.find(a => getAgentName(a) === agentName);
+  const displayName = agent ? (getAgentDisplayName(agent) || agentName) : agentName;
+  const avatarId = agent ? getAgentAvatar(agent) : 'captain';
+
+  // Build modal
+  const modal = document.createElement('div');
+  modal.className = 'fullscreen-modal';
+  modal.id = 'chat-modal';
+
+  modal.innerHTML = `
+    <div class="fullscreen-modal-header">
+      <button class="fullscreen-modal-close" onclick="closeChatModal()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+        Back
+      </button>
+      <div style="flex-shrink:0">${renderAvatar(avatarId, 28)}</div>
+      <span class="fullscreen-modal-title">${esc(displayName)}</span>
+      <div style="flex:1"></div>
+      <select id="modal-model-selector"></select>
+      <button id="modal-btn-new-session" class="cockpit-card-btn" onclick="modalNewChat()" style="max-width:80px">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        New
+      </button>
+      <button id="modal-btn-stop" class="hidden cockpit-card-btn" onclick="stopStreaming()" style="max-width:80px;color:#f87171;border-color:rgba(248,113,113,0.3)">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="#f87171"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+        Stop
+      </button>
+    </div>
+    <div id="modal-spinner-bar" class="hidden fm-spinner-bar flex items-center gap-3 px-5 py-2" style="min-height:36px">
+      <div class="dot-pulse"><span></span><span></span><span></span></div>
+      <span id="modal-spinner-model" style="font-size:11px;color:var(--cp-accent,#e87820);font-family:'IBM Plex Mono',monospace;font-weight:500"></span>
+      <span id="modal-spinner-label" style="font-size:12px;color:var(--cp-text-muted,#8e9099);font-family:'Outfit',sans-serif">Thinking...</span>
+      <span id="modal-spinner-elapsed" style="font-size:10px;color:var(--cp-text-muted,#8e9099);font-family:'IBM Plex Mono',monospace;margin-left:auto"></span>
+    </div>
+    <div id="modal-project-context-bar" class="sb-project-context-bar" style="display:none"></div>
+    <div class="fm-chat-wrap">
+      <div id="modal-chat-messages" class="flex-1 overflow-y-auto px-6 py-4" style="font-family:'IBM Plex Sans',sans-serif">
+        <div class="flex items-center justify-center h-full" style="color:var(--cp-text-muted,#8e9099);font-size:13px;font-family:'IBM Plex Sans',sans-serif">Start a conversation</div>
+      </div>
+      <div id="modal-chat-input-area" class="flex-shrink-0 px-3 pb-3 pt-2" style="border-top:1px solid var(--cp-border-light,#e2e5ea)">
+        <div class="max-w-[900px] mx-auto" style="position:relative">
+          <div id="modal-slash-popup" class="slash-popup" style="display:none"></div>
+          <div id="modal-image-preview-area" class="flex gap-2 flex-wrap mb-1" style="display:none"></div>
+          <div class="chat-input-wrapper flex items-end gap-2 p-2">
+            <input type="file" id="modal-image-file-input" accept="image/png,image/jpeg,image/gif,image/webp" multiple style="display:none" onchange="handleImageFiles(this.files)">
+            <button title="Attach image" style="padding:6px 10px;border-radius:8px;border:1px solid var(--cp-border,#d5d8de);background:transparent;color:var(--cp-text-secondary,#5a5d66);cursor:pointer;align-self:flex-end" onclick="document.getElementById('modal-image-file-input').click()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+            <textarea id="modal-chat-input" class="flex-1 bg-transparent border-none px-3 py-2 text-sm focus:outline-none" rows="2" placeholder="Type a message... (Ctrl+Enter to send)" style="box-shadow:none !important;font-family:'IBM Plex Sans',sans-serif;color:var(--cp-text,#1a1c24)"></textarea>
+            <button id="modal-btn-thinking" title="Thinking level (click to cycle)" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--cp-border,#d5d8de);background:transparent;color:var(--cp-text-secondary,#5a5d66);cursor:pointer;white-space:nowrap;align-self:flex-end;font-family:'IBM Plex Sans',sans-serif" onclick="cycleThinkingLevel()"><span id="modal-thinking-level-label">${_THINKING_LABELS[thinkingLevel] || 'Think'}</span></button>
+            <button id="modal-btn-plan-mode" title="Toggle Plan Mode" style="padding:6px 10px;border-radius:8px;font-size:11px;border:1px solid var(--cp-border,#d5d8de);background:transparent;color:var(--cp-text-secondary,#5a5d66);cursor:pointer;white-space:nowrap;align-self:flex-end;font-family:'IBM Plex Sans',sans-serif" onclick="togglePlanMode()">Plan</button>
+            <button id="modal-btn-toggle-tools" title="Toggle tool call visibility" style="padding:6px 10px;border-radius:8px;border:1px solid var(--cp-border,#d5d8de);background:transparent;color:var(--cp-text-secondary,#5a5d66);cursor:pointer;white-space:nowrap;align-self:flex-end" onclick="toggleToolCalls()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></button>
+            <button id="modal-btn-refine" title="Refine message with AI" style="padding:6px 10px;border-radius:8px;border:1px solid var(--cp-border,#d5d8de);background:transparent;color:var(--cp-text-secondary,#5a5d66);cursor:pointer;white-space:nowrap;align-self:flex-end" onclick="refineMessage()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></button>
+            <button id="modal-btn-send" style="padding:8px 20px;border-radius:12px;border:none;background:var(--cp-navy,#090d19);color:#ffffff;font-size:13px;font-weight:600;font-family:'Outfit',sans-serif;cursor:pointer;display:flex;align-items:center;gap:6px;transition:opacity 0.15s;align-self:flex-end" onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'" onclick="sendMessage()">
+              Send
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <footer class="fm-status-bar">
+      <span id="modal-status-agent" class="text-agent font-medium"></span>
+      <span class="text-text-muted">|</span>
+      <span id="modal-status-model" class="text-model mono font-medium"></span>
+      <span class="text-text-muted">|</span>
+      <span id="modal-status-tokens" class="mono"></span>
+      <span id="modal-status-context" class="flex items-center gap-1.5" style="margin-left:auto">
+        <span id="modal-status-context-label" class="mono" style="font-size:10px"></span>
+      </span>
+    </footer>
+  `;
+
+  document.body.appendChild(modal);
+
+  // Save original dom refs and swap to modal elements
+  _savedDomRefs = {};
+  const swapMap = {
+    chatMessages: '#modal-chat-messages',
+    chatInput: '#modal-chat-input',
+    chatInputArea: '#modal-chat-input-area',
+    modelSelector: '#modal-model-selector',
+    btnSend: '#modal-btn-send',
+    btnStop: '#modal-btn-stop',
+    chatAgentName: null, // no agent name element in modal header — it's static
+    statusModel: '#modal-status-model',
+    statusAgent: '#modal-status-agent',
+    statusTokens: '#modal-status-tokens',
+    projectContextBar: '#modal-project-context-bar',
+  };
+
+  for (const [key, selector] of Object.entries(swapMap)) {
+    _savedDomRefs[key] = dom[key];
+    if (selector) dom[key] = document.querySelector(selector);
+  }
+
+  // Swap spinner IDs: remove from original, set on modal copies
+  const spinnerSwaps = [
+    ['chat-spinner-bar', 'modal-spinner-bar'],
+    ['spinner-label', 'modal-spinner-label'],
+    ['spinner-model', 'modal-spinner-model'],
+    ['spinner-elapsed', 'modal-spinner-elapsed'],
+  ];
+  _savedDomRefs._spinnerSwaps = [];
+  for (const [origId, modalId] of spinnerSwaps) {
+    const orig = document.getElementById(origId);
+    const modalEl = document.getElementById(modalId);
+    if (orig && modalEl) {
+      _savedDomRefs._spinnerSwaps.push({ orig, origId, modalEl, modalId });
+      orig.id = '_hidden_' + origId;
+      modalEl.id = origId;
+    }
+  }
+  // Also swap slash-popup ID
+  const origSlash = document.getElementById('slash-popup');
+  const modalSlash = document.getElementById('modal-slash-popup');
+  if (origSlash && modalSlash) {
+    _savedDomRefs._slashOrig = origSlash;
+    origSlash.id = '_hidden_slash-popup';
+    modalSlash.id = 'slash-popup';
+  }
+
+  // Populate model selector in modal
+  renderModelSelector();
+  // Set correct model
+  const chat = state.agentChats[agentName];
+  if (chat && chat.model && dom.modelSelector) {
+    dom.modelSelector.value = chat.model;
+  }
+
+  // Load session if provided
+  if (sessionId) {
+    window.loadSession(sessionId);
+  } else {
+    renderMessages();
+    updateChatArea();
+  }
+  updateStatusBar();
+
+  // Bind keyboard handlers to modal input
+  const modalInput = document.getElementById('modal-chat-input');
+  if (modalInput) {
+    modalInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+    modalInput.addEventListener('input', () => {
+      modalInput.style.height = 'auto';
+      modalInput.style.height = Math.min(modalInput.scrollHeight, 200) + 'px';
+    });
+    // Focus input
+    setTimeout(() => modalInput.focus(), 100);
+  }
+
+  // ESC to close (global handler)
+  modal._keyHandler = (e) => {
+    if (e.key === 'Escape' && !document.querySelector('.modal-overlay')) {
+      closeChatModal();
+    }
+  };
+  document.addEventListener('keydown', modal._keyHandler);
+}
+
+function closeChatModal(silent) {
+  const modal = document.getElementById('chat-modal');
+  if (!modal) return;
+
+  // Remove keyboard handler
+  if (modal._keyHandler) document.removeEventListener('keydown', modal._keyHandler);
+
+  // Restore dom refs
+  if (_savedDomRefs) {
+    // Restore spinner IDs
+    if (_savedDomRefs._spinnerSwaps) {
+      for (const s of _savedDomRefs._spinnerSwaps) {
+        s.orig.id = s.origId;
+      }
+    }
+    // Restore slash popup ID
+    if (_savedDomRefs._slashOrig) {
+      _savedDomRefs._slashOrig.id = 'slash-popup';
+    }
+    for (const [key, el] of Object.entries(_savedDomRefs)) {
+      if (key.startsWith('_')) continue;
+      dom[key] = el;
+    }
+    _savedDomRefs = null;
+  }
+
+  modal.remove();
+  state.chatModalAgent = null;
+
+  // Re-render cockpit cards and restart polling
+  if (!silent) {
+    loadCockpitData().then(() => renderCockpit());
+    startCockpitPolling();
+  }
+}
+
+function modalNewChat() {
+  const agentId = state.activeAgentId;
+  if (!agentId) return;
+  const model = getDefaultModel(agentId);
+  state.agentChats[agentId] = { sessionId: null, agent: agentId, model, messages: [], streaming: false, totalTokens: 0 };
+  state.currentProject = null;
+  renderMessages();
+  updateChatArea();
+  updateStatusBar();
+  const input = document.getElementById('modal-chat-input');
+  if (input) { input.value = ''; input.focus(); }
+}
+
+function stopStreaming() {
+  if (API._abortController) {
+    try { API._abortController.abort(); } catch {}
+  }
+}
+
+async function cpSessionAction(action, sessionId, agentName) {
+  if (action === 'delete' && !confirm('Permanently delete this session?')) return;
+  try {
+    await API.manageSession({ action, session_id: sessionId });
+    showToast(action === 'delete' ? 'Session deleted' : 'Session archived');
+    // Reload sessions for this agent and re-render
+    await loadAgentSessions(agentName);
+    renderCockpitAgentCards();
+  } catch (e) {
+    showToast('Error: ' + e.message, true);
+  }
+}
+
+async function cpDeleteProject(agentName, projectName) {
+  if (!confirm(`Delete project "${projectName}"? This will remove the project and all its documents.`)) return;
+  try {
+    await API.post(`/v1/agents/${encodeURIComponent(agentName)}/projects`, { action: 'delete', name: projectName });
+    showToast(`Project "${projectName}" deleted`);
+    await loadAgentProjects(agentName);
+    renderCockpitAgentCards();
+  } catch (e) {
+    showToast('Error: ' + e.message, true);
+  }
+}
+
+// ─── Project Modal ──────────────────────────────────────────
+
+let _savedProjectDomRefs = null;
+
+function openProjectModal(agentName, projectName) {
+  closeProjectModal(true);
+
+  state.projectModalAgent = agentName;
+  state.projectModalProject = projectName;
+  state.activeAgentId = agentName;
+  state.currentProject = projectName;
+
+  const modal = document.createElement('div');
+  modal.className = 'fullscreen-modal';
+  modal.id = 'project-modal';
+  modal.style.zIndex = '58';
+
+  modal.innerHTML = `
+    <div class="fullscreen-modal-header">
+      <button class="fullscreen-modal-close" onclick="closeProjectModal()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+        Back
+      </button>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--color-agent)" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      <span class="fullscreen-modal-title">${esc(projectName)}</span>
+      <span style="font-size:11px;color:var(--color-text-muted);font-family:'IBM Plex Mono',monospace">@ ${esc(agentName)}</span>
+      <div style="flex:1"></div>
+      <button class="cockpit-card-btn" onclick="openChatModal('${esc(agentName)}')" style="max-width:120px">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Chat in Project
+      </button>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:20px;max-width:900px;margin:0 auto;width:100%">
+      <div class="pp-body">
+        <div class="pp-section" data-section="chats">
+          <div class="pp-section-header" onclick="togglePpSection('chats')">
+            <span class="pp-chevron">&#9660;</span> Chats <span class="pp-section-count" id="modal-pp-count-chats"></span>
+            <button class="pp-add-btn" onclick="event.stopPropagation();newProjectChat('${esc(projectName)}')">+</button>
+          </div>
+          <div class="pp-section-content" id="modal-pp-chats"></div>
+        </div>
+        <div class="pp-section" data-section="notes">
+          <div class="pp-section-header" onclick="togglePpSection('notes')">
+            <span class="pp-chevron">&#9660;</span> Notes <span class="pp-section-count" id="modal-pp-count-notes"></span>
+            <button class="pp-add-btn" onclick="event.stopPropagation();createNewNote()">+</button>
+          </div>
+          <div class="pp-section-content" id="modal-pp-notes"></div>
+        </div>
+        <div class="pp-section" data-section="documents">
+          <div class="pp-section-header" onclick="togglePpSection('documents')">
+            <span class="pp-chevron">&#9660;</span> Documents <span class="pp-section-count" id="modal-pp-count-documents"></span>
+            <button class="pp-add-btn" onclick="event.stopPropagation();showIngestDialog('${esc(agentName)}','${esc(projectName)}')" title="Ingest document">+</button>
+          </div>
+          <div class="pp-section-content" id="modal-pp-documents"></div>
+        </div>
+        <div class="pp-section" data-section="attachments">
+          <div class="pp-section-header" onclick="togglePpSection('attachments')">
+            <span class="pp-chevron">&#9660;</span> Attachments <span class="pp-section-count" id="modal-pp-count-attachments"></span>
+          </div>
+          <div class="pp-section-content" id="modal-pp-attachments"></div>
+        </div>
+        <div class="pp-section" data-section="folders">
+          <div class="pp-section-header" onclick="togglePpSection('folders')">
+            <span class="pp-chevron">&#9660;</span> Folders <span class="pp-section-count" id="modal-pp-count-folders"></span>
+            <button class="pp-add-btn" onclick="event.stopPropagation();ppAddWatchFolder()" title="Add watched folder">+</button>
+          </div>
+          <div class="pp-section-content" id="modal-pp-folders"></div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  // Swap project panel dom refs to modal
+  _savedProjectDomRefs = {};
+  const ppSwapMap = {
+    ppChats: '#modal-pp-chats',
+    ppNotes: '#modal-pp-notes',
+    ppDocuments: '#modal-pp-documents',
+    ppAttachments: '#modal-pp-attachments',
+    ppFolders: '#modal-pp-folders',
+  };
+  for (const [key, selector] of Object.entries(ppSwapMap)) {
+    _savedProjectDomRefs[key] = dom[key];
+    dom[key] = document.querySelector(selector);
+  }
+
+  // Render project content
+  renderProjectPanel();
+
+  // ESC to close
+  modal._keyHandler = (e) => {
+    if (e.key === 'Escape' && !document.querySelector('.modal-overlay')) closeProjectModal();
+  };
+  document.addEventListener('keydown', modal._keyHandler);
+}
+
+function closeProjectModal(silent) {
+  const modal = document.getElementById('project-modal');
+  if (!modal) return;
+  if (modal._keyHandler) document.removeEventListener('keydown', modal._keyHandler);
+
+  if (_savedProjectDomRefs) {
+    for (const [key, el] of Object.entries(_savedProjectDomRefs)) {
+      dom[key] = el;
+    }
+    _savedProjectDomRefs = null;
+  }
+
+  modal.remove();
+  state.projectModalAgent = null;
+  state.projectModalProject = null;
+  if (!silent) renderCockpit();
+}
+
 // ─── Initialization ─────────────────────────────────────────
 (async function init() {
   await loadInitialData();
   updateToolToggleButton();
   startNotifPolling();
+
+  // Load cockpit data and render — use cached sessions for instant display
+  _loadSessionsFromCache();
+  await loadCockpitData();
+  renderCockpit();
+  startCockpitPolling();
+
+  // Refresh sessions for all agents in background (staggered to avoid flooding)
+  (async () => {
+    const agents = state.agents || [];
+    for (let i = 0; i < agents.length; i++) {
+      const name = getAgentName(agents[i]);
+      if (!state.agentSessions[name]) {
+        state.agentSessions[name] = { sessions: [], showArchived: false, loaded: false };
+      }
+      await loadAgentSessions(name);
+      // Re-render cards after each agent loads so they progressively populate
+      if (document.getElementById('cockpit') && !document.getElementById('chat-modal')) {
+        renderCockpitAgentCards();
+      }
+    }
+  })();
+
   setInterval(async () => {
     await checkConnection();
   }, 30000);
-  // Poll agent activity every 3 seconds for live status
+  // Poll agent activity every 5 seconds for live status (skip during streaming)
   setInterval(async () => {
+    const anyStreaming = Object.values(state.agentChats).some(c => c.streaming);
+    if (anyStreaming) return; // Don't poll during streaming — preserves SSE bandwidth
     try {
       const res = await API.get('/v1/agents/activity');
       const prev = JSON.stringify(state.agentActivity);
       state.agentActivity = res.activity || {};
-      // Also mark streaming chats as active
       for (const [aid, chat] of Object.entries(state.agentChats)) {
         if (chat.streaming && !state.agentActivity[aid]) {
           state.agentActivity[aid] = ['chat'];
@@ -12395,9 +14170,10 @@ window.channelAction = async function(action, chId) {
       }
       if (JSON.stringify(state.agentActivity) !== prev) {
         updateAgentActivityVisuals();
+        if (!document.getElementById('chat-modal')) renderCockpitAgentCards();
       }
     } catch {}
-  }, 3000);
+  }, 5000);
 })();
 
 // ─── KNOWLEDGE MAP ─────────────────────────────────────────

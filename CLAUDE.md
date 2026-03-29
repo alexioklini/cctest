@@ -33,8 +33,26 @@ brain.py (gateway)
   │   └── Collections: one per agent → agents/<name>/*.md
   ├── tui.py (terminal client)
   ├── telegram.py (Telegram client)
-  └── web/index.html (browser client)
+  └── web/index.html (browser client — Mission Control cockpit)
 ```
+
+### Web UI (Mission Control Cockpit)
+
+The web UI uses a dashboard-first architecture with full-screen modal overlays:
+
+- **Cockpit** (`#cockpit`): default main screen with agent cards, cost feed, system status
+- **Chat modal** (`.fullscreen-modal#chat-modal`): full-screen overlay for conversations
+- **Project modal** (`.fullscreen-modal#project-modal`): full-screen overlay for project management
+- **Config/Settings modals** (`.modal-overlay`): standard overlays that stack on top
+
+Key patterns:
+- Cockpit has its own CSS custom properties (`--cp-*`) for consistent theming
+- Chat modal uses DOM ref swapping (`_savedDomRefs`) — saves original `dom.*` refs, reassigns to modal elements, restores on close
+- Spinner element IDs are swapped at open/close so `sendMessage()` getElementById calls resolve correctly
+- Session cache in `sessionStorage` for instant cockpit loads; background refresh updates progressively
+- Cockpit polling (10s) pauses while chat modal is open to avoid server flooding during SSE streaming
+- Agent card ordering follows team hierarchy: main → team heads + members → standalone
+- `_CARD_ACCENTS` array assigns deterministic colors per agent index
 
 ### Agent SDK (Agentic Loop)
 

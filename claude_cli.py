@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "5.1.0"
-VERSION_DATE = "2026-03-28"
+VERSION = "5.2.0"
+VERSION_DATE = "2026-03-29"
 CHANGELOG = [
+    ("5.2.0", "2026-03-29", "Mission Control cockpit — the web UI is now a dashboard-first design inspired by mission control interfaces. Agent cards show live status, model, schedules, past actions (scrollable), projects, and cost. Chat and project views are full-screen modals with maximum screen space. Token Cost Feed table with per-agent breakdown. Consistent color palette (dark navy header, light cards, green/orange/purple accents) across cockpit, chat modal, config dialogs, and settings. Session cache for instant cockpit loads. Hover actions for archive/delete on sessions and projects. Team badges on agent cards. Agent ordering matches team hierarchy (main → teams → standalone). All chat input controls (attach, think, plan, tools toggle, refine) available in modal."),
     ("5.1.0", "2026-03-28", "Real-time streaming + Claude Code skills. Sidecar rewritten as REST API (POST /query, GET /events/{id}) — decouples event production from consumption for true token-by-token streaming. MCP tools served via /mcp JSON-RPC endpoint on the server. Hooks moved server-side into /mcp tools/call handler (SDK hook registration was the root cause of streaming buffering). Claude Code plugin integration: scan, browse, install, and toggle 121 CC plugins per agent via GUI. SDK integration audited against official docs: @tool decorator, allowed_tools wildcards, correct hook signatures."),
     ("5.0.0", "2026-03-28", "Full SDK migration complete — closed all remaining gaps from the Agent SDK transition. HTTP MCP server for 24 custom tools, chat summary + transcript indexing for SDK path, file change watcher, rate limiting + model fallback, trace spans + audit logging, all background tasks route through SDK, TUI + CLI one-shot + scheduled tasks route through sidecar with graceful direct-API fallback."),
     ("4.5.0", "2026-03-27", "Agent SDK integration — all agents now use the Anthropic Agent SDK (Claude Code) as the agentic loop backend. Multi-provider support: Claude via CLIProxyAPI (Max subscription), MiniMax, oMLX local models, and Gemini via CLIProxyAPI. Real-time token streaming via a lean sidecar process. SDK badge in status bar and message footers. Provider-aware env var routing. System prompt extracted into reusable _build_system_prompt()."),
