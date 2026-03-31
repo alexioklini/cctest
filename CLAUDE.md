@@ -58,6 +58,25 @@ Key patterns:
 - Agent quick-switch buttons below composer on welcome view
 - Streaming uses raw socket SSE for unbuffered token-by-token display
 - `renderStreamingMessage()` updates in-place during streaming; `renderMessages()` for full re-render
+- Artifact panel: resizable right panel (`#artifact-panel`) for viewing generated files with type-aware rendering
+
+### Artifacts
+
+Files generated during chat are treated as artifacts when written to `agents/<name>/artifacts/`.
+
+- **Location-based promotion**: any file under `artifacts/` = artifact; everything else = regular file
+- **Session-scoped folders**: `agents/<name>/artifacts/<date>_<session_prefix>/`
+- **Content snapshots**: each write/edit creates a version in SQLite `artifact_versions` table (content blob, capped at 5MB)
+- **No memory/KG integration**: artifacts excluded from QMD indexing and entity extraction
+- **Default write path**: `write_file` with relative path defaults to agent's artifacts session folder
+- **SSE event**: `artifact_updated` (enriched `file_created` with `artifact_id`, `artifact_version`, `artifact_type`)
+- **DB tables**: `artifacts` (id, session_id, agent_id, name, path, type) + `artifact_versions` (content blob, version, size, action)
+- **API**: `GET /v1/artifacts?session_id=X`, `GET /v1/artifacts/<id>/content?version=N`, `GET /v1/artifacts/<id>/download?version=N`
+- **Panel UI**: resizable right panel with version selector, type-aware rendering (code=highlight.js, html=iframe, svg=inline, image=img, markdown=rendered), copy/download/source-toggle actions
+- **Artifact cards**: in chat messages, artifact files show with coral border and monitor icon, click opens panel instead of preview modal
+- **Artifacts browse**: sidebar nav item → full-page view with type filter tabs (All/Code/HTML/Documents/Images/Markdown), agent filter chips, card grid with content previews
+- **Browse API**: `GET /v1/artifacts/browse?agent_id=X&limit=N` — returns all artifacts across sessions with text previews
+- **Click-through**: clicking a card in browse view opens the source chat session + artifact panel
 
 ### Agent SDK (Agentic Loop)
 

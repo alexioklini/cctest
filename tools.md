@@ -67,6 +67,7 @@ Update this file to teach the agent new patterns and fix recurring mistakes.
 - Creates parent directories automatically
 - Overwrites without confirmation — be sure this is intended
 - For small changes to existing files, prefer `edit_file` over `write_file`
+- **Artifacts**: When creating files for the user (documents, code, reports, visualizations, etc.), use a relative path like `report.xlsx` or `script.py`. The system automatically places it in your artifacts folder for the current session. Use absolute paths only when writing to a specific location outside your artifacts folder.
 
 ---
 

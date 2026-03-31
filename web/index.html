@@ -905,6 +905,229 @@ textarea { resize: none; }
 .fa-badge.created { background: rgba(22,163,74,0.1); color: var(--success); }
 .fa-badge.modified { background: rgba(44,132,219,0.1); color: var(--accent-blue); }
 
+/* Artifact card indicator */
+.file-attachment-card.artifact-card { border-color: var(--accent-brand); border-style: solid; }
+.file-attachment-card.artifact-card:hover { border-color: var(--accent-brand-hover); }
+.fa-artifact-indicator { color: var(--accent-brand); font-size: 12px; margin-left: 2px; }
+
+/* ═══ Artifact Panel ═══ */
+#artifact-panel {
+  display: none;
+  flex-direction: column;
+  width: 480px;
+  min-width: 320px;
+  max-width: 800px;
+  height: 100%;
+  background: var(--bg-000);
+  border-left: 1px solid var(--border-200);
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+#artifact-panel.open { display: flex; }
+
+.artifact-resize-handle {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 10;
+  transition: background 0.15s;
+}
+.artifact-resize-handle:hover,
+.artifact-resize-handle.dragging {
+  background: var(--accent-brand);
+  opacity: 0.3;
+  border-radius: 3px;
+}
+
+.artifact-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--border-100);
+  flex-shrink: 0;
+  background: var(--bg-000);
+}
+.artifact-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+.artifact-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.artifact-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-100);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.artifact-list-btn,
+.artifact-close-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--text-400);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.artifact-list-btn:hover,
+.artifact-close-btn:hover {
+  background: var(--bg-200);
+  color: var(--text-200);
+}
+.artifact-version-select {
+  padding: 4px 24px 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-200);
+  background: var(--bg-000);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-300);
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' fill='%2373726c' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.artifact-version-select:focus { border-color: var(--accent-brand); outline: none; }
+
+.artifact-content {
+  flex: 1;
+  overflow: auto;
+  background: var(--bg-000);
+}
+.artifact-content iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+.artifact-content img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 24px auto;
+}
+.artifact-content .artifact-code {
+  margin: 0;
+  padding: 16px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow: auto;
+  height: 100%;
+  background: var(--code-bg);
+  color: var(--code-text);
+}
+.artifact-content .artifact-markdown {
+  padding: 24px;
+}
+
+.artifact-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-100);
+  flex-shrink: 0;
+  background: var(--bg-000);
+}
+.artifact-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-300);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.artifact-action-btn:hover {
+  background: var(--bg-200);
+  color: var(--text-100);
+}
+.artifact-action-btn.active {
+  background: var(--bg-300);
+  color: var(--text-100);
+}
+
+/* Artifact list view inside panel */
+.artifact-list {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.artifact-list-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--bg-100);
+  border: 1px solid var(--border-100);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.artifact-list-card:hover {
+  border-color: var(--border-300);
+  background: var(--bg-200);
+}
+.artifact-list-card .alc-icon { font-size: 20px; flex-shrink: 0; }
+.artifact-list-card .alc-info { flex: 1; min-width: 0; }
+.artifact-list-card .alc-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-100);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.artifact-list-card .alc-meta {
+  font-size: 11px;
+  color: var(--text-400);
+  margin-top: 2px;
+}
+.artifact-list-card .alc-versions {
+  font-size: 11px;
+  color: var(--text-400);
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+}
+
+.artifact-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-400);
+  font-size: 14px;
+  gap: 8px;
+}
+
 /* Chat input area at bottom */
 .chat-input-area {
   padding: 0 24px 16px;
@@ -1106,6 +1329,178 @@ textarea { resize: none; }
   overflow-y: auto;
 }
 #projects-view.active { display: flex; }
+
+/* ── Artifacts Browse View ── */
+#artifacts-view {
+  flex: 1;
+  display: none;
+  flex-direction: column;
+  background: var(--bg-page);
+  overflow-y: auto;
+}
+#artifacts-view.active { display: flex; }
+
+.artifacts-container {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 32px 24px;
+  width: 100%;
+}
+.artifacts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+.artifacts-title {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--text-000);
+}
+.artifacts-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border-100);
+  margin-bottom: 20px;
+}
+.artifacts-tab {
+  padding: 10px 16px;
+  font-size: 14px;
+  color: var(--text-400);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+  background: none;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+}
+.artifacts-tab:hover { color: var(--text-200); }
+.artifacts-tab.active {
+  color: var(--text-000);
+  border-bottom-color: var(--text-000);
+  font-weight: 500;
+}
+.artifacts-agent-filter {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.artifacts-agent-chip {
+  padding: 5px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid var(--border-200);
+  background: var(--bg-000);
+  color: var(--text-300);
+  transition: all 0.15s;
+}
+.artifacts-agent-chip:hover { border-color: var(--border-300); background: var(--bg-200); }
+.artifacts-agent-chip.active {
+  background: var(--text-000);
+  color: var(--bg-000);
+  border-color: var(--text-000);
+}
+
+.artifacts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+.artifact-browse-card {
+  border: 1px solid var(--border-200);
+  border-radius: 12px;
+  background: var(--bg-000);
+  cursor: pointer;
+  transition: all 0.15s;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.artifact-browse-card:hover {
+  border-color: var(--border-300);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+.artifact-browse-preview {
+  height: 180px;
+  padding: 16px;
+  overflow: hidden;
+  background: var(--bg-100);
+  border-bottom: 1px solid var(--border-100);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-300);
+  white-space: pre-wrap;
+  word-break: break-word;
+  position: relative;
+}
+.artifact-browse-preview::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  background: linear-gradient(transparent, var(--bg-100));
+}
+.artifact-browse-preview.no-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-400);
+}
+.artifact-browse-preview.no-preview svg {
+  width: 36px;
+  height: 36px;
+  stroke: var(--text-400);
+  opacity: 0.5;
+}
+.artifact-browse-info {
+  padding: 14px 16px;
+}
+.artifact-browse-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-000);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+.artifact-browse-meta {
+  font-size: 12px;
+  color: var(--text-400);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.artifact-browse-meta .abm-type {
+  text-transform: uppercase;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-200);
+  color: var(--text-400);
+}
+.artifacts-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text-400);
+  font-size: 15px;
+}
+.artifacts-empty svg {
+  display: block;
+  margin: 0 auto 16px;
+  width: 48px;
+  height: 48px;
+  stroke: var(--text-400);
+  opacity: 0.4;
+}
 
 /* ── Knowledge Graph View ── */
 #graph-view {
@@ -1868,6 +2263,10 @@ textarea { resize: none; }
       <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg></span>
       <span class="sb-label">Projects</span>
     </div>
+    <div class="sb-nav-item" onclick="navigateTo('artifacts')" data-view="artifacts">
+      <span class="sb-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
+      <span class="sb-label">Artifacts</span>
+    </div>
     <div class="sb-nav-item" onclick="navigateTo('graph')" data-view="graph">
       <span class="sb-icon"><svg viewBox="0 0 24 24"><circle cx="5" cy="6" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="7" y1="7.5" x2="10" y2="16"/><line x1="17" y1="7.5" x2="14" y2="16"/><line x1="7.5" y1="6" x2="16.5" y2="6"/></svg></span>
       <span class="sb-label">Knowledge Graph</span>
@@ -2056,6 +2455,29 @@ textarea { resize: none; }
     </div>
   </div>
 
+  <!-- ═══ Artifacts Browse View ═══ -->
+  <div id="artifacts-view">
+    <div class="artifacts-container">
+      <div class="artifacts-header">
+        <h1 class="artifacts-title">Artifacts</h1>
+      </div>
+      <div class="artifacts-tabs" id="artifacts-tabs">
+        <button class="artifacts-tab active" onclick="filterArtifactsBrowse('all')">All</button>
+        <button class="artifacts-tab" onclick="filterArtifactsBrowse('code')">Code</button>
+        <button class="artifacts-tab" onclick="filterArtifactsBrowse('html')">HTML</button>
+        <button class="artifacts-tab" onclick="filterArtifactsBrowse('document')">Documents</button>
+        <button class="artifacts-tab" onclick="filterArtifactsBrowse('image')">Images</button>
+        <button class="artifacts-tab" onclick="filterArtifactsBrowse('markdown')">Markdown</button>
+      </div>
+      <div class="artifacts-agent-filter" id="artifacts-agent-filter">
+        <!-- Agent chips populated dynamically -->
+      </div>
+      <div class="artifacts-grid" id="artifacts-grid">
+        <!-- Populated dynamically -->
+      </div>
+    </div>
+  </div>
+
   <!-- ═══ Knowledge Graph View ═══ -->
   <div id="graph-view">
     <div class="graph-container">
@@ -2102,6 +2524,43 @@ textarea { resize: none; }
     </div>
   </div>
 </div>
+
+<!-- ═══ Artifact Panel ═══ -->
+<div id="artifact-panel">
+  <div class="artifact-resize-handle" id="artifact-resize-handle"></div>
+  <div class="artifact-header">
+    <div class="artifact-header-left">
+      <button class="artifact-list-btn" id="artifact-list-btn" onclick="showArtifactList()" title="All artifacts">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      </button>
+      <span class="artifact-title" id="artifact-title"></span>
+    </div>
+    <div class="artifact-header-right">
+      <select class="artifact-version-select" id="artifact-version-select" onchange="loadArtifactVersion(this.value)"></select>
+      <button class="artifact-close-btn" onclick="closeArtifactPanel()" title="Close">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="artifact-content" id="artifact-content">
+    <!-- Artifact list or rendered content -->
+  </div>
+  <div class="artifact-actions" id="artifact-actions">
+    <button class="artifact-action-btn" onclick="copyArtifact()" title="Copy">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+      Copy
+    </button>
+    <button class="artifact-action-btn" onclick="downloadArtifact()" title="Download">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Download
+    </button>
+    <button class="artifact-action-btn" id="artifact-source-btn" onclick="toggleArtifactSource()" title="View source">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+      Code
+    </button>
+  </div>
+</div>
+
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════
@@ -2215,6 +2674,12 @@ class API {
   static getFilePreview(path) { return this.get(`/v1/files/preview?path=${encodeURIComponent(path)}&lines=100`); }
   static getFileDownloadUrl(path) { return `${BASE_URL}/v1/files/download?path=${encodeURIComponent(path)}`; }
 
+  // Artifacts
+  static getArtifacts(sessionId) { return this.get(`/v1/artifacts?session_id=${encodeURIComponent(sessionId)}`); }
+  static browseArtifacts(agentId, limit) { return this.get(`/v1/artifacts/browse?${agentId ? 'agent_id=' + encodeURIComponent(agentId) + '&' : ''}limit=${limit || 100}`); }
+  static getArtifactContent(id, version) { return this.get(`/v1/artifacts/${id}/content${version ? '?version=' + version : ''}`); }
+  static getArtifactDownloadUrl(id, version) { return `${BASE_URL}/v1/artifacts/${id}/download${version ? '?version=' + version : ''}`; }
+
   // Skills
   static getClaudeCodeSkills(agent) { return this.get(`/v1/skills/claude-code?agent=${agent}`); }
   static toggleCCSkill(agent, slug, enabled) { return this.post('/v1/skills/claude-code', {agent, slug, enabled}); }
@@ -2325,6 +2790,13 @@ const state = {
   // Chats list
   chatsFilter: 'all',
   chatsSearchQuery: '',
+
+  // Artifact panel
+  artifactPanelOpen: false,
+  artifacts: {},           // { sessionId: [artifact objects] }
+  activeArtifactId: null,
+  activeArtifactVersion: null,
+  artifactSourceMode: false,
 
   // Stream timing
   _streamStartTime: null,
@@ -2437,6 +2909,7 @@ function navigateTo(view, opts) {
   document.getElementById('chats-view').classList.remove('active');
   document.getElementById('projects-view').classList.remove('active');
   document.getElementById('graph-view').classList.remove('active');
+  document.getElementById('artifacts-view').classList.remove('active');
 
   // Update sidebar active state
   document.querySelectorAll('.sb-nav-item').forEach(n => n.classList.remove('active'));
@@ -2468,6 +2941,13 @@ function navigateTo(view, opts) {
       updatePageHeader('Projects');
       document.getElementById('status-bar').style.display = 'none';
       loadProjectsList();
+      break;
+
+    case 'artifacts':
+      document.getElementById('artifacts-view').classList.add('active');
+      updatePageHeader('Artifacts');
+      document.getElementById('status-bar').style.display = 'none';
+      loadArtifactsBrowse();
       break;
 
     case 'graph':
@@ -3883,9 +4363,20 @@ async function openSession(sessionId, agentId) {
       expanded.push(msg);
     }
     chat.messages = expanded;
+
+    // Load artifacts for this session
+    try {
+      const artResp = await API.getArtifacts(sessionId);
+      state.artifacts[sessionId] = artResp.artifacts || [];
+    } catch(e) {
+      state.artifacts[sessionId] = [];
+    }
   } catch(e) {
     showToast('Failed to load session', true);
   }
+
+  // Close artifact panel when switching sessions
+  closeArtifactPanel();
 
   navigateTo('chat');
 }
@@ -3902,6 +4393,7 @@ function newChat() {
   chat.streamingText = '';
   chat.thinkingText = '';
   chat.files = [];
+  closeArtifactPanel();
   navigateTo('welcome');
 }
 
@@ -4040,6 +4532,24 @@ async function sendMessage() {
       },
       file_created: (d) => {
         chat.files.push(d);
+      },
+      artifact_updated: (d) => {
+        chat.files.push(d);
+        updateArtifactRegistry(chat.sessionId, d);
+        if (!state.artifactPanelOpen) {
+          openArtifactPanel(d.artifact_id, d.artifact_version);
+        } else if (state.activeArtifactId === d.artifact_id) {
+          // Refresh version selector and content
+          const sel = document.getElementById('artifact-version-select');
+          if (sel) {
+            const opt = document.createElement('option');
+            opt.value = d.artifact_version;
+            opt.textContent = `v${d.artifact_version}`;
+            sel.appendChild(opt);
+            sel.value = d.artifact_version;
+          }
+          loadArtifactVersion(d.artifact_version);
+        }
       },
       fallback: (d) => {
         if (d.to) {
@@ -4229,13 +4739,24 @@ function renderAssistantMessage(msg, idx) {
     for (const f of msg._files) {
       const name = f.path ? f.path.split('/').pop() : 'file';
       const badge = f.action === 'created' ? '<span class="fa-badge created">new</span>' : f.action === 'modified' ? '<span class="fa-badge modified">edit</span>' : '';
-      filesHtml += `
-        <div class="file-attachment-card" onclick="previewFile('${esc(f.path)}')">
-          <span class="fa-icon">${fileTypeIcon(name)}</span>
-          <span class="fa-name">${esc(name)}</span>
-          ${badge}
-        </div>
-      `;
+      if (f.artifact_id) {
+        filesHtml += `
+          <div class="file-attachment-card artifact-card" onclick="openArtifactPanel('${esc(f.artifact_id)}', ${f.artifact_version || ''})">
+            <span class="fa-icon">${fileTypeIcon(name)}</span>
+            <span class="fa-name">${esc(name)}</span>
+            ${badge}
+            <span class="fa-artifact-indicator"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></span>
+          </div>
+        `;
+      } else {
+        filesHtml += `
+          <div class="file-attachment-card" onclick="previewFile('${esc(f.path)}')">
+            <span class="fa-icon">${fileTypeIcon(name)}</span>
+            <span class="fa-name">${esc(name)}</span>
+            ${badge}
+          </div>
+        `;
+      }
     }
     filesHtml += '</div>';
   }
@@ -7239,6 +7760,400 @@ async function previewFile(path) {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   ARTIFACT PANEL
+   ═══════════════════════════════════════════════════════════ */
+
+function initArtifactResize() {
+  const handle = document.getElementById('artifact-resize-handle');
+  const panel = document.getElementById('artifact-panel');
+  if (!handle || !panel) return;
+  handle.addEventListener('mousedown', (e) => {
+    const startX = e.clientX;
+    const startW = panel.offsetWidth;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    const onMove = (e) => {
+      const newW = Math.min(800, Math.max(320, startW + (startX - e.clientX)));
+      panel.style.width = newW + 'px';
+    };
+    const onUp = () => {
+      handle.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      localStorage.setItem('artifact-panel-width', panel.style.width);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    e.preventDefault();
+  });
+  const saved = localStorage.getItem('artifact-panel-width');
+  if (saved) panel.style.width = saved;
+}
+
+function artifactTypeIcon(type) {
+  const icons = {
+    code: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+    html: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+    svg: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M8 12l2 2 4-4"/></svg>',
+    image: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
+    markdown: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+    document: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>',
+    text: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+  };
+  return icons[type] || icons.text;
+}
+
+async function openArtifactPanel(artifactId, version) {
+  const panel = document.getElementById('artifact-panel');
+  if (!panel) return;
+
+  state.activeArtifactId = artifactId;
+  state.artifactSourceMode = false;
+  document.getElementById('artifact-source-btn')?.classList.remove('active');
+
+  // Find artifact in registry
+  const chat = state.activeChat;
+  if (!chat) return;
+  const sessionId = chat.sessionId;
+  const artifacts = state.artifacts[sessionId] || [];
+  const artifact = artifacts.find(a => a.id === artifactId);
+  if (!artifact) {
+    showToast('Artifact not found', true);
+    return;
+  }
+
+  // Update header
+  document.getElementById('artifact-title').textContent = artifact.name;
+
+  // Populate version selector
+  const sel = document.getElementById('artifact-version-select');
+  sel.innerHTML = '';
+  const versions = artifact.versions || [];
+  for (const v of versions) {
+    const opt = document.createElement('option');
+    opt.value = v.version;
+    opt.textContent = `v${v.version}`;
+    sel.appendChild(opt);
+  }
+  const targetVersion = version || (versions.length ? versions[versions.length - 1].version : 1);
+  sel.value = targetVersion;
+  state.activeArtifactVersion = targetVersion;
+
+  // Show panel
+  panel.classList.add('open');
+  state.artifactPanelOpen = true;
+
+  // Show actions bar, hide list button highlight
+  document.getElementById('artifact-actions').style.display = '';
+
+  // Load content
+  await loadArtifactVersion(targetVersion);
+}
+
+async function loadArtifactVersion(version) {
+  const artifactId = state.activeArtifactId;
+  if (!artifactId) return;
+  state.activeArtifactVersion = version;
+  const sel = document.getElementById('artifact-version-select');
+  if (sel) sel.value = version;
+
+  const container = document.getElementById('artifact-content');
+  container.innerHTML = '<div class="artifact-empty"><div class="wave-bars"><span></span><span></span><span></span></div></div>';
+
+  try {
+    const data = await API.getArtifactContent(artifactId, version);
+    renderArtifactContent(data.content, data.type, data.name, data.encoding);
+  } catch (e) {
+    container.innerHTML = `<div class="artifact-empty">Failed to load content</div>`;
+  }
+}
+
+function renderArtifactContent(content, type, name, encoding) {
+  const container = document.getElementById('artifact-content');
+  const ext = name.split('.').pop().toLowerCase();
+
+  // Store raw content for source toggle
+  container._rawContent = content;
+  container._rawType = type;
+  container._rawName = name;
+  container._rawEncoding = encoding;
+
+  if (state.artifactSourceMode && type !== 'image') {
+    // Source view — always raw text
+    container.innerHTML = `<pre class="artifact-code"><code>${esc(content)}</code></pre>`;
+    return;
+  }
+
+  switch (type) {
+    case 'html':
+      container.innerHTML = `<iframe sandbox="allow-scripts allow-same-origin" srcdoc="${esc(content)}" style="width:100%;height:100%;border:none"></iframe>`;
+      break;
+    case 'svg':
+      container.innerHTML = `<div style="padding:24px;display:flex;align-items:center;justify-content:center;height:100%">${content}</div>`;
+      break;
+    case 'image': {
+      const imgExt = ext === 'svg' ? 'svg+xml' : ext;
+      const src = encoding === 'base64' ? `data:image/${imgExt};base64,${content}` : content;
+      container.innerHTML = `<div style="padding:24px;display:flex;align-items:center;justify-content:center;height:100%;background:var(--bg-100)"><img src="${src}" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px"></div>`;
+      break;
+    }
+    case 'markdown':
+      container.innerHTML = `<div class="artifact-markdown msg-content">${renderMarkdown(content)}</div>`;
+      // Apply syntax highlighting to code blocks
+      container.querySelectorAll('pre code').forEach(el => { try { hljs.highlightElement(el); } catch(e) {} });
+      break;
+    case 'code':
+    default: {
+      const lang = (typeof hljs !== 'undefined' && hljs.getLanguage(ext)) ? ext : 'plaintext';
+      let highlighted;
+      try {
+        highlighted = hljs.highlight(content, { language: lang }).value;
+      } catch(e) {
+        highlighted = esc(content);
+      }
+      container.innerHTML = `<pre class="artifact-code"><code class="hljs language-${lang}">${highlighted}</code></pre>`;
+      break;
+    }
+  }
+}
+
+function closeArtifactPanel() {
+  const panel = document.getElementById('artifact-panel');
+  if (panel) panel.classList.remove('open');
+  state.artifactPanelOpen = false;
+  state.activeArtifactId = null;
+  state.activeArtifactVersion = null;
+  state.artifactSourceMode = false;
+}
+
+function showArtifactList() {
+  const chat = state.activeChat;
+  if (!chat) return;
+  const sessionId = chat.sessionId;
+  const artifacts = state.artifacts[sessionId] || [];
+
+  const container = document.getElementById('artifact-content');
+  document.getElementById('artifact-title').textContent = 'Artifacts';
+  document.getElementById('artifact-actions').style.display = 'none';
+  document.getElementById('artifact-version-select').innerHTML = '';
+  state.activeArtifactId = null;
+
+  if (artifacts.length === 0) {
+    container.innerHTML = '<div class="artifact-empty"><svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>No artifacts yet</div>';
+    return;
+  }
+
+  let html = '<div class="artifact-list">';
+  for (const a of artifacts) {
+    const verCount = a.versions?.length || 0;
+    const latestVer = verCount > 0 ? a.versions[verCount - 1] : null;
+    const meta = latestVer ? (latestVer.action === 'created' ? 'Created' : 'Modified') : '';
+    html += `
+      <div class="artifact-list-card" onclick="openArtifactPanel('${esc(a.id)}')">
+        <span class="alc-icon">${artifactTypeIcon(a.type)}</span>
+        <div class="alc-info">
+          <div class="alc-name">${esc(a.name)}</div>
+          <div class="alc-meta">${esc(a.type)} ${meta ? '· ' + meta : ''}</div>
+        </div>
+        <span class="alc-versions">v${verCount}</span>
+      </div>
+    `;
+  }
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+async function copyArtifact() {
+  const container = document.getElementById('artifact-content');
+  const raw = container._rawContent;
+  if (!raw) { showToast('Nothing to copy', true); return; }
+  try {
+    await navigator.clipboard.writeText(raw);
+    showToast('Copied to clipboard');
+  } catch (e) {
+    showToast('Copy failed', true);
+  }
+}
+
+function downloadArtifact() {
+  const id = state.activeArtifactId;
+  const ver = state.activeArtifactVersion;
+  if (!id) return;
+  const url = API.getArtifactDownloadUrl(id, ver);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function toggleArtifactSource() {
+  state.artifactSourceMode = !state.artifactSourceMode;
+  const btn = document.getElementById('artifact-source-btn');
+  if (btn) btn.classList.toggle('active', state.artifactSourceMode);
+
+  const container = document.getElementById('artifact-content');
+  if (container._rawContent) {
+    renderArtifactContent(container._rawContent, container._rawType, container._rawName, container._rawEncoding);
+  }
+}
+
+function updateArtifactRegistry(sessionId, eventData) {
+  if (!state.artifacts[sessionId]) state.artifacts[sessionId] = [];
+  const artifacts = state.artifacts[sessionId];
+  const existing = artifacts.find(a => a.id === eventData.artifact_id);
+  if (existing) {
+    // Add new version
+    if (!existing.versions) existing.versions = [];
+    existing.versions.push({
+      version: eventData.artifact_version,
+      size: eventData.size,
+      action: eventData.action,
+      created_at: Date.now() / 1000,
+    });
+  } else {
+    // New artifact
+    artifacts.push({
+      id: eventData.artifact_id,
+      name: eventData.name,
+      path: eventData.path,
+      type: eventData.artifact_type,
+      versions: [{
+        version: eventData.artifact_version,
+        size: eventData.size,
+        action: eventData.action,
+        created_at: Date.now() / 1000,
+      }],
+    });
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ARTIFACTS BROWSE VIEW
+   ═══════════════════════════════════════════════════════════ */
+
+let _browseArtifactsCache = [];
+let _browseArtifactsFilter = 'all';
+let _browseArtifactsAgent = null;
+
+async function loadArtifactsBrowse() {
+  const grid = document.getElementById('artifacts-grid');
+  grid.innerHTML = '<div class="artifacts-empty">Loading...</div>';
+
+  try {
+    const resp = await API.browseArtifacts(_browseArtifactsAgent);
+    _browseArtifactsCache = resp.artifacts || [];
+  } catch (e) {
+    grid.innerHTML = '<div class="artifacts-empty">Failed to load artifacts</div>';
+    return;
+  }
+
+  // Build agent filter chips
+  const agents = [...new Set(_browseArtifactsCache.map(a => a.agent_id))];
+  const filterEl = document.getElementById('artifacts-agent-filter');
+  if (agents.length > 1) {
+    let chips = `<button class="artifacts-agent-chip${!_browseArtifactsAgent ? ' active' : ''}" onclick="setArtifactsBrowseAgent(null)">All agents</button>`;
+    for (const ag of agents) {
+      chips += `<button class="artifacts-agent-chip${_browseArtifactsAgent === ag ? ' active' : ''}" onclick="setArtifactsBrowseAgent('${esc(ag)}')">${esc(ag)}</button>`;
+    }
+    filterEl.innerHTML = chips;
+    filterEl.style.display = '';
+  } else {
+    filterEl.style.display = 'none';
+  }
+
+  renderArtifactsBrowse();
+}
+
+function renderArtifactsBrowse() {
+  const grid = document.getElementById('artifacts-grid');
+  let filtered = _browseArtifactsCache;
+
+  if (_browseArtifactsFilter !== 'all') {
+    filtered = filtered.filter(a => a.type === _browseArtifactsFilter);
+  }
+
+  if (filtered.length === 0) {
+    grid.innerHTML = `<div class="artifacts-empty" style="grid-column:1/-1">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      No artifacts${_browseArtifactsFilter !== 'all' ? ' of this type' : ''} yet
+    </div>`;
+    return;
+  }
+
+  let html = '';
+  for (const a of filtered) {
+    const preview = a.preview ? esc(a.preview) : '';
+    const binaryTypes = ['image', 'document'];
+    const hasPreview = preview && !binaryTypes.includes(a.type);
+
+    // Time ago
+    const ts = a.latest_created_at || a.created_at;
+    const ago = ts ? timeAgo(ts) : '';
+
+    html += `
+      <div class="artifact-browse-card" onclick="openArtifactFromBrowse('${esc(a.id)}', '${esc(a.session_id)}', '${esc(a.agent_id)}')">
+        <div class="artifact-browse-preview${hasPreview ? '' : ' no-preview'}">
+          ${hasPreview ? preview : artifactTypeIcon(a.type)}
+        </div>
+        <div class="artifact-browse-info">
+          <div class="artifact-browse-name">${esc(a.name)}</div>
+          <div class="artifact-browse-meta">
+            <span class="abm-type">${esc(a.type)}</span>
+            <span>v${a.latest_version || 1}</span>
+            ${ago ? `<span>· ${ago}</span>` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+  grid.innerHTML = html;
+}
+
+function filterArtifactsBrowse(type) {
+  _browseArtifactsFilter = type;
+  // Update tab active states
+  document.querySelectorAll('#artifacts-tabs .artifacts-tab').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+  renderArtifactsBrowse();
+}
+
+function setArtifactsBrowseAgent(agentId) {
+  _browseArtifactsAgent = agentId;
+  loadArtifactsBrowse();
+}
+
+async function openArtifactFromBrowse(artifactId, sessionId, agentId) {
+  // Load the session's artifacts into state, then open the session and artifact panel
+  try {
+    const resp = await API.getArtifacts(sessionId);
+    state.artifacts[sessionId] = resp.artifacts || [];
+  } catch (e) {
+    state.artifacts[sessionId] = [];
+  }
+
+  // Open the session chat
+  await openSession(sessionId, agentId);
+
+  // Open the artifact panel
+  setTimeout(() => openArtifactPanel(artifactId), 300);
+}
+
+function timeAgo(timestamp) {
+  const now = Date.now() / 1000;
+  const diff = now - timestamp;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 2592000) return `${Math.floor(diff / 86400)}d ago`;
+  return `${Math.floor(diff / 2592000)}mo ago`;
+}
+
+/* ═══════════════════════════════════════════════════════════
    MESSAGE ACTIONS
    ═══════════════════════════════════════════════════════════ */
 function copyMessage(idx) {
@@ -7515,6 +8430,9 @@ async function init() {
   if (localStorage.getItem('sidebar-collapsed') === '1') {
     document.getElementById('sidebar').classList.add('collapsed');
   }
+
+  // Init artifact panel resize
+  initArtifactResize();
 
   // Set greeting
   const hour = new Date().getHours();

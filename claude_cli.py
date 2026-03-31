@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "5.3.0"
+VERSION = "5.4.0"
 VERSION_DATE = "2026-03-31"
 CHANGELOG = [
+    ("5.4.0", "2026-03-31", "Artifact system — Claude.ai-style artifact management. Files written with relative paths auto-land in agents/<name>/artifacts/<session_folder>/. Session-scoped SQLite registry with content snapshots (versioned blobs, up to 5MB per version). Resizable right panel with type-aware rendering: syntax-highlighted code (highlight.js), sandboxed HTML iframe, inline SVG, image display, rendered markdown. Version selector dropdown, copy/download/source-toggle actions. Artifact cards in chat messages (coral border, monitor icon) open panel on click. Artifacts excluded from QMD indexing and knowledge graph (not memory). Artifacts browse view in sidebar: full-page grid with content preview cards, type filter tabs (All/Code/HTML/Documents/Images/Markdown), agent filter chips, time-ago timestamps. Click-through from browse opens chat + artifact panel. API: GET /v1/artifacts, /v1/artifacts/browse, /v1/artifacts/<id>/content, /v1/artifacts/<id>/download."),
     ("5.3.0", "2026-03-31", "Claude.ai-style web UI + interactive agents. Complete UI rewrite: sidebar + multi-view layout (Welcome, Chat, Chats, Projects, Knowledge Graph, Customize) with Anthropic Sans/Serif/Mono fonts, warm light/dark themes. Tool call blocks show with full args during streaming and persist across page reloads (reconstructed from assistant message metadata). Tool display toggle works. Interactive mode: agents can ask clarifying questions via AskUserQuestion — sidecar intercepts with PreToolUse hook, emits user_input_needed SSE event, blocks until answer arrives via POST /answer/{query_id}. TUI renders questions with selectable options. New endpoints: memory CRUD, soul.md AI editing, MCP registry. Agent creation accepts model and display_name. Sidecar captures tool input_json_delta for full args on content_block_stop."),
     ("5.2.0", "2026-03-29", "Mission Control cockpit — the web UI is now a dashboard-first design inspired by mission control interfaces. Agent cards show live status, model, schedules, past actions (scrollable), projects, and cost. Chat and project views are full-screen modals with maximum screen space. Token Cost Feed table with per-agent breakdown. Consistent color palette (dark navy header, light cards, green/orange/purple accents) across cockpit, chat modal, config dialogs, and settings. Session cache for instant cockpit loads. Hover actions for archive/delete on sessions and projects. Team badges on agent cards. Agent ordering matches team hierarchy (main → teams → standalone). All chat input controls (attach, think, plan, tools toggle, refine) available in modal."),
     ("5.1.0", "2026-03-28", "Real-time streaming + Claude Code skills. Sidecar rewritten as REST API (POST /query, GET /events/{id}) — decouples event production from consumption for true token-by-token streaming. MCP tools served via /mcp JSON-RPC endpoint on the server. Hooks moved server-side into /mcp tools/call handler (SDK hook registration was the root cause of streaming buffering). Claude Code plugin integration: scan, browse, install, and toggle 121 CC plugins per agent via GUI. SDK integration audited against official docs: @tool decorator, allowed_tools wildcards, correct hook signatures."),
@@ -934,6 +935,18 @@ def _maybe_qmd_reindex(path: str) -> None:
     _qmd_debounced_embed(collection)
 
 
+def _get_artifact_session_folder(session_id: str) -> str:
+    """Return session folder name for artifacts: <date>_<session_prefix>"""
+    cache_key = f"_artifact_folder_{session_id}"
+    cached = getattr(_thread_local, cache_key, None)
+    if cached:
+        return cached
+    from datetime import datetime as _dt
+    folder = f"{_dt.now().strftime('%Y-%m-%d')}_{session_id[:8]}"
+    setattr(_thread_local, cache_key, folder)
+    return folder
+
+
 def tool_write_file(args: dict) -> str:
     node_result = _route_to_node("write_file", args)
     if node_result is not None:
@@ -943,7 +956,16 @@ def tool_write_file(args: dict) -> str:
     try:
         path = os.path.expanduser(path)
         if not os.path.isabs(path):
-            path = os.path.abspath(path)
+            # Default relative paths to artifacts session folder during chat
+            session_id = getattr(_thread_local, 'current_session_id', None)
+            agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+            if session_id and agent:
+                folder = _get_artifact_session_folder(session_id)
+                artifact_dir = os.path.join(AGENTS_DIR, agent.agent_id, "artifacts", folder)
+                os.makedirs(artifact_dir, exist_ok=True)
+                path = os.path.join(artifact_dir, path)
+            else:
+                path = os.path.abspath(path)
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         with open(path, "w") as f:
             f.write(content)
@@ -13049,16 +13071,85 @@ def _get_hook_runner(agent_id: str = "main") -> HookRunner:
         return _hook_runners[agent_id]
 
 
+# --- Artifact Helpers ---
+
+_ARTIFACT_TYPE_MAP = {
+    "html": "html", "htm": "html",
+    "svg": "svg",
+    "md": "markdown", "markdown": "markdown",
+    "png": "image", "jpg": "image", "jpeg": "image", "gif": "image", "webp": "image", "bmp": "image",
+    "pdf": "document", "docx": "document", "xlsx": "document", "pptx": "document",
+    "txt": "text",
+}
+
+def _is_artifact_path(path: str) -> bool:
+    """Check if path is under agents/<name>/artifacts/"""
+    try:
+        agents_dir = os.path.realpath(AGENTS_DIR)
+        real_path = os.path.realpath(path)
+        if not real_path.startswith(agents_dir + os.sep):
+            return False
+        parts = real_path[len(agents_dir) + 1:].split(os.sep)
+        return len(parts) >= 3 and parts[1] == "artifacts"
+    except Exception:
+        return False
+
+def _register_artifact_version(path: str, action: str, agent_id: str):
+    """Register or update an artifact in the DB, capturing content snapshot.
+    Returns (artifact_id, version, type) or None on failure."""
+    try:
+        from server import ChatDB
+        import uuid as _uuid_mod
+
+        session_id = getattr(_thread_local, 'current_session_id', None) or ""
+        if not session_id:
+            return None
+
+        name = os.path.basename(path)
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        artifact_type = _ARTIFACT_TYPE_MAP.get(ext, "code")
+
+        # Read content snapshot (cap at 5MB)
+        try:
+            with open(path, "rb") as f:
+                content = f.read(5 * 1024 * 1024)
+            size = os.path.getsize(path)
+            if size > 5 * 1024 * 1024:
+                content = None  # too large, disk-only
+        except Exception:
+            content = None
+            size = 0
+
+        # Check if artifact already exists for this path+session
+        existing = ChatDB.get_artifact_by_path(session_id, path)
+        if existing:
+            artifact_id = existing["id"]
+            next_version = existing["latest_version"] + 1
+        else:
+            artifact_id = str(_uuid_mod.uuid4())[:12]
+            ChatDB.create_artifact(artifact_id, session_id, agent_id, name, path, artifact_type)
+            next_version = 1
+
+        ChatDB.add_artifact_version(artifact_id, next_version, content, size, None, action)
+        return (artifact_id, next_version, artifact_type)
+    except Exception as e:
+        print(f"  [WARN] artifact registration: {e}", flush=True)
+        return None
+
+
 # --- Centralized File-Write Pipeline ---
 
 def _after_file_write(path: str, action: str = "created", agent_id: str = ""):
     """Centralized post-file-write pipeline. Called from tool_write_file and tool_edit_file.
     Replaces scattered _maybe_qmd_reindex(), _extract_entities(), file_created calls."""
-    # 1. QMD reindex
-    _maybe_qmd_reindex(path)
+    is_artifact = _is_artifact_path(path)
 
-    # 2. Entity extraction + knowledge graph (if .md in agent dir)
-    if path.endswith(".md") and agent_id:
+    # 1. QMD reindex (skip for artifacts)
+    if not is_artifact:
+        _maybe_qmd_reindex(path)
+
+    # 2. Entity extraction + knowledge graph (skip for artifacts)
+    if path.endswith(".md") and agent_id and not is_artifact:
         try:
             with open(path, "r") as f:
                 raw = f.read()
@@ -13069,16 +13160,38 @@ def _after_file_write(path: str, action: str = "created", agent_id: str = ""):
         except Exception:
             pass
 
-    # 3. File event emission (for UI attachments)
+    # 3. File/artifact event emission (for UI)
     ecb = getattr(_thread_local, 'event_callback', None)
     if ecb:
         try:
-            ecb("file_created", {
-                "path": path,
-                "name": os.path.basename(path),
-                "size": os.path.getsize(path),
-                "action": action,
-            })
+            if is_artifact:
+                art_result = _register_artifact_version(path, action, agent_id)
+                if art_result:
+                    art_id, art_ver, art_type = art_result
+                    ecb("artifact_updated", {
+                        "path": path,
+                        "name": os.path.basename(path),
+                        "size": os.path.getsize(path),
+                        "action": action,
+                        "artifact_id": art_id,
+                        "artifact_version": art_ver,
+                        "artifact_type": art_type,
+                    })
+                else:
+                    # Fallback to regular file event if artifact registration failed
+                    ecb("file_created", {
+                        "path": path,
+                        "name": os.path.basename(path),
+                        "size": os.path.getsize(path),
+                        "action": action,
+                    })
+            else:
+                ecb("file_created", {
+                    "path": path,
+                    "name": os.path.basename(path),
+                    "size": os.path.getsize(path),
+                    "action": action,
+                })
         except Exception:
             pass
 

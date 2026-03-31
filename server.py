@@ -235,7 +235,175 @@ class ChatDB:
                 conn.execute("ALTER TABLE messages ADD COLUMN compacted INTEGER DEFAULT 0")
             except sqlite3.OperationalError:
                 pass
+            # ── Artifact tables ──
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS artifacts (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    type TEXT NOT NULL DEFAULT 'code',
+                    created_at REAL DEFAULT (strftime('%s','now')),
+                    FOREIGN KEY (session_id) REFERENCES sessions(id)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_artifact_session ON artifacts(session_id)")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS artifact_versions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    artifact_id TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    content BLOB,
+                    size INTEGER DEFAULT 0,
+                    message_idx INTEGER,
+                    action TEXT DEFAULT 'created',
+                    created_at REAL DEFAULT (strftime('%s','now')),
+                    FOREIGN KEY (artifact_id) REFERENCES artifacts(id)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_artver_artifact ON artifact_versions(artifact_id)")
             conn.commit()
+
+    # ── Artifact CRUD ──
+
+    @staticmethod
+    @_db_safe(default=None)
+    def create_artifact(artifact_id, session_id, agent_id, name, path, artifact_type):
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT INTO artifacts (id, session_id, agent_id, name, path, type) VALUES (?, ?, ?, ?, ?, ?)",
+                (artifact_id, session_id, agent_id, name, path, artifact_type))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def add_artifact_version(artifact_id, version, content, size, message_idx, action):
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT INTO artifact_versions (artifact_id, version, content, size, message_idx, action) VALUES (?, ?, ?, ?, ?, ?)",
+                (artifact_id, version, content, size, message_idx, action))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=list)
+    def get_artifacts(session_id):
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""
+                SELECT a.*, COALESCE(v.latest_version, 0) as latest_version
+                FROM artifacts a
+                LEFT JOIN (SELECT artifact_id, MAX(version) as latest_version FROM artifact_versions GROUP BY artifact_id) v
+                ON a.id = v.artifact_id
+                WHERE a.session_id = ?
+                ORDER BY a.created_at
+            """, (session_id,)).fetchall()
+            results = []
+            for r in rows:
+                d = dict(r)
+                # Fetch version metadata (no content)
+                vers = conn.execute(
+                    "SELECT version, size, action, created_at FROM artifact_versions WHERE artifact_id = ? ORDER BY version",
+                    (d["id"],)).fetchall()
+                d["versions"] = [{"version": v[0], "size": v[1], "action": v[2], "created_at": v[3]} for v in vers]
+                results.append(d)
+            return results
+
+    @staticmethod
+    @_db_safe(default=None)
+    def get_artifact_by_path(session_id, path):
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT a.*, COALESCE(v.latest_version, 0) as latest_version "
+                "FROM artifacts a "
+                "LEFT JOIN (SELECT artifact_id, MAX(version) as latest_version FROM artifact_versions GROUP BY artifact_id) v "
+                "ON a.id = v.artifact_id "
+                "WHERE a.session_id = ? AND a.path = ?",
+                (session_id, path)).fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    @_db_safe(default=None)
+    def get_artifact_content(artifact_id, version=None):
+        with _db_conn() as conn:
+            if version:
+                row = conn.execute(
+                    "SELECT content, version, size, action FROM artifact_versions WHERE artifact_id = ? AND version = ?",
+                    (artifact_id, int(version))).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT content, version, size, action FROM artifact_versions WHERE artifact_id = ? ORDER BY version DESC LIMIT 1",
+                    (artifact_id,)).fetchone()
+            if not row:
+                return None
+            return {"content": row[0], "version": row[1], "size": row[2], "action": row[3]}
+
+    @staticmethod
+    @_db_safe(default=None)
+    def get_artifact(artifact_id):
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM artifacts WHERE id = ?", (artifact_id,)).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            vers = conn.execute(
+                "SELECT version, size, action, created_at FROM artifact_versions WHERE artifact_id = ? ORDER BY version",
+                (artifact_id,)).fetchall()
+            d["versions"] = [{"version": v[0], "size": v[1], "action": v[2], "created_at": v[3]} for v in vers]
+            return d
+
+    @staticmethod
+    @_db_safe(default=list)
+    def get_all_artifacts(agent_id=None, limit=100):
+        """Get all artifacts across sessions, optionally filtered by agent. Ordered by most recent."""
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            if agent_id:
+                rows = conn.execute("""
+                    SELECT a.*, s.title as session_title, s.last_active as session_last_active,
+                           COALESCE(v.latest_version, 0) as latest_version,
+                           v.latest_created_at
+                    FROM artifacts a
+                    LEFT JOIN sessions s ON a.session_id = s.id
+                    LEFT JOIN (SELECT artifact_id, MAX(version) as latest_version, MAX(created_at) as latest_created_at
+                               FROM artifact_versions GROUP BY artifact_id) v ON a.id = v.artifact_id
+                    WHERE a.agent_id = ?
+                    ORDER BY COALESCE(v.latest_created_at, a.created_at) DESC
+                    LIMIT ?
+                """, (agent_id, limit)).fetchall()
+            else:
+                rows = conn.execute("""
+                    SELECT a.*, s.title as session_title, s.last_active as session_last_active,
+                           COALESCE(v.latest_version, 0) as latest_version,
+                           v.latest_created_at
+                    FROM artifacts a
+                    LEFT JOIN sessions s ON a.session_id = s.id
+                    LEFT JOIN (SELECT artifact_id, MAX(version) as latest_version, MAX(created_at) as latest_created_at
+                               FROM artifact_versions GROUP BY artifact_id) v ON a.id = v.artifact_id
+                    ORDER BY COALESCE(v.latest_created_at, a.created_at) DESC
+                    LIMIT ?
+                """, (limit,)).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=None)
+    def get_artifact_preview(artifact_id, max_chars=300):
+        """Get a text preview of the latest version content."""
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT content FROM artifact_versions WHERE artifact_id = ? ORDER BY version DESC LIMIT 1",
+                (artifact_id,)).fetchone()
+            if not row or not row[0]:
+                return None
+            content = row[0]
+            if isinstance(content, bytes):
+                try:
+                    content = content.decode("utf-8", errors="replace")
+                except Exception:
+                    return None
+            return content[:max_chars]
 
     @staticmethod
     @_db_safe(default=None)
@@ -779,6 +947,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_file_download()
         elif path == "/v1/files/preview":
             self._handle_file_preview()
+        elif path == "/v1/artifacts":
+            self._handle_artifacts_list()
+        elif path == "/v1/artifacts/browse":
+            self._handle_artifacts_browse()
+        elif path.startswith("/v1/artifacts/") and path.endswith("/content"):
+            self._handle_artifact_content(path)
+        elif path.startswith("/v1/artifacts/") and path.endswith("/download"):
+            self._handle_artifact_download(path)
         elif path == "/" or path.startswith("/web/") or path.endswith((".html", ".css", ".js", ".ico")):
             self._serve_static(path)
         else:
@@ -1676,7 +1852,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         def event_callback(event_type, data):
             if event_type == "text_delta":
                 _partial_reply.append(data.get("text", ""))
-            elif event_type == "file_created":
+            elif event_type in ("file_created", "artifact_updated"):
                 created_files.append(data)
             elif event_type == "thinking_delta":
                 _partial_thinking.append(data.get("text", ""))
@@ -1726,6 +1902,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             engine._thread_local.memory_store = session.memory
             agent_config = engine.AgentConfig(session.agent_id)
             engine._thread_local.current_agent = agent_config
+            engine._thread_local.current_session_id = sid
 
             # Use shared MCP manager (singleton from main())
             engine._thread_local.mcp_manager = engine._mcp_manager
@@ -6060,6 +6237,136 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             })
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
+
+    # ── Artifact Endpoints ──
+
+    def _handle_artifacts_list(self):
+        """GET /v1/artifacts?session_id=X — list artifacts for a session."""
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        session_id = qs.get("session_id", [""])[0]
+        if not session_id:
+            self._send_json({"error": "session_id required"}, 400)
+            return
+        artifacts = ChatDB.get_artifacts(session_id)
+        self._send_json({"artifacts": artifacts})
+
+    def _handle_artifacts_browse(self):
+        """GET /v1/artifacts/browse?agent_id=X&limit=N — browse all artifacts across sessions."""
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        agent_id = qs.get("agent_id", [None])[0]
+        limit = int(qs.get("limit", ["100"])[0])
+        artifacts = ChatDB.get_all_artifacts(agent_id=agent_id, limit=limit)
+        # Fetch text preview for each text-based artifact
+        binary_types = {"image", "document"}
+        for a in artifacts:
+            if a.get("type") not in binary_types:
+                preview = ChatDB.get_artifact_preview(a["id"], max_chars=300)
+                a["preview"] = preview
+            else:
+                a["preview"] = None
+        self._send_json({"artifacts": artifacts})
+
+    def _handle_artifact_content(self, path):
+        """GET /v1/artifacts/<id>/content?version=N — get artifact version content."""
+        from urllib.parse import urlparse, parse_qs
+        import base64
+        parts = path.split("/")
+        # /v1/artifacts/<id>/content
+        artifact_id = parts[3] if len(parts) >= 5 else ""
+        qs = parse_qs(urlparse(self.path).query)
+        version = qs.get("version", [None])[0]
+
+        artifact = ChatDB.get_artifact(artifact_id)
+        if not artifact:
+            self._send_json({"error": "Artifact not found"}, 404)
+            return
+
+        ver_data = ChatDB.get_artifact_content(artifact_id, version)
+        if not ver_data:
+            self._send_json({"error": "Version not found"}, 404)
+            return
+
+        content_raw = ver_data["content"]
+        is_binary = artifact["type"] in ("image", "document")
+
+        if content_raw is None:
+            # Disk-only fallback (file was > 5MB)
+            try:
+                with open(artifact["path"], "rb") as f:
+                    content_raw = f.read()
+            except Exception:
+                self._send_json({"error": "Content not available"}, 404)
+                return
+
+        if is_binary:
+            content_str = base64.b64encode(content_raw if isinstance(content_raw, bytes) else content_raw.encode()).decode()
+            encoding = "base64"
+        else:
+            content_str = content_raw.decode("utf-8", errors="replace") if isinstance(content_raw, bytes) else content_raw
+            encoding = "text"
+
+        self._send_json({
+            "artifact_id": artifact_id,
+            "name": artifact["name"],
+            "type": artifact["type"],
+            "version": ver_data["version"],
+            "content": content_str,
+            "encoding": encoding,
+            "size": ver_data["size"],
+        })
+
+    def _handle_artifact_download(self, path):
+        """GET /v1/artifacts/<id>/download?version=N — download artifact content."""
+        from urllib.parse import urlparse, parse_qs
+        parts = path.split("/")
+        artifact_id = parts[3] if len(parts) >= 5 else ""
+        qs = parse_qs(urlparse(self.path).query)
+        version = qs.get("version", [None])[0]
+
+        artifact = ChatDB.get_artifact(artifact_id)
+        if not artifact:
+            self._send_json({"error": "Artifact not found"}, 404)
+            return
+
+        filename = artifact["name"]
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        content_types = {
+            "md": "text/markdown", "txt": "text/plain", "py": "text/x-python",
+            "json": "application/json", "pdf": "application/pdf",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "html": "text/html", "csv": "text/csv",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "js": "application/javascript", "ts": "text/typescript",
+            "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "gif": "image/gif", "svg": "image/svg+xml",
+        }
+        ct = content_types.get(ext, "application/octet-stream")
+
+        # If no version specified, serve disk file
+        if not version:
+            try:
+                with open(artifact["path"], "rb") as f:
+                    data = f.read()
+            except Exception:
+                self._send_json({"error": "File not found on disk"}, 404)
+                return
+        else:
+            ver_data = ChatDB.get_artifact_content(artifact_id, version)
+            if not ver_data or ver_data["content"] is None:
+                self._send_json({"error": "Version content not available"}, 404)
+                return
+            data = ver_data["content"] if isinstance(ver_data["content"], bytes) else ver_data["content"].encode()
+
+        self.send_response(200)
+        self.send_header("Content-Type", ct)
+        self.send_header("Content-Length", len(data))
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(data)
 
     def _serve_static(self, path):
         """Serve static files from web/ directory."""
