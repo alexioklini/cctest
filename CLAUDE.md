@@ -44,7 +44,8 @@ The web UI uses a sidebar + multi-view layout inspired by Claude.ai:
 - **Welcome view** (`#welcome-view`): greeting + composer for new conversations
 - **Chat view** (`#chat-view`): message history + streaming composer with tool blocks
 - **Chats view** (`#chats-view`): searchable session list with All/Archived tabs
-- **Projects view** (`#projects-view`): project management
+- **Projects view** (`#projects-view`): Claude.ai-style project list with card grid, search, Your Projects/Archived tabs, sort dropdown
+- **Project detail view** (`#project-detail-view`): back nav, project heading, chat composer, conversation list, right panel (Instructions + Files)
 - **Graph view** (`#graph-view`): knowledge graph visualization
 - **Settings/Config modals** (`.modal-overlay`): standard overlays that stack on top
 
@@ -162,6 +163,11 @@ Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic A
 - Provider fallback ordering: same provider first, then capabilities, then priority
 - Chat file attachments: files created by agents (write_file/edit_file) appear as viewable/downloadable attachments
 - `get_model_max_output(model)` returns max output tokens based on model family or config
+- Projects (Claude.ai-style): `ProjectManager` CRUD, `instructions` field in project.json injected into system prompt, file upload via multipart to `IngestManager`
+- Project-scoped conversations: `session.project` field, `list_sessions(project=X)` filter, `state.currentProject` in web UI
+- Project archive: sets `status: "archived"` in project.json, preserves files and QMD collection
+- Project delete: soft-delete to `.trash/`, removes QMD collection, recoverable from trash
+- Multipart upload: manual boundary parser (Python 3.13+ removed `cgi` module), preserves original filename
 - Project notes: NoteManager CRUD, AI editing via write_file/edit_file tools (not EDIT_NOTE tags), auto-reload on filesystem changes
 - Chat transcript indexing: chats-indexed/*.md chunks stored in QMD for semantic search
 - LLM chat summaries: generated via Haiku after first response, shown in sidebar
@@ -318,6 +324,13 @@ Server runs on port 8420 (configurable). Key endpoints:
 - `GET /v1/mcp/registry` — list available MCP server templates
 - `GET /v1/costs` — cost stats (agent, hours params)
 - `GET /v1/costs/daily` — daily cost breakdown (agent, days params)
+- `GET /v1/sessions?project=X` — list sessions filtered by project
+- `GET /v1/agents/<id>/projects` — list projects with instructions, doc_count, status
+- `POST /v1/agents/<id>/projects` — create project (name, description)
+- `GET/PUT/DELETE /v1/agents/<id>/projects/<name>` — project CRUD (instructions field editable)
+- `POST /v1/agents/<id>/projects/<name>/ingest` — multipart file upload to project knowledge base
+- `GET /v1/agents/<id>/projects/<name>/docs` — list ingested documents
+- `DELETE /v1/agents/<id>/projects/<name>/docs/<hash>` — remove ingested document
 - `POST /v1/restart` — re-execs the server process
 
 ### Deployment

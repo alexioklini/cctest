@@ -460,7 +460,7 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=list)
-    def list_sessions(agent_id=None, status=None):
+    def list_sessions(agent_id=None, status=None, project=None):
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
             q = ("SELECT s.*, "
@@ -471,6 +471,9 @@ class ChatDB:
             if agent_id:
                 q += " AND s.agent_id = ?"
                 params.append(agent_id)
+            if project:
+                q += " AND s.project = ?"
+                params.append(project)
             if status:
                 if status == 'all':
                     pass  # No filter — return all statuses
@@ -1359,14 +1362,19 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         self._send_json({"models": models})
 
     def _handle_list_sessions(self):
-        # Support ?agent=X&status=active|archived
+        # Support ?agent=X&status=active|archived&project=Y
         qs = self.path.split("?", 1)[1] if "?" in self.path else ""
         params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
         from urllib.parse import unquote
         agent = unquote(params.get("agent", ""))
         status = unquote(params.get("status", ""))
-        if agent:
-            self._send_json({"sessions": sessions.list_for_agent(agent, status or None)})
+        project = unquote(params.get("project", ""))
+        if agent or project:
+            if project:
+                all_sessions = ChatDB.list_sessions(agent_id=agent or None, status=status or None, project=project)
+                self._send_json({"sessions": all_sessions})
+            else:
+                self._send_json({"sessions": sessions.list_for_agent(agent, status or None)})
         else:
             self._send_json({"sessions": sessions.list_all()})
 
@@ -3014,43 +3022,94 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     def _handle_multipart_ingest(self, agent_id: str, project_name: str | None) -> dict:
         """Parse multipart/form-data upload and ingest the file."""
-        import cgi
         import tempfile
+        import email.parser
+        import email.policy
         content_type = self.headers.get("Content-Type", "")
-        # Parse multipart form data
-        environ = {
-            "REQUEST_METHOD": "POST",
-            "CONTENT_TYPE": content_type,
-            "CONTENT_LENGTH": self.headers.get("Content-Length", "0"),
-        }
-        try:
-            form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ=environ)
-        except Exception as e:
-            return {"error": f"Failed to parse upload: {e}"}
-        file_item = form["file"] if "file" in form else None
-        if not file_item or not file_item.filename:
+        content_length = int(self.headers.get("Content-Length", "0"))
+        if not content_length:
+            return {"error": "No content"}
+
+        # Read the full body
+        body = self.rfile.read(content_length)
+
+        # Extract boundary from content-type
+        boundary = None
+        for part in content_type.split(";"):
+            part = part.strip()
+            if part.startswith("boundary="):
+                boundary = part[len("boundary="):]
+                break
+        if not boundary:
+            return {"error": "No boundary in Content-Type"}
+
+        # Parse multipart parts manually
+        delimiter = f"--{boundary}".encode()
+        parts = body.split(delimiter)
+
+        filename = None
+        file_data = None
+        form_fields = {}
+
+        for part in parts:
+            if not part or part == b"--\r\n" or part == b"--":
+                continue
+            # Split headers from body at first double newline
+            if b"\r\n\r\n" in part:
+                header_block, part_body = part.split(b"\r\n\r\n", 1)
+            elif b"\n\n" in part:
+                header_block, part_body = part.split(b"\n\n", 1)
+            else:
+                continue
+
+            # Strip trailing \r\n from part body
+            if part_body.endswith(b"\r\n"):
+                part_body = part_body[:-2]
+
+            header_text = header_block.decode("utf-8", errors="replace")
+            # Parse Content-Disposition
+            field_name = None
+            field_filename = None
+            for line in header_text.split("\r\n"):
+                line = line.strip()
+                if line.lower().startswith("content-disposition:"):
+                    for item in line.split(";"):
+                        item = item.strip()
+                        if item.startswith("name="):
+                            field_name = item[5:].strip('"').strip("'")
+                        elif item.startswith("filename="):
+                            field_filename = item[9:].strip('"').strip("'")
+
+            if field_name == "file" and field_filename:
+                filename = field_filename
+                file_data = part_body
+            elif field_name:
+                form_fields[field_name] = part_body.decode("utf-8", errors="replace")
+
+        if not filename or file_data is None:
             return {"error": "No file uploaded"}
-        # Save to temp file
-        suffix = os.path.splitext(file_item.filename)[1]
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(file_item.file.read())
-            tmp_path = tmp.name
+
+        # Save to temp file with original filename preserved
+        suffix = os.path.splitext(filename)[1]
+        import tempfile
+        tmp_dir = tempfile.mkdtemp()
+        tmp_path = os.path.join(tmp_dir, filename)
+        with open(tmp_path, "wb") as tmp:
+            tmp.write(file_data)
         try:
-            tags_raw = form.getvalue("tags", "")
+            tags_raw = form_fields.get("tags", "")
             tags = [t.strip() for t in tags_raw.split(",") if t.strip()] if tags_raw else []
-            chunk_size = int(form.getvalue("chunk_size", "1500"))
-            chunk_overlap = int(form.getvalue("chunk_overlap", "200"))
+            chunk_size = int(form_fields.get("chunk_size", "1500"))
+            chunk_overlap = int(form_fields.get("chunk_overlap", "200"))
             result = engine.IngestManager.ingest_file(
                 agent_id, tmp_path, project_name=project_name,
                 tags=tags, chunk_size=chunk_size, chunk_overlap=chunk_overlap,
             )
-            # Replace tmp path source with original filename
-            if "source" in result:
-                result["source"] = file_item.filename
             return result
         finally:
             try:
                 os.unlink(tmp_path)
+                os.rmdir(tmp_dir)
             except OSError:
                 pass
 

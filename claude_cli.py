@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "5.4.0"
+VERSION = "5.5.0"
 VERSION_DATE = "2026-03-31"
 CHANGELOG = [
+    ("5.5.0", "2026-03-31", "Claude.ai-style Projects — full project workspace system modeled after Claude.ai. Projects list view with card grid, search, Your Projects/Archived tabs, sort by activity/name/created. Project detail view with back navigation, description (show more/less), chat composer, conversation list, and right panel with Instructions and Files sections. Custom instructions per project — editable via modal, stored in project.json, injected into system prompt for all project conversations. File upload via multipart form (replaced deprecated cgi module with manual boundary parser for Python 3.13+). Files displayed with document icons, deletable per file. Project-scoped conversations — sessions filtered by project field, new chats auto-scoped. Project CRUD — create modal with name/description/agent, archive (preserves data + QMD), delete (soft-delete to .trash, removes QMD collection). Context menus on project cards and chat items. API: GET/POST /v1/sessions?project=X for project-filtered session listing."),
     ("5.4.0", "2026-03-31", "Artifact system — Claude.ai-style artifact management. Files written with relative paths auto-land in agents/<name>/artifacts/<session_folder>/. Session-scoped SQLite registry with content snapshots (versioned blobs, up to 5MB per version). Resizable right panel with type-aware rendering: syntax-highlighted code (highlight.js), sandboxed HTML iframe, inline SVG, image display, rendered markdown. Version selector dropdown, copy/download/source-toggle actions. Artifact cards in chat messages (coral border, monitor icon) open panel on click. Artifacts excluded from QMD indexing and knowledge graph (not memory). Artifacts browse view in sidebar: full-page grid with content preview cards, type filter tabs (All/Code/HTML/Documents/Images/Markdown), agent filter chips, time-ago timestamps. Click-through from browse opens chat + artifact panel. API: GET /v1/artifacts, /v1/artifacts/browse, /v1/artifacts/<id>/content, /v1/artifacts/<id>/download."),
     ("5.3.0", "2026-03-31", "Claude.ai-style web UI + interactive agents. Complete UI rewrite: sidebar + multi-view layout (Welcome, Chat, Chats, Projects, Knowledge Graph, Customize) with Anthropic Sans/Serif/Mono fonts, warm light/dark themes. Tool call blocks show with full args during streaming and persist across page reloads (reconstructed from assistant message metadata). Tool display toggle works. Interactive mode: agents can ask clarifying questions via AskUserQuestion — sidecar intercepts with PreToolUse hook, emits user_input_needed SSE event, blocks until answer arrives via POST /answer/{query_id}. TUI renders questions with selectable options. New endpoints: memory CRUD, soul.md AI editing, MCP registry. Agent creation accepts model and display_name. Sidecar captures tool input_json_delta for full args on content_block_stop."),
     ("5.2.0", "2026-03-29", "Mission Control cockpit — the web UI is now a dashboard-first design inspired by mission control interfaces. Agent cards show live status, model, schedules, past actions (scrollable), projects, and cost. Chat and project views are full-screen modals with maximum screen space. Token Cost Feed table with per-agent breakdown. Consistent color palette (dark navy header, light cards, green/orange/purple accents) across cockpit, chat modal, config dialogs, and settings. Session cache for instant cockpit loads. Hover actions for archive/delete on sessions and projects. Team badges on agent cards. Agent ordering matches team hierarchy (main → teams → standalone). All chat input controls (attach, think, plan, tools toggle, refine) available in modal."),
@@ -4059,15 +4060,28 @@ class ProjectManager:
                 chunk_count = sum(1 for fn in os.listdir(ingested_dir) if fn.startswith("ingest-") and fn.endswith(".md"))
             # Count memory files
             mem_count = sum(1 for fn in os.listdir(pdir) if fn.endswith(".md") and not fn.startswith("ingest-") and fn not in _QMD_IGNORE_FILES)
+            # Count ingested source files (unique sources, not chunks)
+            doc_count = 0
+            if os.path.isdir(ingested_dir):
+                seen_sources = set()
+                for fn in os.listdir(ingested_dir):
+                    if fn.startswith("ingest-") and fn.endswith(".md"):
+                        # Source hash is between first and second dash
+                        parts_fn = fn.split("-", 2)
+                        if len(parts_fn) >= 2:
+                            seen_sources.add(parts_fn[1])
+                doc_count = len(seen_sources) if seen_sources else chunk_count
             projects.append({
                 "name": name,
                 "description": cfg.get("description", ""),
+                "instructions": cfg.get("instructions", ""),
                 "icon": cfg.get("icon", "folder"),
                 "created_at": cfg.get("created_at", ""),
                 "tags": cfg.get("tags", []),
                 "watch_folders": cfg.get("watch_folders", []),
                 "status": cfg.get("status", "active"),
                 "chunks": chunk_count,
+                "doc_count": doc_count,
                 "memories": mem_count,
             })
         return projects
@@ -4111,9 +4125,17 @@ class ProjectManager:
     def get_project(agent_id: str, name: str) -> dict | None:
         """Read project.json for a project."""
         pdir = ProjectManager._project_dir(agent_id, name)
+        if not os.path.isdir(pdir):
+            return None
         cfg_path = os.path.join(pdir, "project.json")
         if not os.path.exists(cfg_path):
-            return None
+            # Auto-create minimal project.json for dirs that exist without one
+            cfg = {"name": name, "description": "", "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
+            try:
+                with open(cfg_path, "w") as f:
+                    json.dump(cfg, f, indent=2)
+            except OSError:
+                pass
         try:
             with open(cfg_path, "r") as f:
                 cfg = json.load(f)
@@ -4138,7 +4160,7 @@ class ProjectManager:
         try:
             with open(cfg_path, "r") as f:
                 cfg = json.load(f)
-            for k in ("description", "watch_folders", "tags", "model", "name", "icon", "status"):
+            for k in ("description", "watch_folders", "tags", "model", "name", "icon", "status", "instructions"):
                 if k in updates:
                     cfg[k] = updates[k]
             with open(cfg_path, "w") as f:
@@ -4159,9 +4181,22 @@ class ProjectManager:
         shutil.move(pdir, dest)
         # Remove QMD collection
         collection_name = f"{agent_id}/{name}"
+        def _find_qmd():
+            p = shutil.which("qmd")
+            if p:
+                return p
+            # Common locations when running under launchd
+            for candidate in [
+                os.path.expanduser("~/.nvm/versions/node/v22.20.0/bin/qmd"),
+                "/opt/homebrew/bin/qmd",
+                "/usr/local/bin/qmd",
+            ]:
+                if os.path.isfile(candidate):
+                    return candidate
+            return "qmd"
         try:
             subprocess.run(
-                ["qmd", "collection", "remove", collection_name],
+                [_find_qmd(), "collection", "remove", collection_name],
                 capture_output=True, text=True, timeout=5,
             )
         except Exception:
@@ -13477,6 +13512,13 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
                 "\nPrioritize project-specific documents when answering. "
                 "Memory operations (store/recall) are scoped to this project.\n\n"
             )
+            # Inject project custom instructions
+            proj_instructions = proj_cfg.get("instructions", "")
+            if proj_instructions:
+                system_instruction += (
+                    f"PROJECT INSTRUCTIONS (set by the user for this project):\n"
+                    f"{proj_instructions}\n\n"
+                )
     # Inject note context for AI-assisted note editing
     note_context = getattr(_thread_local, 'note_context', None)
     if note_context:
