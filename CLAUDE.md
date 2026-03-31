@@ -61,6 +61,20 @@ Key patterns:
 - `renderStreamingMessage()` updates in-place during streaming; `renderMessages()` for full re-render
 - Artifact panel: resizable right panel (`#artifact-panel`) for viewing generated files with type-aware rendering
 
+### Code Mode
+
+Code mode provides a Claude Desktop-style coding assistant with file tree, diff view, and project folder context.
+
+- **Folder browser GUI**: modal with breadcrumb navigation, lazy-loaded directory listing via `/v1/files/tree?depth=0`, single-click select, double-click navigate, manual path input
+- **SSE streaming**: uses proper two-line `event: type\ndata: json` format (same parser as main chat)
+- **Tool calls**: rendered identically to main chat — `renderToolCall`/`renderToolResult` style with gear/check icons, `.tool-block.open` toggle
+- **Streaming indicator**: spinner bar with wave animation, model name, tool name labels ("Running Read..."), elapsed timer, stop button swaps with send button
+- **Folder-based projects**: sessions tagged with folder path in `project` field; "All Projects" expands to show discovered projects (unique folder paths from sessions) with counts; selecting a project filters the session list
+- **Session management**: archive/delete buttons on hover in sidebar session items; `archiveCodeSession()`/`deleteCodeSession()` via API
+- **State**: `codeFolder` (selected path, persisted to localStorage), `codeProjectFilter` (null=all, string=folder filter), `codeSessionId`, `codeMessages[]`
+- **Session creation**: `API.createSession(agent, model, folderPath, 'code')` — folder path stored as `project`, `status=code`
+- **Views**: `code-welcome` (folder picker + composer), `code-chat` (file tree + messages + diff panel)
+
 ### Artifacts
 
 Files generated during chat are treated as artifacts when written to `agents/<name>/artifacts/`.

@@ -444,6 +444,396 @@ textarea { resize: none; }
 .page-header-right { display: flex; align-items: center; gap: 8px; }
 
 /* ═══════════════════════════════════════════════════════════
+   Mode Selector (Chat / Code tabs — Claude Desktop style)
+   ═══════════════════════════════════════════════════════════ */
+.mode-selector {
+  display: flex;
+  align-items: center;
+  background: var(--bg-200);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+.mode-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-400);
+  transition: all 0.15s ease;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mode-tab:hover { color: var(--text-200); background: var(--bg-300); }
+.mode-tab.active {
+  color: var(--text-000);
+  background: var(--bg-000);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+.mode-tab svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+/* ═══════════════════════════════════════════════════════════
+   Code Mode Views
+   ═══════════════════════════════════════════════════════════ */
+#code-welcome-view {
+  flex: 1;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 24px 80px;
+  background: var(--bg-page);
+}
+#code-welcome-view.active { display: flex; }
+
+.code-welcome-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 28px;
+}
+.code-welcome-header svg { width: 32px; height: 32px; color: var(--accent-brand); }
+.code-welcome-title {
+  font-family: var(--font-serif);
+  font-size: 28px;
+  font-weight: 400;
+  color: var(--text-000);
+}
+@media (min-width: 640px) {
+  .code-welcome-title { font-size: 36px; }
+}
+
+/* Code mode config bar */
+.code-config-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.code-config-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-200);
+  background: var(--bg-000);
+  font-size: 13px;
+  color: var(--text-200);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.code-config-pill:hover { border-color: var(--border-300); background: var(--bg-200); }
+.code-config-pill svg { width: 14px; height: 14px; color: var(--text-400); flex-shrink: 0; }
+.code-config-pill .pill-value { font-weight: 500; color: var(--text-000); }
+
+/* Permission mode selector */
+.permission-selector {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 6px;
+  background: var(--bg-200);
+}
+.permission-opt {
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-400);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.permission-opt:hover { color: var(--text-200); }
+.permission-opt.active {
+  background: var(--bg-000);
+  color: var(--text-000);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+}
+
+/* Code chat layout (with optional file tree + diff panels) */
+#code-chat-view {
+  flex: 1;
+  display: none;
+  flex-direction: row;
+  background: var(--bg-page);
+  overflow: hidden;
+}
+#code-chat-view.active { display: flex; }
+
+/* File tree panel */
+.code-file-tree {
+  width: 240px;
+  min-width: 200px;
+  max-width: 360px;
+  border-right: 1px solid var(--border-100);
+  background: var(--bg-100);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.code-file-tree-header {
+  padding: 10px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-400);
+  border-bottom: 1px solid var(--border-100);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.code-file-tree-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.tree-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px 3px calc(8px + var(--depth, 0) * 16px);
+  font-size: 12.5px;
+  font-family: var(--font-mono);
+  color: var(--text-200);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-item:hover { background: var(--sidebar-hover); }
+.tree-item.modified { color: var(--warning); }
+.tree-item.staged { color: var(--success); }
+.tree-item.untracked { color: var(--text-400); font-style: italic; }
+.tree-item svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--text-400); }
+.tree-item.dir svg { color: var(--accent-brand); }
+.tree-toggle { width: 12px; height: 12px; transition: transform 0.15s; }
+.tree-toggle.collapsed { transform: rotate(-90deg); }
+
+/* Code chat center column */
+.code-chat-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Diff panel */
+.code-diff-panel {
+  width: 360px;
+  min-width: 280px;
+  max-width: 500px;
+  border-left: 1px solid var(--border-100);
+  background: var(--bg-100);
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+}
+.code-diff-panel.open { display: flex; }
+
+.code-diff-header {
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-200);
+  border-bottom: 1px solid var(--border-100);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.diff-stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-200);
+  background: var(--bg-000);
+  transition: background 0.15s;
+}
+.diff-stats:hover { background: var(--bg-200); }
+.diff-stats .diff-plus { color: var(--success); }
+.diff-stats .diff-minus { color: var(--error); }
+
+.code-diff-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+.diff-file-item {
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-family: var(--font-mono);
+  color: var(--text-200);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.diff-file-item:hover { background: var(--sidebar-hover); }
+.diff-file-item .diff-file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diff-file-changes { font-size: 11px; white-space: nowrap; }
+.diff-file-changes .plus { color: var(--success); }
+.diff-file-changes .minus { color: var(--error); }
+
+.diff-detail {
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-200);
+  line-height: 1.5;
+}
+.diff-detail .diff-add { color: var(--success); background: rgba(22,163,74,0.08); }
+.diff-detail .diff-del { color: var(--error); background: rgba(220,38,38,0.08); }
+.diff-detail .diff-hunk { color: var(--accent-blue); font-weight: 600; }
+
+/* Code mode session toolbar */
+.code-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-100);
+  background: var(--bg-100);
+  font-size: 12px;
+}
+.code-toolbar-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-400);
+  font-family: var(--font-mono);
+}
+.code-toolbar-item svg { width: 13px; height: 13px; }
+.code-toolbar .branch-name {
+  color: var(--accent-brand);
+  font-weight: 500;
+}
+.code-toolbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+/* Code mode sidebar override */
+.code-sidebar-content { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+.code-sidebar-content.active { display: flex; }
+.chat-sidebar-content { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+.chat-sidebar-content.hidden { display: none; }
+
+.code-sb-header {
+  padding: 16px 16px 8px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-000);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.code-sb-header .code-badge {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-400);
+  background: var(--bg-200);
+  border: 1px solid var(--border-100);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.code-sb-nav { padding: 4px 8px; flex-shrink: 0; }
+.code-sb-nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; border-radius: 8px;
+  font-size: 14px; color: var(--sidebar-text);
+  cursor: pointer; transition: background 0.1s;
+}
+.code-sb-nav-item:hover { background: var(--sidebar-hover); }
+.code-sb-nav-item svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; flex-shrink: 0; }
+
+.code-sb-filter {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; font-size: 13px; color: var(--text-200);
+  cursor: pointer; position: relative;
+}
+.code-sb-filter:hover { color: var(--text-000); }
+.code-sb-filter svg { width: 16px; height: 16px; }
+.code-sb-filter-label { display: flex; align-items: center; gap: 4px; font-weight: 500; }
+
+.code-sb-project-list { padding: 0 8px 4px; }
+.code-sb-project-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 10px; border-radius: 6px;
+  font-size: 12px; color: var(--sidebar-text);
+  cursor: pointer; transition: background 0.1s;
+}
+.code-sb-project-item:hover { background: var(--sidebar-hover); }
+.code-sb-project-item.active { background: var(--sidebar-active); color: var(--text-000); font-weight: 500; }
+.code-sb-project-item svg { width: 14px; height: 14px; flex-shrink: 0; }
+.code-sb-project-item .project-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-sb-project-item .project-count { font-size: 11px; color: var(--text-400); }
+.code-sb-sessions { flex: 1; overflow-y: auto; padding: 0 8px; }
+.code-sb-date-group { font-size: 11px; font-weight: 500; color: var(--text-400); padding: 10px 8px 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+
+.code-sb-session-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 8px;
+  font-size: 13px; color: var(--sidebar-text);
+  cursor: pointer; transition: background 0.1s;
+}
+.code-sb-session-item:hover { background: var(--sidebar-hover); }
+.code-sb-session-item.active { background: var(--sidebar-active); color: var(--text-000); font-weight: 500; }
+.code-sb-session-item .session-status {
+  width: 8px; height: 8px; border-radius: 50%;
+  border: 1.5px solid var(--text-400); flex-shrink: 0;
+}
+.code-sb-session-item .session-status.running { border-color: var(--success); background: var(--success); }
+.code-sb-session-item .session-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-sb-session-item .session-env {
+  width: 16px; height: 16px; color: var(--text-400); flex-shrink: 0;
+}
+.code-session-actions {
+  display: none; gap: 2px; flex-shrink: 0;
+}
+.code-sb-session-item:hover .code-session-actions { display: flex; }
+.code-sb-session-item:hover .session-env { display: none; }
+.code-session-actions button {
+  background: none; border: none; padding: 2px; cursor: pointer; color: var(--text-400);
+  border-radius: 4px; line-height: 0;
+}
+.code-session-actions button:hover { color: var(--text-100); background: var(--bg-300); }
+
+/* Code composer below-bar (repo + environment) */
+.code-below-composer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 640px;
+  margin: 8px auto 0;
+  padding: 0 4px;
+}
+.code-repo-pill, .code-env-pill {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 20px;
+  border: 1px solid var(--border-200); background: var(--bg-000);
+  font-size: 13px; color: var(--text-200);
+  cursor: pointer; transition: all 0.15s;
+}
+.code-repo-pill:hover, .code-env-pill:hover { border-color: var(--border-300); background: var(--bg-200); }
+.code-repo-pill svg, .code-env-pill svg { width: 16px; height: 16px; flex-shrink: 0; }
+
+/* ═══════════════════════════════════════════════════════════
    Welcome / New Chat View
    ═══════════════════════════════════════════════════════════ */
 #welcome-view {
@@ -1789,6 +2179,227 @@ textarea { resize: none; }
 }
 #artifacts-view.active { display: flex; }
 
+/* ═══ Scheduled Tasks View ═══ */
+#scheduled-view {
+  display: none;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-page);
+  overflow-y: auto;
+}
+#scheduled-view.active { display: flex; }
+
+.scheduled-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 32px 24px;
+  width: 100%;
+}
+.scheduled-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+.scheduled-title {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--text-000);
+}
+.scheduled-new-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 20px;
+  background: var(--text-000);
+  color: var(--bg-000);
+  font-size: 14px;
+  font-weight: 500;
+  transition: opacity 0.15s;
+}
+.scheduled-new-btn:hover { opacity: 0.85; }
+
+.scheduled-tabs {
+  display: flex;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-100);
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+.scheduled-tab {
+  padding: 4px 0;
+  color: var(--text-400);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+}
+.scheduled-tab:hover { color: var(--text-200); }
+.scheduled-tab.active { color: var(--text-000); border-bottom-color: var(--text-000); font-weight: 500; }
+
+.sched-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border-200);
+  border-radius: 12px;
+  background: var(--bg-000);
+  margin-bottom: 12px;
+  transition: border-color 0.15s;
+}
+.sched-card:hover { border-color: var(--accent-brand); }
+.sched-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sched-card-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-000);
+}
+.sched-card-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.sched-card-badge.running { background: rgba(16,185,129,.15); color: #10b981; }
+.sched-card-badge.paused { background: rgba(245,158,11,.15); color: #f59e0b; }
+.sched-card-badge.enabled { background: rgba(59,130,246,.15); color: #3b82f6; }
+.sched-card-badge.loop { background: rgba(168,85,247,.15); color: #a855f7; }
+.sched-card-prompt {
+  font-size: 13px;
+  color: var(--text-300);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.sched-card-meta {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--text-400);
+  font-family: var(--font-mono);
+}
+.sched-card-actions {
+  display: flex;
+  gap: 6px;
+}
+.sched-card-actions button {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--bg-200);
+  color: var(--text-200);
+  transition: all 0.15s;
+}
+.sched-card-actions button:hover { background: var(--bg-300); color: var(--text-000); }
+.sched-card-actions button.danger:hover { background: rgba(239,68,68,.15); color: #ef4444; }
+
+/* Create scheduled task modal */
+.sched-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.sched-modal {
+  background: var(--bg-000);
+  border-radius: 16px;
+  padding: 28px;
+  width: 520px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0,0,0,.3);
+}
+.sched-modal h2 {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-000);
+  margin-bottom: 20px;
+}
+.sched-form-group {
+  margin-bottom: 16px;
+}
+.sched-form-group label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-200);
+  margin-bottom: 6px;
+}
+.sched-form-group input,
+.sched-form-group select,
+.sched-form-group textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-200);
+  background: var(--bg-100);
+  color: var(--text-100);
+  font-size: 14px;
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.15s;
+}
+.sched-form-group input:focus,
+.sched-form-group select:focus,
+.sched-form-group textarea:focus { border-color: var(--accent-brand); }
+.sched-form-group textarea { resize: vertical; min-height: 80px; }
+.sched-form-row {
+  display: flex;
+  gap: 12px;
+}
+.sched-form-row .sched-form-group { flex: 1; }
+.sched-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+.sched-modal-actions button {
+  padding: 8px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+.sched-modal-actions .sched-cancel-btn {
+  background: var(--bg-200);
+  color: var(--text-200);
+}
+.sched-modal-actions .sched-cancel-btn:hover { background: var(--bg-300); }
+.sched-modal-actions .sched-create-btn {
+  background: var(--text-000);
+  color: var(--bg-000);
+}
+.sched-modal-actions .sched-create-btn:hover { opacity: 0.85; }
+
+/* Loop indicator in chat */
+.loop-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: rgba(168,85,247,.12);
+  color: #a855f7;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+}
+
 .artifacts-container {
   max-width: 1000px;
   margin: 0 auto;
@@ -2685,52 +3296,92 @@ textarea { resize: none; }
     </button>
   </div>
 
-  <!-- Agent Selector -->
-  <div style="position:relative;flex-shrink:0">
-    <div class="sb-agent-selector" id="sb-agent-selector" onclick="toggleSbAgentDropdown()">
-      <span class="sb-agent-selector-name" id="sb-agent-selector-name">Steve Rogers</span>
-      <span id="sb-agent-avatar-icon" style="font-size:10px;font-family:var(--font-mono);color:var(--text-400);white-space:nowrap">main</span>
-      <svg class="sb-agent-selector-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+  <!-- ══ Chat Sidebar Content ══ -->
+  <div class="chat-sidebar-content" id="chat-sidebar-content">
+    <!-- Agent Selector -->
+    <div style="position:relative;flex-shrink:0">
+      <div class="sb-agent-selector" id="sb-agent-selector" onclick="toggleSbAgentDropdown()">
+        <span class="sb-agent-selector-name" id="sb-agent-selector-name">Steve Rogers</span>
+        <span id="sb-agent-avatar-icon" style="font-size:10px;font-family:var(--font-mono);color:var(--text-400);white-space:nowrap">main</span>
+        <svg class="sb-agent-selector-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+      <div class="sb-agent-dropdown hidden" id="sb-agent-dropdown"></div>
     </div>
-    <div class="sb-agent-dropdown hidden" id="sb-agent-dropdown"></div>
+
+    <nav class="sb-nav">
+      <div class="sb-nav-item" onclick="navigateTo('welcome')" data-view="welcome">
+        <span class="sb-icon"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>
+        <span class="sb-label">New Chat</span>
+      </div>
+      <div class="sb-nav-item" onclick="openSearchModal()" data-view="search">
+        <span class="sb-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+        <span class="sb-label">Search</span>
+      </div>
+      <div class="sb-nav-item" onclick="navigateTo('chats')" data-view="chats">
+        <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></span>
+        <span class="sb-label">Chats</span>
+      </div>
+      <div class="sb-nav-item" onclick="navigateTo('projects')" data-view="projects">
+        <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg></span>
+        <span class="sb-label">Projects</span>
+      </div>
+      <div class="sb-nav-item" onclick="navigateTo('artifacts')" data-view="artifacts">
+        <span class="sb-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
+        <span class="sb-label">Artifacts</span>
+      </div>
+      <div class="sb-nav-item" onclick="navigateTo('scheduled')" data-view="scheduled">
+        <span class="sb-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
+        <span class="sb-label">Scheduled</span>
+      </div>
+      <div class="sb-nav-item" onclick="navigateTo('graph')" data-view="graph">
+        <span class="sb-icon"><svg viewBox="0 0 24 24"><circle cx="5" cy="6" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="7" y1="7.5" x2="10" y2="16"/><line x1="17" y1="7.5" x2="14" y2="16"/><line x1="7.5" y1="6" x2="16.5" y2="6"/></svg></span>
+        <span class="sb-label">Knowledge Graph</span>
+      </div>
+      <div class="sb-nav-item" onclick="openAgentSettings()" data-view="settings">
+        <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+        <span class="sb-label">Customize</span>
+      </div>
+    </nav>
+
+    <hr class="sb-divider">
+
+    <div class="sb-section-title">Recent</div>
+    <div class="sb-sessions-list" id="sb-recent-chats">
+      <!-- Populated dynamically -->
+    </div>
   </div>
 
-  <nav class="sb-nav">
-    <div class="sb-nav-item" onclick="navigateTo('welcome')" data-view="welcome">
-      <span class="sb-icon"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>
-      <span class="sb-label">New Chat</span>
+  <!-- ══ Code Sidebar Content ══ -->
+  <div class="code-sidebar-content" id="code-sidebar-content">
+    <div class="code-sb-header">
+      Code Mode <span class="code-badge">Local</span>
     </div>
-    <div class="sb-nav-item" onclick="openSearchModal()" data-view="search">
-      <span class="sb-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
-      <span class="sb-label">Search</span>
-    </div>
-    <div class="sb-nav-item" onclick="navigateTo('chats')" data-view="chats">
-      <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></span>
-      <span class="sb-label">Chats</span>
-    </div>
-    <div class="sb-nav-item" onclick="navigateTo('projects')" data-view="projects">
-      <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg></span>
-      <span class="sb-label">Projects</span>
-    </div>
-    <div class="sb-nav-item" onclick="navigateTo('artifacts')" data-view="artifacts">
-      <span class="sb-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
-      <span class="sb-label">Artifacts</span>
-    </div>
-    <div class="sb-nav-item" onclick="navigateTo('graph')" data-view="graph">
-      <span class="sb-icon"><svg viewBox="0 0 24 24"><circle cx="5" cy="6" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="7" y1="7.5" x2="10" y2="16"/><line x1="17" y1="7.5" x2="14" y2="16"/><line x1="7.5" y1="6" x2="16.5" y2="6"/></svg></span>
-      <span class="sb-label">Knowledge Graph</span>
-    </div>
-    <div class="sb-nav-item" onclick="openAgentSettings()" data-view="settings">
-      <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
-      <span class="sb-label">Customize</span>
-    </div>
-  </nav>
 
-  <hr class="sb-divider">
+    <div class="code-sb-nav">
+      <div class="code-sb-nav-item" onclick="codeNewSession()">
+        <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        New Session
+      </div>
+      <div class="code-sb-nav-item" onclick="openGeneralSettings(); setTimeout(()=>{ const tabs=document.querySelectorAll('#general-settings-tabs .modal-tab'); tabs[tabs.length-1]?.click(); },100)">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09"/></svg>
+        Settings
+      </div>
+    </div>
 
-  <div class="sb-section-title">Recent</div>
-  <div class="sb-sessions-list" id="sb-recent-chats">
-    <!-- Populated dynamically -->
+    <div class="code-sb-filter" id="code-sb-filter" onclick="toggleCodeProjectList()">
+      <span class="code-sb-filter-label">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+        <span id="code-sb-project-label">All Projects</span>
+        <svg id="code-sb-project-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" style="transition:transform 0.15s"><polyline points="6 9 12 15 18 9"/></svg>
+      </span>
+    </div>
+    <div class="code-sb-project-list" id="code-sb-project-list" style="display:none">
+      <!-- Populated by JS: list of folder-based projects -->
+    </div>
+
+    <div class="code-sb-sessions" id="code-sb-sessions">
+      <!-- Populated by JS: date groups + session items -->
+    </div>
   </div>
 
   <!-- User section at bottom -->
@@ -2763,6 +3414,17 @@ textarea { resize: none; }
       <div class="page-header-title" id="page-header-title" onclick="toggleChatTitleMenu(event)">
         <!-- Dynamic: "Brain Agent" or "Project / Chat Title" -->
       </div>
+    </div>
+    <!-- Mode Selector (Chat / Code) -->
+    <div class="mode-selector" id="mode-selector">
+      <button class="mode-tab active" data-mode="chat" onclick="switchAppMode('chat')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        Chat
+      </button>
+      <button class="mode-tab" data-mode="code" onclick="switchAppMode('code')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        Code
+      </button>
     </div>
     <div class="page-header-right" id="page-header-right">
       <!-- Dynamic buttons -->
@@ -3002,6 +3664,28 @@ textarea { resize: none; }
     </div>
   </div>
 
+  <!-- ═══ Scheduled Tasks View ═══ -->
+  <div id="scheduled-view">
+    <div class="scheduled-container">
+      <div class="scheduled-header">
+        <h1 class="scheduled-title">Scheduled</h1>
+        <button class="scheduled-new-btn" onclick="showCreateScheduledModal()">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New Task
+        </button>
+      </div>
+      <div class="scheduled-tabs">
+        <div class="scheduled-tab active" data-filter="all" onclick="setScheduledFilter('all',this)">All</div>
+        <div class="scheduled-tab" data-filter="scheduled" onclick="setScheduledFilter('scheduled',this)">Persistent</div>
+        <div class="scheduled-tab" data-filter="loops" onclick="setScheduledFilter('loops',this)">Loops</div>
+        <div class="scheduled-tab" data-filter="running" onclick="setScheduledFilter('running',this)">Running</div>
+      </div>
+      <div id="scheduled-list">
+        <!-- Populated dynamically -->
+      </div>
+    </div>
+  </div>
+
   <!-- ═══ Knowledge Graph View ═══ -->
   <div id="graph-view">
     <div class="graph-container">
@@ -3023,6 +3707,159 @@ textarea { resize: none; }
         <div class="graph-tooltip-name"></div>
         <div class="graph-tooltip-type"></div>
         <div class="graph-tooltip-desc"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Code Mode: Welcome View ═══ -->
+  <div id="code-welcome-view">
+    <div class="code-welcome-header">
+      <svg viewBox="0 0 32 32" fill="none" width="40" height="40">
+        <rect x="4" y="8" width="8" height="8" rx="1" fill="var(--accent-brand)" opacity="0.8"/>
+        <rect x="14" y="4" width="8" height="8" rx="1" fill="var(--accent-brand)"/>
+        <rect x="14" y="14" width="8" height="8" rx="1" fill="var(--accent-brand)" opacity="0.6"/>
+        <rect x="24" y="8" width="4" height="4" rx="1" fill="var(--accent-brand)" opacity="0.4"/>
+        <rect x="4" y="18" width="4" height="4" rx="1" fill="var(--accent-brand)" opacity="0.3"/>
+      </svg>
+    </div>
+    <div class="composer-wrapper">
+      <div class="composer-box" id="code-welcome-composer">
+        <textarea class="composer-input" id="code-welcome-input" placeholder="Find a small todo in the codebase and do it" rows="1" oninput="autoResizeInput(this); updateCodeSendButton()"></textarea>
+        <div class="composer-footer">
+          <div class="composer-footer-left">
+            <button class="composer-btn" onclick="triggerCodeFileUpload()" title="Attach files">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
+          </div>
+          <div class="composer-footer-right">
+            <button class="model-selector-btn" id="code-welcome-model-btn" onclick="toggleCodeModelDropdown(event)">
+              <span class="model-name" id="code-model-name">Opus 4.6</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <button class="composer-send-btn" id="code-welcome-send-btn" onclick="sendCodeMessage()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Below composer: repo/folder pill + agent/environment pill -->
+    <div class="code-below-composer">
+      <div class="code-repo-pill" onclick="selectCodeFolder()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+        <span id="code-folder-name">Select folder</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="code-env-pill" id="code-agent-pill" onclick="toggleCodeAgentDropdown(event)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <span id="code-agent-name">main</span>
+        </div>
+        <div class="permission-selector" id="code-permission-selector">
+          <button class="permission-opt active" data-perm="ask" onclick="setCodePermission('ask',this)">Ask</button>
+          <button class="permission-opt" data-perm="auto" onclick="setCodePermission('auto',this)">Auto</button>
+          <button class="permission-opt" data-perm="plan" onclick="setCodePermission('plan',this)">Plan</button>
+        </div>
+      </div>
+    </div>
+    <input type="file" id="code-file-input" multiple style="display:none">
+  </div>
+
+  <!-- ═══ Code Mode: Chat View ═══ -->
+  <div id="code-chat-view">
+    <!-- File tree panel -->
+    <div class="code-file-tree" id="code-file-tree">
+      <div class="code-file-tree-header">
+        <span>Files</span>
+        <button class="composer-btn" onclick="refreshCodeFileTree()" title="Refresh">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 109-9"/><polyline points="3 3 3 9 9 9"/></svg>
+        </button>
+      </div>
+      <div class="code-file-tree-content" id="code-file-tree-content">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+
+    <!-- Chat center column -->
+    <div class="code-chat-main">
+      <!-- Code toolbar -->
+      <div class="code-toolbar" id="code-toolbar">
+        <div class="code-toolbar-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+          <span id="code-toolbar-folder" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</span>
+        </div>
+        <div class="code-toolbar-item">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>
+          <span class="branch-name" id="code-toolbar-branch">—</span>
+        </div>
+        <div class="code-toolbar-right">
+          <div class="diff-stats" id="code-diff-toggle" onclick="toggleCodeDiffPanel()" title="View changes" style="display:none">
+            <span class="diff-plus" id="code-diff-plus">+0</span>
+            <span class="diff-minus" id="code-diff-minus">-0</span>
+          </div>
+          <button class="composer-btn" onclick="toggleCodeFileTreePanel()" title="Toggle file tree">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="18" rx="1"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Spinner bar -->
+      <div class="spinner-bar" id="code-spinner-bar">
+        <div class="wave-bars"><span></span><span></span><span></span><span></span><span></span></div>
+        <span class="spinner-model" id="code-spinner-model"></span>
+        <span id="code-spinner-label">Thinking...</span>
+        <span class="spinner-elapsed" id="code-spinner-elapsed"></span>
+      </div>
+
+      <!-- Messages -->
+      <div class="messages-scroll" id="code-messages-scroll">
+        <div class="messages-container" id="code-messages-container">
+        </div>
+      </div>
+
+      <!-- Code chat input -->
+      <div class="chat-input-area">
+        <div class="chat-composer-wrapper">
+          <div class="composer-box" id="code-chat-composer">
+            <textarea class="composer-input" id="code-chat-input" placeholder="Ask about your code..." rows="1" oninput="autoResizeInput(this); updateCodeSendButton()"></textarea>
+            <div class="composer-footer">
+              <div class="composer-footer-left">
+                <button class="composer-btn" onclick="triggerCodeFileUpload()" title="Attach files">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </button>
+              </div>
+              <div class="composer-footer-right">
+                <button class="model-selector-btn" id="code-model-selector-btn" onclick="toggleCodeModelDropdown(event)">
+                  <span class="model-name" id="code-model-selector-name">Sonnet 4.6</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <button class="composer-send-btn" id="code-chat-send-btn" onclick="sendCodeMessage()">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                </button>
+                <button class="composer-stop-btn hidden" id="code-chat-stop-btn" onclick="stopCodeGeneration()">
+                  <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Diff panel -->
+    <div class="code-diff-panel" id="code-diff-panel">
+      <div class="code-diff-header">
+        <span>Changes</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="composer-btn" onclick="refreshCodeDiff()" title="Refresh diff">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 109-9"/><polyline points="3 3 3 9 9 9"/></svg>
+          </button>
+          <button class="composer-btn" onclick="toggleCodeDiffPanel()" title="Close">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="code-diff-content" id="code-diff-content">
+        <div style="padding:20px;text-align:center;color:var(--text-400);font-size:13px">No changes detected</div>
       </div>
     </div>
   </div>
@@ -3137,9 +3974,10 @@ class API {
   static saveAgentConfig(id, cfg) { return this.post(`/v1/agents/${id}/config`, cfg); }
 
   // Sessions
-  static createSession(agent, model, project) {
+  static createSession(agent, model, project, status) {
     const body = { agent, model };
     if (project) body.project = project;
+    if (status) body.status = status;
     return this.post('/v1/sessions', body);
   }
   static deleteSession(id) { return this.del(`/v1/sessions/${id}`); }
@@ -3176,6 +4014,10 @@ class API {
   static manageSchedule(body) { return this.post('/v1/schedule', body); }
   static getRunningTasks() { return this.get('/v1/schedule/running'); }
   static cancelScheduledTask(name) { return this.post('/v1/schedule/cancel', { name }); }
+  // Loops API
+  static getLoops(sessionId) { return this.get('/v1/loops' + (sessionId ? `?session_id=${sessionId}` : '')); }
+  static cancelLoop(sessionId, loopId) { return this.post('/v1/loops/cancel', { session_id: sessionId, loop_id: loopId }); }
+  static cancelAllLoops(sessionId) { return this.post('/v1/loops/cancel', { session_id: sessionId, all: true }); }
 
   // Models config
   static getModelsConfig() { return this.get('/v1/models/config'); }
@@ -3315,6 +4157,22 @@ const state = {
   chatsFilter: 'all',
   chatsSearchQuery: '',
 
+  // Code mode
+  appMode: localStorage.getItem('appMode') || 'chat', // chat | code
+  codeFolder: localStorage.getItem('codeFolder') || '',
+  codeAgent: localStorage.getItem('codeAgent') || 'main',
+  codeModel: localStorage.getItem('codeModel') || '',
+  codePermission: localStorage.getItem('codePermission') || 'ask', // ask | auto | plan
+  codeSessionId: null,
+  codeProjectFilter: null, // null = all projects, string = filter by folder path
+  codeMessages: [],
+  codeStreaming: false,
+  codeBranch: '',
+  codeDiffData: null,
+  codeFileTree: null,
+  codeFileTreeVisible: true,
+  codeDiffPanelOpen: false,
+
   // Artifact panel
   artifactPanelOpen: false,
   artifacts: {},           // { sessionId: [artifact objects] }
@@ -3425,6 +4283,19 @@ function updateSendButton() {
    NAVIGATION
    ═══════════════════════════════════════════════════════════ */
 function navigateTo(view, opts) {
+  // Guard: when in code mode, block chat-mode-only navigations
+  if (state.appMode === 'code' && (view === 'welcome' || view === 'chat')) {
+    // Ensure chat views are hidden even when blocking
+    document.getElementById('welcome-view').style.display = 'none';
+    document.getElementById('chat-view').classList.remove('active');
+    return;
+  }
+  if (state.appMode === 'chat' && (view === 'code-welcome' || view === 'code-chat')) {
+    document.getElementById('code-welcome-view').classList.remove('active');
+    document.getElementById('code-chat-view').classList.remove('active');
+    return;
+  }
+
   state.currentView = view;
 
   // Hide all views
@@ -3435,6 +4306,9 @@ function navigateTo(view, opts) {
   document.getElementById('project-detail-view').classList.remove('active');
   document.getElementById('graph-view').classList.remove('active');
   document.getElementById('artifacts-view').classList.remove('active');
+  document.getElementById('scheduled-view').classList.remove('active');
+  document.getElementById('code-welcome-view').classList.remove('active');
+  document.getElementById('code-chat-view').classList.remove('active');
 
   // Update sidebar active state
   document.querySelectorAll('.sb-nav-item').forEach(n => n.classList.remove('active'));
@@ -3484,11 +4358,32 @@ function navigateTo(view, opts) {
       loadArtifactsBrowse();
       break;
 
+    case 'scheduled':
+      document.getElementById('scheduled-view').classList.add('active');
+      updatePageHeader('Scheduled');
+      document.getElementById('status-bar').style.display = 'none';
+      loadScheduledView();
+      break;
+
     case 'graph':
       document.getElementById('graph-view').classList.add('active');
       updatePageHeader('Knowledge Graph', state.activeAgentId || 'main');
       document.getElementById('status-bar').style.display = 'none';
       loadKnowledgeGraph();
+      break;
+
+    case 'code-welcome':
+      document.getElementById('code-welcome-view').classList.add('active');
+      updatePageHeader('Code');
+      document.getElementById('status-bar').style.display = 'none';
+      initCodeWelcome();
+      break;
+
+    case 'code-chat':
+      document.getElementById('code-chat-view').classList.add('active');
+      updatePageHeader('Code');
+      document.getElementById('status-bar').style.display = '';
+      initCodeChat();
       break;
   }
 
@@ -4748,6 +5643,8 @@ function switchToAgent(agentId) {
   loadAgentSessions(agentId);
 
   // If on welcome, stay; if on chat with no session, go to welcome
+  // Skip navigation when in code mode — code mode manages its own views
+  if (state.appMode === 'code') return;
   if (state.currentView === 'chats') {
     loadChatsList();
   } else if (state.currentView === 'projects') {
@@ -4801,7 +5698,7 @@ function renderRecentChats() {
     for (const [agentId, data] of Object.entries(state.agentSessions)) {
       if (data.sessions) {
         for (const s of data.sessions) {
-          allSessions.push({...s, agentId});
+          if (s.status !== 'code') allSessions.push({...s, agentId});
         }
       }
     }
@@ -4815,7 +5712,7 @@ function renderRecentChats() {
   if (!data?.sessions) { container.innerHTML = ''; return; }
 
   const sessions = data.sessions
-    .filter(s => s.status !== 'archived')
+    .filter(s => s.status !== 'archived' && s.status !== 'code')
     .sort((a,b) => new Date(b.last_active||0) - new Date(a.last_active||0))
     .slice(0, 20);
 
@@ -6128,6 +7025,7 @@ function openGeneralSettings() {
       <button class="modal-tab" onclick="switchGeneralTab('context',this)">Context</button>
       <button class="modal-tab" onclick="switchGeneralTab('costs',this)">Costs</button>
       <button class="modal-tab" onclick="switchGeneralTab('tools',this)">Tools</button>
+      <button class="modal-tab" onclick="switchGeneralTab('code',this)">Code</button>
     </div>
     <div class="modal-body" id="general-tab-content" style="flex:1;overflow-y:auto;padding:0">
     </div>
@@ -6831,6 +7729,79 @@ async function switchGeneralTab(tab, btn) {
       </div>`);
     } catch(e) { C.innerHTML = P('<div style="color:var(--error)">Failed to load tools config</div>'); }
   }
+
+  /* ─── CODE MODE ─── */
+  if (tab === 'code') {
+    const agentOpts = state.agents.map(a => {
+      const aid = a.id || a.name;
+      return `<option value="${esc(aid)}" ${aid===state.codeAgent?'selected':''}>${esc(a.display_name||aid)}</option>`;
+    }).join('');
+    const mc = state.modelsConfig?.models || {};
+    const enabledModels = Object.entries(mc).filter(([,c])=>c.enabled).sort((a,b)=>(b[1].priority||0)-(a[1].priority||0));
+    const modelOpts = enabledModels.map(([mid]) => `<option value="${esc(mid)}" ${mid===state.codeModel?'selected':''}>${esc(modelShortName(mid))}</option>`).join('');
+
+    C.innerHTML = P(`<div style="${G('16px')}">
+      ${SEC('Code Mode Configuration')}
+      <div style="font-size:13px;color:var(--text-300);margin-bottom:8px">
+        Code mode provides a Claude Desktop-style coding assistant with file tree, diff view, and project folder context.
+      </div>
+
+      <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px;${G('12px')}">
+        <div style="font-size:12px;font-weight:600;color:var(--text-200)">Default Agent</div>
+        <select id="code-settings-agent" class="form-select" style="width:100%">${agentOpts}</select>
+        <div style="font-size:11px;color:var(--text-400)">The agent used for Code mode sessions. Choose an agent with coding-focused instructions.</div>
+      </div>
+
+      <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px;${G('12px')}">
+        <div style="font-size:12px;font-weight:600;color:var(--text-200)">Default Model</div>
+        <select id="code-settings-model" class="form-select" style="width:100%">${modelOpts}</select>
+        <div style="font-size:11px;color:var(--text-400)">The model used for Code mode sessions. Opus and Sonnet recommended for complex coding tasks.</div>
+      </div>
+
+      <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px;${G('12px')}">
+        <div style="font-size:12px;font-weight:600;color:var(--text-200)">Default Project Folder</div>
+        <input id="code-settings-folder" type="text" value="${esc(state.codeFolder)}" class="form-input" style="font-family:var(--font-mono);font-size:12px" placeholder="/path/to/your/project">
+        <div style="font-size:11px;color:var(--text-400)">The default working directory for Code mode. Agents will have file access to this directory.</div>
+      </div>
+
+      <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px;${G('12px')}">
+        <div style="font-size:12px;font-weight:600;color:var(--text-200)">Default Permission Mode</div>
+        <select id="code-settings-permission" class="form-select" style="width:100%">
+          <option value="ask" ${state.codePermission==='ask'?'selected':''}>Ask permissions — Claude asks before each change</option>
+          <option value="auto" ${state.codePermission==='auto'?'selected':''}>Auto accept — File edits auto-accepted, commands ask</option>
+          <option value="plan" ${state.codePermission==='plan'?'selected':''}>Plan mode — Claude plans without making changes</option>
+        </select>
+      </div>
+
+      <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px;${G('12px')}">
+        <div style="font-size:12px;font-weight:600;color:var(--text-200)">UI Options</div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="code-settings-filetree" ${state.codeFileTreeVisible?'checked':''}>
+          <span style="font-size:13px;color:var(--text-200)">Show file tree panel by default</span>
+        </label>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
+        <button class="btn-primary" onclick="saveCodeSettings()" style="padding:8px 20px;font-size:13px">Save Code Settings</button>
+      </div>
+    </div>`);
+  }
+}
+
+function saveCodeSettings() {
+  const agent = document.getElementById('code-settings-agent')?.value;
+  const model = document.getElementById('code-settings-model')?.value;
+  const folder = document.getElementById('code-settings-folder')?.value?.trim();
+  const perm = document.getElementById('code-settings-permission')?.value;
+  const showTree = document.getElementById('code-settings-filetree')?.checked;
+
+  if (agent) { state.codeAgent = agent; localStorage.setItem('codeAgent', agent); }
+  if (model) { state.codeModel = model; localStorage.setItem('codeModel', model); }
+  if (folder !== undefined) { state.codeFolder = folder; localStorage.setItem('codeFolder', folder); state.codeSessionId = null; }
+  if (perm) { state.codePermission = perm; localStorage.setItem('codePermission', perm); }
+  state.codeFileTreeVisible = showTree !== false;
+
+  showToast('Code mode settings saved');
 }
 
 /* ── General Settings Helpers ── */
@@ -8492,6 +9463,306 @@ async function _schedHistory(name) {
   } catch(e) { body.innerHTML = `<div style="color:var(--error)">${esc(e.message)}</div>`; }
 }
 
+// ═══ Scheduled Tasks View ═══
+
+let _scheduledFilter = 'all';
+
+async function loadScheduledView() {
+  const container = document.getElementById('scheduled-list');
+  if (!container) return;
+  container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-400)">Loading...</div>';
+  try {
+    const [schedData, loopsData] = await Promise.all([
+      API.getSchedule(),
+      API.getLoops()
+    ]);
+    const schedules = schedData.schedules || [];
+    const running = schedData.running || [];
+    const runningNames = new Set(running.map(r => r.name));
+    const loops = loopsData.loops || [];
+
+    let html = '';
+
+    // Persistent scheduled tasks
+    const filteredSchedules = schedules.filter(s => {
+      if (_scheduledFilter === 'loops') return false;
+      if (_scheduledFilter === 'running') return runningNames.has(s.name);
+      if (_scheduledFilter === 'scheduled') return true;
+      return true; // 'all'
+    });
+
+    for (const s of filteredSchedules) {
+      const isRunning = runningNames.has(s.name);
+      const enabled = s.enabled !== 0;
+      const badgeClass = isRunning ? 'running' : (enabled ? 'enabled' : 'paused');
+      const badgeText = isRunning ? 'Running' : (enabled ? 'Active' : 'Paused');
+      const nextRun = s.next_run ? new Date(s.next_run + (s.next_run.includes('Z') ? '' : 'Z')).toLocaleString(undefined, {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+      const lastRun = s.last_run ? new Date(s.last_run + (s.last_run.includes('Z') ? '' : 'Z')).toLocaleString(undefined, {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : 'never';
+      html += `<div class="sched-card">
+        <div class="sched-card-header">
+          <span class="sched-card-name">${esc(s.name)}</span>
+          <span class="sched-card-badge ${badgeClass}">${badgeText}</span>
+        </div>
+        <div class="sched-card-prompt">${esc(s.task || '')}</div>
+        <div class="sched-card-meta">
+          <span>Agent: ${esc(s.agent || 'main')}</span>
+          <span>${esc(s.schedule || '')}</span>
+          <span>Next: ${nextRun}</span>
+          <span>Last: ${lastRun}</span>
+        </div>
+        <div class="sched-card-actions">
+          ${isRunning
+            ? `<button onclick="_schedViewCancel('${esc(s.name)}')">Cancel</button>`
+            : `<button onclick="_schedViewRun('${esc(s.name)}')">Run Now</button>`}
+          <button onclick="_schedViewToggle('${esc(s.name)}', ${!enabled})">${enabled ? 'Pause' : 'Resume'}</button>
+          <button onclick="_schedViewHistory('${esc(s.name)}')">History</button>
+          <button class="danger" onclick="_schedViewDelete('${esc(s.name)}')">Delete</button>
+        </div>
+      </div>`;
+    }
+
+    // Session-scoped loops
+    const filteredLoops = loops.filter(() => {
+      if (_scheduledFilter === 'scheduled') return false;
+      return true;
+    });
+
+    for (const l of filteredLoops) {
+      const interval = _formatLoopInterval(l.interval);
+      const expires = new Date(l.expires_at * 1000).toLocaleString(undefined, {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+      const nextRun = new Date(l.next_run * 1000).toLocaleString(undefined, {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      html += `<div class="sched-card">
+        <div class="sched-card-header">
+          <span class="sched-card-name">Loop: ${esc(l.prompt.substring(0, 60))}</span>
+          <span class="sched-card-badge loop">every ${interval}</span>
+        </div>
+        <div class="sched-card-prompt">${esc(l.prompt)}</div>
+        <div class="sched-card-meta">
+          <span>Agent: ${esc(l.agent_id || 'main')}</span>
+          <span>Runs: ${l.run_count}</span>
+          <span>Next: ${nextRun}</span>
+          <span>Expires: ${expires}</span>
+          ${l.session_id ? `<span>Session: ${l.session_id.substring(0,8)}</span>` : ''}
+        </div>
+        <div class="sched-card-actions">
+          <button class="danger" onclick="_loopViewCancel('${esc(l.session_id)}','${esc(l.id)}')">Cancel</button>
+        </div>
+      </div>`;
+    }
+
+    if (!html) {
+      html = '<div style="padding:40px;text-align:center;color:var(--text-400)">No scheduled tasks. Click "New Task" to create one.</div>';
+    }
+    container.innerHTML = html;
+  } catch(e) {
+    container.innerHTML = `<div style="padding:20px;color:var(--error)">Failed to load: ${esc(e.message)}</div>`;
+  }
+}
+
+function _formatLoopInterval(seconds) {
+  if (seconds >= 86400) return `${Math.round(seconds/86400)}d`;
+  if (seconds >= 3600) return `${Math.round(seconds/3600)}h`;
+  if (seconds >= 60) return `${Math.round(seconds/60)}m`;
+  return `${seconds}s`;
+}
+
+function setScheduledFilter(filter, el) {
+  _scheduledFilter = filter;
+  document.querySelectorAll('.scheduled-tab').forEach(t => t.classList.remove('active'));
+  if (el) el.classList.add('active');
+  loadScheduledView();
+}
+
+// Persistent schedule actions from the Scheduled view
+async function _schedViewRun(name) {
+  try {
+    // Run now = delete and re-add with same config but "once" schedule for now
+    // Actually, simplest: just trigger via the existing scheduler run mechanism
+    // For now, we'll use the schedule modify to set next_run to now
+    showToast('Running task...');
+    // Trigger by cancelling and immediately re-scheduling isn't ideal.
+    // Better approach: add a "run now" action to the scheduler
+    await API.manageSchedule({ action: 'run_now', name });
+    showToast('Task triggered');
+    setTimeout(loadScheduledView, 1000);
+  } catch(e) { showToast('Failed: ' + e.message, true); }
+}
+
+async function _schedViewToggle(name, enable) {
+  try {
+    await API.manageSchedule({ action: enable ? 'resume' : 'pause', name });
+    showToast(enable ? 'Resumed' : 'Paused');
+    loadScheduledView();
+  } catch(e) { showToast('Failed: ' + e.message, true); }
+}
+
+async function _schedViewCancel(name) {
+  try {
+    await API.cancelScheduledTask(name);
+    showToast('Cancelling...');
+    setTimeout(loadScheduledView, 1000);
+  } catch(e) { showToast('Failed: ' + e.message, true); }
+}
+
+async function _schedViewDelete(name) {
+  if (!confirm(`Delete scheduled task "${name}"?`)) return;
+  try {
+    await API.manageSchedule({ action: 'delete', name });
+    showToast('Deleted');
+    loadScheduledView();
+  } catch(e) { showToast('Failed: ' + e.message, true); }
+}
+
+async function _schedViewHistory(name) {
+  try {
+    const res = await API.manageSchedule({ action: 'history', name, limit: 20 });
+    const history = res.history || [];
+    let html = `<h3 style="margin:0 0 12px;font-size:16px;color:var(--text-000)">History: ${esc(name)}</h3>`;
+    if (!history.length) {
+      html += '<div style="color:var(--text-400)">No execution history</div>';
+    } else {
+      for (const h of history) {
+        const ok = h.status === 'success' || h.status === 'completed';
+        const started = h.started_at ? new Date(h.started_at+'Z').toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+        const statusColor = ok ? '#10b981' : (h.status === 'timeout' ? '#f59e0b' : '#ef4444');
+        html += `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border-100)">
+          <span style="width:8px;height:8px;border-radius:50%;background:${statusColor};flex-shrink:0"></span>
+          <span style="font-size:13px;color:var(--text-200);flex:1">${esc(h.status||'unknown')}</span>
+          <span style="font-size:12px;color:var(--text-400);font-family:var(--font-mono)">${started}</span>
+        </div>`;
+      }
+    }
+    html += `<div style="margin-top:12px;text-align:right"><button onclick="this.closest('.sched-modal-overlay').remove()" style="padding:6px 16px;border-radius:8px;background:var(--bg-200);color:var(--text-200);font-size:13px">Close</button></div>`;
+    const overlay = document.createElement('div');
+    overlay.className = 'sched-modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `<div class="sched-modal" style="width:420px">${html}</div>`;
+    document.body.appendChild(overlay);
+  } catch(e) { showToast('Failed: ' + e.message, true); }
+}
+
+async function _loopViewCancel(sessionId, loopId) {
+  try {
+    await API.cancelLoop(sessionId, loopId);
+    showToast('Loop cancelled');
+    loadScheduledView();
+  } catch(e) { showToast('Failed: ' + e.message, true); }
+}
+
+// Create Scheduled Task modal
+function showCreateScheduledModal() {
+  const overlay = document.createElement('div');
+  overlay.className = 'sched-modal-overlay';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+
+  // Build agent options
+  const agentOpts = (state.agents || []).map(a =>
+    `<option value="${esc(a.id)}" ${a.id === (state.activeAgentId || 'main') ? 'selected' : ''}>${esc(a.display_name || a.id)}</option>`
+  ).join('');
+
+  // Build model options
+  const modelOpts = (state.models || []).map(m =>
+    `<option value="${esc(m)}">${esc(m)}</option>`
+  ).join('');
+
+  overlay.innerHTML = `<div class="sched-modal">
+    <h2>New Scheduled Task</h2>
+    <div class="sched-form-group">
+      <label>Name</label>
+      <input id="sched-new-name" placeholder="e.g. Daily PR review">
+    </div>
+    <div class="sched-form-group">
+      <label>Prompt</label>
+      <textarea id="sched-new-prompt" placeholder="What should the agent do?"></textarea>
+    </div>
+    <div class="sched-form-row">
+      <div class="sched-form-group">
+        <label>Agent</label>
+        <select id="sched-new-agent">${agentOpts}</select>
+      </div>
+      <div class="sched-form-group">
+        <label>Model (optional)</label>
+        <select id="sched-new-model"><option value="">Default</option>${modelOpts}</select>
+      </div>
+    </div>
+    <div class="sched-form-row">
+      <div class="sched-form-group">
+        <label>Frequency</label>
+        <select id="sched-new-freq" onchange="_schedFreqChanged()">
+          <option value="every 1h">Hourly</option>
+          <option value="daily 09:00" selected>Daily</option>
+          <option value="weekly mon 09:00">Weekly</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+      <div class="sched-form-group">
+        <label>Time</label>
+        <input id="sched-new-time" type="time" value="09:00">
+      </div>
+    </div>
+    <div class="sched-form-group" id="sched-custom-row" style="display:none">
+      <label>Custom Schedule</label>
+      <input id="sched-new-custom" placeholder="e.g. every 30m, daily 14:00, weekly fri 17:00" style="font-family:var(--font-mono)">
+    </div>
+    <div class="sched-form-group">
+      <label>Timeout (seconds)</label>
+      <input id="sched-new-timeout" type="number" value="300" min="30" max="3600">
+    </div>
+    <div class="sched-modal-actions">
+      <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Cancel</button>
+      <button class="sched-create-btn" onclick="_createScheduledTask()">Create</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+function _schedFreqChanged() {
+  const freq = document.getElementById('sched-new-freq')?.value;
+  const customRow = document.getElementById('sched-custom-row');
+  const timeInput = document.getElementById('sched-new-time');
+  if (freq === 'custom') {
+    customRow.style.display = '';
+    timeInput.parentElement.style.display = 'none';
+  } else {
+    customRow.style.display = 'none';
+    timeInput.parentElement.style.display = '';
+  }
+}
+
+async function _createScheduledTask() {
+  const name = document.getElementById('sched-new-name')?.value?.trim();
+  const task = document.getElementById('sched-new-prompt')?.value?.trim();
+  const agent = document.getElementById('sched-new-agent')?.value || 'main';
+  const model = document.getElementById('sched-new-model')?.value || undefined;
+  const freq = document.getElementById('sched-new-freq')?.value;
+  const timeVal = document.getElementById('sched-new-time')?.value || '09:00';
+  const customSched = document.getElementById('sched-new-custom')?.value?.trim();
+  const timeout = parseInt(document.getElementById('sched-new-timeout')?.value) || 300;
+
+  if (!name || !task) { showToast('Name and prompt are required', true); return; }
+
+  let schedule;
+  if (freq === 'custom') {
+    schedule = customSched;
+    if (!schedule) { showToast('Custom schedule is required', true); return; }
+  } else if (freq.startsWith('every')) {
+    schedule = freq;
+  } else if (freq.startsWith('daily')) {
+    schedule = `daily ${timeVal}`;
+  } else if (freq.startsWith('weekly')) {
+    const day = freq.split(' ')[1] || 'mon';
+    schedule = `weekly ${day} ${timeVal}`;
+  }
+
+  try {
+    const res = await API.manageSchedule({ action: 'add', name, task, schedule, agent, model, timeout });
+    if (res.error) { showToast(res.error, true); return; }
+    showToast('Task created');
+    document.querySelector('.sched-modal-overlay')?.remove();
+    loadScheduledView();
+  } catch(e) { showToast('Failed: ' + e.message, true); }
+}
+
 async function saveAgentSoul(agentId) {
   const editor = document.getElementById('agent-soul-editor');
   if (!editor) return;
@@ -9491,6 +10762,11 @@ async function init() {
     // Set suggestion chips
     renderSuggestionChips();
 
+    // Refresh code mode welcome if active
+    if (state.appMode === 'code' && state.currentView === 'code-welcome') {
+      initCodeWelcome();
+    }
+
   } catch(e) {
     console.error('Init failed:', e);
     showToast('Failed to connect to server', true);
@@ -9508,8 +10784,12 @@ async function init() {
     thinkBtn.title = `Thinking: ${state.thinkingLevel}`;
   }
 
-  // Start on welcome view
-  navigateTo('welcome');
+  // Start on welcome view (respecting app mode)
+  if (state.appMode === 'code') {
+    // Code mode will be set up by _restoreAppMode
+  } else {
+    navigateTo('welcome');
+  }
 }
 
 function renderSuggestionChips() {
@@ -9531,8 +10811,996 @@ function renderSuggestionChips() {
   container.innerHTML = chips.join('');
 }
 
+/* ═══════════════════════════════════════════════════════════
+   CODE MODE
+   ═══════════════════════════════════════════════════════════ */
+
+function switchAppMode(mode) {
+  state.appMode = mode;
+  localStorage.setItem('appMode', mode);
+
+  // Update mode selector UI
+  document.querySelectorAll('.mode-tab').forEach(t => t.classList.toggle('active', t.dataset.mode === mode));
+
+  // Toggle sidebar content
+  const chatSb = document.getElementById('chat-sidebar-content');
+  const codeSb = document.getElementById('code-sidebar-content');
+  const sbHeader = document.querySelector('.sb-header');
+  if (mode === 'code') {
+    chatSb?.classList.add('hidden');
+    codeSb?.classList.add('active');
+    if (sbHeader) sbHeader.style.display = 'none';
+    loadCodeSessions();
+    // Navigate immediately and also re-assert after a tick (guards against selectAgent callbacks)
+    const _codeNav = () => {
+      if (state.appMode !== 'code') return;
+      if (state.codeSessionId && state.codeMessages.length > 0) {
+        navigateTo('code-chat');
+      } else {
+        navigateTo('code-welcome');
+      }
+    };
+    _codeNav();
+    setTimeout(_codeNav, 50);
+    setTimeout(_codeNav, 200);
+  } else {
+    chatSb?.classList.remove('hidden');
+    codeSb?.classList.remove('active');
+    if (sbHeader) sbHeader.style.display = '';
+    if (state.activeChat?.sessionId && state.activeChat?.messages?.length > 0) {
+      navigateTo('chat');
+    } else {
+      navigateTo('welcome');
+    }
+  }
+}
+
+function initCodeWelcome() {
+  // Populate folder name
+  const folderEl = document.getElementById('code-folder-name');
+  if (state.codeFolder) {
+    const parts = state.codeFolder.split('/');
+    folderEl.textContent = parts[parts.length - 1] || state.codeFolder;
+    folderEl.title = state.codeFolder;
+  } else {
+    folderEl.textContent = 'Select folder';
+  }
+
+  // Populate agent name
+  document.getElementById('code-agent-name').textContent = state.codeAgent || 'main';
+
+  // Populate model — default to first enabled model if not set
+  if (!state.codeModel && state.models.length) {
+    state.codeModel = state.models[0]?.id || state.models[0] || '';
+  }
+  const model = state.codeModel || state.activeChat?.model || '';
+  const displayModel = _shortModelName(model);
+  document.getElementById('code-model-name').textContent = displayModel || 'Select model';
+
+  // Permission mode
+  document.querySelectorAll('#code-permission-selector .permission-opt').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.perm === state.codePermission);
+  });
+}
+
+function codeNewSession() {
+  state.codeSessionId = null;
+  state.codeMessages = [];
+  state.codeStreaming = false;
+  state.codeDiffData = null;
+  navigateTo('code-welcome');
+}
+
+function loadCodeSessions() {
+  // Load code-mode sessions, filtered by project if set
+  const agentId = state.codeAgent || 'main';
+  let url = `${BASE_URL}/v1/sessions?agent=${encodeURIComponent(agentId)}&status=code`;
+  if (state.codeProjectFilter) {
+    url += `&project=${encodeURIComponent(state.codeProjectFilter)}`;
+  }
+  fetch(url)
+    .then(r => r.json())
+    .then(data => {
+      const sessions = (data.sessions || data || []);
+      renderCodeSessionList(sessions);
+    })
+    .catch(() => {});
+}
+
+function renderCodeSessionList(sessions) {
+  const container = document.getElementById('code-sb-sessions');
+  if (!container) return;
+
+  if (!sessions || sessions.length === 0) {
+    container.innerHTML = '<div style="padding:16px;color:var(--text-400);font-size:13px;text-align:center">No sessions yet</div>';
+    return;
+  }
+
+  // Group by date
+  const now = new Date();
+  const today = now.toDateString();
+  const yesterday = new Date(now - 86400000).toDateString();
+  const groups = {};
+
+  for (const s of sessions) {
+    const d = new Date(s.last_active || s.created || s.timestamp);
+    const ds = d.toDateString();
+    let label;
+    if (ds === today) label = 'Today';
+    else if (ds === yesterday) label = 'Yesterday';
+    else label = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    if (!groups[label]) groups[label] = [];
+    groups[label].push(s);
+  }
+
+  let html = '';
+  for (const [label, items] of Object.entries(groups)) {
+    html += `<div class="code-sb-date-group">${esc(label)}</div>`;
+    for (const s of items) {
+      const sid = s.session_id || s.sessionId || s.id;
+      const title = s.summary || s.title || sid.slice(0, 12);
+      const isActive = sid === state.codeSessionId;
+      html += `<div class="code-sb-session-item${isActive ? ' active' : ''}" onclick="openCodeSession('${esc(sid)}','${esc(s.agent_id || s.agent || state.codeAgent)}')">
+        <span class="session-status${isActive ? ' running' : ''}"></span>
+        <span class="session-title">${esc(title)}</span>
+        <span class="code-session-actions">
+          <button onclick="event.stopPropagation(); archiveCodeSession('${esc(sid)}')" title="Archive">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>
+          </button>
+          <button onclick="event.stopPropagation(); deleteCodeSession('${esc(sid)}')" title="Delete">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+          </button>
+        </span>
+      </div>`;
+    }
+  }
+  container.innerHTML = html;
+}
+
+async function openCodeSession(sessionId, agentId) {
+  if (!sessionId) return;
+  state.codeSessionId = sessionId;
+  state.codeAgent = agentId || state.codeAgent;
+  // Load messages
+  try {
+    const resp = await fetch(`${BASE_URL}/v1/sessions/${sessionId}/messages`);
+    const data = await resp.json();
+    state.codeMessages = (data.messages || data || []).map(m => ({
+      role: m.role,
+      content: typeof m.content === 'string' ? m.content : (m.content?.[0]?.text || JSON.stringify(m.content)),
+      metadata: m.metadata || {},
+    }));
+  } catch (e) {
+    state.codeMessages = [];
+  }
+  navigateTo('code-chat');
+  loadCodeSessions(); // refresh list to highlight active
+}
+
+async function archiveCodeSession(sessionId) {
+  try {
+    await API.manageSession({ action: 'archive', session_id: sessionId });
+    showToast('Chat archived');
+    if (state.codeSessionId === sessionId) {
+      codeNewSession();
+    }
+    loadCodeSessions();
+  } catch (e) { showToast('Archive failed', true); }
+}
+
+async function deleteCodeSession(sessionId) {
+  try {
+    await API.deleteSession(sessionId);
+    showToast('Chat deleted');
+    if (state.codeSessionId === sessionId) {
+      codeNewSession();
+    }
+    loadCodeSessions();
+  } catch (e) { showToast('Delete failed', true); }
+}
+
+function toggleCodeProjectList() {
+  const list = document.getElementById('code-sb-project-list');
+  const chevron = document.getElementById('code-sb-project-chevron');
+  if (!list) return;
+  const isOpen = list.style.display !== 'none';
+  if (isOpen) {
+    list.style.display = 'none';
+    if (chevron) chevron.style.transform = '';
+  } else {
+    list.style.display = '';
+    if (chevron) chevron.style.transform = 'rotate(180deg)';
+    loadCodeProjects();
+  }
+}
+
+function loadCodeProjects() {
+  // Fetch ALL code sessions (no folder filter) to discover unique folder-based projects
+  const agentId = state.codeAgent || 'main';
+  fetch(`${BASE_URL}/v1/sessions?agent=${encodeURIComponent(agentId)}&status=code`)
+    .then(r => r.json())
+    .then(data => {
+      const sessions = data.sessions || data || [];
+      // Group by project (folder path)
+      const projects = {};
+      for (const s of sessions) {
+        const folder = s.project || 'Uncategorized';
+        if (!projects[folder]) projects[folder] = { path: folder, count: 0 };
+        projects[folder].count++;
+      }
+      renderCodeProjectList(Object.values(projects));
+    })
+    .catch(() => {});
+}
+
+function renderCodeProjectList(projects) {
+  const container = document.getElementById('code-sb-project-list');
+  if (!container) return;
+
+  // "All Projects" item
+  const isAll = !state.codeProjectFilter;
+  let html = `<div class="code-sb-project-item${isAll ? ' active' : ''}" onclick="selectCodeProject(null)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="9" height="9" rx="1"/><rect x="13" y="2" width="9" height="9" rx="1"/><rect x="2" y="13" width="9" height="9" rx="1"/><rect x="13" y="13" width="9" height="9" rx="1"/></svg>
+    <span class="project-name">All Projects</span>
+  </div>`;
+
+  for (const p of projects) {
+    const parts = p.path.split('/');
+    const name = parts[parts.length - 1] || p.path;
+    const isActive = state.codeProjectFilter === p.path;
+    html += `<div class="code-sb-project-item${isActive ? ' active' : ''}" onclick="selectCodeProject('${esc(p.path)}')" title="${esc(p.path)}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+      <span class="project-name">${esc(name)}</span>
+      <span class="project-count">${p.count}</span>
+    </div>`;
+  }
+  container.innerHTML = html;
+}
+
+function selectCodeProject(folderPath) {
+  state.codeProjectFilter = folderPath;
+  const label = document.getElementById('code-sb-project-label');
+  if (label) {
+    if (folderPath) {
+      const parts = folderPath.split('/');
+      label.textContent = parts[parts.length - 1] || folderPath;
+    } else {
+      label.textContent = 'All Projects';
+    }
+  }
+  // Collapse project list
+  const list = document.getElementById('code-sb-project-list');
+  const chevron = document.getElementById('code-sb-project-chevron');
+  if (list) list.style.display = 'none';
+  if (chevron) chevron.style.transform = '';
+  // Reload sessions filtered by selected project
+  loadCodeSessionsFiltered();
+}
+
+function loadCodeSessionsFiltered() {
+  const agentId = state.codeAgent || 'main';
+  let url = `${BASE_URL}/v1/sessions?agent=${encodeURIComponent(agentId)}&status=code`;
+  if (state.codeProjectFilter) {
+    url += `&project=${encodeURIComponent(state.codeProjectFilter)}`;
+  }
+  fetch(url)
+    .then(r => r.json())
+    .then(data => {
+      const sessions = (data.sessions || data || []);
+      renderCodeSessionList(sessions);
+    })
+    .catch(() => {});
+}
+
+function _shortModelName(mid) {
+  if (!mid) return '';
+  if (mid.includes('opus')) return 'Opus 4.6';
+  if (mid.includes('sonnet')) return 'Sonnet 4.6';
+  if (mid.includes('haiku')) return 'Haiku 4.5';
+  if (mid.includes('crow')) return 'Crow 4B';
+  const parts = mid.split(/[-/]/);
+  return parts.slice(-2).join(' ');
+}
+
+async function selectCodeFolder() {
+  let currentPath = state.codeFolder || '/Users';
+  let selectedPath = currentPath;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width:540px">
+      <div class="modal-header">
+        <span class="modal-title">Select Project Folder</span>
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+      </div>
+      <div class="modal-body" style="padding:0">
+        <div id="folder-breadcrumb" style="display:flex;align-items:center;gap:2px;padding:12px 16px;border-bottom:1px solid var(--border-200);font-size:13px;font-family:var(--font-mono);flex-wrap:wrap;min-height:42px"></div>
+        <div id="folder-list" style="height:min(240px, 40vh);overflow-y:auto;padding:4px 0"></div>
+        <div style="padding:10px 16px;border-top:1px solid var(--border-200);display:flex;align-items:center;gap:8px">
+          <input id="code-folder-input" type="text" value="${esc(currentPath)}" class="form-input" style="flex:1;font-family:var(--font-mono);font-size:12px;padding:7px 10px" placeholder="/path/to/project" onkeydown="if(event.key==='Enter'){const v=this.value.trim();if(v)window._folderBrowserNavigate(v)}">
+          <button class="btn-secondary" style="white-space:nowrap" onclick="
+            const v = document.getElementById('code-folder-input').value.trim();
+            if (v) window._folderBrowserNavigate(v);
+          ">Go</button>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--border-200)">
+          <button class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+          <button class="btn-primary" id="folder-select-btn" onclick="
+            const v = document.getElementById('code-folder-input').value.trim();
+            if (v) { state.codeFolder = v; localStorage.setItem('codeFolder', v); state.codeSessionId = null; state.codeMessages = []; initCodeWelcome(); loadCodeSessions(); }
+            this.closest('.modal-overlay').remove();
+          ">Select</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  function renderBreadcrumb(dirPath) {
+    const bc = document.getElementById('folder-breadcrumb');
+    if (!bc) return;
+    const parts = dirPath.split('/').filter(Boolean);
+    let html = `<span style="cursor:pointer;color:var(--accent-brand);padding:2px 4px;border-radius:4px" onclick="window._folderBrowserNavigate('/')" onmouseover="this.style.background='var(--bg-200)'" onmouseout="this.style.background=''">/</span>`;
+    let accumulated = '';
+    for (const part of parts) {
+      accumulated += '/' + part;
+      const p = accumulated;
+      html += `<span style="color:var(--text-400)">/</span><span style="cursor:pointer;color:var(--accent-brand);padding:2px 4px;border-radius:4px" onclick="window._folderBrowserNavigate('${esc(p)}')" onmouseover="this.style.background='var(--bg-200)'" onmouseout="this.style.background=''">${esc(part)}</span>`;
+    }
+    bc.innerHTML = html;
+  }
+
+  async function navigateTo(dirPath) {
+    currentPath = dirPath;
+    selectedPath = dirPath;
+    const input = document.getElementById('code-folder-input');
+    if (input) input.value = dirPath;
+    renderBreadcrumb(dirPath);
+
+    const listEl = document.getElementById('folder-list');
+    if (!listEl) return;
+    listEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-400);font-size:13px">Loading...</div>';
+
+    try {
+      const resp = await fetch(`${BASE_URL}/v1/files/tree?path=${encodeURIComponent(dirPath)}&depth=0`);
+      if (!resp.ok) throw new Error(await resp.text());
+      const data = await resp.json();
+      const dirs = (data.tree || []).filter(n => n.type === 'dir');
+      const files = (data.tree || []).filter(n => n.type === 'file');
+
+      let html = '';
+      // Parent directory link
+      if (dirPath !== '/') {
+        const parent = dirPath.replace(/\/[^/]+\/?$/, '') || '/';
+        html += `<div class="folder-browser-item" ondblclick="window._folderBrowserNavigate('${esc(parent)}')" onclick="window._folderBrowserNavigate('${esc(parent)}')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:8px 16px;font-size:13px;color:var(--text-200)" onmouseover="this.style.background='var(--bg-200)'" onmouseout="this.style.background=''">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M15 18l-6-6 6-6"/></svg>
+          <span style="font-family:var(--font-mono)">..</span>
+        </div>`;
+      }
+
+      for (const d of dirs) {
+        html += `<div class="folder-browser-item" onclick="window._folderBrowserSelect(this, '${esc(d.path)}')" ondblclick="window._folderBrowserNavigate('${esc(d.path)}')" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:8px 16px;font-size:13px;color:var(--text-200)" onmouseover="if(!this.classList.contains('selected'))this.style.background='var(--bg-200)'" onmouseout="if(!this.classList.contains('selected'))this.style.background=''">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-brand)" stroke-width="1.5"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+          <span style="font-family:var(--font-mono)">${esc(d.name)}</span>
+        </div>`;
+      }
+      for (const f of files) {
+        const size = f.size < 1024 ? f.size + ' B' : f.size < 1048576 ? (f.size/1024).toFixed(1) + ' KB' : (f.size/1048576).toFixed(1) + ' MB';
+        html += `<div style="display:flex;align-items:center;gap:8px;padding:8px 16px;font-size:13px;color:var(--text-400);opacity:0.6">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
+          <span style="font-family:var(--font-mono);flex:1">${esc(f.name)}</span>
+          <span style="font-size:11px">${size}</span>
+        </div>`;
+      }
+      if (!dirs.length && !files.length) {
+        html = '<div style="padding:20px;text-align:center;color:var(--text-400);font-size:13px">Empty directory</div>';
+      }
+      listEl.innerHTML = html;
+    } catch (err) {
+      listEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--error);font-size:13px">${esc(err.message || 'Failed to load directory')}</div>`;
+    }
+  }
+
+  window._folderBrowserNavigate = (path) => navigateTo(path);
+  window._folderBrowserSelect = (el, path) => {
+    // Single click: select (highlight) a subfolder, update input
+    document.querySelectorAll('.folder-browser-item.selected').forEach(e => {
+      e.classList.remove('selected');
+      e.style.background = '';
+    });
+    el.classList.add('selected');
+    el.style.background = 'var(--bg-300)';
+    selectedPath = path;
+    const input = document.getElementById('code-folder-input');
+    if (input) input.value = path;
+  };
+
+  navigateTo(currentPath);
+}
+
+function toggleCodeAgentDropdown(event) {
+  event.stopPropagation();
+  // Create inline dropdown
+  const existing = document.getElementById('code-agent-dropdown');
+  if (existing) { existing.remove(); return; }
+
+  const dd = document.createElement('div');
+  dd.id = 'code-agent-dropdown';
+  dd.className = 'sb-agent-dropdown';
+  dd.style.cssText = 'position:absolute;top:100%;left:0;right:0;z-index:100;min-width:180px;margin-top:4px';
+
+  for (const agent of state.agents) {
+    const aid = agent.id || agent.name;
+    const display = agent.display_name || aid;
+    const item = document.createElement('div');
+    item.className = 'dropdown-item' + (aid === state.codeAgent ? ' active' : '');
+    item.innerHTML = `<span>${esc(display)}</span><span style="font-size:11px;color:var(--text-400);font-family:var(--font-mono)">${esc(aid)}</span>`;
+    item.onclick = () => {
+      state.codeAgent = aid;
+      localStorage.setItem('codeAgent', aid);
+      document.getElementById('code-agent-name').textContent = display;
+      dd.remove();
+    };
+    dd.appendChild(item);
+  }
+
+  event.currentTarget.style.position = 'relative';
+  event.currentTarget.appendChild(dd);
+  setTimeout(() => document.addEventListener('click', function rm() { dd.remove(); document.removeEventListener('click', rm); }), 0);
+}
+
+function toggleCodeModelDropdown(event) {
+  event.stopPropagation();
+  const existing = document.getElementById('code-model-dropdown');
+  if (existing) { existing.remove(); return; }
+
+  const dd = document.createElement('div');
+  dd.id = 'code-model-dropdown';
+  dd.className = 'sb-agent-dropdown';
+  dd.style.cssText = 'position:absolute;top:100%;left:0;z-index:100;min-width:220px;margin-top:4px;max-height:300px;overflow-y:auto';
+
+  for (const m of state.models) {
+    const mid = m.id || m;
+    const item = document.createElement('div');
+    item.className = 'dropdown-item' + (mid === state.codeModel ? ' active' : '');
+    item.textContent = mid;
+    item.onclick = () => {
+      state.codeModel = mid;
+      localStorage.setItem('codeModel', mid);
+      document.getElementById('code-model-name').textContent = _shortModelName(mid);
+      const chatModelEl = document.getElementById('code-model-selector-name');
+      if (chatModelEl) chatModelEl.textContent = _shortModelName(mid);
+      dd.remove();
+    };
+    dd.appendChild(item);
+  }
+
+  event.currentTarget.style.position = 'relative';
+  event.currentTarget.appendChild(dd);
+  setTimeout(() => document.addEventListener('click', function rm() { dd.remove(); document.removeEventListener('click', rm); }), 0);
+}
+
+function setCodePermission(perm, btn) {
+  state.codePermission = perm;
+  localStorage.setItem('codePermission', perm);
+  document.querySelectorAll('#code-permission-selector .permission-opt').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+}
+
+function setCodeInput(text) {
+  const input = document.getElementById('code-welcome-input');
+  if (input) { input.value = text; autoResizeInput(input); updateCodeSendButton(); input.focus(); }
+}
+
+function updateCodeSendButton() {
+  const welcomeBtn = document.getElementById('code-welcome-send-btn');
+  const chatBtn = document.getElementById('code-chat-send-btn');
+  const welcomeInput = document.getElementById('code-welcome-input');
+  const chatInput = document.getElementById('code-chat-input');
+  if (welcomeBtn) welcomeBtn.classList.toggle('active', welcomeInput?.value?.trim().length > 0);
+  if (chatBtn) chatBtn.classList.toggle('active', chatInput?.value?.trim().length > 0);
+}
+
+function triggerCodeFileUpload() {
+  document.getElementById('code-file-input')?.click();
+}
+
+async function sendCodeMessage() {
+  const isWelcome = state.currentView === 'code-welcome';
+  const input = isWelcome ? document.getElementById('code-welcome-input') : document.getElementById('code-chat-input');
+  const text = input?.value?.trim();
+  if (!text) return;
+
+  if (!state.codeFolder) {
+    showToast('Please select a project folder first', true);
+    return;
+  }
+
+  input.value = '';
+  autoResizeInput(input);
+  updateCodeSendButton();
+
+  // Ensure we have a code session — use folder path as project scope
+  if (!state.codeSessionId) {
+    try {
+      const agentId = state.codeAgent || 'main';
+      const model = state.codeModel || state.activeChat?.model || state.models[0]?.id || state.models[0] || '';
+      const folderProject = state.codeFolder || null;
+      const resp = await API.createSession(agentId, model, folderProject, 'code');
+      state.codeSessionId = resp.session_id || resp.sessionId;
+    } catch (e) {
+      showToast('Failed to create code session: ' + e.message, true);
+      return;
+    }
+  }
+
+  // Add user message
+  state.codeMessages.push({ role: 'user', content: text });
+
+  // Switch to code chat view if on welcome
+  if (isWelcome) {
+    navigateTo('code-chat');
+  }
+  renderCodeMessages();
+  scrollCodeToBottom();
+
+  // Send to server using proper SSE format
+  state.codeStreaming = true;
+  updateCodeStreamingUI(true);
+  const agentId = state.codeAgent || 'main';
+  const model = state.codeModel || '';
+
+  // Prepare assistant message slot
+  let assistantText = '';
+  let currentTools = [];
+  state.codeMessages.push({ role: 'assistant', content: '', metadata: { tools: [] } });
+  const msgIdx = state.codeMessages.length - 1;
+
+  try {
+    const body = {
+      message: text,
+      session_id: state.codeSessionId,
+      model: model,
+    };
+    if (state.codePermission === 'plan') body.mode = 'plan';
+    if (state.codeFolder) body.project = state.codeFolder;
+
+    const resp = await fetch(`${BASE_URL}/v1/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let eventType = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith('data: ') && eventType) {
+          try {
+            const d = JSON.parse(line.slice(6));
+            if (eventType === 'text_delta') {
+              assistantText += d.text || '';
+              state.codeMessages[msgIdx].content = assistantText;
+              renderCodeStreamingMessage(msgIdx);
+              const label = document.getElementById('code-spinner-label');
+              if (label && label.textContent !== 'Responding...') label.textContent = 'Responding...';
+            } else if (eventType === 'tool_call') {
+              // Dedup: update existing entry if re-emitted with full args
+              const last = currentTools[currentTools.length - 1];
+              if (last && last.name === d.name && d.args && Object.keys(d.args).length) {
+                last.args = d.args;
+              } else {
+                currentTools.push({ name: d.name, args: d.args || {} });
+              }
+              state.codeMessages[msgIdx].metadata.tools = [...currentTools];
+              renderCodeStreamingMessage(msgIdx);
+              // Update spinner label with tool name
+              const label = document.getElementById('code-spinner-label');
+              if (label) label.textContent = `Running ${d.name}...`;
+            } else if (eventType === 'tool_result') {
+              // Show tool results as expandable blocks
+              const toolResult = { name: d.name, result: d.result, isResult: true };
+              currentTools.push(toolResult);
+              state.codeMessages[msgIdx].metadata.tools = [...currentTools];
+              renderCodeStreamingMessage(msgIdx);
+            } else if (eventType === 'done') {
+              if (d.text) assistantText = d.text;
+              if (d.tokens) state.codeMessages[msgIdx].metadata.tokens = d.tokens;
+              if (d.model) state.codeMessages[msgIdx].metadata.model = d.model;
+            } else if (eventType === 'error') {
+              showToast('Error: ' + (d.message || 'Unknown error'), true);
+            }
+          } catch (_) {}
+          eventType = null;
+        } else if (line.startsWith(':')) {
+          // keepalive comment
+        }
+      }
+    }
+
+    state.codeMessages[msgIdx].content = assistantText;
+    state.codeMessages[msgIdx].metadata.tools = currentTools;
+
+  } catch (e) {
+    showToast('Code chat error: ' + e.message, true);
+  }
+
+  state.codeStreaming = false;
+  updateCodeStreamingUI(false);
+  renderCodeMessages();
+  scrollCodeToBottom();
+
+  // Refresh diff and file tree after response
+  refreshCodeDiff();
+  refreshCodeStatus();
+  refreshCodeFileTree();
+  loadCodeSessions();
+}
+
+function updateCodeStreamingUI(isStreaming) {
+  const spinnerBar = document.getElementById('code-spinner-bar');
+  const sendBtn = document.getElementById('code-chat-send-btn');
+  const stopBtn = document.getElementById('code-chat-stop-btn');
+  if (!spinnerBar) return;
+
+  if (isStreaming) {
+    spinnerBar.classList.add('active');
+    if (sendBtn) sendBtn.classList.add('hidden');
+    if (stopBtn) stopBtn.classList.remove('hidden');
+    document.getElementById('code-spinner-model').textContent = _shortModelName(state.codeModel);
+    document.getElementById('code-spinner-label').textContent = 'Thinking...';
+    document.getElementById('code-spinner-elapsed').textContent = '';
+    state._codeStreamStartTime = Date.now();
+    state._codeStreamTimerInterval = setInterval(updateCodeStreamTimer, 100);
+  } else {
+    spinnerBar.classList.remove('active');
+    if (sendBtn) sendBtn.classList.remove('hidden');
+    if (stopBtn) stopBtn.classList.add('hidden');
+    clearInterval(state._codeStreamTimerInterval);
+  }
+}
+
+function updateCodeStreamTimer() {
+  if (!state._codeStreamStartTime) return;
+  const elapsed = ((Date.now() - state._codeStreamStartTime) / 1000).toFixed(1);
+  const el = document.getElementById('code-spinner-elapsed');
+  if (el) el.textContent = elapsed + 's';
+}
+
+async function stopCodeGeneration() {
+  if (!state.codeSessionId) return;
+  try {
+    await API.cancelChat(state.codeSessionId);
+  } catch (_) {}
+  state.codeStreaming = false;
+  updateCodeStreamingUI(false);
+  renderCodeMessages();
+}
+
+function _renderCodeToolBlock(tool) {
+  if (tool.isResult) {
+    const resultStr = typeof tool.result === 'string' ? tool.result : JSON.stringify(tool.result, null, 2);
+    const truncated = resultStr.length > 500 ? resultStr.substring(0, 500) + '...' : resultStr;
+    return `<div class="tool-block" onclick="this.classList.toggle('open')">
+      <div class="tool-block-header">
+        <span class="tool-icon" style="color:var(--success)">&#10003;</span>
+        <span class="tool-name">${esc(tool.name)} result</span>
+        <span class="tool-chevron">&#9656;</span>
+      </div>
+      <div class="tool-block-body tool-result-text"><pre>${esc(truncated)}</pre></div>
+    </div>`;
+  }
+  const argsStr = typeof tool.args === 'string' ? tool.args : JSON.stringify(tool.args, null, 2);
+  return `<div class="tool-block" onclick="this.classList.toggle('open')">
+    <div class="tool-block-header">
+      <span class="tool-icon">&#9881;</span>
+      <span class="tool-name">${esc(tool.name)}</span>
+      <span class="tool-chevron">&#9656;</span>
+    </div>
+    <div class="tool-block-body"><pre>${esc(argsStr)}</pre></div>
+  </div>`;
+}
+
+function renderCodeMessages() {
+  const container = document.getElementById('code-messages-container');
+  if (!container) return;
+  let html = '';
+
+  for (let i = 0; i < state.codeMessages.length; i++) {
+    const msg = state.codeMessages[i];
+
+    if (msg.role === 'user') {
+      html += `<div class="msg-turn msg-turn-user"><div class="msg-user">${esc(msg.content)}</div></div>`;
+    } else {
+      // Tool blocks rendered as separate turns (like main chat)
+      const tools = msg.metadata?.tools || [];
+      if (tools.length > 0 && state.showToolCalls) {
+        for (const tool of tools) html += _renderCodeToolBlock(tool);
+      }
+      if (msg.content) {
+        html += `<div class="msg-turn msg-turn-assistant"><div class="msg-assistant msg-content">${renderMarkdown(msg.content)}</div></div>`;
+      }
+    }
+  }
+  container.innerHTML = html;
+
+  // Syntax highlight code blocks
+  container.querySelectorAll('pre code').forEach(block => {
+    try { hljs.highlightElement(block); } catch(e) {}
+  });
+}
+
+function renderCodeStreamingMessage(idx) {
+  const container = document.getElementById('code-messages-container');
+  if (!container) return;
+  const msg = state.codeMessages[idx];
+
+  // Remove previous streaming block and re-render from this message's tools+content
+  let el = container.querySelector(`[data-stream-idx="${idx}"]`);
+  if (el) el.remove();
+
+  el = document.createElement('div');
+  el.dataset.streamIdx = idx;
+
+  let html = '';
+  const tools = msg.metadata?.tools || [];
+  if (tools.length > 0 && state.showToolCalls) {
+    for (const tool of tools) html += _renderCodeToolBlock(tool);
+  }
+  if (msg.content) {
+    html += `<div class="msg-turn msg-turn-assistant"><div class="msg-assistant msg-content">${renderMarkdown(msg.content)}</div></div>`;
+  }
+  if (!msg.content && tools.length === 0) {
+    html += `<div class="msg-turn msg-turn-assistant"><div class="streaming-indicator"><div class="wave-bars"><span></span><span></span><span></span><span></span><span></span></div><span>Thinking...</span></div></div>`;
+  }
+  el.innerHTML = html;
+  container.appendChild(el);
+  scrollCodeToBottom();
+}
+
+function scrollCodeToBottom() {
+  const scroll = document.getElementById('code-messages-scroll');
+  if (scroll) scroll.scrollTop = scroll.scrollHeight;
+}
+
+function initCodeChat() {
+  // Update toolbar
+  if (state.codeFolder) {
+    const parts = state.codeFolder.split('/');
+    document.getElementById('code-toolbar-folder').textContent = parts[parts.length - 1] || state.codeFolder;
+    document.getElementById('code-toolbar-folder').title = state.codeFolder;
+  }
+
+  const modelEl = document.getElementById('code-model-selector-name');
+  if (modelEl) modelEl.textContent = _shortModelName(state.codeModel);
+
+  renderCodeMessages();
+  scrollCodeToBottom();
+  refreshCodeStatus();
+  refreshCodeFileTree();
+  refreshCodeDiff();
+
+  // File tree visibility
+  const tree = document.getElementById('code-file-tree');
+  if (tree) tree.style.display = state.codeFileTreeVisible ? '' : 'none';
+}
+
+async function refreshCodeStatus() {
+  if (!state.codeFolder) return;
+  try {
+    const resp = await fetch(`${BASE_URL}/v1/code/status?path=${encodeURIComponent(state.codeFolder)}`);
+    const data = await resp.json();
+    if (data.branch) {
+      state.codeBranch = data.branch;
+      document.getElementById('code-toolbar-branch').textContent = data.branch;
+    }
+  } catch (_) {}
+}
+
+async function refreshCodeFileTree() {
+  if (!state.codeFolder) return;
+  try {
+    const resp = await fetch(`${BASE_URL}/v1/files/tree?path=${encodeURIComponent(state.codeFolder)}&depth=2`);
+    const data = await resp.json();
+    state.codeFileTree = data.tree;
+    renderCodeFileTree(data.tree, document.getElementById('code-file-tree-content'), 0);
+  } catch (e) {
+    const container = document.getElementById('code-file-tree-content');
+    if (container) container.innerHTML = `<div style="padding:12px;color:var(--text-400);font-size:12px">Could not load file tree</div>`;
+  }
+}
+
+function renderCodeFileTree(nodes, container, depth) {
+  if (!container) return;
+  container.innerHTML = '';
+  if (!nodes || nodes.length === 0) {
+    container.innerHTML = '<div style="padding:12px;color:var(--text-400);font-size:12px">Empty directory</div>';
+    return;
+  }
+  for (const node of nodes) {
+    const item = document.createElement('div');
+    item.className = 'tree-item' + (node.type === 'dir' ? ' dir' : '');
+    item.style.setProperty('--depth', depth);
+
+    if (node.type === 'dir') {
+      const isOpen = true;
+      item.innerHTML = `
+        <svg class="tree-toggle${isOpen ? '' : ' collapsed'}" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+        <span>${esc(node.name)}</span>`;
+
+      const childContainer = document.createElement('div');
+      childContainer.className = 'tree-children';
+      if (node.children && node.children.length > 0) {
+        renderCodeFileTree(node.children, childContainer, depth + 1);
+      } else if (node.truncated) {
+        childContainer.innerHTML = '<div class="tree-item" style="--depth:' + (depth+1) + ';color:var(--text-400);font-style:italic;font-size:11px;cursor:default">...</div>';
+      }
+
+      item.onclick = (e) => {
+        e.stopPropagation();
+        const toggle = item.querySelector('.tree-toggle');
+        toggle.classList.toggle('collapsed');
+        childContainer.style.display = childContainer.style.display === 'none' ? '' : 'none';
+      };
+      container.appendChild(item);
+      container.appendChild(childContainer);
+    } else {
+      const ext = node.name.split('.').pop().toLowerCase();
+      const icon = _fileIcon(ext);
+      item.innerHTML = `${icon}<span>${esc(node.name)}</span>`;
+      item.onclick = () => {
+        // Could open file preview — for now just show path
+        showToast(node.path);
+      };
+      container.appendChild(item);
+    }
+  }
+}
+
+function _fileIcon(ext) {
+  const codeExts = ['py','js','ts','tsx','jsx','rs','go','java','c','cpp','h','rb','kt','swift','php','cs'];
+  const docExts = ['md','txt','rst','pdf','docx'];
+  const configExts = ['json','yaml','yml','toml','ini','env','cfg'];
+  if (codeExts.includes(ext)) return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
+  if (docExts.includes(ext)) return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+  if (configExts.includes(ext)) return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06"/></svg>';
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+}
+
+async function refreshCodeDiff() {
+  if (!state.codeFolder) return;
+  try {
+    const resp = await fetch(`${BASE_URL}/v1/code/diff?path=${encodeURIComponent(state.codeFolder)}`);
+    const data = await resp.json();
+    state.codeDiffData = data;
+
+    const toggle = document.getElementById('code-diff-toggle');
+    if (data.files && data.files.length > 0) {
+      toggle.style.display = '';
+      document.getElementById('code-diff-plus').textContent = '+' + data.added;
+      document.getElementById('code-diff-minus').textContent = '-' + data.removed;
+    } else {
+      toggle.style.display = 'none';
+    }
+
+    // Render diff content if panel open
+    if (state.codeDiffPanelOpen) {
+      renderCodeDiffContent(data);
+    }
+  } catch (_) {}
+}
+
+function renderCodeDiffContent(data) {
+  const container = document.getElementById('code-diff-content');
+  if (!container) return;
+
+  if (!data || !data.files || data.files.length === 0) {
+    container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-400);font-size:13px">No changes detected</div>';
+    return;
+  }
+
+  let html = '';
+  // File list
+  for (const f of data.files) {
+    html += `<div class="diff-file-item" onclick="showCodeFileDiff('${esc(f.file)}')">
+      <span class="diff-file-name">${esc(f.file)}</span>
+      <span class="diff-file-changes"><span class="plus">+${f.added}</span> <span class="minus">-${f.removed}</span></span>
+    </div>`;
+  }
+
+  // Full diff (collapsible)
+  if (data.diff) {
+    html += `<div style="padding:8px 12px;border-top:1px solid var(--border-100);margin-top:4px">
+      <button class="composer-btn" style="font-size:11px;padding:4px 8px" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? '' : 'none'">
+        Show full diff
+      </button>
+      <div class="diff-detail" style="display:none">${_renderDiffHighlight(data.diff)}</div>
+    </div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+function _renderDiffHighlight(diff) {
+  return esc(diff).split('\n').map(line => {
+    if (line.startsWith('+') && !line.startsWith('+++')) return `<span class="diff-add">${line}</span>`;
+    if (line.startsWith('-') && !line.startsWith('---')) return `<span class="diff-del">${line}</span>`;
+    if (line.startsWith('@@')) return `<span class="diff-hunk">${line}</span>`;
+    return line;
+  }).join('\n');
+}
+
+function showCodeFileDiff(filename) {
+  // Show just the relevant part of the full diff
+  if (!state.codeDiffData?.diff) return;
+  const lines = state.codeDiffData.diff.split('\n');
+  let capture = false;
+  let fileDiff = [];
+  for (const line of lines) {
+    if (line.startsWith('diff --git') && line.includes(filename)) { capture = true; }
+    else if (line.startsWith('diff --git') && capture) break;
+    if (capture) fileDiff.push(line);
+  }
+  if (fileDiff.length === 0) { showToast('No diff found for ' + filename); return; }
+
+  const container = document.getElementById('code-diff-content');
+  container.innerHTML = `
+    <div style="padding:6px 12px;border-bottom:1px solid var(--border-100)">
+      <button class="composer-btn" style="font-size:11px" onclick="renderCodeDiffContent(state.codeDiffData)">&larr; All files</button>
+      <span style="margin-left:8px;font-size:12px;font-weight:500;color:var(--text-200)">${esc(filename)}</span>
+    </div>
+    <div class="diff-detail">${_renderDiffHighlight(fileDiff.join('\n'))}</div>`;
+}
+
+function toggleCodeDiffPanel() {
+  state.codeDiffPanelOpen = !state.codeDiffPanelOpen;
+  const panel = document.getElementById('code-diff-panel');
+  panel.classList.toggle('open', state.codeDiffPanelOpen);
+  if (state.codeDiffPanelOpen && state.codeDiffData) {
+    renderCodeDiffContent(state.codeDiffData);
+  }
+}
+
+function toggleCodeFileTreePanel() {
+  state.codeFileTreeVisible = !state.codeFileTreeVisible;
+  const tree = document.getElementById('code-file-tree');
+  if (tree) tree.style.display = state.codeFileTreeVisible ? '' : 'none';
+}
+
+// Restore app mode on load
+function _restoreAppMode() {
+  const mode = state.appMode;
+  document.querySelectorAll('.mode-tab').forEach(t => t.classList.toggle('active', t.dataset.mode === mode));
+  if (mode === 'code') {
+    const chatSb = document.getElementById('chat-sidebar-content');
+    const codeSb = document.getElementById('code-sidebar-content');
+    const sbHeader = document.querySelector('.sb-header');
+    chatSb?.classList.add('hidden');
+    codeSb?.classList.add('active');
+    if (sbHeader) sbHeader.style.display = 'none';
+    setTimeout(() => { navigateTo('code-welcome'); loadCodeSessions(); }, 300);
+  }
+}
+
+// Hook into init
+const _origInit = typeof init === 'function' ? init : null;
+
 // Start
 init();
+_restoreAppMode();
 </script>
 </body>
 </html>

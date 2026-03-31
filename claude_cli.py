@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "5.5.0"
+VERSION = "5.6.0"
 VERSION_DATE = "2026-03-31"
 CHANGELOG = [
+    ("5.6.0", "2026-03-31", "Code Mode overhaul — full-featured coding assistant experience. Folder browser GUI for project selection (breadcrumb navigation, lazy-loaded directory listing via /v1/files/tree). Fixed SSE streaming (two-line event:/data: format matching server output). Tool calls display identically to main chat (gear/check icons, expandable args/results, proper .open toggle). Streaming indicator with wave animation, model name, tool labels, elapsed timer, and stop button. Folder-based project system — sessions tagged with folder path, 'All Projects' expands to show discovered projects with session counts, selecting a project filters sessions. Session management: archive and delete buttons on hover in sidebar. Code mode sessions properly scoped by folder path via project field."),
     ("5.5.0", "2026-03-31", "Claude.ai-style Projects — full project workspace system modeled after Claude.ai. Projects list view with card grid, search, Your Projects/Archived tabs, sort by activity/name/created. Project detail view with back navigation, description (show more/less), chat composer, conversation list, and right panel with Instructions and Files sections. Custom instructions per project — editable via modal, stored in project.json, injected into system prompt for all project conversations. File upload via multipart form (replaced deprecated cgi module with manual boundary parser for Python 3.13+). Files displayed with document icons, deletable per file. Project-scoped conversations — sessions filtered by project field, new chats auto-scoped. Project CRUD — create modal with name/description/agent, archive (preserves data + QMD), delete (soft-delete to .trash, removes QMD collection). Context menus on project cards and chat items. API: GET/POST /v1/sessions?project=X for project-filtered session listing."),
     ("5.4.0", "2026-03-31", "Artifact system — Claude.ai-style artifact management. Files written with relative paths auto-land in agents/<name>/artifacts/<session_folder>/. Session-scoped SQLite registry with content snapshots (versioned blobs, up to 5MB per version). Resizable right panel with type-aware rendering: syntax-highlighted code (highlight.js), sandboxed HTML iframe, inline SVG, image display, rendered markdown. Version selector dropdown, copy/download/source-toggle actions. Artifact cards in chat messages (coral border, monitor icon) open panel on click. Artifacts excluded from QMD indexing and knowledge graph (not memory). Artifacts browse view in sidebar: full-page grid with content preview cards, type filter tabs (All/Code/HTML/Documents/Images/Markdown), agent filter chips, time-ago timestamps. Click-through from browse opens chat + artifact panel. API: GET /v1/artifacts, /v1/artifacts/browse, /v1/artifacts/<id>/content, /v1/artifacts/<id>/download."),
     ("5.3.0", "2026-03-31", "Claude.ai-style web UI + interactive agents. Complete UI rewrite: sidebar + multi-view layout (Welcome, Chat, Chats, Projects, Knowledge Graph, Customize) with Anthropic Sans/Serif/Mono fonts, warm light/dark themes. Tool call blocks show with full args during streaming and persist across page reloads (reconstructed from assistant message metadata). Tool display toggle works. Interactive mode: agents can ask clarifying questions via AskUserQuestion — sidecar intercepts with PreToolUse hook, emits user_input_needed SSE event, blocks until answer arrives via POST /answer/{query_id}. TUI renders questions with selectable options. New endpoints: memory CRUD, soul.md AI editing, MCP registry. Agent creation accepts model and display_name. Sidecar captures tool input_json_delta for full args on content_block_stop."),
@@ -8260,6 +8261,13 @@ class Scheduler:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("SELECT * FROM schedules ORDER BY name").fetchall()
             return [dict(r) for r in rows]
+
+    def get_task(self, name: str) -> dict | None:
+        """Get a single scheduled task by name."""
+        with _sched_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM schedules WHERE name = ?", (name,)).fetchone()
+            return dict(row) if row else None
 
     def get_history(self, name: str | None = None, limit: int = 20) -> list[dict]:
         with _sched_conn() as conn:
