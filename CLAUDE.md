@@ -36,23 +36,28 @@ brain.py (gateway)
   └── web/index.html (browser client — Mission Control cockpit)
 ```
 
-### Web UI (Mission Control Cockpit)
+### Web UI (Claude.ai-style)
 
-The web UI uses a dashboard-first architecture with full-screen modal overlays:
+The web UI uses a sidebar + multi-view layout inspired by Claude.ai:
 
-- **Cockpit** (`#cockpit`): default main screen with agent cards, cost feed, system status
-- **Chat modal** (`.fullscreen-modal#chat-modal`): full-screen overlay for conversations
-- **Project modal** (`.fullscreen-modal#project-modal`): full-screen overlay for project management
-- **Config/Settings modals** (`.modal-overlay`): standard overlays that stack on top
+- **Sidebar** (`#sidebar`): collapsible left panel with agent selector, nav (New Chat, Search, Chats, Projects, Knowledge Graph, Customize), recent sessions
+- **Welcome view** (`#welcome-view`): greeting + composer for new conversations
+- **Chat view** (`#chat-view`): message history + streaming composer with tool blocks
+- **Chats view** (`#chats-view`): searchable session list with All/Archived tabs
+- **Projects view** (`#projects-view`): project management
+- **Graph view** (`#graph-view`): knowledge graph visualization
+- **Settings/Config modals** (`.modal-overlay`): standard overlays that stack on top
 
 Key patterns:
-- Cockpit has its own CSS custom properties (`--cp-*`) for consistent theming
-- Chat modal uses DOM ref swapping (`_savedDomRefs`) — saves original `dom.*` refs, reassigns to modal elements, restores on close
-- Spinner element IDs are swapped at open/close so `sendMessage()` getElementById calls resolve correctly
-- Session cache in `sessionStorage` for instant cockpit loads; background refresh updates progressively
-- Cockpit polling (10s) pauses while chat modal is open to avoid server flooding during SSE streaming
-- Agent card ordering follows team hierarchy: main → team heads + members → standalone
-- `_CARD_ACCENTS` array assigns deterministic colors per agent index
+- Claude.ai design system: Anthropic Sans/Serif/Mono fonts, warm light theme, dark theme toggle
+- CSS custom properties (`--bg-*`, `--text-*`, `--accent-*`) for consistent theming across light/dark
+- `navigateTo(view)` switches between views by toggling `display:none`
+- Tool call blocks: collapsible `div.tool-block` with gear icon, tool name, chevron, expandable args body
+- Tool calls persisted in assistant message metadata (`metadata.tools`), reconstructed on session restore via `openSession()`
+- Tool display toggle (`state.showToolCalls`) hides/shows tool blocks, persisted to localStorage
+- Agent quick-switch buttons below composer on welcome view
+- Streaming uses raw socket SSE for unbuffered token-by-token display
+- `renderStreamingMessage()` updates in-place during streaming; `renderMessages()` for full re-render
 
 ### Agent SDK (Agentic Loop)
 
@@ -66,12 +71,18 @@ context management, and token-efficient file operations.
 - Server builds system prompt and provider env using `claude_cli`, then hands off to sidecar via REST
 - `/mcp` endpoint on server: MCP JSON-RPC (initialize, tools/list, tools/call) — sidecar's SDK connects here for custom tools
 - Hooks run server-side in `/mcp` tools/call handler (SDK hook registration causes streaming to buffer — never pass `hooks_enabled: true`)
+- Exception: `AskUserQuestion` PreToolUse hook registered only in interactive mode (matcher scoped to single tool)
 - Opt out per agent: `"agent_sdk": {"enabled": false}` in agent.json falls back to custom loop
 - SDK badge shown in web UI status bar and message footers
 - All paths route through SDK: web UI, TUI interactive, CLI one-shot, scheduled tasks, `_run_delegate`
 - `query_sync` accepts `tool_defs`, `server_url`, `agent_id`, `session_id`, `cancel_fn`, `sdk_session_id`, `return_metadata`
 - All SDK paths fall back to direct API if sidecar is unavailable
 - Claude Code skills: `scan_claude_code_skills()` discovers plugins from `~/.claude`, GUI toggle per agent, `SdkPluginConfig` for SDK loading
+- Tool args capture: sidecar accumulates `input_json_delta` fragments, re-emits `tool_call` with full args on `content_block_stop`
+- Tool call dedup: server and client detect re-emitted tool_calls (same name, now with args) and update in-place
+- Interactive mode: `POST /query` accepts `interactive: true`, sidecar registers AskUserQuestion PreToolUse hook
+- Interactive answer flow: sidecar emits `user_input_needed` SSE event, blocks on `_pending_answers[query_id]`, unblocked by `POST /answer/{query_id}`
+- TUI interactive: `client.chat(..., interactive=True)` enables AskUserQuestion, renders questions with options, sends answers via `client.answer()`
 
 Provider routing for SDK (env vars per provider):
 - `cliproxyapi`: Claude models (Max subscription OAuth) + Gemini, Qwen — `ANTHROPIC_BASE_URL=http://127.0.0.1:8317`
@@ -273,14 +284,19 @@ MCP: mcp_* (dynamic, from connected MCP servers)
 
 Server runs on port 8420 (configurable). Key endpoints:
 - `POST /v1/chat` — SSE streaming with keepalive
+- `POST /v1/chat/answer` — deliver user answer to interactive AskUserQuestion
 - `POST /v1/sessions` — auto-resolves provider from model
 - `GET /v1/schedule/running` — live task monitoring
 - `POST /v1/skills/browse` — searches 7000+ skills from ClawHub
 - `GET /v1/services/qmd/docs` — list docs with index health (modified, embedded_at, current)
 - `GET /v1/agents/activity` — active tasks/chats per agent
+- `GET /v1/agents/<id>/memories` — list all memories with frontmatter and content
+- `DELETE /v1/agents/<id>/memories?name=X` — delete a memory by name
+- `POST /v1/agents/<id>/soul-chat` — AI-assisted soul.md editing
 - `GET /v1/teams` — team structure (heads, members, standalone)
 - `POST /v1/teams` — manage teams (create, update, dissolve, move)
 - `GET|POST /v1/models/config` — model routing configuration
+- `GET /v1/mcp/registry` — list available MCP server templates
 - `GET /v1/costs` — cost stats (agent, hours params)
 - `GET /v1/costs/daily` — daily cost breakdown (agent, days params)
 - `POST /v1/restart` — re-execs the server process

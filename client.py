@@ -81,13 +81,15 @@ class BrainAgentClient:
     # --- Chat (SSE streaming) ---
 
     def chat(self, message: str, mode: str | None = None,
-             project: str | None = None, images: list[dict] | None = None):
+             project: str | None = None, images: list[dict] | None = None,
+             interactive: bool = False):
         """Send a message and yield SSE events as (event_type, data) tuples.
 
-        Event types: text_delta, tool_call, tool_result, tool_output, done, error
+        Event types: text_delta, tool_call, tool_result, tool_output, user_input_needed, done, error
         Uses raw socket for unbuffered SSE streaming.
 
         images: optional list of {data: base64, media_type: "image/png"} for multimodal.
+        interactive: enable AskUserQuestion support (SDK canUseTool callback).
         """
         import socket
         from urllib.parse import urlparse
@@ -102,6 +104,8 @@ class BrainAgentClient:
             payload["project"] = project
         if images:
             payload["images"] = images
+        if interactive:
+            payload["interactive"] = True
         body = json.dumps(payload)
 
         parsed = urlparse(self.server_url)
@@ -151,6 +155,11 @@ class BrainAgentClient:
                         pass
         finally:
             sock.close()
+
+    def answer(self, answer_data):
+        """Send an answer to a pending AskUserQuestion prompt."""
+        if self.session_id:
+            self._post("/v1/chat/answer", {"session_id": self.session_id, "answer": answer_data})
 
     def cancel(self):
         if self.session_id:

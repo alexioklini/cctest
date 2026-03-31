@@ -36,7 +36,7 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
 - **Custom slash commands** — user-defined prompt templates with `{{variable}}` interpolation
 
 ### Frontends
-- **Web UI** — sidebar with Projects + Chats sections, slash command popup, plan mode, image upload, knowledge map
+- **Web UI** — Claude.ai-style sidebar layout with multi-view navigation (Chat, Chats, Projects, Knowledge Graph, Customize), light/dark themes with Anthropic fonts
 - **TUI** — Rich + prompt_toolkit, 50+ slash commands, autocomplete
 - **Multi-messaging** — adapter framework for Telegram + future Discord/Slack channels
 - **Remote nodes** — lightweight agents on remote machines with centralized management, launchd install, settings UI
@@ -188,18 +188,15 @@ brain-agent/
 
 Access at `http://127.0.0.1:8420/` after starting the server.
 
-- **Collapsible sidebar** — agent list, sessions, quick actions; expand/collapse with Ctrl+B
-- **Chat** — streaming responses, markdown, image upload (drag-and-drop, paste), plan mode toggle
-- **Slash command popup** — type `/` for autocomplete menu with built-in + custom commands
-- **Project tabs** — switch between project-scoped contexts per agent
-- **Agent config** — modal with tabs: Soul, Settings, Skills, MCP, Schedule, Projects, Workflows, Commands, Memory
+- **Claude.ai-style layout** — collapsible sidebar with agent selector, nav links, recent sessions; multi-view main area
+- **Chat** — streaming responses with tool call blocks (expandable args), markdown, image upload, plan mode toggle
+- **Tool display** — collapsible tool blocks with full args, persisted across reloads, toggle to hide/show
+- **Interactive agents** — agents can ask clarifying questions (AskUserQuestion) in TUI with selectable options
+- **Chats browser** — searchable list with All/Archived tabs
+- **Agent config** — modal with tabs: Soul (AI-assisted editing), Settings, Skills, MCP, Schedule, Projects, Workflows, Commands, Memory
 - **Settings dashboard** — vertical nav with grouped sections: System, Agents, Monitoring, Data
-- **Workflow runner** — stage pipeline visualization with approval gates
-- **Notifications** — bell icon with badge, dropdown for recent alerts
-- **Streaming tool output** — live terminal panel for command execution
 - **Cost display** — per-session and per-message cost in status bar
-- **Light/dark theme** — toggle with sun/moon icon, saved to localStorage
-- **Mobile responsive** — sidebar as overlay drawer on small screens
+- **Light/dark theme** — Anthropic Sans/Serif/Mono fonts, warm palette, toggle saved to localStorage
 
 ## Multi-Agent System
 
@@ -360,11 +357,18 @@ Each task runs with a specified agent and model in its own context. Results stor
 | GET/POST | `/v1/channels` | Multi-messaging channels |
 | GET/POST | `/v1/nodes` | Remote node management |
 | GET/POST | `/v1/mcp/connections` | Dynamic MCP connections |
+| GET | `/v1/mcp/registry` | MCP server templates |
+| GET | `/v1/agents/{id}/memories` | List memories with content |
+| DELETE | `/v1/agents/{id}/memories` | Delete memory by name |
+| POST | `/v1/agents/{id}/soul-chat` | AI-assisted soul.md editing |
+| POST | `/v1/chat/answer` | Answer agent's AskUserQuestion |
 
 ## Changelog
 
 | Version | Date | Changes |
 |---|---|---|
+| 5.3.0 | 2026-03-31 | Claude.ai-style web UI rewrite (sidebar + multi-view, Anthropic fonts, warm themes). Tool call blocks with full args persist across reloads. Interactive mode: agents ask questions via AskUserQuestion with TUI support. New endpoints: memory CRUD, soul.md AI editing, MCP registry. Sidecar captures input_json_delta for tool args |
+| 5.2.0 | 2026-03-29 | Mission Control cockpit — dashboard-first UI with agent cards, cost feed, team badges, session cache |
 | 5.1.0 | 2026-03-28 | Real-time streaming + Claude Code skills. Sidecar rewritten as REST API for true token-by-token streaming. MCP tools via /mcp JSON-RPC endpoint. Hooks moved server-side (SDK hooks caused buffering). Claude Code plugin GUI: browse, install, toggle 121 plugins per agent. SDK audit: @tool decorator, allowed_tools, correct hook signatures |
 | 5.0.0 | 2026-03-28 | Full SDK migration — HTTP MCP server (24 tools), chat summaries, file watcher, rate limiting, model fallback, trace spans, audit logging, background tasks through SDK, TUI + CLI + scheduled tasks via sidecar with direct-API fallback |
 | 4.2.0 | 2026-03-23 | Code graph: LLM node summaries, architecture layers, guided tours, code_graph_enhance tool. Lossless compaction with compacted flag, context fill indicator, manual compact, LCM footer |

@@ -1,18 +1,20 @@
 {
-  "puppeteer": {
-    "transport": "stdio",
-    "command": "npx",
-    "args": [
-      "-y",
-      "@modelcontextprotocol/server-puppeteer"
-    ]
-  },
-  "sqlite": {
-    "transport": "stdio",
-    "command": "npx",
-    "args": [
-      "-y",
-      "@mokei/mcp-sqlite"
-    ]
+  "mcpServers": {
+    "puppeteer": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-puppeteer"
+      ]
+    },
+    "sqlite": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@mokei/mcp-sqlite"
+      ]
+    }
   }
 }

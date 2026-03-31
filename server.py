@@ -703,6 +703,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_qmd_docs()
         elif path.startswith("/v1/services/log"):
             self._handle_service_log()
+        elif path.startswith("/v1/agents/") and path.endswith("/memories"):
+            self._handle_agent_memories_list(path)
         elif path.startswith("/v1/agents/") and path.endswith("/memory-summary"):
             self._handle_memory_summary_get(path)
         elif path.startswith("/v1/agents/") and path.endswith("/memory-health"):
@@ -735,6 +737,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         # --- MCP GET routes ---
         elif path == "/v1/mcp/connections":
             self._handle_mcp_list()
+        elif path == "/v1/mcp/registry":
+            self._handle_mcp_registry()
         # --- Projects & Ingestion GET routes ---
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/notes" in path:
             self._handle_notes(path, "GET")
@@ -801,6 +805,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_delete_agent()
         elif path == "/v1/agents/rename":
             self._handle_rename_agent()
+        elif path.startswith("/v1/agents/") and path.endswith("/soul-chat"):
+            self._handle_soul_chat(path)
         elif path.startswith("/v1/agents/") and "/file" in path:
             self._handle_agent_file_write(path)
         elif path == "/v1/schedule":
@@ -860,6 +866,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         elif path == "/v1/cache/clear":
             engine._web_cache.clear()
             self._send_json({"status": "cleared"})
+        elif path == "/v1/chat/answer":
+            self._handle_chat_answer()
         elif path == "/v1/notifications/settings":
             self._handle_notifications_settings_post()
         elif path == "/v1/notifications/dismiss":
@@ -957,6 +965,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_agent_ingested_delete(path)
         elif path.startswith("/v1/agents/") and "/workflows/" in path:
             self._handle_workflow_delete(path)
+        elif path.startswith("/v1/agents/") and path.endswith("/memories"):
+            self._handle_agent_memory_delete(path)
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -1671,7 +1681,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             elif event_type == "thinking_delta":
                 _partial_thinking.append(data.get("text", ""))
             elif event_type == "tool_call":
-                _partial_tools.append({"name": data.get("name", ""), "args": data.get("args", {})})
+                name = data.get("name", "")
+                args = data.get("args", {})
+                # Update existing entry if re-emitted with full args, else append
+                if args and _partial_tools and _partial_tools[-1].get("name") == name and not _partial_tools[-1].get("args"):
+                    _partial_tools[-1]["args"] = args
+                else:
+                    _partial_tools.append({"name": name, "args": args})
             elif event_type == "tool_result":
                 # Attach result to the last matching tool
                 for t in reversed(_partial_tools):
@@ -2062,6 +2078,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         sdk_prompt = "Conversation so far:\n\n" + "\n\n".join(parts) + f"\n\nHuman: {message}"
 
             server_port = server_config.get("port", 8420)
+            _interactive = body.get("interactive", False)
             payload = json.dumps({
                 "message": sdk_prompt,
                 "model": model,
@@ -2079,6 +2096,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "server_url": f"http://127.0.0.1:{server_port}",
                 "hooks_enabled": hooks_enabled,
                 "cc_plugin_paths": cc_plugin_paths,
+                "interactive": _interactive,
             }).encode()
 
             # Tracing spans
@@ -2095,6 +2113,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 _req = _urlreq.Request(f"{_base}/query", data=payload,
                                         headers={"Content-Type": "application/json"})
                 _qid = json.loads(_urlreq.urlopen(_req, timeout=10).read()).get("query_id")
+                # Store sidecar query ID on session for answer forwarding
+                session._sidecar_query_id = _qid
 
                 r = {"text": "", "sdk_session_id": None, "tokens_in": 0,
                      "tokens_out": 0, "cost": 0.0, "tools": []}
@@ -2103,22 +2123,49 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 _tool_calls_list = []
                 import time as _time
                 _t0 = _time.time()
+                _waiting_input = False
 
-                while _time.time() - _t0 < 300:
+                while _time.time() - _t0 < 600:  # 10min timeout to allow for user input waits
                     _resp = json.loads(_urlreq.urlopen(
                         f"{_base}/events/{_qid}?after={_after}", timeout=10).read())
                     for _ev in _resp["events"]:
                         _et = _ev["event"]
                         _ed = _ev["data"]
-                        if _et in ("text_delta", "thinking_delta", "tool_call", "tool_result"):
+                        if _et in ("text_delta", "thinking_delta", "tool_call", "tool_result", "user_input_needed"):
                             self.wfile.write(f"event: {_et}\ndata: {json.dumps(_ed)}\n\n".encode())
                             self.wfile.flush()
-                        if _et == "text_delta":
+                        if _et == "user_input_needed":
+                            _waiting_input = True
+                            _t0 = _time.time()  # Reset timeout while waiting for user input
+                            # Also fire a notification
+                            if _notification_manager:
+                                _notification_manager.notify(
+                                    "user_input", "Agent needs your input",
+                                    f"Agent {session.agent_id} is waiting for your response",
+                                    severity="warning", agent=session.agent_id,
+                                    metadata={"session_id": sid, "query_id": _qid})
+                        elif _et == "text_delta":
+                            _waiting_input = False
                             _full_text += _ed.get("text", "")
                             _partial_reply.append(_ed.get("text", ""))
                         elif _et == "tool_call":
-                            _tool_calls_list.append(_ed)
-                            _partial_tools.append({"name": _ed.get("name", ""), "args": _ed.get("args", {})})
+                            _waiting_input = False
+                            name = _ed.get("name", "")
+                            args = _ed.get("args", {})
+                            # Update existing entry if re-emitted with full args
+                            if args and _partial_tools and _partial_tools[-1].get("name") == name and not _partial_tools[-1].get("args"):
+                                _partial_tools[-1]["args"] = args
+                                if _tool_calls_list and _tool_calls_list[-1].get("name") == name:
+                                    _tool_calls_list[-1] = _ed
+                            else:
+                                _tool_calls_list.append(_ed)
+                                _partial_tools.append({"name": name, "args": args})
+                        elif _et == "tool_result":
+                            # Attach result to the last matching tool entry
+                            for t in reversed(_partial_tools):
+                                if t["name"] == _ed.get("name") and "result" not in t:
+                                    t["result"] = str(_ed.get("result", ""))[:500]
+                                    break
                         elif _et == "_result":
                             r = {
                                 "text": _ed.get("text", "") or _full_text,
@@ -3451,9 +3498,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Invalid agent name"}, 400)
             return
         agent = engine.AgentConfig(agent_id)  # auto-creates defaults
-        if body.get("description"):
-            cfg = agent.config
-            cfg["description"] = body["description"]
+        cfg_dirty = False
+        cfg = agent.config
+        for field in ("description", "model", "display_name"):
+            if body.get(field):
+                cfg[field] = body[field]
+                cfg_dirty = True
+        if cfg_dirty:
             with open(os.path.join(agent.dir, "agent.json"), "w") as f:
                 json.dump(cfg, f, indent=2)
         if body.get("soul"):
@@ -4149,6 +4200,41 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         except OSError as e:
             self._send_json({"error": str(e)}, 500)
 
+    def _handle_agent_memories_list(self, path):
+        """GET /v1/agents/<id>/memories — list all memory files with frontmatter and content."""
+        parts = path.split("/")
+        agent_id = parts[3]
+        from urllib.parse import unquote
+        agent_id = unquote(agent_id)
+        try:
+            ms = engine.MemoryStore(agent_id)
+            memories = ms.list_all()
+            self._send_json({"agent": agent_id, "memories": memories, "count": len(memories)})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_agent_memory_delete(self, path):
+        """DELETE /v1/agents/<id>/memories?name=X — delete a memory by name."""
+        parts = path.split("/")
+        agent_id = parts[3]
+        from urllib.parse import unquote
+        agent_id = unquote(agent_id)
+        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+        name = unquote(params.get("name", ""))
+        if not name:
+            self._send_json({"error": "name parameter required"}, 400)
+            return
+        try:
+            ms = engine.MemoryStore(agent_id)
+            result = ms.delete(name)
+            if "error" in result:
+                self._send_json(result, 404)
+            else:
+                self._send_json(result)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
     def _handle_memory_summary_get(self, path):
         """GET /v1/agents/<id>/memory-summary — get memory summary content, config, and relationship discovery status."""
         parts = path.split("/")
@@ -4532,6 +4618,74 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             return
         self._send_json(result)
 
+    def _handle_mcp_registry(self):
+        """GET /v1/mcp/registry?q=...&limit=... — search official MCP registry."""
+        import urllib.request
+        import urllib.parse
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        query = params.get("q", [""])[0]
+        limit = params.get("limit", ["20"])[0]
+        try:
+            url = f"https://registry.modelcontextprotocol.io/v0/servers?search={urllib.parse.quote(query)}&limit={limit}"
+            req = urllib.request.Request(url, headers={"User-Agent": "BrainAgent/1.0"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+            # Normalize into a flat list with install info — dedup by name
+            servers = []
+            seen = set()
+            items = data if isinstance(data, list) else data.get("servers", [])
+            for item in items:
+                srv = item.get("server", item) if isinstance(item, dict) else item
+                if not isinstance(srv, dict):
+                    continue
+                name = srv.get("name", "")
+                if name in seen:
+                    continue
+                seen.add(name)
+                desc = srv.get("description", "")
+                repo = srv.get("repository", {})
+                repo_url = repo.get("url", "") if isinstance(repo, dict) else ""
+                packages = srv.get("packages", [])
+                remotes = srv.get("remotes", [])
+                pkg = packages[0] if packages else {}
+                registry_type = pkg.get("registryType", "")
+                identifier = pkg.get("identifier", "")
+                transport = pkg.get("transport", {})
+                transport_type = transport.get("type", "stdio") if isinstance(transport, dict) else "stdio"
+                pkg_args = pkg.get("packageArguments", [])
+                env_vars = pkg.get("environmentVariables", [])
+                # Build install command from packages or remotes
+                if registry_type == "npm":
+                    command = "npx"
+                    args = ["-y", identifier]
+                elif registry_type == "pypi":
+                    command = "uvx"
+                    args = [identifier]
+                elif remotes:
+                    remote = remotes[0]
+                    transport_type = remote.get("type", "sse")
+                    command = remote.get("url", "")
+                    args = []
+                    registry_type = "remote"
+                else:
+                    command = identifier
+                    args = []
+                servers.append({
+                    "name": name,
+                    "description": desc,
+                    "repo_url": repo_url,
+                    "registry_type": registry_type,
+                    "identifier": identifier,
+                    "transport": transport_type,
+                    "command": command,
+                    "args": args,
+                    "env_vars": [{"name": e.get("name",""), "description": e.get("description",""), "required": e.get("isRequired", False)} for e in env_vars],
+                    "pkg_args": [{"name": a.get("name",""), "description": a.get("description",""), "required": a.get("isRequired", False), "format": a.get("format","")} for a in pkg_args],
+                })
+            self._send_json({"servers": servers})
+        except Exception as e:
+            self._send_json({"error": str(e), "servers": []})
+
     def _handle_refine(self):
         """POST /v1/refine — refine text with LLM one-shot call."""
         body = self._read_json()
@@ -4637,6 +4791,75 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 silent=True, tools=False,
             )
             self._send_json({"refined": result or text, "model": refine_model})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_soul_chat(self, path):
+        """POST /v1/agents/<id>/soul-chat — chat to edit soul.md with LLM."""
+        parts = path.split("/")
+        agent_id = parts[3]
+        body = self._read_json()
+        message = body.get("message", "").strip()
+        soul = body.get("soul", "")
+        history = body.get("history", [])
+
+        if not message:
+            self._send_json({"error": "No message provided"}, 400)
+            return
+
+        # Resolve model (same logic as refine)
+        model = None
+        tc = engine.get_tool_config()
+        model = tc.get("refinement", {}).get("model", "")
+        if not model and engine._models_config:
+            candidates = []
+            for mid, cfg in engine._models_config.items():
+                if not cfg.get("enabled", True):
+                    continue
+                ml = mid.lower()
+                if "haiku" in ml:
+                    score = 0
+                elif "sonnet" in ml:
+                    score = 1
+                else:
+                    score = 2 + (cfg.get("cost_input", 0) or 0)
+                candidates.append((mid, score))
+            candidates.sort(key=lambda x: x[1])
+            if candidates:
+                model = candidates[0][0]
+        if not model:
+            model = server_config.get("default_model", "")
+        if not model:
+            self._send_json({"error": "No model available"}, 503)
+            return
+
+        provider = self._resolve_provider(model)
+
+        system_block = (
+            "You are a soul.md editor assistant. The user wants to modify an agent's soul.md file "
+            "(system prompt that defines the agent's personality and behavior).\n\n"
+            "CURRENT SOUL.MD:\n```\n" + soul + "\n```\n\n"
+            "RULES:\n"
+            "- Help the user edit, improve, or rewrite the soul.md based on their instructions\n"
+            "- When you make changes, output the COMPLETE updated soul.md inside a ```soul\n...\n``` code block\n"
+            "- You may also provide brief commentary outside the code block\n"
+            "- If the user is just asking a question or discussing (not requesting changes), respond normally without a code block\n"
+            "- Preserve existing structure and formatting unless asked to change it\n"
+            "- Keep the same voice/style unless the user wants a different one\n"
+        )
+
+        messages = [{"role": "user", "content": system_block}, {"role": "assistant", "content": "I understand. I'm ready to help you edit this agent's soul.md. What changes would you like to make?"}]
+        for h in history:
+            messages.append({"role": h["role"], "content": h["content"]})
+        messages.append({"role": "user", "content": message})
+
+        try:
+            result = engine.send_message(
+                messages, model, provider["api_key"],
+                provider["base_url"], provider["api_type"],
+                silent=True, tools=False,
+            )
+            self._send_json({"reply": result or "", "model": model})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
@@ -5106,6 +5329,38 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             time.sleep(0.5)
             os.execv(sys.executable, [sys.executable] + sys.argv)
         threading.Thread(target=do_restart, daemon=True).start()
+
+    # --- Chat answer handler (interactive AskUserQuestion) ---
+
+    def _handle_chat_answer(self):
+        """POST /v1/chat/answer — forward user's answer to sidecar's waiting canUseTool callback."""
+        body = self._read_json()
+        if not body:
+            self._send_json({"error": "empty body"}, 400)
+            return
+        session_id = body.get("session_id", "")
+        answer = body.get("answer", "")
+        session = sessions.get(session_id)
+        if not session:
+            self._send_json({"error": "session not found"}, 404)
+            return
+        _qid = getattr(session, "_sidecar_query_id", None)
+        if not _qid:
+            self._send_json({"error": "no active sidecar query"}, 404)
+            return
+        # Forward to sidecar
+        try:
+            import urllib.request as _urlreq
+            import sdk_backend
+            _base = f"http://{sdk_backend.SIDECAR_URL}:{sdk_backend.SIDECAR_PORT}"
+            _req = _urlreq.Request(
+                f"{_base}/answer/{_qid}",
+                data=json.dumps({"answer": answer}).encode(),
+                headers={"Content-Type": "application/json"})
+            _urlreq.urlopen(_req, timeout=10)
+            self._send_json({"status": "ok"})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
 
     # --- Notification handlers ---
 

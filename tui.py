@@ -2677,7 +2677,7 @@ def run_interactive(args):
                     "  [bold #ff8700]Thinking...[/]",
                     spinner="dots", spinner_style="#ff8700",
                 ):
-                    for event_type, data in client.chat(stripped, mode="plan" if plan_mode else None, project=current_project):
+                    for event_type, data in client.chat(stripped, mode="plan" if plan_mode else None, project=current_project, interactive=True):
                         if event_type == "text_delta":
                             pass  # Collecting server-side (silent mode)
                         elif event_type == "tool_call":
@@ -2692,6 +2692,30 @@ def run_interactive(args):
                                     tool_output_lines = 0
                         elif event_type == "tool_output":
                             tool_output_lines += 1
+                        elif event_type == "user_input_needed":
+                            # Agent is asking the user a question via AskUserQuestion
+                            tool_input = data.get("tool_input", {})
+                            questions = tool_input.get("questions", [])
+                            answers = {}
+                            for q in questions:
+                                console.print(f"\n  [bold purple]Question:[/] {q.get('question', '')}")
+                                for i, opt in enumerate(q.get("options", [])):
+                                    desc = f" — {opt['description']}" if opt.get("description") else ""
+                                    console.print(f"    [dim]{i+1}.[/] {opt.get('label', '')}{desc}")
+                                if q.get("multiSelect"):
+                                    console.print("    [dim](Enter numbers separated by commas, or type your own)[/]")
+                                else:
+                                    console.print("    [dim](Enter a number, or type your own)[/]")
+                                resp = console.input("  [bold]> [/]").strip()
+                                # Parse as number(s) or free text
+                                options = q.get("options", [])
+                                try:
+                                    indices = [int(s.strip()) - 1 for s in resp.split(",")]
+                                    labels = [options[i]["label"] for i in indices if 0 <= i < len(options)]
+                                    answers[q["question"]] = ", ".join(labels) if labels else resp
+                                except (ValueError, IndexError):
+                                    answers[q["question"]] = resp
+                            client.answer(answers)
                         elif event_type == "fallback":
                             if data.get("status") == "switch":
                                 fallback_notice = f"Fallback: {data.get('from','')} -> {data.get('to','')} ({data.get('reason','unavailable')})"
