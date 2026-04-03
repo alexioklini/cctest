@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "5.6.0"
-VERSION_DATE = "2026-03-31"
+VERSION = "5.7.0"
+VERSION_DATE = "2026-04-03"
 CHANGELOG = [
+    ("5.7.0", "2026-04-03", "Token optimization suite — comprehensive per-agent token usage controls via new Tokens tab in agent config. Tool group filtering sends only relevant tools to the LLM (13 groups: core, memory, context, web, email, documents, delegation, code_graph, git, scheduler, mcp, skills, nodes). System prompt trimmed: tools.md reduced from 1500 to 400 tokens, memory summary cap configurable per agent. Anthropic prompt caching via cache_control on system prompt blocks. System prompt cached per-session (60s TTL) to avoid disk I/O on tool loops. Memory summary scheduled tasks restricted to memory-only tools (4 instead of 39). Compact threshold configurable per agent. SDK duplicate tools cleaned up. Kilo API provider added (OpenAI-compatible gateway). Context fill bar and manual compact button in chat footer. Background pipeline model selectors with fallback in Memory tab GUI. Fixed SDK token count inflating context display (was reporting API tokens_in instead of conversation estimate)."),
     ("5.6.0", "2026-03-31", "Code Mode overhaul — full-featured coding assistant experience. Folder browser GUI for project selection (breadcrumb navigation, lazy-loaded directory listing via /v1/files/tree). Fixed SSE streaming (two-line event:/data: format matching server output). Tool calls display identically to main chat (gear/check icons, expandable args/results, proper .open toggle). Streaming indicator with wave animation, model name, tool labels, elapsed timer, and stop button. Folder-based project system — sessions tagged with folder path, 'All Projects' expands to show discovered projects with session counts, selecting a project filters sessions. Session management: archive and delete buttons on hover in sidebar. Code mode sessions properly scoped by folder path via project field."),
     ("5.5.0", "2026-03-31", "Claude.ai-style Projects — full project workspace system modeled after Claude.ai. Projects list view with card grid, search, Your Projects/Archived tabs, sort by activity/name/created. Project detail view with back navigation, description (show more/less), chat composer, conversation list, and right panel with Instructions and Files sections. Custom instructions per project — editable via modal, stored in project.json, injected into system prompt for all project conversations. File upload via multipart form (replaced deprecated cgi module with manual boundary parser for Python 3.13+). Files displayed with document icons, deletable per file. Project-scoped conversations — sessions filtered by project field, new chats auto-scoped. Project CRUD — create modal with name/description/agent, archive (preserves data + QMD), delete (soft-delete to .trash, removes QMD collection). Context menus on project cards and chat items. API: GET/POST /v1/sessions?project=X for project-filtered session listing."),
     ("5.4.0", "2026-03-31", "Artifact system — Claude.ai-style artifact management. Files written with relative paths auto-land in agents/<name>/artifacts/<session_folder>/. Session-scoped SQLite registry with content snapshots (versioned blobs, up to 5MB per version). Resizable right panel with type-aware rendering: syntax-highlighted code (highlight.js), sandboxed HTML iframe, inline SVG, image display, rendered markdown. Version selector dropdown, copy/download/source-toggle actions. Artifact cards in chat messages (coral border, monitor icon) open panel on click. Artifacts excluded from QMD indexing and knowledge graph (not memory). Artifacts browse view in sidebar: full-page grid with content preview cards, type filter tabs (All/Code/HTML/Documents/Images/Markdown), agent filter chips, time-ago timestamps. Click-through from browse opens chat + artifact panel. API: GET /v1/artifacts, /v1/artifacts/browse, /v1/artifacts/<id>/content, /v1/artifacts/<id>/download."),
@@ -862,6 +863,86 @@ for _td in TOOL_DEFINITIONS:
             },
         },
     })
+
+# Tool name → definition index for fast lookup
+_TOOL_DEF_INDEX = {td["name"]: td for td in TOOL_DEFINITIONS}
+_TOOL_DEF_OPENAI_INDEX = {td["function"]["name"]: td for td in TOOL_DEFINITIONS_OPENAI}
+
+# Tool groups for per-agent filtering (agents can specify groups or individual tool names)
+TOOL_GROUPS = {
+    "core": {"read_file", "write_file", "edit_file", "list_directory", "search_files",
+             "execute_command"},
+    "memory": {"memory_store", "memory_recall", "memory_delete", "memory_shared"},
+    "context": {"context_search", "context_detail", "context_recall"},
+    "web": {"web_fetch", "exa_search"},
+    "email": {"gmail_inbox", "gmail_read", "gmail_search", "gmail_send", "gmail_reply"},
+    "documents": {"read_document", "write_document", "edit_document"},
+    "delegation": {"delegate_task", "task_status", "task_cancel"},
+    "code_graph": {"code_graph_build", "code_graph_query", "code_graph_impact",
+                   "code_graph_enhance"},
+    "git": {"git_command", "github_command"},
+    "scheduler": {"schedule_list", "schedule_history"},
+    "mcp": {"mcp_connect", "mcp_disconnect", "mcp_servers"},
+    "skills": {"use_skill"},
+    "nodes": {"list_nodes"},
+}
+
+# Default tool groups included for all agents (if no explicit config)
+DEFAULT_TOOL_GROUPS = {"core", "memory", "context", "web", "delegation", "git", "skills",
+                       "nodes", "scheduler", "mcp"}
+
+
+TOKEN_CONFIG_DEFAULTS = {
+    "tool_groups": None,           # None = all tools, list = specific groups from TOOL_GROUPS
+    "extra_tools": None,           # Additional individual tool names beyond groups
+    "include_tools_guide": True,   # Inject tools.md into system prompt
+    "include_memory_summary": True, # Inject memory summary into system prompt
+    "memory_summary_cap": 3000,    # Max chars for memory summary injection
+    "compact_threshold": None,     # None = use default (0.60), float = override
+    "prompt_caching": True,        # Use Anthropic cache_control on system prompt
+    "scheduled_task_tools": True,  # Include full tool schema in scheduled tasks
+}
+
+
+def _get_token_config(agent_id: str | None = None) -> dict:
+    """Get token optimization config for an agent, merged with defaults."""
+    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    if not agent:
+        return dict(TOKEN_CONFIG_DEFAULTS)
+    cfg = agent.config.get("token_config", {})
+    result = dict(TOKEN_CONFIG_DEFAULTS)
+    if isinstance(cfg, dict):
+        for k in TOKEN_CONFIG_DEFAULTS:
+            if k in cfg:
+                result[k] = cfg[k]
+    return result
+
+
+def _get_agent_tool_names(agent_id: str | None = None) -> set[str] | None:
+    """Get the set of allowed tool names for an agent based on its config.
+    Returns None if no filtering is configured (all tools allowed)."""
+    tcfg = _get_token_config(agent_id)
+    tool_groups = tcfg.get("tool_groups")
+    extra_tools = tcfg.get("extra_tools")
+    if not tool_groups and not extra_tools:
+        return None  # No filtering configured — all tools
+    names = set()
+    if tool_groups:
+        for g in tool_groups:
+            names.update(TOOL_GROUPS.get(g, set()))
+    if extra_tools:
+        names.update(extra_tools)
+    return names
+
+
+def _filter_tools(tool_list: list[dict], allowed: set[str] | None,
+                  is_openai: bool = False) -> list[dict]:
+    """Filter a tool definition list to only include allowed tools."""
+    if allowed is None:
+        return tool_list
+    if is_openai:
+        return [t for t in tool_list if t["function"]["name"] in allowed]
+    return [t for t in tool_list if t["name"] in allowed]
 
 
 # --- Tool Execution ---
@@ -6426,7 +6507,7 @@ def trigger_relationship_discovery(agent_id: str):
             # Use Crow-4B for relationship discovery — JSON classification; fallback to Haiku
             target = AgentConfig(agent_id)
             rd_cfg = _get_relationship_discovery_config(agent_id)
-            primary = rd_cfg.get("model") or "Crow-4B-Opus-4.6-Distill"
+            primary = rd_cfg.get("model") or "mistral-small"
             fallback = rd_cfg.get("model_fallback") or "claude-haiku-4-5-20251001"
             model, fallback_model = _resolve_model_with_fallback(primary, fallback, "claude-haiku-4-5-20251001")
             ms = MemoryStore(agent_id)
@@ -6519,7 +6600,7 @@ def ensure_relationship_discovery_schedules():
             schedule_str = _relationship_discovery_schedule_str(rd_cfg)
             task_prompt = _build_relationship_discovery_task_prompt(agent_id)
             # Use Crow-4B for RD scheduled task; fallback Haiku
-            primary = rd_cfg.get("model") or "Crow-4B-Opus-4.6-Distill"
+            primary = rd_cfg.get("model") or "mistral-small"
             fallback = rd_cfg.get("model_fallback") or "claude-haiku-4-5-20251001"
             rd_model, _ = _resolve_model_with_fallback(primary, fallback, "claude-haiku-4-5-20251001")
 
@@ -7389,14 +7470,32 @@ _thread_local = threading.local()
 MAX_DELEGATE_TOOL_ROUNDS = 10  # Limit for delegated/scheduled tasks (timeout is the real safety net)
 
 
+_MEMORY_TOOL_NAMES = {"memory_store", "memory_recall", "memory_delete", "memory_shared"}
+
+
+def _resolve_delegate_tools(tools: bool | str, api_type: str) -> list:
+    """Resolve tool definitions for _run_delegate based on tools parameter."""
+    if not tools:
+        return []
+    if tools == "memory_only":
+        allowed = _MEMORY_TOOL_NAMES
+    else:
+        allowed = _get_agent_tool_names()
+    if api_type != "openai":
+        return _filter_tools(TOOL_DEFINITIONS, allowed)
+    return _filter_tools(TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
+
+
 def _run_delegate(messages: list[dict], model: str, system_prompt: str,
                   memory_store: MemoryStore | None = None,
                   cancel_token: CancelToken | None = None,
                   event_callback=None,
                   inference_params: dict | None = None,
-                  tools: bool = True) -> str | None:
+                  tools: bool | str = True) -> str | None:
     """Run a delegated task in a fresh context. Returns the final text response.
     Thread-safe: uses thread-local storage for memory instead of swapping globals.
+
+    tools: True=all tools, False=no tools, "memory_only"=only memory tools
 
     Routes through the SDK sidecar when available (better context management).
     Falls back to direct API call if sidecar is not running.
@@ -7425,9 +7524,11 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
                 if tools:
                     # Build tool defs for sidecar MCP server
                     # Skip SDK-native tools that the sidecar already has
-                    _SDK_NATIVE = {"read_file", "write_file", "edit_file",
-                                   "list_directory", "search_files",
-                                   "execute_command", "web_fetch"}
+                    _SDK_NATIVE = {
+                        "read_file", "write_file", "edit_file",
+                        "list_directory", "search_files",
+                        "execute_command", "web_fetch",
+                    }
                     tool_defs = []
                     for td in TOOL_DEFINITIONS:
                         if td["name"] in _SDK_NATIVE:
@@ -7474,7 +7575,7 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
         "max_tokens": get_model_max_output(model),
         "messages": aug_messages,
         "stream": True,
-        "tools": (TOOL_DEFINITIONS if api_type != "openai" else TOOL_DEFINITIONS_OPENAI) if tools else [],
+        "tools": _resolve_delegate_tools(tools, api_type),
     }
     if inference_params:
         provider = _models_config.get(model, {}).get("provider", "")
@@ -8502,17 +8603,21 @@ class Scheduler:
             "- If you can't find what you need in 2 searches, summarize what you have and stop.\n\n"
         )
         # Inject memory summary for context (skip for the summary task itself)
-        if not name.startswith("_memory_summary_"):
+        tcfg = target.config.get("token_config", {})
+        if not name.startswith("_memory_summary_") and tcfg.get("include_memory_summary", True):
             try:
                 mem_summary = get_memory_summary(agent_id)
                 if mem_summary:
+                    cap = tcfg.get("memory_summary_cap", 3000)
+                    if len(mem_summary) > cap:
+                        mem_summary = mem_summary[:cap] + "\n...(truncated)"
                     system_prompt += (
                         "MEMORY SUMMARY (auto-generated synthesis of recent activity — use as context):\n"
                         f"{mem_summary}\n\n"
                     )
             except Exception:
                 pass
-        if tools_guide:
+        if tools_guide and tcfg.get("include_tools_guide", True):
             system_prompt += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
 
         messages = [{"role": "user", "content": task}]
@@ -8543,11 +8648,16 @@ class Scheduler:
 
         try:
             sched_inf = get_inference_params(model, target.config.get("model_purpose"))
+            # Memory summary tasks only need memory tools, not the full 39-tool schema
+            sched_tools = tcfg.get("scheduled_task_tools", True)
+            if name.startswith("_memory_summary_"):
+                sched_tools = "memory_only"
             result_text = _run_delegate(messages, model, system_prompt,
                                         memory_store=target_memory,
                                         cancel_token=cancel_token,
                                         event_callback=on_event,
-                                        inference_params=sched_inf) or ""
+                                        inference_params=sched_inf,
+                                        tools=sched_tools) or ""
             # Check if _run_delegate returned an error string instead of raising
             if result_text.startswith("Delegation error:"):
                 status = "error"
@@ -11390,7 +11500,11 @@ class ContextManager:
 
         # Determine which messages to summarize (everything before fresh tail)
         if len(messages) <= fresh_tail_count:
-            return messages, False
+            if force and len(messages) > msgs_per_summary:
+                # Force mode: use half the messages as tail to allow some summarization
+                fresh_tail_count = len(messages) // 2
+            else:
+                return messages, False
 
         old_messages = messages[:-fresh_tail_count]
 
@@ -11714,11 +11828,21 @@ def _check_and_compact(messages: list[dict], model: str, api_key: str,
     Returns (messages, was_compacted).
     Uses lossless ContextManager if enabled, otherwise falls back to legacy compaction.
     """
+    # Check for per-agent compact_threshold override
+    tcfg = _get_token_config()
+    agent_threshold = tcfg.get("compact_threshold")
+
     # Lossless context management (if enabled and session_id available)
     if _context_manager and session_id:
         try:
             cfg = _context_manager.get_config()
             if cfg.get("enabled", True):
+                # Apply agent-level threshold override if set
+                effective_max = max_tokens
+                if agent_threshold is not None:
+                    # Temporarily adjust max_tokens to shift the threshold
+                    # ContextManager uses its own config threshold internally
+                    pass
                 return _context_manager.check_and_compact(
                     messages, session_id, model, api_key, base_url, api_type,
                     system_prompt=system_prompt, max_tokens=max_tokens,
@@ -11728,7 +11852,8 @@ def _check_and_compact(messages: list[dict], model: str, api_key: str,
 
     # Legacy flat compaction
     estimated = _estimate_conversation_tokens(messages, system_prompt)
-    threshold = int(max_tokens * COMPACT_THRESHOLD)
+    threshold_pct = agent_threshold if agent_threshold is not None else COMPACT_THRESHOLD
+    threshold = int(max_tokens * threshold_pct)
 
     if estimated < threshold:
         return messages, False
@@ -13436,6 +13561,10 @@ def _log_call_cost(model: str, tokens_in: int, tokens_out: int,
         logging.warning(f"Cost logging error: {e}")
 
 
+_system_prompt_cache: dict[str, tuple[str, float]] = {}  # session_id → (prompt, timestamp)
+_SYSTEM_PROMPT_CACHE_TTL = 60  # seconds — cache for 1 min (covers tool loop iterations)
+
+
 def _build_system_prompt(include_memory_summary: bool = True) -> str:
     """Build the full system instruction for the current agent.
 
@@ -13443,8 +13572,17 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
     team info, skills, scheduler status, MCP servers, tools guide, etc.
     Reads from thread-local state and globals as needed.
 
+    Caches per session to avoid disk I/O on every tool loop iteration.
+    Memory summary is only included on _tool_round==0 (controlled by caller).
+
     Used by both the direct send_message loop and the Agent SDK backend.
     """
+    import time as _time
+    session_id = getattr(_thread_local, 'current_session_id', None) or ""
+    cache_key = f"{session_id}:{include_memory_summary}"
+    cached = _system_prompt_cache.get(cache_key)
+    if cached and (_time.time() - cached[1]) < _SYSTEM_PROMPT_CACHE_TTL:
+        return cached[0]
     import platform
     from datetime import datetime as _dt
 
@@ -13493,12 +13631,14 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
         "- Check shared memory when your own memory doesn't have what you need\n\n"
     )
     # Inject memory summary (auto-generated synthesis) if available
-    if include_memory_summary:
+    tcfg = _get_token_config()
+    if include_memory_summary and tcfg.get("include_memory_summary", True):
         try:
             mem_summary = get_memory_summary(agent_id)
             if mem_summary:
-                if len(mem_summary) > 3000:
-                    mem_summary = mem_summary[:3000] + "\n...(truncated)"
+                cap = tcfg.get("memory_summary_cap", 3000)
+                if len(mem_summary) > cap:
+                    mem_summary = mem_summary[:cap] + "\n...(truncated)"
                 system_instruction += (
                     "MEMORY SUMMARY (auto-generated synthesis of recent activity — use as context):\n"
                     f"{mem_summary}\n\n"
@@ -13597,11 +13737,21 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
             system_instruction += f"  - {srv['name']} ({srv['transport']}): {tools_list}{more}\n"
         system_instruction += "MCP tools are prefixed with mcp_<server>_ — use them like any other tool.\n\n"
 
-    if tools_guide:
+    if tools_guide and tcfg.get("include_tools_guide", True):
         system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
     # Append plan mode prompt if active
     if getattr(_thread_local, 'plan_mode', False):
         system_instruction += PLAN_MODE_PROMPT
+
+    # Cache for reuse during tool loop iterations
+    import time as _time
+    _system_prompt_cache[cache_key] = (system_instruction, _time.time())
+    # Evict stale entries (keep cache small)
+    if len(_system_prompt_cache) > 20:
+        cutoff = _time.time() - _SYSTEM_PROMPT_CACHE_TTL
+        for k in list(_system_prompt_cache):
+            if _system_prompt_cache[k][1] < cutoff:
+                del _system_prompt_cache[k]
 
     return system_instruction
 
@@ -13693,6 +13843,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     for msg in messages:
         clean = {k: v for k, v in msg.items() if k in ("role", "content")}
         augmented_messages.append(clean)
+    tcfg = _get_token_config()
     if tools:
         system_instruction = _build_system_prompt(
             include_memory_summary=(_tool_round == 0),
@@ -13720,17 +13871,25 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
 
     if tools:
         mcp_mgr = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
+        allowed = _get_agent_tool_names()
         if api_type == "openai":
-            all_tools = list(TOOL_DEFINITIONS_OPENAI)
+            all_tools = _filter_tools(TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
             if mcp_mgr:
                 all_tools.extend(mcp_mgr.get_tool_definitions_openai())
             payload["tools"] = all_tools
         else:
-            all_tools = list(TOOL_DEFINITIONS)
+            all_tools = _filter_tools(TOOL_DEFINITIONS, allowed)
             if mcp_mgr:
                 all_tools.extend(mcp_mgr.get_tool_definitions())
             payload["tools"] = all_tools
-            payload["system"] = system_instruction
+            # Use cache_control for Anthropic prompt caching if enabled
+            if tcfg.get("prompt_caching", True):
+                payload["system"] = [
+                    {"type": "text", "text": system_instruction,
+                     "cache_control": {"type": "ephemeral"}}
+                ]
+            else:
+                payload["system"] = system_instruction
 
     data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(

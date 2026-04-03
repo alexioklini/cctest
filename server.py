@@ -768,9 +768,292 @@ class SessionManager:
         return ChatDB.list_sessions(agent_id=agent_id, status=status)
 
 
+# --- Loop Manager (session-scoped /loop tasks) ---
+
+class LoopManager:
+    """Manages session-scoped recurring loop tasks (in-memory, no DB persistence).
+
+    Like Claude Code's /loop — lightweight, ephemeral, auto-expires after 3 days.
+    Loops fire between turns (when session is not streaming).
+    """
+
+    EXPIRY_SECONDS = 3 * 24 * 3600  # 3 days
+    CHECK_INTERVAL = 10  # seconds between checks
+
+    def __init__(self):
+        self._loops: dict[str, dict[str, dict]] = {}  # session_id -> {loop_id -> loop_info}
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self):
+        self._thread = threading.Thread(target=self._run_loop, daemon=True, name="loop_manager")
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+
+    @staticmethod
+    def _parse_interval(text: str) -> int | None:
+        """Parse interval string like '5m', '2h', '30s', '1d' to seconds."""
+        import re
+        m = re.match(r'^(\d+)\s*(s|m|h|d)$', text.strip().lower())
+        if not m:
+            return None
+        val, unit = int(m.group(1)), m.group(2)
+        multipliers = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}
+        seconds = val * multipliers[unit]
+        # Minimum 30 seconds
+        return max(30, seconds)
+
+    @staticmethod
+    def parse_loop_command(message: str) -> dict | None:
+        """Parse /loop command variants.
+
+        Supported:
+          /loop <interval> <prompt>       — e.g. /loop 5m check CI status
+          /loop <prompt> every <interval> — e.g. /loop check CI every 5m
+          /loop list                      — list active loops
+          /loop cancel <id>               — cancel a loop
+          /loop cancel all                — cancel all loops in session
+        """
+        parts = message.strip().split(None, 1)
+        if len(parts) < 2:
+            return {"action": "help"}
+
+        rest = parts[1].strip()
+
+        # /loop list
+        if rest.lower() == "list":
+            return {"action": "list"}
+
+        # /loop cancel <id|all>
+        if rest.lower().startswith("cancel"):
+            target = rest[6:].strip()
+            if target.lower() == "all":
+                return {"action": "cancel_all"}
+            return {"action": "cancel", "loop_id": target}
+
+        # /loop <interval> <prompt>
+        first_word = rest.split()[0]
+        interval = LoopManager._parse_interval(first_word)
+        if interval is not None:
+            prompt = rest[len(first_word):].strip()
+            if prompt:
+                return {"action": "create", "interval": interval, "prompt": prompt}
+
+        # /loop <prompt> every <interval>
+        import re
+        m = re.search(r'\s+every\s+(\d+\s*[smhd])\s*$', rest, re.IGNORECASE)
+        if m:
+            interval = LoopManager._parse_interval(m.group(1))
+            prompt = rest[:m.start()].strip()
+            if interval and prompt:
+                return {"action": "create", "interval": interval, "prompt": prompt}
+
+        return None  # Could not parse
+
+    def create(self, session_id: str, agent_id: str, model: str, interval: int, prompt: str) -> dict:
+        """Create a new loop task for a session."""
+        loop_id = uuid.uuid4().hex[:8]
+        now = time.time()
+        loop_info = {
+            "id": loop_id,
+            "session_id": session_id,
+            "agent_id": agent_id,
+            "model": model,
+            "interval": interval,
+            "prompt": prompt,
+            "created_at": now,
+            "expires_at": now + self.EXPIRY_SECONDS,
+            "next_run": now + interval,
+            "run_count": 0,
+            "last_run": None,
+            "cancel_token": engine.CancelToken(),
+        }
+        with self._lock:
+            if session_id not in self._loops:
+                self._loops[session_id] = {}
+            if len(self._loops[session_id]) >= 50:
+                return {"error": "Maximum 50 loops per session"}
+            self._loops[session_id][loop_id] = loop_info
+        return {
+            "id": loop_id,
+            "interval": interval,
+            "prompt": prompt,
+            "next_run": loop_info["next_run"],
+            "expires_at": loop_info["expires_at"],
+            "status": "created",
+        }
+
+    def cancel(self, session_id: str, loop_id: str) -> bool:
+        with self._lock:
+            session_loops = self._loops.get(session_id, {})
+            loop = session_loops.pop(loop_id, None)
+            if loop:
+                loop["cancel_token"].cancel()
+                return True
+        return False
+
+    def cancel_all(self, session_id: str) -> int:
+        with self._lock:
+            session_loops = self._loops.pop(session_id, {})
+            for loop in session_loops.values():
+                loop["cancel_token"].cancel()
+            return len(session_loops)
+
+    def list_loops(self, session_id: str) -> list[dict]:
+        with self._lock:
+            session_loops = self._loops.get(session_id, {})
+            return [{
+                "id": l["id"],
+                "interval": l["interval"],
+                "prompt": l["prompt"],
+                "created_at": l["created_at"],
+                "expires_at": l["expires_at"],
+                "next_run": l["next_run"],
+                "run_count": l["run_count"],
+                "last_run": l["last_run"],
+            } for l in session_loops.values()]
+
+    def _format_interval(self, seconds: int) -> str:
+        if seconds >= 86400:
+            return f"{seconds // 86400}d"
+        if seconds >= 3600:
+            return f"{seconds // 3600}h"
+        if seconds >= 60:
+            return f"{seconds // 60}m"
+        return f"{seconds}s"
+
+    def _run_loop(self):
+        """Background loop: check all sessions for due loop tasks."""
+        while not self._stop.is_set():
+            try:
+                self._check_and_fire()
+            except Exception as e:
+                print(f"  LoopManager error: {e}", flush=True)
+            self._stop.wait(self.CHECK_INTERVAL)
+
+    def _check_and_fire(self):
+        now = time.time()
+        to_fire: list[dict] = []
+        expired_ids: list[tuple[str, str]] = []
+
+        with self._lock:
+            for sid, session_loops in list(self._loops.items()):
+                # Get session to check streaming state
+                session = sessions._sessions.get(sid)
+                if not session:
+                    # Session gone — clean up
+                    for loop in session_loops.values():
+                        loop["cancel_token"].cancel()
+                    del self._loops[sid]
+                    continue
+
+                # Skip if session is actively streaming
+                if getattr(session, '_streaming', False):
+                    continue
+
+                for lid, loop in list(session_loops.items()):
+                    # Check expiry
+                    if now >= loop["expires_at"]:
+                        expired_ids.append((sid, lid))
+                        continue
+                    # Check if due
+                    if now >= loop["next_run"]:
+                        loop["next_run"] = now + loop["interval"]
+                        to_fire.append(dict(loop))  # shallow copy
+
+            # Remove expired
+            for sid, lid in expired_ids:
+                loop = self._loops.get(sid, {}).pop(lid, None)
+                if loop:
+                    loop["cancel_token"].cancel()
+                    print(f"  Loop expired: {lid} ({loop['prompt'][:40]})", flush=True)
+
+        # Fire due loops outside lock
+        for loop in to_fire:
+            t = threading.Thread(
+                target=self._execute_loop, args=(loop,),
+                daemon=True, name=f"loop_{loop['id']}")
+            t.start()
+
+    def _execute_loop(self, loop: dict):
+        """Execute a single loop iteration — runs the prompt and adds result to session."""
+        session_id = loop["session_id"]
+        agent_id = loop["agent_id"]
+        model = loop["model"]
+        prompt = loop["prompt"]
+        loop_id = loop["id"]
+        cancel_token = loop["cancel_token"]
+
+        if cancel_token.cancelled:
+            return
+
+        session = sessions.get(session_id)
+        if not session:
+            return
+
+        # Wait if session is streaming (double-check)
+        for _ in range(30):  # wait up to 30s
+            if not getattr(session, '_streaming', False):
+                break
+            time.sleep(1)
+        else:
+            return  # still streaming, skip this iteration
+
+        target = engine.AgentConfig(agent_id)
+        target_memory = engine.MemoryStore(agent_id, base_dir=target.memory_dir)
+
+        system_prompt = (
+            f"{target.soul}\n\n"
+            f"You are executing a recurring loop task (iteration #{loop.get('run_count', 0) + 1}).\n"
+            f"Current date and time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+            f"Current working directory: {os.getcwd()}\n\n"
+            "IMPORTANT: Be brief and direct. Report findings concisely. "
+            "Complete within 2-3 tool calls maximum.\n"
+        )
+        if target.tools_guide:
+            system_prompt += f"\n--- TOOL USAGE GUIDE ---\n{target.tools_guide}"
+
+        messages = [{"role": "user", "content": prompt}]
+
+        try:
+            inf_params = engine.get_inference_params(model, target.config.get("model_purpose"))
+            result = engine._run_delegate(
+                messages, model, system_prompt,
+                memory_store=target_memory,
+                cancel_token=cancel_token,
+                inference_params=inf_params,
+            ) or "(no response)"
+        except engine.TaskCancelled:
+            result = "(loop cancelled)"
+        except Exception as e:
+            result = f"(loop error: {e})"
+
+        # Update run count
+        with self._lock:
+            session_loops = self._loops.get(session_id, {})
+            live = session_loops.get(loop_id)
+            if live:
+                live["run_count"] += 1
+                live["last_run"] = time.time()
+
+        # Add result to session chat as a loop notification
+        interval_str = self._format_interval(loop["interval"])
+        loop_label = f"[Loop every {interval_str}: {prompt[:60]}]"
+        session.add_message("user", f"{loop_label}\n*(auto-triggered, iteration #{loop.get('run_count', 0) + 1})*",
+                           metadata={"loop_id": loop_id, "loop": True})
+        session.add_message("assistant", result,
+                           metadata={"model": model, "loop_id": loop_id, "loop": True})
+
+
 # --- Server globals ---
 
 sessions = SessionManager()
+loop_manager = LoopManager()
 server_config = {
     "api_key": "",
     "base_url": "http://localhost:8317/v1",
@@ -848,6 +1131,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_get_session_files(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/messages"):
             self._handle_get_messages(path)
+        elif path == "/v1/loops":
+            self._handle_loops_get()
         elif path == "/v1/schedule":
             self._handle_list_schedule()
         elif path == "/v1/tasks":
@@ -950,6 +1235,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_file_download()
         elif path == "/v1/files/preview":
             self._handle_file_preview()
+        elif path == "/v1/files/tree":
+            self._handle_file_tree()
+        elif path == "/v1/code/diff":
+            self._handle_code_diff()
+        elif path == "/v1/code/status":
+            self._handle_code_status()
         elif path == "/v1/artifacts":
             self._handle_artifacts_list()
         elif path == "/v1/artifacts/browse":
@@ -1006,6 +1297,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_install_skill()
         elif path == "/v1/skills/install-zip":
             self._handle_install_skill_zip()
+        elif path == "/v1/loops/cancel":
+            self._handle_loops_cancel()
         elif path == "/v1/schedule/cancel":
             self._handle_cancel_scheduled()
         elif path == "/v1/skills/remove":
@@ -1159,11 +1452,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
     # --- Tool MCP Endpoints (for SDK sidecar) ---
 
     # Tools the SDK handles natively — don't expose these
+    # Tools the SDK handles natively (Read, Write, Edit, Bash, Grep, Glob, WebFetch, WebSearch)
+    # These overlap with our custom tools and should NOT be sent via MCP to avoid duplication
     _SDK_NATIVE_TOOLS = {
         "read_file", "write_file", "edit_file", "list_directory", "search_files",
-        "execute_command", "web_fetch", "git_command", "github_command",
-        "context_search", "context_detail", "context_recall",
-        "mcp_connect", "mcp_disconnect", "mcp_servers",
+        "execute_command", "web_fetch",
     }
 
     def _handle_mcp_jsonrpc(self):
@@ -1383,7 +1676,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         parts = path.split("/")
         sid = parts[3]
         msgs = ChatDB.load_messages(sid)
-        self._send_json({"session_id": sid, "messages": msgs})
+        resp = {"session_id": sid, "messages": msgs}
+        session = sessions.get(sid)
+        if session:
+            resp["max_context"] = session.max_context
+            resp["total_tokens"] = engine._estimate_conversation_tokens(session.messages)
+        self._send_json(resp)
 
     def _handle_get_session_files(self, path):
         """GET /v1/sessions/<id>/files — returns all files from all messages (including compacted)"""
@@ -1556,6 +1854,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         elif action == "delete":
             # Get agent_id before deleting so we can trigger summary refresh
             info = ChatDB.get_session_info(sid)
+            loop_manager.cancel_all(sid)  # Clean up session-scoped loops
             sessions.delete(sid)
             self._send_json({"status": "deleted", "session_id": sid})
             # Clean up indexed transcript files and trigger memory summary refresh
@@ -1737,6 +2036,46 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         if not message:
             self._send_json({"error": "No message"}, 400)
             return
+
+        # --- /loop command handling (session-scoped recurring tasks) ---
+        if message.strip().lower().startswith("/loop"):
+            parsed = LoopManager.parse_loop_command(message)
+            if not parsed or parsed.get("action") == "help":
+                self._send_json({"type": "loop", "action": "help", "usage": (
+                    "/loop <interval> <prompt> — create a recurring task (e.g. /loop 5m check CI)\n"
+                    "/loop <prompt> every <interval> — alternative syntax\n"
+                    "/loop list — show active loops\n"
+                    "/loop cancel <id> — cancel a loop\n"
+                    "/loop cancel all — cancel all loops\n"
+                    "Intervals: 30s, 5m, 2h, 1d (minimum 30s, auto-expires after 3 days)"
+                )})
+                return
+            action = parsed["action"]
+            if action == "list":
+                loops = loop_manager.list_loops(session.id)
+                self._send_json({"type": "loop", "action": "list", "loops": loops})
+                return
+            elif action == "cancel":
+                ok = loop_manager.cancel(session.id, parsed.get("loop_id", ""))
+                self._send_json({"type": "loop", "action": "cancel",
+                                "success": ok, "loop_id": parsed.get("loop_id", "")})
+                return
+            elif action == "cancel_all":
+                count = loop_manager.cancel_all(session.id)
+                self._send_json({"type": "loop", "action": "cancel_all", "cancelled": count})
+                return
+            elif action == "create":
+                result = loop_manager.create(
+                    session_id=session.id,
+                    agent_id=session.agent_id,
+                    model=session.model,
+                    interval=parsed["interval"],
+                    prompt=parsed["prompt"],
+                )
+                result["type"] = "loop"
+                result["action"] = "create"
+                self._send_json(result)
+                return
 
         # Custom command expansion
         if message.startswith("/"):
@@ -2009,6 +2348,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     done_data = {
                         "text": reply,
                         "tokens": engine._estimate_conversation_tokens(session.messages),
+                        "max_context": session.max_context,
                         "model": session.model,
                     }
                     if session_cost is not None:
@@ -2182,11 +2522,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             _load_mcp_file(os.path.join(engine.AGENTS_DIR, session.agent_id, "mcp.json"))
 
             # Build tool definitions for sidecar MCP server
+            # Apply per-agent tool filtering to reduce token overhead
+            allowed_tools = engine._get_agent_tool_names(session.agent_id)
             tool_defs = []
             for td in engine.TOOL_DEFINITIONS:
                 if td["name"] in BrainAgentHandler._SDK_NATIVE_TOOLS:
                     continue
                 if td["name"] not in engine.TOOL_DISPATCH:
+                    continue
+                if allowed_tools is not None and td["name"] not in allowed_tools:
                     continue
                 desc = td["description"]
                 if isinstance(desc, tuple):
@@ -2402,7 +2746,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         pass
 
                 msg_metadata = {"model": model, "sdk": True,
-                                "tokens": r.get("tokens_in", 0) + r.get("tokens_out", 0)}
+                                "tokens_api": r.get("tokens_in", 0) + r.get("tokens_out", 0),
+                                "tokens": engine._estimate_conversation_tokens(session.messages)}
                 if is_partial:
                     msg_metadata["partial"] = True
                 if session_cost is not None:
@@ -2412,7 +2757,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 session.add_message("assistant", reply, metadata=msg_metadata)
 
                 # Done event (may fail if client disconnected — that's ok)
-                done_data = {"text": reply, "tokens": r.get("tokens_in", 0) + r.get("tokens_out", 0),
+                done_data = {"text": reply, "tokens": engine._estimate_conversation_tokens(session.messages),
+                             "max_context": session.max_context,
                              "model": model, "sdk": True}
                 if session_cost is not None:
                     done_data["cost"] = session_cost
@@ -2519,6 +2865,45 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
 
+    # --- Loop Management Endpoints ---
+
+    def _handle_loops_get(self):
+        """GET /v1/loops?session_id=X — list loops for a session, or all loops."""
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        sid = qs.get("session_id", [None])[0]
+        if sid:
+            loops = loop_manager.list_loops(sid)
+            self._send_json({"loops": loops, "session_id": sid})
+        else:
+            # Return all active loops across all sessions
+            all_loops = []
+            with loop_manager._lock:
+                for session_id, session_loops in loop_manager._loops.items():
+                    for l in session_loops.values():
+                        all_loops.append({
+                            "id": l["id"], "session_id": session_id,
+                            "agent_id": l["agent_id"], "model": l["model"],
+                            "interval": l["interval"], "prompt": l["prompt"],
+                            "created_at": l["created_at"], "expires_at": l["expires_at"],
+                            "next_run": l["next_run"], "run_count": l["run_count"],
+                            "last_run": l["last_run"],
+                        })
+            self._send_json({"loops": all_loops})
+
+    def _handle_loops_cancel(self):
+        """POST /v1/loops/cancel — cancel a loop by session_id + loop_id."""
+        body = self._read_json()
+        sid = body.get("session_id", "")
+        lid = body.get("loop_id", "")
+        if body.get("all"):
+            count = loop_manager.cancel_all(sid)
+            self._send_json({"cancelled": count})
+        elif sid and lid:
+            ok = loop_manager.cancel(sid, lid)
+            self._send_json({"success": ok, "loop_id": lid})
+        else:
+            self._send_json({"error": "session_id and loop_id required"}, 400)
+
     def _handle_list_schedule(self):
         if engine._scheduler:
             schedules = engine._scheduler.list_all()
@@ -2553,6 +2938,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json(engine._scheduler.resume(body.get("name", "")))
         elif action == "delete":
             self._send_json(engine._scheduler.remove(body.get("name", "")))
+        elif action == "run_now":
+            name = body.get("name", "")
+            task_row = engine._scheduler.get_task(name) if hasattr(engine._scheduler, 'get_task') else None
+            if task_row:
+                t = threading.Thread(target=engine._scheduler._execute_scheduled, args=(task_row,), daemon=True, name=f"sched_now_{name}")
+                t.start()
+                self._send_json({"status": "triggered", "name": name})
+            else:
+                self._send_json({"error": f"Task '{name}' not found"}, 404)
         elif action == "history":
             self._send_json({"history": engine._scheduler.get_history(
                 body.get("name"), body.get("limit", 20))})
@@ -4482,6 +4876,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             rd_stats = engine.get_graph_stats(agent_id) if hasattr(engine, 'get_graph_stats') else {}
             am_config = engine._get_auto_memory_config(agent_id)
             ad_config = engine._get_autodream_config(agent_id)
+            # Resolve actual models used by each pipeline
+            ms_primary = config.get("model") or "Crow-9B-HERETIC-4.6-MLX-8bit"
+            ms_fallback = config.get("model_fallback") or "claude-sonnet-4-6"
+            rd_primary = rd_config.get("model") or "mistral-small"
+            rd_fallback = rd_config.get("model_fallback") or "claude-haiku-4-5-20251001"
+            ad_model = ad_config.get("model") or "claude-haiku-4-5-20251001"
             self._send_json({
                 "agent": agent_id,
                 "summary": summary or "",
@@ -4491,6 +4891,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "relationship_discovery": {
                     "config": rd_config,
                     "stats": rd_stats,
+                },
+                "resolved_models": {
+                    "memory_summary": {"primary": ms_primary, "fallback": ms_fallback},
+                    "relationship_discovery": {"primary": rd_primary, "fallback": rd_fallback},
+                    "autodream": {"primary": ad_model},
                 },
             })
         except Exception as e:
@@ -4925,7 +5330,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
     def _handle_refine(self):
         """POST /v1/refine — refine text with LLM one-shot call."""
         body = self._read_json()
-        text = body.get("text", "")
+        text = body.get("text", "") or body.get("content", "")
         context = body.get("context", "general")
         if not text:
             self._send_json({"error": "No text provided"}, 400)
@@ -5489,6 +5894,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "status": "compacted" if result[1] else "no_change",
                 "before_tokens": before,
                 "after_tokens": after,
+                "before_pct": int(before / session.max_context * 100) if session.max_context else 0,
+                "after_pct": int(after / session.max_context * 100) if session.max_context else 0,
                 "stats": stats,
             })
         except Exception as e:
@@ -6297,6 +6704,164 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
+    # ── Code Mode Endpoints ──
+
+    def _handle_file_tree(self):
+        """GET /v1/files/tree?path=<dir>&depth=2 — return directory tree for Code mode."""
+        from urllib.parse import urlparse, parse_qs, unquote
+        qs = parse_qs(urlparse(self.path).query)
+        dir_path = unquote(qs.get("path", [""])[0])
+        max_depth = int(qs.get("depth", ["2"])[0])
+        if not dir_path or not os.path.isdir(dir_path):
+            self._send_json({"error": "Invalid or missing directory path"}, 400)
+            return
+
+        IGNORE = {".git", "node_modules", "__pycache__", ".venv", "venv", ".tox",
+                  ".mypy_cache", ".pytest_cache", ".DS_Store", ".claude", "dist", "build"}
+
+        def _scan(base, depth=0):
+            items = []
+            try:
+                entries = sorted(os.scandir(base), key=lambda e: (not e.is_dir(), e.name.lower()))
+            except PermissionError:
+                return items
+            for entry in entries:
+                if entry.name in IGNORE or entry.name.startswith("."):
+                    continue
+                node = {"name": entry.name, "path": entry.path}
+                if entry.is_dir():
+                    node["type"] = "dir"
+                    if depth < max_depth:
+                        node["children"] = _scan(entry.path, depth + 1)
+                    else:
+                        node["children"] = []
+                        node["truncated"] = True
+                else:
+                    node["type"] = "file"
+                    try:
+                        node["size"] = entry.stat().st_size
+                    except OSError:
+                        node["size"] = 0
+                items.append(node)
+            return items
+
+        tree = _scan(dir_path)
+        self._send_json({"path": dir_path, "tree": tree})
+
+    def _handle_code_diff(self):
+        """GET /v1/code/diff?path=<dir>&ref=HEAD — return git diff for Code mode."""
+        from urllib.parse import urlparse, parse_qs, unquote
+        qs = parse_qs(urlparse(self.path).query)
+        dir_path = unquote(qs.get("path", [""])[0])
+        ref = qs.get("ref", ["HEAD"])[0]
+        staged = qs.get("staged", ["false"])[0].lower() == "true"
+        if not dir_path or not os.path.isdir(dir_path):
+            self._send_json({"error": "Invalid directory"}, 400)
+            return
+        try:
+            cmd = ["diff", "--stat"]
+            if staged:
+                cmd.append("--cached")
+            if ref and ref != "working":
+                cmd.append(ref)
+            proc = subprocess.run(
+                ["git", "--no-pager"] + cmd,
+                capture_output=True, cwd=dir_path, timeout=15,
+                env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "PAGER": "cat"},
+            )
+            stat_output = proc.stdout.decode("utf-8", errors="replace").strip()
+
+            # Get full diff too (truncated)
+            cmd2 = ["diff"]
+            if staged:
+                cmd2.append("--cached")
+            if ref and ref != "working":
+                cmd2.append(ref)
+            proc2 = subprocess.run(
+                ["git", "--no-pager"] + cmd2,
+                capture_output=True, cwd=dir_path, timeout=15,
+                env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "PAGER": "cat"},
+            )
+            diff_output = proc2.stdout.decode("utf-8", errors="replace").strip()
+            if len(diff_output) > 50000:
+                diff_output = diff_output[:50000] + "\n... (diff truncated)"
+
+            # Parse stat to get file-level changes
+            files = []
+            added = 0
+            removed = 0
+            for line in stat_output.split("\n"):
+                if "|" in line:
+                    parts = line.split("|")
+                    fname = parts[0].strip()
+                    changes = parts[1].strip()
+                    plus_count = changes.count("+")
+                    minus_count = changes.count("-")
+                    added += plus_count
+                    removed += minus_count
+                    files.append({"file": fname, "added": plus_count, "removed": minus_count, "summary": changes})
+
+            self._send_json({
+                "path": dir_path,
+                "files": files,
+                "added": added,
+                "removed": removed,
+                "stat": stat_output,
+                "diff": diff_output,
+            })
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_code_status(self):
+        """GET /v1/code/status?path=<dir> — return git status for Code mode."""
+        from urllib.parse import urlparse, parse_qs, unquote
+        qs = parse_qs(urlparse(self.path).query)
+        dir_path = unquote(qs.get("path", [""])[0])
+        if not dir_path or not os.path.isdir(dir_path):
+            self._send_json({"error": "Invalid directory"}, 400)
+            return
+        try:
+            # Branch info
+            proc_branch = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True, cwd=dir_path, timeout=10,
+                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            )
+            branch = proc_branch.stdout.decode().strip() if proc_branch.returncode == 0 else ""
+
+            # Status
+            proc_status = subprocess.run(
+                ["git", "status", "--porcelain", "-b"],
+                capture_output=True, cwd=dir_path, timeout=10,
+                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            )
+            status_lines = proc_status.stdout.decode("utf-8", errors="replace").strip().split("\n")
+            modified = []
+            staged = []
+            untracked = []
+            for line in status_lines[1:]:
+                if not line.strip():
+                    continue
+                idx, wt = line[0], line[1]
+                fname = line[3:]
+                if idx in ("M", "A", "D", "R"):
+                    staged.append(fname)
+                if wt == "M":
+                    modified.append(fname)
+                elif wt == "?":
+                    untracked.append(fname)
+
+            self._send_json({
+                "path": dir_path,
+                "branch": branch,
+                "modified": modified,
+                "staged": staged,
+                "untracked": untracked,
+                "is_git": proc_branch.returncode == 0,
+            })
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
     # ── Artifact Endpoints ──
 
     def _handle_artifacts_list(self):
@@ -6745,6 +7310,10 @@ def main():
     # Start scheduler
     engine._scheduler = engine.Scheduler()
     engine._scheduler.start()
+
+    # Start session-scoped loop manager
+    loop_manager.start()
+    print("Loop manager: started (session-scoped /loop tasks)")
 
     # Initialize lossless context manager
     engine._context_manager = engine.ContextManager()

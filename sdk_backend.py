@@ -17,10 +17,12 @@ _PROVIDER_ENV_PRESETS = {
     "cliproxyapi": lambda p, model: {
         "ANTHROPIC_BASE_URL": p["base_url"].rstrip("/").removesuffix("/v1"),
         "ANTHROPIC_AUTH_TOKEN": p.get("api_key", "brain-agent"),
+        "ANTHROPIC_MODEL": model,
         "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
         "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
         "ANTHROPIC_SMALL_FAST_MODEL": model,
+        "API_TIMEOUT_MS": "3000000",
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     },
     "omlx": lambda p, model: {

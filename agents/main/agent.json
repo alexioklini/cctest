@@ -1,13 +1,15 @@
 {
   "description": "General-purpose main agent",
-  "model": "claude-opus-4-6",
+  "model": "mistralai/mistral-small-2603",
   "avatar": "captain",
   "display_name": "Steve Rogers",
   "memory_summary": {
     "enabled": true,
     "paused": false,
     "frequency": "every 24h",
-    "start_time": "03:00"
+    "start_time": "03:00",
+    "model": "Crow-9B-HERETIC-4.6-MLX-8bit",
+    "model_fallback": "MiniMax-M2.7"
   },
   "hooks": {
     "enabled": true,
@@ -25,6 +27,33 @@
     ]
   },
   "autodream": {
-    "model": "claude-haiku-4-5-20251001"
+    "model": "Crow-9B-HERETIC-4.6-MLX-8bit"
+  },
+  "relationship_discovery": {
+    "model": "Crow-4B-Opus-4.6-Distill",
+    "model_fallback": "mistralai/mistral-small-2603"
+  },
+  "token_config": {
+    "tool_groups": [
+      "core",
+      "memory",
+      "context",
+      "web",
+      "delegation",
+      "git",
+      "skills",
+      "nodes",
+      "scheduler"
+    ],
+    "include_tools_guide": true,
+    "include_memory_summary": true,
+    "memory_summary_cap": 2000,
+    "prompt_caching": true,
+    "compact_threshold": 0.7,
+    "scheduled_task_tools": false
+  },
+  "paused": false,
+  "agent_sdk": {
+    "enabled": false
   }
 }

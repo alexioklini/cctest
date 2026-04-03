@@ -2,7 +2,7 @@
 name: Gmail
 slug: gmail
 description: "Send and receive emails via Gmail using IMAP/SMTP. Read inbox, search, send, reply, forward."
-last_recalled: 2026-03-30
+last_recalled: 2026-03-31
 ---
 
 # Gmail Skill

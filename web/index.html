@@ -3145,6 +3145,11 @@ textarea { resize: none; }
 }
 .context-fill.warn { background: var(--warning); }
 .context-fill.danger { background: var(--error); }
+.compact-btn {
+  background: none; border: none; color: var(--text-400); cursor: pointer;
+  font-size: 12px; padding: 0 4px; line-height: 1; opacity: 0.7;
+}
+.compact-btn:hover { opacity: 1; color: var(--accent); }
 
 /* Agent selector dropdown (sidebar) */
 .sb-agent-selector {
@@ -3877,8 +3882,9 @@ textarea { resize: none; }
       <span class="status-value" id="status-tokens">0</span>
     </div>
     <div class="status-item" id="status-context-wrap" style="display:none">
-      <div class="context-bar"><div class="context-fill" id="status-context-fill" style="width:0%"></div></div>
+      <div class="context-bar" title="Context window usage"><div class="context-fill" id="status-context-fill" style="width:0%"></div></div>
       <span class="status-value" id="status-context-label">0%</span>
+      <button class="compact-btn" id="status-compact-btn" onclick="triggerCompact()" title="Compact context" style="display:none">⟳</button>
     </div>
     <div class="status-item" style="margin-left:auto">
       <span class="status-value" id="status-session"></span>
@@ -5752,6 +5758,7 @@ async function ensureSession(chat) {
   try {
     const data = await API.createSession(chat.agent, chat.model, state.currentProject);
     chat.sessionId = data.session_id;
+    if (data.max_context) chat.maxContext = data.max_context;
     return chat.sessionId;
   } catch(e) {
     showToast('Failed to create session: ' + e.message, true);
@@ -5769,7 +5776,7 @@ async function openSession(sessionId, agentId) {
     const data = await API.getSessionMessages(sessionId);
     const rawMessages = data.messages || [];
     if (data.model) chat.model = data.model;
-    if (data.total_tokens) chat.totalTokens = data.total_tokens;
+    if (data.max_context) chat.maxContext = data.max_context;
 
     // Reconstruct tool blocks from metadata and extract per-message fields
     const expanded = [];
@@ -5789,10 +5796,12 @@ async function openSession(sessionId, agentId) {
         if (meta.cost) msg._cost = meta.cost;
         if (meta.files) msg._files = meta.files;
         if (meta.model && !data.model) chat.model = meta.model;
-        if (meta.tokens) chat.totalTokens = meta.tokens;
+        if (!data.total_tokens && meta.tokens) chat.totalTokens = meta.tokens;
       }
       expanded.push(msg);
     }
+    // Server-side live estimate takes priority over stale per-message metadata
+    if (data.total_tokens) chat.totalTokens = data.total_tokens;
     chat.messages = expanded;
 
     // Load artifacts for this session
@@ -6009,6 +6018,7 @@ async function sendMessage() {
           content: d.text || chat.streamingText,
         };
         if (d.tokens) chat.totalTokens = d.tokens;
+        if (d.max_context) chat.maxContext = d.max_context;
         if (d.model) {
           chat.model = d.model;
           updateModelSelectorDisplay(d.model);
@@ -6047,6 +6057,47 @@ async function sendMessage() {
     clearInterval(state._streamTimerInterval);
     showToast('Send failed: ' + e.message, true);
   }
+}
+
+async function triggerCompact() {
+  const chat = state.activeChat;
+  if (!chat?.sessionId) return;
+  const btn = document.getElementById('status-compact-btn');
+  btn.textContent = '⏳';
+  btn.disabled = true;
+  try {
+    const resp = await API.post('/v1/context/compact', { session_id: chat.sessionId });
+    if (resp.after_tokens) {
+      chat.totalTokens = resp.after_tokens;
+      updateStatusBar();
+    }
+    showToast(`Compacted: ${resp.before_pct || '?'}% → ${resp.after_pct || '?'}%`);
+    // Reload messages to reflect compacted state
+    const data = await API.getSessionMessages(chat.sessionId);
+    const rawMessages = data.messages || [];
+    const expanded = [];
+    for (const msg of rawMessages) {
+      const meta = msg.metadata;
+      if (meta && msg.role === 'assistant') {
+        if (meta.tools?.length) {
+          for (const t of meta.tools) {
+            expanded.push({ role: 'tool_call', name: t.name, args: t.args || {} });
+            if (t.result !== undefined) expanded.push({ role: 'tool_result', name: t.name, result: t.result });
+          }
+        }
+        if (meta.thinking) msg._thinking = meta.thinking;
+        if (meta.cost) msg._cost = meta.cost;
+        if (meta.files) msg._files = meta.files;
+      }
+      expanded.push(msg);
+    }
+    chat.messages = expanded;
+    renderMessages();
+  } catch(e) {
+    showToast('Compact failed: ' + e.message, true);
+  }
+  btn.textContent = '⟳';
+  btn.disabled = false;
 }
 
 async function stopGeneration() {
@@ -6338,6 +6389,24 @@ function updateStatusBar() {
   document.getElementById('status-model').textContent = modelShortName(chat.model);
   document.getElementById('status-tokens').textContent = (chat.totalTokens || 0).toLocaleString();
   document.getElementById('status-session').textContent = chat.sessionId ? chat.sessionId.substring(0,8) : '';
+
+  // Context fill bar
+  const wrap = document.getElementById('status-context-wrap');
+  const fill = document.getElementById('status-context-fill');
+  const label = document.getElementById('status-context-label');
+  const compactBtn = document.getElementById('status-compact-btn');
+  if (chat.totalTokens > 0 && chat.maxContext) {
+    const pct = Math.min(100, Math.round(chat.totalTokens / chat.maxContext * 100));
+    wrap.style.display = '';
+    fill.style.width = Math.max(pct, 1) + '%';
+    fill.className = 'context-fill' + (pct >= 80 ? ' danger' : pct >= 50 ? ' warn' : '');
+    label.textContent = pct + '%';
+    label.title = `${(chat.totalTokens).toLocaleString()} / ${(chat.maxContext).toLocaleString()} tokens`;
+    // Show compact button when there's enough content to compact (>10% or >10 messages)
+    compactBtn.style.display = chat.sessionId && chat.messages.length > 10 ? '' : 'none';
+  } else {
+    wrap.style.display = 'none';
+  }
 }
 
 function scrollToBottom() {
@@ -6982,6 +7051,7 @@ function openAgentSettings() {
       <button class="modal-tab" onclick="switchAgentTab('${esc(agentId)}','memory',this)">Memory</button>
       <button class="modal-tab" onclick="switchAgentTab('${esc(agentId)}','graph',this)">Graph</button>
       <button class="modal-tab" onclick="switchAgentTab('${esc(agentId)}','mcp',this)">MCP</button>
+      <button class="modal-tab" onclick="switchAgentTab('${esc(agentId)}','tokens',this)">Tokens</button>
     </div>
     <div class="modal-body" id="settings-tab-content" style="flex:1;overflow-y:auto;overflow-x:hidden;padding:0">
     </div>
@@ -8309,6 +8379,10 @@ async function switchAgentTab(agentId, tab, btn) {
       const adCfg = summary?.autodream || {};
       const adEnabled = adCfg.enabled !== false;
       const memories = memData?.memories || [];
+      const resolvedModels = summary?.resolved_models || {};
+      const mc = state.modelsConfig?.models || {};
+      const modelOptions = Object.entries(mc).filter(([,c])=>c.enabled).sort((a,b)=>(b[1].priority||0)-(a[1].priority||0));
+      const modelSelect = (id, current) => `<select id="${id}" class="form-select" style="font-size:11px;max-width:200px">${modelOptions.map(([mid])=>`<option value="${esc(mid)}"${mid===current?' selected':''}>${esc(modelShortName(mid))}</option>`).join('')}</select>`;
 
       let html = '<div style="padding:16px;display:grid;gap:16px">';
 
@@ -8328,6 +8402,13 @@ async function switchAgentTab(agentId, tab, btn) {
               <button class="btn-secondary" style="font-size:11px;padding:3px 10px" onclick="_memTogglePause('${esc(agentId)}',${!isPaused})">${isPaused ? 'Resume' : 'Pause'}</button>
               <button class="btn-secondary" style="font-size:11px;padding:3px 10px;color:var(--error)" onclick="_memAction('${esc(agentId)}','reset')">Reset</button>
             </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+            <span style="font-size:11px;color:var(--text-400)">Model:</span>
+            ${modelSelect('mem-summary-model', resolvedModels.memory_summary?.primary || '')}
+            <span style="font-size:11px;color:var(--text-400)">Fallback:</span>
+            ${modelSelect('mem-summary-fallback', resolvedModels.memory_summary?.fallback || '')}
+            <button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="_memSetModel('${esc(agentId)}','set_memory_summary_model',document.getElementById('mem-summary-model').value,document.getElementById('mem-summary-fallback').value)">Save</button>
           </div>
           <textarea id="memory-summary-editor" class="form-textarea" style="width:100%;min-height:120px;font-size:12px;font-family:var(--font-mono);resize:vertical;box-sizing:border-box" placeholder="No memory summary yet. Click Refresh Now to generate.">${esc(summary?.summary || '')}</textarea>
           <div style="display:flex;justify-content:flex-end;margin-top:6px">
@@ -8351,6 +8432,13 @@ async function switchAgentTab(agentId, tab, btn) {
               <button class="btn-secondary" style="font-size:11px;padding:3px 10px" onclick="_memAction('${esc(agentId)}','discover')">Discover Now</button>
               <button class="btn-secondary" style="font-size:11px;padding:3px 10px" onclick="_memToggleRD('${esc(agentId)}',${!rdEnabled})">${rdEnabled ? 'Disable' : 'Enable'}</button>
             </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
+            <span style="font-size:11px;color:var(--text-400)">Model:</span>
+            ${modelSelect('mem-rd-model', resolvedModels.relationship_discovery?.primary || '')}
+            <span style="font-size:11px;color:var(--text-400)">Fallback:</span>
+            ${modelSelect('mem-rd-fallback', resolvedModels.relationship_discovery?.fallback || '')}
+            <button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="_memSetModel('${esc(agentId)}','set_relationship_discovery_model',document.getElementById('mem-rd-model').value,document.getElementById('mem-rd-fallback').value)">Save</button>
           </div>
         </div>
       `;
@@ -8388,6 +8476,11 @@ async function switchAgentTab(agentId, tab, btn) {
               <button class="btn-secondary" style="font-size:11px;padding:3px 10px" onclick="_memAction('${esc(agentId)}','run_autodream')">Run Now</button>
               <button class="btn-secondary" style="font-size:11px;padding:3px 10px" onclick="_memToggleAD('${esc(agentId)}',${!adEnabled})">${adEnabled ? 'Disable' : 'Enable'}</button>
             </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="font-size:11px;color:var(--text-400)">Model:</span>
+            ${modelSelect('mem-ad-model', resolvedModels.autodream?.primary || '')}
+            <button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="_memSetModel('${esc(agentId)}','set_autodream_model',document.getElementById('mem-ad-model').value)">Save</button>
           </div>
           <div id="memory-health-container">${health ? _renderMemoryHealth(health) : '<div style="font-size:12px;color:var(--text-400)">Health data unavailable</div>'}</div>
         </div>
@@ -8711,7 +8804,140 @@ async function switchAgentTab(agentId, tab, btn) {
         </div>
       </div>`;
   }
+
+  if (tab === 'tokens') {
+    try {
+      const data = await fetch(`${BASE_URL}/v1/agents/${agentId}/file?name=agent.json`).then(r=>r.json());
+      const agentCfg = JSON.parse(data.content || '{}');
+      const tcfg = agentCfg.token_config || {};
+      const allGroups = ['core','memory','context','web','email','documents','delegation','code_graph','git','scheduler','mcp','skills','nodes'];
+      const activeGroups = tcfg.tool_groups || null; // null = all
+      const mc = state.modelsConfig?.models || {};
+      const modelOptions = Object.entries(mc).filter(([,c])=>c.enabled).sort((a,b)=>(b[1].priority||0)-(a[1].priority||0));
+
+      container.innerHTML = `
+        <div style="padding:16px;display:grid;gap:16px">
+          <div style="font-size:16px;font-weight:600;color:var(--text-100)">Token Optimization</div>
+          <div style="font-size:11px;color:var(--text-400)">Configure per-agent settings to minimize token usage and API costs.</div>
+
+          <div style="border:1px solid var(--border);border-radius:8px;padding:14px">
+            <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">Tool Groups</div>
+            <div style="font-size:11px;color:var(--text-400);margin-bottom:10px">
+              Select which tool groups are sent to the LLM. Fewer tools = fewer tokens per call. Leave all unchecked to send all tools (default).
+            </div>
+            <div id="tok-tool-groups" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px">
+              ${allGroups.map(g => `
+                <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-200);cursor:pointer">
+                  <input type="checkbox" value="${g}" ${activeGroups ? (activeGroups.includes(g) ? 'checked' : '') : 'checked'}
+                    style="accent-color:var(--accent)">
+                  ${g}
+                </label>
+              `).join('')}
+            </div>
+            <div style="margin-top:6px;font-size:10px;color:var(--text-400)">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                <input type="checkbox" id="tok-all-tools" ${!activeGroups ? 'checked' : ''}
+                  onchange="document.querySelectorAll('#tok-tool-groups input').forEach(i=>{i.disabled=this.checked;if(this.checked)i.checked=true})"
+                  style="accent-color:var(--accent)">
+                Send all tools (no filtering)
+              </label>
+            </div>
+          </div>
+
+          <div style="border:1px solid var(--border);border-radius:8px;padding:14px">
+            <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">System Prompt</div>
+            <div style="display:grid;gap:8px">
+              <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-200);cursor:pointer">
+                <input type="checkbox" id="tok-tools-guide" ${tcfg.include_tools_guide !== false ? 'checked' : ''}
+                  style="accent-color:var(--accent)">
+                Include tools.md guide (~400 tokens)
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-200);cursor:pointer">
+                <input type="checkbox" id="tok-mem-summary" ${tcfg.include_memory_summary !== false ? 'checked' : ''}
+                  style="accent-color:var(--accent)">
+                Include memory summary (~750 tokens, first turn only)
+              </label>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:12px;color:var(--text-300)">Memory summary cap:</span>
+                <input type="number" id="tok-mem-cap" value="${tcfg.memory_summary_cap || 3000}" min="500" max="10000" step="500"
+                  class="form-input" style="width:80px;font-size:12px">
+                <span style="font-size:11px;color:var(--text-400)">chars</span>
+              </div>
+              <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-200);cursor:pointer">
+                <input type="checkbox" id="tok-prompt-cache" ${tcfg.prompt_caching !== false ? 'checked' : ''}
+                  style="accent-color:var(--accent)">
+                Anthropic prompt caching (cache_control on system prompt)
+              </label>
+            </div>
+          </div>
+
+          <div style="border:1px solid var(--border);border-radius:8px;padding:14px">
+            <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">Context Compaction</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:12px;color:var(--text-300)">Compact threshold:</span>
+              <input type="number" id="tok-compact-threshold" value="${tcfg.compact_threshold ? Math.round(tcfg.compact_threshold * 100) : ''}"
+                placeholder="60" min="40" max="95" step="5"
+                class="form-input" style="width:70px;font-size:12px">
+              <span style="font-size:11px;color:var(--text-400)">% (empty = default 60%)</span>
+            </div>
+          </div>
+
+          <div style="border:1px solid var(--border);border-radius:8px;padding:14px">
+            <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">Scheduled Tasks</div>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-200);cursor:pointer">
+              <input type="checkbox" id="tok-sched-tools" ${tcfg.scheduled_task_tools !== false ? 'checked' : ''}
+                style="accent-color:var(--accent)">
+              Include full tool schema in scheduled tasks
+            </label>
+            <div style="font-size:10px;color:var(--text-400);margin-top:4px">
+              Memory summary tasks always use memory-only tools regardless of this setting.
+            </div>
+          </div>
+
+          <div style="display:flex;justify-content:flex-end;gap:8px">
+            <button class="btn-primary" onclick="_saveTokenConfig('${esc(agentId)}')">Save Token Config</button>
+          </div>
+        </div>`;
+
+      // Disable group checkboxes if "all tools" is checked
+      if (!activeGroups) {
+        document.querySelectorAll('#tok-tool-groups input').forEach(i => i.disabled = true);
+      }
+    } catch(e) {
+      container.innerHTML = `<div style="padding:20px;color:var(--error)">${esc(e.message)}</div>`;
+    }
+  }
 }
+
+// --- Token config save helper ---
+window._saveTokenConfig = async function(agentId) {
+  const allTools = document.getElementById('tok-all-tools')?.checked;
+  const groups = allTools ? null :
+    Array.from(document.querySelectorAll('#tok-tool-groups input:checked')).map(i => i.value);
+
+  const tcfg = {
+    tool_groups: groups,
+    include_tools_guide: document.getElementById('tok-tools-guide')?.checked ?? true,
+    include_memory_summary: document.getElementById('tok-mem-summary')?.checked ?? true,
+    memory_summary_cap: parseInt(document.getElementById('tok-mem-cap')?.value) || 3000,
+    prompt_caching: document.getElementById('tok-prompt-cache')?.checked ?? true,
+    scheduled_task_tools: document.getElementById('tok-sched-tools')?.checked ?? true,
+  };
+
+  const threshVal = document.getElementById('tok-compact-threshold')?.value;
+  tcfg.compact_threshold = threshVal ? parseInt(threshVal) / 100 : null;
+
+  try {
+    const res = await fetch(`${BASE_URL}/v1/agents/${agentId}/file?name=agent.json`).then(r => r.json());
+    const cfg = JSON.parse(res.content || '{}');
+    cfg.token_config = tcfg;
+    await API.post(`/v1/agents/${encodeURIComponent(agentId)}/file`, {
+      name: 'agent.json',
+      content: JSON.stringify(cfg, null, 2)
+    });
+    showToast('Token config saved');
+  } catch(e) { showToast('Error: ' + e.message, true); }
+};
 
 // --- MCP management helpers ---
 // Shared inline styles (accent = #d97757 brand orange)
@@ -9356,6 +9582,15 @@ window._memToggleAM = async function(agentId, enabled) {
     await API.post(`/v1/agents/${encodeURIComponent(agentId)}/memory-summary`, { action: 'toggle_auto_memory', enabled });
     showToast('Auto memory ' + (enabled ? 'enabled' : 'disabled'));
     switchAgentTab(agentId, 'memory');
+  } catch(e) { showToast('Error: ' + e.message, true); }
+};
+
+window._memSetModel = async function(agentId, action, model, fallback) {
+  try {
+    const body = { action, model };
+    if (fallback) body.model_fallback = fallback;
+    await API.post(`/v1/agents/${encodeURIComponent(agentId)}/memory-summary`, body);
+    showToast(`Model updated to ${modelShortName(model)}${fallback ? ' / ' + modelShortName(fallback) : ''}`);
   } catch(e) { showToast('Error: ' + e.message, true); }
 };
 
@@ -10526,8 +10761,8 @@ async function refineInput() {
     if (btn) btn.style.opacity = '0.4';
     showToast('Refining...');
 
-    const result = await API.post('/v1/refine', {
-      content: text,
+    const result = await API.post("/v1/refine", {
+      text: text,
       session_id: state.activeChat?.sessionId || null,
     });
 

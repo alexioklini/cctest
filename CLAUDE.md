@@ -129,6 +129,36 @@ The server supports multiple LLM providers (config.json). When a model is select
 the server automatically routes to the correct provider based on which one has that model.
 Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic API).
 
+### Token Optimization
+
+Per-agent token config in `agent.json` under `token_config`:
+
+```json
+{
+  "token_config": {
+    "tool_groups": ["core", "memory", "context", "web", "delegation", "git", "skills", "nodes", "scheduler"],
+    "extra_tools": [],
+    "include_tools_guide": true,
+    "include_memory_summary": true,
+    "memory_summary_cap": 2000,
+    "prompt_caching": true,
+    "compact_threshold": 0.70,
+    "scheduled_task_tools": false
+  }
+}
+```
+
+- `tool_groups`: subset of 13 groups (core, memory, context, web, email, documents, delegation, code_graph, git, scheduler, mcp, skills, nodes). `null` = all tools
+- `include_tools_guide`: inject tools.md into system prompt (~400 tokens)
+- `include_memory_summary`: inject memory summary on first turn (~500 tokens)
+- `memory_summary_cap`: max chars for memory summary injection
+- `prompt_caching`: Anthropic `cache_control` on system prompt blocks
+- `compact_threshold`: override context compaction threshold (0.0-1.0), null = default 0.60
+- `scheduled_task_tools`: include full tool schema in scheduled tasks; memory summary tasks always use memory-only tools
+- System prompt cached per-session (60s TTL) to avoid disk I/O on tool loops
+- `_filter_tools()` and `_get_agent_tool_names()` handle filtering for both custom loop and SDK paths
+- GUI: Tokens tab in agent config modal
+
 ### Key Patterns
 
 - `tools.md` and `soul.md` are injected into the system prompt — primary way to control agent behavior
