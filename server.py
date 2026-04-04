@@ -637,6 +637,28 @@ class ChatDB:
                 conn.execute("UPDATE sessions SET status = 'archived' WHERE status = 'active'")
             conn.commit()
 
+    @staticmethod
+    @_db_safe(default=[])
+    def delete_all(agent_id=None, archived_only=False):
+        """Delete all sessions (optionally filtered). Returns list of deleted session IDs."""
+        with _db_conn() as conn:
+            conditions = []
+            params = []
+            if agent_id:
+                conditions.append("agent_id = ?")
+                params.append(agent_id)
+            if archived_only:
+                conditions.append("status = 'archived'")
+            where = " WHERE " + " AND ".join(conditions) if conditions else ""
+            rows = conn.execute(f"SELECT id FROM sessions{where}", params).fetchall()
+            sids = [r[0] for r in rows]
+            if sids:
+                placeholders = ",".join("?" * len(sids))
+                conn.execute(f"DELETE FROM messages WHERE session_id IN ({placeholders})", sids)
+                conn.execute(f"DELETE FROM sessions WHERE id IN ({placeholders})", sids)
+                conn.commit()
+            return sids
+
 
 class Session:
     """A conversation session with an agent."""
@@ -664,6 +686,12 @@ class Session:
         self.summary: str = ""  # LLM-generated chat summary for sidebar
         self.sdk_session_id: str | None = None  # Agent SDK session ID for resume
         self._last_summary_at = 0  # Token count at last continuous summary
+
+        # Warmup state
+        self._warmup_done = threading.Event()
+        self._warmup_done.set()  # default: no warmup needed
+        self._warmup_active = False
+        self._warmup_cancel = threading.Event()
 
         self.agent = engine.AgentConfig(agent_id)
         self.memory = engine.MemoryStore(agent_id, base_dir=self.agent.memory_dir)
@@ -1070,6 +1098,84 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     allow_reuse_address = True
 
 
+def _trigger_warmup(session):
+    """Send a minimal request to warm up the KV cache for a session's model."""
+    # Cancel any running warmup first
+    if session._warmup_active:
+        session._warmup_cancel.set()
+        session._warmup_done.wait(timeout=5)
+
+    session._warmup_cancel.clear()
+    session._warmup_done.clear()
+    session._warmup_active = True
+
+    def _do_warmup():
+        try:
+            if session._warmup_cancel.is_set():
+                return
+
+            # Build system prompt + tools (same as real request)
+            agent_config = engine.AgentConfig(session.agent_id)
+            engine._thread_local.current_agent = agent_config
+            engine._thread_local.project = getattr(session, 'project', None)
+            engine._thread_local.note_context = getattr(session, 'note_context', None)
+            engine._thread_local.memory_store = session.memory
+            system_prompt = engine._build_system_prompt(include_memory_summary=True)
+
+            if session._warmup_cancel.is_set():
+                return
+
+            # Build minimal payload
+            if session.api_type == "openai":
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": "."},
+                ]
+                endpoint = f"{session.base_url}/chat/completions"
+            else:
+                messages = [{"role": "user", "content": "."}]
+                endpoint = f"{session.base_url}/messages"
+
+            # Get tool definitions
+            allowed = engine._get_agent_tool_names()
+            if session.api_type == "openai":
+                tools = engine._filter_tools(engine.TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
+            else:
+                tools = engine._filter_tools(engine.TOOL_DEFINITIONS, allowed)
+
+            payload = {
+                "model": session.model,
+                "max_tokens": 1,
+                "messages": messages,
+                "stream": False,
+                "tools": tools,
+            }
+            if session.api_type != "openai":
+                payload["system"] = system_prompt
+
+            if session._warmup_cancel.is_set():
+                return
+
+            headers = engine.make_headers(session.api_key, session.api_type)
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                resp.read()  # consume response
+
+            if session._warmup_cancel.is_set():
+                print(f"  [warmup] {session.model} cancelled ({session.id[:8]})")
+            else:
+                print(f"  [warmup] {session.model} prefill done ({session.id[:8]})")
+        except Exception as e:
+            if not session._warmup_cancel.is_set():
+                print(f"  [warmup] {session.model} failed: {e}")
+        finally:
+            session._warmup_active = False
+            session._warmup_done.set()
+
+    threading.Thread(target=_do_warmup, daemon=True, name=f"warmup_{session.id[:8]}").start()
+
+
 class BrainAgentHandler(BaseHTTPRequestHandler):
     """HTTP request handler for Brain Agent API."""
     # NOTE: Deliberately using HTTP/1.0 — SSE streaming works because we write
@@ -1127,10 +1233,16 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_list_sessions()
         elif path.startswith("/v1/sessions/search"):
             self._handle_session_search()
+        elif path.startswith("/v1/sessions/") and path.endswith("/inspect"):
+            self._handle_session_inspect(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/files"):
             self._handle_get_session_files(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/messages"):
             self._handle_get_messages(path)
+        elif path.startswith("/v1/sessions/") and path.endswith("/warmup"):
+            sid = path.split("/")[3]
+            s = sessions.get(sid)
+            self._send_json({"warming_up": s._warmup_active if s else False})
         elif path == "/v1/loops":
             self._handle_loops_get()
         elif path == "/v1/schedule":
@@ -1683,6 +1795,96 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             resp["total_tokens"] = engine._estimate_conversation_tokens(session.messages)
         self._send_json(resp)
 
+    def _handle_session_inspect(self, path):
+        """GET /v1/sessions/<id>/inspect — full session debug view."""
+        parts = path.split("/")
+        sid = parts[3]
+        session = sessions.get(sid)
+        msgs = ChatDB.load_messages(sid, include_compacted=True)
+
+        # Build system prompt for this session's agent
+        system_prompt = ""
+        system_tokens = 0
+        if session:
+            try:
+                agent_config = engine.AgentConfig(session.agent_id)
+                engine._thread_local.current_agent = agent_config
+                engine._thread_local.project = getattr(session, 'project', None)
+                engine._thread_local.note_context = getattr(session, 'note_context', None)
+                system_prompt = engine._build_system_prompt(include_memory_summary=False)
+                system_tokens = len(system_prompt) // 4  # rough estimate
+            except Exception:
+                pass
+
+        # Build interaction pairs: user message + assistant response
+        interactions = []
+        i = 0
+        while i < len(msgs):
+            m = msgs[i]
+            if m["role"] == "user":
+                user_msg = m
+                # Find matching assistant response
+                assistant_msg = None
+                j = i + 1
+                while j < len(msgs):
+                    if msgs[j]["role"] == "assistant":
+                        assistant_msg = msgs[j]
+                        break
+                    j += 1
+                meta = (assistant_msg or {}).get("metadata", {})
+                content_in = user_msg.get("content", "")
+                if isinstance(content_in, list):
+                    content_in = " ".join(str(b.get("text", "")) for b in content_in if isinstance(b, dict))
+                content_out = (assistant_msg or {}).get("content", "")
+                if isinstance(content_out, list):
+                    content_out = " ".join(str(b.get("text", "")) for b in content_out if isinstance(b, dict))
+                # Extract request payloads (what was actually sent to API)
+                payloads = meta.get("request_payloads", [])
+                interactions.append({
+                    "turn": len(interactions) + 1,
+                    "user": {"content": content_in, "tokens_est": len(str(content_in)) // 4},
+                    "assistant": {
+                        "content": content_out,
+                        "tokens_est": len(str(content_out)) // 4,
+                        "tokens_in": meta.get("tokens_in", 0),
+                        "tokens_out": meta.get("tokens_out", 0),
+                        "tokens_total": meta.get("tokens", 0),
+                        "duration": meta.get("duration", 0),
+                        "model": meta.get("model", ""),
+                        "cost": meta.get("cost", 0),
+                        "tools": meta.get("tools", []),
+                        "thinking": bool(meta.get("thinking")),
+                        "sdk": meta.get("sdk", False),
+                        "request_payloads": payloads,
+                    } if assistant_msg else None,
+                    "compacted": bool(m.get("compacted")),
+                })
+                i = (j + 1) if assistant_msg else (i + 1)
+            else:
+                i += 1
+
+        # Totals
+        total_in = sum((ix["assistant"] or {}).get("tokens_in", 0) for ix in interactions if ix.get("assistant"))
+        total_out = sum((ix["assistant"] or {}).get("tokens_out", 0) for ix in interactions if ix.get("assistant"))
+        total_duration = sum((ix["assistant"] or {}).get("duration", 0) for ix in interactions if ix.get("assistant"))
+        total_cost = sum((ix["assistant"] or {}).get("cost", 0) for ix in interactions if ix.get("assistant"))
+
+        self._send_json({
+            "session_id": sid,
+            "agent": session.agent_id if session else "",
+            "model": session.model if session else "",
+            "max_context": session.max_context if session else 0,
+            "system_prompt": {"content": system_prompt, "tokens_est": system_tokens},
+            "interactions": interactions,
+            "totals": {
+                "turns": len(interactions),
+                "tokens_in": total_in,
+                "tokens_out": total_out,
+                "duration": round(total_duration, 2),
+                "cost": round(total_cost, 4),
+            },
+        })
+
     def _handle_get_session_files(self, path):
         """GET /v1/sessions/<id>/files — returns all files from all messages (including compacted)"""
         parts = path.split("/")
@@ -1851,6 +2053,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             agent = body.get("agent")
             ChatDB.archive_all(agent)
             self._send_json({"status": "archived_all"})
+        elif action == "delete_all":
+            agent = body.get("agent")
+            archived_only = body.get("archived_only", False)
+            sids = ChatDB.delete_all(agent, archived_only)
+            for sid in (sids or []):
+                loop_manager.cancel_all(sid)
+                sessions.delete(sid)
+            self._send_json({"status": "deleted_all", "count": len(sids or [])})
         elif action == "delete":
             # Get agent_id before deleting so we can trigger summary refresh
             info = ChatDB.get_session_info(sid)
@@ -1980,13 +2190,23 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             ChatDB.save_session(session.id, session.agent_id, session.model,
                                session.title, session.status, session.created_at,
                                session.last_active, session.project or "")
+        # Check if provider has prefill_warmup enabled
+        provider_name = provider.get("provider_name", "")
+        providers_cfg = server_config.get("providers", {})
+        warmup_enabled = providers_cfg.get(provider_name, {}).get("prefill_warmup", False)
+
         self._send_json({
             "session_id": session.id,
             "agent": session.agent_id,
             "model": session.model,
             "max_context": session.max_context,
             "project": session.project or "",
+            "warmup": warmup_enabled,
         })
+
+        # Trigger warmup in background
+        if warmup_enabled:
+            _trigger_warmup(session)
 
     def _handle_switch_agent(self):
         body = self._read_json()
@@ -1998,16 +2218,23 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         agent_id = body.get("agent", "main")
         model = body.get("model")
         session.switch_agent(agent_id, model)
+        warmup_enabled = False
         if model:
             provider = self._resolve_provider(model)
             session.api_key = provider["api_key"]
             session.base_url = provider["base_url"]
             session.api_type = provider["api_type"]
+            provider_name = provider.get("provider_name", "")
+            providers_cfg = server_config.get("providers", {})
+            warmup_enabled = providers_cfg.get(provider_name, {}).get("prefill_warmup", False)
         self._send_json({
             "session_id": session.id,
             "agent": session.agent_id,
             "model": session.model,
+            "warmup": warmup_enabled,
         })
+        if warmup_enabled:
+            _trigger_warmup(session)
 
     def _handle_cancel(self):
         body = self._read_json()
@@ -2143,7 +2370,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
         # SSE streaming setup (start early so we can send compaction events)
         # Disable Nagle's algorithm for real-time SSE delivery
-        self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        try:
+            self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except OSError:
+            pass
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -2153,10 +2383,26 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.flush()  # Ensure headers are pushed before streaming
 
+        # Wait for warmup if in progress (after SSE headers so client stays connected)
+        if session._warmup_active:
+            try:
+                self.wfile.write(b"event: warmup\ndata: {\"status\":\"waiting\"}\n\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            session._warmup_done.wait(timeout=30)
+            try:
+                self.wfile.write(b"event: warmup\ndata: {\"status\":\"ready\"}\n\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+
         # Check if this agent uses the Agent SDK backend
-        # Default: SDK enabled for all agents. Opt out with agent_sdk.enabled: false
-        _agent_sdk_cfg = session.agent.config.get("agent_sdk", {})
-        _use_sdk = _agent_sdk_cfg.get("enabled", True)  # default ON
+        # - use_sdk=true (default): use SDK when provider is anthropic, direct loop when openai
+        # - use_sdk=false: always use direct agentic loop
+        _agent_sdk_raw = session.agent.config.get("agent_sdk", True)
+        _sdk_setting = _agent_sdk_raw.get("enabled", True) if isinstance(_agent_sdk_raw, dict) else bool(_agent_sdk_raw)
+        _use_sdk = _sdk_setting and session.api_type == "anthropic"
 
         # Check context and compact (with SSE progress) — skip for SDK agents
         # SDK manages its own context via session resume + internal compaction
@@ -2196,6 +2442,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         _partial_reply = []  # accumulate text deltas for partial response recovery
         _partial_tools = []  # accumulate tool calls
         _partial_thinking = []  # accumulate thinking blocks
+        _usage_totals = {"tokens_in": 0, "tokens_out": 0}  # accumulate across tool rounds
+        _request_payloads = []  # capture request snapshots per tool round
         def event_callback(event_type, data):
             if event_type == "text_delta":
                 _partial_reply.append(data.get("text", ""))
@@ -2217,6 +2465,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     if t["name"] == data.get("name") and "result" not in t:
                         t["result"] = str(data.get("result", ""))[:500]
                         break
+            elif event_type == "usage":
+                _usage_totals["tokens_in"] += data.get("tokens_in", 0)
+                _usage_totals["tokens_out"] += data.get("tokens_out", 0)
+                return  # internal only, don't send to client
+            elif event_type == "request_payload":
+                _request_payloads.append(data)
+                return  # internal only, don't send to client
             event_queue.put((event_type, data))
 
         handler_self = self  # capture for closure
@@ -2277,6 +2532,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
             # Snapshot message count for rollback on failure
             _msg_count_before = len(session.messages)
+            _req_start = time.time()
 
             try:
                 if _use_sdk:
@@ -2325,9 +2581,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                             session_cost = round(sc.get("cost", 0.0), 4)
                         except Exception:
                             pass
-                    # Build metadata: model, tokens, cost, files, tools
+                    # Build metadata: model, tokens, cost, files, tools, duration, usage
+                    _req_duration = round(time.time() - _req_start, 2)
                     msg_metadata = {}
                     msg_metadata["model"] = session.model
+                    msg_metadata["duration"] = _req_duration
+                    msg_metadata["tokens_in"] = _usage_totals["tokens_in"]
+                    msg_metadata["tokens_out"] = _usage_totals["tokens_out"]
+                    if _request_payloads:
+                        msg_metadata["request_payloads"] = _request_payloads
                     fb_model = getattr(engine._thread_local, '_fallback_model_used', None)
                     if fb_model:
                         msg_metadata["model"] = fb_model
@@ -2350,6 +2612,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         "tokens": engine._estimate_conversation_tokens(session.messages),
                         "max_context": session.max_context,
                         "model": session.model,
+                        "duration": _req_duration,
+                        "tokens_in": _usage_totals["tokens_in"],
+                        "tokens_out": _usage_totals["tokens_out"],
                     }
                     if session_cost is not None:
                         done_data["cost"] = session_cost
@@ -2745,9 +3010,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
 
+                _req_duration = round(time.time() - _req_start, 2)
                 msg_metadata = {"model": model, "sdk": True,
+                                "tokens_in": r.get("tokens_in", 0),
+                                "tokens_out": r.get("tokens_out", 0),
                                 "tokens_api": r.get("tokens_in", 0) + r.get("tokens_out", 0),
-                                "tokens": engine._estimate_conversation_tokens(session.messages)}
+                                "tokens": engine._estimate_conversation_tokens(session.messages),
+                                "duration": _req_duration}
                 if is_partial:
                     msg_metadata["partial"] = True
                 if session_cost is not None:
@@ -2759,7 +3028,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 # Done event (may fail if client disconnected — that's ok)
                 done_data = {"text": reply, "tokens": engine._estimate_conversation_tokens(session.messages),
                              "max_context": session.max_context,
-                             "model": model, "sdk": True}
+                             "model": model, "sdk": True,
+                             "tokens_in": r.get("tokens_in", 0), "tokens_out": r.get("tokens_out", 0),
+                             "duration": _req_duration}
                 if session_cost is not None:
                     done_data["cost"] = session_cost
                 try:
@@ -2955,28 +3226,24 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     def _handle_list_providers(self):
         providers = server_config.get("providers", {})
+        models_cfg = engine._models_config or {}
         result = []
         for name, p in providers.items():
-            models = []
-            try:
-                models = engine.get_available_models(
-                    p.get("api_key", ""), p.get("base_url", ""), p.get("type", "openai"))
-            except Exception:
-                pass
-            # Include manually-configured models mapped to this provider
-            models_cfg = engine._models_config or {}
-            for mid, mcfg in models_cfg.items():
-                if mcfg.get("provider") == name and mid not in models and mcfg.get("enabled", True):
-                    models.append(mid)
+            # Use already-known models from config instead of fetching from provider
+            all_models = [mid for mid, mcfg in models_cfg.items()
+                          if mcfg.get("provider") == name]
+            enabled_models = [mid for mid, mcfg in models_cfg.items()
+                              if mcfg.get("provider") == name and mcfg.get("enabled", True)]
             result.append({
                 "name": name,
                 "base_url": p.get("base_url", ""),
                 "api_key": p.get("api_key", "")[:4] + "***" if p.get("api_key") else "",
                 "type": p.get("type", "openai"),
                 "default_model": p.get("default_model", ""),
-                "models": models,
-                "model_count": len(models),
-                "status": "connected" if models else "unreachable",
+                "models": all_models,
+                "model_count": len(all_models),
+                "enabled_count": len(enabled_models),
+                "status": "connected" if all_models else "no models",
             })
         self._send_json({"providers": result})
 
@@ -3050,15 +3317,25 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
     def _handle_test_provider(self):
         """POST /v1/providers/test — test provider connection."""
         body = self._read_json()
-        base_url = body.get("base_url", "")
-        api_key = body.get("api_key", "")
-        api_type = body.get("type", "openai")
+        # If only name is provided, look up provider config
+        name = body.get("name")
+        if name and not body.get("base_url"):
+            providers = server_config.get("providers", {})
+            p = providers.get(name, {})
+            base_url = p.get("base_url", "")
+            api_key = p.get("api_key", "")
+            api_type = p.get("type", "openai")
+        else:
+            base_url = body.get("base_url", "")
+            api_key = body.get("api_key", "")
+            api_type = body.get("type", "openai")
         try:
             models = engine.get_available_models(api_key, base_url, api_type)
             self._send_json({
-                "status": "connected",
-                "models": models,
+                "status": "ok",
+                "models": len(models),
                 "model_count": len(models),
+                "model_list": models,
             })
         except Exception as e:
             self._send_json({
@@ -3102,10 +3379,29 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 engine._models_config[model_id] = model_cfg
 
             elif action == "sync":
-                providers = server_config.get("providers", {})
-                existing = config.get("models", {})
-                synced = engine.init_models_config(providers, existing)
-                config["models"] = synced
+                # Run sync in background thread — return immediately
+                sync_provider = body.get("provider")  # optional: sync single provider
+                def _bg_sync(provider_filter=None):
+                    try:
+                        all_providers = server_config.get("providers", {})
+                        if provider_filter:
+                            providers = {k: v for k, v in all_providers.items() if k == provider_filter}
+                        else:
+                            providers = all_providers
+                        cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+                        with open(cfg_path) as f:
+                            cfg = json.load(f)
+                        existing = cfg.get("models", {})
+                        synced = engine.init_models_config(providers, existing)
+                        cfg["models"] = synced
+                        with open(cfg_path, "w") as f:
+                            json.dump(cfg, f, indent=2)
+                        BrainAgentHandler._provider_cache.clear()
+                    except Exception as e:
+                        print(f"[sync] error: {e}")
+                threading.Thread(target=_bg_sync, args=(sync_provider,), daemon=True).start()
+                self._send_json({"status": "syncing"})
+                return
 
             else:
                 self._send_json({"error": f"Unknown action: {action}"}, 400)

@@ -3314,7 +3314,7 @@ textarea { resize: none; }
     </div>
 
     <nav class="sb-nav">
-      <div class="sb-nav-item" onclick="navigateTo('welcome')" data-view="welcome">
+      <div class="sb-nav-item" onclick="newChat()" data-view="welcome">
         <span class="sb-icon"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>
         <span class="sb-label">New Chat</span>
       </div>
@@ -3453,6 +3453,12 @@ textarea { resize: none; }
       <span class="welcome-text" id="welcome-greeting-text">Hello</span>
     </div>
     <div class="composer-wrapper">
+      <div id="welcome-warmup" style="display:none;text-align:center;margin-bottom:10px;font-size:12px;color:#8b5cf6;animation:pulse 1.5s infinite">
+        <span style="display:inline-flex;align-items:center;gap:6px">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+          Warming up model...
+        </span>
+      </div>
       <div class="composer-box" id="welcome-composer">
         <textarea class="composer-input" id="welcome-input" placeholder="How can I help you today?" rows="1" oninput="autoResizeInput(this); updateSendButton()"></textarea>
         <div class="image-preview-area" id="welcome-image-preview"></div>
@@ -3542,9 +3548,13 @@ textarea { resize: none; }
         <svg class="chats-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <input class="chats-search" id="chats-search" placeholder="Search chats..." oninput="filterChatsList()">
       </div>
-      <div class="chats-tabs">
+      <div class="chats-tabs" style="display:flex;align-items:center;gap:0">
         <div class="chats-tab active" data-filter="all" onclick="setChatFilter('all',this)">All Chats</div>
         <div class="chats-tab" data-filter="archived" onclick="setChatFilter('archived',this)">Archived</div>
+        <div style="margin-left:auto;display:flex;gap:6px">
+          <button class="btn-secondary" style="padding:3px 10px;font-size:11px" onclick="archiveAllChats()">Archive All</button>
+          <button class="btn-secondary" style="padding:3px 10px;font-size:11px;color:var(--error)" onclick="deleteAllChats()">Delete All</button>
+        </div>
       </div>
       <div id="chats-list">
         <!-- Populated dynamically -->
@@ -3877,9 +3887,17 @@ textarea { resize: none; }
     <div class="status-item">
       <span class="status-model" id="status-model"></span>
     </div>
-    <div class="status-item">
-      <span class="status-label">Tokens:</span>
-      <span class="status-value" id="status-tokens">0</span>
+    <div class="status-item" title="Input tokens (total)">
+      <span class="status-label">In:</span>
+      <span class="status-value" id="status-tokens-in">0</span>
+    </div>
+    <div class="status-item" title="Output tokens (total)">
+      <span class="status-label">Out:</span>
+      <span class="status-value" id="status-tokens-out">0</span>
+    </div>
+    <div class="status-item" title="Last request speed">
+      <span class="status-label">Speed:</span>
+      <span class="status-value" id="status-speed">-</span>
     </div>
     <div class="status-item" id="status-context-wrap" style="display:none">
       <div class="context-bar" title="Context window usage"><div class="context-fill" id="status-context-fill" style="width:0%"></div></div>
@@ -3888,6 +3906,7 @@ textarea { resize: none; }
     </div>
     <div class="status-item" style="margin-left:auto">
       <span class="status-value" id="status-session"></span>
+      <button class="compact-btn" onclick="openInspectModal()" title="Inspect session" style="font-size:13px;padding:1px 6px">&#x1F50D;</button>
     </div>
   </div>
 </div>
@@ -3994,6 +4013,7 @@ class API {
   }
   static getSessionMessages(id) { return this.get(`/v1/sessions/${id}/messages`); }
   static manageSession(body) { return this.post('/v1/sessions/manage', body); }
+  static inspectSession(sessionId) { return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}/inspect`); }
   static cancelChat(sessionId) { return this.post('/v1/chat/cancel', {session_id: sessionId}); }
 
   // Projects
@@ -5499,8 +5519,17 @@ function toggleModelDropdown(event) {
       <span class="dd-label">${esc(label)}</span>
     `;
     item.onclick = () => {
-      if (state.activeChat) state.activeChat.model = mid;
-      updateModelSelectorDisplay(mid);
+      if (state.activeChat) {
+        const oldModel = state.activeChat.model;
+        state.activeChat.model = mid;
+        updateModelSelectorDisplay(mid);
+        // Re-create session + warmup if model changed and no messages yet
+        if (mid !== oldModel && state.activeChat.messages.length === 0) {
+          state.activeChat.sessionId = null;
+          state.activeChat._warmingUp = false;
+          ensureSession(state.activeChat).catch(() => {});
+        }
+      }
       closeAllDropdowns();
     };
     dd.appendChild(item);
@@ -5755,10 +5784,41 @@ function renderSessionsList(container, sessions) {
    ═══════════════════════════════════════════════════════════ */
 async function ensureSession(chat) {
   if (chat.sessionId) return chat.sessionId;
+  // Stop any existing warmup poll
+  if (chat._warmupPoll) {
+    clearInterval(chat._warmupPoll);
+    chat._warmupPoll = null;
+  }
+  // Generation counter to handle race conditions on model switch
+  const gen = (chat._sessionGen = (chat._sessionGen || 0) + 1);
   try {
     const data = await API.createSession(chat.agent, chat.model, state.currentProject);
+    // Discard if a newer ensureSession was called (model switched)
+    if (chat._sessionGen !== gen) return null;
     chat.sessionId = data.session_id;
     if (data.max_context) chat.maxContext = data.max_context;
+    // Show warmup indicator if provider supports it
+    if (data.warmup) {
+      chat._warmingUp = true;
+      updateStatusBar();
+      // Poll until warmup done
+      chat._warmupPoll = setInterval(async () => {
+        try {
+          const w = await API.get(`/v1/sessions/${chat.sessionId}/warmup`);
+          if (!w.warming_up) {
+            clearInterval(chat._warmupPoll);
+            chat._warmupPoll = null;
+            chat._warmingUp = false;
+            updateStatusBar();
+          }
+        } catch(e) {
+          clearInterval(chat._warmupPoll);
+          chat._warmupPoll = null;
+          chat._warmingUp = false;
+          updateStatusBar();
+        }
+      }, 500);
+    }
     return chat.sessionId;
   } catch(e) {
     showToast('Failed to create session: ' + e.message, true);
@@ -5771,6 +5831,10 @@ async function openSession(sessionId, agentId) {
   const chat = state.ensureAgentChat(agentId);
   chat.sessionId = sessionId;
   chat.messages = [];
+  chat._tokensIn = 0;
+  chat._tokensOut = 0;
+  chat._lastSpeed = null;
+  chat._lastApiIn = 0;
 
   try {
     const data = await API.getSessionMessages(sessionId);
@@ -5797,6 +5861,10 @@ async function openSession(sessionId, agentId) {
         if (meta.files) msg._files = meta.files;
         if (meta.model && !data.model) chat.model = meta.model;
         if (!data.total_tokens && meta.tokens) chat.totalTokens = meta.tokens;
+        // Accumulate token in/out for status bar
+        if (meta.tokens_in) chat._tokensIn = (chat._tokensIn || 0) + meta.tokens_in;
+        if (meta.tokens_out) chat._tokensOut = (chat._tokensOut || 0) + meta.tokens_out;
+        if (meta.duration > 0 && meta.tokens_out > 0) chat._lastSpeed = Math.round(meta.tokens_out / meta.duration);
       }
       expanded.push(msg);
     }
@@ -5833,8 +5901,15 @@ function newChat() {
   chat.streamingText = '';
   chat.thinkingText = '';
   chat.files = [];
+  chat._tokensIn = 0;
+  chat._tokensOut = 0;
+  chat._lastSpeed = null;
+  chat._lastApiIn = 0;
+  chat._warmingUp = false;
   closeArtifactPanel();
   navigateTo('welcome');
+  // Pre-create session to trigger warmup for local models
+  ensureSession(chat).catch(() => {});
 }
 
 async function archiveSession(sessionId) {
@@ -5862,6 +5937,30 @@ async function deleteSession(sessionId) {
     showToast('Session deleted');
     loadAgentSessions(state.activeAgentId);
   } catch(e) { showToast('Delete failed', true); }
+}
+
+async function archiveAllChats() {
+  const scope = state.chatsFilter === 'archived' ? 'archived' : 'active';
+  if (!confirm(`Archive all ${scope} chats?`)) return;
+  try {
+    await API.manageSession({action:'archive_all'});
+    showToast('All chats archived');
+    loadChatsList();
+    loadAgentSessions(state.activeAgentId);
+  } catch(e) { showToast('Archive all failed', true); }
+}
+
+async function deleteAllChats() {
+  const archived = state.chatsFilter === 'archived';
+  const label = archived ? 'archived' : 'ALL';
+  if (!confirm(`Permanently delete ${label} chats? This cannot be undone.`)) return;
+  try {
+    const r = await API.manageSession({action:'delete_all', archived_only: archived});
+    showToast(`Deleted ${r.count || 'all'} chats`);
+    newChat();
+    loadChatsList();
+    loadAgentSessions(state.activeAgentId);
+  } catch(e) { showToast('Delete all failed', true); }
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -6005,6 +6104,14 @@ async function sendMessage() {
           updateModelSelectorDisplay(d.to);
         }
       },
+      warmup: (d) => {
+        if (d.status === 'waiting') {
+          document.getElementById('spinner-label').textContent = 'Waiting for warmup...';
+        } else if (d.status === 'ready') {
+          chat._warmingUp = false;
+          updateStatusBar();
+        }
+      },
       compacting: (d) => {
         document.getElementById('spinner-label').textContent = `Compacting... ${d.pct || ''}%`;
       },
@@ -6023,6 +6130,24 @@ async function sendMessage() {
           chat.model = d.model;
           updateModelSelectorDisplay(d.model);
         }
+        // Track token in/out and speed
+        const tokIn = d.tokens_in || 0;
+        const tokOut = d.tokens_out || 0;
+        const dur = d.duration || 0;
+        // Estimate output tokens from text if API didn't provide them
+        const estOut = tokOut || Math.ceil((d.text || chat.streamingText || '').length / 4);
+        chat._tokensIn = (chat._tokensIn || 0) + tokIn;
+        chat._tokensOut = (chat._tokensOut || 0) + (tokOut || estOut);
+        assistantMsg.metadata = {
+          ...(assistantMsg.metadata || {}),
+          tokens_in: tokIn,
+          tokens_out: tokOut || estOut,
+          duration: dur,
+        };
+        if (dur > 0 && estOut > 0) {
+          chat._lastSpeed = Math.round(estOut / dur);
+        }
+        if (tokIn > 0) chat._lastApiIn = tokIn;
         if (d.cost) assistantMsg._cost = d.cost;
         if (d.files?.length) assistantMsg._files = d.files;
         else if (chat.files.length) assistantMsg._files = chat.files;
@@ -6098,6 +6223,217 @@ async function triggerCompact() {
   }
   btn.textContent = '⟳';
   btn.disabled = false;
+}
+
+async function openInspectModal() {
+  const chat = state.activeChat;
+  if (!chat?.sessionId) { showToast('No active session', true); return; }
+
+  // Create modal overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div class="modal-content wide" style="max-height:90vh;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;padding:20px 24px 0;gap:12px">
+      <h2 style="margin:0;font-size:18px;font-weight:600;color:var(--text-000)">Session Inspector</h2>
+      <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-400)">${esc(chat.sessionId)}</span>
+      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()" style="margin-left:auto">&times;</button>
+    </div>
+    <div id="inspect-body" style="flex:1;overflow-y:auto;padding:16px 24px 24px">
+      <div style="color:var(--text-400);padding:24px;text-align:center">Loading...</div>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+
+  try {
+    const data = await API.inspectSession(chat.sessionId);
+    const body = document.getElementById('inspect-body');
+    let html = '';
+
+    // --- Summary bar ---
+    const t = data.totals || {};
+    html += `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px">
+      <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
+        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Turns</div>
+        <div style="font-size:20px;font-weight:600;color:var(--text-000);margin-top:4px">${t.turns || 0}</div>
+      </div>
+      <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
+        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Tokens In</div>
+        <div style="font-size:20px;font-weight:600;color:var(--text-000);margin-top:4px">${(t.tokens_in||0).toLocaleString()}</div>
+      </div>
+      <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
+        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Tokens Out</div>
+        <div style="font-size:20px;font-weight:600;color:var(--text-000);margin-top:4px">${(t.tokens_out||0).toLocaleString()}</div>
+      </div>
+      <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
+        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Duration</div>
+        <div style="font-size:20px;font-weight:600;color:var(--text-000);margin-top:4px">${t.duration ? t.duration.toFixed(1) + 's' : '-'}</div>
+      </div>
+      <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
+        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Cost</div>
+        <div style="font-size:20px;font-weight:600;color:var(--text-000);margin-top:4px">$${(t.cost||0).toFixed(4)}</div>
+      </div>
+    </div>`;
+
+    // --- Extract system prompt & tools from first payload (constant per session) ---
+    const firstPayload = (data.interactions || []).find(ix => ix.assistant?.request_payloads?.length)?.assistant?.request_payloads?.[0];
+    const spContent = firstPayload?.system_prompt || data.system_prompt?.content || '';
+    const spTokens = firstPayload?.system_tokens || data.system_prompt?.tokens_est || 0;
+    const toolNames = firstPayload?.tool_names || [];
+    const toolsCount = firstPayload?.tools_count || 0;
+    const toolsTokens = firstPayload?.tools_tokens || 0;
+
+    // --- System Prompt (once) ---
+    html += `<details style="margin-bottom:8px;border:1px solid var(--border-100);border-radius:10px;overflow:hidden">
+      <summary style="padding:12px 16px;cursor:pointer;background:var(--bg-100);font-weight:500;color:var(--text-000);display:flex;align-items:center;gap:8px">
+        <span style="color:#8b5cf6">System Prompt</span>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-400);margin-left:auto">~${spTokens.toLocaleString()} tokens</span>
+      </summary>
+      <pre style="margin:0;padding:16px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:400px;overflow-y:auto;background:var(--bg-200);color:var(--text-200);font-family:var(--font-mono)">${esc(spContent || '(not available)')}</pre>
+    </details>`;
+
+    // --- Tool Definitions (once) ---
+    if (toolsCount > 0) {
+      html += `<details style="margin-bottom:16px;border:1px solid var(--border-100);border-radius:10px;overflow:hidden">
+        <summary style="padding:12px 16px;cursor:pointer;background:var(--bg-100);font-weight:500;color:var(--text-000);display:flex;align-items:center;gap:8px">
+          <span style="color:var(--accent-brand)">Tool Definitions</span>
+          <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-400);margin-left:auto">${toolsCount} tools &middot; ~${toolsTokens.toLocaleString()} tokens</span>
+        </summary>
+        <div style="padding:12px 16px;display:flex;flex-wrap:wrap;gap:4px">
+          ${toolNames.map(n => `<span style="font-size:11px;font-family:var(--font-mono);background:var(--bg-200);color:var(--text-300);padding:2px 8px;border-radius:4px">${esc(n)}</span>`).join('')}
+        </div>
+      </details>`;
+    }
+
+    // --- Interactions ---
+    html += `<div style="font-weight:600;font-size:14px;color:var(--text-000);margin-bottom:12px">Interactions</div>`;
+
+    for (const ix of (data.interactions || [])) {
+      const a = ix.assistant || {};
+      const dimmed = ix.compacted ? 'opacity:0.5;' : '';
+      const compactedBadge = ix.compacted ? '<span style="font-size:10px;background:var(--bg-300);color:var(--text-400);padding:1px 6px;border-radius:4px;margin-left:6px">compacted</span>' : '';
+
+      // Speed calculation
+      const speed = a.duration > 0 && a.tokens_out > 0 ? Math.round(a.tokens_out / a.duration) : null;
+
+      html += `<div style="${dimmed}border:1px solid var(--border-100);border-radius:10px;margin-bottom:12px;overflow:hidden">`;
+
+      // Turn header
+      html += `<div style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--bg-100);border-bottom:1px solid var(--border-100)">
+        <span style="font-weight:600;color:var(--text-000)">Turn ${ix.turn}</span>
+        ${compactedBadge}
+        <span style="margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--text-400)">
+          ${a.model ? esc(a.model) : ''}
+          ${a.duration ? ' &middot; ' + a.duration.toFixed(1) + 's' : ''}
+          ${speed ? ' &middot; ' + speed + ' tok/s' : ''}
+          ${a.cost ? ' &middot; $' + a.cost.toFixed(4) : ''}
+        </span>
+      </div>`;
+
+      // --- API Request Breakdown ---
+      const payloads = (a.request_payloads || []);
+      const MONO11 = 'font-family:var(--font-mono);font-size:11px;color:var(--text-400)';
+      const BADGE = (label, bg, fg) => `<span style="font-size:10px;background:${bg};color:${fg};padding:1px 6px;border-radius:4px">${label}</span>`;
+      const PRE = 'margin:0;padding:10px 16px;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:250px;overflow-y:auto;background:var(--bg-000);color:var(--text-200);font-family:var(--font-mono)';
+
+      if (payloads.length) {
+        for (const p of payloads) {
+          const round = p.tool_round || 0;
+          html += `<details style="border-bottom:1px solid var(--border-050)">
+            <summary style="padding:10px 16px;cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span style="color:var(--accent-brand);font-weight:500;font-size:13px">API Request${payloads.length > 1 ? ' (Round ' + round + ')' : ''}</span>
+              <span style="${MONO11}">${a.tokens_in ? a.tokens_in.toLocaleString() + ' tok (API)' : '~' + (p.total_payload_tokens||0).toLocaleString() + ' tok est'}</span>
+            </summary>
+            <div style="padding:8px 16px 12px">
+              <!-- Token breakdown bar -->
+              <div style="display:flex;gap:0;height:6px;margin-bottom:8px;border-radius:3px;overflow:hidden">
+                <div style="flex:${p.system_tokens||1};background:#8b5cf6" title="System"></div>
+                <div style="flex:${p.tools_tokens||1};background:var(--accent-brand)" title="Tools"></div>
+                <div style="flex:${p.history_tokens||1};background:var(--text-400)" title="History"></div>
+                <div style="flex:${p.user_tokens||1};background:var(--success)" title="User"></div>
+              </div>
+              <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:11px;margin-bottom:8px">
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:#8b5cf6"></span>System ~${(p.system_tokens||0).toLocaleString()}</span>
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:var(--accent-brand)"></span>Tools (${p.tools_count||0}) ~${(p.tools_tokens||0).toLocaleString()}</span>
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:var(--text-400)"></span>History (${(p.history||[]).length} msgs) ~${(p.history_tokens||0).toLocaleString()}</span>
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:var(--success)"></span>User ~${(p.user_tokens||0).toLocaleString()}</span>
+              </div>
+
+              <!-- History (expandable if present) -->
+              ${(p.history||[]).length ? `<details style="margin-bottom:4px">
+                <summary style="cursor:pointer;${MONO11}">History (${(p.history||[]).length} messages)</summary>
+                <div style="max-height:250px;overflow-y:auto;border:1px solid var(--border-050);border-radius:6px;margin-top:4px">
+                  ${(p.history||[]).map(h => `<div style="padding:4px 12px;border-bottom:1px solid var(--border-050)">
+                    <span style="font-size:10px;font-weight:600;color:${h.role==='user'?'var(--accent-brand)':'var(--success)'};text-transform:uppercase">${esc(h.role)}</span>
+                    <pre style="margin:2px 0 0;font-size:11px;white-space:pre-wrap;word-break:break-word;color:var(--text-300);font-family:var(--font-mono)">${esc(String(h.content||'').substring(0, 2000))}${String(h.content||'').length > 2000 ? '\\n... (truncated)' : ''}</pre>
+                  </div>`).join('')}
+                </div>
+              </details>` : ''}
+
+              <!-- User Message (always open) -->
+              <details open>
+                <summary style="cursor:pointer;${MONO11}">User Message (~${(p.user_tokens||0).toLocaleString()} tok)</summary>
+                <pre style="${PRE};margin-top:4px;border-radius:6px">${esc(p.user_message || ix.user.content || '')}</pre>
+              </details>
+            </div>
+          </details>`;
+        }
+      } else {
+        // No payload data — fallback to simple view
+        html += `<details style="border-bottom:1px solid var(--border-050)">
+          <summary style="padding:10px 16px;cursor:pointer;display:flex;align-items:center;gap:8px">
+            <span style="color:var(--accent-brand);font-weight:500;font-size:13px">Request</span>
+            <span style="${MONO11}">~${(ix.user.tokens_est||0).toLocaleString()} tok est</span>
+            ${a.tokens_in ? `<span style="${MONO11}">&middot; ${a.tokens_in.toLocaleString()} tok in (API)</span>` : ''}
+          </summary>
+          <pre style="${PRE}">${esc(ix.user.content || '')}</pre>
+        </details>`;
+      }
+
+      // --- Response ---
+      if (ix.assistant) {
+        const tools = a.tools || [];
+        const toolBadges = tools.length ? tools.map(t => BADGE(esc(t.name), 'var(--bg-300)', 'var(--text-300)')).join(' ') : '';
+
+        html += `<details>
+          <summary style="padding:10px 16px;cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="color:var(--success);font-weight:500;font-size:13px">Response</span>
+            <span style="${MONO11}">~${(a.tokens_est||0).toLocaleString()} tok est</span>
+            ${a.tokens_out ? `<span style="${MONO11}">&middot; ${a.tokens_out.toLocaleString()} tok out (API)</span>` : ''}
+            ${a.thinking ? BADGE('thinking', '#ede9fe', '#8b5cf6') : ''}
+            ${a.sdk ? BADGE('SDK', 'var(--bg-300)', 'var(--text-400)') : ''}
+            ${toolBadges}
+          </summary>
+          <div style="max-height:400px;overflow-y:auto">`;
+
+        if (tools.length) {
+          html += `<div style="padding:8px 16px;background:var(--bg-100);border-bottom:1px solid var(--border-050)">`;
+          for (const t of tools) {
+            html += `<details style="margin-bottom:4px">
+              <summary style="cursor:pointer;font-size:12px;font-family:var(--font-mono);color:var(--text-300)">${esc(t.name)}</summary>
+              <div style="padding:4px 12px;font-size:11px;font-family:var(--font-mono);color:var(--text-400)">
+                ${t.args ? '<div style="margin-bottom:2px"><strong>args:</strong> ' + esc(JSON.stringify(t.args).substring(0, 500)) + '</div>' : ''}
+                ${t.result ? '<div><strong>result:</strong> ' + esc(String(t.result).substring(0, 500)) + '</div>' : ''}
+              </div>
+            </details>`;
+          }
+          html += `</div>`;
+        }
+
+        html += `<pre style="${PRE}">${esc(a.content || '')}</pre>
+          </div>
+        </details>`;
+      } else {
+        html += `<div style="padding:10px 16px;color:var(--text-400);font-style:italic;font-size:13px">No response</div>`;
+      }
+
+      html += `</div>`;
+    }
+
+    body.innerHTML = html;
+  } catch(e) {
+    document.getElementById('inspect-body').innerHTML = `<div style="color:var(--error);padding:24px">${esc(e.message)}</div>`;
+  }
 }
 
 async function stopGeneration() {
@@ -6387,22 +6723,66 @@ function updateStatusBar() {
 
   document.getElementById('status-agent').textContent = state.activeAgentId || '';
   document.getElementById('status-model').textContent = modelShortName(chat.model);
-  document.getElementById('status-tokens').textContent = (chat.totalTokens || 0).toLocaleString();
   document.getElementById('status-session').textContent = chat.sessionId ? chat.sessionId.substring(0,8) : '';
 
-  // Context fill bar
+  // Warmup indicator
+  let warmupEl = document.getElementById('status-warmup');
+  if (!warmupEl) {
+    warmupEl = document.createElement('div');
+    warmupEl.id = 'status-warmup';
+    warmupEl.className = 'status-item';
+    warmupEl.innerHTML = '<span style="font-size:11px;color:#8b5cf6;font-weight:500;animation:pulse 1s infinite">Warming up...</span>';
+    document.getElementById('status-bar').insertBefore(warmupEl, document.getElementById('status-bar').children[2]);
+  }
+  warmupEl.style.display = chat._warmingUp ? '' : 'none';
+  // Welcome view warmup indicator
+  const wwEl = document.getElementById('welcome-warmup');
+  if (wwEl) wwEl.style.display = chat._warmingUp ? '' : 'none';
+
+  // Compute token totals from message metadata
+  let totalIn = 0, totalOut = 0, lastSpeed = null;
+  const msgs = chat.messages || [];
+  for (const m of msgs) {
+    if (m.role === 'assistant' && m.metadata) {
+      totalIn += m.metadata.tokens_in || 0;
+      totalOut += m.metadata.tokens_out || 0;
+      if (m.metadata.duration > 0 && m.metadata.tokens_out > 0) {
+        lastSpeed = Math.round(m.metadata.tokens_out / m.metadata.duration);
+      }
+    }
+  }
+  // Also use chat-level tracking from done events
+  if (chat._tokensIn) totalIn = chat._tokensIn;
+  if (chat._tokensOut) totalOut = chat._tokensOut;
+  if (chat._lastSpeed) lastSpeed = chat._lastSpeed;
+
+  document.getElementById('status-tokens-in').textContent = totalIn ? totalIn.toLocaleString() : '0';
+  document.getElementById('status-tokens-out').textContent = totalOut ? totalOut.toLocaleString() : '0';
+  document.getElementById('status-speed').textContent = lastSpeed ? `${lastSpeed} tok/s` : '-';
+
+  // Context fill bar — use last API tokens_in as real context usage
   const wrap = document.getElementById('status-context-wrap');
   const fill = document.getElementById('status-context-fill');
   const label = document.getElementById('status-context-label');
   const compactBtn = document.getElementById('status-compact-btn');
-  if (chat.totalTokens > 0 && chat.maxContext) {
-    const pct = Math.min(100, Math.round(chat.totalTokens / chat.maxContext * 100));
+  // Find last tokens_in from messages (= actual context sent to API)
+  let lastApiIn = 0;
+  for (let mi = msgs.length - 1; mi >= 0; mi--) {
+    if (msgs[mi].role === 'assistant' && msgs[mi].metadata?.tokens_in) {
+      lastApiIn = msgs[mi].metadata.tokens_in;
+      break;
+    }
+  }
+  if (chat._lastApiIn) lastApiIn = chat._lastApiIn;
+  const contextUsed = lastApiIn || chat.totalTokens || 0;
+  if (contextUsed > 0 && chat.maxContext) {
+    const pct = Math.min(100, Math.round(contextUsed / chat.maxContext * 100));
     wrap.style.display = '';
     fill.style.width = Math.max(pct, 1) + '%';
     fill.className = 'context-fill' + (pct >= 80 ? ' danger' : pct >= 50 ? ' warn' : '');
-    label.textContent = pct + '%';
-    label.title = `${(chat.totalTokens).toLocaleString()} / ${(chat.maxContext).toLocaleString()} tokens`;
-    // Show compact button when there's enough content to compact (>10% or >10 messages)
+    const fmtK = (n) => n >= 1000 ? (n/1000).toFixed(1) + 'K' : n.toString();
+    label.textContent = `${fmtK(contextUsed)} / ${fmtK(chat.maxContext)} (${pct}%)`;
+    label.title = `${contextUsed.toLocaleString()} / ${(chat.maxContext).toLocaleString()} tokens (last API input)`;
     compactBtn.style.display = chat.sessionId && chat.messages.length > 10 ? '' : 'none';
   } else {
     wrap.style.display = 'none';
@@ -7268,7 +7648,7 @@ async function switchGeneralTab(tab, btn) {
     const sorted = Object.entries(mc).sort((a,b)=>(b[1].priority||0)-(a[1].priority||0));
     let html = `<div style="${G('6px')}">
       <div style="display:flex;gap:8px;margin-bottom:8px">
-        <button class="btn-secondary" onclick="API.post('/v1/models/config',{action:'sync'}).then(()=>{showToast('Synced');API.getModelsConfig().then(d=>{state.modelsConfig=d;switchGeneralTab('models')})}).catch(e=>showToast('Failed',true))">Sync from Providers</button>
+        <button class="btn-secondary" onclick="this.disabled=true;this.textContent='Syncing...';API.post('/v1/models/config',{action:'sync'}).then(()=>{showToast('Syncing...');setTimeout(()=>API.getModelsConfig().then(d=>{state.modelsConfig=d;switchGeneralTab('models');showToast('Synced')}),3000)}).catch(e=>{showToast('Failed',true);this.disabled=false;this.textContent='Sync from Providers'})">Sync from Providers</button>
       </div>`;
     for (const [mid, cfg] of sorted) {
       html += `<div style="${ROW};opacity:${cfg.enabled?1:0.5}" data-model-id="${esc(mid)}">
@@ -7292,19 +7672,31 @@ async function switchGeneralTab(tab, btn) {
       const providers = Array.isArray(provs) ? provs : (provs.providers || []);
       let html = `<div style="${G('12px')}">`;
       for (const p of providers) {
-        const ok = p.status === 'connected' || p.status === 'ok';
+        const ok = p.model_count > 0;
         const mc = p.models?.length || p.model_count || 0;
+        const pid = `prov-edit-${p.name.replace(/[^a-zA-Z0-9]/g,'_')}`;
         html += `<div style="padding:12px;border:1px solid var(--border-100);border-radius:10px">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
             ${DOT(ok)}
             <span style="font-size:14px;font-weight:500;color:var(--text-000)">${esc(p.name)}</span>
             ${BADGE(p.type||'unknown')}
             <span style="${MONO};margin-left:auto">${mc} models</span>
+            <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="syncProvider(this,'${esc(p.name)}')">Sync</button>
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="testProvider('${esc(p.name)}')">Test</button>
+            <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="document.getElementById('${pid}').style.display=document.getElementById('${pid}').style.display==='none'?'grid':'none'">Edit</button>
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px;color:var(--error)" onclick="if(confirm('Delete provider ${esc(p.name)}?'))deleteProvider('${esc(p.name)}')">Delete</button>
           </div>
           <div style="${MONO};overflow:hidden;text-overflow:ellipsis">${esc(p.base_url||'')}</div>
           ${(p.models||[]).length?`<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${(p.models||[]).slice(0,8).map(m=>{const mid=typeof m==='string'?m:(m.id||m);return BADGE(modelShortName(mid));}).join('')}${(p.models||[]).length>8?`<span style="${MONO}">+${(p.models||[]).length-8} more</span>`:''}</div>`:''}
+          <div id="${pid}" style="display:none;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-100)">
+            <div style="display:flex;gap:8px">
+              <div style="width:120px"><label class="form-label">Type</label><select class="form-select" id="${pid}-type"><option value="anthropic" ${p.type==='anthropic'?'selected':''}>anthropic</option><option value="openai" ${p.type==='openai'?'selected':''}>openai</option></select></div>
+              <div style="flex:1"><label class="form-label">Base URL</label><input class="form-input" id="${pid}-url" value="${esc(p.base_url||'')}"></div>
+            </div>
+            <div><label class="form-label">API Key</label><input class="form-input" id="${pid}-key" type="password" placeholder="${p.api_key||'unchanged'}"></div>
+            <div><label class="form-label">Default Model</label><input class="form-input" id="${pid}-model" value="${esc(p.default_model||'')}"></div>
+            <div><button class="btn-primary" style="font-size:12px" onclick="saveProviderEdit('${esc(p.name)}','${pid}')">Save</button></div>
+          </div>
         </div>`;
       }
       html += `${SEC('Add Provider')}
@@ -7960,6 +8352,35 @@ async function saveModelsConfig() {
   } catch(e) { showToast('Save failed: ' + e.message, true); }
 }
 
+async function syncProvider(btn, name) {
+  btn.disabled = true; btn.textContent = 'Syncing...';
+  try {
+    await API.post('/v1/models/config', { action: 'sync', provider: name });
+    showToast(`Syncing ${name}...`);
+    setTimeout(async () => {
+      const d = await API.getModelsConfig();
+      state.modelsConfig = d;
+      switchGeneralTab('providers');
+      showToast(`${name} synced`);
+    }, 3000);
+  } catch(e) { showToast('Sync failed', true); btn.disabled = false; btn.textContent = 'Sync'; }
+}
+
+async function saveProviderEdit(name, pid) {
+  const type = document.getElementById(`${pid}-type`).value;
+  const base_url = document.getElementById(`${pid}-url`).value;
+  const api_key = document.getElementById(`${pid}-key`).value;
+  const default_model = document.getElementById(`${pid}-model`).value;
+  const provider = { type, base_url, default_model };
+  if (api_key) provider.api_key = api_key;
+  else provider._keep_key = true;
+  try {
+    await API.post('/v1/providers', { action: 'add', name, provider });
+    showToast('Provider updated');
+    switchGeneralTab('providers');
+  } catch(e) { showToast('Save failed: ' + e.message, true); }
+}
+
 async function testProvider(name) {
   try {
     const r = await API.post('/v1/providers/test', { name });
@@ -8229,7 +8650,8 @@ async function switchAgentTab(agentId, tab, btn) {
           </div>
           <div style="display:flex;align-items:center;gap:8px">
             <input type="checkbox" id="cfg-agent-sdk" ${cfg.agent_sdk !== false?'checked':''}>
-            <label for="cfg-agent-sdk" style="font-size:14px;color:var(--text-200)">Agent SDK enabled</label>
+            <label for="cfg-agent-sdk" style="font-size:14px;color:var(--text-200)">Use SDK</label>
+            <span style="font-size:11px;color:var(--text-400)">auto: SDK for anthropic providers, direct loop for openai. Off = always direct loop.</span>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:8px">
             <button class="btn-primary" onclick="saveAgentJson('${esc(agentId)}')">Save</button>

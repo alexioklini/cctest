@@ -13839,9 +13839,11 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
 
     # System instruction for the agent
     # Strip metadata from messages — API providers don't accept extra fields
+    # Keep fields required by OpenAI tool call protocol
+    _ALLOWED_MSG_KEYS = {"role", "content", "tool_calls", "tool_call_id", "name"}
     augmented_messages = []
     for msg in messages:
-        clean = {k: v for k, v in msg.items() if k in ("role", "content")}
+        clean = {k: v for k, v in msg.items() if k in _ALLOWED_MSG_KEYS}
         augmented_messages.append(clean)
     tcfg = _get_token_config()
     if tools:
@@ -13890,6 +13892,48 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                 ]
             else:
                 payload["system"] = system_instruction
+
+    # Emit request snapshot for inspector
+    if event_callback:
+        # System prompt: from payload["system"] (Anthropic) or first system message (OpenAI)
+        _sys = payload.get("system", "")
+        if isinstance(_sys, list):
+            _sys = "".join(b.get("text", "") for b in _sys if isinstance(b, dict))
+        _tool_defs = payload.get("tools", [])
+        _tool_names = []
+        for _td in _tool_defs:
+            if isinstance(_td, dict):
+                # OpenAI: {"type":"function","function":{"name":...}} or Anthropic: {"name":...}
+                _tn = _td.get("name") or (_td.get("function", {}) or {}).get("name", "")
+                if _tn:
+                    _tool_names.append(_tn)
+        _hist_msgs = []
+        _user_msg = ""
+        for _m in payload.get("messages", []):
+            if _m.get("role") == "system":
+                if not _sys:
+                    _c = _m.get("content", "")
+                    _sys = _c if isinstance(_c, str) else str(_c)
+                continue
+            if _m is payload["messages"][-1] and _m.get("role") == "user":
+                _c = _m.get("content", "")
+                _user_msg = _c if isinstance(_c, str) else str(_c)
+            else:
+                _c = _m.get("content", "")
+                _hist_msgs.append({"role": _m.get("role", ""), "content": _c if isinstance(_c, str) else str(_c)})
+        event_callback("request_payload", {
+            "tool_round": _tool_round,
+            "system_prompt": _sys,
+            "system_tokens": len(_sys) // 4,
+            "tools_count": len(_tool_defs),
+            "tools_tokens": len(json.dumps(_tool_defs)) // 4,
+            "tool_names": _tool_names,
+            "history": _hist_msgs,
+            "history_tokens": sum(len(str(m.get("content", ""))) // 4 for m in _hist_msgs),
+            "user_message": _user_msg,
+            "user_tokens": len(_user_msg) // 4,
+            "total_payload_tokens": len(json.dumps(payload)) // 4,
+        })
 
     data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
@@ -13949,6 +13993,32 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         print(error_msg, file=sys.stderr)
         _thread_local._last_send_error = {"code": 0, "message": error_msg}
         return None
+
+
+def _parse_gemma_tool_calls(text: str) -> tuple[list[dict], str]:
+    """Parse gemma4-style tool calls from raw text.
+
+    Format: <|tool_call>call:name{key:<|"|>val<|"|>,...}<tool_call|>
+    Returns (list of tool_use dicts, cleaned text with tool calls removed).
+    """
+    tool_uses = []
+    pattern = r'<\|tool_call>call:(\w+)\{(.*?)\}<tool_call\|>'
+    for match in re.finditer(pattern, text):
+        name = match.group(1)
+        args_raw = match.group(2)
+        # Parse key-value pairs: key:<|"|>value<|"|>
+        args = {}
+        kv_pattern = r'(\w+):<\|"\|>(.*?)<\|"\|>'
+        for kv in re.finditer(kv_pattern, args_raw):
+            args[kv.group(1)] = kv.group(2)
+        tool_uses.append({
+            "id": f"gemma_{_uuid.uuid4().hex[:8]}",
+            "name": name,
+            "input": args,
+            "input_json": json.dumps(args),
+        })
+    cleaned = re.sub(pattern, '', text)
+    return tool_uses, cleaned
 
 
 def _handle_anthropic_response(response, payload, messages, model, api_key,
@@ -14071,6 +14141,10 @@ def _handle_anthropic_response(response, payload, messages, model, api_key,
 
     # Log cost for this API call
     _log_call_cost(model, _usage_in, _usage_out, session_id, _tool_round)
+
+    # Emit usage event so callers can capture token counts
+    if event_callback:
+        event_callback("usage", {"tokens_in": _usage_in, "tokens_out": _usage_out})
 
     # End LLM trace span
     _llm_span = getattr(_thread_local, 'current_trace_span', None)
@@ -14231,8 +14305,25 @@ def _handle_openai_response(response, payload, messages, model, api_key,
 
     full_text = "".join(collected_text)
 
+    # Parse gemma4-style tool calls from raw text (oMLX doesn't convert these)
+    if not tool_calls_map and "<|tool_call>" in full_text:
+        parsed, cleaned = _parse_gemma_tool_calls(full_text)
+        if parsed:
+            for i, tc in enumerate(parsed):
+                tool_calls_map[i] = {
+                    "id": tc["id"],
+                    "name": tc["name"],
+                    "arguments": json.dumps(tc["input"]),
+                }
+            full_text = cleaned.strip()
+            collected_text = [full_text] if full_text else []
+
     # Log cost for this API call
     _log_call_cost(model, _usage_in, _usage_out, session_id, _tool_round)
+
+    # Emit usage event so callers can capture token counts
+    if event_callback:
+        event_callback("usage", {"tokens_in": _usage_in, "tokens_out": _usage_out})
 
     # End LLM trace span (OpenAI handler)
     _llm_span_oai = getattr(_thread_local, 'current_trace_span', None)
