@@ -1,7 +1,7 @@
 ---
 name: github
 description: "Interact with GitHub using the gh CLI — PRs, issues, CI runs, API queries."
-last_recalled: 2026-03-31
+last_recalled: 2026-04-05
 ---
 
 # GitHub Skill

@@ -1609,6 +1609,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     "description": desc[:1000],
                     "inputSchema": td["input_schema"],
                 })
+            # Sort for prompt cache stability
+            tools.sort(key=lambda t: t.get("name", ""))
             self._send_json({"jsonrpc": "2.0", "id": msg_id, "result": {"tools": tools}})
         elif method == "tools/call":
             tool_name = params.get("name", "")
@@ -1805,6 +1807,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         # Build system prompt for this session's agent
         system_prompt = ""
         system_tokens = 0
+        memory_summary = ""
+        memory_tokens = 0
         if session:
             try:
                 agent_config = engine.AgentConfig(session.agent_id)
@@ -1813,6 +1817,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 engine._thread_local.note_context = getattr(session, 'note_context', None)
                 system_prompt = engine._build_system_prompt(include_memory_summary=False)
                 system_tokens = len(system_prompt) // 4  # rough estimate
+                # Memory summary (injected on first turn, separate from system prompt)
+                ms = engine.get_memory_summary(session.agent_id)
+                if ms:
+                    tc = agent_config.get("token_config") or {}
+                    cap = tc.get("memory_summary_cap", 3000)
+                    memory_summary = ms[:cap] if len(ms) > cap else ms
+                    memory_tokens = len(memory_summary) // 4
             except Exception:
                 pass
 
@@ -1875,6 +1886,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             "model": session.model if session else "",
             "max_context": session.max_context if session else 0,
             "system_prompt": {"content": system_prompt, "tokens_est": system_tokens},
+            "memory_summary": {"content": memory_summary, "tokens_est": memory_tokens},
             "interactions": interactions,
             "totals": {
                 "turns": len(interactions),
@@ -2404,9 +2416,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         _sdk_setting = _agent_sdk_raw.get("enabled", True) if isinstance(_agent_sdk_raw, dict) else bool(_agent_sdk_raw)
         _use_sdk = _sdk_setting and session.api_type == "anthropic"
 
+        # Pre-processing: tool result budget + microcompact (benefits both SDK and direct paths)
+        engine._thread_local.current_session_id = session.id
+        if len(session.messages) > 4:
+            engine._apply_tool_result_budget(session.messages, session_id=session.id,
+                                              agent_id=session.agent_id)
+            session.messages, _mc_freed = engine._microcompact(session.messages, keep_recent=5)
+
         # Check context and compact (with SSE progress) — skip for SDK agents
         # SDK manages its own context via session resume + internal compaction
-        engine._thread_local.current_session_id = session.id
         if not _use_sdk:
             estimated = engine._estimate_conversation_tokens(session.messages)
             ctx_cfg = engine._context_manager.get_config() if engine._context_manager else {}
@@ -2805,6 +2823,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     "description": desc[:1000],
                     "input_schema": td["input_schema"],
                 })
+            # Sort tool definitions deterministically for prompt cache stability
+            tool_defs.sort(key=lambda t: t.get("name", ""))
 
             # Plan mode / workflow tool restrictions → SDK allowed_tools
             allowed_tools = None

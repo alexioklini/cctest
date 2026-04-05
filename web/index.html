@@ -1214,24 +1214,185 @@ textarea { resize: none; }
 }
 .tool-block-header:hover { background: var(--bg-200); }
 .tool-block-header .tool-icon { color: var(--accent-brand); font-size: 14px; }
-.tool-block-header .tool-name { font-family: var(--font-mono); font-weight: 500; }
-.tool-block-header .tool-chevron { transition: transform 0.15s; font-size: 10px; margin-left: auto; }
+.tool-block-header .tool-icon-spin { animation: tool-spin 1.5s linear infinite; }
+@keyframes tool-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.tool-block-header .tool-name { font-weight: 500; font-size: 13px; }
+.tool-block-header .tool-timing { font-family: var(--font-mono); font-size: 11px; color: var(--text-400); margin-left: auto; }
+.tool-block-header .tool-chevron { transition: transform 0.15s; font-size: 10px; margin-left: 4px; }
+.tool-block-header .tool-timing + .tool-chevron { margin-left: 0; }
 .tool-block.open .tool-chevron { transform: rotate(90deg); }
 .tool-block-body {
   display: none;
   padding: 8px 12px;
   border-top: 1px solid var(--border-100);
-  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
-  max-height: 300px;
+  max-height: 400px;
   overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
   color: var(--text-300);
 }
 .tool-block.open .tool-block-body { display: block; }
-.tool-result-text { color: var(--text-200); }
+.tool-args-table { border-collapse: collapse; width: 100%; margin: 0; font-size: 12px; }
+.tool-args-table tr { border-bottom: 1px solid var(--border-100); }
+.tool-args-table tr:last-child { border-bottom: none; }
+.tool-args-key { padding: 4px 8px 4px 0; font-family: var(--font-mono); color: var(--text-400); white-space: nowrap; vertical-align: top; width: 1%; font-weight: 500; }
+.tool-args-val { padding: 4px 0; color: var(--text-200); word-break: break-word; }
+.tool-args-val pre { margin: 0; white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; }
+.tool-result-section { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-100); }
+.tool-result-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-400); margin-bottom: 4px; }
+.tool-result-pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: 12px; color: var(--text-200); max-height: 250px; overflow-y: auto; }
+
+/* ═══ References Panel ═══ */
+#references-panel {
+  display: none;
+  flex-direction: column;
+  width: 420px;
+  min-width: 300px;
+  max-width: 700px;
+  height: 100%;
+  background: var(--bg-000);
+  border-left: 1px solid var(--border-200);
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+#references-panel.open { display: flex; }
+.refs-resize-handle {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 10;
+  transition: background 0.15s;
+}
+.refs-resize-handle:hover, .refs-resize-handle.dragging { background: var(--accent-brand); opacity: 0.3; border-radius: 3px; }
+.refs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--border-100);
+  flex-shrink: 0;
+  background: var(--bg-000);
+}
+.refs-header-title { font-weight: 600; font-size: 14px; color: var(--text-100); }
+.refs-header-count { font-size: 12px; color: var(--text-400); margin-left: 8px; }
+.refs-close-btn { background: none; border: none; cursor: pointer; padding: 4px; color: var(--text-300); border-radius: 6px; }
+.refs-close-btn:hover { background: var(--bg-200); }
+.refs-content { flex: 1; overflow-y: auto; padding: 16px; }
+.ref-card {
+  border: 1px solid var(--border-100);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  background: var(--bg-100);
+}
+.ref-card:hover { border-color: var(--accent-brand); box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.ref-card-preview {
+  height: 160px;
+  background: var(--bg-200);
+  overflow: hidden;
+  position: relative;
+}
+.ref-card-preview img.ref-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
+  display: block;
+}
+.ref-card-preview .ref-thumb-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ref-card-preview .ref-favicon {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: var(--bg-000);
+  padding: 2px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  z-index: 1;
+}
+.ref-card-preview .ref-domain-pill {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  background: rgba(0,0,0,0.65);
+  color: #fff;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-family: var(--font-mono);
+  backdrop-filter: blur(4px);
+  z-index: 1;
+}
+.ref-card-body { padding: 12px; }
+.ref-card-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-100);
+  margin-bottom: 4px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ref-card-snippet {
+  font-size: 12px;
+  color: var(--text-300);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ref-card-url {
+  font-size: 11px;
+  color: var(--text-400);
+  font-family: var(--font-mono);
+  margin-top: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Reference badges in messages */
+.msg-references {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-100);
+}
+.ref-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-100);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-200);
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.15s;
+  background: var(--bg-100);
+  max-width: 220px;
+}
+.ref-badge:hover { background: var(--bg-200); border-color: var(--accent-brand); }
+.ref-badge img { width: 14px; height: 14px; border-radius: 3px; }
+.ref-badge-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Thinking block */
 .thinking-block {
@@ -3947,6 +4108,21 @@ textarea { resize: none; }
   </div>
 </div>
 
+<!-- ═══ References Panel ═══ -->
+<div id="references-panel">
+  <div class="refs-resize-handle" id="refs-resize-handle"></div>
+  <div class="refs-header">
+    <div style="display:flex;align-items:center">
+      <span class="refs-header-title">Sources</span>
+      <span class="refs-header-count" id="refs-count"></span>
+    </div>
+    <button class="refs-close-btn" onclick="closeReferencesPanel()" title="Close">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <div class="refs-content" id="refs-content"></div>
+</div>
+
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════
@@ -4201,6 +4377,8 @@ const state = {
 
   // Artifact panel
   artifactPanelOpen: false,
+  referencesPanelOpen: false,
+  chatReferences: {},  // sessionId -> [{title, link, snippet, domain, favicon}]
   artifacts: {},           // { sessionId: [artifact objects] }
   activeArtifactId: null,
   activeArtifactVersion: null,
@@ -5907,6 +6085,7 @@ function newChat() {
   chat._lastApiIn = 0;
   chat._warmingUp = false;
   closeArtifactPanel();
+  closeReferencesPanel();
   navigateTo('welcome');
   // Pre-create session to trigger warmup for local models
   ensureSession(chat).catch(() => {});
@@ -6061,15 +6240,18 @@ async function sendMessage() {
         if (last && last.role === 'tool_call' && last.name === d.name && d.args && Object.keys(d.args).length) {
           last.args = d.args;
         } else {
-          chat.messages.push({ role: 'tool_call', name: d.name, args: d.args || {} });
+          chat.messages.push({ role: 'tool_call', name: d.name, args: d.args || {}, _ts: Date.now() });
         }
         renderMessages();
         scrollToBottom();
       },
       tool_result: (d) => {
-        if (!state.showToolCalls) return;
-        const toolMsg = { role: 'tool_result', name: d.name, result: d.result };
+        const toolMsg = { role: 'tool_result', name: d.name, result: d.result, _ts: Date.now() };
         chat.messages.push(toolMsg);
+        // Extract web references from tool results
+        const refs = extractReferencesFromToolResult(toolMsg);
+        for (const ref of refs) addChatReference(ref);
+        if (!state.showToolCalls) return;
         renderMessages();
         scrollToBottom();
       },
@@ -6292,6 +6474,19 @@ async function openInspectModal() {
       <pre style="margin:0;padding:16px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:400px;overflow-y:auto;background:var(--bg-200);color:var(--text-200);font-family:var(--font-mono)">${esc(spContent || '(not available)')}</pre>
     </details>`;
 
+    // --- Memory Summary (once, if present) ---
+    const memContent = data.memory_summary?.content || '';
+    const memTokens = data.memory_summary?.tokens_est || 0;
+    if (memContent) {
+      html += `<details style="margin-bottom:8px;border:1px solid var(--border-100);border-radius:10px;overflow:hidden">
+        <summary style="padding:12px 16px;cursor:pointer;background:var(--bg-100);font-weight:500;color:var(--text-000);display:flex;align-items:center;gap:8px">
+          <span style="color:#e89234">Memory Summary</span>
+          <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-400);margin-left:auto">~${memTokens.toLocaleString()} tokens</span>
+        </summary>
+        <pre style="margin:0;padding:16px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:400px;overflow-y:auto;background:var(--bg-200);color:var(--text-200);font-family:var(--font-mono)">${esc(memContent)}</pre>
+      </details>`;
+    }
+
     // --- Tool Definitions (once) ---
     if (toolsCount > 0) {
       html += `<details style="margin-bottom:16px;border:1px solid var(--border-100);border-radius:10px;overflow:hidden">
@@ -6348,12 +6543,14 @@ async function openInspectModal() {
               <!-- Token breakdown bar -->
               <div style="display:flex;gap:0;height:6px;margin-bottom:8px;border-radius:3px;overflow:hidden">
                 <div style="flex:${p.system_tokens||1};background:#8b5cf6" title="System"></div>
+                ${memTokens ? `<div style="flex:${memTokens};background:#e89234" title="Memory"></div>` : ''}
                 <div style="flex:${p.tools_tokens||1};background:var(--accent-brand)" title="Tools"></div>
                 <div style="flex:${p.history_tokens||1};background:var(--text-400)" title="History"></div>
                 <div style="flex:${p.user_tokens||1};background:var(--success)" title="User"></div>
               </div>
               <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:11px;margin-bottom:8px">
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:#8b5cf6"></span>System ~${(p.system_tokens||0).toLocaleString()}</span>
+                ${memTokens ? `<span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:#e89234"></span>Memory ~${memTokens.toLocaleString()}</span>` : ''}
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:var(--accent-brand)"></span>Tools (${p.tools_count||0}) ~${(p.tools_tokens||0).toLocaleString()}</span>
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:var(--text-400)"></span>History (${(p.history||[]).length} msgs) ~${(p.history_tokens||0).toLocaleString()}</span>
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:var(--success)"></span>User ~${(p.user_tokens||0).toLocaleString()}</span>
@@ -6586,11 +6783,28 @@ function renderAssistantMessage(msg, idx) {
     filesHtml += '</div>';
   }
 
+  // Reference badges
+  let refsHtml = '';
+  const msgRefs = getReferencesForMessage(idx);
+  if (msgRefs.length > 0) {
+    refsHtml = '<div class="msg-references">';
+    for (const ref of msgRefs) {
+      refsHtml += `
+        <div class="ref-badge" onclick="openReferencesPanel()" title="${esc(ref.link)}">
+          <img src="${esc(ref.favicon)}" onerror="this.style.display='none'" alt="">
+          <span class="ref-badge-text">${esc(ref.title || ref.domain)}</span>
+        </div>
+      `;
+    }
+    refsHtml += '</div>';
+  }
+
   return `
     <div class="msg-turn msg-turn-assistant">
       ${thinkingHtml}
       <div class="msg-assistant msg-content">${rendered}</div>
       ${filesHtml}
+      ${refsHtml}
       <div class="msg-actions-bar">
         <button class="msg-action-btn" onclick="copyMessage(${idx})" title="Copy">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
@@ -6603,33 +6817,124 @@ function renderAssistantMessage(msg, idx) {
   `;
 }
 
+function toolDescribe(name, args) {
+  const a = args || {};
+  const descs = {
+    read_file: () => `Reading ${a.path || a.file_path || 'file'}`,
+    write_file: () => `Writing ${a.path || a.file_path || 'file'}`,
+    edit_file: () => `Editing ${a.path || a.file_path || 'file'}`,
+    list_directory: () => `Listing ${a.path || a.directory || 'directory'}`,
+    search_files: () => `Searching files for "${a.query || a.pattern || '...'}"`,
+    execute_command: () => `Running \`${(a.command || '').substring(0, 60)}${(a.command || '').length > 60 ? '...' : ''}\``,
+    web_fetch: () => { try { return `Fetching ${a.url ? new URL(a.url).hostname : 'web page'}`; } catch(e) { return `Fetching ${a.url || 'web page'}`; } },
+    exa_search: () => `Searching the web for "${a.query || '...'}"`,
+    gmail_inbox: () => 'Checking inbox',
+    gmail_read: () => `Reading email${a.id ? ' #' + a.id : ''}`,
+    gmail_search: () => `Searching email for "${a.query || '...'}"`,
+    gmail_send: () => `Sending email to ${a.to || '...'}`,
+    gmail_reply: () => `Replying to email${a.id ? ' #' + a.id : ''}`,
+    memory_store: () => `Storing memory "${a.name || a.title || '...'}"`,
+    memory_recall: () => `Recalling "${a.query || '...'}"`,
+    memory_shared: () => `Reading shared memory${a.scope ? ' (' + a.scope + ')' : ''}`,
+    memory_delete: () => `Deleting memory "${a.name || '...'}"`,
+    delegate_task: () => `Delegating to ${a.agent || a.agent_id || 'agent'}`,
+    task_status: () => `Checking task status`,
+    task_cancel: () => `Cancelling task`,
+    git_command: () => `Git ${a.subcommand || a.command || ''}`,
+    github_command: () => `GitHub ${a.subcommand || a.command || ''}`,
+    use_skill: () => `Using skill "${a.skill || a.name || '...'}"`,
+    code_graph_build: () => `Building code graph${a.path ? ' for ' + a.path : ''}`,
+    code_graph_query: () => `Querying code graph`,
+    code_graph_impact: () => `Analyzing impact`,
+    schedule_list: () => 'Listing schedules',
+    schedule_history: () => 'Checking schedule history',
+    context_search: () => `Searching context for "${a.query || '...'}"`,
+    context_detail: () => `Loading context detail`,
+    context_recall: () => `Recalling from context`,
+    read_document: () => `Reading document ${a.path || a.file_path || ''}`,
+    write_document: () => `Writing document ${a.path || a.file_path || ''}`,
+    edit_document: () => `Editing document ${a.path || a.file_path || ''}`,
+    list_nodes: () => 'Listing remote nodes',
+  };
+  const fn = descs[name];
+  return fn ? fn() : name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function renderToolArgsTable(args) {
+  if (!args || typeof args !== 'object' || Object.keys(args).length === 0) return '';
+  let html = '<table class="tool-args-table">';
+  for (const [k, v] of Object.entries(args)) {
+    const val = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
+    const displayVal = val.length > 300 ? val.substring(0, 300) + '...' : val;
+    html += `<tr><td class="tool-args-key">${esc(k)}</td><td class="tool-args-val"><pre>${esc(displayVal)}</pre></td></tr>`;
+  }
+  html += '</table>';
+  return html;
+}
+
 function renderToolCall(msg, idx) {
   if (!state.showToolCalls) return '';
-  const argsStr = typeof msg.args === 'string' ? msg.args : JSON.stringify(msg.args, null, 2);
+  // Look ahead for matching tool_result
+  const chat = state.activeChat;
+  let resultMsg = null;
+  if (chat) {
+    for (let j = idx + 1; j < chat.messages.length; j++) {
+      const next = chat.messages[j];
+      if (next.role === 'tool_result' && next.name === msg.name) { resultMsg = next; break; }
+      if (next.role === 'tool_call' || next.role === 'assistant' || next.role === 'user') break;
+    }
+  }
+  const desc = toolDescribe(msg.name, msg.args);
+  const args = typeof msg.args === 'string' ? {} : (msg.args || {});
+  const hasResult = resultMsg !== null;
+  const duration = (hasResult && msg._ts && resultMsg._ts) ? ((resultMsg._ts - msg._ts) / 1000).toFixed(1) : null;
+  const icon = hasResult ? `<span class="tool-icon" style="color:var(--success)">&#10003;</span>` : `<span class="tool-icon tool-icon-spin">&#9881;</span>`;
+  const timing = duration ? `<span class="tool-timing">${duration}s</span>` : '';
+
+  let bodyHtml = renderToolArgsTable(args);
+  if (hasResult) {
+    const resultStr = typeof resultMsg.result === 'string' ? resultMsg.result : JSON.stringify(resultMsg.result, null, 2);
+    const truncated = resultStr.length > 800 ? resultStr.substring(0, 800) + '...' : resultStr;
+    bodyHtml += `<div class="tool-result-section"><div class="tool-result-label">Response</div><pre class="tool-result-pre">${esc(truncated)}</pre></div>`;
+  }
+
   return `
-    <div class="tool-block" onclick="this.classList.toggle('open')">
+    <div class="tool-block${hasResult ? ' has-result' : ''}" onclick="this.classList.toggle('open')">
       <div class="tool-block-header">
-        <span class="tool-icon">&#9881;</span>
-        <span class="tool-name">${esc(msg.name)}</span>
+        ${icon}
+        <span class="tool-name">${desc}</span>
+        ${timing}
         <span class="tool-chevron">&#9656;</span>
       </div>
-      <div class="tool-block-body"><pre>${esc(argsStr)}</pre></div>
+      <div class="tool-block-body">${bodyHtml}</div>
     </div>
   `;
 }
 
 function renderToolResult(msg, idx) {
+  // Tool results are now rendered inside their tool_call block
+  // Only render standalone if no preceding tool_call found
   if (!state.showToolCalls) return '';
+  const chat = state.activeChat;
+  if (chat) {
+    for (let j = idx - 1; j >= 0; j--) {
+      const prev = chat.messages[j];
+      if (prev.role === 'tool_call' && prev.name === msg.name) return ''; // already rendered inside tool_call
+      if (prev.role === 'assistant' || prev.role === 'user') break;
+    }
+  }
+  // Standalone result (no matching call found)
   const resultStr = typeof msg.result === 'string' ? msg.result : JSON.stringify(msg.result, null, 2);
-  const truncated = resultStr.length > 500 ? resultStr.substring(0, 500) + '...' : resultStr;
+  const truncated = resultStr.length > 800 ? resultStr.substring(0, 800) + '...' : resultStr;
+  const desc = toolDescribe(msg.name, {});
   return `
-    <div class="tool-block" onclick="this.classList.toggle('open')">
+    <div class="tool-block has-result" onclick="this.classList.toggle('open')">
       <div class="tool-block-header">
         <span class="tool-icon" style="color:var(--success)">&#10003;</span>
-        <span class="tool-name">${esc(msg.name)} result</span>
+        <span class="tool-name">${desc}</span>
         <span class="tool-chevron">&#9656;</span>
       </div>
-      <div class="tool-block-body tool-result-text"><pre>${esc(truncated)}</pre></div>
+      <div class="tool-block-body"><div class="tool-result-section"><div class="tool-result-label">Response</div><pre class="tool-result-pre">${esc(truncated)}</pre></div></div>
     </div>
   `;
 }
@@ -10865,6 +11170,202 @@ function closeArtifactPanel() {
   state.artifactSourceMode = false;
 }
 
+/* ═══════════════════════════════════════════════════════════
+   REFERENCES PANEL
+   ═══════════════════════════════════════════════════════════ */
+
+function extractReferencesFromToolResult(msg) {
+  // Extract web references from tool_result messages
+  if (msg.role !== 'tool_result' || !msg.result) return [];
+  if (msg.name !== 'exa_search' && msg.name !== 'web_fetch') return [];
+  const refs = [];
+  const resultStr = typeof msg.result === 'string' ? msg.result : JSON.stringify(msg.result);
+
+  // Try full JSON parse first
+  try {
+    const data = JSON.parse(resultStr);
+    if (data.results && Array.isArray(data.results)) {
+      for (const r of data.results) {
+        if (r.link || r.url) {
+          const url = r.link || r.url;
+          let domain = '';
+          try { domain = new URL(url).hostname.replace('www.', ''); } catch(e) {}
+          refs.push({
+            title: r.title || domain || url,
+            link: url,
+            snippet: (r.snippet || '').substring(0, 200),
+            domain: domain,
+            favicon: `https://www.google.com/s2/favicons?domain=${domain}&sz=32`,
+          });
+        }
+      }
+      return refs;
+    } else if (data.url && (data.content || data.status)) {
+      let domain = '';
+      try { domain = new URL(data.url).hostname.replace('www.', ''); } catch(e) {}
+      let title = domain;
+      const titleMatch = (data.content || '').match(/<title[^>]*>([^<]+)<\/title>/i);
+      if (titleMatch) title = titleMatch[1].trim();
+      refs.push({ title, link: data.url, snippet: '', domain, favicon: `https://www.google.com/s2/favicons?domain=${domain}&sz=32` });
+      return refs;
+    }
+  } catch(e) {
+    // JSON truncated — fall back to regex extraction
+  }
+
+  // Regex fallback for truncated JSON (tool results capped at 500 chars)
+  const decodeJsonStr = (s) => { try { return JSON.parse('"' + s + '"'); } catch(e) { return s; } };
+  if (msg.name === 'exa_search') {
+    const titleLinkPairs = [...resultStr.matchAll(/"title"\s*:\s*"([^"]*)"[^}]*?"link"\s*:\s*"([^"]*)"/g)];
+    for (const match of titleLinkPairs) {
+      const [, rawTitle, link] = match;
+      const title = decodeJsonStr(rawTitle);
+      let domain = '';
+      try { domain = new URL(link).hostname.replace('www.', ''); } catch(e) {}
+      refs.push({ title, link, snippet: '', domain, favicon: `https://www.google.com/s2/favicons?domain=${domain}&sz=32` });
+    }
+  } else if (msg.name === 'web_fetch') {
+    const urlMatch = resultStr.match(/"url"\s*:\s*"([^"]*)"/);
+    if (urlMatch) {
+      const url = urlMatch[1];
+      let domain = '';
+      try { domain = new URL(url).hostname.replace('www.', ''); } catch(e) {}
+      let title = domain;
+      const titleMatch = resultStr.match(/<title[^>]*>([^<]+)<\/title>/i);
+      if (titleMatch) title = titleMatch[1].trim();
+      refs.push({ title, link: url, snippet: '', domain, favicon: `https://www.google.com/s2/favicons?domain=${domain}&sz=32` });
+    }
+  }
+  return refs;
+}
+
+function collectChatReferences() {
+  const chat = state.activeChat;
+  if (!chat) return [];
+  const sessionId = chat.sessionId;
+  // Use cached if available
+  if (state.chatReferences[sessionId]) return state.chatReferences[sessionId];
+
+  const refs = [];
+  const seen = new Set();
+  for (const msg of chat.messages) {
+    const extracted = extractReferencesFromToolResult(msg);
+    for (const ref of extracted) {
+      if (!seen.has(ref.link)) {
+        seen.add(ref.link);
+        refs.push(ref);
+      }
+    }
+  }
+  state.chatReferences[sessionId] = refs;
+  return refs;
+}
+
+function addChatReference(ref) {
+  const chat = state.activeChat;
+  if (!chat) return;
+  const sessionId = chat.sessionId;
+  if (!state.chatReferences[sessionId]) state.chatReferences[sessionId] = [];
+  const refs = state.chatReferences[sessionId];
+  if (!refs.some(r => r.link === ref.link)) {
+    refs.push(ref);
+  }
+}
+
+function getReferencesForMessage(idx) {
+  // Look backward from this assistant message for tool_result messages
+  const chat = state.activeChat;
+  if (!chat) return [];
+  const refs = [];
+  const seen = new Set();
+  for (let j = idx - 1; j >= 0; j--) {
+    const m = chat.messages[j];
+    if (m.role === 'user' || m.role === 'human') break;
+    if (m.role === 'tool_result') {
+      for (const ref of extractReferencesFromToolResult(m)) {
+        if (!seen.has(ref.link)) {
+          seen.add(ref.link);
+          refs.push(ref);
+        }
+      }
+    }
+  }
+  return refs;
+}
+
+function openReferencesPanel() {
+  const refs = collectChatReferences();
+  if (!refs.length) { showToast('No web sources in this chat'); return; }
+
+  const panel = document.getElementById('references-panel');
+  if (!panel) return;
+
+  document.getElementById('refs-count').textContent = `${refs.length} source${refs.length !== 1 ? 's' : ''}`;
+
+  let html = '';
+  for (const ref of refs) {
+    const snippetHtml = ref.snippet ? `<div class="ref-card-snippet">${esc(ref.snippet)}</div>` : '';
+    const thumbUrl = `https://api.microlink.io/?url=${encodeURIComponent(ref.link)}&screenshot=true&meta=false&embed=screenshot.url`;
+    html += `
+      <div class="ref-card" onclick="window.open('${esc(ref.link)}', '_blank')">
+        <div class="ref-card-preview">
+          <img class="ref-favicon" src="${esc(ref.favicon)}" onerror="this.style.display='none'" alt="">
+          <img class="ref-thumb" src="${esc(thumbUrl)}" onerror="this.parentElement.innerHTML='<div class=\\'ref-thumb-placeholder\\'><svg viewBox=\\'0 0 24 24\\' width=\\'32\\' height=\\'32\\' fill=\\'none\\' stroke=\\'var(--text-400)\\' stroke-width=\\'1\\' opacity=\\'0.3\\'><path d=\\'M12 2a10 10 0 110 20 10 10 0 010-20z\\'/><path d=\\'M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z\\'/></svg></div>'" loading="lazy" alt="">
+          <span class="ref-domain-pill">${esc(ref.domain)}</span>
+        </div>
+        <div class="ref-card-body">
+          <div class="ref-card-title">${esc(ref.title)}</div>
+          ${snippetHtml}
+          <div class="ref-card-url">${esc(ref.link)}</div>
+        </div>
+      </div>
+    `;
+  }
+  document.getElementById('refs-content').innerHTML = html;
+
+  // Close artifact panel if open
+  if (state.artifactPanelOpen) closeArtifactPanel();
+
+  panel.classList.add('open');
+  state.referencesPanelOpen = true;
+
+  // Setup resize handle
+  initRefsResizeHandle();
+}
+
+function closeReferencesPanel() {
+  const panel = document.getElementById('references-panel');
+  if (panel) panel.classList.remove('open');
+  state.referencesPanelOpen = false;
+}
+
+function initRefsResizeHandle() {
+  const handle = document.getElementById('refs-resize-handle');
+  const panel = document.getElementById('references-panel');
+  if (!handle || !panel) return;
+  let startX, startWidth;
+  handle.onmousedown = (e) => {
+    e.preventDefault();
+    startX = e.clientX;
+    startWidth = panel.offsetWidth;
+    handle.classList.add('dragging');
+    const onMove = (e2) => {
+      const newW = startWidth - (e2.clientX - startX);
+      panel.style.width = Math.max(300, Math.min(700, newW)) + 'px';
+    };
+    const onUp = () => {
+      handle.classList.remove('dragging');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      localStorage.setItem('refs-panel-width', panel.style.width);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
+  const saved = localStorage.getItem('refs-panel-width');
+  if (saved) panel.style.width = saved;
+}
+
 function showArtifactList() {
   const chat = state.activeChat;
   if (!chat) return;
@@ -12147,26 +12648,24 @@ async function stopCodeGeneration() {
 }
 
 function _renderCodeToolBlock(tool) {
-  if (tool.isResult) {
+  if (tool.isResult) return ''; // Results rendered inside their tool_call block
+  const desc = toolDescribe(tool.name, tool.args);
+  const args = typeof tool.args === 'string' ? {} : (tool.args || {});
+  const hasResult = tool.result !== undefined;
+  const icon = hasResult ? `<span class="tool-icon" style="color:var(--success)">&#10003;</span>` : `<span class="tool-icon tool-icon-spin">&#9881;</span>`;
+  let bodyHtml = renderToolArgsTable(args);
+  if (hasResult) {
     const resultStr = typeof tool.result === 'string' ? tool.result : JSON.stringify(tool.result, null, 2);
-    const truncated = resultStr.length > 500 ? resultStr.substring(0, 500) + '...' : resultStr;
-    return `<div class="tool-block" onclick="this.classList.toggle('open')">
-      <div class="tool-block-header">
-        <span class="tool-icon" style="color:var(--success)">&#10003;</span>
-        <span class="tool-name">${esc(tool.name)} result</span>
-        <span class="tool-chevron">&#9656;</span>
-      </div>
-      <div class="tool-block-body tool-result-text"><pre>${esc(truncated)}</pre></div>
-    </div>`;
+    const truncated = resultStr.length > 800 ? resultStr.substring(0, 800) + '...' : resultStr;
+    bodyHtml += `<div class="tool-result-section"><div class="tool-result-label">Response</div><pre class="tool-result-pre">${esc(truncated)}</pre></div>`;
   }
-  const argsStr = typeof tool.args === 'string' ? tool.args : JSON.stringify(tool.args, null, 2);
-  return `<div class="tool-block" onclick="this.classList.toggle('open')">
+  return `<div class="tool-block${hasResult ? ' has-result' : ''}" onclick="this.classList.toggle('open')">
     <div class="tool-block-header">
-      <span class="tool-icon">&#9881;</span>
-      <span class="tool-name">${esc(tool.name)}</span>
+      ${icon}
+      <span class="tool-name">${desc}</span>
       <span class="tool-chevron">&#9656;</span>
     </div>
-    <div class="tool-block-body"><pre>${esc(argsStr)}</pre></div>
+    <div class="tool-block-body">${bodyHtml}</div>
   </div>`;
 }
 

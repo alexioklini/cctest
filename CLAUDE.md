@@ -53,13 +53,25 @@ Key patterns:
 - Claude.ai design system: Anthropic Sans/Serif/Mono fonts, warm light theme, dark theme toggle
 - CSS custom properties (`--bg-*`, `--text-*`, `--accent-*`) for consistent theming across light/dark
 - `navigateTo(view)` switches between views by toggling `display:none`
-- Tool call blocks: collapsible `div.tool-block` with gear icon, tool name, chevron, expandable args body
+- Tool call blocks: collapsible `div.tool-block` with human-readable descriptions (`toolDescribe()`), args table, merged tool_call+tool_result, timing badge
+- `toolDescribe(name, args)` maps 30+ tool names to readable descriptions (e.g., `exa_search` → `Searching the web for "query"`)
+- `renderToolArgsTable()` displays args as key-value table instead of raw JSON
+- Tool call + result merged into single block: args table + "Response" section when expanded, timing in header
+- Spinning gear icon while tool is running, green checkmark when complete
+- Timestamps (`_ts`) on tool_call/tool_result messages for duration calculation
 - Tool calls persisted in assistant message metadata (`metadata.tools`), reconstructed on session restore via `openSession()`
 - Tool display toggle (`state.showToolCalls`) hides/shows tool blocks, persisted to localStorage
+- References panel: Le Chat-style sources panel for web references from `exa_search`/`web_fetch` tool results
+- Reference badges: favicon + title chips at bottom of assistant messages, click opens sources panel
+- Sources panel (`#references-panel`): resizable right panel with card grid, webpage screenshot previews via Microlink API
+- `extractReferencesFromToolResult()` parses JSON (with regex fallback for truncated results), extracts title/link/domain
+- `collectChatReferences()` aggregates all references per session; `getReferencesForMessage(idx)` scopes to preceding tools
+- Reference cards: click opens URL in new tab; preview uses `api.microlink.io` screenshot thumbnails with lazy loading
 - Agent quick-switch buttons below composer on welcome view
 - Streaming uses raw socket SSE for unbuffered token-by-token display
 - `renderStreamingMessage()` updates in-place during streaming; `renderMessages()` for full re-render
 - Artifact panel: resizable right panel (`#artifact-panel`) for viewing generated files with type-aware rendering
+- References panel: resizable right panel (`#references-panel`) for web source cards with screenshot previews
 
 ### Code Mode
 
@@ -67,7 +79,7 @@ Code mode provides a Claude Desktop-style coding assistant with file tree, diff 
 
 - **Folder browser GUI**: modal with breadcrumb navigation, lazy-loaded directory listing via `/v1/files/tree?depth=0`, single-click select, double-click navigate, manual path input
 - **SSE streaming**: uses proper two-line `event: type\ndata: json` format (same parser as main chat)
-- **Tool calls**: rendered identically to main chat — `renderToolCall`/`renderToolResult` style with gear/check icons, `.tool-block.open` toggle
+- **Tool calls**: same merged format as main chat — human-readable descriptions, args table, timing badge, merged call+result
 - **Streaming indicator**: spinner bar with wave animation, model name, tool name labels ("Running Read..."), elapsed timer, stop button swaps with send button
 - **Folder-based projects**: sessions tagged with folder path in `project` field; "All Projects" expands to show discovered projects (unique folder paths from sessions) with counts; selecting a project filters the session list
 - **Session management**: archive/delete buttons on hover in sidebar session items; `archiveCodeSession()`/`deleteCodeSession()` via API
