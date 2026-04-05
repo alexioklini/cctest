@@ -4306,7 +4306,9 @@ class API {
             try {
               const data = JSON.parse(line.slice(6));
               if (callbacks[lastEventType]) callbacks[lastEventType](data);
-            } catch(e) {}
+            } catch(e) {
+              console.error('[SSE] JSON parse failed for event:', lastEventType, 'line length:', line.length, e.message);
+            }
             lastEventType = null;
           } else if (line.startsWith(':')) {
             // keepalive comment
@@ -4399,10 +4401,6 @@ const state = {
   activeArtifactVersion: null,
   artifactSourceMode: false,
 
-  // Stream timing
-  _streamStartTime: null,
-  _streamTimerInterval: null,
-
   get activeChat() {
     return this.activeAgentId ? this.agentChats[this.activeAgentId] : null;
   },
@@ -4420,6 +4418,8 @@ const state = {
         streamingText: '',
         thinkingText: '',
         files: [],
+        _streamStartTime: null,
+        _streamTimerInterval: null,
       };
     }
     return this.agentChats[agentId];
@@ -5713,14 +5713,25 @@ function toggleModelDropdown(event) {
     `;
     item.onclick = () => {
       if (state.activeChat) {
-        const oldModel = state.activeChat.model;
-        state.activeChat.model = mid;
+        const chat = state.activeChat;  // capture by value for async callbacks
+        const oldModel = chat.model;
+        chat.model = mid;
         updateModelSelectorDisplay(mid);
-        // Re-create session + warmup if model changed and no messages yet
-        if (mid !== oldModel && state.activeChat.messages.length === 0) {
-          state.activeChat.sessionId = null;
-          state.activeChat._warmingUp = false;
-          ensureSession(state.activeChat).catch(() => {});
+        if (mid !== oldModel) {
+          stopWarmupPoll(chat);
+          updateStatusBar();
+          if (chat.messages.length === 0) {
+            // Re-create session + warmup for empty chats
+            chat.sessionId = null;
+            ensureSession(chat).catch(() => {});
+          } else if (chat.sessionId) {
+            // Trigger warmup on existing session with new model
+            API.post(`/v1/sessions/${chat.sessionId}/warmup`, {model: mid}).then(data => {
+              if (data.warmup) {
+                startWarmupPoll(chat);
+              }
+            }).catch(() => {});
+          }
         }
       }
       closeAllDropdowns();
@@ -5975,13 +5986,40 @@ function renderSessionsList(container, sessions) {
 /* ═══════════════════════════════════════════════════════════
    SESSION MANAGEMENT
    ═══════════════════════════════════════════════════════════ */
-async function ensureSession(chat) {
-  if (chat.sessionId) return chat.sessionId;
-  // Stop any existing warmup poll
+
+/** Stop any active warmup poll on a chat and reset warmup state. */
+function stopWarmupPoll(chat) {
   if (chat._warmupPoll) {
     clearInterval(chat._warmupPoll);
     chat._warmupPoll = null;
   }
+  chat._warmingUp = false;
+}
+
+/** Start polling warmup status for a chat's session. Chat is captured by value. */
+function startWarmupPoll(chat) {
+  stopWarmupPoll(chat);
+  const sid = chat.sessionId;
+  if (!sid) return;
+  chat._warmingUp = true;
+  updateStatusBar();
+  chat._warmupPoll = setInterval(async () => {
+    try {
+      const w = await API.get(`/v1/sessions/${sid}/warmup`);
+      if (!w.warming_up) {
+        stopWarmupPoll(chat);
+        updateStatusBar();
+      }
+    } catch(e) {
+      stopWarmupPoll(chat);
+      updateStatusBar();
+    }
+  }, 500);
+}
+
+async function ensureSession(chat) {
+  if (chat.sessionId) return chat.sessionId;
+  stopWarmupPoll(chat);
   // Generation counter to handle race conditions on model switch
   const gen = (chat._sessionGen = (chat._sessionGen || 0) + 1);
   try {
@@ -5992,25 +6030,7 @@ async function ensureSession(chat) {
     if (data.max_context) chat.maxContext = data.max_context;
     // Show warmup indicator if provider supports it
     if (data.warmup) {
-      chat._warmingUp = true;
-      updateStatusBar();
-      // Poll until warmup done
-      chat._warmupPoll = setInterval(async () => {
-        try {
-          const w = await API.get(`/v1/sessions/${chat.sessionId}/warmup`);
-          if (!w.warming_up) {
-            clearInterval(chat._warmupPoll);
-            chat._warmupPoll = null;
-            chat._warmingUp = false;
-            updateStatusBar();
-          }
-        } catch(e) {
-          clearInterval(chat._warmupPoll);
-          chat._warmupPoll = null;
-          chat._warmingUp = false;
-          updateStatusBar();
-        }
-      }, 500);
+      startWarmupPoll(chat);
     }
     return chat.sessionId;
   } catch(e) {
@@ -6020,10 +6040,28 @@ async function ensureSession(chat) {
 }
 
 async function openSession(sessionId, agentId) {
+  // Abort any running stream before switching
+  const prevChat = state.activeChat;
+  if (prevChat?.streaming) {
+    if (API._abortController) API._abortController.abort();
+    prevChat.streaming = false;
+    clearInterval(prevChat._streamTimerInterval);
+    if (prevChat.streamingText) {
+      prevChat.messages.push({role:'assistant', content: prevChat.streamingText, _cancelled: true});
+    }
+    prevChat.streamingText = '';
+    prevChat.thinkingText = '';
+    prevChat.files = [];
+    updateStreamingUI(false);
+  }
+
   selectAgent(agentId);
   const chat = state.ensureAgentChat(agentId);
   chat.sessionId = sessionId;
   chat.messages = [];
+  chat.streamingText = '';
+  chat.thinkingText = '';
+  chat.files = [];
   chat._tokensIn = 0;
   chat._tokensOut = 0;
   chat._lastSpeed = null;
@@ -6076,8 +6114,19 @@ async function openSession(sessionId, agentId) {
     showToast('Failed to load session', true);
   }
 
-  // Close artifact panel when switching sessions
+  // Close artifact and references panels when switching sessions
   closeArtifactPanel();
+  closeReferencesPanel();
+
+  // Trigger warmup for the restored session's model if provider supports it
+  stopWarmupPoll(chat);
+  if (chat.sessionId) {
+    API.post(`/v1/sessions/${chat.sessionId}/warmup`, {}).then(data => {
+      if (data.warmup) {
+        startWarmupPoll(chat);
+      }
+    }).catch(() => {});
+  }
 
   navigateTo('chat');
 }
@@ -6088,9 +6137,17 @@ function newChat() {
     else return;
   }
   const chat = state.ensureAgentChat(state.activeAgentId);
+  // If a stream is active, stop it cleanly before resetting
+  if (chat.streaming) {
+    if (API._abortController) API._abortController.abort();
+    chat.streaming = false;
+    clearInterval(chat._streamTimerInterval);
+    updateStreamingUI(false);
+  }
   chat.sessionId = null;
   chat.messages = [];
   chat.totalTokens = 0;
+  chat.maxContext = 0;
   chat.streamingText = '';
   chat.thinkingText = '';
   chat.files = [];
@@ -6098,7 +6155,7 @@ function newChat() {
   chat._tokensOut = 0;
   chat._lastSpeed = null;
   chat._lastApiIn = 0;
-  chat._warmingUp = false;
+  stopWarmupPoll(chat);
   closeArtifactPanel();
   closeReferencesPanel();
   navigateTo('welcome');
@@ -6222,51 +6279,67 @@ async function sendMessage() {
   chat.streamingText = '';
   chat.thinkingText = '';
   chat.files = [];
-  updateStreamingUI(true);
+  updateStreamingUI(true, chat);
 
-  // Timer
-  state._streamStartTime = Date.now();
-  state._streamTimerInterval = setInterval(updateStreamTimer, 100);
+  // Timer (per-chat, not global)
+  chat._streamStartTime = Date.now();
+  chat._streamTimerInterval = setInterval(() => updateStreamTimer(chat), 100);
 
   try {
-    await ensureSession(chat);
+    const sid = await ensureSession(chat);
+    if (!sid) {
+      // Race condition: model switched during session creation — abort cleanly
+      chat.streaming = false;
+      updateStreamingUI(false);
+      clearInterval(chat._streamTimerInterval);
+      return;
+    }
+
+    // Guard: only update DOM when this chat is still the active one
+    const isActive = () => state.activeChat === chat;
 
     await API.streamChat(chat.sessionId, text, {
       thinking_start: () => {
         chat.thinkingText = '';
-        renderStreamingMessage(chat);
+        if (isActive()) renderStreamingMessage(chat);
       },
       thinking_delta: (d) => {
         chat.thinkingText += d.text || '';
-        renderStreamingMessage(chat);
+        if (isActive()) renderStreamingMessage(chat);
       },
       thinking_done: (d) => {
         chat.thinkingText = d.text || chat.thinkingText;
       },
       text_delta: (d) => {
         chat.streamingText += d.text || '';
-        renderStreamingMessage(chat);
-        scrollToBottom();
+        if (isActive()) { renderStreamingMessage(chat); scrollToBottom(); }
       },
       tool_call: (d) => {
+        console.log('[SSE] tool_call:', d.name, 'showToolCalls:', state.showToolCalls);
+        // Always update data
         if (!state.showToolCalls) return;
-        // Update existing entry if re-emitted with full args
         const last = chat.messages[chat.messages.length - 1];
         if (last && last.role === 'tool_call' && last.name === d.name && d.args && Object.keys(d.args).length) {
           last.args = d.args;
         } else {
           chat.messages.push({ role: 'tool_call', name: d.name, args: d.args || {}, _ts: Date.now() });
         }
-        renderMessages();
-        scrollToBottom();
+        if (isActive()) { renderMessages(); scrollToBottom(); }
       },
       tool_result: (d) => {
+        console.log('[SSE] tool_result:', d.name, 'hasResult:', !!d.result);
         const toolMsg = { role: 'tool_result', name: d.name, result: d.result, _ts: Date.now() };
         chat.messages.push(toolMsg);
-        // Extract web references from tool results
+        // Add references scoped to this chat's session (not state.activeChat)
         const refs = extractReferencesFromToolResult(toolMsg);
-        for (const ref of refs) addChatReference(ref);
-        if (!state.showToolCalls) return;
+        if (refs.length && chat.sessionId) {
+          if (!state.chatReferences[chat.sessionId]) state.chatReferences[chat.sessionId] = [];
+          const existing = state.chatReferences[chat.sessionId];
+          for (const ref of refs) {
+            if (!existing.some(r => r.link === ref.link)) existing.push(ref);
+          }
+        }
+        if (!state.showToolCalls || !isActive()) return;
         renderMessages();
         scrollToBottom();
       },
@@ -6279,10 +6352,10 @@ async function sendMessage() {
       artifact_updated: (d) => {
         chat.files.push(d);
         updateArtifactRegistry(chat.sessionId, d);
+        if (!isActive()) return;
         if (!state.artifactPanelOpen) {
           openArtifactPanel(d.artifact_id, d.artifact_version);
         } else if (state.activeArtifactId === d.artifact_id) {
-          // Refresh version selector and content
           const sel = document.getElementById('artifact-version-select');
           if (sel) {
             const opt = document.createElement('option');
@@ -6296,42 +6369,40 @@ async function sendMessage() {
       },
       fallback: (d) => {
         if (d.to) {
-          document.getElementById('spinner-model').textContent = modelShortName(d.to);
           chat.model = d.to;
-          updateModelSelectorDisplay(d.to);
+          if (isActive()) {
+            document.getElementById('spinner-model').textContent = modelShortName(d.to);
+            updateModelSelectorDisplay(d.to);
+          }
         }
       },
       warmup: (d) => {
         if (d.status === 'waiting') {
-          document.getElementById('spinner-label').textContent = 'Waiting for warmup...';
+          if (isActive()) document.getElementById('spinner-label').textContent = 'Waiting for warmup...';
         } else if (d.status === 'ready') {
-          chat._warmingUp = false;
+          stopWarmupPoll(chat);
           updateStatusBar();
         }
       },
       compacting: (d) => {
-        document.getElementById('spinner-label').textContent = `Compacting... ${d.pct || ''}%`;
+        if (isActive()) document.getElementById('spinner-label').textContent = `Compacting... ${d.pct || ''}%`;
       },
       compacted: () => {
-        document.getElementById('spinner-label').textContent = 'Thinking...';
+        if (isActive()) document.getElementById('spinner-label').textContent = 'Thinking...';
       },
       done: (d) => {
-        // Finalize assistant message
+        console.log('[SSE] done event received', {textLen: (d.text||'').length, tokens: d.tokens, model: d.model, msgCount: chat.messages.length});
+        // Finalize assistant message (always update data)
         const assistantMsg = {
           role: 'assistant',
           content: d.text || chat.streamingText,
         };
         if (d.tokens) chat.totalTokens = d.tokens;
         if (d.max_context) chat.maxContext = d.max_context;
-        if (d.model) {
-          chat.model = d.model;
-          updateModelSelectorDisplay(d.model);
-        }
-        // Track token in/out and speed
+        if (d.model) chat.model = d.model;
         const tokIn = d.tokens_in || 0;
         const tokOut = d.tokens_out || 0;
         const dur = d.duration || 0;
-        // Estimate output tokens from text if API didn't provide them
         const estOut = tokOut || Math.ceil((d.text || chat.streamingText || '').length / 4);
         chat._tokensIn = (chat._tokensIn || 0) + tokIn;
         chat._tokensOut = (chat._tokensOut || 0) + (tokOut || estOut);
@@ -6355,29 +6426,37 @@ async function sendMessage() {
         chat.streamingText = '';
         chat.thinkingText = '';
         chat.files = [];
+        clearInterval(chat._streamTimerInterval);
 
-        renderMessages();
-        scrollToBottom();
-        updateStreamingUI(false);
-        updateStatusBar();
-        clearInterval(state._streamTimerInterval);
+        // Only update DOM if this chat is still visible
+        if (isActive()) {
+          if (d.model) updateModelSelectorDisplay(d.model);
+          renderMessages();
+          scrollToBottom();
+          updateStreamingUI(false);
+          updateStatusBar();
+        }
 
         // Reload sessions for sidebar
-        loadAgentSessions(state.activeAgentId);
+        loadAgentSessions(chat.agent);
       },
       error: (d) => {
         chat.streaming = false;
         chat.streamingText = '';
-        updateStreamingUI(false);
-        clearInterval(state._streamTimerInterval);
-        showToast('Error: ' + (d.message || 'Unknown error'), true);
+        chat.thinkingText = '';
+        chat.files = [];
+        clearInterval(chat._streamTimerInterval);
+        if (isActive()) {
+          updateStreamingUI(false);
+          showToast('Error: ' + (d.message || 'Unknown error'), true);
+        }
       },
     }, chat.model);
 
-    // Safety net: if stream ended without a 'done' event (server closed connection
-    // prematurely, partial chunk lost, etc.), finalize the UI so tool results and
-    // references render instead of requiring a manual page refresh.
+    // Safety net: if stream ended without a 'done' event
+    console.log('[SSE] streamChat resolved, streaming:', chat.streaming, 'msgCount:', chat.messages.length);
     if (chat.streaming) {
+      console.warn('[SSE] safety net triggered — done event was lost');
       const text = chat.streamingText || '';
       if (text) {
         chat.messages.push({ role: 'assistant', content: text });
@@ -6386,18 +6465,25 @@ async function sendMessage() {
       chat.streamingText = '';
       chat.thinkingText = '';
       chat.files = [];
-      renderMessages();
-      scrollToBottom();
-      updateStreamingUI(false);
-      updateStatusBar();
-      clearInterval(state._streamTimerInterval);
-      loadAgentSessions(state.activeAgentId);
+      clearInterval(chat._streamTimerInterval);
+      if (isActive()) {
+        renderMessages();
+        scrollToBottom();
+        updateStreamingUI(false);
+        updateStatusBar();
+      }
+      loadAgentSessions(chat.agent);
     }
   } catch(e) {
     chat.streaming = false;
-    updateStreamingUI(false);
-    clearInterval(state._streamTimerInterval);
-    showToast('Send failed: ' + e.message, true);
+    chat.streamingText = '';
+    chat.thinkingText = '';
+    chat.files = [];
+    clearInterval(chat._streamTimerInterval);
+    if (isActive()) {
+      updateStreamingUI(false);
+      showToast('Send failed: ' + e.message, true);
+    }
   }
 }
 
@@ -6672,6 +6758,8 @@ async function stopGeneration() {
   const chat = state.activeChat;
   if (!chat?.sessionId) return;
   try {
+    // Abort the active fetch immediately so the client stops reading
+    if (API._abortController) API._abortController.abort();
     await API.cancelChat(chat.sessionId);
     chat.streaming = false;
     if (chat.streamingText) {
@@ -6679,22 +6767,26 @@ async function stopGeneration() {
     }
     chat.streamingText = '';
     chat.thinkingText = '';
+    chat.files = [];
     updateStreamingUI(false);
     renderMessages();
-    clearInterval(state._streamTimerInterval);
+    updateStatusBar();
+    clearInterval(chat._streamTimerInterval);
   } catch(e) {}
 }
 
-function updateStreamingUI(isStreaming) {
+function updateStreamingUI(isStreaming, chat) {
   const spinnerBar = document.getElementById('spinner-bar');
   const sendBtn = document.getElementById('chat-send-btn');
   const stopBtn = document.getElementById('chat-stop-btn');
+  // Use provided chat, fall back to activeChat for backward compat (stopGeneration, etc.)
+  const targetChat = chat || state.activeChat;
 
   if (isStreaming) {
     spinnerBar.classList.add('active');
     sendBtn.classList.add('hidden');
     stopBtn.classList.remove('hidden');
-    document.getElementById('spinner-model').textContent = modelShortName(state.activeChat?.model);
+    document.getElementById('spinner-model').textContent = modelShortName(targetChat?.model);
     document.getElementById('spinner-label').textContent = 'Thinking...';
     document.getElementById('spinner-elapsed').textContent = '';
   } else {
@@ -6704,9 +6796,10 @@ function updateStreamingUI(isStreaming) {
   }
 }
 
-function updateStreamTimer() {
-  if (!state._streamStartTime) return;
-  const elapsed = ((Date.now() - state._streamStartTime) / 1000).toFixed(1);
+function updateStreamTimer(chat) {
+  const target = chat || state.activeChat;
+  if (!target?._streamStartTime) return;
+  const elapsed = ((Date.now() - target._streamStartTime) / 1000).toFixed(1);
   document.getElementById('spinner-elapsed').textContent = elapsed + 's';
 }
 

@@ -692,6 +692,7 @@ class Session:
         self._warmup_done.set()  # default: no warmup needed
         self._warmup_active = False
         self._warmup_cancel = threading.Event()
+        self._warmup_lock = threading.Lock()
 
         self.agent = engine.AgentConfig(agent_id)
         self.memory = engine.MemoryStore(agent_id, base_dir=self.agent.memory_dir)
@@ -700,23 +701,27 @@ class Session:
         msg = {"role": role, "content": content}
         if metadata:
             msg["metadata"] = metadata
-        self.messages.append(msg)
-        self.last_active = time.time()
-        # Auto-title from first user message
-        if not self.title and role == "user":
-            text = content if isinstance(content, str) else str(content)
-            self.title = text[:60].strip()
+        with self.lock:
+            self.messages.append(msg)
+            self.last_active = time.time()
+            # Auto-title from first user message
+            if not self.title and role == "user":
+                text = content if isinstance(content, str) else str(content)
+                self.title = text[:60].strip()
         ChatDB.save_message(self.id, role, content, metadata=metadata)
         ChatDB.save_session(self.id, self.agent_id, self.model, self.title,
                            self.status, self.created_at, self.last_active, self.project or "")
 
     def switch_agent(self, agent_id: str, model: str | None = None):
         """Switch this session to a different agent (and optionally model)."""
-        self.agent_id = agent_id
-        self.agent = engine.AgentConfig(agent_id)
-        self.memory = engine.MemoryStore(agent_id, base_dir=self.agent.memory_dir)
-        if model:
-            self.model = model
+        new_agent = engine.AgentConfig(agent_id)
+        new_memory = engine.MemoryStore(agent_id, base_dir=new_agent.memory_dir)
+        with self.lock:
+            self.agent_id = agent_id
+            self.agent = new_agent
+            self.memory = new_memory
+            if model:
+                self.model = model
 
     def load_from_db(self):
         """Load messages from database (for restoring sessions)."""
@@ -726,23 +731,28 @@ class Session:
             print(f"  Session {self.id[:12]}: repaired {repaired} dangling message(s)", flush=True)
 
         db_msgs = ChatDB.load_messages(self.id)
-        self.messages = [{"role": m["role"], "content": m["content"]} for m in db_msgs]
+        loaded_messages = [{"role": m["role"], "content": m["content"]} for m in db_msgs]
         info = ChatDB.get_session_info(self.id)
-        if info:
-            self.title = info.get("title", "")
-            self.status = info.get("status", "active")
-            self.created_at = info.get("created_at", self.created_at)
-            self.last_active = info.get("last_active", self.last_active)
-            self.project = info.get("project", "") or None
-            self.summary = info.get("summary", "") or ""
+        with self.lock:
+            self.messages = loaded_messages
+            if info:
+                self.title = info.get("title", "")
+                self.status = info.get("status", "active")
+                self.created_at = info.get("created_at", self.created_at)
+                self.last_active = info.get("last_active", self.last_active)
+                self.project = info.get("project", "") or None
+                self.summary = info.get("summary", "") or ""
 
 
 class SessionManager:
     """Thread-safe session storage with SQLite persistence."""
 
+    _LOADING_SENTINEL = object()  # Sentinel to prevent duplicate DB loads
+
     def __init__(self):
-        self._sessions: dict[str, Session] = {}
+        self._sessions: dict[str, Session | object] = {}
         self._lock = threading.Lock()
+        self._load_events: dict[str, threading.Event] = {}  # session_id -> Event for waiters
         ChatDB.init()
 
     def create(self, **kwargs) -> Session:
@@ -757,19 +767,38 @@ class SessionManager:
     def get(self, session_id: str) -> Session | None:
         with self._lock:
             s = self._sessions.get(session_id)
-            if s:
+            if s is self._LOADING_SENTINEL:
+                # Another thread is loading this session — wait for it
+                evt = self._load_events.get(session_id)
+            elif s is not None:
                 s.last_active = time.time()
                 return s
-        # Try loading from DB
+            else:
+                # Mark as loading to prevent duplicate construction
+                self._sessions[session_id] = self._LOADING_SENTINEL
+                evt = threading.Event()
+                self._load_events[session_id] = evt
+                s = None
+
+        # If we were waiting on another thread's load
+        if s is self._LOADING_SENTINEL:
+            evt.wait(timeout=30)
+            with self._lock:
+                result = self._sessions.get(session_id)
+                if result is not self._LOADING_SENTINEL and result is not None:
+                    result.last_active = time.time()
+                    return result
+            return None
+
+        # We are the loader — do DB load outside the lock
         info = ChatDB.get_session_info(session_id)
         if info:
             model = info.get("model", "")
-            # Resolve provider from model to get correct API key/URL/type
             try:
                 prov = BrainAgentHandler._resolve_provider_static(model) if model else {}
             except Exception:
                 prov = {}
-            s = Session(
+            loaded = Session(
                 agent_id=info["agent_id"], model=model,
                 api_key=prov.get("api_key", server_config.get("api_key", "")),
                 base_url=prov.get("base_url", server_config.get("base_url", "")),
@@ -777,11 +806,29 @@ class SessionManager:
                 max_context=engine.get_model_max_context(model) if model else server_config.get("max_context", 131072),
                 session_id=session_id,
             )
-            s.load_from_db()
+            loaded.load_from_db()
             with self._lock:
-                self._sessions[session_id] = s
+                self._sessions[session_id] = loaded
+                self._load_events.pop(session_id, None)
+            evt.set()
+            return loaded
+        else:
+            # Not in DB — remove sentinel
+            with self._lock:
+                if self._sessions.get(session_id) is self._LOADING_SENTINEL:
+                    del self._sessions[session_id]
+                self._load_events.pop(session_id, None)
+            evt.set()
+            return None
+
+    def peek(self, session_id: str) -> Session | None:
+        """Get a cached session without triggering DB load or updating last_active.
+        Used by LoopManager and other internal checks that shouldn't create sessions."""
+        with self._lock:
+            s = self._sessions.get(session_id)
+            if s is self._LOADING_SENTINEL:
+                return None
             return s
-        return None
 
     def delete(self, session_id: str) -> bool:
         with self._lock:
@@ -971,8 +1018,8 @@ class LoopManager:
 
         with self._lock:
             for sid, session_loops in list(self._loops.items()):
-                # Get session to check streaming state
-                session = sessions._sessions.get(sid)
+                # Get session to check streaming state (peek: no DB load, no last_active bump)
+                session = sessions.peek(sid)
                 if not session:
                     # Session gone — clean up
                     for loop in session_loops.values():
@@ -981,8 +1028,9 @@ class LoopManager:
                     continue
 
                 # Skip if session is actively streaming
-                if getattr(session, '_streaming', False):
-                    continue
+                with session.lock:
+                    if getattr(session, '_streaming', False):
+                        continue
 
                 for lid, loop in list(session_loops.items()):
                     # Check expiry
@@ -1035,6 +1083,11 @@ class LoopManager:
         target = engine.AgentConfig(agent_id)
         target_memory = engine.MemoryStore(agent_id, base_dir=target.memory_dir)
 
+        # Set thread-local context for tools that need agent/memory context
+        engine._thread_local.current_agent = target
+        engine._thread_local.memory_store = target_memory
+        engine._thread_local.mcp_manager = engine._mcp_manager
+
         system_prompt = (
             f"{target.soul}\n\n"
             f"You are executing a recurring loop task (iteration #{loop.get('run_count', 0) + 1}).\n"
@@ -1060,6 +1113,11 @@ class LoopManager:
             result = "(loop cancelled)"
         except Exception as e:
             result = f"(loop error: {e})"
+
+        # Clean up thread-local context
+        engine._thread_local.current_agent = None
+        engine._thread_local.memory_store = None
+        engine._thread_local.mcp_manager = None
 
         # Update run count
         with self._lock:
@@ -1100,14 +1158,15 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 
 def _trigger_warmup(session):
     """Send a minimal request to warm up the KV cache for a session's model."""
-    # Cancel any running warmup first
-    if session._warmup_active:
-        session._warmup_cancel.set()
-        session._warmup_done.wait(timeout=5)
+    with session._warmup_lock:
+        # Cancel any running warmup first
+        if session._warmup_active:
+            session._warmup_cancel.set()
+            session._warmup_done.wait(timeout=5)
 
-    session._warmup_cancel.clear()
-    session._warmup_done.clear()
-    session._warmup_active = True
+        session._warmup_cancel.clear()
+        session._warmup_done.clear()
+        session._warmup_active = True
 
     def _do_warmup():
         try:
@@ -1125,23 +1184,20 @@ def _trigger_warmup(session):
             if session._warmup_cancel.is_set():
                 return
 
-            # Build minimal payload
-            if session.api_type == "openai":
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": "."},
-                ]
-                endpoint = f"{session.base_url}/chat/completions"
-            else:
-                messages = [{"role": "user", "content": "."}]
-                endpoint = f"{session.base_url}/messages"
-
+            # Build minimal payload — system prompt + tools only, no dummy user message
+            # so the KV cache prefix matches any real first request exactly.
             # Get tool definitions
             allowed = engine._get_agent_tool_names()
             if session.api_type == "openai":
                 tools = engine._filter_tools(engine.TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
+                # OpenAI API requires at least one message — use system-only
+                messages = [{"role": "system", "content": system_prompt}]
+                endpoint = f"{session.base_url}/chat/completions"
             else:
                 tools = engine._filter_tools(engine.TOOL_DEFINITIONS, allowed)
+                # Anthropic API requires at least one user message — unavoidable
+                messages = [{"role": "user", "content": "."}]
+                endpoint = f"{session.base_url}/messages"
 
             payload = {
                 "model": session.model,
@@ -1243,6 +1299,24 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             sid = path.split("/")[3]
             s = sessions.get(sid)
             self._send_json({"warming_up": s._warmup_active if s else False})
+        elif path.startswith("/v1/sessions/") and path.endswith("/warmup-status"):
+            # Returns warmup availability + current status for a session
+            sid = path.split("/")[3]
+            s = sessions.get(sid)
+            if not s:
+                self._send_json({"warmup": False, "warming_up": False})
+            else:
+                provider_name = getattr(s, '_provider_name', '')
+                if not provider_name:
+                    # Resolve provider name from model
+                    try:
+                        prov = self._resolve_provider(s.model)
+                        provider_name = prov.get("provider_name", "")
+                    except Exception:
+                        provider_name = ""
+                providers_cfg = server_config.get("providers", {})
+                warmup_enabled = providers_cfg.get(provider_name, {}).get("prefill_warmup", False)
+                self._send_json({"warmup": warmup_enabled, "warming_up": s._warmup_active})
         elif path == "/v1/loops":
             self._handle_loops_get()
         elif path == "/v1/schedule":
@@ -1450,6 +1524,36 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         elif path == "/v1/cache/clear":
             engine._web_cache.clear()
             self._send_json({"status": "cleared"})
+        elif path.startswith("/v1/sessions/") and path.endswith("/warmup"):
+            sid = path.split("/")[3]
+            s = sessions.get(sid)
+            if not s:
+                self._send_json({"error": "Session not found"}, 404)
+                return
+            body = self._read_json()
+            # If model specified, update session model + provider
+            new_model = body.get("model")
+            if new_model and new_model != s.model:
+                s.model = new_model
+                try:
+                    prov = self._resolve_provider(new_model)
+                    s.api_key = prov["api_key"]
+                    s.base_url = prov["base_url"]
+                    s.api_type = prov["api_type"]
+                except Exception:
+                    pass
+            # Resolve provider for warmup check
+            provider_name = ""
+            try:
+                prov = self._resolve_provider(s.model)
+                provider_name = prov.get("provider_name", "")
+            except Exception:
+                pass
+            providers_cfg = server_config.get("providers", {})
+            warmup_enabled = providers_cfg.get(provider_name, {}).get("prefill_warmup", False)
+            if warmup_enabled and not s._warmup_active:
+                _trigger_warmup(s)
+            self._send_json({"warmup": warmup_enabled, "warming_up": s._warmup_active})
         elif path == "/v1/chat/answer":
             self._handle_chat_answer()
         elif path == "/v1/notifications/settings":
@@ -2207,6 +2311,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         providers_cfg = server_config.get("providers", {})
         warmup_enabled = providers_cfg.get(provider_name, {}).get("prefill_warmup", False)
 
+        # Mark warmup sessions so they don't appear in sidebar until first message
+        if warmup_enabled and not custom_status:
+            session.status = "warmup"
+            ChatDB.save_session(session.id, session.agent_id, session.model,
+                               session.title, session.status, session.created_at,
+                               session.last_active, session.project or "")
+
         self._send_json({
             "session_id": session.id,
             "agent": session.agent_id,
@@ -2331,27 +2442,30 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
         # If model changed, re-resolve provider
         if model_override and model_override != session.model:
-            session.model = model_override
             provider = self._resolve_provider(model_override)
-            session.api_key = provider["api_key"]
-            session.base_url = provider["base_url"]
-            session.api_type = provider["api_type"]
+            with session.lock:
+                session.model = model_override
+                session.api_key = provider["api_key"]
+                session.base_url = provider["base_url"]
+                session.api_type = provider["api_type"]
 
         # Auto model selection: if agent uses model="auto", re-resolve per message
         agent_cfg = session.agent.config
         if not model_override and agent_cfg.get("model") == "auto":
             auto_model, auto_purpose = engine.resolve_auto_model_for_task(agent_cfg, message)
             if auto_model and auto_model != session.model:
-                session.model = auto_model
                 provider = self._resolve_provider(auto_model)
-                session.api_key = provider["api_key"]
-                session.base_url = provider["base_url"]
-                session.api_type = provider["api_type"]
-                session.max_context = engine.get_model_max_context(auto_model)
+                with session.lock:
+                    session.model = auto_model
+                    session.api_key = provider["api_key"]
+                    session.base_url = provider["base_url"]
+                    session.api_type = provider["api_type"]
+                    session.max_context = engine.get_model_max_context(auto_model)
 
         # Reset cancel token
-        session.cancel_token = engine.CancelToken()
-        session._streaming = True
+        with session.lock:
+            session.cancel_token = engine.CancelToken()
+            session._streaming = True
 
         # --- Multimodal: construct content blocks if images present ---
         images = body.get("images", [])
@@ -2376,6 +2490,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             user_content = content_blocks
         else:
             user_content = message
+
+        # Promote warmup session to active on first message
+        if session.status == "warmup":
+            session.status = "active"
+            ChatDB.save_session(session.id, session.agent_id, session.model,
+                               session.title, session.status, session.created_at,
+                               session.last_active, session.project or "")
 
         # Add user message (persisted to DB)
         session.add_message("user", user_content)
@@ -2402,9 +2523,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
-            session._warmup_done.wait(timeout=30)
+            completed = session._warmup_done.wait(timeout=30)
             try:
-                self.wfile.write(b"event: warmup\ndata: {\"status\":\"ready\"}\n\n")
+                if completed and not session._warmup_cancel.is_set():
+                    self.wfile.write(b"event: warmup\ndata: {\"status\":\"ready\"}\n\n")
+                else:
+                    # Warmup cancelled or timed out — proceed anyway but log it
+                    reason = "cancelled" if session._warmup_cancel.is_set() else "timed out"
+                    print(f"  [warmup] {session.model} {reason}, proceeding without cache ({session.id[:8]})")
+                    self.wfile.write(b"event: warmup\ndata: {\"status\":\"ready\"}\n\n")
                 self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
@@ -2479,9 +2606,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     _partial_tools.append({"name": name, "args": args})
             elif event_type == "tool_result":
                 # Attach result to the last matching tool
+                # Web tools get higher cap to preserve reference URLs
+                tool_name = data.get("name", "")
+                cap = 2000 if tool_name in ("exa_search", "web_fetch") else 500
                 for t in reversed(_partial_tools):
-                    if t["name"] == data.get("name") and "result" not in t:
-                        t["result"] = str(data.get("result", ""))[:500]
+                    if t["name"] == tool_name and "result" not in t:
+                        t["result"] = str(data.get("result", ""))[:cap]
                         break
             elif event_type == "usage":
                 _usage_totals["tokens_in"] += data.get("tokens_in", 0)
@@ -2497,10 +2627,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         def _rollback_messages(session, sid, target_count):
             """Rollback session.messages to target_count and remove extras from DB.
             Handles intermediate tool_use/tool_result messages from the agentic loop."""
-            extras = len(session.messages) - target_count
-            if extras <= 0:
-                return
-            session.messages = session.messages[:target_count]
+            with session.lock:
+                extras = len(session.messages) - target_count
+                if extras <= 0:
+                    return
+                session.messages = session.messages[:target_count]
             # Delete the extra messages from DB (they were appended by send_message's tool loop)
             try:
                 with _db_conn() as conn:
@@ -2524,6 +2655,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             engine._thread_local.current_agent = agent_config
             engine._thread_local.current_session_id = sid
 
+            # Reset per-request state (prevents cross-session leaks in pooled threads)
+            engine.reset_tool_dedup()
+
             # Use shared MCP manager (singleton from main())
             engine._thread_local.mcp_manager = engine._mcp_manager
 
@@ -2542,11 +2676,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 engine._thread_local.note_context = session.note_context
             else:
                 engine._thread_local.note_context = None
-
-            # Set globals as fallback for code that hasn't been migrated yet
-            old_agent = engine._current_agent
-            old_mcp = engine._mcp_manager
-            engine._current_agent = agent_config
 
             # Snapshot message count for rollback on failure
             _msg_count_before = len(session.messages)
@@ -2743,9 +2872,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     _rollback_messages(session, sid, _msg_count_before)
                 event_queue.put(("error", {"message": str(e)}))
             finally:
-                session._streaming = False
-                engine._current_agent = old_agent
-                engine._mcp_manager = old_mcp
+                with session.lock:
+                    session._streaming = False
                 # Clean up thread-local state
                 engine._thread_local.current_agent = None
                 engine._thread_local.mcp_manager = None
@@ -2976,9 +3104,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                                 _partial_tools.append({"name": name, "args": args})
                         elif _et == "tool_result":
                             # Attach result to the last matching tool entry
+                            _tn = _ed.get("name", "")
+                            _cap = 2000 if _tn in ("exa_search", "web_fetch") else 500
                             for t in reversed(_partial_tools):
-                                if t["name"] == _ed.get("name") and "result" not in t:
-                                    t["result"] = str(_ed.get("result", ""))[:500]
+                                if t["name"] == _tn and "result" not in t:
+                                    t["result"] = str(_ed.get("result", ""))[:_cap]
                                     break
                         elif _et == "_result":
                             r = {
@@ -3009,10 +3139,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     self.wfile.write(f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n".encode()); self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError):
                     pass
+            finally:
+                with session.lock:
+                    session._streaming = False
 
             # Save response (complete or partial)
             reply = r.get("text", "") or "".join(_partial_reply).strip()
-            session.sdk_session_id = r.get("sdk_session_id") or session.sdk_session_id
+            with session.lock:
+                session.sdk_session_id = r.get("sdk_session_id") or session.sdk_session_id
             is_partial = not r.get("text")  # No _result event = partial/cancelled
 
             if reply:
@@ -3098,6 +3232,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                                 daemon=True, name=f"chat_index_{sid}").start()
                     except Exception:
                         pass
+
+            else:
+                # No reply — send explicit error so client doesn't hang
+                try:
+                    self.wfile.write(b'event: error\ndata: {"message":"No response from agent"}\n\n')
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
 
             # End tracing span
             if engine._trace_manager and _request_span:
@@ -4071,6 +4213,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         # Instead, track streaming sessions server-side
         with sessions._lock:
             for s in sessions._sessions.values():
+                if not isinstance(s, Session):
+                    continue  # skip loading sentinels
                 if hasattr(s, '_streaming') and s._streaming:
                     activity.setdefault(s.agent_id, []).append("chat")
 
@@ -6181,7 +6325,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 max_tokens=session.max_context,
                 force=True,
             )
-            session.messages = result[0]
+            with session.lock:
+                session.messages = result[0]
             # Persist: mark old messages as compacted, insert new summary messages
             if result[1]:
                 try:
@@ -7513,6 +7658,9 @@ def _generate_chat_summary(session):
     """Generate a short LLM summary of a chat session for sidebar display."""
     if not engine._delegate_api_key or len(session.messages) < 2:
         return
+    # Set thread-local context for this background thread
+    engine._thread_local.current_agent = session.agent
+    engine._thread_local.memory_store = session.memory
     # Build a condensed view of the conversation (first + last few messages)
     msgs = session.messages
     sample = []
@@ -7558,13 +7706,17 @@ def _generate_chat_summary(session):
         )
         if result and not result.startswith("Delegation error"):
             summary = result.strip().strip('"').strip("'")[:80]
-            session.summary = summary
+            with session.lock:
+                session.summary = summary
             # Persist to DB
             ChatDB.save_session(session.id, session.agent_id, session.model,
                                 session.title, session.status, session.created_at,
                                 session.last_active, session.project or "", summary)
     except Exception:
         pass
+    finally:
+        engine._thread_local.current_agent = None
+        engine._thread_local.memory_store = None
 
 
 def main():
@@ -7731,7 +7883,8 @@ def main():
                             "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id",
                             (sid,)
                         ).fetchall()
-                    session.messages = [{"role": m["role"], "content": m["content"]} for m in msgs]
+                    with session.lock:
+                        session.messages = [{"role": m["role"], "content": m["content"]} for m in msgs]
                 try:
                     _index_chat_transcript(session)
                     indexed += 1

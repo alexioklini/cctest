@@ -16,26 +16,39 @@ from socketserver import ThreadingMixIn
 SIDECAR_PORT = int(os.environ.get("SDK_SIDECAR_PORT", "8421"))
 
 
-# In-memory store for active queries: query_id → {"events": [...], "done": bool}
+# In-memory store for active queries: query_id → {"events": [...], "done": bool, "_finished_at": float}
 _queries = {}
 _queries_lock = threading.Lock()
 _query_counter = 0
+_QUERY_TTL = 300  # seconds to keep finished queries before eviction
 
 # Pending answers for interactive queries: query_id → {"event": threading.Event, "answer": None|str}
 _pending_answers = {}
 _pending_answers_lock = threading.Lock()
 
 
+def _evict_stale_queries():
+    """Remove finished queries older than _QUERY_TTL to prevent memory leaks."""
+    import time as _t
+    now = _t.time()
+    with _queries_lock:
+        stale = [qid for qid, q in _queries.items()
+                 if q.get("done") and now - q.get("_finished_at", now) > _QUERY_TTL]
+        for qid in stale:
+            del _queries[qid]
+
+
 def _wait_for_answer(query_id, timeout=300):
     """Block until an answer arrives for the given query, or timeout."""
     with _pending_answers_lock:
         pa = _pending_answers.get(query_id)
-    if not pa:
-        return None
+        if not pa:
+            return None
     pa["event"].wait(timeout=timeout)
     with _pending_answers_lock:
-        pa = _pending_answers.pop(query_id, pa)
-    return pa.get("answer")
+        popped = _pending_answers.pop(query_id, None)
+    # Use the popped version if available (has the answer set by /answer endpoint)
+    return (popped or pa).get("answer")
 
 
 class SidecarHandler(BaseHTTPRequestHandler):
@@ -94,6 +107,7 @@ class SidecarHandler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length)) if length else {}
 
             global _query_counter
+            _evict_stale_queries()
             with _queries_lock:
                 _query_counter += 1
                 query_id = f"q{_query_counter}"
@@ -115,10 +129,13 @@ class SidecarHandler(BaseHTTPRequestHandler):
 
         elif path.startswith("/cancel/"):
             query_id = path.split("/cancel/")[1]
+            import time as _t
             with _queries_lock:
                 q = _queries.get(query_id)
+                if q:
+                    q["done"] = True
+                    q["_finished_at"] = _t.time()
             if q:
-                q["done"] = True
                 # Also unblock any pending answer wait
                 with _pending_answers_lock:
                     pa = _pending_answers.pop(query_id, None)
@@ -135,9 +152,10 @@ class SidecarHandler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length)) if length else {}
             with _pending_answers_lock:
                 pa = _pending_answers.get(query_id)
+                if pa:
+                    pa["answer"] = body.get("answer", "")
+                    pa["event"].set()
             if pa:
-                pa["answer"] = body.get("answer", "")
-                pa["event"].set()
                 self._json_response({"status": "ok"})
             else:
                 self._json_response({"error": "no pending question for this query"}, 404)
@@ -415,7 +433,8 @@ class SidecarHandler(BaseHTTPRequestHandler):
                 while True:
                     with _queries_lock:
                         q = _queries.get(query_id)
-                    if q and q["done"]:
+                        is_done = q["done"] if q else True
+                    if is_done:
                         break
                     await _aio.sleep(1)
             sdk_prompt = _prompt_stream()
@@ -428,7 +447,8 @@ class SidecarHandler(BaseHTTPRequestHandler):
                 if self._query_id:
                     with _queries_lock:
                         q = _queries.get(self._query_id)
-                    if q and q["done"]:
+                        cancelled = q["done"] if q else True
+                    if cancelled:
                         break
                 if self._cancelled:
                     break
@@ -484,10 +504,12 @@ class SidecarHandler(BaseHTTPRequestHandler):
         finally:
             # Ensure query is marked done even if no _result event was sent
             if self._query_id:
+                import time as _t
                 with _queries_lock:
                     q = _queries.get(self._query_id)
-                    if q:
+                    if q and not q.get("done"):
                         q["done"] = True
+                        q["_finished_at"] = _t.time()
 
     def _sse(self, event_type, data):
         """Store event in the query's event list for REST polling."""
@@ -499,6 +521,7 @@ class SidecarHandler(BaseHTTPRequestHandler):
                     q["events"].append({"event": event_type, "data": data, "_t": _t.time()})
                     if event_type in ("_result", "error"):
                         q["done"] = True
+                        q["_finished_at"] = _t.time()
 
 
 class ThreadedServer(ThreadingMixIn, HTTPServer):

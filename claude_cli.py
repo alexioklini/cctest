@@ -2472,9 +2472,10 @@ class MCPSSEClient:
 
 
 class MCPManager:
-    """Manages MCP server connections for an agent."""
+    """Manages MCP server connections for an agent. Thread-safe."""
 
     def __init__(self):
+        self._lock = threading.Lock()
         self.clients: dict[str, MCPStdioClient | MCPSSEClient] = {}
         self._tool_to_server: dict[str, str] = {}  # tool_name -> server_name
 
@@ -2508,20 +2509,21 @@ class MCPManager:
                 continue
 
             if client.start():
-                self.clients[name] = client
-                # Map tool names to server
-                for tool in client.tools:
-                    tool_name = f"mcp_{name}_{tool['name']}"
-                    self._tool_to_server[tool_name] = name
+                with self._lock:
+                    self.clients[name] = client
+                    for tool in client.tools:
+                        tool_name = f"mcp_{name}_{tool['name']}"
+                        self._tool_to_server[tool_name] = name
                 count += 1
         return count
 
     def get_tool_definitions(self) -> list[dict]:
         """Get all MCP tool definitions in Anthropic format."""
         defs = []
-        for server_name, client in self.clients.items():
+        with self._lock:
+            clients_snapshot = list(self.clients.items())
+        for server_name, client in clients_snapshot:
             for tool in client.tools:
-                # Prefix tool names to avoid conflicts
                 prefixed_name = f"mcp_{server_name}_{tool['name']}"
                 defs.append({
                     "name": prefixed_name,
@@ -2552,21 +2554,25 @@ class MCPManager:
 
     def call_tool(self, prefixed_name: str, arguments: dict) -> str:
         """Call an MCP tool by its prefixed name."""
-        server_name = self._tool_to_server.get(prefixed_name)
-        if not server_name or server_name not in self.clients:
+        with self._lock:
+            server_name = self._tool_to_server.get(prefixed_name)
+            client = self.clients.get(server_name) if server_name else None
+        if not server_name or not client:
             return json.dumps({"error": f"MCP tool '{prefixed_name}' not found"})
-        # Strip prefix to get original tool name
         prefix = f"mcp_{server_name}_"
         original_name = prefixed_name[len(prefix):]
-        return self.clients[server_name].call_tool(original_name, arguments)
+        return client.call_tool(original_name, arguments)
 
     def is_mcp_tool(self, name: str) -> bool:
-        return name in self._tool_to_server
+        with self._lock:
+            return name in self._tool_to_server
 
     def list_servers(self) -> list[dict]:
         """List all connected MCP servers and their tools."""
         result = []
-        for name, client in self.clients.items():
+        with self._lock:
+            clients_snapshot = list(self.clients.items())
+        for name, client in clients_snapshot:
             result.append({
                 "name": name,
                 "transport": "stdio" if isinstance(client, MCPStdioClient) else "sse",
@@ -2577,20 +2583,21 @@ class MCPManager:
 
     def connect_runtime(self, url: str, name: str, transport: str = "sse") -> dict:
         """Connect to an MCP server at runtime. Returns status dict with discovered tools."""
-        if name in self.clients:
-            return {"error": f"Server '{name}' is already connected"}
+        with self._lock:
+            if name in self.clients:
+                return {"error": f"Server '{name}' is already connected"}
         if transport == "stdio":
-            # url is treated as command, split on spaces for args
             parts = url.split()
             client = MCPStdioClient(name=name, command=parts[0], args=parts[1:] if len(parts) > 1 else [])
         else:
             client = MCPSSEClient(name=name, url=url)
 
         if client.start():
-            self.clients[name] = client
-            for tool in client.tools:
-                tool_name = f"mcp_{name}_{tool['name']}"
-                self._tool_to_server[tool_name] = name
+            with self._lock:
+                self.clients[name] = client
+                for tool in client.tools:
+                    tool_name = f"mcp_{name}_{tool['name']}"
+                    self._tool_to_server[tool_name] = name
             return {
                 "status": "connected",
                 "name": name,
@@ -2607,23 +2614,24 @@ class MCPManager:
 
     def disconnect_runtime(self, name: str) -> dict:
         """Disconnect a runtime MCP server."""
-        if name not in self.clients:
-            return {"error": f"Server '{name}' is not connected"}
-        client = self.clients[name]
+        with self._lock:
+            if name not in self.clients:
+                return {"error": f"Server '{name}' is not connected"}
+            client = self.clients.pop(name)
+            to_remove = [k for k, v in self._tool_to_server.items() if v == name]
+            for k in to_remove:
+                del self._tool_to_server[k]
         client.stop()
-        # Remove tool mappings
-        to_remove = [k for k, v in self._tool_to_server.items() if v == name]
-        for k in to_remove:
-            del self._tool_to_server[k]
-        del self.clients[name]
         return {"status": "disconnected", "name": name}
 
     def stop_all(self):
         """Stop all MCP server connections."""
-        for client in self.clients.values():
+        with self._lock:
+            clients_to_stop = list(self.clients.values())
+            self.clients.clear()
+            self._tool_to_server.clear()
+        for client in clients_to_stop:
             client.stop()
-        self.clients.clear()
-        self._tool_to_server.clear()
 
 
 # Global MCP manager
@@ -3721,15 +3729,17 @@ def _qmd_rpc(method: str, params: dict | None = None) -> dict | None:
     payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}
     data = json.dumps(payload).encode()
     headers = dict(_QMD_HEADERS)
-    if _qmd_session_id:
-        headers["Mcp-Session-Id"] = _qmd_session_id
+    with _qmd_session_lock:
+        if _qmd_session_id:
+            headers["Mcp-Session-Id"] = _qmd_session_id
     req = urllib.request.Request(_QMD_URL, data=data, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
-            # Capture session ID from response
+            # Capture session ID from response (under lock)
             sid = resp.headers.get("Mcp-Session-Id")
             if sid:
-                _qmd_session_id = sid
+                with _qmd_session_lock:
+                    _qmd_session_id = sid
             body = json.loads(resp.read().decode())
             if "error" in body:
                 logging.warning("QMD RPC error: %s", body["error"])
@@ -3833,6 +3843,7 @@ class MemoryStore:
     """Per-agent memory store backed by QMD hybrid search and markdown files."""
 
     _ensured_collections: set[str] = set()
+    _ensured_lock = threading.Lock()
 
     def __init__(self, agent_id: str = "main", base_dir: str | None = None):
         self.agent_id = agent_id
@@ -3843,8 +3854,11 @@ class MemoryStore:
         os.makedirs(self.dir, exist_ok=True)
         self._collection = agent_id
         # Ensure QMD knows about this collection (once per collection, background)
-        if agent_id not in MemoryStore._ensured_collections:
-            MemoryStore._ensured_collections.add(agent_id)
+        with MemoryStore._ensured_lock:
+            already_ensured = agent_id in MemoryStore._ensured_collections
+            if not already_ensured:
+                MemoryStore._ensured_collections.add(agent_id)
+        if not already_ensured:
             threading.Thread(
                 target=_qmd_ensure_collection,
                 args=(self._collection, self.dir),
@@ -6061,9 +6075,12 @@ def _rebuild_entity_index(agent_id: str):
 
 
 def _ensure_entity_index(agent_id: str):
-    """Lazy-initialize entity index on first access."""
-    if agent_id not in _entity_index_initialized:
-        _rebuild_entity_index(agent_id)
+    """Lazy-initialize entity index on first access. Thread-safe."""
+    with _entity_index_lock:
+        if agent_id in _entity_index_initialized:
+            return
+    # Rebuild outside lock (I/O heavy), then store result under lock
+    _rebuild_entity_index(agent_id)
 
 
 def _update_entity_index(agent_id: str, filename: str, entities: set[str]):
@@ -6236,6 +6253,18 @@ def _get_auto_memory_config(agent_id: str) -> dict:
 def _auto_memory_extract(agent_id: str, user_message: str, assistant_response: str):
     """Background: check if the conversation exchange contains info worth auto-storing.
     Uses lightweight heuristics first, then optional LLM for borderline cases."""
+    # Set thread-local context for this background thread
+    _thread_local.current_agent = AgentConfig(agent_id)
+    _thread_local.memory_store = MemoryStore(agent_id)
+    try:
+        _auto_memory_extract_inner(agent_id, user_message, assistant_response)
+    finally:
+        _thread_local.current_agent = None
+        _thread_local.memory_store = None
+
+
+def _auto_memory_extract_inner(agent_id: str, user_message: str, assistant_response: str):
+    """Inner implementation of auto-memory extraction."""
 
     # Check config
     am_cfg = _get_auto_memory_config(agent_id)
@@ -7784,8 +7813,10 @@ class TaskRunner:
         result_text = ""
         status = "completed"
         try:
-            # Store delegate agent ID in thread-local for delegation scoping
+            # Store delegate agent context in thread-local (thread-safe, no global mutation)
             _thread_local.delegate_agent_id = agent_id
+            _thread_local.current_agent = target
+            _thread_local.memory_store = target_memory
             if cancel_flag.is_set():
                 status = "cancelled"
             else:
@@ -7801,6 +7832,7 @@ class TaskRunner:
         finally:
             # Clean up thread-local state
             _thread_local.delegate_agent_id = None
+            _thread_local.current_agent = None
             _thread_local.memory_store = None
 
         with self._lock:
@@ -8051,6 +8083,8 @@ class WorkflowExecution:
 
         try:
             _thread_local.delegate_agent_id = target_agent_id
+            _thread_local.current_agent = target
+            _thread_local.memory_store = target_memory
             if restricted_tools:
                 _thread_local.workflow_allowed_tools = set(restricted_tools)
 
@@ -8081,6 +8115,7 @@ class WorkflowExecution:
             self.stage_results[sname] = {"status": "error", "output": str(e), "elapsed": elapsed}
         finally:
             _thread_local.delegate_agent_id = None
+            _thread_local.current_agent = None
             _thread_local.memory_store = None
             _thread_local.workflow_allowed_tools = None
 
@@ -8692,6 +8727,11 @@ class Scheduler:
         timer.start()
 
         try:
+            # Set thread-local context for tools that need agent/memory
+            _thread_local.current_agent = target
+            _thread_local.memory_store = target_memory
+            _thread_local.delegate_agent_id = agent_id
+
             sched_inf = get_inference_params(model, target.config.get("model_purpose"))
             # Memory summary tasks only need memory tools, not the full 39-tool schema
             sched_tools = tcfg.get("scheduled_task_tools", True)
@@ -8733,6 +8773,10 @@ class Scheduler:
             status = "error"
         finally:
             cancel_token.cancel()  # stop the watchdog if still running
+            # Clean up thread-local state
+            _thread_local.current_agent = None
+            _thread_local.memory_store = None
+            _thread_local.delegate_agent_id = None
             with self._lock:
                 self._running_tasks.pop(name, None)
 

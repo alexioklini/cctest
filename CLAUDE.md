@@ -290,6 +290,22 @@ Per-agent token config in `agent.json` under `token_config`:
 - Model display: shown in inline thinking indicator + spinner bar, updates on fallback
 - Remote node badge: purple pill on tool blocks when `node` param present
 - Resizable sidebars: drag handles on right edge of left sidebar, left edge of project panel, persisted to localStorage
+- Stream timing state (`_streamStartTime`, `_streamTimerInterval`) scoped per-agent chat, not global
+
+### Concurrency & Thread Safety
+
+The server handles multiple concurrent chat requests, scheduled tasks, delegations, and background threads. Key invariants:
+
+- **Session.lock**: all session field mutations (messages, model, status, streaming flag, sdk_session_id, summary) must be under `session.lock`
+- **SessionManager.get()**: uses `_LOADING_SENTINEL` + `threading.Event` to prevent duplicate Session objects for the same session_id; `peek()` for lightweight cache-only reads (no DB load)
+- **Thread-local context**: every request/background thread MUST set `_thread_local.current_agent`, `_thread_local.memory_store`, and `_thread_local.mcp_manager` — never fall back to globals for agent context
+- **MCPManager**: all dict access (`clients`, `_tool_to_server`) protected by `self._lock`; iteration uses snapshots
+- **MemoryStore._ensured_collections**: guarded by `_ensured_lock` to prevent duplicate QMD collection init
+- **Entity index**: `_ensure_entity_index()` checks `_entity_index_initialized` under `_entity_index_lock`
+- **QMD session ID**: reads/writes of `_qmd_session_id` under `_qmd_session_lock`
+- **Tool dedup**: `reset_tool_dedup()` called at start of each chat request to prevent cross-session false duplicates
+- **Background threads**: `_auto_memory_extract`, `_generate_chat_summary`, scheduler, workflow engine, TaskRunner all set/clean thread-local context in try/finally
+- **SDK sidecar**: pending answers set atomically under `_pending_answers_lock`; stale queries evicted via `_evict_stale_queries()` (5min TTL)
 
 ### Agent Teams
 
