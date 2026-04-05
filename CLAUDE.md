@@ -305,6 +305,11 @@ The server handles multiple concurrent chat requests, scheduled tasks, delegatio
 - **QMD session ID**: reads/writes of `_qmd_session_id` under `_qmd_session_lock`
 - **Tool dedup**: `reset_tool_dedup()` called at start of each chat request to prevent cross-session false duplicates
 - **Background threads**: `_auto_memory_extract`, `_generate_chat_summary`, scheduler, workflow engine, TaskRunner all set/clean thread-local context in try/finally
+- **Co-recall dict**: `_recall_cooccurrence` capped at 50K entries to prevent unbounded memory growth
+- **QMD queries**: sanitized (strip newlines, quotes, markdown chars) before sending to QMD
+- **LLM JSON parsing**: `_extract_json_from_llm()` uses `json.JSONDecoder.raw_decode()` — handles nested objects, markdown fences, surrounding text
+- **Entity extraction**: `_RE_CAPITALIZED` requires 3+ char words; `_ENTITY_STOP_PHRASES` filters common false positives
+- **Fallback search**: file reads capped at 32KB to prevent OOM on large files
 - **SDK sidecar**: pending answers set atomically under `_pending_answers_lock`; stale queries evicted via `_evict_stale_queries()` (5min TTL)
 
 ### Agent Teams

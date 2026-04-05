@@ -3705,6 +3705,44 @@ import hashlib
 import urllib.request
 import urllib.error
 
+
+def _extract_json_from_llm(text: str, expect_array: bool = False):
+    """Robustly extract JSON object or array from LLM response text.
+
+    Handles markdown code fences, nested objects, surrounding text.
+    Returns parsed dict/list or None on failure.
+    """
+    if not text:
+        return None
+    # Strip markdown code fences first
+    stripped = re.sub(r'```(?:json)?\s*', '', text)
+    stripped = stripped.replace('```', '')
+
+    # Try parsing the entire stripped text first
+    try:
+        parsed = json.loads(stripped.strip())
+        if expect_array and isinstance(parsed, list):
+            return parsed
+        if not expect_array and isinstance(parsed, dict):
+            return parsed
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Use json.JSONDecoder.raw_decode to find the first valid JSON structure
+    decoder = json.JSONDecoder()
+    target_char = '[' if expect_array else '{'
+    for i, ch in enumerate(stripped):
+        if ch == target_char:
+            try:
+                obj, _ = decoder.raw_decode(stripped[i:])
+                if expect_array and isinstance(obj, list):
+                    return obj
+                if not expect_array and isinstance(obj, dict):
+                    return obj
+            except (json.JSONDecodeError, ValueError):
+                continue
+    return None
+
 # QMD HTTP MCP daemon endpoint
 _QMD_URL = "http://localhost:8181/mcp"
 _QMD_HEADERS = {
@@ -3938,8 +3976,8 @@ agent: {self.agent_id}
                 _update_entity_index(self.agent_id, filename, entities)
                 if matches:
                     _qmd_debounced_embed(self._collection)
-        except Exception:
-            pass  # Entity linking is best-effort, never block store
+        except Exception as e:
+            logging.warning(f"Entity linking failed for {filename}: {e}")  # best-effort, never block store
 
         return {"id": mem_id, "name": name, "file": filename, "status": "stored"}
 
@@ -3980,7 +4018,8 @@ agent: {self.agent_id}
                     fm_text = fm_text.rstrip() + f"\nlast_recalled: {now}"
                 with open(fpath, "w") as f:
                     f.write(opener + fm_text + closer + body)
-            except Exception:
+            except Exception as e:
+                logging.debug(f"Failed to stamp last_recalled on {fpath}: {e}")
                 continue
 
     def _qmd_query(self, query: str, limit: int, mem_type: str | None) -> list[dict] | None:
@@ -3991,9 +4030,15 @@ agent: {self.agent_id}
             if not _qmd_init_session():
                 return None
 
+        # Sanitize query: strip newlines, quotes, markdown — QMD silently returns empty on these
+        clean_q = query.replace('\n', ' ').replace('\r', ' ').replace('"', '').replace("'", "")
+        clean_q = re.sub(r'[#*`~\[\]{}()]', '', clean_q).strip()
+        if not clean_q:
+            return []
+
         searches = [
-            {"type": "lex", "query": query},
-            {"type": "vec", "query": query},
+            {"type": "lex", "query": clean_q},
+            {"type": "vec", "query": clean_q},
         ]
         result = _qmd_rpc("tools/call", {
             "name": "query",
@@ -4075,8 +4120,9 @@ agent: {self.agent_id}
                     continue
                 fpath = os.path.join(scan_dir, fname)
                 try:
+                    # Cap file read to 32KB to prevent OOM on large files
                     with open(fpath, "r") as f:
-                        raw = f.read()
+                        raw = f.read(32768)
                     fm, body = _parse_frontmatter(raw)
                     mtype = fm.get("type", "general")
                     if mem_type and mtype != mem_type:
@@ -4093,6 +4139,9 @@ agent: {self.agent_id}
                             "file_path": fpath,
                             "score": hits / len(terms),
                         })
+                except (UnicodeDecodeError, OSError) as e:
+                    logging.debug(f"Fallback search skipping {fname}: {e}")
+                    continue
                 except Exception:
                     continue
         results.sort(key=lambda x: x["score"], reverse=True)
@@ -5945,6 +5994,9 @@ def get_memory_summary(agent_id: str) -> str | None:
             fm, body = _parse_frontmatter(raw)
             if fm.get("name") == "Memory Summary":
                 return body.strip()
+        except (UnicodeDecodeError, OSError) as e:
+            logging.debug(f"Error reading memory file {fname}: {e}")
+            continue
         except Exception:
             continue
     return None
@@ -5990,8 +6042,8 @@ def trigger_memory_summary_refresh(agent_id: str):
     def _run():
         try:
             _scheduler._execute_scheduled(task_row)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning(f"Memory summary refresh failed for {agent_id}: {e}")
     threading.Thread(target=_run, daemon=True, name=f"memory_summary_refresh_{agent_id}").start()
 
 
@@ -5999,11 +6051,19 @@ def trigger_memory_summary_refresh(agent_id: str):
 
 # --- Mechanism 2: Entity Extraction + Auto-linking ---
 
-_RE_CAPITALIZED = re.compile(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b')
+# Entity extraction regexes — tuned to reduce false positives
+# Require at least 2 capitalized words with 3+ chars each (filters "The Quick", "In This")
+_RE_CAPITALIZED = re.compile(r'\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})+\b')
 _RE_MENTIONS = re.compile(r'@\w+')
-_RE_URLS = re.compile(r'https?://\S+')
-_RE_FILEPATHS = re.compile(r'(?:/[\w.-]+)+\.\w+')
+_RE_URLS = re.compile(r'https?://[^\s<>"\']+')
+_RE_FILEPATHS = re.compile(r'(?:/[\w.-]+){2,}\.\w+')  # require at least 2 path segments
 _RE_HASHTAGS = re.compile(r'#\w+')
+# Common false positive phrases to filter out
+_ENTITY_STOP_PHRASES = frozenset({
+    "The Following", "In This", "For Example", "As Well", "In Order",
+    "This Case", "Each Time", "At Least", "Make Sure", "Right Now",
+    "Based Upon", "Other Than",
+})
 
 
 def _extract_entities(text: str) -> set[str]:
@@ -6011,7 +6071,9 @@ def _extract_entities(text: str) -> set[str]:
     Returns set of entity strings."""
     entities = set()
     for m in _RE_CAPITALIZED.finditer(text):
-        entities.add(m.group())
+        phrase = m.group()
+        if phrase not in _ENTITY_STOP_PHRASES:
+            entities.add(phrase)
     for m in _RE_MENTIONS.finditer(text):
         entities.add(m.group())
     for m in _RE_URLS.finditer(text):
@@ -6075,11 +6137,18 @@ def _rebuild_entity_index(agent_id: str):
 
 
 def _ensure_entity_index(agent_id: str):
-    """Lazy-initialize entity index on first access. Thread-safe."""
+    """Lazy-initialize entity index on first access. Thread-safe with double-checked locking."""
+    # Fast path: already initialized
+    if agent_id in _entity_index_initialized:
+        return
+    # Slow path: acquire lock, check again, rebuild if needed
     with _entity_index_lock:
         if agent_id in _entity_index_initialized:
             return
-    # Rebuild outside lock (I/O heavy), then store result under lock
+        # Mark as initialized BEFORE rebuild (under lock) to prevent duplicate work.
+        # _rebuild_entity_index stores the result under this same lock.
+        _entity_index_initialized.add(agent_id)
+    # Rebuild outside lock (I/O heavy) — only one thread gets here per agent_id
     _rebuild_entity_index(agent_id)
 
 
@@ -6169,6 +6238,9 @@ def _record_recall_cooccurrence(result_files: list[str], agent_id: str, base_dir
     files = result_files[:10]
     pairs_to_link = []
     with _recall_cooccurrence_lock:
+        # Cap dict size to prevent unbounded memory growth
+        if len(_recall_cooccurrence) > 50_000:
+            _recall_cooccurrence.clear()
         for i in range(len(files)):
             for j in range(i + 1, len(files)):
                 pair = frozenset({files[i], files[j]})
@@ -6367,12 +6439,8 @@ def _auto_memory_extract_inner(agent_id: str, user_message: str, assistant_respo
             return
 
         # Parse JSON
-        json_match = re.search(r'\{[^}]+\}', result, re.DOTALL)
-        if not json_match:
-            return
-
-        data = json.loads(json_match.group())
-        if data.get('skip'):
+        data = _extract_json_from_llm(result)
+        if not data or data.get('skip'):
             return
 
         name = data.get('name', '').strip()
@@ -6383,18 +6451,25 @@ def _auto_memory_extract_inner(agent_id: str, user_message: str, assistant_respo
         if not name or not content:
             return
 
-        # Check if similar memory already exists
+        # Check if similar memory already exists — skip if content is substantially the same
         existing = ms.recall(name, limit=3)
         for e in existing:
-            if e.get('score', 0) > 0.8 and e.get('name', '').lower() == name.lower():
-                return  # Already stored
+            if e.get('name', '').lower() == name.lower():
+                # Same name exists — update only if new content is meaningfully different
+                old_content = e.get('content', '')
+                if old_content and content.strip().lower() == old_content.strip().lower():
+                    return  # Identical content, skip
+                # Content differs — allow the store to overwrite
+                break
 
         # Store it
         ms.store(name, content, description, mem_type_extracted)
         logging.info(f"Auto-memory stored for {agent_id}: {name} ({mem_type_extracted})")
 
+    except (json.JSONDecodeError, ValueError, KeyError) as e:
+        logging.debug(f"Auto-memory extraction parse error for {agent_id}: {e}")
     except Exception as e:
-        logging.debug(f"Auto-memory extraction failed for {agent_id}: {e}")
+        logging.warning(f"Auto-memory extraction failed for {agent_id}: {e}")
 
 
 def _collect_agent_memories(agent_id: str, max_content: int = 2000) -> list[dict]:
@@ -6601,20 +6676,16 @@ def trigger_relationship_discovery(agent_id: str):
                 logging.warning(f"Relationship discovery for {agent_id}: {result_text}")
                 return
             # Extract JSON from response (may have markdown code fences)
-            json_match = re.search(r'\[.*?\]', result_text, re.DOTALL)
-            if json_match:
-                relationships = json.loads(json_match.group())
-                if isinstance(relationships, list) and relationships:
-                    _apply_discovered_relationships(agent_id, relationships)
-                    logging.info(f"Relationship discovery for {agent_id}: found {len(relationships)} relationships")
-                else:
-                    logging.info(f"Relationship discovery for {agent_id}: no relationships found")
+            relationships = _extract_json_from_llm(result_text, expect_array=True)
+            if isinstance(relationships, list) and relationships:
+                _apply_discovered_relationships(agent_id, relationships)
+                logging.info(f"Relationship discovery for {agent_id}: found {len(relationships)} relationships")
+            elif relationships is not None:
+                logging.info(f"Relationship discovery for {agent_id}: no relationships found")
             else:
                 logging.warning(f"Relationship discovery for {agent_id}: no JSON in response: {result_text[:200]}")
         except Exception as e:
-            logging.warning(f"Relationship discovery failed for {agent_id}: {e}")
-            import traceback
-            traceback.print_exc()
+            logging.exception(f"Relationship discovery failed for {agent_id}: {e}")
 
     threading.Thread(target=_run, daemon=True, name=f"rel_discovery_{agent_id}").start()
 
@@ -6728,13 +6799,14 @@ def _autodream_dedup(agent_id: str, ms: MemoryStore, config: dict, memories: lis
                 "merge_log": ["No model available for merge confirmation"]}
 
     for mem_a, mem_b, score in high_sim:
-        if merged >= max_merges:
-            skipped += len(high_sim) - duplicates_found
-            break
         if mem_a["file"] in deleted_files or mem_b["file"] in deleted_files:
             continue
 
         duplicates_found += 1
+
+        if merged >= max_merges:
+            skipped += 1
+            continue
         prompt = (
             f"Are these two memories duplicates or near-duplicates that should be merged?\n\n"
             f"MEMORY A ({mem_a['name']}):\n{mem_a['content'][:800]}\n\n"
@@ -6755,12 +6827,8 @@ def _autodream_dedup(agent_id: str, ms: MemoryStore, config: dict, memories: lis
             if not result:
                 skipped += 1
                 continue
-            json_match = re.search(r'\{.*\}', result, re.DOTALL)
-            if not json_match:
-                skipped += 1
-                continue
-            data = json.loads(json_match.group())
-            if not data.get("is_duplicate"):
+            data = _extract_json_from_llm(result)
+            if not data or not data.get("is_duplicate"):
                 skipped += 1
                 continue
 
@@ -6844,12 +6912,12 @@ def _autodream_staleness(agent_id: str, ms: MemoryStore, config: dict) -> dict:
                     if fm_match:
                         opener, fm_text, closer, body_text = fm_match.groups()
                         if "stale:" not in fm_text:
-                            fm_text = fm_text.rstrip() + "\nstale: true"
+                            fm_text = fm_text.rstrip() + "\nstale: true\n"
                         with open(fpath, "w") as f:
                             f.write(opener + fm_text + closer + body_text)
                         newly_stale += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.debug(f"Failed to mark stale: {fpath}: {e}")
         elif already_stale:
             # Was stale but now recalled within threshold — remove stale flag
             try:
@@ -6910,10 +6978,9 @@ def _autodream_conflicts(agent_id: str, ms: MemoryStore, config: dict, memories:
             )
             if not result:
                 continue
-            json_match = re.search(r'\{.*\}', result, re.DOTALL)
-            if not json_match:
+            data = _extract_json_from_llm(result)
+            if not data:
                 continue
-            data = json.loads(json_match.group())
             if data.get("contradicts"):
                 conflicts_found += 1
                 conflict_pairs.append({
@@ -6975,10 +7042,9 @@ def _autodream_skill_candidates(agent_id: str, ms: MemoryStore, config: dict, me
             )
             if not result:
                 continue
-            json_match = re.search(r'\{.*\}', result, re.DOTALL)
-            if not json_match:
+            data = _extract_json_from_llm(result)
+            if not data:
                 continue
-            data = json.loads(json_match.group())
             if data.get("is_skill_candidate"):
                 candidates_found += 1
                 candidate_names.append(mem["name"])
@@ -7095,11 +7161,9 @@ def promote_memory_to_skill(agent_id: str, memory_name: str) -> dict:
         if not result:
             return {"error": "LLM returned empty response"}
 
-        json_match = re.search(r'\{.*\}', result, re.DOTALL)
-        if not json_match:
+        data = _extract_json_from_llm(result)
+        if not data:
             return {"error": "Could not parse LLM response"}
-
-        data = json.loads(json_match.group())
         slug = re.sub(r'[^a-z0-9-]', '', data.get("slug", "").lower().replace(" ", "-"))[:40]
         if not slug:
             slug = re.sub(r'[^a-z0-9-]', '', memory_name.lower().replace(" ", "-"))[:40]
