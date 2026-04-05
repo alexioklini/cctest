@@ -4290,6 +4290,7 @@ class API {
       const decoder = new TextDecoder();
       let buffer = '';
 
+      let lastEventType = null;
       while (true) {
         const {done, value} = await reader.read();
         if (done) break;
@@ -4298,18 +4299,32 @@ class API {
         const lines = buffer.split('\n');
         buffer = lines.pop();
 
-        let eventType = null;
         for (const line of lines) {
           if (line.startsWith('event: ')) {
-            eventType = line.slice(7).trim();
-          } else if (line.startsWith('data: ') && eventType) {
+            lastEventType = line.slice(7).trim();
+          } else if (line.startsWith('data: ') && lastEventType) {
             try {
               const data = JSON.parse(line.slice(6));
-              if (callbacks[eventType]) callbacks[eventType](data);
+              if (callbacks[lastEventType]) callbacks[lastEventType](data);
             } catch(e) {}
-            eventType = null;
+            lastEventType = null;
           } else if (line.startsWith(':')) {
             // keepalive comment
+          }
+        }
+      }
+      // Process any remaining data in buffer after stream ends
+      if (buffer.trim()) {
+        const remaining = buffer.split('\n');
+        for (const line of remaining) {
+          if (line.startsWith('event: ')) {
+            lastEventType = line.slice(7).trim();
+          } else if (line.startsWith('data: ') && lastEventType) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (callbacks[lastEventType]) callbacks[lastEventType](data);
+            } catch(e) {}
+            lastEventType = null;
           }
         }
       }
@@ -6358,6 +6373,26 @@ async function sendMessage() {
         showToast('Error: ' + (d.message || 'Unknown error'), true);
       },
     }, chat.model);
+
+    // Safety net: if stream ended without a 'done' event (server closed connection
+    // prematurely, partial chunk lost, etc.), finalize the UI so tool results and
+    // references render instead of requiring a manual page refresh.
+    if (chat.streaming) {
+      const text = chat.streamingText || '';
+      if (text) {
+        chat.messages.push({ role: 'assistant', content: text });
+      }
+      chat.streaming = false;
+      chat.streamingText = '';
+      chat.thinkingText = '';
+      chat.files = [];
+      renderMessages();
+      scrollToBottom();
+      updateStreamingUI(false);
+      updateStatusBar();
+      clearInterval(state._streamTimerInterval);
+      loadAgentSessions(state.activeAgentId);
+    }
   } catch(e) {
     chat.streaming = false;
     updateStreamingUI(false);

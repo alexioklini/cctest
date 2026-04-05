@@ -1820,7 +1820,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 # Memory summary (injected on first turn, separate from system prompt)
                 ms = engine.get_memory_summary(session.agent_id)
                 if ms:
-                    tc = agent_config.get("token_config") or {}
+                    tc = agent_config.config.get("token_config") or {}
                     cap = tc.get("memory_summary_cap", 3000)
                     memory_summary = ms[:cap] if len(ms) > cap else ms
                     memory_tokens = len(memory_summary) // 4
