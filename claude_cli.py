@@ -7619,7 +7619,7 @@ def _resolve_delegate_tools(tools: bool | str, api_type: str) -> list:
         allowed = _MEMORY_TOOL_NAMES
     else:
         allowed = _get_agent_tool_names()
-    if api_type != "openai":
+    if api_type != "openai" and api_type != "mistral":
         return _filter_tools(TOOL_DEFINITIONS, allowed)
     return _filter_tools(TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
 
@@ -7701,7 +7701,7 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
 
     headers = make_headers(api_key, api_type)
 
-    if api_type == "openai":
+    if api_type == "openai" or api_type == "mistral":
         endpoint = f"{base_url}/chat/completions"
         aug_messages = [{"role": "system", "content": system_prompt}] + messages
     else:
@@ -7718,16 +7718,22 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
     if inference_params:
         provider = _models_config.get(model, {}).get("provider", "")
         _apply_inference_to_payload(payload, inference_params, api_type, provider)
-    if api_type != "openai":
+    if api_type != "openai" and api_type != "mistral":
         payload["system"] = system_prompt
-
-    data = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
 
     try:
         # Use stricter tool round limit via thread-local (thread-safe)
         _thread_local.max_tool_rounds = MAX_DELEGATE_TOOL_ROUNDS
         try:
+            # Mistral path: use SDK directly
+            if api_type == "mistral":
+                return _handle_mistral_response(
+                    payload, messages, model, api_key, base_url,
+                    api_type, True, True, cancel_token, 0, event_callback)
+
+            data = json.dumps(payload).encode("utf-8")
+            request = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
+
             with urllib.request.urlopen(request) as response:
                 if api_type == "openai":
                     return _handle_openai_response(
@@ -12452,6 +12458,11 @@ def make_headers(api_key: str, api_type: str) -> dict:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
         }
+    if api_type == "mistral":
+        return {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
     return {
         "Content-Type": "application/json",
         "x-api-key": api_key,
@@ -12754,11 +12765,22 @@ def _apply_inference_to_payload(payload: dict, params: dict, api_type: str, prov
         if key in params and is_omlx:
             payload[key] = params[key]
 
+    # Mistral-specific inference keys
+    if api_type == "mistral":
+        if "reasoning_effort" in params:
+            payload["reasoning_effort"] = params["reasoning_effort"]
+
     # Thinking translation
     if params.get("thinking"):
         budget = params.get("thinking_budget", 4096)
         if api_type == "anthropic":
             payload["thinking"] = {"type": "enabled", "budget_tokens": budget}
+        elif api_type == "mistral":
+            # Map thinking to Mistral reasoning_effort (Vibe CLI mapping)
+            _thinking_to_reasoning = {"low": "none", "medium": "high", "high": "high"}
+            payload["reasoning_effort"] = _thinking_to_reasoning.get(
+                str(params.get("thinking", "high")), "high"
+            )
         elif is_omlx:
             payload.setdefault("chat_template_kwargs", {})["enable_thinking"] = True
 
@@ -14438,7 +14460,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         tools = False
     headers = make_headers(api_key, api_type)
 
-    if api_type == "openai":
+    if api_type == "openai" or api_type == "mistral":
         endpoint = f"{base_url}/chat/completions"
     else:
         endpoint = f"{base_url}/messages"
@@ -14456,7 +14478,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         system_instruction = _build_system_prompt(
             include_memory_summary=(_tool_round == 0),
         )
-        if api_type == "openai":
+        if api_type == "openai" or api_type == "mistral":
             augmented_messages.insert(0, {"role": "system", "content": system_instruction})
         else:
             pass  # handled below via payload["system"]
@@ -14471,6 +14493,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     # Request usage stats in streaming responses (OpenAI-compatible APIs)
     if api_type == "openai":
         payload["stream_options"] = {"include_usage": True}
+    # Mistral SDK handles usage internally — no stream_options needed
 
     # Apply inference parameters (temperature, top_p, thinking, etc.)
     if inference_params:
@@ -14486,7 +14509,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         defer_mcp = tcfg.get("defer_mcp_tools", "auto")
         discovered_tools = getattr(_thread_local, '_discovered_tools', set())
 
-        if api_type == "openai":
+        if api_type == "openai" or api_type == "mistral":
             all_tools = _filter_tools(TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
             if mcp_mgr:
                 mcp_tools = mcp_mgr.get_tool_definitions_openai()
@@ -14561,11 +14584,6 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
             "total_payload_tokens": len(json.dumps(payload)) // 4,
         })
 
-    data = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        endpoint, data=data, headers=headers, method="POST",
-    )
-
     # Check for cancellation before making the request
     if escape_watcher and escape_watcher.cancelled:
         raise TaskCancelled()
@@ -14577,6 +14595,18 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         allowed, reason, _usage_info = _rate_limiter.check(agent_id)
         if not allowed:
             raise RuntimeError(reason)
+
+    # Mistral path: use SDK directly (replicates Vibe CLI behavior)
+    if api_type == "mistral":
+        return _handle_mistral_response(
+            payload, messages, model, api_key, base_url,
+            api_type, silent, tools, escape_watcher,
+            _tool_round, event_callback, inference_params, session_id)
+
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint, data=data, headers=headers, method="POST",
+    )
 
     try:
         with urllib.request.urlopen(request) as response:
@@ -15084,6 +15114,246 @@ def _handle_openai_response(response, payload, messages, model, api_key,
                         inference_params=inference_params, session_id=session_id)
 
 
+# --- Mistral SDK integration (replicates Vibe CLI behavior) ---
+
+_VIBE_VERSION = "2.5.0"
+
+def _get_mistral_vibe_headers(session_id: str | None = None) -> dict:
+    """Build Vibe CLI-compatible HTTP headers for Mistral API calls."""
+    return {
+        "user-agent": f"mistral-client-python/Mistral-Vibe/{_VIBE_VERSION}",
+        "x-affinity": session_id or "brain-agent",
+    }
+
+def _get_mistral_vibe_metadata(session_id: str | None = None) -> dict:
+    """Build Vibe CLI-compatible metadata for Mistral API calls."""
+    return {
+        "agent_entrypoint": "cli",
+        "agent_version": _VIBE_VERSION,
+        "client_name": "vibe_cli",
+        "client_version": _VIBE_VERSION,
+        "session_id": session_id or "brain-agent",
+        "is_user_prompt": "true",
+        "call_type": "main_call",
+    }
+
+def _create_mistral_client(api_key: str):
+    """Create a Mistral SDK client instance."""
+    from mistralai.client import Mistral
+    return Mistral(api_key=api_key)
+
+
+def _handle_mistral_response(payload, messages, model, api_key,
+                              base_url, api_type, silent, tools,
+                              escape_watcher=None,
+                              _tool_round: int = 0,
+                              event_callback=None,
+                              inference_params: dict | None = None,
+                              session_id: str | None = None) -> str | None:
+    """Handle Mistral SDK streaming response, including tool-use agentic loop.
+
+    Uses the official mistralai SDK with Vibe CLI-compatible headers/metadata
+    to replicate the Vibe CLI's API interaction pattern.
+    """
+    collected_text = []
+    tool_calls_map = {}  # index -> {id, name, arguments_str}
+    _usage_in = 0
+    _usage_out = 0
+    finish_reason = None
+
+    client = _create_mistral_client(api_key)
+    vibe_headers = _get_mistral_vibe_headers(session_id)
+    vibe_metadata = _get_mistral_vibe_metadata(session_id)
+
+    # Build SDK call kwargs from payload
+    sdk_kwargs = {
+        "model": payload["model"],
+        "messages": payload["messages"],
+        "max_tokens": payload.get("max_tokens"),
+        "http_headers": vibe_headers,
+        "metadata": vibe_metadata,
+    }
+    if payload.get("tools"):
+        sdk_kwargs["tools"] = payload["tools"]
+    if payload.get("temperature") is not None:
+        sdk_kwargs["temperature"] = payload["temperature"]
+    if payload.get("top_p") is not None:
+        sdk_kwargs["top_p"] = payload["top_p"]
+    if payload.get("reasoning_effort"):
+        sdk_kwargs["reasoning_effort"] = payload["reasoning_effort"]
+
+    try:
+        stream = client.chat.stream(**sdk_kwargs)
+    except Exception as e:
+        error_msg = f"Mistral SDK error: {e}"
+        print(error_msg, file=sys.stderr)
+        _thread_local._last_send_error = {"code": 0, "message": error_msg}
+        return None
+
+    try:
+        for event in stream:
+            if escape_watcher and escape_watcher.cancelled:
+                raise TaskCancelled()
+
+            data = event.data
+            if not data or not data.choices:
+                # Check for usage on non-choice events
+                if data and data.usage:
+                    _usage_in = data.usage.prompt_tokens or 0
+                    _usage_out = data.usage.completion_tokens or 0
+                continue
+
+            choice = data.choices[0]
+
+            # Track finish reason
+            if choice.finish_reason:
+                finish_reason = choice.finish_reason
+
+            # Extract usage when available
+            if data.usage:
+                _usage_in = data.usage.prompt_tokens or 0
+                _usage_out = data.usage.completion_tokens or 0
+
+            delta = choice.delta
+            if not delta:
+                continue
+
+            # Text content
+            content = delta.content
+            if content:
+                content = _unescape(content)
+                if not silent:
+                    print(content, end="", flush=True)
+                if event_callback:
+                    event_callback("text_delta", {"text": content})
+                collected_text.append(content)
+
+            # Tool calls (same structure as OpenAI)
+            if delta.tool_calls:
+                for tc in delta.tool_calls:
+                    # SDK tool call deltas use index-based accumulation
+                    idx = getattr(tc, 'index', 0) or 0
+                    if idx not in tool_calls_map:
+                        tool_calls_map[idx] = {
+                            "id": getattr(tc, 'id', '') or "",
+                            "name": "",
+                            "arguments": "",
+                        }
+                    if getattr(tc, 'id', None):
+                        tool_calls_map[idx]["id"] = tc.id
+                    fn = getattr(tc, 'function', None)
+                    if fn:
+                        if getattr(fn, 'name', None):
+                            tool_calls_map[idx]["name"] = fn.name
+                        if getattr(fn, 'arguments', None):
+                            tool_calls_map[idx]["arguments"] += fn.arguments
+
+    except TaskCancelled:
+        raise
+    except Exception as e:
+        error_msg = f"Mistral stream error: {e}"
+        print(error_msg, file=sys.stderr)
+        # If we got partial text, continue with it
+        if not collected_text:
+            _thread_local._last_send_error = {"code": 0, "message": error_msg}
+            return None
+
+    full_text = "".join(collected_text)
+
+    # Log cost for this API call
+    _log_call_cost(model, _usage_in, _usage_out, session_id, _tool_round)
+
+    # Emit usage event
+    if event_callback:
+        event_callback("usage", {"tokens_in": _usage_in, "tokens_out": _usage_out})
+
+    # End LLM trace span
+    _llm_span = getattr(_thread_local, 'current_trace_span', None)
+    if _trace_manager and _llm_span and _llm_span.get("type") == "llm_call":
+        _trace_manager.end_span(_llm_span, status="ok",
+                                 tokens_in=_usage_in, tokens_out=_usage_out)
+
+    # Max output token recovery
+    if finish_reason == "length" and not tool_calls_map and full_text:
+        recovery_count = getattr(_thread_local, '_max_output_recovery_count', 0)
+        if recovery_count < MAX_OUTPUT_RECOVERY_LIMIT:
+            _thread_local._max_output_recovery_count = recovery_count + 1
+            if event_callback:
+                event_callback("max_tokens_recovery", {
+                    "attempt": recovery_count + 1,
+                    "max_attempts": MAX_OUTPUT_RECOVERY_LIMIT,
+                })
+            messages.append({"role": "assistant", "content": full_text})
+            messages.append({"role": "user", "content": _MAX_OUTPUT_RESUME_MSG})
+            return send_message(messages, model, api_key, base_url, api_type,
+                                silent=silent, tools=tools, escape_watcher=escape_watcher,
+                                _tool_round=_tool_round, event_callback=event_callback,
+                                inference_params=inference_params, session_id=session_id)
+
+    if not tool_calls_map:
+        if not silent and full_text:
+            print()
+        # End request trace span
+        _req_span = getattr(_thread_local, 'request_trace_span', None)
+        if _trace_manager and _req_span:
+            _trace_manager.end_span(_req_span, status="ok",
+                                     tokens_in=_usage_in, tokens_out=_usage_out)
+            _thread_local.request_trace_span = None
+        _thread_local._max_output_recovery_count = 0
+        return full_text
+
+    if full_text:
+        print()
+
+    # Build assistant message with tool_calls (OpenAI format)
+    assistant_msg = {"role": "assistant", "content": full_text or None}
+    tc_list = []
+    for idx in sorted(tool_calls_map.keys()):
+        tc = tool_calls_map[idx]
+        tc_list.append({
+            "id": tc["id"],
+            "type": "function",
+            "function": {"name": tc["name"], "arguments": tc["arguments"]},
+        })
+    assistant_msg["tool_calls"] = tc_list
+    messages.append(assistant_msg)
+
+    # Execute tools (same as OpenAI path)
+    batch_calls = []
+    for tc in tc_list:
+        try:
+            args = json.loads(tc["function"]["arguments"])
+        except json.JSONDecodeError:
+            args = {}
+        batch_calls.append({"id": tc["id"], "name": tc["function"]["name"], "input": args})
+
+    batch_results = _execute_tools_batch(batch_calls, event_callback=event_callback)
+
+    for br in batch_results:
+        sanitized = _sanitize_tool_result(
+            next((bc["name"] for bc in batch_calls if bc["id"] == br["tool_use_id"]), ""),
+            br["result"],
+        )
+        messages.append({
+            "role": "tool",
+            "tool_call_id": br["tool_use_id"],
+            "content": sanitized,
+        })
+
+    # Run middleware pipeline
+    _sid = session_id or getattr(_thread_local, 'current_session_id', None) or ""
+    messages, should_continue = _run_middleware(
+        messages, _tool_round, event_callback,
+        model=model, api_key=api_key, base_url=base_url, api_type=api_type,
+        session_id=_sid, escape_watcher=escape_watcher,
+    )
+
+    return send_message(messages, model, api_key, base_url, api_type,
+                        silent=silent, tools=tools, escape_watcher=escape_watcher,
+                        _tool_round=_tool_round + 1, event_callback=event_callback,
+                        inference_params=inference_params, session_id=session_id)
+
+
 def _classify_error_transient(error_info: dict | None) -> bool:
     """Check if the last send error is transient (retryable) vs permanent."""
     if not error_info:
@@ -15374,7 +15644,7 @@ def main():
         help="Base URL for the API (default: http://localhost:8317/v1)",
     )
     parser.add_argument(
-        "-t", "--api-type", choices=["anthropic", "openai"], default="anthropic",
+        "-t", "--api-type", choices=["anthropic", "openai", "mistral"], default="anthropic",
         help="API type: anthropic or openai (default: anthropic)",
     )
     parser.add_argument(

@@ -139,7 +139,22 @@ Provider routing for SDK (env vars per provider):
 
 The server supports multiple LLM providers (config.json). When a model is selected,
 the server automatically routes to the correct provider based on which one has that model.
-Provider types: `openai` (OpenAI-compatible) and `anthropic` (native Anthropic API).
+Provider types: `openai` (OpenAI-compatible), `anthropic` (native Anthropic API), and `mistral` (Mistral SDK with Vibe CLI-compatible headers).
+
+### Mistral Provider (Vibe CLI Integration)
+
+The `mistral` provider type uses the official `mistralai` Python SDK instead of raw HTTP,
+replicating the Vibe CLI's API interaction pattern for Pro subscription key compatibility.
+
+- SDK: `from mistralai.client import Mistral` — handles auth, streaming, tool calling natively
+- Vibe headers: `user-agent: mistral-client-python/Mistral-Vibe/{version}`, `x-affinity: {session_id}`
+- Vibe metadata: `{agent_entrypoint: "cli", client_name: "vibe_cli", ...}` in request body
+- Tool format: OpenAI-style function calling (same as `openai` provider type)
+- System prompt: inserted as first message (same as `openai` provider type)
+- Models: `devstral-small-latest` (Devstral Small), `mistral-vibe-cli-latest` (Devstral 2)
+- `_handle_mistral_response()`: streaming response handler via SDK with full agentic tool loop
+- Warmup uses SDK `chat.complete()` instead of raw urllib
+- `_use_sdk` (Agent SDK): not used for mistral — always direct agentic loop
 
 ### Token Optimization
 

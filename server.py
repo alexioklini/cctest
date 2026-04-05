@@ -1188,9 +1188,9 @@ def _trigger_warmup(session):
             # so the KV cache prefix matches any real first request exactly.
             # Get tool definitions
             allowed = engine._get_agent_tool_names()
-            if session.api_type == "openai":
+            if session.api_type in ("openai", "mistral"):
                 tools = engine._filter_tools(engine.TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
-                # OpenAI API requires at least one message — use system-only
+                # OpenAI/Mistral API requires at least one message — use system-only
                 messages = [{"role": "system", "content": system_prompt}]
                 endpoint = f"{session.base_url}/chat/completions"
             else:
@@ -1206,17 +1206,27 @@ def _trigger_warmup(session):
                 "stream": False,
                 "tools": tools,
             }
-            if session.api_type != "openai":
+            if session.api_type not in ("openai", "mistral"):
                 payload["system"] = system_prompt
 
             if session._warmup_cancel.is_set():
                 return
 
-            headers = engine.make_headers(session.api_key, session.api_type)
-            data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                resp.read()  # consume response
+            if session.api_type == "mistral":
+                # Mistral warmup via SDK (replicates Vibe CLI behavior)
+                client = engine._create_mistral_client(session.api_key)
+                vibe_headers = engine._get_mistral_vibe_headers(session.id)
+                vibe_metadata = engine._get_mistral_vibe_metadata(session.id)
+                client.chat.complete(
+                    model=session.model, messages=messages, max_tokens=1,
+                    tools=tools, http_headers=vibe_headers, metadata=vibe_metadata,
+                )
+            else:
+                headers = engine.make_headers(session.api_key, session.api_type)
+                data = json.dumps(payload).encode("utf-8")
+                req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    resp.read()  # consume response
 
             if session._warmup_cancel.is_set():
                 print(f"  [warmup] {session.model} cancelled ({session.id[:8]})")
@@ -2472,8 +2482,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         if images:
             content_blocks = []
             for img in images:
-                if session.api_type == "openai":
-                    # OpenAI format: image_url with data URI
+                if session.api_type in ("openai", "mistral"):
+                    # OpenAI/Mistral format: image_url with data URI
                     data_uri = f"data:{img.get('media_type', 'image/png')};base64,{img['data']}"
                     content_blocks.append({"type": "image_url", "image_url": {"url": data_uri}})
                 else:
@@ -7732,7 +7742,7 @@ def main():
     parser.add_argument("--port", type=int, default=srv_cfg.get("port", 8420))
     parser.add_argument("--api-key", default=provider.get("api_key", ""))
     parser.add_argument("--base-url", default=provider.get("base_url", "http://localhost:8317/v1"))
-    parser.add_argument("-t", "--api-type", choices=["anthropic", "openai"],
+    parser.add_argument("-t", "--api-type", choices=["anthropic", "openai", "mistral"],
                         default=provider.get("type", "anthropic"))
     parser.add_argument("-m", "--model", default=provider.get("default_model", ""))
     parser.add_argument("--max-context", type=int, default=file_config.get("max_context", 131072))

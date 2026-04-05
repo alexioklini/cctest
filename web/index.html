@@ -8123,7 +8123,7 @@ async function switchGeneralTab(tab, btn) {
           ${(p.models||[]).length?`<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${(p.models||[]).slice(0,8).map(m=>{const mid=typeof m==='string'?m:(m.id||m);return BADGE(modelShortName(mid));}).join('')}${(p.models||[]).length>8?`<span style="${MONO}">+${(p.models||[]).length-8} more</span>`:''}</div>`:''}
           <div id="${pid}" style="display:none;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-100)">
             <div style="display:flex;gap:8px">
-              <div style="width:120px"><label class="form-label">Type</label><select class="form-select" id="${pid}-type"><option value="anthropic" ${p.type==='anthropic'?'selected':''}>anthropic</option><option value="openai" ${p.type==='openai'?'selected':''}>openai</option></select></div>
+              <div style="width:120px"><label class="form-label">Type</label><select class="form-select" id="${pid}-type"><option value="anthropic" ${p.type==='anthropic'?'selected':''}>anthropic</option><option value="openai" ${p.type==='openai'?'selected':''}>openai</option><option value="mistral" ${p.type==='mistral'?'selected':''}>mistral</option></select></div>
               <div style="flex:1"><label class="form-label">Base URL</label><input class="form-input" id="${pid}-url" value="${esc(p.base_url||'')}"></div>
             </div>
             <div><label class="form-label">API Key</label><input class="form-input" id="${pid}-key" type="password" placeholder="${p.api_key||'unchanged'}"></div>
@@ -8136,7 +8136,7 @@ async function switchGeneralTab(tab, btn) {
         <div style="padding:12px;border:1px solid var(--border-200);border-radius:10px;${G('10px')}">
           <div style="display:flex;gap:8px">
             <div style="flex:1"><label class="form-label">Name</label><input class="form-input" id="prov-name" placeholder="e.g. my-provider"></div>
-            <div style="width:120px"><label class="form-label">Type</label><select class="form-select" id="prov-type" style="width:100%"><option value="anthropic">anthropic</option><option value="openai">openai</option></select></div>
+            <div style="width:120px"><label class="form-label">Type</label><select class="form-select" id="prov-type" style="width:100%"><option value="anthropic">anthropic</option><option value="openai">openai</option><option value="mistral">mistral</option></select></div>
           </div>
           <div><label class="form-label">Base URL</label><input class="form-input" id="prov-url" placeholder="http://localhost:8081/v1"></div>
           <div><label class="form-label">API Key</label><input class="form-input" id="prov-key" placeholder="sk-..." type="password"></div>
