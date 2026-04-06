@@ -4456,31 +4456,38 @@ function relativeTime(ts) {
   return new Date(ts).toLocaleDateString();
 }
 
-function modelShortName(modelId) {
+function modelShortName(modelId, withProvider = true) {
   if (!modelId) return '';
-  // Check modelsConfig shortname — skip if it looks like a raw model ID
   const cfg = state.modelsConfig?.models?.[modelId];
-  if (cfg?.shortname && cfg.shortname !== modelId && !cfg.shortname.startsWith('claude-')) return cfg.shortname;
-  const m = modelId.toLowerCase();
-  if (m === 'claude-opus-4-6' || m === 'claude-opus-4-20250514') return 'Opus 4.6';
-  if (m === 'claude-sonnet-4-6' || m === 'claude-sonnet-4-20250514') return 'Sonnet 4.6';
-  if (m.includes('claude-3-7-sonnet')) return 'Sonnet 3.7';
-  if (m.includes('claude-3-5-sonnet')) return 'Sonnet 3.5';
-  if (m.includes('haiku-4-5') || m.includes('haiku-4.5')) return 'Haiku 4.5';
-  if (m.includes('haiku')) return 'Haiku';
-  if (m.includes('crow-9b')) return 'Crow 9B';
-  if (m.includes('crow-4b')) return 'Crow 4B';
-  if (m === 'minimax-m2.7' || m === 'minimax-m2.5') return modelId;
-  if (m.includes('gemini-3.1')) return 'Gemini 3.1 Flash Lite';
-  if (m.includes('gemini-3-flash')) return 'Gemini 3 Flash';
-  if (m.includes('gemini-2.5-pro')) return 'Gemini 2.5 Pro';
-  if (m.includes('gemini-2.5-flash')) return 'Gemini 2.5 Flash';
-  if (m.includes('gemini')) return modelId;
-  if (m.includes('qwen')) return modelId;
-  // strip provider prefix
-  const parts = modelId.split('/');
-  const name = parts[parts.length - 1];
-  return name.length > 25 ? name.substring(0, 23) + '...' : name;
+  let name = '';
+  // Check display_name first (user-configurable), then shortname
+  if (cfg?.display_name) { name = cfg.display_name; }
+  else if (cfg?.shortname && cfg.shortname !== modelId && !cfg.shortname.startsWith('claude-')) { name = cfg.shortname; }
+  else {
+    const m = modelId.toLowerCase();
+    if (m === 'claude-opus-4-6' || m === 'claude-opus-4-20250514') name = 'Opus 4.6';
+    else if (m === 'claude-sonnet-4-6' || m === 'claude-sonnet-4-20250514') name = 'Sonnet 4.6';
+    else if (m.includes('claude-3-7-sonnet')) name = 'Sonnet 3.7';
+    else if (m.includes('claude-3-5-sonnet')) name = 'Sonnet 3.5';
+    else if (m.includes('haiku-4-5') || m.includes('haiku-4.5')) name = 'Haiku 4.5';
+    else if (m.includes('haiku')) name = 'Haiku';
+    else if (m.includes('crow-9b')) name = 'Crow 9B';
+    else if (m.includes('crow-4b')) name = 'Crow 4B';
+    else if (m === 'minimax-m2.7' || m === 'minimax-m2.5') name = modelId;
+    else if (m.includes('gemini-3.1')) name = 'Gemini 3.1 Flash Lite';
+    else if (m.includes('gemini-3-flash')) name = 'Gemini 3 Flash';
+    else if (m.includes('gemini-2.5-pro')) name = 'Gemini 2.5 Pro';
+    else if (m.includes('gemini-2.5-flash')) name = 'Gemini 2.5 Flash';
+    else if (m.includes('gemini')) name = modelId;
+    else if (m.includes('qwen')) name = modelId;
+    else {
+      const parts = modelId.split('/');
+      const n = parts[parts.length - 1];
+      name = n.length > 25 ? n.substring(0, 23) + '...' : n;
+    }
+  }
+  if (withProvider && cfg?.provider) return `${name} (${cfg.provider})`;
+  return name;
 }
 
 function autoResizeInput(el) {
@@ -8092,20 +8099,52 @@ async function switchGeneralTab(tab, btn) {
   /* ─── MODELS ─── */
   if (tab === 'models') {
     const mc = state.modelsConfig?.models || {};
-    const sorted = Object.entries(mc).sort((a,b)=>(b[1].priority||0)-(a[1].priority||0));
+    // Group by provider
+    const byProvider = {};
+    for (const [mid, cfg] of Object.entries(mc)) {
+      const prov = cfg.provider || 'unassigned';
+      (byProvider[prov] = byProvider[prov] || []).push([mid, cfg]);
+    }
+    const provKeys = Object.keys(byProvider).sort();
+    // Sort models within each provider by display name
+    for (const pk of provKeys) byProvider[pk].sort((a, b) => (a[1].display_name || modelShortName(a[0], false)).localeCompare(b[1].display_name || modelShortName(b[0], false)));
+
     let html = `<div style="${G('6px')}">
-      <div style="display:flex;gap:8px;margin-bottom:8px">
+      <div style="display:flex;gap:8px;margin-bottom:12px">
         <button class="btn-secondary" onclick="this.disabled=true;this.textContent='Syncing...';API.post('/v1/models/config',{action:'sync'}).then(()=>{showToast('Syncing...');setTimeout(()=>API.getModelsConfig().then(d=>{state.modelsConfig=d;switchGeneralTab('models');showToast('Synced')}),3000)}).catch(e=>{showToast('Failed',true);this.disabled=false;this.textContent='Sync from Providers'})">Sync from Providers</button>
       </div>`;
-    for (const [mid, cfg] of sorted) {
-      html += `<div style="${ROW};opacity:${cfg.enabled?1:0.5}" data-model-id="${esc(mid)}">
-        <input type="checkbox" class="mdl-enabled" ${cfg.enabled?'checked':''} onchange="this.closest('[data-model-id]').style.opacity=this.checked?1:0.5">
-        <span style="flex:1;font-size:13px;color:var(--text-100)">${esc(modelShortName(mid))}</span>
-        <span style="${MONO}">${esc(mid)}</span>
-        <span style="${MONO}">${esc(cfg.provider||'')}</span>
-        <label style="font-size:11px;color:var(--text-400)">P</label><input type="number" class="mdl-priority" value="${cfg.priority||0}" style="width:50px;padding:2px 4px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;text-align:center;background:var(--bg-000);color:var(--text-200)">
-      </div>`;
+    for (const prov of provKeys) {
+      const models = byProvider[prov];
+      const provId = `mdl-prov-${prov.replace(/[^a-zA-Z0-9]/g,'_')}`;
+      html += `<div style="margin-bottom:6px;border:1px solid var(--border-100);border-radius:8px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:8px 12px;background:var(--bg-100)" onclick="const c=document.getElementById('${provId}');const open=c.style.display!=='none';c.style.display=open?'none':'block';this.querySelector('.mdl-arrow').textContent=open?'▶':'▼'">
+          <span class="mdl-arrow" style="font-size:10px;color:var(--text-400)">▼</span>
+          <span style="font-size:13px;font-weight:600;color:var(--text-100)">${esc(prov)}</span>
+          <span style="font-size:11px;color:var(--text-400)">${models.length} model${models.length!==1?'s':''}</span>
+        </div>
+        <div id="${provId}" style="padding:4px 8px">`;
+      for (const [mid, cfg] of models) {
+        html += `<div style="${ROW};opacity:${cfg.enabled?1:0.5}" data-model-id="${esc(mid)}">
+          <input type="checkbox" class="mdl-enabled" ${cfg.enabled?'checked':''} onchange="this.closest('[data-model-id]').style.opacity=this.checked?1:0.5">
+          <input class="mdl-display-name" value="${esc(cfg.display_name || modelShortName(mid, false))}" style="width:140px;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:12px;background:var(--bg-000);color:var(--text-100)" placeholder="Display name" title="Display name">
+          <span style="${MONO};flex:1;overflow:hidden;text-overflow:ellipsis" title="${esc(mid)}">${esc(mid)}</span>
+          <label style="font-size:11px;color:var(--text-400)">P</label><input type="number" class="mdl-priority" value="${cfg.priority||0}" style="width:50px;padding:2px 4px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;text-align:center;background:var(--bg-000);color:var(--text-200)">
+          <button class="btn-secondary" style="padding:2px 6px;font-size:10px;color:var(--error)" onclick="if(confirm('Remove model ${esc(mid)}?'))removeModel('${esc(mid)}')">✕</button>
+        </div>`;
+      }
+      html += `</div></div>`;
     }
+    // Add Model form
+    const knownProvs = [...new Set(Object.values(mc).map(c=>c.provider).filter(Boolean))].sort();
+    html += `<div style="margin-top:12px;padding:12px;border:1px solid var(--border-200);border-radius:8px;${G('8px')}">
+      <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:4px">Add Model Manually</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
+        <div style="flex:2;min-width:180px"><label class="form-label">Model ID</label><input class="form-input" id="add-model-id" placeholder="e.g. my-model-v1"></div>
+        <div style="flex:1;min-width:120px"><label class="form-label">Provider</label><input class="form-input" id="add-model-provider" list="add-model-provs" placeholder="provider name"><datalist id="add-model-provs">${knownProvs.map(p=>`<option value="${esc(p)}">`).join('')}</datalist></div>
+        <div style="flex:1;min-width:120px"><label class="form-label">Display Name</label><input class="form-input" id="add-model-display" placeholder="Optional"></div>
+        <button class="btn-primary" style="height:34px" onclick="addManualModel()">Add</button>
+      </div>
+    </div>`;
     html += `<div style="display:flex;gap:8px;margin-top:12px">
       <button class="btn-primary" onclick="saveModelsConfig()">Save</button>
     </div></div>`;
@@ -8134,7 +8173,7 @@ async function switchGeneralTab(tab, btn) {
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px;color:var(--error)" onclick="if(confirm('Delete provider ${esc(p.name)}?'))deleteProvider('${esc(p.name)}')">Delete</button>
           </div>
           <div style="${MONO};overflow:hidden;text-overflow:ellipsis">${esc(p.base_url||'')}</div>
-          ${(p.models||[]).length?`<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${(p.models||[]).slice(0,8).map(m=>{const mid=typeof m==='string'?m:(m.id||m);return BADGE(modelShortName(mid));}).join('')}${(p.models||[]).length>8?`<span style="${MONO}">+${(p.models||[]).length-8} more</span>`:''}</div>`:''}
+          ${(p.models||[]).length?`<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${(p.models||[]).slice(0,8).map(m=>{const mid=typeof m==='string'?m:(m.id||m);return BADGE(modelShortName(mid,false));}).join('')}${(p.models||[]).length>8?`<span style="${MONO}">+${(p.models||[]).length-8} more</span>`:''}</div>`:''}
           <div id="${pid}" style="display:none;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-100)">
             <div style="display:flex;gap:8px">
               <div style="width:120px"><label class="form-label">Type</label><select class="form-select" id="${pid}-type"><option value="anthropic" ${p.type==='anthropic'?'selected':''}>anthropic</option><option value="openai" ${p.type==='openai'?'selected':''}>openai</option><option value="mistral" ${p.type==='mistral'?'selected':''}>mistral</option></select></div>
@@ -8791,12 +8830,42 @@ async function saveModelsConfig() {
         mc[mid].enabled = row.querySelector('.mdl-enabled')?.checked ?? mc[mid].enabled;
         const pVal = row.querySelector('.mdl-priority')?.value;
         if (pVal !== undefined) mc[mid].priority = parseInt(pVal) || 0;
+        const dName = row.querySelector('.mdl-display-name')?.value?.trim();
+        if (dName) mc[mid].display_name = dName;
       }
     });
     await API.post('/v1/models/config', { action: 'save', models: mc });
     state.modelsConfig.models = mc;
     showToast('Models config saved');
   } catch(e) { showToast('Save failed: ' + e.message, true); }
+}
+
+async function addManualModel() {
+  const id = document.getElementById('add-model-id')?.value?.trim();
+  const provider = document.getElementById('add-model-provider')?.value?.trim();
+  const display = document.getElementById('add-model-display')?.value?.trim();
+  if (!id) { showToast('Model ID required', true); return; }
+  if (!provider) { showToast('Provider required', true); return; }
+  const mc = state.modelsConfig?.models || {};
+  if (mc[id]) { showToast('Model already exists', true); return; }
+  mc[id] = { enabled: true, provider, display_name: display || id, shortname: id, priority: 10, capabilities: [], icon: '\u{1F916}' };
+  state.modelsConfig.models = mc;
+  try {
+    await API.post('/v1/models/config', { action: 'save', models: mc });
+    showToast('Model added');
+    switchGeneralTab('models');
+  } catch(e) { showToast('Failed: ' + e.message, true); }
+}
+
+async function removeModel(mid) {
+  const mc = {...(state.modelsConfig?.models || {})};
+  delete mc[mid];
+  state.modelsConfig.models = mc;
+  try {
+    await API.post('/v1/models/config', { action: 'save', models: mc });
+    showToast('Model removed');
+    switchGeneralTab('models');
+  } catch(e) { showToast('Failed: ' + e.message, true); }
 }
 
 async function syncProvider(btn, name) {
@@ -12401,13 +12470,7 @@ function loadCodeSessionsFiltered() {
 }
 
 function _shortModelName(mid) {
-  if (!mid) return '';
-  if (mid.includes('opus')) return 'Opus 4.6';
-  if (mid.includes('sonnet')) return 'Sonnet 4.6';
-  if (mid.includes('haiku')) return 'Haiku 4.5';
-  if (mid.includes('crow')) return 'Crow 4B';
-  const parts = mid.split(/[-/]/);
-  return parts.slice(-2).join(' ');
+  return modelShortName(mid);
 }
 
 async function selectCodeFolder() {
@@ -12568,11 +12631,13 @@ function toggleCodeModelDropdown(event) {
   dd.className = 'sb-agent-dropdown';
   dd.style.cssText = 'position:absolute;top:100%;left:0;z-index:100;min-width:220px;margin-top:4px;max-height:300px;overflow-y:auto';
 
-  for (const m of state.models) {
-    const mid = m.id || m;
+  const codeModels = Object.entries(state.modelsConfig?.models || {})
+    .filter(([, cfg]) => cfg.enabled)
+    .sort((a, b) => (b[1].priority || 0) - (a[1].priority || 0));
+  for (const [mid] of codeModels) {
     const item = document.createElement('div');
     item.className = 'dropdown-item' + (mid === state.codeModel ? ' active' : '');
-    item.textContent = mid;
+    item.textContent = modelShortName(mid);
     item.onclick = () => {
       state.codeModel = mid;
       localStorage.setItem('codeModel', mid);

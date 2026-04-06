@@ -15,9 +15,7 @@
     "model": "devstral-small-latest"
   },
   "paused": false,
-  "agent_sdk": {
-    "enabled": false
-  },
+  "agent_sdk": false,
   "relationship_discovery": {
     "model": "mistral-small",
     "model_fallback": "devstral-small-latest"

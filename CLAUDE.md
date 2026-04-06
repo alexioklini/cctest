@@ -141,6 +141,17 @@ The server supports multiple LLM providers (config.json). When a model is select
 the server automatically routes to the correct provider based on which one has that model.
 Provider types: `openai` (OpenAI-compatible), `anthropic` (native Anthropic API), and `mistral` (Mistral SDK with Vibe CLI-compatible headers).
 
+### Model Management
+
+Models have a configurable `display_name` (default = shortname derived from model ID). All UI
+surfaces show models as `displayName (provider)` — selectors, dropdowns, status bar, spinners.
+
+- `display_name`: user-editable label, persisted in config.json `models` section
+- Models tab: grouped by provider (collapsible sections), sorted by display name within each
+- Manual model add: model ID + provider + optional display name (for providers without `/models` endpoint)
+- `modelShortName(modelId, withProvider=true)`: returns `display_name (provider)` or compact form
+- `_match_known_model()` sets `display_name` from cleaned model ID (strips version suffixes)
+
 ### Mistral Provider (Vibe CLI Integration)
 
 The `mistral` provider type uses the official `mistralai` Python SDK instead of raw HTTP,
@@ -204,7 +215,8 @@ Per-agent token config in `agent.json` under `token_config`:
 - QMD path normalization: QMD lowercases paths and converts underscores to hyphens — `/docs` endpoint mirrors this when matching filesystem paths to index entries
 - `/v1/services` returns per-collection health stats: `total`, `indexed`, `embedded`, `stale`, `not_indexed`
 - Smart model routing: `init_models_config()` auto-discovers models from providers, `resolve_model()` picks by purpose
-- Providers without `/models` endpoint: manually-configured models from `_models_config` are included in provider listings
+- Providers without `/models` endpoint: manually add models via Models tab (model ID + provider + display name)
+- Model display format: `displayName (provider)` everywhere — `modelShortName(mid, withProvider)` controls compact vs full
 - QMD session reuse: `_qmd_session_lock` prevents concurrent threads from creating duplicate MCP sessions
 - QMD health check uses lightweight TCP socket connect (no MCP session created)
 - `memory_shared` and `list_all` return full content body, not just metadata

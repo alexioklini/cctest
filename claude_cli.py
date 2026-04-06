@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "5.7.0"
-VERSION_DATE = "2026-04-03"
+VERSION = "5.8.0"
+VERSION_DATE = "2026-04-06"
 CHANGELOG = [
+    ("5.8.0", "2026-04-06", "Model management overhaul — models now have a configurable display_name (default = cleaned model ID). All UI surfaces show models as 'displayName (provider)' format — selectors, dropdowns, status bar, spinners, agent config. Models tab redesigned: grouped by provider with collapsible sections, sorted by display name, inline editable display names, per-model remove button. Manual model add form for providers without /models endpoint (model ID + provider + display name with datalist autocomplete). Code mode dropdown uses modelsConfig instead of flat model list. Provider tab badges use compact names. Backend: display_name field added to _match_known_model()."),
     ("5.7.0", "2026-04-03", "Token optimization suite — comprehensive per-agent token usage controls via new Tokens tab in agent config. Tool group filtering sends only relevant tools to the LLM (13 groups: core, memory, context, web, email, documents, delegation, code_graph, git, scheduler, mcp, skills, nodes). System prompt trimmed: tools.md reduced from 1500 to 400 tokens, memory summary cap configurable per agent. Anthropic prompt caching via cache_control on system prompt blocks. System prompt cached per-session (60s TTL) to avoid disk I/O on tool loops. Memory summary scheduled tasks restricted to memory-only tools (4 instead of 39). Compact threshold configurable per agent. SDK duplicate tools cleaned up. Kilo API provider added (OpenAI-compatible gateway). Context fill bar and manual compact button in chat footer. Background pipeline model selectors with fallback in Memory tab GUI. Fixed SDK token count inflating context display (was reporting API tokens_in instead of conversation estimate)."),
     ("5.6.0", "2026-03-31", "Code Mode overhaul — full-featured coding assistant experience. Folder browser GUI for project selection (breadcrumb navigation, lazy-loaded directory listing via /v1/files/tree). Fixed SSE streaming (two-line event:/data: format matching server output). Tool calls display identically to main chat (gear/check icons, expandable args/results, proper .open toggle). Streaming indicator with wave animation, model name, tool labels, elapsed timer, and stop button. Folder-based project system — sessions tagged with folder path, 'All Projects' expands to show discovered projects with session counts, selecting a project filters sessions. Session management: archive and delete buttons on hover in sidebar. Code mode sessions properly scoped by folder path via project field."),
     ("5.5.0", "2026-03-31", "Claude.ai-style Projects — full project workspace system modeled after Claude.ai. Projects list view with card grid, search, Your Projects/Archived tabs, sort by activity/name/created. Project detail view with back navigation, description (show more/less), chat composer, conversation list, and right panel with Instructions and Files sections. Custom instructions per project — editable via modal, stored in project.json, injected into system prompt for all project conversations. File upload via multipart form (replaced deprecated cgi module with manual boundary parser for Python 3.13+). Files displayed with document icons, deletable per file. Project-scoped conversations — sessions filtered by project field, new chats auto-scoped. Project CRUD — create modal with name/description/agent, archive (preserves data + QMD), delete (soft-delete to .trash, removes QMD collection). Context menus on project cards and chat items. API: GET/POST /v1/sessions?project=X for project-filtered session listing."),
@@ -12557,6 +12558,7 @@ def _match_known_model(model_id: str) -> dict:
             result = {
                 "enabled": True,
                 "shortname": shortname,
+                "display_name": shortname,
                 "icon": defaults["icon"],
                 "priority": defaults["priority"],
                 "capabilities": list(defaults["capabilities"]),
@@ -12569,6 +12571,7 @@ def _match_known_model(model_id: str) -> dict:
     return {
         "enabled": True,
         "shortname": shortname,
+        "display_name": shortname,
         "icon": "\U0001f916",
         "priority": 10,
         "capabilities": [],
