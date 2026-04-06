@@ -6274,11 +6274,12 @@ async function sendMessage() {
   renderMessages();
   scrollToBottom();
 
-  // Start streaming
+  // Start streaming (generation counter prevents stale safety-net from killing newer streams)
   chat.streaming = true;
   chat.streamingText = '';
   chat.thinkingText = '';
   chat.files = [];
+  const streamGen = (chat._streamGen = (chat._streamGen || 0) + 1);
   updateStreamingUI(true, chat);
 
   // Timer (per-chat, not global)
@@ -6454,8 +6455,9 @@ async function sendMessage() {
     }, chat.model);
 
     // Safety net: if stream ended without a 'done' event
-    console.log('[SSE] streamChat resolved, streaming:', chat.streaming, 'msgCount:', chat.messages.length);
-    if (chat.streaming) {
+    // Guard with streamGen to prevent a stale safety-net (resumed via microtask)
+    // from killing a newer stream's spinner
+    if (chat.streaming && chat._streamGen === streamGen) {
       console.warn('[SSE] safety net triggered — done event was lost');
       const text = chat.streamingText || '';
       if (text) {
@@ -6475,6 +6477,7 @@ async function sendMessage() {
       loadAgentSessions(chat.agent);
     }
   } catch(e) {
+    if (chat._streamGen !== streamGen) return; // stale — newer stream took over
     chat.streaming = false;
     chat.streamingText = '';
     chat.thinkingText = '';

@@ -306,6 +306,7 @@ Per-agent token config in `agent.json` under `token_config`:
 - Remote node badge: purple pill on tool blocks when `node` param present
 - Resizable sidebars: drag handles on right edge of left sidebar, left edge of project panel, persisted to localStorage
 - Stream timing state (`_streamStartTime`, `_streamTimerInterval`) scoped per-agent chat, not global
+- Stream generation counter (`_streamGen`): safety net and catch block check generation to avoid stale microtasks from a completed stream killing a newer stream's spinner
 
 ### Concurrency & Thread Safety
 
