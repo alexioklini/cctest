@@ -8,8 +8,8 @@
     "paused": false,
     "frequency": "every 24h",
     "start_time": "03:00",
-    "model": "Crow-9B-HERETIC-4.6-MLX-8bit",
-    "model_fallback": "MiniMax-M2.7"
+    "model": "mistral-vibe-cli-latest",
+    "model_fallback": "devstral-small-latest"
   },
   "hooks": {
     "enabled": true,
@@ -27,11 +27,11 @@
     ]
   },
   "autodream": {
-    "model": "Crow-9B-HERETIC-4.6-MLX-8bit"
+    "model": "devstral-small-latest"
   },
   "relationship_discovery": {
-    "model": "Crow-4B-Opus-4.6-Distill",
-    "model_fallback": "mistralai/mistral-small-2603"
+    "model": "mistralai/mistral-small-2603",
+    "model_fallback": "mistral-vibe-cli-latest"
   },
   "token_config": {
     "tool_groups": [
@@ -54,6 +54,10 @@
   },
   "paused": false,
   "agent_sdk": {
-    "enabled": false
+    "enabled": true
+  },
+  "auto_memory": {
+    "model": "mistral-vibe-cli-latest",
+    "model_fallback": "devstral-small-latest"
   }
 }

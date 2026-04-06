@@ -7,9 +7,19 @@
     "enabled": true,
     "paused": false,
     "frequency": "every 24h",
-    "start_time": "03:00"
+    "start_time": "03:00",
+    "model": "mistral-vibe-cli-latest",
+    "model_fallback": "devstral-small-latest"
   },
   "autodream": {
-    "model": "claude-haiku-4-5-20251001"
+    "model": "devstral-small-latest"
+  },
+  "relationship_discovery": {
+    "model": "mistralai/mistral-small-2603",
+    "model_fallback": "mistral-vibe-cli-latest"
+  },
+  "auto_memory": {
+    "model": "mistral-vibe-cli-latest",
+    "model_fallback": "devstral-small-latest"
   }
 }

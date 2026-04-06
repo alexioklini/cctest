@@ -3496,7 +3496,7 @@ def get_agent_summaries() -> list[dict]:
             "model": cfg.preferred_model,
             "avatar": config.get("avatar"),
             "paused": config.get("paused", False),
-            "agent_sdk": config.get("agent_sdk", {}).get("enabled", True),
+            "agent_sdk": config.get("agent_sdk", {}).get("enabled", True) if isinstance(config.get("agent_sdk"), dict) else bool(config.get("agent_sdk", True)),
         }
         team_cfg = config.get("team")
         if isinstance(team_cfg, dict) and team_cfg.get("members"):
@@ -3752,7 +3752,7 @@ _QMD_HEADERS = {
 
 # Shared MCP session ID (set on first successful init)
 _qmd_session_id: str | None = None
-_qmd_session_lock = threading.Lock()
+_qmd_session_lock = threading.RLock()
 # Per-collection debounce timers for embedding after writes
 _qmd_embed_timers: dict[str, threading.Timer] = {}
 _qmd_embed_lock = threading.Lock()
@@ -5718,12 +5718,42 @@ def _get_memory_summary_config(agent_id: str) -> dict:
     ms_cfg = cfg.get("memory_summary", {})
     result = dict(MEMORY_SUMMARY_DEFAULTS)
     if isinstance(ms_cfg, dict):
-        for k in ("enabled", "paused", "frequency", "start_time"):
+        for k in ("enabled", "paused", "frequency", "start_time", "model", "model_fallback"):
             if k in ms_cfg:
                 result[k] = ms_cfg[k]
     elif isinstance(ms_cfg, bool):
         result["enabled"] = ms_cfg
     return result
+
+
+def _cleanup_orphaned_chat_index_files(agent_id: str):
+    """Remove chats-indexed files for sessions that no longer exist in the DB."""
+    chats_dir = os.path.join(AGENTS_DIR, agent_id, "chats-indexed")
+    if not os.path.isdir(chats_dir):
+        return
+    chat_db_path = os.path.join(AGENTS_DIR, "main", "chats.db")
+    if not os.path.exists(chat_db_path):
+        return
+    try:
+        conn = sqlite3.connect(chat_db_path, timeout=5)
+        existing_sids = {row[0] for row in conn.execute("SELECT id FROM sessions")}
+        conn.close()
+    except Exception:
+        return
+    removed = 0
+    for fname in os.listdir(chats_dir):
+        if not fname.startswith("chat-") or not fname.endswith(".md"):
+            continue
+        sid = fname.split("-", 1)[1].rsplit("-", 1)[0]
+        if sid not in existing_sids:
+            try:
+                os.remove(os.path.join(chats_dir, fname))
+                removed += 1
+            except OSError:
+                pass
+    if removed:
+        logging.info("Chat index cleanup for %s: removed %d orphaned files", agent_id, removed)
+        _qmd_debounced_embed(agent_id)
 
 
 def _memory_summary_schedule_name(agent_id: str) -> str:
@@ -6279,7 +6309,7 @@ def _get_relationship_discovery_config(agent_id: str) -> dict:
     rd_cfg = cfg.get("relationship_discovery", {})
     result = dict(RELATIONSHIP_DISCOVERY_DEFAULTS)
     if isinstance(rd_cfg, dict):
-        for k in ("enabled", "frequency", "start_time"):
+        for k in ("enabled", "frequency", "start_time", "model", "model_fallback"):
             if k in rd_cfg:
                 result[k] = rd_cfg[k]
     elif isinstance(rd_cfg, bool):
@@ -6304,7 +6334,7 @@ def _get_autodream_config(agent_id: str) -> dict:
     ad_cfg = cfg.get("autodream", {})
     result = dict(AUTODREAM_DEFAULTS)
     if isinstance(ad_cfg, dict):
-        for k in AUTODREAM_DEFAULTS:
+        for k in list(AUTODREAM_DEFAULTS) + ["model_fallback"]:
             if k in ad_cfg:
                 result[k] = ad_cfg[k]
     elif isinstance(ad_cfg, bool):
@@ -6319,6 +6349,8 @@ def _get_auto_memory_config(agent_id: str) -> dict:
     return {
         "enabled": am.get("enabled", True),
         "min_message_length": am.get("min_message_length", 20),
+        "model": am.get("model", ""),
+        "model_fallback": am.get("model_fallback", ""),
     }
 
 
@@ -6407,9 +6439,13 @@ def _auto_memory_extract_inner(agent_id: str, user_message: str, assistant_respo
     )
 
     try:
-        # Use cheapest model
+        # Use configured model, or find cheapest
         model = None
-        if _models_config:
+        am_model = am_cfg.get("model", "")
+        am_fallback = am_cfg.get("model_fallback", "")
+        if am_model:
+            model, _ = _resolve_model_with_fallback(am_model, am_fallback, "claude-haiku-4-5-20251001")
+        if not model and _models_config:
             for mid, cfg in sorted(_models_config.items(), key=lambda x: x[1].get('cost_input', 999)):
                 if cfg.get('enabled', True):
                     ml = mid.lower()
@@ -8700,8 +8736,12 @@ class Scheduler:
         schedule_id = task_row.get("id")
         name = task_row.get("name", "")
 
-        # Memory summary tasks: regenerate prompt fresh with live data
+        # Memory summary tasks: clean up orphaned chat indexes, then regenerate prompt with live data
         if name.startswith("_memory_summary_"):
+            try:
+                _cleanup_orphaned_chat_index_files(agent_id)
+            except Exception:
+                pass
             try:
                 task = _build_memory_summary_prompt(agent_id)
             except Exception:
@@ -14975,7 +15015,7 @@ def _handle_openai_response(response, payload, messages, model, api_key,
             fr = choices[0].get("finish_reason")
             if fr:
                 finish_reason = fr
-            delta = choices[0].get("delta", {})
+            delta = choices[0].get("delta") or {}
             content = delta.get("content")
             if content:
                 content = _unescape(content)

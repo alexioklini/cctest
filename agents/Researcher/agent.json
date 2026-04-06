@@ -1,6 +1,6 @@
 {
   "description": "A specialised agent which performs analysis of various topics",
-  "model": "claude-sonnet-4-6",
+  "model": "mistralai/mistral-small-2603",
   "avatar": "professor",
   "display_name": "Tony Stark",
   "team": {
@@ -16,9 +16,23 @@
     "enabled": true,
     "paused": false,
     "frequency": "every 24h",
-    "start_time": "03:00"
+    "start_time": "03:00",
+    "model": "mistral-vibe-cli-latest",
+    "model_fallback": "devstral-small-latest"
   },
   "autodream": {
-    "model": "claude-haiku-4-5-20251001"
+    "model": "mistral-vibe-cli-latest"
+  },
+  "paused": false,
+  "agent_sdk": {
+    "enabled": false
+  },
+  "relationship_discovery": {
+    "model": "mistral-small",
+    "model_fallback": "devstral-small-latest"
+  },
+  "auto_memory": {
+    "model": "mistralai/mistral-small-2603",
+    "model_fallback": "devstral-small-latest"
   }
 }

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 """Brain Agent Remote Node — connects to Brain Agent server via HTTP long-polling.
 
 Single-file, stdlib-only agent that runs on remote machines to execute commands

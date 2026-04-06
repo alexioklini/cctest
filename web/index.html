@@ -9240,7 +9240,7 @@ async function switchAgentTab(agentId, tab, btn) {
       const resolvedModels = summary?.resolved_models || {};
       const mc = state.modelsConfig?.models || {};
       const modelOptions = Object.entries(mc).filter(([,c])=>c.enabled).sort((a,b)=>(b[1].priority||0)-(a[1].priority||0));
-      const modelSelect = (id, current) => `<select id="${id}" class="form-select" style="font-size:11px;max-width:200px">${modelOptions.map(([mid])=>`<option value="${esc(mid)}"${mid===current?' selected':''}>${esc(modelShortName(mid))}</option>`).join('')}</select>`;
+      const modelSelect = (id, current) => `<select id="${id}" class="form-select" style="font-size:11px;max-width:200px"><option value="">Auto</option>${modelOptions.map(([mid])=>`<option value="${esc(mid)}"${mid===current?' selected':''}>${esc(modelShortName(mid))}</option>`).join('')}</select>`;
 
       let html = '<div style="padding:16px;display:grid;gap:16px">';
 
@@ -9315,6 +9315,13 @@ async function switchAgentTab(agentId, tab, btn) {
             <div style="margin-left:auto">
               <button class="btn-secondary" style="font-size:11px;padding:3px 10px" onclick="_memToggleAM('${esc(agentId)}',${!amEnabled})">${amEnabled ? 'Disable' : 'Enable'}</button>
             </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
+            <span style="font-size:11px;color:var(--text-400)">Model:</span>
+            ${modelSelect('mem-am-model', resolvedModels.auto_memory?.primary || '')}
+            <span style="font-size:11px;color:var(--text-400)">Fallback:</span>
+            ${modelSelect('mem-am-fallback', resolvedModels.auto_memory?.fallback || '')}
+            <button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="_memSetModel('${esc(agentId)}','set_auto_memory_model',document.getElementById('mem-am-model').value,document.getElementById('mem-am-fallback').value)">Save</button>
           </div>
         </div>
       `;
@@ -10449,6 +10456,7 @@ window._memSetModel = async function(agentId, action, model, fallback) {
     if (fallback) body.model_fallback = fallback;
     await API.post(`/v1/agents/${encodeURIComponent(agentId)}/memory-summary`, body);
     showToast(`Model updated to ${modelShortName(model)}${fallback ? ' / ' + modelShortName(fallback) : ''}`);
+    switchAgentTab(agentId, 'memory');
   } catch(e) { showToast('Error: ' + e.message, true); }
 };
 

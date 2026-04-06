@@ -1642,10 +1642,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             info = ChatDB.get_session_info(sid)
             if sessions.delete(sid):
                 self._send_json({"status": "deleted"})
-                # Trigger memory summary refresh to purge deleted chat insights
+                # Clean up indexed transcripts and trigger memory summary refresh
                 if info:
+                    agent = info.get("agent_id", "main")
                     try:
-                        engine.trigger_memory_summary_refresh(info.get("agent_id", "main"))
+                        _cleanup_chat_index(sid, agent)
+                    except Exception:
+                        pass
+                    try:
+                        engine.trigger_memory_summary_refresh(agent)
                     except Exception:
                         pass
             else:
@@ -2186,6 +2191,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             for sid in (sids or []):
                 loop_manager.cancel_all(sid)
                 sessions.delete(sid)
+                if agent:
+                    try:
+                        _cleanup_chat_index(sid, agent)
+                    except Exception:
+                        pass
             self._send_json({"status": "deleted_all", "count": len(sids or [])})
         elif action == "delete":
             # Get agent_id before deleting so we can trigger summary refresh
@@ -5352,6 +5362,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             rd_primary = rd_config.get("model") or "mistral-small"
             rd_fallback = rd_config.get("model_fallback") or "claude-haiku-4-5-20251001"
             ad_model = ad_config.get("model") or "claude-haiku-4-5-20251001"
+            am_primary = am_config.get("model") or ""
+            am_fallback = am_config.get("model_fallback") or ""
             self._send_json({
                 "agent": agent_id,
                 "summary": summary or "",
@@ -5366,6 +5378,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     "memory_summary": {"primary": ms_primary, "fallback": ms_fallback},
                     "relationship_discovery": {"primary": rd_primary, "fallback": rd_fallback},
                     "autodream": {"primary": ad_model},
+                    "auto_memory": {"primary": am_primary, "fallback": am_fallback},
                 },
             })
         except Exception as e:
@@ -5501,6 +5514,27 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             else:
                 ad.pop("model_fallback", None)
             cfg["autodream"] = ad
+            cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
+            with open(cfg_path, "w") as f:
+                json.dump(cfg, f, indent=2)
+            self._send_json({"status": "updated", "model": model or "auto", "agent": agent_id})
+        elif action == "set_auto_memory_model":
+            model = body.get("model")
+            fallback = body.get("model_fallback")
+            agent_cfg = engine.AgentConfig(agent_id)
+            cfg = agent_cfg.config
+            am = cfg.get("auto_memory", {})
+            if not isinstance(am, dict):
+                am = {}
+            if model:
+                am["model"] = model
+            else:
+                am.pop("model", None)
+            if fallback:
+                am["model_fallback"] = fallback
+            else:
+                am.pop("model_fallback", None)
+            cfg["auto_memory"] = am
             cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
             with open(cfg_path, "w") as f:
                 json.dump(cfg, f, indent=2)
@@ -6105,6 +6139,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             reindex_env = os.environ.copy()
             reindex_env["PATH"] = os.path.dirname(qmd_bin) + ":" + reindex_env.get("PATH", "")
             def do_reindex():
+                _cleanup_orphaned_chat_indexes()
                 subprocess.run([qmd_bin, "update"], capture_output=True, timeout=30, env=reindex_env)
                 if collection:
                     subprocess.run([qmd_bin, "embed", "-c", collection], capture_output=True, timeout=60, env=reindex_env)
@@ -7851,9 +7886,36 @@ def main():
     print(f"MCP: loaded {mcp_count} server(s) from mcp.json")
 
     # Backfill: index any unindexed chat transcripts (runs once at startup)
+    def _cleanup_orphaned_chat_indexes():
+        """Remove chats-indexed files for sessions that no longer exist in the DB."""
+        try:
+            with _db_conn() as conn:
+                existing_sids = {row[0] for row in conn.execute("SELECT id FROM sessions")}
+            for agent_dir in os.listdir(engine.AGENTS_DIR):
+                chats_dir = os.path.join(engine.AGENTS_DIR, agent_dir, "chats-indexed")
+                if not os.path.isdir(chats_dir):
+                    continue
+                removed = 0
+                for fname in os.listdir(chats_dir):
+                    if not fname.startswith("chat-") or not fname.endswith(".md"):
+                        continue
+                    sid = fname.split("-", 1)[1].rsplit("-", 1)[0]
+                    if sid not in existing_sids:
+                        try:
+                            os.remove(os.path.join(chats_dir, fname))
+                            removed += 1
+                        except OSError:
+                            pass
+                if removed:
+                    print(f"Chat index cleanup: removed {removed} orphaned files for {agent_dir}", flush=True)
+                    engine._qmd_debounced_embed(agent_dir)
+        except Exception as e:
+            print(f"[WARN] Chat index orphan cleanup: {e}", flush=True)
+
     def _backfill_chat_index():
         """Find sessions with 4+ messages that have no indexed transcript files and index them."""
         time.sleep(10)  # let server fully start
+        _cleanup_orphaned_chat_indexes()
         try:
             with _db_conn() as conn:
                 conn.row_factory = sqlite3.Row
