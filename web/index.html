@@ -4335,7 +4335,7 @@ class API {
         }
       }
     } catch(e) {
-      if (e.name !== 'AbortError') {
+      if (e.name !== 'AbortError' && !/Load failed|Failed to fetch|NetworkError/i.test(e.message)) {
         if (callbacks.error) callbacks.error({message: e.message});
       }
     }
@@ -6453,7 +6453,10 @@ async function sendMessage() {
         clearInterval(chat._streamTimerInterval);
         if (isActive()) {
           updateStreamingUI(false);
-          showToast('Error: ' + (d.message || 'Unknown error'), true);
+          const msg = d.message || 'Unknown error';
+          if (!/Load failed|Failed to fetch|NetworkError|AbortError|network/i.test(msg)) {
+            showToast('Error: ' + msg, true);
+          }
         }
       },
     }, chat.model);
