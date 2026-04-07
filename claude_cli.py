@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "5.8.0"
-VERSION_DATE = "2026-04-06"
+VERSION = "5.9.0"
+VERSION_DATE = "2026-04-07"
 CHANGELOG = [
+    ("5.9.0", "2026-04-07", "Chat file attachments — attach files directly in the chat composer. Files are saved to a session-scoped temp directory on the server; the agent reads them on demand via read_document (PDF, DOCX, XLSX, PPTX, CSV) or read_file (text/code). Web UI: file input accepts 30+ extensions, binary formats (PDF, DOCX, XLSX, PPTX) sent as base64, text files as UTF-8. File preview chips in composer with remove buttons. Attached files shown on sent user messages with extension badges. Configurable vision model for image attachments (Settings → Server → Attachments). Documents tool group added to default agent config."),
     ("5.8.0", "2026-04-06", "Model management overhaul — models now have a configurable display_name (default = cleaned model ID). All UI surfaces show models as 'displayName (provider)' format — selectors, dropdowns, status bar, spinners, agent config. Models tab redesigned: grouped by provider with collapsible sections, sorted by display name, inline editable display names, per-model remove button. Manual model add form for providers without /models endpoint (model ID + provider + display name with datalist autocomplete). Code mode dropdown uses modelsConfig instead of flat model list. Provider tab badges use compact names. Backend: display_name field added to _match_known_model()."),
     ("5.7.0", "2026-04-03", "Token optimization suite — comprehensive per-agent token usage controls via new Tokens tab in agent config. Tool group filtering sends only relevant tools to the LLM (13 groups: core, memory, context, web, email, documents, delegation, code_graph, git, scheduler, mcp, skills, nodes). System prompt trimmed: tools.md reduced from 1500 to 400 tokens, memory summary cap configurable per agent. Anthropic prompt caching via cache_control on system prompt blocks. System prompt cached per-session (60s TTL) to avoid disk I/O on tool loops. Memory summary scheduled tasks restricted to memory-only tools (4 instead of 39). Compact threshold configurable per agent. SDK duplicate tools cleaned up. Kilo API provider added (OpenAI-compatible gateway). Context fill bar and manual compact button in chat footer. Background pipeline model selectors with fallback in Memory tab GUI. Fixed SDK token count inflating context display (was reporting API tokens_in instead of conversation estimate)."),
     ("5.6.0", "2026-03-31", "Code Mode overhaul — full-featured coding assistant experience. Folder browser GUI for project selection (breadcrumb navigation, lazy-loaded directory listing via /v1/files/tree). Fixed SSE streaming (two-line event:/data: format matching server output). Tool calls display identically to main chat (gear/check icons, expandable args/results, proper .open toggle). Streaming indicator with wave animation, model name, tool labels, elapsed timer, and stop button. Folder-based project system — sessions tagged with folder path, 'All Projects' expands to show discovered projects with session counts, selecting a project filters sessions. Session management: archive and delete buttons on hover in sidebar. Code mode sessions properly scoped by folder path via project field."),
@@ -1133,6 +1134,206 @@ def tool_edit_file(args: dict) -> str:
         return _ok({"path": path, "replacements": count if replace_all else 1, "status": "edited"})
     except Exception as e:
         return _err(f"edit_file: {e}")
+
+
+def _describe_image_with_vision(image_data_b64: str, media_type: str, filename: str) -> str:
+    """Use a vision-capable model to describe an image attachment."""
+    vision_model = getattr(_thread_local, 'attachment_image_model', '') or ''
+    if not vision_model:
+        return f"(Image: {filename} — no image model configured. Set attachments.image_model in config.)"
+
+    # Build multimodal message with image
+    content_blocks = [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": image_data_b64,
+            },
+        },
+        {"type": "text", "text": f"Describe this image ({filename}) in detail. Include any text, data, diagrams, or visual elements you see."},
+    ]
+
+    try:
+        result = _run_delegate(
+            messages=[{"role": "user", "content": content_blocks}],
+            model=vision_model,
+            system_prompt="You are a precise image description assistant. Describe the image content thoroughly and concisely.",
+            inference_params={"max_tokens": 2048, "temperature": 0.1},
+            tools=False,
+        )
+        if result:
+            return f"**Image: {filename}**\n\n{result}"
+        return f"(Image: {filename} — vision model returned no description)"
+    except Exception as e:
+        return f"(Image: {filename} — vision error: {e})"
+
+
+def tool_read_attachment(args: dict) -> str:
+    """Read a user-attached file from the session attachment store."""
+    name = args.get("name", "")
+    if not name:
+        return _err("read_attachment: 'name' is required")
+    attachments = getattr(_thread_local, 'attachments', None) or {}
+    if name not in attachments:
+        # Try case-insensitive match
+        for k in attachments:
+            if k.lower() == name.lower():
+                name = k
+                break
+        else:
+            available = list(attachments.keys())
+            if available:
+                return _err(f"Attachment '{name}' not found. Available: {', '.join(available)}")
+            return _err("No attachments in this session.")
+    att = attachments[name]
+    content = att.get("content", "")
+    encoding = att.get("encoding", "text")
+    media_type = att.get("media_type", "text/plain")
+    ext = os.path.splitext(name)[1].lower()
+
+    # --- Binary files (base64 encoded) ---
+    if encoding == "base64":
+        import base64 as b64_mod
+        import io as io_mod
+        try:
+            raw_bytes = b64_mod.b64decode(content)
+        except Exception as e:
+            return _err(f"Failed to decode attachment: {e}")
+
+        # PDF
+        if ext == ".pdf" or "pdf" in media_type.lower():
+            try:
+                import fitz  # pymupdf
+                doc = fitz.open(stream=raw_bytes, filetype="pdf")
+                pages = []
+                for i, page in enumerate(doc):
+                    text = page.get_text()
+                    if text.strip():
+                        pages.append(f"--- Page {i+1} ---\n{text}")
+                doc.close()
+                return "\n\n".join(pages) if pages else "(PDF has no extractable text)"
+            except ImportError:
+                return _err("Install pymupdf for PDF support: pip3 install pymupdf")
+
+        # DOCX
+        if ext == ".docx":
+            try:
+                import docx
+                doc = docx.Document(io_mod.BytesIO(raw_bytes))
+                return DocumentParser.parse_docx.__func__(None) if False else _parse_docx_from_bytes(raw_bytes)
+            except ImportError:
+                return _err("Install python-docx for DOCX support: pip3 install python-docx")
+
+        # XLSX
+        if ext == ".xlsx":
+            try:
+                return _parse_xlsx_from_bytes(raw_bytes, sheet=args.get("sheet"))
+            except ImportError:
+                return _err("Install openpyxl for XLSX support: pip3 install openpyxl")
+
+        # PPTX
+        if ext == ".pptx":
+            try:
+                return _parse_pptx_from_bytes(raw_bytes)
+            except ImportError:
+                return _err("Install python-pptx for PPTX support: pip3 install python-pptx")
+
+        # Images — use vision model
+        if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg") or media_type.startswith("image/"):
+            return _describe_image_with_vision(content, media_type, name)
+
+        # Unknown binary
+        return f"(Binary file: {name}, {len(raw_bytes)} bytes, type: {media_type})"
+
+    # --- Text files ---
+    return content
+
+
+def _parse_docx_from_bytes(raw_bytes: bytes) -> str:
+    """Parse DOCX from in-memory bytes."""
+    import io, docx
+    doc = docx.Document(io.BytesIO(raw_bytes))
+    paragraphs = []
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if text:
+            if para.style and para.style.name and para.style.name.startswith("Heading"):
+                level = 1
+                try:
+                    level = int(para.style.name.replace("Heading", "").strip()) or 1
+                except ValueError:
+                    pass
+                text = "#" * level + " " + text
+            paragraphs.append(text)
+    # Tables
+    for table in doc.tables:
+        rows = []
+        for row in table.rows:
+            cells = [cell.text.strip() for cell in row.cells]
+            rows.append("| " + " | ".join(cells) + " |")
+        if rows:
+            # Add header separator after first row
+            header_sep = "| " + " | ".join(["---"] * len(table.rows[0].cells)) + " |"
+            rows.insert(1, header_sep)
+            paragraphs.append("\n".join(rows))
+    return "\n\n".join(paragraphs)
+
+
+def _parse_xlsx_from_bytes(raw_bytes: bytes, sheet: str | None = None) -> str:
+    """Parse XLSX from in-memory bytes."""
+    import io, openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(raw_bytes), read_only=True, data_only=True)
+    sheets = [wb[sheet]] if sheet and sheet in wb.sheetnames else wb.worksheets
+    parts = []
+    for ws in sheets:
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            continue
+        # Build markdown table
+        header = rows[0]
+        cols = [str(c) if c is not None else "" for c in header]
+        lines = [f"**Sheet: {ws.title}**"]
+        lines.append("| " + " | ".join(cols) + " |")
+        lines.append("| " + " | ".join(["---"] * len(cols)) + " |")
+        for row in rows[1:200]:  # Cap at 200 rows
+            cells = [str(c) if c is not None else "" for c in row]
+            lines.append("| " + " | ".join(cells) + " |")
+        if len(rows) > 201:
+            lines.append(f"*... ({len(rows) - 201} more rows)*")
+        parts.append("\n".join(lines))
+    wb.close()
+    return "\n\n".join(parts) if parts else "(Empty spreadsheet)"
+
+
+def _parse_pptx_from_bytes(raw_bytes: bytes) -> str:
+    """Parse PPTX from in-memory bytes."""
+    import io
+    from pptx import Presentation
+    prs = Presentation(io.BytesIO(raw_bytes))
+    slides = []
+    for i, slide in enumerate(prs.slides, 1):
+        texts = []
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                for para in shape.text_frame.paragraphs:
+                    text = para.text.strip()
+                    if text:
+                        texts.append(text)
+            if shape.has_table:
+                for row in shape.table.rows:
+                    cells = [cell.text.strip() for cell in row.cells]
+                    texts.append("| " + " | ".join(cells) + " |")
+        if texts:
+            slides.append(f"--- Slide {i} ---\n" + "\n".join(texts))
+    # Notes
+    for i, slide in enumerate(prs.slides, 1):
+        if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
+            notes = slide.notes_slide.notes_text_frame.text.strip()
+            if notes:
+                slides.append(f"[Slide {i} notes] {notes}")
+    return "\n\n".join(slides) if slides else "(Empty presentation)"
 
 
 def tool_read_document(args: dict) -> str:
@@ -3884,7 +4085,8 @@ class MemoryStore:
     _ensured_collections: set[str] = set()
     _ensured_lock = threading.Lock()
 
-    def __init__(self, agent_id: str = "main", base_dir: str | None = None):
+    def __init__(self, agent_id: str = "main", base_dir: str | None = None,
+                 user_id: str | None = None, team_ids: list[str] | None = None):
         self.agent_id = agent_id
         if base_dir:
             self.dir = base_dir
@@ -3892,6 +4094,20 @@ class MemoryStore:
             self.dir = os.path.join(AGENTS_DIR, agent_id)
         os.makedirs(self.dir, exist_ok=True)
         self._collection = agent_id
+
+        # Multi-user scoping
+        self.user_id = user_id
+        self.team_ids = team_ids or []
+        self._user_dir = None
+        self._team_dirs: list[tuple[str, str]] = []  # (dir_path, team_id)
+        if user_id:
+            self._user_dir = os.path.join(self.dir, "users", user_id)
+            os.makedirs(self._user_dir, exist_ok=True)
+        for tid in self.team_ids:
+            td = os.path.join(self.dir, "teams", tid)
+            os.makedirs(td, exist_ok=True)
+            self._team_dirs.append((td, tid))
+
         # Ensure QMD knows about this collection (once per collection, background)
         with MemoryStore._ensured_lock:
             already_ensured = agent_id in MemoryStore._ensured_collections
@@ -3933,12 +4149,35 @@ class MemoryStore:
                 continue
         return None
 
+    def _resolve_store_dir(self, scope: str = "global") -> str:
+        """Resolve target directory based on scope: global, user, team:<id>."""
+        if scope == "user" and self._user_dir:
+            return self._user_dir
+        if scope.startswith("team:"):
+            tid = scope[5:]
+            for td, t_id in self._team_dirs:
+                if t_id == tid:
+                    return td
+        return self.dir  # global
+
+    def _all_scan_dirs(self) -> list[str]:
+        """Get all directories to scan for this user's memories (global + user + team)."""
+        dirs = [self.dir]
+        if self._user_dir and os.path.isdir(self._user_dir):
+            dirs.append(self._user_dir)
+        for td, _ in self._team_dirs:
+            if os.path.isdir(td):
+                dirs.append(td)
+        return dirs
+
     def store(self, name: str, content: str, description: str = "",
-              mem_type: str = "general") -> dict:
-        """Store or update a memory. Writes .md file and triggers QMD reindex."""
+              mem_type: str = "general", scope: str = "global") -> dict:
+        """Store or update a memory. Writes .md file and triggers QMD reindex.
+        scope: 'global', 'user', or 'team:<team_id>'"""
         mem_id = self._make_id(name)
         filename = self._name_to_filename(name)
-        file_path = os.path.join(self.dir, filename)
+        target_dir = self._resolve_store_dir(scope)
+        file_path = os.path.join(target_dir, filename)
 
         # Check if memory already exists under a different filename (migration)
         existing = self._find_file_for_name(name)
@@ -4110,8 +4349,8 @@ agent: {self.agent_id}
         if not terms:
             return self.list_all(mem_type)[:limit]
         results = []
-        # Directories to scan: agent root + chats-indexed subdir
-        scan_dirs = [self.dir]
+        # Directories to scan: all user-visible dirs + chats-indexed subdir
+        scan_dirs = list(self._all_scan_dirs())
         chats_dir = os.path.join(self.dir, "chats-indexed")
         if os.path.isdir(chats_dir):
             scan_dirs.append(chats_dir)
@@ -4165,30 +4404,46 @@ agent: {self.agent_id}
         return {"name": name, "status": "deleted"}
 
     def list_all(self, mem_type: str | None = None) -> list[dict]:
-        """List all memories by scanning .md files (no QMD needed)."""
+        """List all memories by scanning .md files (no QMD needed).
+        Scans global + user + team directories."""
         results = []
-        for fname in os.listdir(self.dir):
-            if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
-                continue
-            fpath = os.path.join(self.dir, fname)
+        for scan_dir in self._all_scan_dirs():
+            # Determine scope label
+            scope = "global"
+            if scan_dir == self._user_dir:
+                scope = "user"
+            else:
+                for td, tid in self._team_dirs:
+                    if scan_dir == td:
+                        scope = f"team:{tid}"
+                        break
             try:
-                with open(fpath, "r") as f:
-                    raw = f.read()
-                fm, body = _parse_frontmatter(raw)
-                mtype = fm.get("type", "general")
-                if mem_type and mtype != mem_type:
-                    continue
-                mtime = os.path.getmtime(fpath)
-                results.append({
-                    "id": self._make_id(fm.get("name", fname)),
-                    "name": fm.get("name", fname.replace(".md", "")),
-                    "description": fm.get("description", ""),
-                    "type": mtype,
-                    "content": body,
-                    "updated_at": datetime.datetime.fromtimestamp(mtime).isoformat(),
-                })
-            except Exception:
+                entries = os.listdir(scan_dir)
+            except OSError:
                 continue
+            for fname in entries:
+                if not fname.endswith(".md") or fname in _QMD_IGNORE_FILES:
+                    continue
+                fpath = os.path.join(scan_dir, fname)
+                try:
+                    with open(fpath, "r") as f:
+                        raw = f.read()
+                    fm, body = _parse_frontmatter(raw)
+                    mtype = fm.get("type", "general")
+                    if mem_type and mtype != mem_type:
+                        continue
+                    mtime = os.path.getmtime(fpath)
+                    results.append({
+                        "id": self._make_id(fm.get("name", fname)),
+                        "name": fm.get("name", fname.replace(".md", "")),
+                        "description": fm.get("description", ""),
+                        "type": mtype,
+                        "content": body,
+                        "updated_at": datetime.datetime.fromtimestamp(mtime).isoformat(),
+                        "scope": scope,
+                    })
+                except Exception:
+                    continue
         results.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
         return results
 
@@ -4226,8 +4481,10 @@ class ProjectManager:
         return os.path.join(AGENTS_DIR, agent_id, "projects")
 
     @staticmethod
-    def list_projects(agent_id: str) -> list[dict]:
-        """List all projects for an agent."""
+    def list_projects(agent_id: str, user_id: str | None = None,
+                      user_team_ids: list[str] | None = None) -> list[dict]:
+        """List projects for an agent, optionally filtered by user access.
+        user_id=None means admin (sees all). user_team_ids are team IDs the user belongs to."""
         base = ProjectManager._projects_base(agent_id)
         if not os.path.isdir(base):
             return []
@@ -4262,6 +4519,9 @@ class ProjectManager:
                         if len(parts_fn) >= 2:
                             seen_sources.add(parts_fn[1])
                 doc_count = len(seen_sources) if seen_sources else chunk_count
+            visibility = cfg.get("visibility", "global")
+            owner_uid = cfg.get("owner_user_id", "")
+            owner_tid = cfg.get("owner_team_id", "")
             projects.append({
                 "name": name,
                 "description": cfg.get("description", ""),
@@ -4274,13 +4534,29 @@ class ProjectManager:
                 "chunks": chunk_count,
                 "doc_count": doc_count,
                 "memories": mem_count,
+                "visibility": visibility,
+                "owner_user_id": owner_uid,
+                "owner_team_id": owner_tid,
             })
+        # Filter by user access if user_id provided
+        if user_id is not None:
+            team_set = set(user_team_ids or [])
+            projects = [
+                p for p in projects
+                if p["visibility"] == "global"
+                or (p["visibility"] == "user" and p["owner_user_id"] == user_id)
+                or (p["visibility"] == "team" and p["owner_team_id"] in team_set)
+            ]
         return projects
 
     @staticmethod
     def create_project(agent_id: str, name: str, description: str = "",
-                       config: dict | None = None) -> dict:
-        """Create a new project directory with project.json."""
+                       config: dict | None = None,
+                       visibility: str = "global",
+                       owner_user_id: str = "",
+                       owner_team_id: str = "") -> dict:
+        """Create a new project directory with project.json.
+        visibility: 'global', 'user', or 'team'"""
         # Validate name
         safe_name = re.sub(r'[^\w\s-]', '', name).strip().lower().replace(' ', '-')
         if not safe_name:
@@ -4299,6 +4575,9 @@ class ProjectManager:
             "watch_folders": (config or {}).get("watch_folders", []),
             "tags": (config or {}).get("tags", []),
             "model": (config or {}).get("model"),
+            "visibility": visibility,
+            "owner_user_id": owner_user_id,
+            "owner_team_id": owner_team_id,
         }
         cfg_path = os.path.join(pdir, "project.json")
         with open(cfg_path, "w") as f:

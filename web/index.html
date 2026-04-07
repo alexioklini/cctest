@@ -237,6 +237,7 @@ textarea { resize: none; }
 #sidebar.collapsed .sb-user-name,
 #sidebar.collapsed .sb-user-plan,
 #sidebar.collapsed .sb-user-actions,
+#sidebar.collapsed .sb-user-dropdown,
 #sidebar.collapsed .sb-divider-line,
 #sidebar.collapsed .sb-pin-label { display: none; }
 #sidebar.collapsed .sb-nav-item { justify-content: center; padding: 10px; }
@@ -377,7 +378,10 @@ textarea { resize: none; }
   border-top: 1px solid var(--border-100);
   flex-shrink: 0;
   gap: 10px;
+  cursor: pointer;
+  position: relative;
 }
+.sb-user-section:hover { background: var(--sidebar-hover, rgba(0,0,0,0.04)); }
 .sb-user-avatar {
   width: 32px;
   height: 32px;
@@ -3440,9 +3444,110 @@ textarea { resize: none; }
    Hidden utility
    ═══════════════════════════════════════════════════════════ */
 .hidden { display: none !important; }
+
+/* ═══════════════════════════════════════════════════════════
+   Auth Overlay
+   ═══════════════════════════════════════════════════════════ */
+#auth-overlay {
+  position: fixed; inset: 0; z-index: 99999;
+  background: var(--bg-base, #f5f0e8);
+  display: flex; align-items: center; justify-content: center;
+}
+.auth-container {
+  width: 380px; padding: 48px 40px;
+  background: var(--bg-surface, #fff); border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+}
+.auth-logo {
+  font-family: var(--font-heading, system-ui); font-size: 24px; font-weight: 600;
+  text-align: center; margin-bottom: 32px; color: var(--text-primary, #2d2b28);
+}
+.auth-container h2 {
+  font-size: 18px; font-weight: 500; margin: 0 0 20px;
+  color: var(--text-primary, #2d2b28); text-align: center;
+}
+.auth-container input {
+  display: block; width: 100%; box-sizing: border-box;
+  padding: 12px 14px; margin-bottom: 12px;
+  border: 1px solid var(--border-light, #d4cfc7); border-radius: 8px;
+  font-size: 14px; font-family: inherit;
+  background: var(--bg-base, #f5f0e8); color: var(--text-primary, #2d2b28);
+  outline: none; transition: border-color 0.2s;
+}
+.auth-container input:focus { border-color: var(--accent-primary, #c96442); }
+.auth-btn {
+  display: block; width: 100%; padding: 12px;
+  background: var(--accent-primary, #c96442); color: #fff;
+  border: none; border-radius: 8px; font-size: 15px; font-weight: 500;
+  cursor: pointer; transition: opacity 0.2s; margin-top: 4px;
+}
+.auth-btn:hover { opacity: 0.9; }
+.auth-toggle {
+  text-align: center; margin-top: 16px; font-size: 13px;
+  color: var(--text-secondary, #7a756e);
+}
+.auth-toggle a { color: var(--accent-primary, #c96442); cursor: pointer; text-decoration: underline; }
+.auth-error {
+  background: #fef2f2; border: 1px solid #fca5a5; color: #b91c1c;
+  border-radius: 8px; padding: 10px 14px; margin-bottom: 16px;
+  font-size: 13px; text-align: center;
+}
+
+/* User dropdown in sidebar */
+.sb-user-dropdown {
+  position: absolute; bottom: 100%; left: 8px; right: 8px;
+  background: var(--bg-surface, #fff); border: 1px solid var(--border-light, #d4cfc7);
+  border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  display: none; z-index: 100; overflow: hidden;
+}
+.sb-user-dropdown.open { display: block; }
+.sb-user-dropdown-item {
+  padding: 10px 16px; font-size: 13px; cursor: pointer;
+  color: var(--text-primary); display: flex; align-items: center; gap: 8px;
+}
+.sb-user-dropdown-item:hover { background: var(--bg-hover, #f0ebe3); }
+.sb-user-dropdown-item.danger { color: #dc2626; }
+
+/* Role badges */
+.role-badge {
+  display: inline-block; padding: 1px 8px; border-radius: 10px;
+  font-size: 11px; font-weight: 500; text-transform: capitalize;
+}
+.role-badge.admin { background: #fef3c7; color: #92400e; }
+.role-badge.poweruser { background: #dbeafe; color: #1e40af; }
+.role-badge.user { background: #f0fdf4; color: #166534; }
 </style>
 </head>
 <body>
+<!-- ═══════════════════════════════════════════════════════════
+     AUTH OVERLAY (login / register)
+     ═══════════════════════════════════════════════════════════ -->
+<div id="auth-overlay" style="display:none">
+  <div class="auth-container">
+    <div class="auth-logo">Brain Agent</div>
+    <div id="auth-error" class="auth-error" style="display:none"></div>
+    <!-- Login Form -->
+    <div id="auth-login-form">
+      <h2>Sign in</h2>
+      <input id="auth-username" type="text" placeholder="Username" autocomplete="username" onkeydown="if(event.key==='Enter')authLogin()" />
+      <input id="auth-password" type="password" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter')authLogin()" />
+      <button class="auth-btn" onclick="authLogin()">Sign in</button>
+      <p class="auth-toggle">Don't have an account? <a onclick="showAuthRegister()">Register</a></p>
+    </div>
+    <!-- Register Form -->
+    <div id="auth-register-form" style="display:none">
+      <h2>Create account</h2>
+      <input id="reg-username" type="text" placeholder="Username" autocomplete="username" />
+      <input id="reg-display-name" type="text" placeholder="Display name" />
+      <input id="reg-email" type="email" placeholder="Email (optional)" />
+      <input id="reg-password" type="password" placeholder="Password (min 6 chars)" autocomplete="new-password" />
+      <input id="reg-password2" type="password" placeholder="Confirm password" autocomplete="new-password" />
+      <button class="auth-btn" onclick="authRegister()">Create account</button>
+      <p class="auth-toggle">Already have an account? <a onclick="showAuthLogin()">Sign in</a></p>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════════════════════════════════════════════════════════
      SIDEBAR BACKDROP (mobile)
      ═══════════════════════════════════════════════════════════ -->
@@ -3550,21 +3655,23 @@ textarea { resize: none; }
     </div>
   </div>
 
-  <!-- User section at bottom -->
-  <div class="sb-user-section">
+  <!-- User section at bottom (populated by renderUserMenu) -->
+  <div class="sb-user-section" id="sb-user-section" onclick="toggleUserDropdown()">
     <div class="sb-user-avatar" id="sb-user-avatar">A</div>
     <div class="sb-user-info">
       <div class="sb-user-name" id="sb-user-name">Agent</div>
       <div class="sb-user-plan" id="sb-user-plan">Connected</div>
     </div>
-    <div class="sb-user-actions">
-      <button onclick="toggleTheme()" title="Toggle theme">
+    <div class="sb-user-actions" id="sb-user-actions">
+      <button onclick="event.stopPropagation(); toggleTheme()" title="Toggle theme">
         <svg id="theme-icon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="1.5"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
       </button>
-      <button onclick="openGeneralSettings()" title="General settings">
+      <button onclick="event.stopPropagation(); openGeneralSettings()" title="General settings">
         <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
       </button>
     </div>
+    <!-- User dropdown menu (shown on click) -->
+    <div id="sb-user-dropdown" class="sb-user-dropdown"></div>
   </div>
 </aside>
 
@@ -3645,7 +3752,7 @@ textarea { resize: none; }
     <div class="suggestion-chips" id="suggestion-chips">
       <!-- Populated dynamically -->
     </div>
-    <input type="file" id="file-input" multiple accept="image/*,.pdf,.txt,.md,.csv,.json,.py,.js,.ts,.html,.css" style="display:none" onchange="handleFileSelect(event)">
+    <input type="file" id="file-input" multiple accept="image/*,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.tsv,.json,.py,.js,.ts,.html,.css,.xml,.yaml,.yml,.toml,.sh,.go,.rs,.java,.rb,.swift,.kt,.c,.cpp,.h" style="display:none" onchange="handleFileSelect(event)">
   </div>
 
   <!-- ═══ Chat View ═══ -->
@@ -4143,27 +4250,42 @@ const SSE_KEEPALIVE_TIMEOUT = 15000;
 class API {
   static _abortController = null;
 
+  static _headers(extra) {
+    const h = {'Content-Type':'application/json'};
+    const t = localStorage.getItem('auth-token');
+    if (t) h['Authorization'] = `Bearer ${t}`;
+    if (extra) Object.assign(h, extra);
+    return h;
+  }
+  static _handleAuthError(r) {
+    if (r.status === 401) { authLogout(); return true; }
+    return false;
+  }
   static async get(path) {
     let r;
-    try { r = await fetch(`${BASE_URL}${path}`); } catch(e) { throw new Error(`GET ${path}: ${e.message}`); }
+    try { r = await fetch(`${BASE_URL}${path}`, {headers: this._headers()}); } catch(e) { throw new Error(`GET ${path}: ${e.message}`); }
+    if (this._handleAuthError(r)) return {};
     if (!r.ok) throw new Error(`GET ${path}: ${r.status}`);
     return r.json();
   }
   static async post(path, body) {
     let r;
-    try { r = await fetch(`${BASE_URL}${path}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }); } catch(e) { throw new Error(`POST ${path}: ${e.message}`); }
+    try { r = await fetch(`${BASE_URL}${path}`, { method:'POST', headers: this._headers(), body: JSON.stringify(body) }); } catch(e) { throw new Error(`POST ${path}: ${e.message}`); }
+    if (this._handleAuthError(r)) return {};
     if (!r.ok) { const t = await r.text(); throw new Error(`POST ${path}: ${r.status} ${t}`); }
     return r.json();
   }
   static async put(path, body) {
     let r;
-    try { r = await fetch(`${BASE_URL}${path}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }); } catch(e) { throw new Error(`PUT ${path}: ${e.message}`); }
+    try { r = await fetch(`${BASE_URL}${path}`, { method:'PUT', headers: this._headers(), body: JSON.stringify(body) }); } catch(e) { throw new Error(`PUT ${path}: ${e.message}`); }
+    if (this._handleAuthError(r)) return {};
     if (!r.ok) throw new Error(`PUT ${path}: ${r.status}`);
     return r.json();
   }
   static async del(path) {
     let r;
-    try { r = await fetch(`${BASE_URL}${path}`, { method:'DELETE' }); } catch(e) { throw new Error(`DELETE ${path}: ${e.message}`); }
+    try { r = await fetch(`${BASE_URL}${path}`, { method:'DELETE', headers: this._headers() }); } catch(e) { throw new Error(`DELETE ${path}: ${e.message}`); }
+    if (this._handleAuthError(r)) return {};
     if (!r.ok) throw new Error(`DELETE ${path}: ${r.status}`);
     return r.json();
   }
@@ -4198,7 +4320,12 @@ class API {
 
   // Projects
   static getProjects(agent) { return this.get(`/v1/agents/${agent}/projects`); }
-  static createProject(agent, name, desc) { return this.post(`/v1/agents/${agent}/projects`, {name, description:desc}); }
+  static createProject(agent, name, desc, visibility, ownerTeamId) {
+    const body = {name, description:desc};
+    if (visibility) body.visibility = visibility;
+    if (ownerTeamId) body.owner_team_id = ownerTeamId;
+    return this.post(`/v1/agents/${agent}/projects`, body);
+  }
   static getProject(agent, name) { return this.get(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}`); }
   static updateProject(agent, name, cfg) { return this.put(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}`, cfg); }
   static deleteProject(agent, name) { return this.del(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}`); }
@@ -4265,7 +4392,7 @@ class API {
   static getMemorySummary(agent) { return this.get(`/v1/agents/${agent}/memory-summary`); }
 
   // SSE Streaming Chat
-  static async streamChat(sessionId, message, callbacks, model) {
+  static async streamChat(sessionId, message, callbacks, model, files) {
     if (this._abortController) this._abortController.abort();
     this._abortController = new AbortController();
 
@@ -4281,11 +4408,19 @@ class API {
     if (state._pendingImages.length) {
       body.images = state._pendingImages.map(i => ({data: i.data, media_type: i.type}));
     }
+    if (files && files.length) {
+      body.files = files.map(f => ({
+        name: f.name,
+        content: f.content || f.data,
+        encoding: f.encoding,
+        media_type: f.type,
+      }));
+    }
 
     try {
       const resp = await fetch(`${BASE_URL}/v1/chat`, {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        headers: this._headers(),
         body: JSON.stringify(body),
         signal: this._abortController.signal,
       });
@@ -4371,6 +4506,7 @@ const state = {
   thinkingLevel: localStorage.getItem('thinking-level') || 'none',
   showToolCalls: localStorage.getItem('showToolCalls') !== 'false',
   _pendingImages: [],
+  _pendingFiles: [],
 
   // Activity
   agentActivity: {},
@@ -4502,10 +4638,10 @@ function updateSendButton() {
   const chatInput = document.getElementById('chat-input');
 
   if (welcomeBtn) {
-    welcomeBtn.classList.toggle('active', (welcomeInput?.value?.trim().length > 0) || state._pendingImages.length > 0);
+    welcomeBtn.classList.toggle('active', (welcomeInput?.value?.trim().length > 0) || state._pendingImages.length > 0 || state._pendingFiles.length > 0);
   }
   if (chatBtn) {
-    chatBtn.classList.toggle('active', (chatInput?.value?.trim().length > 0) || state._pendingImages.length > 0);
+    chatBtn.classList.toggle('active', (chatInput?.value?.trim().length > 0) || state._pendingImages.length > 0 || state._pendingFiles.length > 0);
   }
 }
 
@@ -6234,7 +6370,7 @@ async function sendMessage() {
     : document.getElementById('chat-input');
 
   let text = input?.value?.trim();
-  if (!text && !state._pendingImages.length) return;
+  if (!text && !state._pendingImages.length && !state._pendingFiles.length) return;
 
   // Ensure agent selected
   if (!state.activeAgentId) {
@@ -6267,14 +6403,22 @@ async function sendMessage() {
     }
   }
 
+  // Capture pending files before clearing (needed for streamChat)
+  const filesToSend = state._pendingFiles.length ? [...state._pendingFiles] : null;
+
   // Add user message
-  const userMsg = { role: 'human', content: text || '[Image]' };
+  const userMsg = { role: 'human', content: text || (state._pendingImages.length ? '[Image]' : '[File]') };
   if (state._pendingImages.length) {
     userMsg.images = [...state._pendingImages];
   }
+  if (filesToSend) {
+    userMsg.files = filesToSend;
+  }
   chat.messages.push(userMsg);
   state._pendingImages = [];
+  state._pendingFiles = [];
   renderImagePreviews();
+  renderFilePreviews();
 
   // Clear input
   input.value = '';
@@ -6466,7 +6610,7 @@ async function sendMessage() {
           }
         }
       },
-    }, chat.model);
+    }, chat.model, filesToSend);
 
     // Safety net: if stream ended without a 'done' event
     // Guard with streamGen to prevent a stale safety-net (resumed via microtask)
@@ -6872,10 +7016,14 @@ function renderMessage(msg, idx) {
 function renderUserMessage(msg, idx) {
   const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
   let filesHtml = '';
-  if (msg.images?.length) {
+  if (msg.images?.length || msg.files?.length) {
     filesHtml = '<div class="msg-user-files">';
-    for (const img of msg.images) {
+    for (const img of (msg.images || [])) {
       filesHtml += `<div class="msg-file-chip"><span class="file-ext">IMG</span> Image</div>`;
+    }
+    for (const f of (msg.files || [])) {
+      const ext = f.name?.split('.').pop()?.toUpperCase() || 'FILE';
+      filesHtml += `<div class="msg-file-chip"><span class="file-ext">${esc(ext)}</span> ${esc(f.name || 'File')}</div>`;
     }
     filesHtml += '</div>';
   }
@@ -8089,6 +8237,15 @@ async function switchGeneralTab(tab, btn) {
           <select class="form-select" id="srv-default-model" style="flex:1">${modelOpts}</select>
           <button class="btn-secondary" onclick="API.post('/v1/services/server',{default_model:document.getElementById('srv-default-model').value}).then(()=>showToast('Default model updated')).catch(e=>showToast('Failed',true))">Set</button>
         </div>
+        ${SEC('Attachments')}
+        <div style="display:flex;gap:8px;align-items:center">
+          <select class="form-select" id="srv-attachment-image-model" style="flex:1">
+            <option value="">None (images not described)</option>
+            ${enabledModels.map(([mid])=>`<option value="${esc(mid)}" ${mid===(srv.attachment_image_model||'')?'selected':''}>${esc(modelShortName(mid))}</option>`).join('')}
+          </select>
+          <button class="btn-secondary" onclick="API.post('/v1/services/server',{attachment_image_model:document.getElementById('srv-attachment-image-model').value}).then(()=>showToast('Image model updated')).catch(e=>showToast('Failed',true))">Set</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-400);margin-top:2px">Vision model used to describe attached images (e.g. gemini-2.5-flash, mistral-small-latest)</div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <button class="btn-secondary" onclick="API.restartServer().then(()=>showToast('Server restarting...')).catch(e=>showToast('Failed',true))">Restart Server</button>
         </div>
@@ -11145,6 +11302,32 @@ function handleFileSelect(event) {
         updateSendButton();
       };
       reader.readAsDataURL(file);
+    } else {
+      const ext = file.name.toLowerCase().split('.').pop();
+      const binaryExts = ['pdf', 'docx', 'xlsx', 'pptx'];
+      const isBinary = binaryExts.includes(ext) || file.type.startsWith('image/');
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        if (isBinary) {
+          state._pendingFiles.push({
+            name: file.name,
+            type: file.type || 'application/octet-stream',
+            data: e.target.result.split(',')[1],
+            encoding: 'base64',
+          });
+        } else {
+          state._pendingFiles.push({
+            name: file.name,
+            type: file.type || 'text/plain',
+            content: e.target.result,
+            encoding: 'text',
+          });
+        }
+        renderFilePreviews();
+        updateSendButton();
+      };
+      if (isBinary) reader.readAsDataURL(file);
+      else reader.readAsText(file);
     }
   }
   event.target.value = '';
@@ -11176,11 +11359,44 @@ function removePendingImage(idx) {
   updateSendButton();
 }
 
+function renderFilePreviews() {
+  const containers = ['welcome-image-preview', 'chat-image-preview'];
+  for (const id of containers) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.querySelectorAll('.file-chip').forEach(c => c.remove());
+    if (!state._pendingFiles.length && !state._pendingImages.length) {
+      el.classList.remove('has-images');
+      if (!el.children.length) el.innerHTML = '';
+      continue;
+    }
+    el.classList.add('has-images');
+    for (let i = 0; i < state._pendingFiles.length; i++) {
+      const f = state._pendingFiles[i];
+      const chip = document.createElement('div');
+      chip.className = 'file-chip';
+      chip.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;border:1px solid var(--border-200);background:var(--bg-200);font-size:12px;position:relative;height:64px;box-sizing:border-box';
+      chip.innerHTML = `
+        <span>${fileTypeIcon(f.name)}</span>
+        <span style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</span>
+        <button class="image-preview-remove" onclick="removePendingFile(${i})">&#10005;</button>
+      `;
+      el.appendChild(chip);
+    }
+  }
+}
+
+function removePendingFile(idx) {
+  state._pendingFiles.splice(idx, 1);
+  renderFilePreviews();
+  updateSendButton();
+}
+
 function fileTypeIcon(name) {
   const ext = name.split('.').pop()?.toLowerCase();
   const icons = {
-    pdf: '&#128196;', doc: '&#128196;', docx: '&#128196;',
-    xls: '&#128200;', xlsx: '&#128200;', csv: '&#128200;',
+    pdf: '&#128196;', doc: '&#128196;', docx: '&#128196;', pptx: '&#128202;', ppt: '&#128202;',
+    xls: '&#128200;', xlsx: '&#128200;', csv: '&#128200;', tsv: '&#128200;',
     py: '&#128187;', js: '&#128187;', ts: '&#128187;', html: '&#128187;', css: '&#128187;',
     md: '&#128221;', txt: '&#128221;',
     png: '&#128247;', jpg: '&#128247;', jpeg: '&#128247;', gif: '&#128247;', svg: '&#128247;',
@@ -12077,7 +12293,399 @@ function toggleChatTitleMenu(event) {
 /* ═══════════════════════════════════════════════════════════
    INITIALIZATION
    ═══════════════════════════════════════════════════════════ */
+// ═══════════════════════════════════════════════════════════
+// Auth System
+// ═══════════════════════════════════════════════════════════
+state.authUser = null;  // current user object
+state.authEnabled = false;  // whether server has auth enabled
+
+function showAuthOverlay() {
+  document.getElementById('auth-overlay').style.display = 'flex';
+  document.getElementById('app-root').style.display = 'none';
+}
+function hideAuthOverlay() {
+  document.getElementById('auth-overlay').style.display = 'none';
+  document.getElementById('app-root').style.display = '';
+}
+function showAuthLogin() {
+  document.getElementById('auth-login-form').style.display = '';
+  document.getElementById('auth-register-form').style.display = 'none';
+  document.getElementById('auth-error').style.display = 'none';
+}
+function showAuthRegister() {
+  document.getElementById('auth-login-form').style.display = 'none';
+  document.getElementById('auth-register-form').style.display = '';
+  document.getElementById('auth-error').style.display = 'none';
+}
+function showAuthError(msg) {
+  const el = document.getElementById('auth-error');
+  el.textContent = msg;
+  el.style.display = '';
+}
+
+async function authLogin() {
+  const username = document.getElementById('auth-username').value.trim();
+  const password = document.getElementById('auth-password').value;
+  if (!username || !password) { showAuthError('Username and password required'); return; }
+  try {
+    const r = await fetch(`${BASE_URL}/v1/auth/login`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username, password})
+    });
+    const data = await r.json();
+    if (data.error) { showAuthError(data.error); return; }
+    localStorage.setItem('auth-token', data.token);
+    localStorage.setItem('auth-user', JSON.stringify(data.user));
+    state.authUser = data.user;
+    hideAuthOverlay();
+    renderUserMenu();
+    init();
+  } catch(e) { showAuthError('Connection failed'); }
+}
+
+async function authRegister() {
+  const username = document.getElementById('reg-username').value.trim();
+  const displayName = document.getElementById('reg-display-name').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
+  const password = document.getElementById('reg-password').value;
+  const password2 = document.getElementById('reg-password2').value;
+  if (!username || !password) { showAuthError('Username and password required'); return; }
+  if (password !== password2) { showAuthError('Passwords do not match'); return; }
+  if (password.length < 6) { showAuthError('Password must be at least 6 characters'); return; }
+  try {
+    const r = await fetch(`${BASE_URL}/v1/auth/register`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username, password, display_name: displayName || username, email})
+    });
+    const data = await r.json();
+    if (data.error) { showAuthError(data.error); return; }
+    localStorage.setItem('auth-token', data.token);
+    localStorage.setItem('auth-user', JSON.stringify(data.user));
+    state.authUser = data.user;
+    hideAuthOverlay();
+    renderUserMenu();
+    init();
+  } catch(e) { showAuthError('Connection failed'); }
+}
+
+function authLogout() {
+  localStorage.removeItem('auth-token');
+  localStorage.removeItem('auth-user');
+  state.authUser = null;
+  if (state.authEnabled) showAuthOverlay();
+}
+
+async function checkAuth() {
+  // Check if server has auth enabled
+  const token = localStorage.getItem('auth-token');
+
+  // Try /v1/auth/me — if 401, auth is enabled and we need login
+  // If no token and auth is enabled, show login
+  if (!token) {
+    // Check if auth is enabled by trying a protected endpoint
+    try {
+      const r = await fetch(`${BASE_URL}/v1/agents`, {headers: {'Content-Type':'application/json'}});
+      if (r.status === 401) {
+        state.authEnabled = true;
+        showAuthOverlay();
+        return false;
+      }
+      // Auth not enabled, continue as normal
+      state.authEnabled = false;
+      return true;
+    } catch(e) { return true; } // server down, let init handle it
+  }
+
+  // Have token — validate it
+  try {
+    const r = await fetch(`${BASE_URL}/v1/auth/me`, {
+      headers: {'Content-Type':'application/json', 'Authorization': `Bearer ${token}`}
+    });
+    if (r.status === 401) {
+      state.authEnabled = true;
+      localStorage.removeItem('auth-token');
+      localStorage.removeItem('auth-user');
+      showAuthOverlay();
+      return false;
+    }
+    const data = await r.json();
+    state.authUser = data.user;
+    state.authEnabled = true;
+    localStorage.setItem('auth-user', JSON.stringify(data.user));
+    renderUserMenu();
+    return true;
+  } catch(e) { return true; }
+}
+
+function renderUserMenu() {
+  const user = state.authUser;
+  const avatarEl = document.getElementById('sb-user-avatar');
+  const nameEl = document.getElementById('sb-user-name');
+  const planEl = document.getElementById('sb-user-plan');
+  const dropdownEl = document.getElementById('sb-user-dropdown');
+
+  if (!user || !state.authEnabled) {
+    // Not authenticated — show default "Agent / Connected"
+    if (avatarEl) avatarEl.textContent = 'A';
+    if (nameEl) nameEl.textContent = 'Agent';
+    if (planEl) { planEl.textContent = state.connected ? 'Connected' : 'Disconnected'; planEl.className = 'sb-user-plan'; }
+    if (dropdownEl) dropdownEl.innerHTML = '';
+    return;
+  }
+
+  // Show user info
+  const initials = (user.display_name || user.username || '?').split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase();
+  if (avatarEl) { avatarEl.textContent = initials; avatarEl.style.background = 'var(--accent-primary, #c96442)'; avatarEl.style.color = '#fff'; }
+  if (nameEl) nameEl.textContent = user.display_name || user.username;
+  if (planEl) { planEl.textContent = user.role; planEl.className = 'sb-user-plan'; planEl.style.textTransform = 'capitalize'; }
+
+  // Populate dropdown
+  if (dropdownEl) {
+    dropdownEl.innerHTML = `
+      ${user.role === 'admin' ? '<div class="sb-user-dropdown-item" onclick="event.stopPropagation(); openUserManagement()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>Manage Users</div>' : ''}
+      ${(user.role === 'admin' || user.role === 'poweruser') ? '<div class="sb-user-dropdown-item" onclick="event.stopPropagation(); openUserTeams()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>User Teams</div>' : ''}
+      <div class="sb-user-dropdown-item" onclick="event.stopPropagation(); openChangePassword()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>Change Password</div>
+      <div class="sb-user-dropdown-item" onclick="event.stopPropagation(); openGeneralSettings()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>Settings</div>
+      <div class="sb-user-dropdown-item danger" onclick="event.stopPropagation(); authLogout()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>Sign out</div>
+    `;
+  }
+}
+
+function toggleUserDropdown() {
+  const dd = document.getElementById('sb-user-dropdown');
+  if (dd && dd.innerHTML.trim()) dd.classList.toggle('open');
+}
+
+// Close user dropdown when clicking elsewhere
+document.addEventListener('click', (e) => {
+  const dd = document.getElementById('sb-user-dropdown');
+  if (dd && !e.target.closest('#sb-user-section')) dd.classList.remove('open');
+});
+
+// ── User Management Modal (admin only) ──
+async function openUserManagement() {
+  document.getElementById('sb-user-dropdown')?.classList.remove('open');
+  try {
+    const data = await API.get('/v1/auth/users');
+    const users = data.users || [];
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.onclick = e => { if (e.target === modal) modal.remove(); };
+    modal.innerHTML = `
+      <div class="modal" style="max-width:700px">
+        <div class="modal-header"><h2>User Management</h2><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button></div>
+        <div class="modal-body" style="max-height:70vh;overflow-y:auto">
+          <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <thead><tr style="text-align:left;border-bottom:2px solid var(--border-light)">
+              <th style="padding:8px">Username</th><th style="padding:8px">Display Name</th>
+              <th style="padding:8px">Role</th><th style="padding:8px">Last Login</th>
+              <th style="padding:8px">Actions</th>
+            </tr></thead>
+            <tbody>
+              ${users.map(u => `<tr style="border-bottom:1px solid var(--border-light)">
+                <td style="padding:8px"><code>${u.username}</code></td>
+                <td style="padding:8px">${u.display_name || ''}</td>
+                <td style="padding:8px"><span class="role-badge ${u.role}">${u.role}</span></td>
+                <td style="padding:8px">${u.last_login ? new Date(u.last_login*1000).toLocaleDateString() : 'Never'}</td>
+                <td style="padding:8px">
+                  <select onchange="changeUserRole('${u.id}', this.value)" style="font-size:12px;padding:2px 6px;border-radius:4px;border:1px solid var(--border-light)">
+                    ${['admin','poweruser','user'].map(r => `<option value="${r}" ${u.role===r?'selected':''}>${r}</option>`).join('')}
+                  </select>
+                  ${u.username !== 'admin' ? `<button onclick="deleteUser('${u.id}','${u.username}')" style="margin-left:4px;color:#dc2626;background:none;border:none;cursor:pointer;font-size:12px">Delete</button>` : ''}
+                </td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+          <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border-light)">
+            <h3 style="font-size:14px;margin:0 0 12px">Add User</h3>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <input id="new-user-name" placeholder="Username" style="flex:1;min-width:120px;padding:8px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
+              <input id="new-user-pass" type="password" placeholder="Password" style="flex:1;min-width:120px;padding:8px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
+              <select id="new-user-role" style="padding:8px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
+                <option value="user">user</option><option value="poweruser">poweruser</option><option value="admin">admin</option>
+              </select>
+              <button onclick="addUser()" class="auth-btn" style="width:auto;padding:8px 20px">Add</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  } catch(e) { console.error('Failed to load users:', e); }
+}
+
+async function changeUserRole(userId, role) {
+  try {
+    await API.post('/v1/auth/users', {action:'update', user_id: userId, updates:{role}});
+  } catch(e) { alert('Failed to update role: ' + e.message); }
+}
+
+async function deleteUser(userId, username) {
+  if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+  try {
+    await API.post('/v1/auth/users', {action:'delete', user_id: userId});
+    openUserManagement(); // refresh
+  } catch(e) { alert('Failed to delete user: ' + e.message); }
+}
+
+async function addUser() {
+  const username = document.getElementById('new-user-name')?.value.trim();
+  const password = document.getElementById('new-user-pass')?.value;
+  const role = document.getElementById('new-user-role')?.value;
+  if (!username || !password) { alert('Username and password required'); return; }
+  try {
+    const r = await API.post('/v1/auth/users', {action:'create', username, password, role});
+    if (r.error) { alert(r.error); return; }
+    openUserManagement(); // refresh
+  } catch(e) { alert('Failed to add user: ' + e.message); }
+}
+
+// ── User Teams Modal ──
+async function openUserTeams() {
+  document.getElementById('sb-user-dropdown')?.classList.remove('open');
+  try {
+    const teamsData = await API.get('/v1/user-teams');
+    const teams = teamsData.teams || [];
+    const usersData = state.authUser?.role === 'admin' ? await API.get('/v1/auth/users').catch(() => ({users:[]})) : {users:[]};
+    const allUsers = usersData.users || [];
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.onclick = e => { if (e.target === modal) modal.remove(); };
+    modal.innerHTML = `
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header"><h2>User Teams</h2><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button></div>
+        <div class="modal-body" style="max-height:70vh;overflow-y:auto">
+          ${teams.length ? teams.map(t => `
+            <div style="border:1px solid var(--border-light);border-radius:10px;padding:16px;margin-bottom:12px">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <div><strong>${t.name}</strong> <span style="font-size:12px;color:var(--text-secondary)">${t.description || ''}</span></div>
+                <button onclick="dissolveUserTeam('${t.id}')" style="font-size:12px;color:#dc2626;background:none;border:none;cursor:pointer">Dissolve</button>
+              </div>
+              <div style="margin-top:8px;font-size:13px">
+                ${(t.members||[]).map(m => `
+                  <span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;margin:2px;background:var(--bg-base);border-radius:12px;font-size:12px">
+                    ${m.display_name || m.username}
+                    ${m.id === t.head_user_id ? '<span class="role-badge poweruser" style="font-size:10px">head</span>' : `<button onclick="removeTeamMember('${t.id}','${m.id}')" style="background:none;border:none;cursor:pointer;color:#999;font-size:14px">&times;</button>`}
+                  </span>
+                `).join('')}
+              </div>
+            </div>
+          `).join('') : '<p style="color:var(--text-secondary);text-align:center">No user teams yet</p>'}
+          <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border-light)">
+            <h3 style="font-size:14px;margin:0 0 12px">Create Team</h3>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <input id="new-team-name" placeholder="Team name" style="padding:8px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
+              <input id="new-team-desc" placeholder="Description (optional)" style="padding:8px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
+              <button onclick="createUserTeam()" class="auth-btn" style="width:auto;padding:8px 20px">Create Team</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  } catch(e) { console.error('Failed to load teams:', e); }
+}
+
+async function createUserTeam() {
+  const name = document.getElementById('new-team-name')?.value.trim();
+  const desc = document.getElementById('new-team-desc')?.value.trim();
+  if (!name) { alert('Team name required'); return; }
+  try {
+    const r = await API.post('/v1/user-teams', {action:'create', name, description: desc});
+    if (r.error) { alert(r.error); return; }
+    // Close and reopen to refresh
+    document.querySelector('.modal-overlay')?.remove();
+    openUserTeams();
+  } catch(e) { alert('Failed to create team: ' + e.message); }
+}
+
+async function dissolveUserTeam(teamId) {
+  if (!confirm('Dissolve this team? Members will become standalone.')) return;
+  try {
+    await API.post('/v1/user-teams', {action:'dissolve', team_id: teamId});
+    document.querySelector('.modal-overlay')?.remove();
+    openUserTeams();
+  } catch(e) { alert('Failed to dissolve team: ' + e.message); }
+}
+
+async function removeTeamMember(teamId, userId) {
+  try {
+    await API.post('/v1/user-teams', {action:'remove_member', team_id: teamId, user_id: userId});
+    document.querySelector('.modal-overlay')?.remove();
+    openUserTeams();
+  } catch(e) { alert('Failed to remove member: ' + e.message); }
+}
+
+// ── Change Password Modal ──
+function openChangePassword() {
+  document.getElementById('sb-user-dropdown')?.classList.remove('open');
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.onclick = e => { if (e.target === modal) modal.remove(); };
+  modal.innerHTML = `
+    <div class="modal" style="max-width:400px">
+      <div class="modal-header"><h2>Change Password</h2><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button></div>
+      <div class="modal-body">
+        <input id="cp-old" type="password" placeholder="Current password" style="display:block;width:100%;box-sizing:border-box;padding:10px;margin-bottom:10px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
+        <input id="cp-new" type="password" placeholder="New password" style="display:block;width:100%;box-sizing:border-box;padding:10px;margin-bottom:10px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
+        <input id="cp-new2" type="password" placeholder="Confirm new password" style="display:block;width:100%;box-sizing:border-box;padding:10px;margin-bottom:16px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
+        <button onclick="doChangePassword()" class="auth-btn">Change Password</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+
+async function doChangePassword() {
+  const old_password = document.getElementById('cp-old')?.value;
+  const new_password = document.getElementById('cp-new')?.value;
+  const new_password2 = document.getElementById('cp-new2')?.value;
+  if (!old_password || !new_password) { alert('All fields required'); return; }
+  if (new_password !== new_password2) { alert('Passwords do not match'); return; }
+  try {
+    const r = await API.post('/v1/auth/password', {old_password, new_password});
+    if (r.error) { alert(r.error); return; }
+    alert('Password changed successfully');
+    document.querySelector('.modal-overlay')?.remove();
+  } catch(e) { alert('Failed: ' + e.message); }
+}
+
+// ── Role-based UI visibility ──
+function applyRoleVisibility() {
+  const user = state.authUser;
+  if (!user || !state.authEnabled) return;
+  // Hide admin-only UI elements for non-admins
+  document.querySelectorAll('[data-role-min]').forEach(el => {
+    const minRole = el.dataset.roleMin;
+    const roleOrder = {user: 0, poweruser: 1, admin: 2};
+    const userLevel = roleOrder[user.role] ?? 0;
+    const requiredLevel = roleOrder[minRole] ?? 2;
+    el.style.display = userLevel >= requiredLevel ? '' : 'none';
+  });
+}
+
+// ── Project visibility picker ──
+function getProjectVisibilityHTML() {
+  const user = state.authUser;
+  if (!user || !state.authEnabled) return '';
+  return `
+    <div style="margin-top:8px">
+      <label style="font-size:12px;color:var(--text-secondary)">Visibility</label>
+      <select id="project-visibility" style="width:100%;padding:8px;margin-top:4px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
+        <option value="global">Global (everyone)</option>
+        <option value="user">Private (me only)</option>
+        <option value="team">Team</option>
+      </select>
+    </div>
+  `;
+}
+
 async function init() {
+  // Check auth first
+  const authOk = await checkAuth();
+  if (!authOk) return;
+
   // Load theme
   const savedTheme = localStorage.getItem('theme') || 'light';
   setTheme(savedTheme);
@@ -12116,9 +12724,8 @@ async function init() {
     state.teamStructure = teamsData || {};
     state.modelsConfig = modelsConfigData || {};
 
-    // Update connection indicator
-    const planEl = document.getElementById('sb-user-plan');
-    if (planEl) planEl.textContent = state.connected ? 'Connected' : 'Disconnected';
+    // Update user menu / connection indicator
+    renderUserMenu();
 
     // Auto-select first agent
     if (state.agents.length) {

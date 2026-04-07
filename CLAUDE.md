@@ -87,6 +87,21 @@ Code mode provides a Claude Desktop-style coding assistant with file tree, diff 
 - **Session creation**: `API.createSession(agent, model, folderPath, 'code')` — folder path stored as `project`, `status=code`
 - **Views**: `code-welcome` (folder picker + composer), `code-chat` (file tree + messages + diff panel)
 
+### Chat File Attachments
+
+Users can attach files in the chat composer. Files are saved server-side and read on demand.
+
+- **Web UI**: file input accepts 30+ extensions (PDF, DOCX, XLSX, PPTX, images, code, text, etc.)
+- **Binary files** (PDF, DOCX, XLSX, PPTX): read as base64 in browser, saved as binary on server
+- **Text files**: read as UTF-8, saved as text on server
+- **Storage**: `/tmp/brain-attachments/{session_id}/{filename}` — session-scoped temp directory
+- **Agent access**: message includes file paths + instruction to use `read_document` (documents) or `read_file` (text/code)
+- **Composer UI**: `state._pendingFiles[]` holds files before send, `filesToSend` captured before clearing, passed to `streamChat()`
+- **File chips**: preview area shows file type icon + filename + remove button; also displayed on sent user messages
+- **Image model**: configurable vision model for image description (`config.json` → `attachments.image_model`), selectable in Settings → Server → Attachments
+- **Server config**: `GET /v1/services` returns `attachment_image_model`; `POST /v1/services/server` accepts `attachment_image_model`
+- **Requirement**: `documents` tool group must be in agent's `token_config.tool_groups` for `read_document` to be available
+
 ### Artifacts
 
 Files generated during chat are treated as artifacts when written to `agents/<name>/artifacts/`.

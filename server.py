@@ -27,6 +27,7 @@ _QMD_PID_FILE = os.path.expanduser("~/.cache/qmd/mcp.pid")
 
 import claude_cli as engine
 import notifications as _notif_mod
+import auth as _auth_mod
 
 # --- Notification Manager (initialized in main()) ---
 _notification_manager: _notif_mod.NotificationManager | None = None
@@ -263,6 +264,19 @@ class ChatDB:
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_artver_artifact ON artifact_versions(artifact_id)")
+            # ── Multi-user migrations ──
+            # Add user_id to sessions (migration)
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
+            # Add user_id to artifacts (migration)
+            try:
+                conn.execute("ALTER TABLE artifacts ADD COLUMN user_id TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_session_user ON sessions(user_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_artifact_user ON artifacts(user_id)")
             conn.commit()
 
     # ── Artifact CRUD ──
@@ -407,12 +421,19 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=None)
-    def save_session(sid, agent_id, model, title, status, created_at, last_active, project="", summary=""):
+    def save_session(sid, agent_id, model, title, status, created_at, last_active, project="", summary="", user_id=""):
         with _db_conn() as conn:
             conn.execute("""
-                INSERT OR REPLACE INTO sessions (id, agent_id, model, title, status, created_at, last_active, project, summary)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (sid, agent_id, model, title, status, created_at, last_active, project or "", summary or ""))
+                INSERT OR REPLACE INTO sessions (id, agent_id, model, title, status, created_at, last_active, project, summary, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (sid, agent_id, model, title, status, created_at, last_active, project or "", summary or "", user_id or ""))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_session_user(session_id, user_id):
+        with _db_conn() as conn:
+            conn.execute("UPDATE sessions SET user_id = ? WHERE id = ?", (user_id, session_id))
             conn.commit()
 
     @staticmethod
@@ -460,7 +481,7 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=list)
-    def list_sessions(agent_id=None, status=None, project=None):
+    def list_sessions(agent_id=None, status=None, project=None, visible_user_ids=None):
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
             q = ("SELECT s.*, "
@@ -468,6 +489,11 @@ class ChatDB:
                  "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.metadata LIKE '%\"files\"%') as has_attachments "
                  "FROM sessions s WHERE 1=1")
             params = []
+            # Multi-user: filter by visible user IDs (None = admin sees all)
+            if visible_user_ids is not None:
+                placeholders = ",".join("?" * len(visible_user_ids))
+                q += f" AND (s.user_id IN ({placeholders}) OR s.user_id = '' OR s.user_id IS NULL)"
+                params.extend(visible_user_ids)
             if agent_id:
                 q += " AND s.agent_id = ?"
                 params.append(agent_id)
@@ -1278,10 +1304,259 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             sid = body.get("session_id", "")
         return sessions.get(sid) if sid else None
 
+    # --- Auth Middleware ---
+
+    def _get_auth_user(self) -> dict | None:
+        """Extract and validate JWT from Authorization: Bearer header."""
+        auth_header = self.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return None
+        token = auth_header[7:]
+        payload = _auth_mod.verify_token(token)
+        if not payload:
+            return None
+        user = _auth_mod.AuthDB.get_user(payload["user_id"])
+        if not user or user.get("disabled"):
+            return None
+        return user
+
+    def _require_auth(self) -> dict | None:
+        """Returns user dict or sends 401. Bypasses if auth disabled."""
+        if not _auth_mod.auth_enabled():
+            return _auth_mod.SYNTHETIC_ADMIN
+        user = self._get_auth_user()
+        if not user:
+            self._send_json({"error": "Authentication required"}, 401)
+            return None
+        return user
+
+    def _require_role(self, *roles) -> dict | None:
+        """Require auth + specific role. Returns user or None (sends 403)."""
+        user = self._require_auth()
+        if not user:
+            return None
+        if user["role"] not in roles:
+            self._send_json({"error": "Insufficient permissions"}, 403)
+            return None
+        return user
+
+    # --- Auth Endpoint Handlers ---
+
+    def _handle_auth_register(self):
+        body = self._read_json()
+        if not _auth_mod.registration_enabled():
+            self._send_json({"error": "Registration is disabled"}, 403)
+            return
+        username = body.get("username", "").strip()
+        password = body.get("password", "")
+        if not username or not password:
+            self._send_json({"error": "Username and password required"}, 400)
+            return
+        result = _auth_mod.AuthDB.create_user(
+            username=username, password=password,
+            display_name=body.get("display_name", username),
+            email=body.get("email", ""),
+        )
+        if "error" in result:
+            self._send_json(result, 409)
+        else:
+            token = _auth_mod.generate_token(result)
+            self._send_json({"user": result, "token": token}, 201)
+
+    def _handle_auth_login(self):
+        body = self._read_json()
+        user = _auth_mod.AuthDB.authenticate(body.get("username", ""), body.get("password", ""))
+        if not user:
+            self._send_json({"error": "Invalid credentials"}, 401)
+            return
+        _auth_mod.AuthDB.update_last_login(user["id"])
+        token = _auth_mod.generate_token(user)
+        self._send_json({"user": user, "token": token})
+
+    def _handle_auth_refresh(self):
+        auth_header = self.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            self._send_json({"error": "Token required"}, 401)
+            return
+        new_token = _auth_mod.refresh_token(auth_header[7:])
+        if not new_token:
+            self._send_json({"error": "Invalid or expired token"}, 401)
+            return
+        self._send_json({"token": new_token})
+
+    def _handle_auth_me(self):
+        user = self._require_auth()
+        if not user:
+            return
+        teams = _auth_mod.AuthDB.get_user_teams(user["id"]) if user["id"] != "__system__" else []
+        self._send_json({"user": user, "teams": teams})
+
+    def _handle_auth_password(self):
+        user = self._require_auth()
+        if not user:
+            return
+        body = self._read_json()
+        result = _auth_mod.AuthDB.change_password(user["id"], body.get("old_password", ""), body.get("new_password", ""))
+        if "error" in result:
+            self._send_json(result, 400)
+        else:
+            self._send_json(result)
+
+    def _handle_auth_users_list(self):
+        user = self._require_role("admin")
+        if not user:
+            return
+        self._send_json({"users": _auth_mod.AuthDB.list_users()})
+
+    def _handle_auth_users_manage(self):
+        user = self._require_role("admin")
+        if not user:
+            return
+        body = self._read_json()
+        action = body.get("action", "create")
+        if action == "create":
+            result = _auth_mod.AuthDB.create_user(
+                username=body.get("username", ""),
+                password=body.get("password", ""),
+                role=body.get("role", "user"),
+                display_name=body.get("display_name", ""),
+                email=body.get("email", ""),
+            )
+            status = 409 if "error" in result else 201
+            self._send_json(result, status)
+        elif action == "update":
+            uid = body.get("user_id", "")
+            result = _auth_mod.AuthDB.update_user(uid, body.get("updates", {}))
+            status = 400 if "error" in result else 200
+            self._send_json(result, status)
+        elif action == "delete":
+            uid = body.get("user_id", "")
+            _auth_mod.AuthDB.delete_user(uid)
+            self._send_json({"ok": True})
+        else:
+            self._send_json({"error": f"Unknown action: {action}"}, 400)
+
+    def _handle_auth_migrate(self):
+        """Assign unowned sessions/artifacts to a user."""
+        user = self._require_role("admin")
+        if not user:
+            return
+        body = self._read_json()
+        target_uid = body.get("user_id", "")
+        if not target_uid or not _auth_mod.AuthDB.get_user(target_uid):
+            self._send_json({"error": "Valid user_id required"}, 400)
+            return
+        with _db_conn() as conn:
+            c1 = conn.execute("UPDATE sessions SET user_id = ? WHERE user_id = '' OR user_id IS NULL", (target_uid,))
+            c2 = conn.execute("UPDATE artifacts SET user_id = ? WHERE user_id = '' OR user_id IS NULL", (target_uid,))
+            conn.commit()
+            self._send_json({"sessions_updated": c1.rowcount, "artifacts_updated": c2.rowcount})
+
+    # --- User Team Endpoint Handlers ---
+
+    def _handle_user_teams_list(self):
+        user = self._require_auth()
+        if not user:
+            return
+        if user["role"] == "admin" or user["id"] == "__system__":
+            teams = _auth_mod.AuthDB.list_teams()
+        else:
+            teams = _auth_mod.AuthDB.get_user_teams(user["id"])
+        self._send_json({"teams": teams})
+
+    def _handle_user_teams_manage(self):
+        user = self._require_role("poweruser", "admin")
+        if not user:
+            return
+        body = self._read_json()
+        action = body.get("action", "")
+        if action == "create":
+            result = _auth_mod.AuthDB.create_team(
+                name=body.get("name", ""),
+                head_user_id=body.get("head_user_id", user["id"]),
+                description=body.get("description", ""),
+            )
+            status = 400 if "error" in result else 201
+            self._send_json(result, status)
+        elif action == "update":
+            tid = body.get("team_id", "")
+            if not _auth_mod.can_manage_team(user, tid):
+                self._send_json({"error": "Not authorized to manage this team"}, 403)
+                return
+            result = _auth_mod.AuthDB.update_team(tid, body.get("updates", {}))
+            status = 400 if "error" in result else 200
+            self._send_json(result, status)
+        elif action == "add_member":
+            tid = body.get("team_id", "")
+            if not _auth_mod.can_manage_team(user, tid):
+                self._send_json({"error": "Not authorized to manage this team"}, 403)
+                return
+            result = _auth_mod.AuthDB.add_team_member(tid, body.get("user_id", ""))
+            status = 400 if "error" in result else 200
+            self._send_json(result, status)
+        elif action == "remove_member":
+            tid = body.get("team_id", "")
+            if not _auth_mod.can_manage_team(user, tid):
+                self._send_json({"error": "Not authorized to manage this team"}, 403)
+                return
+            result = _auth_mod.AuthDB.remove_team_member(tid, body.get("user_id", ""))
+            status = 400 if "error" in result else 200
+            self._send_json(result, status)
+        elif action == "dissolve":
+            tid = body.get("team_id", "")
+            if not _auth_mod.can_manage_team(user, tid):
+                self._send_json({"error": "Not authorized to manage this team"}, 403)
+                return
+            _auth_mod.AuthDB.delete_team(tid)
+            self._send_json({"ok": True})
+        else:
+            self._send_json({"error": f"Unknown action: {action}"}, 400)
+
     # --- Routing ---
+
+    # Paths that don't require auth
+    _PUBLIC_GET_PATHS = {"/v1/status", "/v1/auth/me"}
+    _PUBLIC_POST_PATHS = {"/v1/auth/login", "/v1/auth/register", "/v1/auth/refresh"}
+    # Paths that require admin role
+    _ADMIN_GET_PATHS = {"/v1/auth/users"}
+    _ADMIN_POST_PATHS = {"/v1/auth/users", "/v1/auth/migrate", "/v1/restart"}
+
+    def _auth_gate(self, path: str, public_paths: set, admin_paths: set) -> dict | None:
+        """Check auth for API paths. Returns user dict or None (response already sent)."""
+        if path in public_paths:
+            return _auth_mod.SYNTHETIC_ADMIN if not _auth_mod.auth_enabled() else (self._get_auth_user() or _auth_mod.SYNTHETIC_ADMIN)
+        user = self._require_auth()
+        if not user:
+            return None
+        if path in admin_paths and user["role"] != "admin" and user["id"] != "__system__":
+            self._send_json({"error": "Admin access required"}, 403)
+            return None
+        return user
 
     def do_GET(self):
         path = self.path.split("?")[0]
+
+        # Serve static files without auth
+        if path == "/" or path.startswith("/web/"):
+            # Fall through to existing static file handling below
+            pass
+        # Auth endpoints
+        elif path == "/v1/auth/me":
+            self._handle_auth_me()
+            return
+        elif path == "/v1/auth/users":
+            self._handle_auth_users_list()
+            return
+        elif path == "/v1/user-teams":
+            self._handle_user_teams_list()
+            return
+
+        # Auth gate for all /v1/* paths
+        if path.startswith("/v1/"):
+            user = self._auth_gate(path, self._PUBLIC_GET_PATHS, self._ADMIN_GET_PATHS)
+            if not user:
+                return
+            self._auth_user = user
 
         if path == "/v1/tools/list":
             self._handle_tools_list()
@@ -1452,6 +1727,36 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?")[0]
+
+        # Auth endpoints (public)
+        if path == "/v1/auth/login":
+            self._handle_auth_login()
+            return
+        elif path == "/v1/auth/register":
+            self._handle_auth_register()
+            return
+        elif path == "/v1/auth/refresh":
+            self._handle_auth_refresh()
+            return
+        elif path == "/v1/auth/password":
+            self._handle_auth_password()
+            return
+        elif path == "/v1/auth/users":
+            self._handle_auth_users_manage()
+            return
+        elif path == "/v1/auth/migrate":
+            self._handle_auth_migrate()
+            return
+        elif path == "/v1/user-teams":
+            self._handle_user_teams_manage()
+            return
+
+        # Auth gate for all /v1/* paths
+        if path.startswith("/v1/") or path == "/mcp":
+            user = self._auth_gate(path, self._PUBLIC_POST_PATHS, self._ADMIN_POST_PATHS)
+            if not user:
+                return
+            self._auth_user = user
 
         if path == "/mcp":
             self._handle_mcp_jsonrpc()
@@ -1628,6 +1933,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         path = self.path.split("?")[0]
+        # Auth gate
+        if path.startswith("/v1/"):
+            user = self._auth_gate(path, set(), set())
+            if not user:
+                return
+            self._auth_user = user
         if path.startswith("/v1/agents/") and "/projects/" in path and "/notes/" in path:
             self._handle_notes(path, "PUT")
         elif path.startswith("/v1/agents/") and "/projects/" in path:
@@ -1637,6 +1948,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         path = self.path.split("?")[0]
+        # Auth gate
+        if path.startswith("/v1/"):
+            user = self._auth_gate(path, set(), set())
+            if not user:
+                return
+            self._auth_user = user
         if path.startswith("/v1/sessions/"):
             sid = path.split("/")[-1]
             info = ChatDB.get_session_info(sid)
@@ -1677,7 +1994,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Session-ID")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Session-ID, Authorization")
         self.end_headers()
 
     # --- Tool MCP Endpoints (for SDK sidecar) ---
@@ -1751,6 +2068,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 if session_id:
                     engine._thread_local.session_id = session_id
                     engine._thread_local.current_session_id = session_id
+                    engine._thread_local.attachment_image_model = server_config.get("attachment_image_model", "")
 
                 # Pre-hooks: check if tool should be blocked
                 runner = engine._get_hook_runner(agent_id)
@@ -1895,14 +2213,17 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         agent = unquote(params.get("agent", ""))
         status = unquote(params.get("status", ""))
         project = unquote(params.get("project", ""))
+        # Multi-user: scope to visible user IDs
+        visible = _auth_mod.get_visible_user_ids(getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN))
         if agent or project:
             if project:
-                all_sessions = ChatDB.list_sessions(agent_id=agent or None, status=status or None, project=project)
+                all_sessions = ChatDB.list_sessions(agent_id=agent or None, status=status or None, project=project, visible_user_ids=visible)
                 self._send_json({"sessions": all_sessions})
             else:
-                self._send_json({"sessions": sessions.list_for_agent(agent, status or None)})
+                all_sessions = ChatDB.list_sessions(agent_id=agent, status=status or None, visible_user_ids=visible)
+                self._send_json({"sessions": all_sessions})
         else:
-            self._send_json({"sessions": sessions.list_all()})
+            self._send_json({"sessions": ChatDB.list_sessions(visible_user_ids=visible)})
 
     def _handle_get_messages(self, path):
         """GET /v1/sessions/<id>/messages"""
@@ -2310,6 +2631,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             api_type=provider["api_type"],
             max_context=body.get("max_context") or engine.get_model_max_context(model),
         )
+        # Stamp user ownership
+        auth_user = getattr(self, '_auth_user', None)
+        if auth_user and auth_user.get("id") and auth_user["id"] != "__system__":
+            ChatDB.update_session_user(session.id, auth_user["id"])
         project = body.get("project", "")
         if project:
             session.project = project
@@ -2511,6 +2836,45 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         else:
             user_content = message
 
+        # --- File attachments: save to disk, agent uses read_file/read_document ---
+        attached_files = body.get("files", [])
+        if attached_files:
+            import base64 as _b64
+            attach_dir = os.path.join("/tmp", "brain-attachments", session.id)
+            os.makedirs(attach_dir, exist_ok=True)
+            saved_paths = []
+            for f in attached_files:
+                fname = f.get("name", "file")
+                # Sanitize filename (keep emoji, strip path separators)
+                safe_name = fname.replace("/", "_").replace("\\", "_")
+                fpath = os.path.join(attach_dir, safe_name)
+                content = f.get("content", "")
+                if f.get("encoding") == "base64":
+                    with open(fpath, "wb") as fp:
+                        fp.write(_b64.b64decode(content))
+                else:
+                    with open(fpath, "w", errors="replace") as fp:
+                        fp.write(content)
+                saved_paths.append(fpath)
+            # Tell the agent where the files are — must be explicit about which tool
+            paths_list = "\n".join(f"  - {p}" for p in saved_paths)
+            has_docs = any(os.path.splitext(p)[1].lower() in (".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".tsv")
+                           for p in saved_paths)
+            if has_docs:
+                notice = (f"\n\n[User attached files saved to disk. "
+                          f"IMPORTANT: Use the read_document tool (NOT read_file) to read these — "
+                          f"read_document handles PDF, DOCX, XLSX, PPTX and other document formats:]\n{paths_list}")
+            else:
+                notice = f"\n\n[User attached files saved to disk:]\n{paths_list}"
+            message = message + notice
+            if isinstance(user_content, str):
+                user_content = user_content + notice
+            else:
+                for block in user_content:
+                    if block.get("type") == "text":
+                        block["text"] = block["text"] + notice
+                        break
+
         # Promote warmup session to active on first message
         if session.status == "warmup":
             session.status = "active"
@@ -2696,6 +3060,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 engine._thread_local.note_context = session.note_context
             else:
                 engine._thread_local.note_context = None
+
+            # Set attachment image model for read_attachment vision support
+            engine._thread_local.attachment_image_model = server_config.get("attachment_image_model", "")
 
             # Snapshot message count for rollback on failure
             _msg_count_before = len(session.messages)
@@ -3656,7 +4023,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         if not agent_id:
             self._send_json({"error": "Missing agent ID"}, 400)
             return
-        projects = engine.ProjectManager.list_projects(agent_id)
+        # Multi-user: filter projects by user access
+        auth_user = getattr(self, '_auth_user', None)
+        user_id = None
+        user_team_ids = None
+        if auth_user and auth_user["id"] != "__system__" and auth_user["role"] != "admin":
+            user_id = auth_user["id"]
+            user_team_ids = [t["id"] for t in _auth_mod.AuthDB.get_user_teams(auth_user["id"])]
+        projects = engine.ProjectManager.list_projects(agent_id, user_id=user_id, user_team_ids=user_team_ids)
         self._send_json({"agent": agent_id, "projects": projects})
 
     def _handle_create_project(self, path: str):
@@ -3670,10 +4044,16 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         if not name:
             self._send_json({"error": "Project name is required"}, 400)
             return
+        # Multi-user: stamp visibility and ownership
+        auth_user = getattr(self, '_auth_user', None)
+        owner_uid = auth_user["id"] if auth_user and auth_user["id"] != "__system__" else ""
         result = engine.ProjectManager.create_project(
             agent_id, name,
             description=body.get("description", ""),
             config=body,
+            visibility=body.get("visibility", "global"),
+            owner_user_id=owner_uid,
+            owner_team_id=body.get("owner_team_id", ""),
         )
         if "error" in result:
             self._send_json(result, 400)
@@ -6030,6 +6410,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "scheduler_tasks": len(engine._scheduler.list_all()) if engine._scheduler else 0,
                 "default_provider": next((name for name, p in server_config.get("providers", {}).items() if p.get("default_model") == server_config.get("default_model")), ""),
                 "default_model": server_config.get("default_model", ""),
+                "attachment_image_model": server_config.get("attachment_image_model", ""),
             },
             "qmd": {
                 "status": "running" if qmd_running else "stopped",
@@ -6189,46 +6570,67 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"error": f"Unknown action: {action}"}, 400)
 
     def _handle_server_config(self):
-        """POST /v1/services/server — update server defaults (default_model)."""
+        """POST /v1/services/server — update server defaults (default_model, attachment_image_model)."""
         body = self._read_json()
-        model = body.get("default_model")
-        if not model:
-            self._send_json({"error": "default_model required"}, 400)
-            return
-        # Find which provider has this model
-        providers = server_config.get("providers", {})
-        provider_name = None
-        # Check models config for provider mapping
-        mcfg = engine._models_config or {}
-        if model in mcfg and mcfg[model].get("provider"):
-            provider_name = mcfg[model]["provider"]
-        else:
-            for pname, p in providers.items():
-                if p.get("default_model") == model:
-                    provider_name = pname
-                    break
-        # Update server_config in memory
-        server_config["default_model"] = model
-        if provider_name:
-            server_config["api_key"] = providers[provider_name].get("api_key", "")
-            server_config["base_url"] = providers[provider_name].get("base_url", "")
-            server_config["api_type"] = providers[provider_name].get("type", "anthropic")
-        # Persist to config.json
         config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-        try:
-            config = {}
-            if os.path.exists(config_path):
-                with open(config_path) as f:
-                    config = json.load(f)
+        result = {}
+
+        # --- Default model ---
+        model = body.get("default_model")
+        if model:
+            providers = server_config.get("providers", {})
+            provider_name = None
+            mcfg = engine._models_config or {}
+            if model in mcfg and mcfg[model].get("provider"):
+                provider_name = mcfg[model]["provider"]
+            else:
+                for pname, p in providers.items():
+                    if p.get("default_model") == model:
+                        provider_name = pname
+                        break
+            server_config["default_model"] = model
             if provider_name:
-                config["default_provider"] = provider_name
-            with open(config_path, "w") as f:
-                json.dump(config, f, indent=2)
-        except Exception as e:
-            self._send_json({"error": str(e)}, 500)
+                server_config["api_key"] = providers[provider_name].get("api_key", "")
+                server_config["base_url"] = providers[provider_name].get("base_url", "")
+                server_config["api_type"] = providers[provider_name].get("type", "anthropic")
+            try:
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                if provider_name:
+                    config["default_provider"] = provider_name
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+                return
+            result["default_model"] = model
+            result["default_provider"] = provider_name or ""
+
+        # --- Attachment image model ---
+        if "attachment_image_model" in body:
+            aim = body["attachment_image_model"] or ""
+            server_config["attachment_image_model"] = aim
+            try:
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                att_cfg = config.setdefault("attachments", {})
+                att_cfg["image_model"] = aim
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+                return
+            result["attachment_image_model"] = aim
+
+        if not result:
+            self._send_json({"error": "No valid fields to update"}, 400)
             return
-        self._send_json({"status": "saved", "default_model": model,
-                         "default_provider": provider_name or ""})
+        result["status"] = "saved"
+        self._send_json(result)
 
     # --- Tools config handlers ---
 
@@ -7793,6 +8195,8 @@ def main():
     server_config["max_context"] = args.max_context
     server_config["port"] = args.port
     server_config["telegram_enabled"] = file_config.get("telegram", {}).get("enabled", True)
+    attachments_cfg = file_config.get("attachments", {})
+    server_config["attachment_image_model"] = attachments_cfg.get("image_model", "")
 
     # Initialize models config
     existing_models = file_config.get("models")
@@ -7813,6 +8217,13 @@ def main():
                 pass
     elif existing_models:
         engine._models_config = dict(existing_models)
+
+    # Initialize auth system
+    _auth_mod.init_auth(file_config)
+    if _auth_mod.auth_enabled():
+        print(f"Auth: enabled (registration: {'open' if _auth_mod.registration_enabled() else 'closed'})")
+    else:
+        print("Auth: disabled (single-user mode)")
 
     # Initialize engine globals
     engine._delegate_api_key = args.api_key
