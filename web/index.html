@@ -1246,13 +1246,13 @@ textarea { resize: none; }
 .tool-result-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-400); margin-bottom: 4px; }
 .tool-result-pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: 12px; color: var(--text-200); max-height: 250px; overflow-y: auto; }
 
-/* ═══ References Panel ═══ */
-#references-panel {
+/* ═══ Unified Right Panel ═══ */
+#right-panel {
   display: none;
   flex-direction: column;
-  width: 420px;
-  min-width: 300px;
-  max-width: 700px;
+  width: 480px;
+  min-width: 320px;
+  max-width: 800px;
   height: 100%;
   background: var(--bg-000);
   border-left: 1px solid var(--border-200);
@@ -1260,7 +1260,77 @@ textarea { resize: none; }
   overflow: hidden;
   flex-shrink: 0;
 }
-#references-panel.open { display: flex; }
+#right-panel.open { display: flex; }
+.right-panel-resize-handle {
+  position: absolute; left: -3px; top: 0; bottom: 0; width: 6px;
+  cursor: col-resize; z-index: 10; transition: background 0.15s;
+}
+.right-panel-resize-handle:hover, .right-panel-resize-handle.dragging {
+  background: var(--accent-brand); opacity: 0.3; border-radius: 3px;
+}
+.right-panel-header {
+  display: flex; align-items: center; height: 40px;
+  border-bottom: 1px solid var(--border-100); flex-shrink: 0; background: var(--bg-000);
+}
+.right-panel-tabs {
+  display: flex; flex: 1; height: 100%; gap: 0; padding: 0 4px;
+}
+.right-panel-tab {
+  display: flex; align-items: center; justify-content: center; gap: 4px;
+  padding: 0 12px; font-size: 12px; font-weight: 500; color: var(--text-400);
+  background: none; border: none; border-bottom: 2px solid transparent;
+  cursor: pointer; transition: all 0.15s; white-space: nowrap;
+}
+.right-panel-tab:hover { color: var(--text-200); background: var(--bg-100); }
+.right-panel-tab.active { color: var(--accent-brand); border-bottom-color: var(--accent-brand); }
+.right-panel-tab-badge {
+  font-size: 10px; padding: 0 5px; min-width: 16px; height: 16px; border-radius: 8px;
+  background: var(--bg-300); color: var(--text-300);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.right-panel-tab.active .right-panel-tab-badge {
+  background: color-mix(in srgb, var(--accent-brand) 15%, transparent); color: var(--accent-brand);
+}
+.right-panel-close-btn {
+  width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+  border-radius: 8px; color: var(--text-400); background: none; border: none;
+  cursor: pointer; transition: all 0.15s; flex-shrink: 0; margin-right: 4px;
+}
+.right-panel-close-btn:hover { background: var(--bg-200); color: var(--text-200); }
+.right-tab-pane { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+.right-tab-pane.active { display: flex; }
+
+/* Attachment grid & cards */
+.attach-grid { display: grid; grid-template-columns: repeat(auto-fill, 80px); gap: 8px; padding: 16px; overflow-y: auto; }
+.attach-card {
+  width: 80px; height: 80px; border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--border-100); cursor: pointer; transition: border-color 0.15s;
+}
+.attach-card:hover { border-color: var(--accent-brand); box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.attach-card img { width: 100%; height: 100%; object-fit: cover; }
+.attach-fullview {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 16px; overflow: auto; gap: 12px;
+}
+.attach-fullview img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
+.attach-fullview-back {
+  padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border-200);
+  background: var(--bg-100); color: var(--text-200); font-size: 12px; cursor: pointer;
+  align-self: flex-start; margin-bottom: 8px;
+}
+.attach-fullview-back:hover { background: var(--bg-200); }
+.attach-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-400); font-size: 13px; }
+
+/* Message image thumbnails */
+.msg-img-thumb {
+  width: 64px; height: 64px; border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--border-200); cursor: pointer; transition: border-color 0.15s;
+  display: inline-block;
+}
+.msg-img-thumb:hover { border-color: var(--accent-brand); }
+.msg-img-thumb img { width: 100%; height: 100%; object-fit: cover; }
+
+/* Legacy references-panel selector removed — refs content inside right panel */
 .refs-resize-handle {
   position: absolute;
   left: -3px;
@@ -1466,22 +1536,10 @@ textarea { resize: none; }
 .fa-artifact-indicator { color: var(--accent-brand); font-size: 12px; margin-left: 2px; }
 
 /* ═══ Artifact Panel ═══ */
-#artifact-panel {
-  display: none;
-  flex-direction: column;
-  width: 480px;
-  min-width: 320px;
-  max-width: 800px;
-  height: 100%;
-  background: var(--bg-000);
-  border-left: 1px solid var(--border-200);
-  position: relative;
-  overflow: hidden;
-  flex-shrink: 0;
-}
-#artifact-panel.open { display: flex; }
+/* Artifact panel top-level selectors removed — content lives inside #right-panel .right-tab-pane */
 
 .artifact-resize-handle {
+  display: none; /* no longer used — right-panel has its own resize handle */
   position: absolute;
   left: -3px;
   top: 0;
@@ -4179,55 +4237,70 @@ textarea { resize: none; }
   </div>
 </div>
 
-<!-- ═══ Artifact Panel ═══ -->
-<div id="artifact-panel">
-  <div class="artifact-resize-handle" id="artifact-resize-handle"></div>
-  <div class="artifact-header">
-    <div class="artifact-header-left">
-      <button class="artifact-list-btn" id="artifact-list-btn" onclick="showArtifactList()" title="All artifacts">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+<!-- ═══ Unified Right Panel ═══ -->
+<div id="right-panel">
+  <div class="right-panel-resize-handle" id="right-panel-resize-handle"></div>
+  <div class="right-panel-header">
+    <div class="right-panel-tabs">
+      <button class="right-panel-tab active" data-tab="attachments" onclick="switchRightTab('attachments')">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        Attachments <span class="right-panel-tab-badge" id="tab-badge-attachments">0</span>
       </button>
-      <span class="artifact-title" id="artifact-title"></span>
-    </div>
-    <div class="artifact-header-right">
-      <select class="artifact-version-select" id="artifact-version-select" onchange="loadArtifactVersion(this.value)"></select>
-      <button class="artifact-close-btn" onclick="closeArtifactPanel()" title="Close">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      <button class="right-panel-tab" data-tab="references" onclick="switchRightTab('references')">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a10 10 0 110 20 10 10 0 010-20z"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z"/></svg>
+        References <span class="right-panel-tab-badge" id="tab-badge-references">0</span>
+      </button>
+      <button class="right-panel-tab" data-tab="artifacts" onclick="switchRightTab('artifacts')">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Files <span class="right-panel-tab-badge" id="tab-badge-artifacts">0</span>
       </button>
     </div>
-  </div>
-  <div class="artifact-content" id="artifact-content">
-    <!-- Artifact list or rendered content -->
-  </div>
-  <div class="artifact-actions" id="artifact-actions">
-    <button class="artifact-action-btn" onclick="copyArtifact()" title="Copy">
-      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-      Copy
-    </button>
-    <button class="artifact-action-btn" onclick="downloadArtifact()" title="Download">
-      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      Download
-    </button>
-    <button class="artifact-action-btn" id="artifact-source-btn" onclick="toggleArtifactSource()" title="View source">
-      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-      Code
-    </button>
-  </div>
-</div>
-
-<!-- ═══ References Panel ═══ -->
-<div id="references-panel">
-  <div class="refs-resize-handle" id="refs-resize-handle"></div>
-  <div class="refs-header">
-    <div style="display:flex;align-items:center">
-      <span class="refs-header-title">Sources</span>
-      <span class="refs-header-count" id="refs-count"></span>
-    </div>
-    <button class="refs-close-btn" onclick="closeReferencesPanel()" title="Close">
+    <button class="right-panel-close-btn" onclick="closeRightPanel()" title="Close">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
   </div>
-  <div class="refs-content" id="refs-content"></div>
+
+  <!-- Attachments pane -->
+  <div class="right-tab-pane active" id="tab-pane-attachments">
+    <div class="attach-grid" id="attachments-grid"></div>
+    <div class="attach-fullview" id="attachment-fullview" style="display:none"></div>
+    <div class="attach-empty" id="attachments-empty">No attachments in this chat</div>
+  </div>
+
+  <!-- References pane -->
+  <div class="right-tab-pane" id="tab-pane-references">
+    <div class="refs-content" id="refs-content"></div>
+  </div>
+
+  <!-- Artifacts (Generated Files) pane -->
+  <div class="right-tab-pane" id="tab-pane-artifacts">
+    <div class="artifact-header">
+      <div class="artifact-header-left">
+        <button class="artifact-list-btn" id="artifact-list-btn" onclick="showArtifactList()" title="All artifacts">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        </button>
+        <span class="artifact-title" id="artifact-title"></span>
+      </div>
+      <div class="artifact-header-right">
+        <select class="artifact-version-select" id="artifact-version-select" onchange="loadArtifactVersion(this.value)"></select>
+      </div>
+    </div>
+    <div class="artifact-content" id="artifact-content"></div>
+    <div class="artifact-actions" id="artifact-actions">
+      <button class="artifact-action-btn" onclick="copyArtifact()" title="Copy">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        Copy
+      </button>
+      <button class="artifact-action-btn" onclick="downloadArtifact()" title="Download">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download
+      </button>
+      <button class="artifact-action-btn" id="artifact-source-btn" onclick="toggleArtifactSource()" title="View source">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        Code
+      </button>
+    </div>
+  </div>
 </div>
 
 </div>
@@ -4392,7 +4465,7 @@ class API {
   static getMemorySummary(agent) { return this.get(`/v1/agents/${agent}/memory-summary`); }
 
   // SSE Streaming Chat
-  static async streamChat(sessionId, message, callbacks, model, files) {
+  static async streamChat(sessionId, message, callbacks, model, files, images) {
     if (this._abortController) this._abortController.abort();
     this._abortController = new AbortController();
 
@@ -4405,8 +4478,8 @@ class API {
     if (state.planModeActive) body.mode = 'plan';
     if (state.thinkingLevel && state.thinkingLevel !== 'none') body.thinking = state.thinkingLevel;
     if (state.currentProject) body.project = state.currentProject;
-    if (state._pendingImages.length) {
-      body.images = state._pendingImages.map(i => ({data: i.data, media_type: i.type}));
+    if (images && images.length) {
+      body.images = images.map(i => ({data: i.data, media_type: i.type}));
     }
     if (files && files.length) {
       body.files = files.map(f => ({
@@ -4532,9 +4605,11 @@ const state = {
   codeFileTreeVisible: true,
   codeDiffPanelOpen: false,
 
-  // Artifact panel
-  artifactPanelOpen: false,
-  referencesPanelOpen: false,
+  // Right panel (unified: attachments, references, artifacts)
+  rightPanelOpen: false,
+  rightPanelTab: 'attachments',
+  get artifactPanelOpen() { return this.rightPanelOpen && this.rightPanelTab === 'artifacts'; },
+  get referencesPanelOpen() { return this.rightPanelOpen && this.rightPanelTab === 'references'; },
   chatReferences: {},  // sessionId -> [{title, link, snippet, domain, favicon}]
   artifacts: {},           // { sessionId: [artifact objects] }
   activeArtifactId: null,
@@ -6262,8 +6337,7 @@ async function openSession(sessionId, agentId) {
   }
 
   // Close artifact and references panels when switching sessions
-  closeArtifactPanel();
-  closeReferencesPanel();
+  closeRightPanel();
 
   // Trigger warmup for the restored session's model if provider supports it
   stopWarmupPoll(chat);
@@ -6303,8 +6377,7 @@ function newChat() {
   chat._lastSpeed = null;
   chat._lastApiIn = 0;
   stopWarmupPoll(chat);
-  closeArtifactPanel();
-  closeReferencesPanel();
+  closeRightPanel();
   navigateTo('welcome');
   // Pre-create session to trigger warmup for local models
   ensureSession(chat).catch(() => {});
@@ -6403,7 +6476,8 @@ async function sendMessage() {
     }
   }
 
-  // Capture pending files before clearing (needed for streamChat)
+  // Capture pending images and files before clearing (needed for streamChat)
+  const imagesToSend = state._pendingImages.length ? [...state._pendingImages] : null;
   const filesToSend = state._pendingFiles.length ? [...state._pendingFiles] : null;
 
   // Add user message
@@ -6610,7 +6684,7 @@ async function sendMessage() {
           }
         }
       },
-    }, chat.model, filesToSend);
+    }, chat.model, filesToSend, imagesToSend);
 
     // Safety net: if stream ended without a 'done' event
     // Guard with streamGen to prevent a stale safety-net (resumed via microtask)
@@ -6988,6 +7062,9 @@ function renderMessages() {
   container.querySelectorAll('pre code').forEach(block => {
     try { hljs.highlightElement(block); } catch(e) {}
   });
+
+  // Update right panel badges (attachment/reference/artifact counts)
+  if (typeof updateRightPanelBadges === 'function') updateRightPanelBadges();
 }
 
 function renderMessage(msg, idx) {
@@ -7014,14 +7091,48 @@ function renderMessage(msg, idx) {
 }
 
 function renderUserMessage(msg, idx) {
-  const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-  let filesHtml = '';
-  if (msg.images?.length || msg.files?.length) {
-    filesHtml = '<div class="msg-user-files">';
-    for (const img of (msg.images || [])) {
-      filesHtml += `<div class="msg-file-chip"><span class="file-ext">IMG</span> Image</div>`;
+  let textContent = '';
+  const imageUrls = []; // collect data URLs for thumbnail rendering
+
+  if (typeof msg.content === 'string') {
+    textContent = msg.content;
+  } else if (Array.isArray(msg.content)) {
+    // Multimodal content blocks (e.g. from DB restore)
+    for (const block of msg.content) {
+      if (block.type === 'text') {
+        textContent += block.text || '';
+      } else if (block.type === 'image_url' && block.image_url?.url) {
+        imageUrls.push(block.image_url.url);
+      } else if (block.type === 'image' && block.source?.data) {
+        const mt = block.source.media_type || 'image/png';
+        imageUrls.push(`data:${mt};base64,${block.source.data}`);
+      }
     }
-    for (const f of (msg.files || [])) {
+  } else {
+    textContent = JSON.stringify(msg.content);
+  }
+
+  // Also collect from msg.images (live send, before DB roundtrip)
+  if (msg.images?.length) {
+    for (const img of msg.images) {
+      if (img.preview) imageUrls.push(img.preview);
+      else if (img.data) imageUrls.push(`data:${img.type || 'image/png'};base64,${img.data}`);
+    }
+  }
+
+  let thumbsHtml = '';
+  if (imageUrls.length) {
+    thumbsHtml = '<div class="msg-user-files" style="gap:6px">';
+    for (const url of imageUrls) {
+      thumbsHtml += `<div class="msg-img-thumb" onclick="openRightPanel('attachments')"><img src="${url}" alt=""></div>`;
+    }
+    thumbsHtml += '</div>';
+  }
+
+  let filesHtml = '';
+  if (msg.files?.length) {
+    filesHtml = '<div class="msg-user-files">';
+    for (const f of msg.files) {
       const ext = f.name?.split('.').pop()?.toUpperCase() || 'FILE';
       filesHtml += `<div class="msg-file-chip"><span class="file-ext">${esc(ext)}</span> ${esc(f.name || 'File')}</div>`;
     }
@@ -7029,8 +7140,9 @@ function renderUserMessage(msg, idx) {
   }
   return `
     <div class="msg-turn msg-turn-user">
+      ${thumbsHtml}
       ${filesHtml}
-      <div class="msg-user">${esc(content)}</div>
+      <div class="msg-user">${esc(textContent)}</div>
     </div>
   `;
 }
@@ -8256,6 +8368,9 @@ async function switchGeneralTab(tab, btn) {
   /* ─── MODELS ─── */
   if (tab === 'models') {
     const mc = state.modelsConfig?.models || {};
+    // Build provider type map for provider-specific inference params
+    const provTypeMap = {};
+    (state.providers || []).forEach(p => { provTypeMap[p.name] = p.type || 'openai'; });
     // Group by provider
     const byProvider = {};
     for (const [mid, cfg] of Object.entries(mc)) {
@@ -8266,6 +8381,19 @@ async function switchGeneralTab(tab, btn) {
     // Sort models within each provider by display name
     for (const pk of provKeys) byProvider[pk].sort((a, b) => (a[1].display_name || modelShortName(a[0], false)).localeCompare(b[1].display_name || modelShortName(b[0], false)));
 
+    // Helper: small labeled input for model detail panel
+    const mdlInput = (cls, label, val, opts = {}) => {
+      const { type = 'number', step, min, max, ph, width, choices } = opts;
+      const s = `width:${width||'100%'};padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)`;
+      let inp;
+      if (choices) {
+        inp = `<select class="${cls}" style="${s}">${choices.map(c => `<option value="${c}"${val===c?' selected':''}>${c||'(default)'}</option>`).join('')}</select>`;
+      } else {
+        inp = `<input class="${cls}" type="${type}" value="${val??''}" style="${s}" ${step?`step="${step}"`:''}${min!=null?` min="${min}"`:''}${max!=null?` max="${max}"`:''}${ph?` placeholder="${ph}"`:''}>`;
+      }
+      return `<div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px">${label}</label>${inp}</div>`;
+    };
+
     let html = `<div style="${G('6px')}">
       <div style="display:flex;gap:8px;margin-bottom:12px">
         <button class="btn-secondary" onclick="this.disabled=true;this.textContent='Syncing...';API.post('/v1/models/config',{action:'sync'}).then(()=>{showToast('Syncing...');setTimeout(()=>API.getModelsConfig().then(d=>{state.modelsConfig=d;switchGeneralTab('models');showToast('Synced')}),3000)}).catch(e=>{showToast('Failed',true);this.disabled=false;this.textContent='Sync from Providers'})">Sync from Providers</button>
@@ -8273,6 +8401,7 @@ async function switchGeneralTab(tab, btn) {
     for (const prov of provKeys) {
       const models = byProvider[prov];
       const provId = `mdl-prov-${prov.replace(/[^a-zA-Z0-9]/g,'_')}`;
+      const provType = provTypeMap[prov] || 'openai';
       html += `<div style="margin-bottom:6px;border:1px solid var(--border-100);border-radius:8px;overflow:hidden">
         <div style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:8px 12px;background:var(--bg-100)" onclick="const c=document.getElementById('${provId}');const open=c.style.display!=='none';c.style.display=open?'none':'block';this.querySelector('.mdl-arrow').textContent=open?'▶':'▼'">
           <span class="mdl-arrow" style="font-size:10px;color:var(--text-400)">▼</span>
@@ -8281,12 +8410,42 @@ async function switchGeneralTab(tab, btn) {
         </div>
         <div id="${provId}" style="padding:4px 8px">`;
       for (const [mid, cfg] of models) {
-        html += `<div style="${ROW};opacity:${cfg.enabled?1:0.5}" data-model-id="${esc(mid)}">
-          <input type="checkbox" class="mdl-enabled" ${cfg.enabled?'checked':''} onchange="this.closest('[data-model-id]').style.opacity=this.checked?1:0.5">
-          <input class="mdl-display-name" value="${esc(cfg.display_name || modelShortName(mid, false))}" style="width:140px;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:12px;background:var(--bg-000);color:var(--text-100)" placeholder="Display name" title="Display name">
-          <span style="${MONO};flex:1;overflow:hidden;text-overflow:ellipsis" title="${esc(mid)}">${esc(mid)}</span>
-          <label style="font-size:11px;color:var(--text-400)">P</label><input type="number" class="mdl-priority" value="${cfg.priority||0}" style="width:50px;padding:2px 4px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;text-align:center;background:var(--bg-000);color:var(--text-200)">
-          <button class="btn-secondary" style="padding:2px 6px;font-size:10px;color:var(--error)" onclick="if(confirm('Remove model ${esc(mid)}?'))removeModel('${esc(mid)}')">✕</button>
+        const inf = cfg.inference || {};
+        const detId = `mdl-det-${mid.replace(/[^a-zA-Z0-9]/g,'_')}`;
+        html += `<div data-model-id="${esc(mid)}">
+          <div style="${ROW};opacity:${cfg.enabled?1:0.5}" class="mdl-header-row">
+            <input type="checkbox" class="mdl-enabled" ${cfg.enabled?'checked':''} onchange="this.closest('.mdl-header-row').style.opacity=this.checked?1:0.5">
+            <input class="mdl-display-name" value="${esc(cfg.display_name || modelShortName(mid, false))}" style="width:140px;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:12px;background:var(--bg-000);color:var(--text-100)" placeholder="Display name" title="Display name">
+            <span style="${MONO};flex:1;overflow:hidden;text-overflow:ellipsis" title="${esc(mid)}">${esc(mid)}</span>
+            <label style="font-size:11px;color:var(--text-400)">P</label><input type="number" class="mdl-priority" value="${cfg.priority||0}" style="width:50px;padding:2px 4px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;text-align:center;background:var(--bg-000);color:var(--text-200)">
+            <button class="btn-secondary" style="padding:2px 6px;font-size:12px" onclick="const d=document.getElementById('${detId}');d.style.display=d.style.display==='none'?'block':'none'" title="Model settings">&#9881;</button>
+            <button class="btn-secondary" style="padding:2px 6px;font-size:10px;color:var(--error)" onclick="if(confirm('Remove model ${esc(mid)}?'))removeModel('${esc(mid)}')">&#10005;</button>
+          </div>
+          <div id="${detId}" style="display:none;padding:8px 12px;margin:0 0 6px 0;border:1px solid var(--border-100);border-top:none;border-radius:0 0 8px 8px;background:var(--bg-100)">
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px">
+              ${mdlInput('mdl-max-context','Context Window',cfg.max_context,{ph:'131072'})}
+              ${mdlInput('mdl-max-output','Max Output',cfg.max_output,{ph:'16384'})}
+              <div style="border-left:1px solid var(--border-100);margin:0 -2px"></div>
+              ${mdlInput('mdl-inf-temperature','Temperature',inf.temperature,{step:'0.1',min:0,max:2,ph:'1.0'})}
+              ${mdlInput('mdl-inf-top_p','Top P',inf.top_p,{step:'0.05',min:0,max:1,ph:'1.0'})}
+              ${mdlInput('mdl-inf-top_k','Top K',inf.top_k,{min:0,ph:'(none)'})}
+              ${mdlInput('mdl-inf-max_tokens','Max Tokens Override',inf.max_tokens,{ph:'(auto)'})}
+              ${provType === 'openai' || provType === 'omlx' ? `
+                ${mdlInput('mdl-inf-frequency_penalty','Freq Penalty',inf.frequency_penalty,{step:'0.1',min:-2,max:2,ph:'0'})}
+                ${mdlInput('mdl-inf-presence_penalty','Pres Penalty',inf.presence_penalty,{step:'0.1',min:-2,max:2,ph:'0'})}
+              ` : ''}
+              ${provType === 'omlx' ? `
+                ${mdlInput('mdl-inf-min_p','Min P',inf.min_p,{step:'0.01',min:0,max:1,ph:'0'})}
+                ${mdlInput('mdl-inf-repetition_penalty','Rep Penalty',inf.repetition_penalty,{step:'0.1',min:0,max:2,ph:'1.0'})}
+              ` : ''}
+              ${provType === 'mistral' ? `
+                ${mdlInput('mdl-inf-reasoning_effort','Reasoning Effort',inf.reasoning_effort||'',{choices:['','none','low','medium','high']})}
+              ` : ''}
+              <div style="border-left:1px solid var(--border-100);margin:0 -2px"></div>
+              ${mdlInput('mdl-cost-input','Cost In ($/M)',cfg.cost_input,{step:'0.01',min:0,ph:'0'})}
+              ${mdlInput('mdl-cost-output','Cost Out ($/M)',cfg.cost_output,{step:'0.01',min:0,ph:'0'})}
+            </div>
+          </div>
         </div>`;
       }
       html += `</div></div>`;
@@ -8981,15 +9140,38 @@ async function saveContextConfig() {
 async function saveModelsConfig() {
   try {
     const mc = {...(state.modelsConfig?.models || {})};
+    const readNum = (row, cls) => { const v = row.querySelector(`.${cls}`)?.value?.trim(); return v === '' || v == null ? undefined : Number(v); };
+    const readStr = (row, cls) => { const v = row.querySelector(`.${cls}`)?.value?.trim(); return v || undefined; };
     document.querySelectorAll('[data-model-id]').forEach(row => {
       const mid = row.dataset.modelId;
-      if (mc[mid]) {
-        mc[mid].enabled = row.querySelector('.mdl-enabled')?.checked ?? mc[mid].enabled;
-        const pVal = row.querySelector('.mdl-priority')?.value;
-        if (pVal !== undefined) mc[mid].priority = parseInt(pVal) || 0;
-        const dName = row.querySelector('.mdl-display-name')?.value?.trim();
-        if (dName) mc[mid].display_name = dName;
+      if (!mc[mid]) return;
+      mc[mid].enabled = row.querySelector('.mdl-enabled')?.checked ?? mc[mid].enabled;
+      const pVal = row.querySelector('.mdl-priority')?.value;
+      if (pVal !== undefined) mc[mid].priority = parseInt(pVal) || 0;
+      const dName = row.querySelector('.mdl-display-name')?.value?.trim();
+      if (dName) mc[mid].display_name = dName;
+      // Context & output
+      const maxCtx = readNum(row, 'mdl-max-context');
+      if (maxCtx !== undefined) mc[mid].max_context = maxCtx; else delete mc[mid].max_context;
+      const maxOut = readNum(row, 'mdl-max-output');
+      if (maxOut !== undefined) mc[mid].max_output = maxOut; else delete mc[mid].max_output;
+      // Cost
+      const ci = readNum(row, 'mdl-cost-input');
+      if (ci !== undefined) mc[mid].cost_input = ci; else delete mc[mid].cost_input;
+      const co = readNum(row, 'mdl-cost-output');
+      if (co !== undefined) mc[mid].cost_output = co; else delete mc[mid].cost_output;
+      // Inference params — collect non-empty values
+      const inf = {};
+      const infKeys = ['temperature','top_p','top_k','max_tokens','frequency_penalty','presence_penalty','min_p','repetition_penalty'];
+      for (const k of infKeys) {
+        const v = readNum(row, `mdl-inf-${k}`);
+        if (v !== undefined && !isNaN(v)) inf[k] = v;
       }
+      // String params (reasoning_effort)
+      const re = readStr(row, 'mdl-inf-reasoning_effort');
+      if (re) inf.reasoning_effort = re;
+      mc[mid].inference = Object.keys(inf).length > 0 ? inf : undefined;
+      if (!mc[mid].inference) delete mc[mid].inference;
     });
     await API.post('/v1/models/config', { action: 'save', models: mc });
     state.modelsConfig.models = mc;
@@ -9312,10 +9494,6 @@ async function switchAgentTab(agentId, tab, btn) {
           <div>
             <label class="form-label">Model</label>
             <select class="form-select" id="cfg-model" style="width:100%">${modelOptions}</select>
-          </div>
-          <div>
-            <label class="form-label">Max Context</label>
-            <input class="form-input" id="cfg-max-context" type="number" value="${cfg.max_context || ''}">
           </div>
           <div style="display:flex;align-items:center;gap:8px">
             <input type="checkbox" id="cfg-paused" ${cfg.paused?'checked':''}>
@@ -11207,8 +11385,6 @@ async function saveAgentJson(agentId) {
     cfg.display_name = document.getElementById('cfg-display-name')?.value || '';
     cfg.description = document.getElementById('cfg-description')?.value || '';
     cfg.model = document.getElementById('cfg-model')?.value || cfg.model;
-    const maxCtx = document.getElementById('cfg-max-context')?.value;
-    if (maxCtx) cfg.max_context = parseInt(maxCtx);
     cfg.paused = document.getElementById('cfg-paused')?.checked || false;
     const sdkEl = document.getElementById('cfg-agent-sdk');
     if (sdkEl) cfg.agent_sdk = sdkEl.checked;
@@ -11439,9 +11615,11 @@ async function previewFile(path) {
    ARTIFACT PANEL
    ═══════════════════════════════════════════════════════════ */
 
-function initArtifactResize() {
-  const handle = document.getElementById('artifact-resize-handle');
-  const panel = document.getElementById('artifact-panel');
+/* ═══ Unified Right Panel Functions ═══ */
+
+function initRightPanelResize() {
+  const handle = document.getElementById('right-panel-resize-handle');
+  const panel = document.getElementById('right-panel');
   if (!handle || !panel) return;
   handle.addEventListener('mousedown', (e) => {
     const startX = e.clientX;
@@ -11459,15 +11637,164 @@ function initArtifactResize() {
       document.body.style.userSelect = '';
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
-      localStorage.setItem('artifact-panel-width', panel.style.width);
+      localStorage.setItem('right-panel-width', panel.style.width);
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
     e.preventDefault();
   });
-  const saved = localStorage.getItem('artifact-panel-width');
+  const saved = localStorage.getItem('right-panel-width');
   if (saved) panel.style.width = saved;
 }
+
+function openRightPanel(tab) {
+  const panel = document.getElementById('right-panel');
+  if (!panel) return;
+  panel.classList.add('open');
+  state.rightPanelOpen = true;
+  switchRightTab(tab || state.rightPanelTab || 'attachments');
+  initRightPanelResize();
+}
+
+function closeRightPanel() {
+  const panel = document.getElementById('right-panel');
+  if (panel) panel.classList.remove('open');
+  state.rightPanelOpen = false;
+  state.activeArtifactId = null;
+  state.activeArtifactVersion = null;
+  state.artifactSourceMode = false;
+}
+
+function switchRightTab(tabName) {
+  state.rightPanelTab = tabName;
+  // Toggle tab buttons
+  document.querySelectorAll('.right-panel-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tabName);
+  });
+  // Toggle panes
+  document.querySelectorAll('.right-tab-pane').forEach(pane => {
+    pane.classList.toggle('active', pane.id === 'tab-pane-' + tabName);
+  });
+  // Populate content on switch
+  if (tabName === 'attachments') renderAttachmentsPane();
+  if (tabName === 'references') renderReferencesPane();
+  if (tabName === 'artifacts' && !state.activeArtifactId) showArtifactList();
+  updateRightPanelBadges();
+}
+
+function updateRightPanelBadges() {
+  const chat = state.activeChat;
+  const sessionId = chat?.sessionId;
+  // Attachments count
+  const attachCount = collectChatAttachments().length;
+  const attachBadge = document.getElementById('tab-badge-attachments');
+  if (attachBadge) attachBadge.textContent = attachCount || '0';
+  // References count
+  const refsCount = collectChatReferences().length;
+  const refsBadge = document.getElementById('tab-badge-references');
+  if (refsBadge) refsBadge.textContent = refsCount || '0';
+  // Artifacts count
+  const artifactCount = sessionId ? (state.artifacts[sessionId] || []).length : 0;
+  const artBadge = document.getElementById('tab-badge-artifacts');
+  if (artBadge) artBadge.textContent = artifactCount || '0';
+}
+
+function collectChatAttachments() {
+  const chat = state.activeChat;
+  if (!chat) return [];
+  const attachments = [];
+  for (let i = 0; i < chat.messages.length; i++) {
+    const msg = chat.messages[i];
+    if (msg.role !== 'human' && msg.role !== 'user') continue;
+    // From msg.images (live send)
+    if (msg.images?.length) {
+      for (const img of msg.images) {
+        const url = img.preview || (img.data ? `data:${img.type || 'image/png'};base64,${img.data}` : null);
+        if (url) attachments.push({ url, name: img.name || 'Image', msgIndex: i });
+      }
+    }
+    // From content blocks (DB restore)
+    if (Array.isArray(msg.content)) {
+      for (const block of msg.content) {
+        if (block.type === 'image_url' && block.image_url?.url) {
+          attachments.push({ url: block.image_url.url, name: 'Image', msgIndex: i });
+        } else if (block.type === 'image' && block.source?.data) {
+          const mt = block.source.media_type || 'image/png';
+          attachments.push({ url: `data:${mt};base64,${block.source.data}`, name: 'Image', msgIndex: i });
+        }
+      }
+    }
+  }
+  return attachments;
+}
+
+function renderAttachmentsPane() {
+  const attachments = collectChatAttachments();
+  const grid = document.getElementById('attachments-grid');
+  const empty = document.getElementById('attachments-empty');
+  const fullview = document.getElementById('attachment-fullview');
+  if (!grid) return;
+  fullview.style.display = 'none';
+  if (!attachments.length) {
+    grid.style.display = 'none';
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+  grid.style.display = '';
+  grid.innerHTML = attachments.map((a, i) =>
+    `<div class="attach-card" onclick="showAttachmentFullview(${i})"><img src="${a.url}" alt="${esc(a.name)}" loading="lazy"></div>`
+  ).join('');
+}
+
+function showAttachmentFullview(index) {
+  const attachments = collectChatAttachments();
+  if (index < 0 || index >= attachments.length) return;
+  const a = attachments[index];
+  const grid = document.getElementById('attachments-grid');
+  const empty = document.getElementById('attachments-empty');
+  const fullview = document.getElementById('attachment-fullview');
+  grid.style.display = 'none';
+  empty.style.display = 'none';
+  fullview.style.display = '';
+  fullview.innerHTML = `
+    <button class="attach-fullview-back" onclick="renderAttachmentsPane()">Back to all</button>
+    <img src="${a.url}" alt="${esc(a.name)}">
+  `;
+}
+
+function renderReferencesPane() {
+  const refs = collectChatReferences();
+  const container = document.getElementById('refs-content');
+  if (!container) return;
+  if (!refs.length) {
+    container.innerHTML = '<div class="attach-empty">No web sources in this chat</div>';
+    return;
+  }
+  let html = '';
+  for (const ref of refs) {
+    const snippetHtml = ref.snippet ? `<div class="ref-card-snippet">${esc(ref.snippet)}</div>` : '';
+    const thumbUrl = `https://api.microlink.io/?url=${encodeURIComponent(ref.link)}&screenshot=true&meta=false&embed=screenshot.url`;
+    html += `
+      <div class="ref-card" onclick="window.open('${esc(ref.link)}', '_blank')">
+        <div class="ref-card-preview">
+          <img class="ref-favicon" src="${esc(ref.favicon)}" onerror="this.style.display='none'" alt="">
+          <img class="ref-thumb" src="${esc(thumbUrl)}" onerror="this.parentElement.innerHTML='<div class=\\'ref-thumb-placeholder\\'><svg viewBox=\\'0 0 24 24\\' width=\\'32\\' height=\\'32\\' fill=\\'none\\' stroke=\\'var(--text-400)\\' stroke-width=\\'1\\' opacity=\\'0.3\\'><path d=\\'M12 2a10 10 0 110 20 10 10 0 010-20z\\'/><path d=\\'M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z\\'/></svg></div>'" loading="lazy" alt="">
+          <span class="ref-domain-pill">${esc(ref.domain)}</span>
+        </div>
+        <div class="ref-card-body">
+          <div class="ref-card-title">${esc(ref.title)}</div>
+          ${snippetHtml}
+          <div class="ref-card-url">${esc(ref.link)}</div>
+        </div>
+      </div>
+    `;
+  }
+  container.innerHTML = html;
+}
+
+// Legacy compat
+function initArtifactResize() { initRightPanelResize(); }
 
 function artifactTypeIcon(type) {
   const icons = {
@@ -11483,9 +11810,6 @@ function artifactTypeIcon(type) {
 }
 
 async function openArtifactPanel(artifactId, version) {
-  const panel = document.getElementById('artifact-panel');
-  if (!panel) return;
-
   state.activeArtifactId = artifactId;
   state.artifactSourceMode = false;
   document.getElementById('artifact-source-btn')?.classList.remove('active');
@@ -11518,11 +11842,10 @@ async function openArtifactPanel(artifactId, version) {
   sel.value = targetVersion;
   state.activeArtifactVersion = targetVersion;
 
-  // Show panel
-  panel.classList.add('open');
-  state.artifactPanelOpen = true;
+  // Open unified right panel on artifacts tab
+  openRightPanel('artifacts');
 
-  // Show actions bar, hide list button highlight
+  // Show actions bar
   document.getElementById('artifact-actions').style.display = '';
 
   // Load content
@@ -11597,12 +11920,7 @@ function renderArtifactContent(content, type, name, encoding) {
 }
 
 function closeArtifactPanel() {
-  const panel = document.getElementById('artifact-panel');
-  if (panel) panel.classList.remove('open');
-  state.artifactPanelOpen = false;
-  state.activeArtifactId = null;
-  state.activeArtifactVersion = null;
-  state.artifactSourceMode = false;
+  closeRightPanel();
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -11731,75 +12049,14 @@ function getReferencesForMessage(idx) {
 function openReferencesPanel() {
   const refs = collectChatReferences();
   if (!refs.length) { showToast('No web sources in this chat'); return; }
-
-  const panel = document.getElementById('references-panel');
-  if (!panel) return;
-
-  document.getElementById('refs-count').textContent = `${refs.length} source${refs.length !== 1 ? 's' : ''}`;
-
-  let html = '';
-  for (const ref of refs) {
-    const snippetHtml = ref.snippet ? `<div class="ref-card-snippet">${esc(ref.snippet)}</div>` : '';
-    const thumbUrl = `https://api.microlink.io/?url=${encodeURIComponent(ref.link)}&screenshot=true&meta=false&embed=screenshot.url`;
-    html += `
-      <div class="ref-card" onclick="window.open('${esc(ref.link)}', '_blank')">
-        <div class="ref-card-preview">
-          <img class="ref-favicon" src="${esc(ref.favicon)}" onerror="this.style.display='none'" alt="">
-          <img class="ref-thumb" src="${esc(thumbUrl)}" onerror="this.parentElement.innerHTML='<div class=\\'ref-thumb-placeholder\\'><svg viewBox=\\'0 0 24 24\\' width=\\'32\\' height=\\'32\\' fill=\\'none\\' stroke=\\'var(--text-400)\\' stroke-width=\\'1\\' opacity=\\'0.3\\'><path d=\\'M12 2a10 10 0 110 20 10 10 0 010-20z\\'/><path d=\\'M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z\\'/></svg></div>'" loading="lazy" alt="">
-          <span class="ref-domain-pill">${esc(ref.domain)}</span>
-        </div>
-        <div class="ref-card-body">
-          <div class="ref-card-title">${esc(ref.title)}</div>
-          ${snippetHtml}
-          <div class="ref-card-url">${esc(ref.link)}</div>
-        </div>
-      </div>
-    `;
-  }
-  document.getElementById('refs-content').innerHTML = html;
-
-  // Close artifact panel if open
-  if (state.artifactPanelOpen) closeArtifactPanel();
-
-  panel.classList.add('open');
-  state.referencesPanelOpen = true;
-
-  // Setup resize handle
-  initRefsResizeHandle();
+  openRightPanel('references');
 }
 
 function closeReferencesPanel() {
-  const panel = document.getElementById('references-panel');
-  if (panel) panel.classList.remove('open');
-  state.referencesPanelOpen = false;
+  closeRightPanel();
 }
 
-function initRefsResizeHandle() {
-  const handle = document.getElementById('refs-resize-handle');
-  const panel = document.getElementById('references-panel');
-  if (!handle || !panel) return;
-  let startX, startWidth;
-  handle.onmousedown = (e) => {
-    e.preventDefault();
-    startX = e.clientX;
-    startWidth = panel.offsetWidth;
-    handle.classList.add('dragging');
-    const onMove = (e2) => {
-      const newW = startWidth - (e2.clientX - startX);
-      panel.style.width = Math.max(300, Math.min(700, newW)) + 'px';
-    };
-    const onUp = () => {
-      handle.classList.remove('dragging');
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-      localStorage.setItem('refs-panel-width', panel.style.width);
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  };
-  const saved = localStorage.getItem('refs-panel-width');
-  if (saved) panel.style.width = saved;
-}
+function initRefsResizeHandle() { /* no-op — merged into initRightPanelResize */ }
 
 function showArtifactList() {
   const chat = state.activeChat;

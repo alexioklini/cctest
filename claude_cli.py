@@ -12809,14 +12809,16 @@ def get_available_models(api_key: str, base_url: str, api_type: str) -> list[str
 # --- Model Configuration System ---
 
 KNOWN_MODELS = {
-    "claude-opus": {"icon": "\U0001f7e3", "priority": 100, "max_context": 200000, "capabilities": ["coding", "analysis", "agentic", "creative"]},
-    "claude-sonnet": {"icon": "\U0001f7e0", "priority": 80, "max_context": 200000, "capabilities": ["coding", "analysis", "fast"]},
-    "claude-haiku": {"icon": "\U0001f7e2", "priority": 60, "max_context": 200000, "capabilities": ["fast"]},
-    "gemini": {"icon": "\U0001f48e", "priority": 70, "max_context": 1000000, "capabilities": ["coding", "analysis"]},
-    "qwen": {"icon": "\U0001f43c", "priority": 50, "max_context": 131072, "capabilities": ["coding", "analysis"]},
-    "crow": {"icon": "\U0001f426\u200d\u2b1b", "priority": 30, "max_context": 32768, "capabilities": ["fast", "local"]},
-    "llama": {"icon": "\U0001f999", "priority": 40, "max_context": 131072, "capabilities": ["coding", "local"]},
-    "mistral": {"icon": "\U0001f32c\ufe0f", "priority": 45, "max_context": 131072, "capabilities": ["coding", "analysis"]},
+    "claude-opus": {"icon": "\U0001f7e3", "priority": 100, "max_context": 200000, "max_output": 32768, "capabilities": ["coding", "analysis", "agentic", "creative"], "inference": {"temperature": 1.0}},
+    "claude-sonnet": {"icon": "\U0001f7e0", "priority": 80, "max_context": 200000, "max_output": 16384, "capabilities": ["coding", "analysis", "fast"], "inference": {"temperature": 1.0}},
+    "claude-haiku": {"icon": "\U0001f7e2", "priority": 60, "max_context": 200000, "max_output": 8192, "capabilities": ["fast"], "inference": {"temperature": 1.0}},
+    "gemini": {"icon": "\U0001f48e", "priority": 70, "max_context": 1000000, "max_output": 65536, "capabilities": ["coding", "analysis"], "inference": {"temperature": 1.0, "top_p": 0.95}},
+    "qwen": {"icon": "\U0001f43c", "priority": 50, "max_context": 131072, "max_output": 16384, "capabilities": ["coding", "analysis"], "inference": {"temperature": 0.7, "top_p": 0.9}},
+    "crow": {"icon": "\U0001f426\u200d\u2b1b", "priority": 30, "max_context": 32768, "max_output": 4096, "capabilities": ["fast", "local"], "inference": {"temperature": 0.7, "top_p": 0.9, "min_p": 0.05}},
+    "llama": {"icon": "\U0001f999", "priority": 40, "max_context": 131072, "max_output": 16384, "capabilities": ["coding", "local"], "inference": {"temperature": 0.7, "top_p": 0.9}},
+    "mistral": {"icon": "\U0001f32c\ufe0f", "priority": 45, "max_context": 131072, "max_output": 16384, "capabilities": ["coding", "analysis"], "inference": {"temperature": 0.7}},
+    "minimax": {"icon": "\U0001f4ab", "priority": 55, "max_context": 131072, "max_output": 32768, "capabilities": ["coding", "analysis"], "inference": {"temperature": 0.7}},
+    "devstral": {"icon": "\U0001f32c\ufe0f", "priority": 50, "max_context": 256000, "max_output": 65536, "capabilities": ["coding", "analysis", "agentic"], "inference": {"temperature": 0.7}},
 }
 
 CAPABILITY_VALUES = ["coding", "analysis", "agentic", "fast", "creative", "local"]
@@ -12844,6 +12846,10 @@ def _match_known_model(model_id: str) -> dict:
             }
             if "max_context" in defaults:
                 result["max_context"] = defaults["max_context"]
+            if "max_output" in defaults:
+                result["max_output"] = defaults["max_output"]
+            if "inference" in defaults:
+                result["inference"] = dict(defaults["inference"])
             return result
     # Unknown model — enabled with low priority
     shortname = model_id.split("/")[-1]
@@ -15363,13 +15369,25 @@ def _handle_openai_response(response, payload, messages, model, api_key,
                     "attempt": recovery_count + 1,
                     "max_attempts": MAX_OUTPUT_RECOVERY_LIMIT,
                 })
+            # Thinking models consume max_tokens with invisible reasoning tokens.
+            # If visible output is <25% of completion budget, double max_tokens.
+            recovery_params = dict(inference_params) if inference_params else {}
+            visible_tokens = len(full_text) // 4
+            current_max = payload.get("max_tokens", get_model_max_output(model))
+            if _usage_out > 0 and visible_tokens < _usage_out * 0.25:
+                max_cap = get_model_max_context(model)
+                boosted = min(current_max * 2, max_cap)
+                if boosted > current_max:
+                    recovery_params["max_tokens"] = boosted
+                    print(f"[thinking model: boosting max_tokens {current_max} → {boosted}]",
+                          file=sys.stderr)
             # Build continuation: assistant partial + resume prompt
             messages.append({"role": "assistant", "content": full_text})
             messages.append({"role": "user", "content": _MAX_OUTPUT_RESUME_MSG})
             return send_message(messages, model, api_key, base_url, api_type,
                                 silent=silent, tools=tools, escape_watcher=escape_watcher,
                                 _tool_round=_tool_round, event_callback=event_callback,
-                                inference_params=inference_params, session_id=session_id)
+                                inference_params=recovery_params, session_id=session_id)
 
     if not tool_calls_map:
         if not silent and full_text:
@@ -15605,12 +15623,26 @@ def _handle_mistral_response(payload, messages, model, api_key,
                     "attempt": recovery_count + 1,
                     "max_attempts": MAX_OUTPUT_RECOVERY_LIMIT,
                 })
+            # Thinking models (e.g. Devstral 2) consume max_tokens with invisible
+            # reasoning tokens. Detect this: if visible output is <25% of the
+            # completion budget, double max_tokens for the retry so the model has
+            # room for both thinking and output.
+            recovery_params = dict(inference_params) if inference_params else {}
+            visible_tokens = len(full_text) // 4  # rough char-to-token estimate
+            current_max = payload.get("max_tokens", get_model_max_output(model))
+            if _usage_out > 0 and visible_tokens < _usage_out * 0.25:
+                max_cap = get_model_max_context(model)
+                boosted = min(current_max * 2, max_cap)
+                if boosted > current_max:
+                    recovery_params["max_tokens"] = boosted
+                    print(f"[thinking model: boosting max_tokens {current_max} → {boosted}]",
+                          file=sys.stderr)
             messages.append({"role": "assistant", "content": full_text})
             messages.append({"role": "user", "content": _MAX_OUTPUT_RESUME_MSG})
             return send_message(messages, model, api_key, base_url, api_type,
                                 silent=silent, tools=tools, escape_watcher=escape_watcher,
                                 _tool_round=_tool_round, event_callback=event_callback,
-                                inference_params=inference_params, session_id=session_id)
+                                inference_params=recovery_params, session_id=session_id)
 
     if not tool_calls_map:
         if not silent and full_text:

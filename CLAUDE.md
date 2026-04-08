@@ -163,9 +163,24 @@ surfaces show models as `displayName (provider)` — selectors, dropdowns, statu
 
 - `display_name`: user-editable label, persisted in config.json `models` section
 - Models tab: grouped by provider (collapsible sections), sorted by display name within each
+- Per-model detail panel: gear button expands settings grid for each model
 - Manual model add: model ID + provider + optional display name (for providers without `/models` endpoint)
 - `modelShortName(modelId, withProvider=true)`: returns `display_name (provider)` or compact form
-- `_match_known_model()` sets `display_name` from cleaned model ID (strips version suffixes)
+- `_match_known_model()` sets `display_name`, `max_output`, `inference` defaults from `KNOWN_MODELS`
+- `KNOWN_MODELS`: family defaults for claude, gemini, qwen, crow, llama, mistral, minimax, devstral
+
+Per-model config fields (all in config.json `models` section, editable in Models tab):
+- `max_context`: context window size (hard max for compaction)
+- `max_output`: max output tokens per response (thinking models need higher values)
+- `inference`: base inference params (`temperature`, `top_p`, `top_k`, `max_tokens`)
+- Provider-specific inference: `frequency_penalty`/`presence_penalty` (OpenAI/oMLX), `min_p`/`repetition_penalty` (oMLX), `reasoning_effort` (Mistral)
+- `cost_input`/`cost_output`: cost per million tokens
+- `presets`: purpose-based inference overrides (e.g. `coding`, `creative`)
+- Note: `max_context` removed from agent config (was unused — always derived from model)
+
+Thinking model auto-recovery: when `finish_reason == "length"` and visible output is <25% of
+completion tokens (thinking consumed the budget), `max_tokens` is doubled on retry (capped at
+model's `max_context`). Logged to stderr as `[thinking model: boosting max_tokens X → Y]`.
 
 ### Mistral Provider (Vibe CLI Integration)
 
