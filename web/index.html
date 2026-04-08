@@ -8492,11 +8492,16 @@ async function switchGeneralTab(tab, btn) {
           ${(p.models||[]).length?`<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${(p.models||[]).slice(0,8).map(m=>{const mid=typeof m==='string'?m:(m.id||m);return BADGE(modelShortName(mid,false));}).join('')}${(p.models||[]).length>8?`<span style="${MONO}">+${(p.models||[]).length-8} more</span>`:''}</div>`:''}
           <div id="${pid}" style="display:none;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-100)">
             <div style="display:flex;gap:8px">
-              <div style="width:120px"><label class="form-label">Type</label><select class="form-select" id="${pid}-type"><option value="anthropic" ${p.type==='anthropic'?'selected':''}>anthropic</option><option value="openai" ${p.type==='openai'?'selected':''}>openai</option><option value="mistral" ${p.type==='mistral'?'selected':''}>mistral</option></select></div>
+              <div style="width:120px"><label class="form-label">Type</label><select class="form-select" id="${pid}-type" onchange="_provSdkVisibility('${pid}',this.value)"><option value="anthropic" ${p.type==='anthropic'?'selected':''}>anthropic</option><option value="openai" ${p.type==='openai'?'selected':''}>openai</option><option value="mistral" ${p.type==='mistral'?'selected':''}>mistral</option></select></div>
               <div style="flex:1"><label class="form-label">Base URL</label><input class="form-input" id="${pid}-url" value="${esc(p.base_url||'')}"></div>
             </div>
             <div><label class="form-label">API Key</label><input class="form-input" id="${pid}-key" type="password" placeholder="${p.api_key||'unchanged'}"></div>
             <div><label class="form-label">Default Model</label><input class="form-input" id="${pid}-model" value="${esc(p.default_model||'')}"></div>
+            <div id="${pid}-sdk-row" style="display:${p.type==='anthropic'?'flex':'none'};align-items:center;gap:8px">
+              <input type="checkbox" id="${pid}-sdk" ${p.use_sdk!==false?'checked':''}>
+              <label for="${pid}-sdk" style="font-size:13px;color:var(--text-200)">Use Agent SDK</label>
+              <span style="font-size:11px;color:var(--text-400)">When enabled, anthropic models use the SDK sidecar for agentic loop</span>
+            </div>
             <div><button class="btn-primary" style="font-size:12px" onclick="saveProviderEdit('${esc(p.name)}','${pid}')">Save</button></div>
           </div>
         </div>`;
@@ -8505,11 +8510,16 @@ async function switchGeneralTab(tab, btn) {
         <div style="padding:12px;border:1px solid var(--border-200);border-radius:10px;${G('10px')}">
           <div style="display:flex;gap:8px">
             <div style="flex:1"><label class="form-label">Name</label><input class="form-input" id="prov-name" placeholder="e.g. my-provider"></div>
-            <div style="width:120px"><label class="form-label">Type</label><select class="form-select" id="prov-type" style="width:100%"><option value="anthropic">anthropic</option><option value="openai">openai</option><option value="mistral">mistral</option></select></div>
+            <div style="width:120px"><label class="form-label">Type</label><select class="form-select" id="prov-type" style="width:100%" onchange="_provSdkVisibility('prov-new',this.value)"><option value="anthropic">anthropic</option><option value="openai">openai</option><option value="mistral">mistral</option></select></div>
           </div>
           <div><label class="form-label">Base URL</label><input class="form-input" id="prov-url" placeholder="http://localhost:8081/v1"></div>
           <div><label class="form-label">API Key</label><input class="form-input" id="prov-key" placeholder="sk-..." type="password"></div>
           <div><label class="form-label">Default Model</label><input class="form-input" id="prov-model" placeholder="model-name (optional)"></div>
+          <div id="prov-new-sdk-row" style="display:flex;align-items:center;gap:8px">
+            <input type="checkbox" id="prov-new-sdk" checked>
+            <label for="prov-new-sdk" style="font-size:13px;color:var(--text-200)">Use Agent SDK</label>
+            <span style="font-size:11px;color:var(--text-400)">When enabled, anthropic models use the SDK sidecar for agentic loop</span>
+          </div>
           <div style="display:flex;gap:8px">
             <button class="btn-secondary" onclick="testNewProvider()">Test Connection</button>
             <button class="btn-primary" onclick="saveNewProvider()">Add Provider</button>
@@ -9221,12 +9231,21 @@ async function syncProvider(btn, name) {
   } catch(e) { showToast('Sync failed', true); btn.disabled = false; btn.textContent = 'Sync'; }
 }
 
+function _provSdkVisibility(pid, type) {
+  const row = document.getElementById(`${pid}-sdk-row`);
+  if (row) row.style.display = type === 'anthropic' ? 'flex' : 'none';
+}
+
 async function saveProviderEdit(name, pid) {
   const type = document.getElementById(`${pid}-type`).value;
   const base_url = document.getElementById(`${pid}-url`).value;
   const api_key = document.getElementById(`${pid}-key`).value;
   const default_model = document.getElementById(`${pid}-model`).value;
   const provider = { type, base_url, default_model };
+  if (type === 'anthropic') {
+    const sdkEl = document.getElementById(`${pid}-sdk`);
+    if (sdkEl) provider.use_sdk = sdkEl.checked;
+  }
   if (api_key) provider.api_key = api_key;
   else provider._keep_key = true;
   try {
@@ -9270,14 +9289,19 @@ async function testNewProvider() {
 async function saveNewProvider() {
   const name = document.getElementById('prov-name')?.value?.trim();
   if (!name) { showToast('Name required', true); return; }
+  const type = document.getElementById('prov-type')?.value || 'anthropic';
+  const provider = {
+    type,
+    base_url: document.getElementById('prov-url')?.value || '',
+    api_key: document.getElementById('prov-key')?.value || '',
+    default_model: document.getElementById('prov-model')?.value || '',
+  };
+  if (type === 'anthropic') {
+    const sdkEl = document.getElementById('prov-new-sdk');
+    if (sdkEl) provider.use_sdk = sdkEl.checked;
+  }
   try {
-    await API.post('/v1/providers', {
-      action: 'add', name,
-      base_url: document.getElementById('prov-url')?.value,
-      api_key: document.getElementById('prov-key')?.value,
-      type: document.getElementById('prov-type')?.value,
-      default_model: document.getElementById('prov-model')?.value,
-    });
+    await API.post('/v1/providers', { action: 'add', name, provider });
     showToast('Provider added');
     // Refresh providers
     state.providers = await API.getProviders().then(p => Array.isArray(p) ? p : (p.providers||[]));
@@ -9445,7 +9469,7 @@ async function switchAgentTab(agentId, tab, btn) {
 
   if (tab === 'soul') {
     try {
-      const data = await fetch(`${BASE_URL}/v1/agents/${agentId}/file?name=soul.md`).then(r=>r.json());
+      const data = await API.get(`/v1/agents/${agentId}/file?name=soul.md`);
       const soul = data.content || '';
       container.innerHTML = `
         <div style="display:flex;flex-direction:column;height:100%;padding:16px;overflow:hidden">
@@ -9473,7 +9497,7 @@ async function switchAgentTab(agentId, tab, btn) {
 
   if (tab === 'agent') {
     try {
-      const data = await fetch(`${BASE_URL}/v1/agents/${agentId}/file?name=agent.json`).then(r=>r.json());
+      const data = await API.get(`/v1/agents/${agentId}/file?name=agent.json`);
       const cfg = JSON.parse(data.content || '{}');
       const mcModels = state.modelsConfig?.models || {};
       const enabledModels = Object.entries(mcModels).filter(([,c]) => c.enabled).sort((a,b) => (b[1].priority||0)-(a[1].priority||0));
@@ -9499,11 +9523,6 @@ async function switchAgentTab(agentId, tab, btn) {
             <input type="checkbox" id="cfg-paused" ${cfg.paused?'checked':''}>
             <label for="cfg-paused" style="font-size:14px;color:var(--text-200)">Paused</label>
           </div>
-          <div style="display:flex;align-items:center;gap:8px">
-            <input type="checkbox" id="cfg-agent-sdk" ${cfg.agent_sdk !== false?'checked':''}>
-            <label for="cfg-agent-sdk" style="font-size:14px;color:var(--text-200)">Use SDK</label>
-            <span style="font-size:11px;color:var(--text-400)">auto: SDK for anthropic providers, direct loop for openai. Off = always direct loop.</span>
-          </div>
           <div style="display:flex;justify-content:flex-end;gap:8px">
             <button class="btn-primary" onclick="saveAgentJson('${esc(agentId)}')">Save</button>
           </div>
@@ -9518,7 +9537,7 @@ async function switchAgentTab(agentId, tab, btn) {
     try {
       const [ccData, filesData] = await Promise.all([
         API.getClaudeCodeSkills(agentId),
-        fetch(`${BASE_URL}/v1/agents/${agentId}/files`).then(r=>r.json()).catch(() => null),
+        API.get(`/v1/agents/${agentId}/files`).catch(() => null),
       ]);
       const ccSkills = ccData.skills || [];
       const agentSkills = filesData?.skills || [];
@@ -9637,8 +9656,8 @@ async function switchAgentTab(agentId, tab, btn) {
     try {
       const [summary, health, memData] = await Promise.all([
         API.getMemorySummary(agentId).catch(() => null),
-        fetch(`${BASE_URL}/v1/agents/${agentId}/memory-health`).then(r=>r.json()).catch(() => null),
-        fetch(`${BASE_URL}/v1/agents/${agentId}/memories`).then(r=>r.json()).catch(() => null),
+        API.get(`/v1/agents/${agentId}/memory-health`).catch(() => null),
+        API.get(`/v1/agents/${agentId}/memories`).catch(() => null),
       ]);
       const cfg = summary?.config || {};
       const isEnabled = cfg.enabled !== false;
@@ -9791,7 +9810,7 @@ async function switchAgentTab(agentId, tab, btn) {
       // Poll health while autodream is running
       if (health?.autodream?.live?.status === 'running') {
         (function pollHealth() {
-          fetch(`${BASE_URL}/v1/agents/${agentId}/memory-health`).then(r=>r.json()).then(h => {
+          API.get(`/v1/agents/${agentId}/memory-health`).then(h => {
             const el = document.getElementById('memory-health-container');
             if (!el) return;
             el.innerHTML = _renderMemoryHealth(h);
@@ -9989,14 +10008,14 @@ async function switchAgentTab(agentId, tab, btn) {
     // Load agent's mcp.json + main's (for inheritance display)
     let agentMcp = {}, mainMcp = {};
     try {
-      const res = await fetch(`${BASE_URL}/v1/agents/${agentId}/file?name=mcp.json`).then(r=>r.json());
+      const res = await API.get(`/v1/agents/${agentId}/file?name=mcp.json`);
       const raw = typeof res === 'string' ? res : (res.content || JSON.stringify(res));
       agentMcp = JSON.parse(raw);
       if (agentMcp.mcpServers) agentMcp = agentMcp.mcpServers;
     } catch {}
     if (agentId !== 'main') {
       try {
-        const res = await fetch(`${BASE_URL}/v1/agents/main/file?name=mcp.json`).then(r=>r.json());
+        const res = await API.get(`/v1/agents/main/file?name=mcp.json`);
         const raw = typeof res === 'string' ? res : (res.content || JSON.stringify(res));
         mainMcp = JSON.parse(raw);
         if (mainMcp.mcpServers) mainMcp = mainMcp.mcpServers;
@@ -10087,7 +10106,7 @@ async function switchAgentTab(agentId, tab, btn) {
 
   if (tab === 'tokens') {
     try {
-      const data = await fetch(`${BASE_URL}/v1/agents/${agentId}/file?name=agent.json`).then(r=>r.json());
+      const data = await API.get(`/v1/agents/${agentId}/file?name=agent.json`);
       const agentCfg = JSON.parse(data.content || '{}');
       const tcfg = agentCfg.token_config || {};
       const allGroups = ['core','memory','context','web','email','documents','delegation','code_graph','git','scheduler','mcp','skills','nodes'];
@@ -10208,7 +10227,7 @@ window._saveTokenConfig = async function(agentId) {
   tcfg.compact_threshold = threshVal ? parseInt(threshVal) / 100 : null;
 
   try {
-    const res = await fetch(`${BASE_URL}/v1/agents/${agentId}/file?name=agent.json`).then(r => r.json());
+    const res = await API.get(`/v1/agents/${agentId}/file?name=agent.json`);
     const cfg = JSON.parse(res.content || '{}');
     cfg.token_config = tcfg;
     await API.post(`/v1/agents/${encodeURIComponent(agentId)}/file`, {
@@ -10270,7 +10289,7 @@ window._doAgentMcpAdd = async function(agentId) {
 
   let mcp = {};
   try {
-    const res = await fetch(`${BASE_URL}/v1/agents/${agentId}/file?name=mcp.json`).then(r=>r.json());
+    const res = await API.get(`/v1/agents/${agentId}/file?name=mcp.json`);
     const raw = typeof res === 'string' ? res : (res.content || '{}');
     mcp = JSON.parse(raw);
   } catch {}
@@ -10299,7 +10318,7 @@ window._removeAgentMcp = async function(agentId, serverName) {
   if (!confirm(`Remove MCP server "${serverName}"?`)) return;
   let mcp = {};
   try {
-    const res = await fetch(`${BASE_URL}/v1/agents/${agentId}/file?name=mcp.json`).then(r=>r.json());
+    const res = await API.get(`/v1/agents/${agentId}/file?name=mcp.json`);
     const raw = typeof res === 'string' ? res : (res.content || '{}');
     mcp = JSON.parse(raw);
   } catch {}
@@ -10335,7 +10354,7 @@ window._searchMcpRegistry = async function(agentId) {
   // Load current config to mark already-installed
   let installedNames = new Set();
   try {
-    const res = await fetch(`${BASE_URL}/v1/agents/${agentId}/file?name=mcp.json`).then(r=>r.json());
+    const res = await API.get(`/v1/agents/${agentId}/file?name=mcp.json`);
     const raw = typeof res === 'string' ? res : (res.content || '{}');
     const mcp = JSON.parse(raw);
     const servers = mcp.mcpServers || mcp;
@@ -10343,7 +10362,7 @@ window._searchMcpRegistry = async function(agentId) {
   } catch {}
   if (agentId !== 'main') {
     try {
-      const res = await fetch(`${BASE_URL}/v1/agents/main/file?name=mcp.json`).then(r=>r.json());
+      const res = await API.get(`/v1/agents/main/file?name=mcp.json`);
       const raw = typeof res === 'string' ? res : (res.content || '{}');
       const mcp = JSON.parse(raw);
       const servers = mcp.mcpServers || mcp;
@@ -10456,7 +10475,7 @@ window._doRegistryInstall = async function(agentId, idx, formId, btn) {
 
   let mcp = {};
   try {
-    const res = await fetch(`${BASE_URL}/v1/agents/${agentId}/file?name=mcp.json`).then(r=>r.json());
+    const res = await API.get(`/v1/agents/${agentId}/file?name=mcp.json`);
     const raw = typeof res === 'string' ? res : (res.content || '{}');
     mcp = JSON.parse(raw);
   } catch {}
@@ -10498,14 +10517,14 @@ window._refreshMcpServerList = async function(agentId) {
   if (!listEl) return;
   let agentMcp = {}, mainMcp = {}, liveStatus = {};
   try {
-    const res = await fetch(`${BASE_URL}/v1/agents/${agentId}/file?name=mcp.json`).then(r=>r.json());
+    const res = await API.get(`/v1/agents/${agentId}/file?name=mcp.json`);
     const raw = typeof res === 'string' ? res : (res.content || '{}');
     agentMcp = JSON.parse(raw);
     if (agentMcp.mcpServers) agentMcp = agentMcp.mcpServers;
   } catch {}
   if (agentId !== 'main') {
     try {
-      const res = await fetch(`${BASE_URL}/v1/agents/main/file?name=mcp.json`).then(r=>r.json());
+      const res = await API.get(`/v1/agents/main/file?name=mcp.json`);
       const raw = typeof res === 'string' ? res : (res.content || '{}');
       mainMcp = JSON.parse(raw);
       if (mainMcp.mcpServers) mainMcp = mainMcp.mcpServers;
@@ -10839,7 +10858,7 @@ window._memSaveSummary = async function(agentId) {
 
 window._memTogglePause = async function(agentId, pause) {
   try {
-    const res = await fetch(`${BASE_URL}/v1/agents/${agentId}/file?name=agent.json`).then(r=>r.json());
+    const res = await API.get(`/v1/agents/${agentId}/file?name=agent.json`);
     const parsed = JSON.parse(res.content || '{}');
     if (!parsed.memory_summary) parsed.memory_summary = {};
     parsed.memory_summary.paused = pause;
@@ -10886,7 +10905,7 @@ window._memToggleAD = async function(agentId, enabled) {
 window._memDelete = async function(agentId, name) {
   if (!confirm(`Delete memory "${name}"?`)) return;
   try {
-    await fetch(`${BASE_URL}/v1/agents/${encodeURIComponent(agentId)}/memories?name=${encodeURIComponent(name)}`, { method: 'DELETE' });
+    await API.del(`/v1/agents/${encodeURIComponent(agentId)}/memories?name=${encodeURIComponent(name)}`);
     showToast('Memory deleted');
     switchAgentTab(agentId, 'memory');
   } catch(e) { showToast('Error: ' + e.message, true); }
@@ -11378,7 +11397,7 @@ function applySoulEdit(btn) {
 async function saveAgentJson(agentId) {
   try {
     // Read current config first
-    const data = await fetch(`${BASE_URL}/v1/agents/${agentId}/file?name=agent.json`).then(r=>r.json());
+    const data = await API.get(`/v1/agents/${agentId}/file?name=agent.json`);
     const cfg = JSON.parse(data.content || '{}');
 
     // Update fields
@@ -11386,8 +11405,6 @@ async function saveAgentJson(agentId) {
     cfg.description = document.getElementById('cfg-description')?.value || '';
     cfg.model = document.getElementById('cfg-model')?.value || cfg.model;
     cfg.paused = document.getElementById('cfg-paused')?.checked || false;
-    const sdkEl = document.getElementById('cfg-agent-sdk');
-    if (sdkEl) cfg.agent_sdk = sdkEl.checked;
 
     await API.post(`/v1/agents/${agentId}/file`, { name: 'agent.json', content: JSON.stringify(cfg, null, 2) });
     showToast('Agent config saved');
@@ -13204,8 +13221,7 @@ async function openCodeSession(sessionId, agentId) {
   state.codeAgent = agentId || state.codeAgent;
   // Load messages
   try {
-    const resp = await fetch(`${BASE_URL}/v1/sessions/${sessionId}/messages`);
-    const data = await resp.json();
+    const data = await API.get(`/v1/sessions/${sessionId}/messages`);
     state.codeMessages = (data.messages || data || []).map(m => ({
       role: m.role,
       content: typeof m.content === 'string' ? m.content : (m.content?.[0]?.text || JSON.stringify(m.content)),
@@ -13258,8 +13274,7 @@ function toggleCodeProjectList() {
 function loadCodeProjects() {
   // Fetch ALL code sessions (no folder filter) to discover unique folder-based projects
   const agentId = state.codeAgent || 'main';
-  fetch(`${BASE_URL}/v1/sessions?agent=${encodeURIComponent(agentId)}&status=code`)
-    .then(r => r.json())
+  API.get(`/v1/sessions?agent=${encodeURIComponent(agentId)}&status=code`)
     .then(data => {
       const sessions = data.sessions || data || [];
       // Group by project (folder path)
@@ -13398,9 +13413,7 @@ async function selectCodeFolder() {
     listEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-400);font-size:13px">Loading...</div>';
 
     try {
-      const resp = await fetch(`${BASE_URL}/v1/files/tree?path=${encodeURIComponent(dirPath)}&depth=0`);
-      if (!resp.ok) throw new Error(await resp.text());
-      const data = await resp.json();
+      const data = await API.get(`/v1/files/tree?path=${encodeURIComponent(dirPath)}&depth=0`);
       const dirs = (data.tree || []).filter(n => n.type === 'dir');
       const files = (data.tree || []).filter(n => n.type === 'file');
 
@@ -13605,7 +13618,7 @@ async function sendCodeMessage() {
 
     const resp = await fetch(`${BASE_URL}/v1/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: API._headers(),
       body: JSON.stringify(body),
     });
 
@@ -13835,8 +13848,7 @@ function initCodeChat() {
 async function refreshCodeStatus() {
   if (!state.codeFolder) return;
   try {
-    const resp = await fetch(`${BASE_URL}/v1/code/status?path=${encodeURIComponent(state.codeFolder)}`);
-    const data = await resp.json();
+    const data = await API.get(`/v1/code/status?path=${encodeURIComponent(state.codeFolder)}`);
     if (data.branch) {
       state.codeBranch = data.branch;
       document.getElementById('code-toolbar-branch').textContent = data.branch;
@@ -13847,8 +13859,7 @@ async function refreshCodeStatus() {
 async function refreshCodeFileTree() {
   if (!state.codeFolder) return;
   try {
-    const resp = await fetch(`${BASE_URL}/v1/files/tree?path=${encodeURIComponent(state.codeFolder)}&depth=2`);
-    const data = await resp.json();
+    const data = await API.get(`/v1/files/tree?path=${encodeURIComponent(state.codeFolder)}&depth=2`);
     state.codeFileTree = data.tree;
     renderCodeFileTree(data.tree, document.getElementById('code-file-tree-content'), 0);
   } catch (e) {
@@ -13918,8 +13929,7 @@ function _fileIcon(ext) {
 async function refreshCodeDiff() {
   if (!state.codeFolder) return;
   try {
-    const resp = await fetch(`${BASE_URL}/v1/code/diff?path=${encodeURIComponent(state.codeFolder)}`);
-    const data = await resp.json();
+    const data = await API.get(`/v1/code/diff?path=${encodeURIComponent(state.codeFolder)}`);
     state.codeDiffData = data;
 
     const toggle = document.getElementById('code-diff-toggle');

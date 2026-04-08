@@ -2920,12 +2920,17 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
 
-        # Check if this agent uses the Agent SDK backend
-        # - use_sdk=true (default): use SDK when provider is anthropic, direct loop when openai
-        # - use_sdk=false: always use direct agentic loop
-        _agent_sdk_raw = session.agent.config.get("agent_sdk", True)
-        _sdk_setting = _agent_sdk_raw.get("enabled", True) if isinstance(_agent_sdk_raw, dict) else bool(_agent_sdk_raw)
-        _use_sdk = _sdk_setting and session.api_type == "anthropic"
+        # Check if this provider uses the Agent SDK backend
+        # - anthropic: check provider config `use_sdk` (default true)
+        # - mistral: always direct loop (uses Mistral SDK natively)
+        # - openai: always direct loop
+        _prov_cfg = {}
+        try:
+            _prov = handler_self._resolve_provider(session.model)
+            _prov_cfg = server_config.get("providers", {}).get(_prov.get("provider_name", ""), {})
+        except Exception:
+            pass
+        _use_sdk = session.api_type == "anthropic" and _prov_cfg.get("use_sdk", True)
 
         # Pre-processing: tool result budget + microcompact (benefits both SDK and direct paths)
         engine._thread_local.current_session_id = session.id
@@ -3789,6 +3794,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "api_key": p.get("api_key", "")[:4] + "***" if p.get("api_key") else "",
                 "type": p.get("type", "openai"),
                 "default_model": p.get("default_model", ""),
+                "use_sdk": p.get("use_sdk", True),
                 "models": all_models,
                 "model_count": len(all_models),
                 "enabled_count": len(enabled_models),

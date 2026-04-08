@@ -133,7 +133,7 @@ context management, and token-efficient file operations.
 - `/mcp` endpoint on server: MCP JSON-RPC (initialize, tools/list, tools/call) — sidecar's SDK connects here for custom tools
 - Hooks run server-side in `/mcp` tools/call handler (SDK hook registration causes streaming to buffer — never pass `hooks_enabled: true`)
 - Exception: `AskUserQuestion` PreToolUse hook registered only in interactive mode (matcher scoped to single tool)
-- Opt out per agent: `"agent_sdk": {"enabled": false}` in agent.json falls back to custom loop
+- SDK routing per provider: `"use_sdk": true/false` in provider config (anthropic default true, openai/mistral always direct loop)
 - SDK badge shown in web UI status bar and message footers
 - All paths route through SDK: web UI, TUI interactive, CLI one-shot, scheduled tasks, `_run_delegate`
 - `query_sync` accepts `tool_defs`, `server_url`, `agent_id`, `session_id`, `cancel_fn`, `sdk_session_id`, `return_metadata`
@@ -195,7 +195,7 @@ replicating the Vibe CLI's API interaction pattern for Pro subscription key comp
 - Models: `devstral-small-latest` (Devstral Small), `mistral-vibe-cli-latest` (Devstral 2)
 - `_handle_mistral_response()`: streaming response handler via SDK with full agentic tool loop
 - Warmup uses SDK `chat.complete()` instead of raw urllib
-- `_use_sdk` (Agent SDK): not used for mistral — always direct agentic loop
+- `_use_sdk`: always false for mistral — uses Mistral SDK natively via direct agentic loop
 
 ### Token Optimization
 

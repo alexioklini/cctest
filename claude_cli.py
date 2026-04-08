@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "5.9.0"
-VERSION_DATE = "2026-04-07"
+VERSION = "5.11.0"
+VERSION_DATE = "2026-04-08"
 CHANGELOG = [
+    ("5.11.0", "2026-04-08", "Provider-level SDK routing and auth hardening — Use SDK setting moved from per-agent config to per-provider config. Smart routing: anthropic providers have a configurable use_sdk toggle (default on), mistral always uses Mistral SDK natively, openai always uses direct agentic loop. Provider edit/add forms show the toggle only for anthropic type. Fixed web UI authentication: all raw fetch() calls in agent settings tabs (Soul, Agent, Skills, Memory Health, MCP, Tokens) and Code Mode now use API helper with auth headers — previously these tabs returned empty data when auth was enabled."),
+    ("5.10.0", "2026-04-08", "Per-model settings UI and thinking model auto-recovery."),
     ("5.9.0", "2026-04-07", "Chat file attachments — attach files directly in the chat composer. Files are saved to a session-scoped temp directory on the server; the agent reads them on demand via read_document (PDF, DOCX, XLSX, PPTX, CSV) or read_file (text/code). Web UI: file input accepts 30+ extensions, binary formats (PDF, DOCX, XLSX, PPTX) sent as base64, text files as UTF-8. File preview chips in composer with remove buttons. Attached files shown on sent user messages with extension badges. Configurable vision model for image attachments (Settings → Server → Attachments). Documents tool group added to default agent config."),
     ("5.8.0", "2026-04-06", "Model management overhaul — models now have a configurable display_name (default = cleaned model ID). All UI surfaces show models as 'displayName (provider)' format — selectors, dropdowns, status bar, spinners, agent config. Models tab redesigned: grouped by provider with collapsible sections, sorted by display name, inline editable display names, per-model remove button. Manual model add form for providers without /models endpoint (model ID + provider + display name with datalist autocomplete). Code mode dropdown uses modelsConfig instead of flat model list. Provider tab badges use compact names. Backend: display_name field added to _match_known_model()."),
     ("5.7.0", "2026-04-03", "Token optimization suite — comprehensive per-agent token usage controls via new Tokens tab in agent config. Tool group filtering sends only relevant tools to the LLM (13 groups: core, memory, context, web, email, documents, delegation, code_graph, git, scheduler, mcp, skills, nodes). System prompt trimmed: tools.md reduced from 1500 to 400 tokens, memory summary cap configurable per agent. Anthropic prompt caching via cache_control on system prompt blocks. System prompt cached per-session (60s TTL) to avoid disk I/O on tool loops. Memory summary scheduled tasks restricted to memory-only tools (4 instead of 39). Compact threshold configurable per agent. SDK duplicate tools cleaned up. Kilo API provider added (OpenAI-compatible gateway). Context fill bar and manual compact button in chat footer. Background pipeline model selectors with fallback in Memory tab GUI. Fixed SDK token count inflating context display (was reporting API tokens_in instead of conversation estimate)."),
@@ -3698,7 +3700,6 @@ def get_agent_summaries() -> list[dict]:
             "model": cfg.preferred_model,
             "avatar": config.get("avatar"),
             "paused": config.get("paused", False),
-            "agent_sdk": config.get("agent_sdk", {}).get("enabled", True) if isinstance(config.get("agent_sdk"), dict) else bool(config.get("agent_sdk", True)),
         }
         team_cfg = config.get("team")
         if isinstance(team_cfg, dict) and team_cfg.get("members"):
