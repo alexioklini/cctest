@@ -1,0 +1,12 @@
+{
+  "description": "Local",
+  "model": "Crow-9B-HERETIC-4.6-MLX-8bit",
+  "avatar": "android",
+  "display_name": "CROW 9B",
+  "memory_summary": {
+    "enabled": true,
+    "paused": false,
+    "frequency": "every 24h",
+    "start_time": "03:00"
+  }
+}

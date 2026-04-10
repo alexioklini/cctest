@@ -1,0 +1,6 @@
+[
+  {
+    "name": "email",
+    "prompt": "send email with {{variable}}  to Alexander.klinsky@me.com"
+  }
+]

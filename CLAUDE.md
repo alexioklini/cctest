@@ -89,16 +89,22 @@ Code mode provides a Claude Desktop-style coding assistant with file tree, diff 
 
 ### Chat File Attachments
 
-Users can attach files in the chat composer. Files are saved server-side and read on demand.
+Users can attach files in the chat composer. Routing is dynamic based on model capabilities.
 
-- **Web UI**: file input accepts 30+ extensions (PDF, DOCX, XLSX, PPTX, images, code, text, etc.)
-- **Binary files** (PDF, DOCX, XLSX, PPTX): read as base64 in browser, saved as binary on server
-- **Text files**: read as UTF-8, saved as text on server
-- **Storage**: `/tmp/brain-attachments/{session_id}/{filename}` — session-scoped temp directory
-- **Agent access**: message includes file paths + instruction to use `read_document` (documents) or `read_file` (text/code)
-- **Composer UI**: `state._pendingFiles[]` holds files before send, `filesToSend` captured before clearing, passed to `streamChat()`
-- **File chips**: preview area shows file type icon + filename + remove button; also displayed on sent user messages
-- **Image model**: configurable vision model for image description (`config.json` → `attachments.image_model`), selectable in Settings → Server → Attachments
+- **Web UI**: all files go to `state._pendingFiles[]` as base64 (images get `.preview` for thumbnails)
+- **Unified send path**: browser sends all files as `body.files`; `body.images` accepted for backward compat (Telegram)
+- **Server routing**: checks model's `raw_formats` (MIME patterns) to decide per-file:
+  - **Multimodal**: MIME matches `raw_formats` + base64 + <20MB → injected as content block (LLM sees raw data)
+  - **Disk**: otherwise → saved to `/tmp/brain-attachments/{session_id}/`, agent uses `read_document`
+- **Multimodal format**: Anthropic `image`/`document` blocks, OpenAI/Mistral `image_url` data URIs
+- **API type guard**: OpenAI/Mistral only support `image/*` as multimodal (no PDF blocks)
+- **`raw_formats`**: per-model MIME pattern list in `KNOWN_MODELS` and `config.json` models section
+  - Claude/Qwen/Mistral: `["image/*"]`, Gemini: `["image/*", "application/pdf"]`, text-only: `[]`
+  - Editable in Models tab detail panel, saved via `POST /v1/models/config`
+  - `get_model_raw_formats(model)` and `_mime_matches(mime, patterns)` helpers in `claude_cli.py`
+- **Fallback for images**: when model lacks vision, `attachment_image_model` describes via vision LLM; if unconfigured, returns metadata only
+- **Image model**: configurable vision model (`config.json` → `attachments.image_model`), selectable in Settings → Server → Attachments
+- **Settings hint**: warning shown when default model has no `image/*` in `raw_formats` and no `attachment_image_model` configured
 - **Server config**: `GET /v1/services` returns `attachment_image_model`; `POST /v1/services/server` accepts `attachment_image_model`
 - **Requirement**: `documents` tool group must be in agent's `token_config.tool_groups` for `read_document` to be available
 
@@ -166,7 +172,7 @@ surfaces show models as `displayName (provider)` — selectors, dropdowns, statu
 - Per-model detail panel: gear button expands settings grid for each model
 - Manual model add: model ID + provider + optional display name (for providers without `/models` endpoint)
 - `modelShortName(modelId, withProvider=true)`: returns `display_name (provider)` or compact form
-- `_match_known_model()` sets `display_name`, `max_output`, `inference` defaults from `KNOWN_MODELS`
+- `_match_known_model()` sets `display_name`, `max_output`, `inference`, `raw_formats` defaults from `KNOWN_MODELS`
 - `KNOWN_MODELS`: family defaults for claude, gemini, qwen, crow, llama, mistral, minimax, devstral
 
 Per-model config fields (all in config.json `models` section, editable in Models tab):
@@ -175,6 +181,7 @@ Per-model config fields (all in config.json `models` section, editable in Models
 - `inference`: base inference params (`temperature`, `top_p`, `top_k`, `max_tokens`)
 - Provider-specific inference: `frequency_penalty`/`presence_penalty` (OpenAI/oMLX), `min_p`/`repetition_penalty` (oMLX), `reasoning_effort` (Mistral)
 - `cost_input`/`cost_output`: cost per million tokens
+- `raw_formats`: list of MIME patterns the model handles natively as multimodal (e.g. `["image/*", "application/pdf"]`)
 - `presets`: purpose-based inference overrides (e.g. `coding`, `creative`)
 - Note: `max_context` removed from agent config (was unused — always derived from model)
 

@@ -733,7 +733,11 @@ class Session:
             # Auto-title from first user message
             if not self.title and role == "user":
                 text = content if isinstance(content, str) else str(content)
-                self.title = text[:60].strip()
+                title = text[:80].strip()
+                if len(title) > 60:
+                    # Cut at last word boundary
+                    title = title[:60].rsplit(' ', 1)[0]
+                self.title = title
         ChatDB.save_message(self.id, role, content, metadata=metadata)
         ChatDB.save_session(self.id, self.agent_id, self.model, self.title,
                            self.status, self.created_at, self.last_active, self.project or "")
@@ -2235,6 +2239,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         if session:
             resp["max_context"] = session.max_context
             resp["total_tokens"] = engine._estimate_conversation_tokens(session.messages)
+            resp["summary"] = session.summary or ""
+            resp["title"] = session.title or ""
+        else:
+            info = ChatDB.get_session_info(sid)
+            if info:
+                resp["summary"] = info.get("summary", "")
+                resp["title"] = info.get("title", "")
         self._send_json(resp)
 
     def _handle_session_inspect(self, path):
@@ -2501,6 +2512,55 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 self._send_json({"status": "deleted", "message_id": msg_id})
             else:
                 self._send_json({"error": "message_id required"}, 400)
+        elif action == "delete_messages":
+            # Bulk delete: accepts message_ids (list)
+            msg_ids = body.get("message_ids", [])
+            if not msg_ids:
+                self._send_json({"error": "message_ids required"}, 400)
+                return
+            s = sessions.get(sid)
+            id_set = set(msg_ids)
+            # Collect artifact IDs from messages being deleted
+            artifact_ids_to_delete = set()
+            with _db_conn() as conn:
+                placeholders = ",".join("?" * len(msg_ids))
+                rows = conn.execute(
+                    f"SELECT metadata FROM messages WHERE session_id = ? AND id IN ({placeholders})",
+                    [sid] + list(msg_ids)).fetchall()
+                for (meta_str,) in rows:
+                    if not meta_str:
+                        continue
+                    try:
+                        meta = json.loads(meta_str)
+                        for f in meta.get("files", []):
+                            aid = f.get("artifact_id")
+                            if aid:
+                                artifact_ids_to_delete.add(aid)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                # Delete messages
+                conn.execute(f"DELETE FROM messages WHERE session_id = ? AND id IN ({placeholders})",
+                             [sid] + list(msg_ids))
+                # Delete orphaned artifacts and their versions + files
+                for aid in artifact_ids_to_delete:
+                    row = conn.execute("SELECT path FROM artifacts WHERE id = ?", (aid,)).fetchone()
+                    conn.execute("DELETE FROM artifact_versions WHERE artifact_id = ?", (aid,))
+                    conn.execute("DELETE FROM artifacts WHERE id = ?", (aid,))
+                    if row and row[0]:
+                        try:
+                            os.remove(row[0])
+                            # Remove parent dir if empty
+                            parent = os.path.dirname(row[0])
+                            if parent and os.path.isdir(parent) and not os.listdir(parent):
+                                os.rmdir(parent)
+                        except OSError:
+                            pass
+                conn.commit()
+            if s:
+                with s.lock:
+                    s.messages = [m for m in s.messages if m.get("id") not in id_set]
+            self._send_json({"status": "deleted", "count": len(msg_ids),
+                             "artifacts_deleted": len(artifact_ids_to_delete)})
         elif action == "archive_all":
             agent = body.get("agent")
             ChatDB.archive_all(agent)
@@ -2553,6 +2613,19 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             if s:
                 s.status = "active"
             self._send_json({"status": "active", "session_id": sid})
+        elif action == "rename":
+            title = body.get("title", "").strip()
+            if not title:
+                self._send_json({"error": "title required"}, 400)
+                return
+            with _db_conn() as conn:
+                conn.execute("UPDATE sessions SET summary = ? WHERE id = ?", (title, sid))
+                conn.commit()
+            s = sessions.get(sid)
+            if s:
+                with s.lock:
+                    s.summary = title
+            self._send_json({"status": "renamed", "session_id": sid, "title": title})
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)
 
@@ -2812,40 +2885,88 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             session.cancel_token = engine.CancelToken()
             session._streaming = True
 
-        # --- Multimodal: construct content blocks if images present ---
-        images = body.get("images", [])
-        if images:
-            content_blocks = []
-            for img in images:
-                if session.api_type in ("openai", "mistral"):
-                    # OpenAI/Mistral format: image_url with data URI
-                    data_uri = f"data:{img.get('media_type', 'image/png')};base64,{img['data']}"
-                    content_blocks.append({"type": "image_url", "image_url": {"url": data_uri}})
+        # --- Unified attachment routing: multimodal vs disk based on model capabilities ---
+        import base64 as _b64
+        import mimetypes as _mt
+
+        def _guess_mime(filename: str) -> str:
+            mt, _ = _mt.guess_type(filename)
+            return mt or "application/octet-stream"
+
+        # Collect all attachments from both legacy body.images and body.files
+        all_attachments = []
+        for img in body.get("images", []):
+            all_attachments.append({
+                "name": "image",
+                "content": img.get("data", ""),
+                "encoding": "base64",
+                "media_type": img.get("media_type", "image/png"),
+            })
+        for f in body.get("files", []):
+            all_attachments.append({
+                "name": f.get("name", "file"),
+                "content": f.get("content", "") or f.get("data", ""),
+                "encoding": f.get("encoding", "base64"),
+                "media_type": f.get("media_type") or f.get("type") or _guess_mime(f.get("name", "file")),
+            })
+
+        content_blocks = []
+        disk_files = []
+        MAX_INLINE_BYTES = 20 * 1024 * 1024  # 20MB
+
+        if all_attachments:
+            raw_formats = engine.get_model_raw_formats(session.model)
+            attach_dir = os.path.join("/tmp", "brain-attachments", session.id)
+
+            for f in all_attachments:
+                mime = f["media_type"]
+                is_base64 = f["encoding"] == "base64"
+                # Check file size (base64 is ~4/3 of raw)
+                too_large = is_base64 and len(f["content"]) * 3 // 4 > MAX_INLINE_BYTES
+                # OpenAI/Mistral only support image/* as multimodal content blocks
+                api_blocked = session.api_type in ("openai", "mistral") and not mime.startswith("image/")
+
+                if (engine._mime_matches(mime, raw_formats)
+                        and is_base64 and not too_large and not api_blocked):
+                    # Route as multimodal content block — LLM sees raw data
+                    if session.api_type in ("openai", "mistral"):
+                        data_uri = f"data:{mime};base64,{f['content']}"
+                        content_blocks.append({"type": "image_url", "image_url": {"url": data_uri}})
+                    else:
+                        # Anthropic format
+                        if mime.startswith("image/"):
+                            content_blocks.append({
+                                "type": "image",
+                                "source": {"type": "base64", "media_type": mime, "data": f["content"]},
+                            })
+                        elif mime == "application/pdf":
+                            content_blocks.append({
+                                "type": "document",
+                                "source": {"type": "base64", "media_type": mime, "data": f["content"]},
+                            })
+                        else:
+                            content_blocks.append({
+                                "type": "image",
+                                "source": {"type": "base64", "media_type": mime, "data": f["content"]},
+                            })
                 else:
-                    # Anthropic format: image source block
-                    content_blocks.append({
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": img.get("media_type", "image/png"),
-                            "data": img["data"],
-                        },
-                    })
+                    # Route to disk — agent uses read_document/read_file
+                    disk_files.append(f)
+
+        # Build user_content with any multimodal blocks
+        if content_blocks:
             content_blocks.append({"type": "text", "text": message})
             user_content = content_blocks
         else:
             user_content = message
 
-        # --- File attachments: save to disk, agent uses read_file/read_document ---
-        attached_files = body.get("files", [])
-        if attached_files:
-            import base64 as _b64
+        # Save disk-routed files and append notice
+        if disk_files:
             attach_dir = os.path.join("/tmp", "brain-attachments", session.id)
             os.makedirs(attach_dir, exist_ok=True)
             saved_paths = []
-            for f in attached_files:
+            for f in disk_files:
                 fname = f.get("name", "file")
-                # Sanitize filename (keep emoji, strip path separators)
                 safe_name = fname.replace("/", "_").replace("\\", "_")
                 fpath = os.path.join(attach_dir, safe_name)
                 content = f.get("content", "")
@@ -2856,7 +2977,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     with open(fpath, "w", errors="replace") as fp:
                         fp.write(content)
                 saved_paths.append(fpath)
-            # Tell the agent where the files are — must be explicit about which tool
             paths_list = "\n".join(f"  - {p}" for p in saved_paths)
             has_docs = any(os.path.splitext(p)[1].lower() in (".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".tsv")
                            for p in saved_paths)
@@ -8113,25 +8233,36 @@ def _generate_chat_summary(session):
         return
     # Set thread-local context for this background thread
     engine._thread_local.current_agent = session.agent
-    engine._thread_local.memory_store = session.memory
+    engine._thread_local.memory_store = None  # No memory injection — summary must be based only on chat content
     # Build a condensed view of the conversation (first + last few messages)
     msgs = session.messages
     sample = []
     for m in msgs[:3]:
         role = m.get("role", "?")
         content = m.get("content", "")
-        if isinstance(content, str):
+        if isinstance(content, list):
+            # Extract text from multipart content blocks
+            parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+            content = " ".join(parts)
+        if isinstance(content, str) and content.strip():
             sample.append(f"[{role}] {content[:200]}")
     if len(msgs) > 3:
         for m in msgs[-2:]:
             role = m.get("role", "?")
             content = m.get("content", "")
-            if isinstance(content, str):
+            if isinstance(content, list):
+                parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                content = " ".join(parts)
+            if isinstance(content, str) and content.strip():
                 sample.append(f"[{role}] {content[:200]}")
+
+    if not sample:
+        return  # No text content to summarize
 
     prompt = (
         "Summarize this conversation in ONE short sentence (max 60 chars). "
-        "Focus on the topic/task, not greetings. Output ONLY the summary, nothing else.\n\n"
+        "Focus on the topic/task, not greetings. Output ONLY the summary, nothing else. "
+        "Base your summary ONLY on the conversation content below.\n\n"
         + "\n".join(sample)
     )
     try:
@@ -8154,7 +8285,7 @@ def _generate_chat_summary(session):
             messages=[{"role": "user", "content": prompt}],
             model=model,
             system_prompt="Output only a brief summary sentence. No quotes, no prefix.",
-            memory_store=session.memory,
+            memory_store=None,
             inference_params={"max_tokens": 80, "temperature": 0.1},
         )
         if result and not result.startswith("Delegation error"):

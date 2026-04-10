@@ -1,0 +1,12 @@
+{
+  "description": "Crows 4B Opus Distilled",
+  "avatar": "knight",
+  "memory_summary": {
+    "enabled": true,
+    "paused": false,
+    "frequency": "every 24h",
+    "start_time": "03:00"
+  },
+  "display_name": "CROW 4B",
+  "model": "Crow-4B-Opus-4.6-Distill"
+}

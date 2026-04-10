@@ -1116,6 +1116,39 @@ textarea { resize: none; }
 .msg-action-btn:hover { background: var(--bg-200); color: var(--text-200); }
 .msg-action-btn svg { width: 16px; height: 16px; }
 
+/* Message edit dropdown */
+.msg-edit-dropdown {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin-bottom: 4px;
+  background: var(--bg-100);
+  border: 1px solid var(--border-100);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  min-width: 220px;
+  z-index: 100;
+  padding: 4px;
+  display: none;
+}
+.msg-edit-dropdown.open { display: block; }
+.msg-edit-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text-200);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.msg-edit-dropdown-item:hover { background: var(--bg-200); }
+.msg-edit-dropdown-item.destructive { color: var(--accent-error, #e53935); }
+.msg-edit-dropdown-item.destructive:hover { background: rgba(229,57,53,0.08); }
+.msg-edit-dropdown-item svg { width: 15px; height: 15px; flex-shrink: 0; }
+.msg-actions-bar { position: relative; }
+
 /* Markdown content styles */
 .msg-content p { margin: 0.4em 0; }
 .msg-content p:first-child { margin-top: 0; }
@@ -5879,6 +5912,18 @@ async function loadAgentSessions(agentId) {
       loaded: true,
     };
     renderRecentChats();
+    // Sync chat title from session data if not user-edited
+    const chat = state.activeChat;
+    if (chat?.sessionId && agentId === state.activeAgentId) {
+      const sess = (data.sessions || []).find(s => (s.id || s.session_id) === chat.sessionId);
+      if (sess) {
+        const serverTitle = sess.summary || sess.title || '';
+        if (serverTitle && !chat.chatTitle) {
+          chat.chatTitle = serverTitle;
+          if (state.currentView === 'chat') updateChatView();
+        }
+      }
+    }
   } catch(e) { console.error('loadAgentSessions:', e); }
 }
 
@@ -6159,7 +6204,7 @@ function renderRecentChats() {
     for (const [agentId, data] of Object.entries(state.agentSessions)) {
       if (data.sessions) {
         for (const s of data.sessions) {
-          if (s.status !== 'code') allSessions.push({...s, agentId});
+          if (s.status !== 'code' && (s.message_count || 0) > 0) allSessions.push({...s, agentId});
         }
       }
     }
@@ -6173,7 +6218,7 @@ function renderRecentChats() {
   if (!data?.sessions) { container.innerHTML = ''; return; }
 
   const sessions = data.sessions
-    .filter(s => s.status !== 'archived' && s.status !== 'code')
+    .filter(s => s.status !== 'archived' && s.status !== 'code' && (s.message_count || 0) > 0)
     .sort((a,b) => new Date(b.last_active||0) - new Date(a.last_active||0))
     .slice(0, 20);
 
@@ -6294,6 +6339,7 @@ async function openSession(sessionId, agentId) {
     const rawMessages = data.messages || [];
     if (data.model) chat.model = data.model;
     if (data.max_context) chat.maxContext = data.max_context;
+    chat.chatTitle = data.summary || data.title || '';
 
     // Reconstruct tool blocks from metadata and extract per-message fields
     const expanded = [];
@@ -6476,22 +6522,16 @@ async function sendMessage() {
     }
   }
 
-  // Capture pending images and files before clearing (needed for streamChat)
-  const imagesToSend = state._pendingImages.length ? [...state._pendingImages] : null;
+  // Capture pending files before clearing (needed for streamChat)
   const filesToSend = state._pendingFiles.length ? [...state._pendingFiles] : null;
 
   // Add user message
-  const userMsg = { role: 'human', content: text || (state._pendingImages.length ? '[Image]' : '[File]') };
-  if (state._pendingImages.length) {
-    userMsg.images = [...state._pendingImages];
-  }
+  const userMsg = { role: 'human', content: text || '[File]' };
   if (filesToSend) {
     userMsg.files = filesToSend;
   }
   chat.messages.push(userMsg);
-  state._pendingImages = [];
   state._pendingFiles = [];
-  renderImagePreviews();
   renderFilePreviews();
 
   // Clear input
@@ -6614,6 +6654,13 @@ async function sendMessage() {
           updateStatusBar();
         }
       },
+      max_tokens_exhausted: (d) => {
+        if (isActive() && d.message) {
+          const el = document.getElementById('spinner-label');
+          if (el) el.textContent = 'Token limit reached';
+          showToast(d.message, true);
+        }
+      },
       compacting: (d) => {
         if (isActive()) document.getElementById('spinner-label').textContent = `Compacting... ${d.pct || ''}%`;
       },
@@ -6684,7 +6731,7 @@ async function sendMessage() {
           }
         }
       },
-    }, chat.model, filesToSend, imagesToSend);
+    }, chat.model, filesToSend);
 
     // Safety net: if stream ended without a 'done' event
     // Guard with streamGen to prevent a stale safety-net (resumed via microtask)
@@ -7112,11 +7159,17 @@ function renderUserMessage(msg, idx) {
     textContent = JSON.stringify(msg.content);
   }
 
-  // Also collect from msg.images (live send, before DB roundtrip)
+  // Collect from msg.images (legacy) and msg.files with preview (unified path)
   if (msg.images?.length) {
     for (const img of msg.images) {
       if (img.preview) imageUrls.push(img.preview);
       else if (img.data) imageUrls.push(`data:${img.type || 'image/png'};base64,${img.data}`);
+    }
+  }
+  if (msg.files?.length) {
+    for (const f of msg.files) {
+      if (f.preview) imageUrls.push(f.preview);
+      else if (f.data && f.type?.startsWith('image/')) imageUrls.push(`data:${f.type};base64,${f.data}`);
     }
   }
 
@@ -7143,6 +7196,25 @@ function renderUserMessage(msg, idx) {
       ${thumbsHtml}
       ${filesHtml}
       <div class="msg-user">${esc(textContent)}</div>
+      <div class="msg-actions-bar">
+        <button class="msg-action-btn" onclick="toggleMsgEditMenu(event, ${idx})" title="Edit history">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+        </button>
+        <div class="msg-edit-dropdown" id="msg-edit-menu-${idx}">
+          <div class="msg-edit-dropdown-item" onclick="deleteMessages('turn', ${idx})">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 6h18M8 6V4h8v2M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg>
+            Remove Q&A pair
+          </div>
+          <div class="msg-edit-dropdown-item destructive" onclick="deleteMessages('after', ${idx})">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M2 12l4-4 4 4M14 8l4 4 4-4"/><line x1="2" y1="20" x2="22" y2="20" stroke-dasharray="3 3"/></svg>
+            Remove all after this
+          </div>
+          <div class="msg-edit-dropdown-item destructive" onclick="deleteMessages('before', ${idx})">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M2 12l4-4 4 4M14 8l4 4 4-4"/><line x1="2" y1="4" x2="22" y2="4" stroke-dasharray="3 3"/></svg>
+            Remove all before this
+          </div>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -7221,6 +7293,27 @@ function renderAssistantMessage(msg, idx) {
         <button class="msg-action-btn" onclick="retryMessage(${idx})" title="Retry">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
         </button>
+        <button class="msg-action-btn" onclick="toggleMsgEditMenu(event, ${idx})" title="Edit history">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+        </button>
+        <div class="msg-edit-dropdown" id="msg-edit-menu-${idx}">
+          <div class="msg-edit-dropdown-item" onclick="deleteMessages('response', ${idx})">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 18L18 6M6 6l12 12"/></svg>
+            Remove this response
+          </div>
+          <div class="msg-edit-dropdown-item" onclick="deleteMessages('turn', ${idx})">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 6h18M8 6V4h8v2M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg>
+            Remove Q&A pair
+          </div>
+          <div class="msg-edit-dropdown-item destructive" onclick="deleteMessages('after', ${idx})">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M2 12l4-4 4 4M14 8l4 4 4-4"/><line x1="2" y1="20" x2="22" y2="20" stroke-dasharray="3 3"/></svg>
+            Remove all after this
+          </div>
+          <div class="msg-edit-dropdown-item destructive" onclick="deleteMessages('before', ${idx})">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M2 12l4-4 4 4M14 8l4 4 4-4"/><line x1="2" y1="4" x2="22" y2="4" stroke-dasharray="3 3"/></svg>
+            Remove all before this
+          </div>
+        </div>
       </div>
     </div>
   `;
@@ -7411,11 +7504,14 @@ function updateChatView() {
   const chat = state.activeChat;
   if (!chat) return;
 
-  // Update header
+  // Update header — show agent name, then chat title (editable on click)
   const agent = state.agents.find(a => (a.id || a.name) === state.activeAgentId);
   const agentDisplay = agent?.display_name || state.activeAgentId || 'Chat';
+  const chatTitle = chat.chatTitle || '';
   if (state.currentProject) {
-    updatePageHeader(agentDisplay, state.currentProject);
+    updatePageHeader(chatTitle || agentDisplay, state.currentProject);
+  } else if (chatTitle) {
+    updatePageHeader(chatTitle, agentDisplay);
   } else {
     updatePageHeader(agentDisplay);
   }
@@ -7528,7 +7624,7 @@ async function loadChatsList() {
         const data = await API.getSessionsForAgent(aid, state.chatsFilter === 'archived' ? 'archived' : undefined);
         const sessions = data.sessions || [];
         for (const s of sessions) {
-          allSessions.push({...s, agentId: aid, agentDisplay: agent.display_name || aid});
+          if ((s.message_count || 0) > 0) allSessions.push({...s, agentId: aid, agentDisplay: agent.display_name || aid});
         }
         state.agentSessions[aid] = { sessions, loaded: true };
       } catch(e) {}
@@ -8357,7 +8453,14 @@ async function switchGeneralTab(tab, btn) {
           </select>
           <button class="btn-secondary" onclick="API.post('/v1/services/server',{attachment_image_model:document.getElementById('srv-attachment-image-model').value}).then(()=>showToast('Image model updated')).catch(e=>showToast('Failed',true))">Set</button>
         </div>
-        <div style="font-size:11px;color:var(--text-400);margin-top:2px">Vision model used to describe attached images (e.g. gemini-2.5-flash, mistral-small-latest)</div>
+        <div style="font-size:11px;color:var(--text-400);margin-top:2px">Vision model used to describe attached images when the active model has no vision support (e.g. gemini-2.5-flash, mistral-small-latest)</div>
+        ${(() => {
+          const defMdl = srv.default_model || '';
+          const defCfg = state.modelsConfig?.models?.[defMdl] || {};
+          const hasVision = (defCfg.raw_formats || []).some(p => p.startsWith('image'));
+          const hasImageModel = !!(srv.attachment_image_model);
+          return (!hasVision && !hasImageModel) ? `<div style="font-size:11px;color:var(--warning, #b45309);margin-top:4px;padding:6px 8px;border-radius:6px;background:var(--bg-200)">&#9888; Your default model does not support vision and no image description model is configured. Attached images will only return basic metadata (dimensions, format).</div>` : '';
+        })()}
         <div style="display:flex;gap:8px;margin-top:8px">
           <button class="btn-secondary" onclick="API.restartServer().then(()=>showToast('Server restarting...')).catch(e=>showToast('Failed',true))">Restart Server</button>
         </div>
@@ -8444,6 +8547,8 @@ async function switchGeneralTab(tab, btn) {
               <div style="border-left:1px solid var(--border-100);margin:0 -2px"></div>
               ${mdlInput('mdl-cost-input','Cost In ($/M)',cfg.cost_input,{step:'0.01',min:0,ph:'0'})}
               ${mdlInput('mdl-cost-output','Cost Out ($/M)',cfg.cost_output,{step:'0.01',min:0,ph:'0'})}
+              <div style="border-left:1px solid var(--border-100);margin:0 -2px"></div>
+              <div style="grid-column:1/-1"><label class="form-label" style="font-size:11px">Raw Formats <span style="color:var(--text-400);font-weight:400">(MIME patterns the model handles natively as multimodal)</span></label><input class="form-input mdl-raw-formats" value="${esc((cfg.raw_formats||[]).join(', '))}" placeholder="e.g. image/*, application/pdf" style="font-size:12px"></div>
             </div>
           </div>
         </div>`;
@@ -9182,6 +9287,13 @@ async function saveModelsConfig() {
       if (re) inf.reasoning_effort = re;
       mc[mid].inference = Object.keys(inf).length > 0 ? inf : undefined;
       if (!mc[mid].inference) delete mc[mid].inference;
+      // Raw formats
+      const rawFmt = row.querySelector('.mdl-raw-formats')?.value?.trim();
+      if (rawFmt) {
+        mc[mid].raw_formats = rawFmt.split(',').map(s => s.trim()).filter(Boolean);
+      } else {
+        mc[mid].raw_formats = [];
+      }
     });
     await API.post('/v1/models/config', { action: 'save', models: mc });
     state.modelsConfig.models = mc;
@@ -9197,7 +9309,7 @@ async function addManualModel() {
   if (!provider) { showToast('Provider required', true); return; }
   const mc = state.modelsConfig?.models || {};
   if (mc[id]) { showToast('Model already exists', true); return; }
-  mc[id] = { enabled: true, provider, display_name: display || id, shortname: id, priority: 10, capabilities: [], icon: '\u{1F916}' };
+  mc[id] = { enabled: true, provider, display_name: display || id, shortname: id, priority: 10, capabilities: [], icon: '\u{1F916}', manual: true };
   state.modelsConfig.models = mc;
   try {
     await API.post('/v1/models/config', { action: 'save', models: mc });
@@ -11482,74 +11594,32 @@ function triggerFileUpload() {
 function handleFileSelect(event) {
   const files = event.target.files;
   for (const file of files) {
-    if (file.type.startsWith('image/')) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        state._pendingImages.push({
-          data: e.target.result.split(',')[1],
-          type: file.type,
-          name: file.name,
-          preview: e.target.result,
-        });
-        renderImagePreviews();
-        updateSendButton();
-      };
-      reader.readAsDataURL(file);
-    } else {
-      const ext = file.name.toLowerCase().split('.').pop();
-      const binaryExts = ['pdf', 'docx', 'xlsx', 'pptx'];
-      const isBinary = binaryExts.includes(ext) || file.type.startsWith('image/');
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        if (isBinary) {
-          state._pendingFiles.push({
-            name: file.name,
-            type: file.type || 'application/octet-stream',
-            data: e.target.result.split(',')[1],
-            encoding: 'base64',
-          });
-        } else {
-          state._pendingFiles.push({
-            name: file.name,
-            type: file.type || 'text/plain',
-            content: e.target.result,
-            encoding: 'text',
-          });
-        }
-        renderFilePreviews();
-        updateSendButton();
-      };
-      if (isBinary) reader.readAsDataURL(file);
-      else reader.readAsText(file);
-    }
+    const isImage = file.type.startsWith('image/');
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      state._pendingFiles.push({
+        name: file.name,
+        type: file.type || 'application/octet-stream',
+        data: e.target.result.split(',')[1],
+        encoding: 'base64',
+        preview: isImage ? e.target.result : null,
+      });
+      renderFilePreviews();
+      updateSendButton();
+    };
+    reader.readAsDataURL(file);
   }
   event.target.value = '';
 }
 
 function renderImagePreviews() {
-  const containers = ['welcome-image-preview', 'chat-image-preview'];
-  for (const id of containers) {
-    const el = document.getElementById(id);
-    if (!el) continue;
-    if (!state._pendingImages.length) {
-      el.classList.remove('has-images');
-      el.innerHTML = '';
-      continue;
-    }
-    el.classList.add('has-images');
-    el.innerHTML = state._pendingImages.map((img, i) => `
-      <div class="image-preview-card">
-        <img src="${img.preview}" alt="">
-        <button class="image-preview-remove" onclick="removePendingImage(${i})">&#10005;</button>
-      </div>
-    `).join('');
-  }
+  // Legacy — images now unified into _pendingFiles with preview prop
+  renderFilePreviews();
 }
 
 function removePendingImage(idx) {
-  state._pendingImages.splice(idx, 1);
-  renderImagePreviews();
-  updateSendButton();
+  // Legacy — now handled by removePendingFile
+  removePendingFile(idx);
 }
 
 function renderFilePreviews() {
@@ -11557,24 +11627,36 @@ function renderFilePreviews() {
   for (const id of containers) {
     const el = document.getElementById(id);
     if (!el) continue;
-    el.querySelectorAll('.file-chip').forEach(c => c.remove());
-    if (!state._pendingFiles.length && !state._pendingImages.length) {
+    if (!state._pendingFiles.length) {
       el.classList.remove('has-images');
-      if (!el.children.length) el.innerHTML = '';
+      el.innerHTML = '';
       continue;
     }
     el.classList.add('has-images');
+    el.innerHTML = '';
     for (let i = 0; i < state._pendingFiles.length; i++) {
       const f = state._pendingFiles[i];
-      const chip = document.createElement('div');
-      chip.className = 'file-chip';
-      chip.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;border:1px solid var(--border-200);background:var(--bg-200);font-size:12px;position:relative;height:64px;box-sizing:border-box';
-      chip.innerHTML = `
-        <span>${fileTypeIcon(f.name)}</span>
-        <span style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</span>
-        <button class="image-preview-remove" onclick="removePendingFile(${i})">&#10005;</button>
-      `;
-      el.appendChild(chip);
+      if (f.preview) {
+        // Image thumbnail
+        const card = document.createElement('div');
+        card.className = 'image-preview-card';
+        card.innerHTML = `
+          <img src="${f.preview}" alt="">
+          <button class="image-preview-remove" onclick="removePendingFile(${i})">&#10005;</button>
+        `;
+        el.appendChild(card);
+      } else {
+        // File chip
+        const chip = document.createElement('div');
+        chip.className = 'file-chip';
+        chip.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;border:1px solid var(--border-200);background:var(--bg-200);font-size:12px;position:relative;height:64px;box-sizing:border-box';
+        chip.innerHTML = `
+          <span>${fileTypeIcon(f.name)}</span>
+          <span style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</span>
+          <button class="image-preview-remove" onclick="removePendingFile(${i})">&#10005;</button>
+        `;
+        el.appendChild(chip);
+      }
     }
   }
 }
@@ -11723,11 +11805,17 @@ function collectChatAttachments() {
   for (let i = 0; i < chat.messages.length; i++) {
     const msg = chat.messages[i];
     if (msg.role !== 'human' && msg.role !== 'user') continue;
-    // From msg.images (live send)
+    // From msg.images (legacy) and msg.files with preview (unified path)
     if (msg.images?.length) {
       for (const img of msg.images) {
         const url = img.preview || (img.data ? `data:${img.type || 'image/png'};base64,${img.data}` : null);
         if (url) attachments.push({ url, name: img.name || 'Image', msgIndex: i });
+      }
+    }
+    if (msg.files?.length) {
+      for (const f of msg.files) {
+        if (f.preview) attachments.push({ url: f.preview, name: f.name || 'Image', msgIndex: i });
+        else if (f.data && f.type?.startsWith('image/')) attachments.push({ url: `data:${f.type};base64,${f.data}`, name: f.name || 'Image', msgIndex: i });
       }
     }
     // From content blocks (DB restore)
@@ -11881,9 +11969,15 @@ async function loadArtifactVersion(version) {
 
   try {
     const data = await API.getArtifactContent(artifactId, version);
+    if (!data || !data.content) {
+      console.error('[artifact] Empty response for', artifactId, 'version', version, 'data:', data);
+      container.innerHTML = `<div class="artifact-empty">No content available (version ${version})</div>`;
+      return;
+    }
     renderArtifactContent(data.content, data.type, data.name, data.encoding);
   } catch (e) {
-    container.innerHTML = `<div class="artifact-empty">Failed to load content</div>`;
+    console.error('[artifact] Load failed for', artifactId, 'version', version, e);
+    container.innerHTML = `<div class="artifact-empty">Failed to load content: ${e.message || e}</div>`;
   }
 }
 
@@ -12337,6 +12431,135 @@ function retryMessage(idx) {
   }
 }
 
+// --- Message edit/delete functions ---
+
+function toggleMsgEditMenu(event, idx) {
+  event.stopPropagation();
+  // Close any other open menus
+  document.querySelectorAll('.msg-edit-dropdown.open').forEach(el => el.classList.remove('open'));
+  const menu = document.getElementById(`msg-edit-menu-${idx}`);
+  if (menu) menu.classList.toggle('open');
+  // Close on click outside
+  const close = (e) => {
+    if (!menu.contains(e.target)) {
+      menu.classList.remove('open');
+      document.removeEventListener('click', close);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+async function deleteMessages(mode, idx) {
+  const chat = state.activeChat;
+  if (!chat?.sessionId) return;
+  const messages = chat.messages;
+
+  // Close menu
+  document.querySelectorAll('.msg-edit-dropdown.open').forEach(el => el.classList.remove('open'));
+
+  // Determine which message indices to remove.
+  // Messages include synthetic tool_call/tool_result entries (no id) interleaved
+  // between real user/assistant messages (have id from DB).
+  let removeFrom, removeTo;
+
+  if (mode === 'before') {
+    // Remove everything before this message's block (include preceding tool blocks)
+    let start = idx;
+    while (start > 0 && (messages[start - 1].role === 'tool_call' || messages[start - 1].role === 'tool_result')) {
+      start--;
+    }
+    // If this is an assistant msg, also include its preceding user message in what we keep
+    if (messages[idx].role === 'assistant') {
+      for (let i = start - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') { start = i; break; }
+      }
+    }
+    removeFrom = 0;
+    removeTo = start;
+  } else if (mode === 'after') {
+    // Remove everything after this message (keep this message and its preceding tools)
+    // Find the end of the current message's "block" (message + trailing tool messages)
+    let endOfBlock = idx + 1;
+    while (endOfBlock < messages.length && (messages[endOfBlock].role === 'tool_call' || messages[endOfBlock].role === 'tool_result')) {
+      endOfBlock++;
+    }
+    removeFrom = endOfBlock;
+    removeTo = messages.length;
+  } else if (mode === 'response') {
+    // Remove this assistant response + its preceding tool blocks
+    let start = idx;
+    while (start > 0 && (messages[start - 1].role === 'tool_call' || messages[start - 1].role === 'tool_result')) {
+      start--;
+    }
+    let end = idx + 1;
+    removeFrom = start;
+    removeTo = end;
+  } else if (mode === 'turn') {
+    // Remove the Q&A pair: find the user message before this, and the assistant after
+    let userIdx = idx;
+    // If clicked on assistant, find its user message
+    if (messages[idx].role === 'assistant' || messages[idx].role === 'tool_call' || messages[idx].role === 'tool_result') {
+      for (let i = idx; i >= 0; i--) {
+        if (messages[i].role === 'user') { userIdx = i; break; }
+      }
+    }
+    // Find the end of the assistant response (skip tool blocks after)
+    let endIdx = userIdx + 1;
+    while (endIdx < messages.length && messages[endIdx].role !== 'user') {
+      endIdx++;
+    }
+    removeFrom = userIdx;
+    removeTo = endIdx;
+  }
+
+  if (removeFrom === undefined || removeFrom >= removeTo) return;
+
+  // Collect DB message IDs from the range (skip synthetic tool_call/tool_result without id)
+  const idsToDelete = [];
+  for (let i = removeFrom; i < removeTo; i++) {
+    if (messages[i].id) idsToDelete.push(messages[i].id);
+  }
+
+  // Confirm for destructive actions
+  const count = removeTo - removeFrom;
+  const realCount = idsToDelete.length;
+  const label = mode === 'before' ? `Remove ${count} message${count !== 1 ? 's' : ''} before this point?` :
+                mode === 'after' ? `Remove ${count} message${count !== 1 ? 's' : ''} after this point?` :
+                mode === 'response' ? 'Remove this response?' :
+                'Remove this Q&A pair?';
+  if (!confirm(label)) return;
+
+  // Collect artifact IDs from messages being removed (for local cleanup)
+  const artifactIds = new Set();
+  for (let i = removeFrom; i < removeTo; i++) {
+    const m = messages[i];
+    if (m._files) for (const f of m._files) { if (f.artifact_id) artifactIds.add(f.artifact_id); }
+    if (m.metadata?.files) for (const f of m.metadata.files) { if (f.artifact_id) artifactIds.add(f.artifact_id); }
+  }
+
+  // Remove from server (also deletes artifacts)
+  if (idsToDelete.length > 0) {
+    await fetch(`${BASE_URL}/v1/sessions/manage`, {
+      method: 'POST',
+      headers: API._headers(),
+      body: JSON.stringify({ action: 'delete_messages', session_id: chat.sessionId, message_ids: idsToDelete }),
+    });
+  }
+
+  // Update local state
+  chat.messages = [...messages.slice(0, removeFrom), ...messages.slice(removeTo)];
+  // Remove deleted artifacts from registry
+  if (artifactIds.size > 0 && state.artifacts[chat.sessionId]) {
+    state.artifacts[chat.sessionId] = state.artifacts[chat.sessionId].filter(a => !artifactIds.has(a.id));
+    // Close artifact panel if showing a deleted artifact
+    if (state.activeArtifactId && artifactIds.has(state.activeArtifactId)) {
+      closeArtifactPanel();
+    }
+  }
+  renderMessages();
+  showToast(`Removed ${realCount || count} message${(realCount || count) !== 1 ? 's' : ''}`);
+}
+
 function copyCodeBlock(btn) {
   const pre = btn.closest('.code-block-header')?.nextElementSibling;
   const code = pre?.querySelector('code')?.textContent || '';
@@ -12491,13 +12714,14 @@ document.addEventListener('keydown', (e) => {
         const blob = item.getAsFile();
         const reader = new FileReader();
         reader.onload = (ev) => {
-          state._pendingImages.push({
-            data: ev.target.result.split(',')[1],
-            type: item.type,
+          state._pendingFiles.push({
             name: 'pasted-image',
+            type: item.type,
+            data: ev.target.result.split(',')[1],
+            encoding: 'base64',
             preview: ev.target.result,
           });
-          renderImagePreviews();
+          renderFilePreviews();
           updateSendButton();
         };
         reader.readAsDataURL(blob);
@@ -12561,7 +12785,49 @@ function executeSlashCommand(cmd) {
    CHAT TITLE MENU
    ═══════════════════════════════════════════════════════════ */
 function toggleChatTitleMenu(event) {
-  // TODO: rename chat, share, etc
+  const chat = state.activeChat;
+  if (!chat?.sessionId || state.currentView !== 'chat') return;
+
+  const el = document.getElementById('page-header-title');
+  // Already editing?
+  if (el.querySelector('input')) return;
+
+  const current = chat.chatTitle || '';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = current;
+  input.placeholder = 'Name this chat...';
+  input.style.cssText = 'font:inherit;color:inherit;background:var(--bg-200);border:1px solid var(--accent);border-radius:4px;padding:2px 6px;width:240px;outline:none;';
+
+  const finish = async () => {
+    const newTitle = input.value.trim();
+    if (newTitle && newTitle !== current) {
+      chat.chatTitle = newTitle;
+      // Persist to server
+      try {
+        await API.post('/v1/sessions/manage', {action: 'rename', session_id: chat.sessionId, title: newTitle});
+        // Update sidebar session list
+        const agentData = state.agentSessions[state.activeAgentId];
+        if (agentData?.sessions) {
+          const s = agentData.sessions.find(s => (s.id || s.session_id) === chat.sessionId);
+          if (s) s.summary = newTitle;
+          renderRecentChats();
+        }
+      } catch(e) {}
+    }
+    updateChatView();
+  };
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { input.value = current; input.blur(); }
+  });
+  input.addEventListener('blur', finish);
+
+  el.textContent = '';
+  el.appendChild(input);
+  input.focus();
+  input.select();
 }
 
 /* ═══════════════════════════════════════════════════════════

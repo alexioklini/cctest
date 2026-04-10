@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<docx>
+  <content>
+    <paragraph>
+      <text style="title">Local Inference on Mac Silicon</text>
+    </paragraph>
+    <paragraph>
+      <text style="subtitle">Performance Analysis and Hardware Recommendations for 2026</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">Prepared: March 16, 2026</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal"> </text>
+    </paragraph>
+    <paragraph>
+      <text style="heading1">Executive Summary</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">Mac Silicon has become a viable platform for local LLM inference in 2026, with performance characteristics heavily dependent on memory bandwidth rather than raw compute. This report analyzes the performance of M1 through M4 chips, compares the most popular inference frameworks (MLX, llama.cpp, and LM Studio), and provides actionable hardware recommendations based on use case requirements.</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal"> </text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">Key findings:</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• Memory bandwidth is the primary bottleneck for LLM inference on Mac Silicon</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• Unified memory architecture eliminates PCIe bottlenecks</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• 16GB is minimum for serious local AI work in 2026</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• 24-32GB is the sweet spot for most users</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• GPU offloading with -ngl 99 flag is critical for performance</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal"> </text>
+    </paragraph>
+    <paragraph>
+      <text style="heading1">Performance by Mac Generation (2025-2026)</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">The following table summarizes the memory bandwidth capabilities across Apple Silicon generations:</text>
+    </paragraph>
+    <table>
+      <row>
+        <cell><text style="table_header">Chip Tier</text></cell>
+        <cell><text style="table_header">Memory Bandwidth</text></cell>
+        <cell><text style="table_header">Relative Performance</text></cell>
+      </row>
+      <row>
+        <cell><text style="table_cell">Base chips (M1/M2/M3/M4)</text></cell>
+        <cell><text style="table_cell">68-120 GB/s</text></cell>
+        <cell><text style="table_cell">1x</text></cell>
+      </row>
+      <row>
+        <cell><text style="table_cell">Pro variants</text></cell>
+        <cell><text style="table_cell">150-273 GB/s</text></cell>
+        <cell><text style="table_cell">2-2.5x</text></cell>
+      </row>
+      <row>
+        <cell><text style="table_cell">Max variants</text></cell>
+        <cell><text style="table_cell">300-546 GB/s</text></cell>
+        <cell><text style="table_cell">3-5x</text></cell>
+      </row>
+      <row>
+        <cell><text style="table_cell">Ultra variants</text></cell>
+        <cell><text style="table_cell">400-800 GB/s</text></cell>
+        <cell><text style="table_cell">4-7x</text></cell>
+      </row>
+    </table>
+    <paragraph>
+      <text style="normal"> </text>
+    </paragraph>
+    <paragraph>
+      <text style="heading1">Model Performance Benchmarks</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">Real-world inference performance (tokens per second) across different models and hardware:</text>
+    </paragraph>
+    <table>
+      <row>
+        <cell><text style="table_header">Hardware</text></cell>
+        <cell><text style="table_header">Model</text></cell>
+        <cell><text style="table_header">Quantization</text></cell>
+        <cell><text style="table_header">Performance (tps)</text></cell>
+      </row>
+      <row>
+        <cell><text style="table_cell">M4 Pro (273 GB/s)</text></cell>
+        <cell><text style="table_cell">DeepSeek-V3</text></cell>
+        <cell><text style="table_cell">4-bit</text></cell>
+        <cell><text style="table_cell">~42.5</text></cell>
+      </row>
+      <row>
+        <cell><text style="table_cell">M4 Pro (273 GB/s)</text></cell>
+        <cell><text style="table_cell">Llama-3-70B</text></cell>
+        <cell><text style="table_cell">8-bit</text></cell>
+        <cell><text style="table_cell">~8.2</text></cell>
+      </row>
+      <row>
+        <cell><text style="table_cell">M4 Max (546 GB/s)</text></cell>
+        <cell><text style="table_cell">7B models</text></cell>
+        <cell><text style="table_cell">-</text></cell>
+        <cell><text style="table_cell">58.7</text></cell>
+      </row>
+      <row>
+        <cell><text style="table_cell">M4 Max (546 GB/s)</text></cell>
+        <cell><text style="table_cell">13B models</text></cell>
+        <cell><text style="table_cell">-</text></cell>
+        <cell><text style="table_cell">27.9</text></cell>
+      </row>
+      <row>
+        <cell><text style="table_cell">M1 Max (400 GB/s)</text></cell>
+        <cell><text style="table_cell">7B models</text></cell>
+        <cell><text style="table_cell">-</text></cell>
+        <cell><text style="table_cell">42.7</text></cell>
+      </row>
+      <row>
+        <cell><text style="table_cell">M4 16GB</text></cell>
+        <cell><text style="table_cell">7B-8B models</text></cell>
+        <cell><text style="table_cell">Q4</text></cell>
+        <cell><text style="table_cell">28-35</text></cell>
+      </row>
+      <row>
+        <cell><text style="table_cell">M4 16GB</text></cell>
+        <cell><text style="table_cell">7B-8B models</text></cell>
+        <cell><text style="table_cell">Denser quantization</text></cell>
+        <cell><text style="table_cell">18-26</text></cell>
+      </row>
+    </table>
+    <paragraph>
+      <text style="normal"> </text>
+    </paragraph>
+    <paragraph>
+      <text style="heading1">Tool Comparison</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">Three primary frameworks are available for local inference on Mac Silicon:</text>
+    </paragraph>
+    <paragraph>
+      <text style="heading2">1. MLX (Apple's native framework)</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• Optimized for Apple Silicon unified memory</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• Can be 18x faster than CPU-only paths</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• Best for Python-native workflows</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• Potential for 57 tps on some models but real-world performance varies</text>
+    </paragraph>
+    <paragraph>
+      <text style="heading2">2. llama.cpp (via Ollama)</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• Most mature and stable</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• Wider quantization options (Q4, Q5, Q6, Q8)</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• Easier setup with Ollama</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• Real-world performance often 11-21 tps depending on configuration</text>
+    </paragraph>
+    <paragraph>
+      <text style="heading2">3. LM Studio</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• User-friendly GUI</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• Supports both MLX and llama.cpp backends</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• Good for exploration and non-technical users</text>
+    </paragraph>
+    <paragraph>
+      <text style="heading1">Key Considerations</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• Memory bandwidth is the primary bottleneck for LLM inference on Mac Silicon</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• Unified memory architecture eliminates PCIe bottlenecks</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• 16GB is minimum for serious local AI work in 2026</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• 24-32GB is the sweet spot for most users</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">• GPU offloading with -ngl 99 flag is critical for performance</text>
+    </paragraph>
+    <paragraph>
+      <text style="heading1">Hardware Recommendations</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">Based on the analysis, the following hardware configurations are recommended:</text>
+    </paragraph>
+    <table>
+      <row>
+        <cell><text style="table_header">Use Case</text></cell>
+        <cell><text style="table_header">Recommended Hardware</text></cell>
+        <cell><text style="table_header">Price</text></cell>
+        <cell><text style="table_header">Capabilities</text></cell>
+      </row>
+      <row>
+        <cell><text style="table_cell">Budget</text></cell>
+        <cell><text style="table_cell">Mac Mini M4 16GB</text></cell>
+        <cell><text style="table_cell">$599</text></cell>
+        <cell><text style="table_cell">7B-8B models</text></cell>
+      </row>
+      <row>
+        <cell><text style="table_cell">Balanced</text></cell>
+        <cell><text style="table_cell">Mac Mini M4 Pro 48GB</text></cell>
+        <cell><text style="table_cell">$1,799</text></cell>
+        <cell><text style="table_cell">32B models</text></cell>
+      </row>
+      <row>
+        <cell><text style="table_cell">High Performance</text></cell>
+        <cell><text style="table_cell">Mac Studio M4 Max 64GB</text></cell>
+        <cell><text style="table_cell">$2,700</text></cell>
+        <cell><text style="table_cell">Llama 3.3 70B</text></cell>
+      </row>
+    </table>
+    <paragraph>
+      <text style="normal"> </text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">For users requiring the highest performance with large models like Llama-3-70B, the M4 Max configuration provides the necessary memory bandwidth (546 GB/s) and unified memory capacity to maintain reasonable inference speeds.</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal"> </text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">For budget-conscious users, the M4 16GB configuration provides adequate performance for 7B-8B models with Q4 quantization, delivering 28-35 tokens per second.</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal"> </text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">The M4 Pro configuration offers the best balance for users working with 32B models, providing sufficient memory bandwidth (273 GB/s) and unified memory capacity at a more affordable price point than the M4 Max.</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal"> </text>
+    </paragraph>
+    <paragraph>
+      <text style="heading1">Conclusion</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">Mac Silicon is now a viable platform for local LLM inference, with performance scaling primarily with memory bandwidth. The choice of hardware should be based on the target model size and budget constraints. For most users, the M4 Pro configuration offers the best balance of performance and cost, while the M4 Max provides maximum performance for demanding workloads.</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal"> </text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">The unified memory architecture of Apple Silicon eliminates traditional PCIe bottlenecks, making memory bandwidth the primary performance factor. This architecture allows for efficient GPU offloading when configured properly with the -ngl 99 flag.</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal"> </text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">As model sizes continue to grow, users should consider future-proofing their deployments by selecting configurations with higher unified memory capacity, even if the immediate performance requirements are lower.</text>
+    </paragraph>
+    <paragraph>
+      <text style="normal"> </text>
+    </paragraph>
+    <paragraph>
+      <text style="normal">This report was generated on March 16, 2026.</text>
+    </paragraph>
+  </content>
+</docx>

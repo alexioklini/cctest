@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "5.11.0"
-VERSION_DATE = "2026-04-08"
+VERSION = "5.12.0"
+VERSION_DATE = "2026-04-10"
 CHANGELOG = [
+    ("5.12.0", "2026-04-10", "Dynamic attachment routing — file attachments are now routed based on model capabilities instead of browser-side MIME type splitting. New per-model raw_formats config (MIME patterns like image/*, application/pdf) controls which files are sent as multimodal content blocks vs saved to disk for read_document parsing. Server-side unified handler merges body.images and body.files, checks model's raw_formats, and routes accordingly. Vision-capable models see image pixels directly; text-only models get metadata or vision model description via attachment_image_model fallback. Web UI unified: all files go through single _pendingFiles path with image thumbnail previews. Models tab shows editable raw_formats per model. Settings hint warns when no vision capability is configured. Guards: 20MB inline size limit, OpenAI/Mistral restricted to image/* multimodal, Anthropic PDF via document blocks."),
     ("5.11.0", "2026-04-08", "Provider-level SDK routing and auth hardening — Use SDK setting moved from per-agent config to per-provider config. Smart routing: anthropic providers have a configurable use_sdk toggle (default on), mistral always uses Mistral SDK natively, openai always uses direct agentic loop. Provider edit/add forms show the toggle only for anthropic type. Fixed web UI authentication: all raw fetch() calls in agent settings tabs (Soul, Agent, Skills, Memory Health, MCP, Tokens) and Code Mode now use API helper with auth headers — previously these tabs returned empty data when auth was enabled."),
     ("5.10.0", "2026-04-08", "Per-model settings UI and thinking model auto-recovery."),
     ("5.9.0", "2026-04-07", "Chat file attachments — attach files directly in the chat composer. Files are saved to a session-scoped temp directory on the server; the agent reads them on demand via read_document (PDF, DOCX, XLSX, PPTX, CSV) or read_file (text/code). Web UI: file input accepts 30+ extensions, binary formats (PDF, DOCX, XLSX, PPTX) sent as base64, text files as UTF-8. File preview chips in composer with remove buttons. Attached files shown on sent user messages with extension badges. Configurable vision model for image attachments (Settings → Server → Attachments). Documents tool group added to default agent config."),
@@ -12810,16 +12811,16 @@ def get_available_models(api_key: str, base_url: str, api_type: str) -> list[str
 # --- Model Configuration System ---
 
 KNOWN_MODELS = {
-    "claude-opus": {"icon": "\U0001f7e3", "priority": 100, "max_context": 200000, "max_output": 32768, "capabilities": ["coding", "analysis", "agentic", "creative"], "inference": {"temperature": 1.0}},
-    "claude-sonnet": {"icon": "\U0001f7e0", "priority": 80, "max_context": 200000, "max_output": 16384, "capabilities": ["coding", "analysis", "fast"], "inference": {"temperature": 1.0}},
-    "claude-haiku": {"icon": "\U0001f7e2", "priority": 60, "max_context": 200000, "max_output": 8192, "capabilities": ["fast"], "inference": {"temperature": 1.0}},
-    "gemini": {"icon": "\U0001f48e", "priority": 70, "max_context": 1000000, "max_output": 65536, "capabilities": ["coding", "analysis"], "inference": {"temperature": 1.0, "top_p": 0.95}},
-    "qwen": {"icon": "\U0001f43c", "priority": 50, "max_context": 131072, "max_output": 16384, "capabilities": ["coding", "analysis"], "inference": {"temperature": 0.7, "top_p": 0.9}},
-    "crow": {"icon": "\U0001f426\u200d\u2b1b", "priority": 30, "max_context": 32768, "max_output": 4096, "capabilities": ["fast", "local"], "inference": {"temperature": 0.7, "top_p": 0.9, "min_p": 0.05}},
-    "llama": {"icon": "\U0001f999", "priority": 40, "max_context": 131072, "max_output": 16384, "capabilities": ["coding", "local"], "inference": {"temperature": 0.7, "top_p": 0.9}},
-    "mistral": {"icon": "\U0001f32c\ufe0f", "priority": 45, "max_context": 131072, "max_output": 16384, "capabilities": ["coding", "analysis"], "inference": {"temperature": 0.7}},
-    "minimax": {"icon": "\U0001f4ab", "priority": 55, "max_context": 131072, "max_output": 32768, "capabilities": ["coding", "analysis"], "inference": {"temperature": 0.7}},
-    "devstral": {"icon": "\U0001f32c\ufe0f", "priority": 50, "max_context": 256000, "max_output": 65536, "capabilities": ["coding", "analysis", "agentic"], "inference": {"temperature": 0.7}},
+    "claude-opus": {"icon": "\U0001f7e3", "priority": 100, "max_context": 200000, "max_output": 32768, "capabilities": ["coding", "analysis", "agentic", "creative"], "inference": {"temperature": 1.0}, "raw_formats": ["image/*"]},
+    "claude-sonnet": {"icon": "\U0001f7e0", "priority": 80, "max_context": 200000, "max_output": 16384, "capabilities": ["coding", "analysis", "fast"], "inference": {"temperature": 1.0}, "raw_formats": ["image/*"]},
+    "claude-haiku": {"icon": "\U0001f7e2", "priority": 60, "max_context": 200000, "max_output": 8192, "capabilities": ["fast"], "inference": {"temperature": 1.0}, "raw_formats": ["image/*"]},
+    "gemini": {"icon": "\U0001f48e", "priority": 70, "max_context": 1000000, "max_output": 65536, "capabilities": ["coding", "analysis"], "inference": {"temperature": 1.0, "top_p": 0.95}, "raw_formats": ["image/*", "application/pdf"]},
+    "qwen": {"icon": "\U0001f43c", "priority": 50, "max_context": 131072, "max_output": 16384, "capabilities": ["coding", "analysis"], "inference": {"temperature": 0.7, "top_p": 0.9}, "raw_formats": ["image/*"]},
+    "crow": {"icon": "\U0001f426\u200d\u2b1b", "priority": 30, "max_context": 32768, "max_output": 4096, "capabilities": ["fast", "local"], "inference": {"temperature": 0.7, "top_p": 0.9, "min_p": 0.05}, "raw_formats": []},
+    "llama": {"icon": "\U0001f999", "priority": 40, "max_context": 131072, "max_output": 16384, "capabilities": ["coding", "local"], "inference": {"temperature": 0.7, "top_p": 0.9}, "raw_formats": []},
+    "mistral": {"icon": "\U0001f32c\ufe0f", "priority": 45, "max_context": 131072, "max_output": 16384, "capabilities": ["coding", "analysis"], "inference": {"temperature": 0.7}, "raw_formats": ["image/*"]},
+    "minimax": {"icon": "\U0001f4ab", "priority": 55, "max_context": 131072, "max_output": 32768, "capabilities": ["coding", "analysis"], "inference": {"temperature": 0.7}, "raw_formats": []},
+    "devstral": {"icon": "\U0001f32c\ufe0f", "priority": 50, "max_context": 256000, "max_output": 65536, "capabilities": ["coding", "analysis", "agentic"], "inference": {"temperature": 0.7}, "raw_formats": []},
 }
 
 CAPABILITY_VALUES = ["coding", "analysis", "agentic", "fast", "creative", "local"]
@@ -12851,6 +12852,8 @@ def _match_known_model(model_id: str) -> dict:
                 result["max_output"] = defaults["max_output"]
             if "inference" in defaults:
                 result["inference"] = dict(defaults["inference"])
+            if "raw_formats" in defaults:
+                result["raw_formats"] = list(defaults["raw_formats"])
             return result
     # Unknown model — enabled with low priority
     shortname = model_id.split("/")[-1]
@@ -12861,6 +12864,7 @@ def _match_known_model(model_id: str) -> dict:
         "icon": "\U0001f916",
         "priority": 10,
         "capabilities": [],
+        "raw_formats": [],
     }
 
 
@@ -12880,6 +12884,7 @@ def init_models_config(providers: dict, existing_models: dict | None = None) -> 
                 p.get("api_key", ""), p.get("base_url", ""), p.get("type", "openai"))
         except Exception:
             models = []
+        discovered = set(models)
         for model_id in models:
             if model_id not in _models_config:
                 entry = _match_known_model(model_id)
@@ -12893,6 +12898,16 @@ def init_models_config(providers: dict, existing_models: dict | None = None) -> 
                     known = _match_known_model(model_id)
                     if "max_context" in known:
                         _models_config[model_id]["max_context"] = known["max_context"]
+        # Remove models from this provider that are no longer in the /models list
+        if discovered:
+            stale = [
+                mid for mid, cfg in _models_config.items()
+                if cfg.get("provider") == name
+                and mid not in discovered
+                and not cfg.get("manual")
+            ]
+            for mid in stale:
+                del _models_config[mid]
 
     return _models_config
 
@@ -13039,6 +13054,21 @@ _MAX_OUTPUT_DEFAULTS = {
     "m2.7": 32768,
     "m2.5": 32768,
 }
+
+
+def get_model_raw_formats(model: str) -> list[str]:
+    """Return list of MIME patterns the model handles natively as multimodal."""
+    return _models_config.get(model, {}).get("raw_formats", [])
+
+
+def _mime_matches(mime_type: str, patterns: list[str]) -> bool:
+    """Check if a MIME type matches any pattern (supports wildcard like 'image/*')."""
+    for pat in patterns:
+        if pat == mime_type:
+            return True
+        if pat.endswith("/*") and mime_type.startswith(pat[:-1]):
+            return True
+    return False
 
 
 def get_model_max_output(model: str) -> int:
@@ -15314,8 +15344,8 @@ def _handle_openai_response(response, payload, messages, model, api_key,
                     event_callback("text_delta", {"text": content})
                 collected_text.append(content)
 
-            # Accumulate tool calls
-            for tc in delta.get("tool_calls", []):
+            # Accumulate tool calls (guard against null — Gemini returns tool_calls: null)
+            for tc in (delta.get("tool_calls") or []):
                 idx = tc.get("index", 0)
                 if idx not in tool_calls_map:
                     tool_calls_map[idx] = {
@@ -15360,8 +15390,22 @@ def _handle_openai_response(response, payload, messages, model, api_key,
         _trace_manager.end_span(_llm_span_oai, status="ok",
                                  tokens_in=_usage_in, tokens_out=_usage_out)
 
+    # Detect truncated tool calls: finish_reason == "length" with incomplete JSON args
+    if finish_reason == "length" and tool_calls_map:
+        has_truncated = False
+        for tc in tool_calls_map.values():
+            try:
+                json.loads(tc["arguments"])
+            except (json.JSONDecodeError, ValueError):
+                has_truncated = True
+                break
+        if has_truncated:
+            print(f"[thinking model: truncated tool call detected, discarding incomplete tools]",
+                  file=sys.stderr)
+            tool_calls_map.clear()
+
     # Max output token recovery (Phase 2): if model hit output limit, auto-resume
-    if finish_reason == "length" and not tool_calls_map and full_text:
+    if finish_reason == "length" and not tool_calls_map:
         recovery_count = getattr(_thread_local, '_max_output_recovery_count', 0)
         if recovery_count < MAX_OUTPUT_RECOVERY_LIMIT:
             _thread_local._max_output_recovery_count = recovery_count + 1
@@ -15383,12 +15427,33 @@ def _handle_openai_response(response, payload, messages, model, api_key,
                     print(f"[thinking model: boosting max_tokens {current_max} → {boosted}]",
                           file=sys.stderr)
             # Build continuation: assistant partial + resume prompt
-            messages.append({"role": "assistant", "content": full_text})
-            messages.append({"role": "user", "content": _MAX_OUTPUT_RESUME_MSG})
-            return send_message(messages, model, api_key, base_url, api_type,
-                                silent=silent, tools=tools, escape_watcher=escape_watcher,
-                                _tool_round=_tool_round, event_callback=event_callback,
-                                inference_params=recovery_params, session_id=session_id)
+            if full_text:
+                messages.append({"role": "assistant", "content": full_text})
+                messages.append({"role": "user", "content": _MAX_OUTPUT_RESUME_MSG})
+                return send_message(messages, model, api_key, base_url, api_type,
+                                    silent=silent, tools=tools, escape_watcher=escape_watcher,
+                                    _tool_round=_tool_round, event_callback=event_callback,
+                                    inference_params=recovery_params, session_id=session_id)
+        # Recovery exhausted or no text to resume from — inform the user
+        current_max = payload.get("max_tokens", get_model_max_output(model))
+        hint = (f"Output token limit reached (max_tokens={current_max}) and recovery "
+                f"attempts exhausted ({MAX_OUTPUT_RECOVERY_LIMIT}/{MAX_OUTPUT_RECOVERY_LIMIT}). "
+                f"This model may be using too many tokens on internal reasoning. "
+                f"Try: increase max_output in model settings, use a simpler prompt, "
+                f"or switch to a non-thinking model.")
+        print(f"[max_tokens exhausted] {hint}", file=sys.stderr)
+        if event_callback:
+            event_callback("max_tokens_exhausted", {
+                "message": hint,
+                "max_tokens": current_max,
+                "model": model,
+            })
+        if full_text:
+            full_text += f"\n\n⚠️ *{hint}*"
+        else:
+            full_text = f"⚠️ *{hint}*"
+        _thread_local._max_output_recovery_count = 0
+        return full_text
 
     if not tool_calls_map:
         if not silent and full_text:
@@ -15614,8 +15679,25 @@ def _handle_mistral_response(payload, messages, model, api_key,
         _trace_manager.end_span(_llm_span, status="ok",
                                  tokens_in=_usage_in, tokens_out=_usage_out)
 
+    # Detect truncated tool calls: finish_reason == "length" with tool_calls whose
+    # arguments are invalid JSON means the model ran out of tokens mid-tool-call
+    # (common with thinking models like Devstral 2 that consume budget on reasoning).
+    # Discard the incomplete tool calls and treat as text-only for recovery.
+    if finish_reason == "length" and tool_calls_map:
+        has_truncated = False
+        for tc in tool_calls_map.values():
+            try:
+                json.loads(tc["arguments"])
+            except (json.JSONDecodeError, ValueError):
+                has_truncated = True
+                break
+        if has_truncated:
+            print(f"[thinking model: truncated tool call detected, discarding incomplete tools]",
+                  file=sys.stderr)
+            tool_calls_map.clear()
+
     # Max output token recovery
-    if finish_reason == "length" and not tool_calls_map and full_text:
+    if finish_reason == "length" and not tool_calls_map:
         recovery_count = getattr(_thread_local, '_max_output_recovery_count', 0)
         if recovery_count < MAX_OUTPUT_RECOVERY_LIMIT:
             _thread_local._max_output_recovery_count = recovery_count + 1
@@ -15638,12 +15720,34 @@ def _handle_mistral_response(payload, messages, model, api_key,
                     recovery_params["max_tokens"] = boosted
                     print(f"[thinking model: boosting max_tokens {current_max} → {boosted}]",
                           file=sys.stderr)
-            messages.append({"role": "assistant", "content": full_text})
-            messages.append({"role": "user", "content": _MAX_OUTPUT_RESUME_MSG})
-            return send_message(messages, model, api_key, base_url, api_type,
-                                silent=silent, tools=tools, escape_watcher=escape_watcher,
-                                _tool_round=_tool_round, event_callback=event_callback,
-                                inference_params=recovery_params, session_id=session_id)
+            if full_text:
+                messages.append({"role": "assistant", "content": full_text})
+                messages.append({"role": "user", "content": _MAX_OUTPUT_RESUME_MSG})
+                return send_message(messages, model, api_key, base_url, api_type,
+                                    silent=silent, tools=tools, escape_watcher=escape_watcher,
+                                    _tool_round=_tool_round, event_callback=event_callback,
+                                    inference_params=recovery_params, session_id=session_id)
+        # Recovery exhausted or no text to resume from — inform the user
+        current_max = payload.get("max_tokens", get_model_max_output(model))
+        hint = (f"Output token limit reached (max_tokens={current_max}) and recovery "
+                f"attempts exhausted ({MAX_OUTPUT_RECOVERY_LIMIT}/{MAX_OUTPUT_RECOVERY_LIMIT}). "
+                f"This model may be using too many tokens on internal reasoning. "
+                f"Try: increase max_output in model settings, use a simpler prompt, "
+                f"or switch to a non-thinking model.")
+        print(f"[max_tokens exhausted] {hint}", file=sys.stderr)
+        if event_callback:
+            event_callback("max_tokens_exhausted", {
+                "message": hint,
+                "max_tokens": current_max,
+                "model": model,
+            })
+        # Return whatever text we have (may be empty)
+        if full_text:
+            full_text += f"\n\n⚠️ *{hint}*"
+        else:
+            full_text = f"⚠️ *{hint}*"
+        _thread_local._max_output_recovery_count = 0
+        return full_text
 
     if not tool_calls_map:
         if not silent and full_text:

@@ -1,0 +1,6 @@
+{
+  "description": "Minima Agent agent",
+  "model": "MiniMax-M2.7",
+  "display_name": "Minimax",
+  "avatar": "knight"
+}
