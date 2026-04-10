@@ -12896,11 +12896,12 @@ def init_models_config(providers: dict, existing_models: dict | None = None) -> 
             else:
                 if "provider" not in _models_config[model_id]:
                     _models_config[model_id]["provider"] = name
-                # Backfill max_context from KNOWN_MODELS if missing
-                if "max_context" not in _models_config[model_id]:
-                    known = _match_known_model(model_id)
-                    if "max_context" in known:
-                        _models_config[model_id]["max_context"] = known["max_context"]
+                # Backfill defaults from KNOWN_MODELS if missing
+                known = _match_known_model(model_id)
+                if "max_context" not in _models_config[model_id] and "max_context" in known:
+                    _models_config[model_id]["max_context"] = known["max_context"]
+                if "raw_formats" not in _models_config[model_id] and "raw_formats" in known:
+                    _models_config[model_id]["raw_formats"] = known["raw_formats"]
         # Remove models from this provider that are no longer in the /models list
         if discovered:
             stale = [
