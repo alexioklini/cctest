@@ -13057,8 +13057,17 @@ _MAX_OUTPUT_DEFAULTS = {
 
 
 def get_model_raw_formats(model: str) -> list[str]:
-    """Return list of MIME patterns the model handles natively as multimodal."""
-    return _models_config.get(model, {}).get("raw_formats", [])
+    """Return list of MIME patterns the model handles natively as multimodal.
+    Checks models_config first, then falls back to KNOWN_MODELS family defaults."""
+    cfg = _models_config.get(model, {})
+    if "raw_formats" in cfg:
+        return cfg["raw_formats"]
+    # Fall back to KNOWN_MODELS family defaults
+    ml = model.lower()
+    for prefix, defaults in KNOWN_MODELS.items():
+        if ml.startswith(prefix) or prefix in ml:
+            return list(defaults.get("raw_formats", []))
+    return []
 
 
 def _mime_matches(mime_type: str, patterns: list[str]) -> bool:
