@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "5.13.0"
+VERSION = "5.14.0"
 VERSION_DATE = "2026-04-10"
 CHANGELOG = [
-    ("5.12.0", "2026-04-10", "Dynamic attachment routing — file attachments are now routed based on model capabilities instead of browser-side MIME type splitting. New per-model raw_formats config (MIME patterns like image/*, application/pdf) controls which files are sent as multimodal content blocks vs saved to disk for read_document parsing. Server-side unified handler merges body.images and body.files, checks model's raw_formats, and routes accordingly. Vision-capable models see image pixels directly; text-only models get metadata or vision model description via attachment_image_model fallback. Web UI unified: all files go through single _pendingFiles path with image thumbnail previews. Models tab shows editable raw_formats per model. Settings hint warns when no vision capability is configured. Guards: 20MB inline size limit, OpenAI/Mistral restricted to image/* multimodal, Anthropic PDF via document blocks."),
+    ("5.14.0", "2026-04-10", "Unified provider resolution and multi-provider model support. Single resolve_provider_for_model() function in claude_cli.py is now the sole source of truth for model→provider credential resolution — used by interactive chat, PI sidecar (code mode), SDK sidecar, _run_delegate (summaries, auto-memory, scheduled tasks), warmup, and all background LLM calls. Provider-scoped model keys (provider/model_id) support multiple providers offering the same model with different API keys. Mistral model discovery via SDK (client.models.list()) instead of broken raw HTTP. Models tab: All/None buttons per provider for bulk enable/disable. Orphaned models from deleted providers cleaned up on sync. Code mode model dropdown fixed (dropdown-menu class, consistent with chat mode). get_api_model_id() resolves scoped keys to actual API model IDs across all call sites."),
+    ("5.13.0", "2026-04-10", "Dynamic attachment routing — file attachments are now routed based on model capabilities instead of browser-side MIME type splitting. New per-model raw_formats config (MIME patterns like image/*, application/pdf) controls which files are sent as multimodal content blocks vs saved to disk for read_document parsing. Server-side unified handler merges body.images and body.files, checks model's raw_formats, and routes accordingly. Vision-capable models see image pixels directly; text-only models get metadata or vision model description via attachment_image_model fallback. Web UI unified: all files go through single _pendingFiles path with image thumbnail previews. Models tab shows editable raw_formats per model. Settings hint warns when no vision capability is configured. Guards: 20MB inline size limit, OpenAI/Mistral restricted to image/* multimodal, Anthropic PDF via document blocks."),
     ("5.11.0", "2026-04-08", "Provider-level SDK routing and auth hardening — Use SDK setting moved from per-agent config to per-provider config. Smart routing: anthropic providers have a configurable use_sdk toggle (default on), mistral always uses Mistral SDK natively, openai always uses direct agentic loop. Provider edit/add forms show the toggle only for anthropic type. Fixed web UI authentication: all raw fetch() calls in agent settings tabs (Soul, Agent, Skills, Memory Health, MCP, Tokens) and Code Mode now use API helper with auth headers — previously these tabs returned empty data when auth was enabled."),
     ("5.10.0", "2026-04-08", "Per-model settings UI and thinking model auto-recovery."),
     ("5.9.0", "2026-04-07", "Chat file attachments — attach files directly in the chat composer. Files are saved to a session-scoped temp directory on the server; the agent reads them on demand via read_document (PDF, DOCX, XLSX, PPTX, CSV) or read_file (text/code). Web UI: file input accepts 30+ extensions, binary formats (PDF, DOCX, XLSX, PPTX) sent as base64, text files as UTF-8. File preview chips in composer with remove buttons. Attached files shown on sent user messages with extension badges. Configurable vision model for image attachments (Settings → Server → Attachments). Documents tool group added to default agent config."),
@@ -7956,10 +7957,14 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
     Routes through the SDK sidecar when available (better context management).
     Falls back to direct API call if sidecar is not running.
     """
-    # Try SDK sidecar first — routes both tools=True and tools=False
+    # Resolve provider for this model (single source of truth)
+    _prov = resolve_provider_for_model(model)
+    _model_prov_type = _prov["api_type"]
+    # SDK sidecar only supports Anthropic-compatible providers
+    _sdk_compatible = _model_prov_type in ("anthropic",)
     try:
         import sdk_backend
-        if sdk_backend.is_sidecar_running():
+        if _sdk_compatible and sdk_backend.is_sidecar_running():
             # Extract prompt from messages
             prompt = ""
             for m in messages:
@@ -8013,9 +8018,9 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
     if memory_store:
         _thread_local.memory_store = memory_store
 
-    api_key = _delegate_api_key
-    base_url = _delegate_base_url
-    api_type = _delegate_api_type
+    api_key = _prov["api_key"]
+    base_url = _prov["base_url"]
+    api_type = _prov["api_type"]
 
     headers = make_headers(api_key, api_type)
 
@@ -8027,7 +8032,7 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
         aug_messages = list(messages)
 
     payload = {
-        "model": model,
+        "model": get_api_model_id(model),
         "max_tokens": get_model_max_output(model),
         "messages": aug_messages,
         "stream": True,
@@ -8074,6 +8079,65 @@ _delegate_fallback_model: str | None = None
 _delegate_api_key: str = ""
 _delegate_base_url: str = ""
 _delegate_api_type: str = "anthropic"
+
+# Provider cache for resolve_provider_for_model
+_provider_cache: dict[str, dict] = {}
+_provider_cache_lock = threading.Lock()
+_provider_cache_time: float = 0
+
+
+def resolve_provider_for_model(model: str) -> dict:
+    """Resolve provider credentials for a model. Returns {api_key, base_url, api_type, provider_name}.
+
+    Single source of truth for model→provider resolution. Uses model config's provider
+    field, falls back to delegate defaults. Thread-safe with 60s cache.
+    """
+    global _provider_cache_time
+
+    # Check cache first
+    now = time.time()
+    with _provider_cache_lock:
+        if model in _provider_cache and now - _provider_cache_time < 60:
+            return _provider_cache[model].copy()
+
+    # Default: delegate globals (set by server at startup)
+    result = {
+        "api_key": _delegate_api_key,
+        "base_url": _delegate_base_url,
+        "api_type": _delegate_api_type,
+        "provider_name": "default",
+    }
+
+    # Look up model's configured provider
+    model_cfg = _models_config.get(model, {})
+    provider_name = model_cfg.get("provider", "")
+    if provider_name:
+        try:
+            cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+            with open(cfg_path) as f:
+                prov = json.load(f).get("providers", {}).get(provider_name, {})
+            if prov:
+                result = {
+                    "api_key": prov.get("api_key", ""),
+                    "base_url": prov.get("base_url", ""),
+                    "api_type": prov.get("type", "openai"),
+                    "provider_name": provider_name,
+                }
+        except Exception:
+            pass
+
+    with _provider_cache_lock:
+        _provider_cache[model] = result
+        _provider_cache_time = now
+    return result
+
+
+def clear_provider_cache():
+    """Clear the provider resolution cache (call after config changes)."""
+    global _provider_cache_time
+    with _provider_cache_lock:
+        _provider_cache.clear()
+        _provider_cache_time = 0
 
 
 # --- Background Task Runner ---
@@ -12795,6 +12859,15 @@ def make_headers(api_key: str, api_type: str) -> dict:
 
 def get_available_models(api_key: str, base_url: str, api_type: str) -> list[str]:
     """Fetch available models from the API and return as a list."""
+    # Mistral: use SDK to list models (Vibe CLI auth doesn't work with raw HTTP)
+    if api_type == "mistral":
+        try:
+            client = _create_mistral_client(api_key)
+            result = client.models.list()
+            return [m.id for m in result.data if m.id]
+        except Exception:
+            return []
+
     headers = make_headers(api_key, api_type)
     request = urllib.request.Request(
         f"{base_url}/models", headers=headers, method="GET",
@@ -12871,10 +12944,12 @@ def _match_known_model(model_id: str) -> dict:
     }
 
 
-def init_models_config(providers: dict, existing_models: dict | None = None) -> dict:
+def init_models_config(providers: dict, existing_models: dict | None = None,
+                       all_providers: dict | None = None) -> dict:
     """Auto-populate models config from provider model lists.
 
     Merges with existing config (preserves user edits). Returns the models dict.
+    all_providers: when syncing a subset, pass full provider dict for orphan cleanup.
     """
     global _models_config
     if existing_models:
@@ -12893,6 +12968,15 @@ def init_models_config(providers: dict, existing_models: dict | None = None) -> 
                 entry = _match_known_model(model_id)
                 entry["provider"] = name
                 _models_config[model_id] = entry
+            elif _models_config[model_id].get("provider") != name:
+                # Same model ID exists under a different provider — add with provider-scoped key
+                scoped_key = f"{name}/{model_id}"
+                if scoped_key not in _models_config:
+                    entry = _match_known_model(model_id)
+                    entry["provider"] = name
+                    entry["base_model_id"] = model_id
+                    _models_config[scoped_key] = entry
+                discovered.add(scoped_key)
             else:
                 if "provider" not in _models_config[model_id]:
                     _models_config[model_id]["provider"] = name
@@ -12902,10 +12986,21 @@ def init_models_config(providers: dict, existing_models: dict | None = None) -> 
                 mid for mid, cfg in _models_config.items()
                 if cfg.get("provider") == name
                 and mid not in discovered
+                and cfg.get("base_model_id", mid) not in discovered
                 and not cfg.get("manual")
             ]
             for mid in stale:
                 del _models_config[mid]
+
+    # Remove orphaned models from providers that no longer exist
+    all_prov_names = set((all_providers or providers).keys())
+    orphaned = [
+        mid for mid, cfg in _models_config.items()
+        if cfg.get("provider") and cfg["provider"] not in all_prov_names
+        and not cfg.get("manual")
+    ]
+    for mid in orphaned:
+        del _models_config[mid]
 
     # Backfill defaults from KNOWN_MODELS for all models missing fields
     for model_id, cfg in _models_config.items():
@@ -13044,6 +13139,16 @@ def resolve_auto_model_for_task(agent_config: dict, message: str) -> tuple[str, 
 def get_model_info(model: str) -> dict:
     """Return config entry for a model, or empty dict if not configured."""
     return _models_config.get(model, {})
+
+
+def get_api_model_id(model: str) -> str:
+    """Return the actual model ID to send to the API.
+
+    For provider-scoped models (e.g. 'mistral/devstral-small-latest'),
+    returns the base model ID ('devstral-small-latest').
+    """
+    cfg = _models_config.get(model, {})
+    return cfg.get("base_model_id", model)
 
 
 def get_model_max_context(model: str) -> int:
@@ -14858,7 +14963,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
             pass  # handled below via payload["system"]
 
     payload = {
-        "model": model,
+        "model": get_api_model_id(model),
         "max_tokens": get_model_max_output(model),
         "messages": augmented_messages,
         "stream": True,

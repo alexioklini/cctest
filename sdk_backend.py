@@ -81,19 +81,23 @@ def build_provider_env(model: str) -> dict:
     if not matched_prov:
         return {}
 
+    # Resolve actual API model ID for provider-scoped keys
+    model_info = cfg.get("models", {}).get(model, {})
+    api_model = model_info.get("base_model_id", model)
+
     preset_fn = _PROVIDER_ENV_PRESETS.get(matched_name.lower())
     if preset_fn:
-        return preset_fn(matched_prov, model)
+        return preset_fn(matched_prov, api_model)
 
     base_url = matched_prov.get("base_url", "").rstrip("/").removesuffix("/v1")
     return {
         "ANTHROPIC_BASE_URL": base_url,
         "ANTHROPIC_AUTH_TOKEN": matched_prov.get("api_key", ""),
-        "ANTHROPIC_MODEL": model,
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
-        "ANTHROPIC_SMALL_FAST_MODEL": model,
+        "ANTHROPIC_MODEL": api_model,
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": api_model,
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": api_model,
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": api_model,
+        "ANTHROPIC_SMALL_FAST_MODEL": api_model,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     }
 

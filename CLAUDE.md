@@ -267,6 +267,9 @@ Per-agent token config in `agent.json` under `token_config`:
 - QMD path normalization: QMD lowercases paths and converts underscores to hyphens — `/docs` endpoint mirrors this when matching filesystem paths to index entries
 - `/v1/services` returns per-collection health stats: `total`, `indexed`, `embedded`, `stale`, `not_indexed`
 - Smart model routing: `init_models_config()` auto-discovers models from providers, `resolve_model()` picks by purpose
+- Unified provider resolution: `resolve_provider_for_model(model)` in `claude_cli.py` is the single source of truth for model→provider credential resolution (api_key, base_url, api_type, provider_name). Used by all LLM call paths: interactive chat, PI sidecar, SDK sidecar, `_run_delegate`, warmup, background tasks
+- Provider-scoped models: when multiple providers offer the same model ID, entries are stored as `provider/model_id` with a `base_model_id` field. `get_api_model_id(model)` resolves to the actual API model ID
+- Mistral model discovery uses SDK (`client.models.list()`) instead of raw HTTP (Vibe CLI auth incompatible with plain Bearer)
 - Providers without `/models` endpoint: manually add models via Models tab (model ID + provider + display name)
 - Model display format: `displayName (provider)` everywhere — `modelShortName(mid, withProvider)` controls compact vs full
 - QMD session reuse: `_qmd_session_lock` prevents concurrent threads from creating duplicate MCP sessions

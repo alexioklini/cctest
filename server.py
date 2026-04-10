@@ -1230,7 +1230,7 @@ def _trigger_warmup(session):
                 endpoint = f"{session.base_url}/messages"
 
             payload = {
-                "model": session.model,
+                "model": engine.get_api_model_id(session.model),
                 "max_tokens": 1,
                 "messages": messages,
                 "stream": False,
@@ -1248,7 +1248,7 @@ def _trigger_warmup(session):
                 vibe_headers = engine._get_mistral_vibe_headers(session.id)
                 vibe_metadata = engine._get_mistral_vibe_metadata(session.id)
                 client.chat.complete(
-                    model=session.model, messages=messages, max_tokens=1,
+                    model=engine.get_api_model_id(session.model), messages=messages, max_tokens=1,
                     tools=tools, http_headers=vibe_headers, metadata=vibe_metadata,
                 )
             else:
@@ -2630,63 +2630,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"error": f"Unknown action: {action}"}, 400)
 
     # Cache: model -> provider config (refreshed when providers change)
-    _provider_cache: dict[str, dict] = {}
-    _provider_cache_time: float = 0
-    _provider_cache_lock = threading.Lock()
+    # Provider cache now in engine (resolve_provider_for_model)
 
     @staticmethod
     def _resolve_provider_static(model: str) -> dict:
-        """Find the provider that has the given model. Returns {api_key, base_url, api_type}.
-        Thread-safe. Can be called without a handler instance."""
+        """Find the provider that has the given model. Returns {api_key, base_url, api_type, provider_name}.
+        Thread-safe. Delegates to engine.resolve_provider_for_model()."""
         if engine._models_config:
             model = engine.resolve_model(model)
-
-        # Check cache first (refresh every 60s)
-        now = time.time()
-        with BrainAgentHandler._provider_cache_lock:
-            if model in BrainAgentHandler._provider_cache and now - BrainAgentHandler._provider_cache_time < 60:
-                return BrainAgentHandler._provider_cache[model].copy()
-
-        providers = server_config.get("providers", {})
-        result = None
-
-        # Fast path: check models config for provider hint
-        model_cfg = engine.get_model_info(model)
-        if model_cfg.get("provider"):
-            prov_name = model_cfg["provider"]
-            p = providers.get(prov_name)
-            if p:
-                result = {"api_key": p.get("api_key", ""), "base_url": p.get("base_url", ""),
-                          "api_type": p.get("type", "openai"), "provider_name": prov_name}
-
-        if not result:
-            for name, p in providers.items():
-                prov = {"api_key": p.get("api_key", ""), "base_url": p.get("base_url", ""),
-                        "api_type": p.get("type", "openai"), "provider_name": name}
-                if p.get("default_model") == model:
-                    result = prov
-                    break
-                try:
-                    models = engine.get_available_models(p.get("api_key", ""), p.get("base_url", ""), p.get("type", "openai"))
-                    with BrainAgentHandler._provider_cache_lock:
-                        for m in models:
-                            BrainAgentHandler._provider_cache[m] = prov
-                        BrainAgentHandler._provider_cache_time = now
-                    if model in models:
-                        result = prov
-                        break
-                except Exception:
-                    pass
-
-        if not result:
-            result = {"api_key": server_config.get("api_key", ""),
-                      "base_url": server_config.get("base_url", ""),
-                      "api_type": server_config.get("api_type", "openai"),
-                      "provider_name": "default"}
-
-        with BrainAgentHandler._provider_cache_lock:
-            BrainAgentHandler._provider_cache[model] = result
-        return result
+        return engine.resolve_provider_for_model(model)
 
     def _resolve_provider(self, model: str) -> dict:
         """Instance method wrapper for _resolve_provider_static."""
@@ -3044,13 +2996,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         # - anthropic: check provider config `use_sdk` (default true)
         # - mistral: always direct loop (uses Mistral SDK natively)
         # - openai: always direct loop
-        _prov_cfg = {}
-        try:
-            _prov = handler_self._resolve_provider(session.model)
-            _prov_cfg = server_config.get("providers", {}).get(_prov.get("provider_name", ""), {})
-        except Exception:
-            pass
-        _use_sdk = session.api_type == "anthropic" and _prov_cfg.get("use_sdk", True)
+        _prov = engine.resolve_provider_for_model(session.model)
+        _prov_cfg = server_config.get("providers", {}).get(_prov.get("provider_name", ""), {})
+        _use_sdk = _prov["api_type"] == "anthropic" and _prov_cfg.get("use_sdk", True)
 
         # PI SDK sidecar for code mode — works with any provider (OpenAI, Mistral)
         _use_pi_sdk = session.status == "code"
@@ -3418,20 +3366,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             # PI SDK uses its own system prompt + CLAUDE.md/AGENTS.md from project folder
             model = session.model
 
-            # Resolve provider info for PI SDK
-            pi_provider_info = {}
-            try:
-                _pi_prov = handler_self._resolve_provider(model)
-                _pi_prov_name = _pi_prov.get("provider_name", "")
-                _pi_prov_cfg = server_config.get("providers", {}).get(_pi_prov_name, {})
-                pi_provider_info = {
-                    "name": _pi_prov_name,
-                    "type": _pi_prov_cfg.get("type", "openai"),
-                    "base_url": _pi_prov.get("base_url", ""),
-                    "api_key": _pi_prov.get("api_key", ""),
-                }
-            except Exception:
-                pass
+            # Resolve provider info for PI SDK (single source of truth)
+            _pi_prov = engine.resolve_provider_for_model(model)
+            pi_provider_info = {
+                "name": _pi_prov["provider_name"],
+                "type": _pi_prov["api_type"],
+                "base_url": _pi_prov["base_url"],
+                "api_key": _pi_prov["api_key"],
+            }
 
             if not pi_provider_info.get("base_url"):
                 try:
@@ -3470,7 +3412,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             _interactive = body.get("interactive", False)
             pi_payload = json.dumps({
                 "message": message,
-                "model": model,
+                "model": engine.get_api_model_id(model),
                 "agent_id": session.agent_id,
                 "session_id": sid,
                 "cwd": pi_cwd,
@@ -4318,13 +4260,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         with open(cfg_path) as f:
                             cfg = json.load(f)
                         existing = cfg.get("models", {})
-                        synced = engine.init_models_config(providers, existing)
+                        synced = engine.init_models_config(providers, existing, all_providers=all_providers)
                         cfg["models"] = synced
                         with open(cfg_path, "w") as f:
                             json.dump(cfg, f, indent=2)
-                        BrainAgentHandler._provider_cache.clear()
+                        engine.clear_provider_cache()
                     except Exception as e:
+                        import traceback
                         print(f"[sync] error: {e}")
+                        traceback.print_exc()
                 threading.Thread(target=_bg_sync, args=(sync_provider,), daemon=True).start()
                 self._send_json({"status": "syncing"})
                 return
@@ -4337,7 +4281,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 json.dump(config, f, indent=2)
 
             # Clear provider cache since model config changed
-            BrainAgentHandler._provider_cache.clear()
+            engine.clear_provider_cache()
 
             self._send_json({"status": "saved", "models": dict(engine._models_config)})
         except Exception as e:
@@ -8546,7 +8490,7 @@ def _generate_chat_summary(session):
             memory_store=None,
             inference_params={"max_tokens": 80, "temperature": 0.1},
         )
-        if result and not result.startswith("Delegation error"):
+        if result and not result.startswith("Delegation error") and "There's an issue with the selected model" not in result:
             summary = result.strip().strip('"').strip("'")[:80]
             with session.lock:
                 session.summary = summary

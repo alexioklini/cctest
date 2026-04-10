@@ -8492,10 +8492,12 @@ async function switchGeneralTab(tab, btn) {
     // Build provider type map for provider-specific inference params
     const provTypeMap = {};
     (state.providers || []).forEach(p => { provTypeMap[p.name] = p.type || 'openai'; });
-    // Group by provider
+    // Group by provider, skipping models from non-existent providers
+    const existingProviders = new Set((state.providers || []).map(p => p.name));
     const byProvider = {};
     for (const [mid, cfg] of Object.entries(mc)) {
       const prov = cfg.provider || 'unassigned';
+      if (prov !== 'unassigned' && !existingProviders.has(prov)) continue;
       (byProvider[prov] = byProvider[prov] || []).push([mid, cfg]);
     }
     const provKeys = Object.keys(byProvider).sort();
@@ -8528,6 +8530,10 @@ async function switchGeneralTab(tab, btn) {
           <span class="mdl-arrow" style="font-size:10px;color:var(--text-400)">▼</span>
           <span style="font-size:13px;font-weight:600;color:var(--text-100)">${esc(prov)}</span>
           <span style="font-size:11px;color:var(--text-400)">${models.length} model${models.length!==1?'s':''}</span>
+          <span style="margin-left:auto;display:flex;gap:4px" onclick="event.stopPropagation()">
+            <button class="btn-secondary" style="padding:1px 6px;font-size:10px" onclick="document.querySelectorAll('#${provId} .mdl-enabled').forEach(c=>{c.checked=true;c.closest('.mdl-header-row').style.opacity=1})">All</button>
+            <button class="btn-secondary" style="padding:1px 6px;font-size:10px" onclick="document.querySelectorAll('#${provId} .mdl-enabled').forEach(c=>{c.checked=false;c.closest('.mdl-header-row').style.opacity=0.5})">None</button>
+          </span>
         </div>
         <div id="${provId}" style="padding:4px 8px">`;
       for (const [mid, cfg] of models) {
@@ -13878,12 +13884,21 @@ function toggleCodeAgentDropdown(event) {
 
 function toggleCodeModelDropdown(event) {
   event.stopPropagation();
-  const existing = document.getElementById('code-model-dropdown');
-  if (existing) { existing.remove(); return; }
+  closeAllDropdowns();
+
+  const btn = event.currentTarget;
+  const rect = btn.getBoundingClientRect();
 
   const dd = document.createElement('div');
   dd.id = 'code-model-dropdown';
-  dd.className = 'sb-agent-dropdown';
+  dd.className = 'dropdown-menu';
+  dd.style.position = 'fixed';
+  dd.style.right = (window.innerWidth - rect.right) + 'px';
+  dd.style.overflowY = 'auto';
+  const availHeight = rect.top - 12;
+  dd.style.maxHeight = Math.min(320, availHeight) + 'px';
+  dd.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+  dd.style.zIndex = '1000';
 
   const codeModels = Object.entries(state.modelsConfig?.models || {})
     .filter(([, cfg]) => cfg.enabled)
@@ -13891,7 +13906,11 @@ function toggleCodeModelDropdown(event) {
   for (const [mid] of codeModels) {
     const item = document.createElement('div');
     item.className = 'dropdown-item' + (mid === state.codeModel ? ' active' : '');
-    item.textContent = modelShortName(mid);
+    const label = modelShortName(mid);
+    item.innerHTML = `
+      <span class="dd-check">${mid === state.codeModel ? '&#10003;' : ''}</span>
+      <span class="dd-label">${esc(label)}</span>
+    `;
     item.onclick = () => {
       state.codeModel = mid;
       localStorage.setItem('codeModel', mid);
@@ -13907,9 +13926,6 @@ function toggleCodeModelDropdown(event) {
     dd.appendChild(item);
   }
 
-  // Position above the button (fixed, same as chat mode)
-  const rect = event.currentTarget.getBoundingClientRect();
-  dd.style.cssText = `position:fixed;z-index:1000;min-width:220px;max-height:300px;overflow-y:auto;bottom:${window.innerHeight - rect.top + 4}px;right:${window.innerWidth - rect.right}px`;
   document.body.appendChild(dd);
   setTimeout(() => document.addEventListener('click', function rm() { dd.remove(); document.removeEventListener('click', rm); }), 0);
 }
