@@ -3052,6 +3052,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             pass
         _use_sdk = session.api_type == "anthropic" and _prov_cfg.get("use_sdk", True)
 
+        # PI SDK sidecar for code mode — works with any provider (OpenAI, Mistral)
+        _use_pi_sdk = session.status == "code"
+
         # Pre-processing: tool result budget + microcompact (benefits both SDK and direct paths)
         engine._thread_local.current_session_id = session.id
         if len(session.messages) > 4:
@@ -3061,7 +3064,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
         # Check context and compact (with SSE progress) — skip for SDK agents
         # SDK manages its own context via session resume + internal compaction
-        if not _use_sdk:
+        if not _use_sdk and not _use_pi_sdk:
             estimated = engine._estimate_conversation_tokens(session.messages)
             ctx_cfg = engine._context_manager.get_config() if engine._context_manager else {}
             threshold_pct = ctx_cfg.get("compact_threshold", 0.75) if ctx_cfg.get("enabled") else engine.COMPACT_THRESHOLD
@@ -3392,6 +3395,254 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 engine._thread_local.memory_store = None
                 engine._thread_local.plan_mode = False
                 event_queue.put(None)  # sentinel
+
+        # PI SDK path: proxy to Node.js PI sidecar for code mode
+        # Works with any provider (OpenAI, Mistral) — replaces dead Anthropic SDK for code mode
+        if _use_pi_sdk:
+            PI_SIDECAR_PORT = int(os.environ.get("PI_SIDECAR_PORT", "8422"))
+            _req_start = time.time()
+
+            # Rate limiting pre-check
+            if engine._rate_limiter:
+                try:
+                    allowed, reason, _ = engine._rate_limiter.check(session.agent_id)
+                    if not allowed:
+                        try:
+                            self.wfile.write(f"event: error\ndata: {json.dumps({'message': f'Rate limited: {reason}'})}\n\n".encode()); self.wfile.flush()
+                        except (BrokenPipeError, ConnectionResetError):
+                            pass
+                        return
+                except Exception:
+                    pass
+
+            # PI SDK uses its own system prompt + CLAUDE.md/AGENTS.md from project folder
+            model = session.model
+
+            # Resolve provider info for PI SDK
+            pi_provider_info = {}
+            try:
+                _pi_prov = handler_self._resolve_provider(model)
+                _pi_prov_name = _pi_prov.get("provider_name", "")
+                _pi_prov_cfg = server_config.get("providers", {}).get(_pi_prov_name, {})
+                pi_provider_info = {
+                    "name": _pi_prov_name,
+                    "type": _pi_prov_cfg.get("type", "openai"),
+                    "base_url": _pi_prov.get("base_url", ""),
+                    "api_key": _pi_prov.get("api_key", ""),
+                }
+            except Exception:
+                pass
+
+            if not pi_provider_info.get("base_url"):
+                try:
+                    self.wfile.write(b'event: error\ndata: {"message":"Cannot resolve provider for PI SDK"}\n\n'); self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                return
+
+            # Build tool definitions for PI sidecar (same filtering as Anthropic SDK path)
+            allowed_tools_pi = engine._get_agent_tool_names(session.agent_id)
+            pi_tool_defs = []
+            # PI SDK has native read/write/edit/bash — skip Brain Agent equivalents
+            _PI_NATIVE_TOOLS = {"read_file", "write_file", "edit_file", "execute_command",
+                                "list_directory", "search_files"}
+            for td in engine.TOOL_DEFINITIONS:
+                if td["name"] in _PI_NATIVE_TOOLS:
+                    continue
+                if td["name"] not in engine.TOOL_DISPATCH:
+                    continue
+                if allowed_tools_pi is not None and td["name"] not in allowed_tools_pi:
+                    continue
+                desc = td["description"]
+                if isinstance(desc, tuple):
+                    desc = " ".join(desc)
+                pi_tool_defs.append({
+                    "name": td["name"],
+                    "description": desc[:1000],
+                    "input_schema": td["input_schema"],
+                })
+            pi_tool_defs.sort(key=lambda t: t.get("name", ""))
+
+            # CWD: use project folder (code mode) or server CWD
+            pi_cwd = session.project or os.getcwd()
+
+            server_port = server_config.get("port", 8420)
+            _interactive = body.get("interactive", False)
+            pi_payload = json.dumps({
+                "message": message,
+                "model": model,
+                "agent_id": session.agent_id,
+                "session_id": sid,
+                "cwd": pi_cwd,
+                "tool_defs": pi_tool_defs,
+                "server_url": f"http://127.0.0.1:{server_port}",
+                "provider_config": pi_provider_info,
+                "interactive": _interactive,
+                "thinking_level": thinking_level or "off",
+            }).encode()
+
+            # Tracing
+            _request_span = None
+            if engine._trace_manager:
+                _request_span = engine._trace_manager.start_span(
+                    "request", message[:60] or "user message",
+                    agent=session.agent_id, model=model, session_id=sid)
+
+            try:
+                # Inline REST polling to PI sidecar (same pattern as Anthropic SDK path)
+                import urllib.request as _urlreq
+                _base = f"http://127.0.0.1:{PI_SIDECAR_PORT}"
+                _req = _urlreq.Request(f"{_base}/query", data=pi_payload,
+                                        headers={"Content-Type": "application/json"})
+                _qid = json.loads(_urlreq.urlopen(_req, timeout=10).read()).get("query_id")
+
+                r = {"text": "", "tokens_in": 0, "tokens_out": 0, "cost": 0.0, "tools": []}
+                _after = 0
+                _full_text = ""
+                _tool_calls_list = []
+                import time as _time
+                _t0 = _time.time()
+
+                while _time.time() - _t0 < 600:  # 10min timeout
+                    _resp = json.loads(_urlreq.urlopen(
+                        f"{_base}/events/{_qid}?after={_after}", timeout=10).read())
+                    for _ev in _resp["events"]:
+                        _et = _ev["event"]
+                        _ed = _ev["data"]
+                        if _et in ("text_delta", "thinking_delta", "tool_call", "tool_result", "user_input_needed"):
+                            self.wfile.write(f"event: {_et}\ndata: {json.dumps(_ed)}\n\n".encode())
+                            self.wfile.flush()
+                        if _et == "text_delta":
+                            _full_text += _ed.get("text", "")
+                            _partial_reply.append(_ed.get("text", ""))
+                        elif _et == "tool_call":
+                            name = _ed.get("name", "")
+                            args = _ed.get("args", {})
+                            if args and _partial_tools and _partial_tools[-1].get("name") == name and not _partial_tools[-1].get("args"):
+                                _partial_tools[-1]["args"] = args
+                                if _tool_calls_list and _tool_calls_list[-1].get("name") == name:
+                                    _tool_calls_list[-1] = _ed
+                            else:
+                                _tool_calls_list.append(_ed)
+                                _partial_tools.append({"name": name, "args": args})
+                        elif _et == "tool_result":
+                            _tn = _ed.get("name", "")
+                            _cap = 2000 if _tn in ("exa_search", "web_fetch") else 500
+                            for t in reversed(_partial_tools):
+                                if t["name"] == _tn and "result" not in t:
+                                    t["result"] = str(_ed.get("result", ""))[:_cap]
+                                    break
+                        elif _et == "_result":
+                            r = {
+                                "text": _ed.get("text", "") or _full_text,
+                                "tokens_in": _ed.get("tokens_in", 0),
+                                "tokens_out": _ed.get("tokens_out", 0),
+                                "cost": _ed.get("cost", 0),
+                                "tools": _ed.get("tools", []) or _tool_calls_list,
+                            }
+                            break
+                    _after = _resp.get("next", _after)
+                    if _resp.get("done"):
+                        break
+                    # Keepalive + poll interval
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+                    _time.sleep(0.5)
+
+                if not r.get("text") and _full_text:
+                    r["text"] = _full_text
+            except Exception as e:
+                r = {}
+                try:
+                    self.wfile.write(f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n".encode()); self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+            finally:
+                with session.lock:
+                    session._streaming = False
+
+            # Save response
+            reply = r.get("text", "") or "".join(_partial_reply).strip()
+            is_partial = not r.get("text")
+
+            if reply:
+                try:
+                    engine._log_call_cost(model=model, tokens_in=r.get("tokens_in", 0),
+                                          tokens_out=r.get("tokens_out", 0), session_id=sid)
+                except Exception:
+                    pass
+
+                session_cost = None
+                if engine._cost_tracker:
+                    try:
+                        sc = engine._cost_tracker.get_session_cost(sid)
+                        session_cost = round(sc.get("cost", 0.0), 4)
+                    except Exception:
+                        pass
+
+                _req_duration = round(time.time() - _req_start, 2)
+                msg_metadata = {"model": model, "pi_sdk": True,
+                                "tokens_in": r.get("tokens_in", 0),
+                                "tokens_out": r.get("tokens_out", 0),
+                                "tokens_api": r.get("tokens_in", 0) + r.get("tokens_out", 0),
+                                "tokens": engine._estimate_conversation_tokens(session.messages),
+                                "duration": _req_duration}
+                if is_partial:
+                    msg_metadata["partial"] = True
+                if session_cost is not None:
+                    msg_metadata["cost"] = session_cost
+                if r.get("tools") or _partial_tools:
+                    msg_metadata["tools"] = r.get("tools") or _partial_tools
+                session.add_message("assistant", reply, metadata=msg_metadata)
+
+                done_data = {"text": reply, "tokens": engine._estimate_conversation_tokens(session.messages),
+                             "max_context": session.max_context,
+                             "model": model, "pi_sdk": True,
+                             "tokens_in": r.get("tokens_in", 0), "tokens_out": r.get("tokens_out", 0),
+                             "duration": _req_duration}
+                if session_cost is not None:
+                    done_data["cost"] = session_cost
+                try:
+                    done_bytes = f"event: done\ndata: {json.dumps(done_data)}\n\n".encode()
+                    self.wfile.write(done_bytes); self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
+
+                # Post-response hooks
+                if not is_partial:
+                    try:
+                        token_count = engine._estimate_conversation_tokens(session.messages)
+                        if token_count >= getattr(session, '_last_summary_at', 0) + 5000 or \
+                           (getattr(session, '_last_summary_at', 0) == 0 and token_count >= 10000):
+                            session._last_summary_at = token_count
+                            engine.trigger_memory_summary_refresh(session.agent_id)
+                    except Exception:
+                        pass
+                    # Chat summary generation (for sidebar)
+                    try:
+                        if len(session.messages) >= 2 and not session.summary:
+                            threading.Thread(target=_generate_chat_summary, args=(session,),
+                                             daemon=True, name=f"chat_summary_{sid}").start()
+                    except Exception:
+                        pass
+            else:
+                try:
+                    self.wfile.write(b'event: error\ndata: {"message":"No response from PI agent"}\n\n')
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
+
+            # End tracing span
+            if engine._trace_manager and _request_span:
+                engine._trace_manager.end_span(
+                    _request_span, status="ok" if reply else "error",
+                    tokens_in=r.get("tokens_in", 0), tokens_out=r.get("tokens_out", 0))
+
+            try:
+                self.close_connection = True
+            except Exception:
+                pass
+            return
 
         # SDK path: proxy to sidecar process for real-time streaming
         # (claude_cli import side-effects break anyio subprocess streaming)
@@ -6547,6 +6798,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "status": "running" if sdk_running else "stopped",
                 "port": sdk_backend.SIDECAR_PORT,
             },
+            "pi_sidecar": {
+                "status": "running" if _is_pi_sidecar_running() else "stopped",
+                "port": _PI_SIDECAR_PORT,
+            },
             "telegram": {
                 "status": "running" if tg_running else "stopped",
                 "bot": _telegram_mod.telegram_service.bot_username if tg_running else "",
@@ -7798,6 +8053,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 cmd.append("--cached")
             if ref and ref != "working":
                 cmd.append(ref)
+            # Scope to subfolder: add pathspec so only changes within dir_path are shown
+            cmd += ["--", dir_path]
             proc = subprocess.run(
                 ["git", "--no-pager"] + cmd,
                 capture_output=True, cwd=dir_path, timeout=15,
@@ -7811,6 +8068,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 cmd2.append("--cached")
             if ref and ref != "working":
                 cmd2.append(ref)
+            cmd2 += ["--", dir_path]
             proc2 = subprocess.run(
                 ["git", "--no-pager"] + cmd2,
                 capture_output=True, cwd=dir_path, timeout=15,
@@ -8791,6 +9049,67 @@ def main():
     threading.Thread(target=_start_sdk_sidecar, daemon=True, name="sdk-sidecar-start").start()
     threading.Thread(target=_sdk_sidecar_watchdog, daemon=True, name="sdk-sidecar-watchdog").start()
 
+    # Auto-start PI sidecar (Node.js, for code mode with OpenAI/Mistral providers)
+    _pi_sidecar_process = None
+    _PI_SIDECAR_PORT = int(os.environ.get("PI_SIDECAR_PORT", "8422"))
+
+    def _is_pi_sidecar_running():
+        try:
+            s = socket.create_connection(("127.0.0.1", _PI_SIDECAR_PORT), timeout=1)
+            s.close()
+            return True
+        except (OSError, ConnectionRefusedError):
+            return False
+
+    def _start_pi_sidecar():
+        nonlocal _pi_sidecar_process
+        import subprocess as _sp
+        import shutil
+        sidecar_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pi_sidecar")
+        sidecar_script = os.path.join(sidecar_dir, "pi_sidecar.ts")
+        if not os.path.isfile(sidecar_script):
+            print("PI sidecar: pi_sidecar/pi_sidecar.ts not found")
+            return
+        # Check if tsx is available
+        tsx_path = os.path.join(sidecar_dir, "node_modules", ".bin", "tsx")
+        if not os.path.isfile(tsx_path):
+            tsx_path = shutil.which("tsx")
+        npx_path = shutil.which("npx")
+        if not tsx_path and not npx_path:
+            print("PI sidecar: tsx/npx not found — install with: npm install -g tsx")
+            return
+        if _is_pi_sidecar_running():
+            print(f"PI sidecar: already running on port {_PI_SIDECAR_PORT}")
+            return
+        os.makedirs(os.path.expanduser("~/.brain-agent"), exist_ok=True)
+        _pi_log = open(os.path.expanduser("~/.brain-agent/pi-sidecar.log"), "a")
+        cmd = [tsx_path, sidecar_script] if tsx_path else [npx_path, "tsx", sidecar_script]
+        _pi_sidecar_process = _sp.Popen(
+            cmd, stdout=_sp.DEVNULL, stderr=_pi_log,
+            cwd=sidecar_dir,
+            env={**os.environ, "PI_SIDECAR_PORT": str(_PI_SIDECAR_PORT)},
+        )
+        for _ in range(20):
+            time.sleep(0.5)
+            if _is_pi_sidecar_running():
+                print(f"PI sidecar: started (PID {_pi_sidecar_process.pid}, port {_PI_SIDECAR_PORT})")
+                return
+        print("PI sidecar: failed to start within 10s")
+
+    def _pi_sidecar_watchdog():
+        nonlocal _pi_sidecar_process
+        while True:
+            time.sleep(30)
+            if not _is_pi_sidecar_running():
+                print("PI sidecar: not running, restarting...", flush=True)
+                try:
+                    _start_pi_sidecar()
+                except Exception as e:
+                    print(f"PI sidecar restart failed: {e}", flush=True)
+
+    threading.Thread(target=_start_pi_sidecar, daemon=True, name="pi-sidecar-start").start()
+    threading.Thread(target=_pi_sidecar_watchdog, daemon=True, name="pi-sidecar-watchdog").start()
+
     # File change watcher for SDK — detect file writes that bypass _after_file_write
     _file_mtimes: dict[str, float] = {}
 
@@ -8858,6 +9177,12 @@ def main():
             try:
                 _sdk_sidecar_process.terminate()
                 _sdk_sidecar_process.wait(timeout=3)
+            except Exception:
+                pass
+        if _pi_sidecar_process:
+            try:
+                _pi_sidecar_process.terminate()
+                _pi_sidecar_process.wait(timeout=3)
             except Exception:
                 pass
         server.server_close()

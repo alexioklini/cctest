@@ -25,10 +25,13 @@ brain.py (gateway)
   │   ├── /mcp endpoint (MCP JSON-RPC: tools/list, tools/call with hooks)
   │   ├── SQLite: chats.db, scheduler.db
   │   └── MCP server connections
-  ├── sdk_sidecar.py (REST API on port 8421, Agent SDK)
-  │   ├── POST /query → start query, returns query_id
-  │   ├── GET /events/{id}?after=N → poll for new events
+  ├── sdk_sidecar.py (REST API on port 8421, Anthropic Agent SDK — legacy)
   │   └── Runs claude_agent_sdk.query() in a clean process (no claude_cli import)
+  ├── pi_sidecar/ (Node.js REST API on port 8422, PI Agent SDK — code mode)
+  │   ├── POST /query, GET /events/{id}, POST /cancel/{id}, POST /answer/{id}
+  │   ├── PI SDK: createAgentSession() with openai-completions provider
+  │   ├── Native tools: read, write, edit, bash (run in Node.js)
+  │   └── Brain Agent tools via HTTP → /v1/tools/call
   ├── qmd mcp --http (daemon on port 8181, hybrid memory search)
   │   └── Collections: one per agent → agents/<name>/*.md
   ├── tui.py (terminal client)
@@ -73,18 +76,30 @@ Key patterns:
 - Artifact panel: resizable right panel (`#artifact-panel`) for viewing generated files with type-aware rendering
 - References panel: resizable right panel (`#references-panel`) for web source cards with screenshot previews
 
-### Code Mode
+### Code Mode (PI Agent SDK)
 
-Code mode provides a Claude Desktop-style coding assistant with file tree, diff view, and project folder context.
+Code mode uses the PI Agent SDK (`@mariozechner/pi-coding-agent`) as the agentic loop via a Node.js sidecar process.
+No Brain Agent system prompt or agent configuration is used — PI SDK provides its own minimal prompt + native coding tools.
 
+- **PI Sidecar**: `pi_sidecar/pi_sidecar.ts` — Node.js HTTP server on port 8422, same REST API contract as `sdk_sidecar.py`
+- **REST API**: `POST /query` (start), `GET /events/{id}` (poll), `POST /cancel/{id}` (abort), `POST /answer/{id}` (interactive)
+- **Provider routing**: all models use `openai-completions` API type; non-OpenAI providers get `compat: { supportsStore: false }` to avoid 422 errors
+- **Model `baseUrl`**: must keep `/v1` suffix — PI SDK's OpenAI client appends `/chat/completions` directly
+- **Native tools**: PI SDK provides read, write, edit, bash (run in Node.js, no IPC)
+- **Brain Agent tools**: proxied via HTTP to `/v1/tools/call` endpoint (memory, web, git, etc.)
+- **System prompt**: PI SDK's own 150-word default + `AGENTS.md`/`CLAUDE.md`/`.cursorrules` auto-discovered from project folder up to git root
+- **Server routing**: `_use_pi_sdk = session.status == "code"` — inline REST polling to port 8422, same pattern as Anthropic SDK path
+- **Auto-start**: server.py starts PI sidecar with watchdog thread alongside SDK sidecar
 - **Folder browser GUI**: modal with breadcrumb navigation, lazy-loaded directory listing via `/v1/files/tree?depth=0`, single-click select, double-click navigate, manual path input
+- **File preview**: clicking files in tree opens content in diff panel via `/v1/files/preview` (text, code, images)
 - **SSE streaming**: uses proper two-line `event: type\ndata: json` format (same parser as main chat)
-- **Tool calls**: same merged format as main chat — human-readable descriptions, args table, timing badge, merged call+result
-- **Streaming indicator**: spinner bar with wave animation, model name, tool name labels ("Running Read..."), elapsed timer, stop button swaps with send button
-- **Folder-based projects**: sessions tagged with folder path in `project` field; "All Projects" expands to show discovered projects (unique folder paths from sessions) with counts; selecting a project filters the session list
-- **Session management**: archive/delete buttons on hover in sidebar session items; `archiveCodeSession()`/`deleteCodeSession()` via API
-- **State**: `codeFolder` (selected path, persisted to localStorage), `codeProjectFilter` (null=all, string=folder filter), `codeSessionId`, `codeMessages[]`
-- **Session creation**: `API.createSession(agent, model, folderPath, 'code')` — folder path stored as `project`, `status=code`
+- **Folder-based projects**: sessions tagged with folder path in `project` field; sidebar shows projects with counts + session list
+- **Session management**: editable session titles in toolbar, archive/delete in sidebar
+- **Composer**: thinking level, AI refine, tool display toggle, Ask/Auto/Plan mode selector, model dropdown (opens above)
+- **Status bar**: shows model, session ID, tokens in/out, speed, context fill — synced via `updateCodeStatusBar()`
+- **Diff scoping**: `git diff --stat HEAD -- <dir>` scopes to project subfolder, not entire repo
+- **`/init` command**: generates `AGENTS.md` by having PI agent analyze the project structure
+- **State**: `codeFolder`, `codeModel`, `codePermission`, `codeThinking`, `codeShowToolCalls`, `codeSessionId`, `codeMessages[]`
 - **Views**: `code-welcome` (folder picker + composer), `code-chat` (file tree + messages + diff panel)
 
 ### Chat File Attachments

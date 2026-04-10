@@ -1,0 +1,21 @@
+{
+  "name": "brain-agent-pi-sidecar",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "tsx pi_sidecar.ts",
+    "build": "tsc",
+    "start:built": "node dist/pi_sidecar.js"
+  },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "latest",
+    "@mariozechner/pi-ai": "latest",
+    "@sinclair/typebox": "^0.34.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0",
+    "@types/node": "^22.0.0"
+  }
+}

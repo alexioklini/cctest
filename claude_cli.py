@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "5.12.0"
+VERSION = "5.13.0"
 VERSION_DATE = "2026-04-10"
 CHANGELOG = [
     ("5.12.0", "2026-04-10", "Dynamic attachment routing — file attachments are now routed based on model capabilities instead of browser-side MIME type splitting. New per-model raw_formats config (MIME patterns like image/*, application/pdf) controls which files are sent as multimodal content blocks vs saved to disk for read_document parsing. Server-side unified handler merges body.images and body.files, checks model's raw_formats, and routes accordingly. Vision-capable models see image pixels directly; text-only models get metadata or vision model description via attachment_image_model fallback. Web UI unified: all files go through single _pendingFiles path with image thumbnail previews. Models tab shows editable raw_formats per model. Settings hint warns when no vision capability is configured. Guards: 20MB inline size limit, OpenAI/Mistral restricted to image/* multimodal, Anthropic PDF via document blocks."),

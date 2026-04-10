@@ -725,8 +725,8 @@ textarea { resize: none; }
 }
 .code-toolbar-item svg { width: 13px; height: 13px; }
 .code-toolbar .branch-name {
-  color: var(--accent-brand);
-  font-weight: 500;
+  color: var(--text-300);
+  font-weight: 400;
 }
 .code-toolbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
@@ -4124,10 +4124,6 @@ textarea { resize: none; }
         <span id="code-folder-name">Select folder</span>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
-        <div class="code-env-pill" id="code-agent-pill" onclick="toggleCodeAgentDropdown(event)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          <span id="code-agent-name">main</span>
-        </div>
         <div class="permission-selector" id="code-permission-selector">
           <button class="permission-opt active" data-perm="ask" onclick="setCodePermission('ask',this)">Ask</button>
           <button class="permission-opt" data-perm="auto" onclick="setCodePermission('auto',this)">Auto</button>
@@ -4157,13 +4153,17 @@ textarea { resize: none; }
     <div class="code-chat-main">
       <!-- Code toolbar -->
       <div class="code-toolbar" id="code-toolbar">
-        <div class="code-toolbar-item">
+        <div class="code-toolbar-item" style="opacity:0.6;flex-shrink:1">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
           <span id="code-toolbar-folder" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</span>
         </div>
-        <div class="code-toolbar-item">
+        <div class="code-toolbar-item" style="opacity:0.6;flex-shrink:1">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>
           <span class="branch-name" id="code-toolbar-branch">—</span>
+        </div>
+        <div class="code-toolbar-item" onclick="editCodeSessionTitle()" style="cursor:pointer;flex:1;min-width:0" title="Click to rename session">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" style="flex-shrink:0"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+          <span id="code-toolbar-title" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500">New Session</span>
         </div>
         <div class="code-toolbar-right">
           <div class="diff-stats" id="code-diff-toggle" onclick="toggleCodeDiffPanel()" title="View changes" style="display:none">
@@ -4200,12 +4200,26 @@ textarea { resize: none; }
                 <button class="composer-btn" onclick="triggerCodeFileUpload()" title="Attach files">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 </button>
+                <button class="composer-btn" id="code-btn-thinking" onclick="cycleCodeThinkingLevel()" title="Thinking level">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/><line x1="9" y1="21" x2="15" y2="21"/></svg>
+                </button>
+                <button class="composer-btn" id="code-btn-refine" onclick="refineCodeInput()" title="Refine your message with AI">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                </button>
+                <button class="composer-btn" id="code-btn-toggle-tools" onclick="toggleCodeToolDisplay()" title="Toggle tool calls">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+                </button>
+                <div class="permission-selector" id="code-chat-permission-selector" style="margin-left:4px">
+                  <button class="permission-opt active" data-perm="ask" onclick="setCodePermission('ask',this)">Ask</button>
+                  <button class="permission-opt" data-perm="auto" onclick="setCodePermission('auto',this)">Auto</button>
+                  <button class="permission-opt" data-perm="plan" onclick="setCodePermission('plan',this)">Plan</button>
+                </div>
               </div>
               <div class="composer-footer-right">
-                <button class="model-selector-btn" id="code-model-selector-btn" onclick="toggleCodeModelDropdown(event)">
-                  <span class="model-name" id="code-model-selector-name">Sonnet 4.6</span>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                </button>
+                <span class="model-selector-btn" id="code-model-selector-btn" onclick="toggleCodeModelDropdown(event)">
+                  <span class="model-name" id="code-model-selector-name">Select model</span>
+                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </span>
                 <button class="composer-send-btn" id="code-chat-send-btn" onclick="sendCodeMessage()">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                 </button>
@@ -4628,6 +4642,9 @@ const state = {
   codeAgent: localStorage.getItem('codeAgent') || 'main',
   codeModel: localStorage.getItem('codeModel') || '',
   codePermission: localStorage.getItem('codePermission') || 'ask', // ask | auto | plan
+  codeThinking: 'none',
+  codeShowToolCalls: true,
+  codeSessionTitle: '',
   codeSessionId: null,
   codeProjectFilter: null, // null = all projects, string = filter by folder path
   codeMessages: [],
@@ -7528,6 +7545,7 @@ function updateChatView() {
 }
 
 function updateStatusBar() {
+  if (state.appMode === 'code') { updateCodeStatusBar(); return; }
   const chat = state.activeChat;
   if (!chat) return;
 
@@ -9111,10 +9129,6 @@ async function switchGeneralTab(tab, btn) {
 
   /* ─── CODE MODE ─── */
   if (tab === 'code') {
-    const agentOpts = state.agents.map(a => {
-      const aid = a.id || a.name;
-      return `<option value="${esc(aid)}" ${aid===state.codeAgent?'selected':''}>${esc(a.display_name||aid)}</option>`;
-    }).join('');
     const mc = state.modelsConfig?.models || {};
     const enabledModels = Object.entries(mc).filter(([,c])=>c.enabled).sort((a,b)=>(b[1].priority||0)-(a[1].priority||0));
     const modelOpts = enabledModels.map(([mid]) => `<option value="${esc(mid)}" ${mid===state.codeModel?'selected':''}>${esc(modelShortName(mid))}</option>`).join('');
@@ -9122,19 +9136,13 @@ async function switchGeneralTab(tab, btn) {
     C.innerHTML = P(`<div style="${G('16px')}">
       ${SEC('Code Mode Configuration')}
       <div style="font-size:13px;color:var(--text-300);margin-bottom:8px">
-        Code mode provides a Claude Desktop-style coding assistant with file tree, diff view, and project folder context.
-      </div>
-
-      <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px;${G('12px')}">
-        <div style="font-size:12px;font-weight:600;color:var(--text-200)">Default Agent</div>
-        <select id="code-settings-agent" class="form-select" style="width:100%">${agentOpts}</select>
-        <div style="font-size:11px;color:var(--text-400)">The agent used for Code mode sessions. Choose an agent with coding-focused instructions.</div>
+        Code mode uses the PI Agent SDK with project folder context. Place a <code>CLAUDE.md</code> or <code>AGENTS.md</code> file in your project folder to provide coding instructions.
       </div>
 
       <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px;${G('12px')}">
         <div style="font-size:12px;font-weight:600;color:var(--text-200)">Default Model</div>
         <select id="code-settings-model" class="form-select" style="width:100%">${modelOpts}</select>
-        <div style="font-size:11px;color:var(--text-400)">The model used for Code mode sessions. Opus and Sonnet recommended for complex coding tasks.</div>
+        <div style="font-size:11px;color:var(--text-400)">The model used for Code mode sessions. Devstral and Gemma recommended for coding tasks.</div>
       </div>
 
       <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px;${G('12px')}">
@@ -9168,13 +9176,11 @@ async function switchGeneralTab(tab, btn) {
 }
 
 function saveCodeSettings() {
-  const agent = document.getElementById('code-settings-agent')?.value;
   const model = document.getElementById('code-settings-model')?.value;
   const folder = document.getElementById('code-settings-folder')?.value?.trim();
   const perm = document.getElementById('code-settings-permission')?.value;
   const showTree = document.getElementById('code-settings-filetree')?.checked;
 
-  if (agent) { state.codeAgent = agent; localStorage.setItem('codeAgent', agent); }
   if (model) { state.codeModel = model; localStorage.setItem('codeModel', model); }
   if (folder !== undefined) { state.codeFolder = folder; localStorage.setItem('codeFolder', folder); state.codeSessionId = null; }
   if (perm) { state.codePermission = perm; localStorage.setItem('codePermission', perm); }
@@ -13390,9 +13396,6 @@ function initCodeWelcome() {
     folderEl.textContent = 'Select folder';
   }
 
-  // Populate agent name
-  document.getElementById('code-agent-name').textContent = state.codeAgent || 'main';
-
   // Populate model — default to first enabled model if not set
   if (!state.codeModel && state.models.length) {
     state.codeModel = state.models[0]?.id || state.models[0] || '';
@@ -13400,6 +13403,8 @@ function initCodeWelcome() {
   const model = state.codeModel || state.activeChat?.model || '';
   const displayModel = _shortModelName(model);
   document.getElementById('code-model-name').textContent = displayModel || 'Select model';
+  const chatModelEl = document.getElementById('code-model-selector-name');
+  if (chatModelEl) chatModelEl.textContent = displayModel || 'Select model';
 
   // Permission mode
   document.querySelectorAll('#code-permission-selector .permission-opt').forEach(btn => {
@@ -13409,21 +13414,22 @@ function initCodeWelcome() {
 
 function codeNewSession() {
   state.codeSessionId = null;
+  state.codeSessionTitle = '';
   state.codeMessages = [];
   state.codeStreaming = false;
   state.codeDiffData = null;
+  updateCodeToolbarTitle();
   navigateTo('code-welcome');
 }
 
 function loadCodeSessions() {
   // Load code-mode sessions, filtered by project if set
   const agentId = state.codeAgent || 'main';
-  let url = `${BASE_URL}/v1/sessions?agent=${encodeURIComponent(agentId)}&status=code`;
+  let url = `/v1/sessions?agent=${encodeURIComponent(agentId)}&status=code`;
   if (state.codeProjectFilter) {
     url += `&project=${encodeURIComponent(state.codeProjectFilter)}`;
   }
-  fetch(url)
-    .then(r => r.json())
+  API.get(url)
     .then(data => {
       const sessions = (data.sessions || data || []);
       renderCodeSessionList(sessions);
@@ -13496,6 +13502,11 @@ async function openCodeSession(sessionId, agentId) {
   } catch (e) {
     state.codeMessages = [];
   }
+  // Load session title from sidebar data
+  const titleEl = document.querySelector(`.code-sb-session-item[onclick*="${sessionId}"] .session-title`);
+  state.codeSessionTitle = titleEl?.textContent || '';
+  updateCodeToolbarTitle();
+  if (!state.codeSessionTitle) _pollCodeSessionTitle();
   navigateTo('code-chat');
   loadCodeSessions(); // refresh list to highlight active
 }
@@ -13520,6 +13531,108 @@ async function deleteCodeSession(sessionId) {
     }
     loadCodeSessions();
   } catch (e) { showToast('Delete failed', true); }
+}
+
+function _pollCodeSessionTitle() {
+  if (!state.codeSessionId) return;
+  const sid = state.codeSessionId;
+  let polls = 0;
+  const poll = setInterval(async () => {
+    polls++;
+    if (polls > 15 || state.codeSessionId !== sid) { clearInterval(poll); return; }
+    try {
+      const agentId = state.codeAgent || 'main';
+      const data = await API.get(`/v1/sessions?agent=${encodeURIComponent(agentId)}&status=code`);
+      const sessions = data.sessions || data || [];
+      const s = sessions.find(x => (x.session_id || x.id) === sid);
+      const title = s?.summary || s?.title || '';
+      if (title && title !== state.codeSessionTitle) {
+        state.codeSessionTitle = title;
+        updateCodeToolbarTitle();
+        loadCodeSessions();
+        clearInterval(poll);
+      }
+    } catch (_) {}
+  }, 2000);
+}
+
+function updateCodeStatusBar() {
+  const model = state.codeModel || '';
+  document.getElementById('status-agent').textContent = 'Code';
+  document.getElementById('status-model').textContent = _shortModelName(model) || 'Select model';
+  document.getElementById('status-session').textContent = state.codeSessionId ? state.codeSessionId.substring(0, 8) : '';
+
+  // Compute tokens from code messages
+  let totalIn = 0, totalOut = 0, lastSpeed = null, lastApiIn = 0, maxContext = 131072;
+  for (const m of state.codeMessages) {
+    if (m.role === 'assistant' && m.metadata) {
+      totalIn += m.metadata.tokens_in || 0;
+      totalOut += m.metadata.tokens_out || 0;
+      if (m.metadata.duration > 0 && m.metadata.tokens_out > 0) {
+        lastSpeed = Math.round(m.metadata.tokens_out / m.metadata.duration);
+      }
+      if (m.metadata.tokens_in) lastApiIn = m.metadata.tokens_in;
+      if (m.metadata.tokens) lastApiIn = m.metadata.tokens;
+    }
+  }
+  document.getElementById('status-tokens-in').textContent = totalIn ? totalIn.toLocaleString() : '0';
+  document.getElementById('status-tokens-out').textContent = totalOut ? totalOut.toLocaleString() : '0';
+  document.getElementById('status-speed').textContent = lastSpeed ? `${lastSpeed} tok/s` : '-';
+
+  // Context fill bar
+  const wrap = document.getElementById('status-context-wrap');
+  const fill = document.getElementById('status-context-fill');
+  const label = document.getElementById('status-context-label');
+  const compactBtn = document.getElementById('status-compact-btn');
+  if (lastApiIn > 0) {
+    const pct = Math.min(100, Math.round(lastApiIn / maxContext * 100));
+    wrap.style.display = '';
+    fill.style.width = Math.max(pct, 1) + '%';
+    fill.className = 'context-fill' + (pct >= 80 ? ' danger' : pct >= 50 ? ' warn' : '');
+    const fmtK = (n) => n >= 1000 ? (n/1000).toFixed(1) + 'K' : n.toString();
+    label.textContent = `${fmtK(lastApiIn)} / ${fmtK(maxContext)} (${pct}%)`;
+    if (compactBtn) compactBtn.style.display = 'none';
+  } else {
+    wrap.style.display = 'none';
+  }
+}
+
+function updateCodeToolbarTitle() {
+  const el = document.getElementById('code-toolbar-title');
+  if (el) el.textContent = state.codeSessionTitle || 'New Session';
+}
+
+function editCodeSessionTitle() {
+  if (!state.codeSessionId) return;
+  const el = document.getElementById('code-toolbar-title');
+  if (!el || el.querySelector('input')) return;
+
+  const current = state.codeSessionTitle || '';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = current;
+  input.placeholder = 'Name this session...';
+  input.style.cssText = 'font:inherit;color:inherit;background:var(--bg-200);border:1px solid var(--accent);border-radius:4px;padding:2px 6px;width:200px;outline:none;font-weight:500';
+
+  const finish = async () => {
+    const newTitle = input.value.trim();
+    if (newTitle && newTitle !== current) {
+      state.codeSessionTitle = newTitle;
+      try {
+        await API.post('/v1/sessions/manage', { action: 'rename', session_id: state.codeSessionId, title: newTitle });
+        loadCodeSessions();
+      } catch (_) {}
+    }
+    el.textContent = state.codeSessionTitle || 'New Session';
+  };
+
+  input.onblur = finish;
+  input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } if (e.key === 'Escape') { input.value = current; input.blur(); } };
+
+  el.textContent = '';
+  el.appendChild(input);
+  input.focus();
+  input.select();
 }
 
 function toggleCodeProjectList() {
@@ -13601,12 +13714,11 @@ function selectCodeProject(folderPath) {
 
 function loadCodeSessionsFiltered() {
   const agentId = state.codeAgent || 'main';
-  let url = `${BASE_URL}/v1/sessions?agent=${encodeURIComponent(agentId)}&status=code`;
+  let url = `/v1/sessions?agent=${encodeURIComponent(agentId)}&status=code`;
   if (state.codeProjectFilter) {
     url += `&project=${encodeURIComponent(state.codeProjectFilter)}`;
   }
-  fetch(url)
-    .then(r => r.json())
+  API.get(url)
     .then(data => {
       const sessions = (data.sessions || data || []);
       renderCodeSessionList(sessions);
@@ -13772,7 +13884,6 @@ function toggleCodeModelDropdown(event) {
   const dd = document.createElement('div');
   dd.id = 'code-model-dropdown';
   dd.className = 'sb-agent-dropdown';
-  dd.style.cssText = 'position:absolute;top:100%;left:0;z-index:100;min-width:220px;margin-top:4px;max-height:300px;overflow-y:auto';
 
   const codeModels = Object.entries(state.modelsConfig?.models || {})
     .filter(([, cfg]) => cfg.enabled)
@@ -13784,24 +13895,73 @@ function toggleCodeModelDropdown(event) {
     item.onclick = () => {
       state.codeModel = mid;
       localStorage.setItem('codeModel', mid);
-      document.getElementById('code-model-name').textContent = _shortModelName(mid);
+      const _cmn = _shortModelName(mid);
+      document.getElementById('code-model-name').textContent = _cmn;
       const chatModelEl = document.getElementById('code-model-selector-name');
-      if (chatModelEl) chatModelEl.textContent = _shortModelName(mid);
+      if (chatModelEl) chatModelEl.textContent = _cmn;
+      const statusModel = document.getElementById('status-model');
+      if (statusModel) statusModel.textContent = _cmn;
+      updateCodeStatusBar();
       dd.remove();
     };
     dd.appendChild(item);
   }
 
-  event.currentTarget.style.position = 'relative';
-  event.currentTarget.appendChild(dd);
+  // Position above the button (fixed, same as chat mode)
+  const rect = event.currentTarget.getBoundingClientRect();
+  dd.style.cssText = `position:fixed;z-index:1000;min-width:220px;max-height:300px;overflow-y:auto;bottom:${window.innerHeight - rect.top + 4}px;right:${window.innerWidth - rect.right}px`;
+  document.body.appendChild(dd);
   setTimeout(() => document.addEventListener('click', function rm() { dd.remove(); document.removeEventListener('click', rm); }), 0);
 }
 
 function setCodePermission(perm, btn) {
   state.codePermission = perm;
   localStorage.setItem('codePermission', perm);
-  document.querySelectorAll('#code-permission-selector .permission-opt').forEach(b => b.classList.remove('active'));
-  if (btn) btn.classList.add('active');
+  // Update both welcome and chat permission selectors
+  document.querySelectorAll('#code-permission-selector .permission-opt, #code-chat-permission-selector .permission-opt').forEach(b => {
+    b.classList.toggle('active', b.dataset.perm === perm);
+  });
+}
+
+// Thinking level for code mode
+const _CODE_THINKING_LEVELS = ['none', 'low', 'medium', 'high'];
+function cycleCodeThinkingLevel() {
+  const levels = _CODE_THINKING_LEVELS;
+  const current = state.codeThinking || 'none';
+  const idx = (levels.indexOf(current) + 1) % levels.length;
+  state.codeThinking = levels[idx];
+  const btn = document.getElementById('code-btn-thinking');
+  if (btn) {
+    btn.style.color = state.codeThinking !== 'none' ? 'var(--accent)' : '';
+    btn.title = `Thinking: ${state.codeThinking}`;
+  }
+  showToast(`Thinking: ${state.codeThinking}`);
+}
+
+// AI refinement for code mode input
+async function refineCodeInput() {
+  const input = document.getElementById('code-chat-input');
+  if (!input?.value?.trim()) return;
+  const btn = document.getElementById('code-btn-refine');
+  if (btn) btn.style.opacity = '0.5';
+  try {
+    const resp = await API.post('/v1/refine', { text: input.value, context: 'code' });
+    if (resp.refined) { input.value = resp.refined; autoResizeInput(input); }
+  } catch (e) {
+    showToast('Refine failed: ' + e.message, true);
+  }
+  if (btn) btn.style.opacity = '';
+}
+
+// Tool display toggle for code mode
+function toggleCodeToolDisplay() {
+  state.codeShowToolCalls = !state.codeShowToolCalls;
+  const btn = document.getElementById('code-btn-toggle-tools');
+  if (btn) btn.style.color = state.codeShowToolCalls ? 'var(--accent)' : '';
+  // Toggle visibility of tool blocks in code messages
+  document.querySelectorAll('#code-messages-container .tool-block').forEach(el => {
+    el.style.display = state.codeShowToolCalls ? '' : 'none';
+  });
 }
 
 function setCodeInput(text) {
@@ -13825,12 +13985,32 @@ function triggerCodeFileUpload() {
 async function sendCodeMessage() {
   const isWelcome = state.currentView === 'code-welcome';
   const input = isWelcome ? document.getElementById('code-welcome-input') : document.getElementById('code-chat-input');
-  const text = input?.value?.trim();
+  let text = input?.value?.trim();
   if (!text) return;
 
   if (!state.codeFolder) {
     showToast('Please select a project folder first', true);
     return;
+  }
+
+  // Slash commands
+  if (text === '/init') {
+    text = `Analyze this project and generate an AGENTS.md file in the project root (${state.codeFolder}).
+
+The AGENTS.md file should contain:
+1. A brief project description (1-2 sentences)
+2. Build/test/run commands (how to build, test, lint, run the project)
+3. Code style conventions (language, formatting, naming patterns you observe)
+4. Key architecture notes (main entry points, important directories, patterns used)
+5. Any other guidance that would help a coding agent work effectively in this codebase
+
+To gather this information:
+- Read README.md, package.json, Makefile, Cargo.toml, pyproject.toml, or similar config files
+- Look at the directory structure
+- Sample a few source files to understand conventions
+- Check for existing linter/formatter configs (.eslintrc, .prettierrc, rustfmt.toml, etc.)
+
+Keep it concise and practical. Focus on what a coding agent needs to know, not documentation for humans.`;
   }
 
   input.value = '';
@@ -13845,6 +14025,8 @@ async function sendCodeMessage() {
       const folderProject = state.codeFolder || null;
       const resp = await API.createSession(agentId, model, folderProject, 'code');
       state.codeSessionId = resp.session_id || resp.sessionId;
+      state.codeSessionTitle = '';
+      updateCodeToolbarTitle();
     } catch (e) {
       showToast('Failed to create code session: ' + e.message, true);
       return;
@@ -13880,6 +14062,7 @@ async function sendCodeMessage() {
       model: model,
     };
     if (state.codePermission === 'plan') body.mode = 'plan';
+    if (state.codeThinking && state.codeThinking !== 'none') body.thinking = state.codeThinking;
     if (state.codeFolder) body.project = state.codeFolder;
 
     const resp = await fetch(`${BASE_URL}/v1/chat`, {
@@ -13934,7 +14117,12 @@ async function sendCodeMessage() {
             } else if (eventType === 'done') {
               if (d.text) assistantText = d.text;
               if (d.tokens) state.codeMessages[msgIdx].metadata.tokens = d.tokens;
+              if (d.tokens_in) state.codeMessages[msgIdx].metadata.tokens_in = d.tokens_in;
+              if (d.tokens_out) state.codeMessages[msgIdx].metadata.tokens_out = d.tokens_out;
+              if (d.duration) state.codeMessages[msgIdx].metadata.duration = d.duration;
               if (d.model) state.codeMessages[msgIdx].metadata.model = d.model;
+              if (d.max_context) state.codeMessages[msgIdx].metadata.max_context = d.max_context;
+              updateCodeStatusBar();
             } else if (eventType === 'error') {
               showToast('Error: ' + (d.message || 'Unknown error'), true);
             }
@@ -13963,6 +14151,11 @@ async function sendCodeMessage() {
   refreshCodeStatus();
   refreshCodeFileTree();
   loadCodeSessions();
+
+  // Fetch session title (may already exist or arrive via async LLM summary)
+  if (state.codeSessionId) {
+    _pollCodeSessionTitle();
+  }
 }
 
 function updateCodeStreamingUI(isStreaming) {
@@ -14097,8 +14290,30 @@ function initCodeChat() {
     document.getElementById('code-toolbar-folder').title = state.codeFolder;
   }
 
+  // Ensure model is set
+  if (!state.codeModel && state.models.length) {
+    state.codeModel = state.models[0]?.id || state.models[0] || '';
+  }
+  const codeModelName = _shortModelName(state.codeModel) || 'Select model';
   const modelEl = document.getElementById('code-model-selector-name');
-  if (modelEl) modelEl.textContent = _shortModelName(state.codeModel);
+  if (modelEl) modelEl.textContent = codeModelName;
+  // Update full status bar for code mode
+  updateCodeStatusBar();
+  // Sync permission selector in chat composer
+  document.querySelectorAll('#code-chat-permission-selector .permission-opt').forEach(b => {
+    b.classList.toggle('active', b.dataset.perm === (state.codePermission || 'ask'));
+  });
+  // Sync thinking button state
+  const thinkBtn = document.getElementById('code-btn-thinking');
+  if (thinkBtn) {
+    thinkBtn.style.color = (state.codeThinking && state.codeThinking !== 'none') ? 'var(--accent)' : '';
+    thinkBtn.title = `Thinking: ${state.codeThinking || 'none'}`;
+  }
+  // Sync tool display button
+  const toolBtn = document.getElementById('code-btn-toggle-tools');
+  if (toolBtn) toolBtn.style.color = state.codeShowToolCalls ? 'var(--accent)' : '';
+  // Update toolbar title
+  updateCodeToolbarTitle();
 
   renderCodeMessages();
   scrollCodeToBottom();
@@ -14174,11 +14389,34 @@ function renderCodeFileTree(nodes, container, depth) {
       const icon = _fileIcon(ext);
       item.innerHTML = `${icon}<span>${esc(node.name)}</span>`;
       item.onclick = () => {
-        // Could open file preview — for now just show path
-        showToast(node.path);
+        openCodeFilePreview(node.path, node.name);
       };
       container.appendChild(item);
     }
+  }
+}
+
+async function openCodeFilePreview(filePath, fileName) {
+  const panel = document.getElementById('code-diff-panel');
+  if (!panel) return;
+  state.codeDiffPanelOpen = true;
+  panel.classList.add('open');
+  const headerSpan = panel.querySelector('.code-diff-header span');
+  if (headerSpan) headerSpan.textContent = fileName || filePath.split('/').pop();
+  const contentEl = panel.querySelector('.code-diff-content');
+  if (contentEl) contentEl.innerHTML = '<div style="padding:16px;color:var(--text-400)">Loading...</div>';
+  try {
+    const data = await API.getFilePreview(filePath);
+    if (data.error) throw new Error(data.error);
+    if (data.type === 'image') {
+      if (contentEl) contentEl.innerHTML = `<div style="padding:16px;text-align:center"><img src="${BASE_URL}/v1/files/download?path=${encodeURIComponent(filePath)}" style="max-width:100%;max-height:80vh;border-radius:6px" /></div>`;
+    } else {
+      const text = data.content || '';
+      const truncNote = data.truncated ? `<div style="padding:8px 12px;color:var(--text-400);font-size:11px;border-top:1px solid var(--border-200)">Truncated — ${data.size ? (data.size/1024).toFixed(1)+'KB total' : ''}</div>` : '';
+      if (contentEl) contentEl.innerHTML = `<pre style="margin:0;padding:12px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-all;font-family:var(--font-mono);color:var(--text-100);overflow:auto">${esc(text)}</pre>${truncNote}`;
+    }
+  } catch (e) {
+    if (contentEl) contentEl.innerHTML = `<div style="padding:16px;color:var(--text-400)">Could not read file: ${esc(e.message)}</div>`;
   }
 }
 
@@ -14201,10 +14439,15 @@ async function refreshCodeDiff() {
     const toggle = document.getElementById('code-diff-toggle');
     if (data.files && data.files.length > 0) {
       toggle.style.display = '';
-      document.getElementById('code-diff-plus').textContent = '+' + data.added;
-      document.getElementById('code-diff-minus').textContent = '-' + data.removed;
-    } else {
+      document.getElementById('code-diff-plus').textContent = '+' + (data.added || 0);
+      document.getElementById('code-diff-minus').textContent = '-' + (data.removed || 0);
+    } else if (data.error) {
+      console.warn('Code diff error:', data.error);
       toggle.style.display = 'none';
+    } else {
+      toggle.style.display = '';
+      document.getElementById('code-diff-plus').textContent = '+0';
+      document.getElementById('code-diff-minus').textContent = '-0';
     }
 
     // Render diff content if panel open
