@@ -12817,6 +12817,7 @@ KNOWN_MODELS = {
     "gemini": {"icon": "\U0001f48e", "priority": 70, "max_context": 1000000, "max_output": 65536, "capabilities": ["coding", "analysis"], "inference": {"temperature": 1.0, "top_p": 0.95}, "raw_formats": ["image/*", "application/pdf"]},
     "qwen": {"icon": "\U0001f43c", "priority": 50, "max_context": 131072, "max_output": 16384, "capabilities": ["coding", "analysis"], "inference": {"temperature": 0.7, "top_p": 0.9}, "raw_formats": []},
     "qwen-vl": {"icon": "\U0001f43c", "priority": 50, "max_context": 131072, "max_output": 16384, "capabilities": ["coding", "analysis"], "inference": {"temperature": 0.7, "top_p": 0.9}, "raw_formats": ["image/*"]},
+    "gemma": {"icon": "\U0001f48e", "priority": 35, "max_context": 32768, "max_output": 8192, "capabilities": ["fast", "local"], "inference": {"temperature": 0.7, "top_p": 0.9}, "raw_formats": ["image/*"]},
     "crow": {"icon": "\U0001f426\u200d\u2b1b", "priority": 30, "max_context": 32768, "max_output": 4096, "capabilities": ["fast", "local"], "inference": {"temperature": 0.7, "top_p": 0.9, "min_p": 0.05}, "raw_formats": []},
     "llama": {"icon": "\U0001f999", "priority": 40, "max_context": 131072, "max_output": 16384, "capabilities": ["coding", "local"], "inference": {"temperature": 0.7, "top_p": 0.9}, "raw_formats": []},
     "mistral": {"icon": "\U0001f32c\ufe0f", "priority": 45, "max_context": 131072, "max_output": 16384, "capabilities": ["coding", "analysis"], "inference": {"temperature": 0.7}, "raw_formats": []},
