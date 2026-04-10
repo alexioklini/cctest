@@ -12896,12 +12896,6 @@ def init_models_config(providers: dict, existing_models: dict | None = None) -> 
             else:
                 if "provider" not in _models_config[model_id]:
                     _models_config[model_id]["provider"] = name
-                # Backfill defaults from KNOWN_MODELS if missing
-                known = _match_known_model(model_id)
-                if "max_context" not in _models_config[model_id] and "max_context" in known:
-                    _models_config[model_id]["max_context"] = known["max_context"]
-                if "raw_formats" not in _models_config[model_id] and "raw_formats" in known:
-                    _models_config[model_id]["raw_formats"] = known["raw_formats"]
         # Remove models from this provider that are no longer in the /models list
         if discovered:
             stale = [
@@ -12912,6 +12906,14 @@ def init_models_config(providers: dict, existing_models: dict | None = None) -> 
             ]
             for mid in stale:
                 del _models_config[mid]
+
+    # Backfill defaults from KNOWN_MODELS for all models missing fields
+    for model_id, cfg in _models_config.items():
+        known = _match_known_model(model_id)
+        if "max_context" not in cfg and "max_context" in known:
+            cfg["max_context"] = known["max_context"]
+        if "raw_formats" not in cfg and "raw_formats" in known:
+            cfg["raw_formats"] = known["raw_formats"]
 
     return _models_config
 
