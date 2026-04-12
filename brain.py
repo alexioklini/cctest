@@ -99,7 +99,6 @@ def start_server(config: dict, foreground: bool = False):
         "--port", str(port),
         "--base-url", provider["base_url"],
         "--api-key", provider.get("api_key", ""),
-        "-t", provider.get("type", "openai"),
         "-m", provider.get("default_model", ""),
         "--max-context", str(max_ctx),
     ]
@@ -254,7 +253,9 @@ def is_qmd_running() -> bool:
 def start_qmd():
     """Start QMD MCP HTTP daemon if not running."""
     if is_qmd_running():
+        print("  QMD: already running")
         return
+    stop_qmd() # Ensure any stale QMD process is stopped
     qmd_bin = shutil.which("qmd")
     if not qmd_bin:
         print("  QMD: not installed (npm install -g @tobilu/qmd)")
@@ -266,13 +267,14 @@ def start_qmd():
         stdout=log_fd, stderr=log_fd,
         start_new_session=True, cwd=BASE_DIR,
     )
-    # Wait briefly for startup
-    for _ in range(10):
-        time.sleep(0.3)
+    # Wait longer for startup
+    for _ in range(20): # 20 * 0.5s = 10 seconds total wait
+        time.sleep(0.5)
         if is_qmd_running():
             print("  QMD: ready (port 8181)")
             return
-    print("  QMD: started (may take a moment)")
+    print("  QMD: timed out waiting for startup.")
+    print(f"  Check QMD logs: {os.path.expanduser('~/.brain-agent/qmd.log')}")
 
 
 def stop_qmd():

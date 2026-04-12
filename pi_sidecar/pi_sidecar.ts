@@ -1,15 +1,16 @@
 /**
- * PI Sidecar — Node.js process running the PI Agent SDK for Brain Agent code mode.
+ * PI Sidecar — Node.js process running the PI Agent SDK for Brain Agent.
+ * Sole agentic loop for both chat and code mode.
  *
- * Matches the REST API contract of sdk_sidecar.py:
+ * REST API:
  *   POST /query          — start a new agent prompt, returns query_id
  *   GET  /events/{id}    — poll for events (after=N)
  *   POST /cancel/{id}    — abort running query
  *   POST /answer/{id}    — deliver user answer for interactive mode
  *   GET  /health         — health check
  *
- * Uses PI SDK with OpenAI-compatible providers (oMLX, Mistral).
- * Brain Agent custom tools accessed via HTTP to server's /v1/tools/call endpoint.
+ * All providers are OpenAI-compatible. Brain Agent custom tools accessed via
+ * HTTP to the main server's /v1/tools/call endpoint.
  */
 
 import http from "node:http";
@@ -18,17 +19,71 @@ import path from "node:path";
 import {
   createAgentSession,
   createCodingTools,
+  createReadOnlyTools,
   defineTool,
   SessionManager,
   AuthStorage,
   ModelRegistry,
   SettingsManager,
+  DefaultPackageManager,
+  DefaultResourceLoader,
   type AgentSession,
 } from "@mariozechner/pi-coding-agent";
 import type { Model } from "@mariozechner/pi-ai";
 
 const PORT = parseInt(process.env.PI_SIDECAR_PORT || "8422", 10);
 const QUERY_TTL = 300_000; // 5 min to keep finished queries
+const AGENT_DIR = path.join(process.env.HOME || "~", ".brain-agent", "pi-agent");
+const PACKAGES_CONFIG = path.join(process.env.HOME || "~", ".brain-agent", "pi-packages.json");
+
+// ── Package Config Persistence ──────────────────────────────────────────
+
+interface PackageConfig {
+  packages: Array<string | { source: string; enabled: boolean }>;
+}
+
+function loadPackageConfig(): PackageConfig {
+  try {
+    if (fs.existsSync(PACKAGES_CONFIG)) {
+      return JSON.parse(fs.readFileSync(PACKAGES_CONFIG, "utf-8"));
+    }
+  } catch {}
+  return { packages: [] };
+}
+
+function savePackageConfig(cfg: PackageConfig) {
+  fs.mkdirSync(path.dirname(PACKAGES_CONFIG), { recursive: true });
+  fs.writeFileSync(PACKAGES_CONFIG, JSON.stringify(cfg, null, 2));
+}
+
+/** Get list of enabled package sources for SettingsManager */
+function getEnabledPackageSources(): string[] {
+  const cfg = loadPackageConfig();
+  return cfg.packages
+    .filter((p) => typeof p === "string" || p.enabled !== false)
+    .map((p) => (typeof p === "string" ? p : p.source));
+}
+
+/** Build a SettingsManager with packages from our config */
+function buildSettingsManager() {
+  const enabledSources = getEnabledPackageSources();
+  return SettingsManager.inMemory({
+    compaction: { enabled: true, reserveTokens: 16000, keepRecentTokens: 8000 },
+    retry: { enabled: true },
+    packages: enabledSources,
+  });
+}
+
+/** Build a DefaultPackageManager for install/remove/list operations */
+function buildPackageManager(cwd: string = "/tmp") {
+  const settingsManager = buildSettingsManager();
+  fs.mkdirSync(AGENT_DIR, { recursive: true });
+  return new DefaultPackageManager({
+    cwd,
+    agentDir: AGENT_DIR,
+    settingsManager,
+  });
+}
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -59,11 +114,11 @@ interface QueryPayload {
   provider_config: ProviderInfo;
   interactive?: boolean;
   thinking_level?: string;
+  skip_project_context?: boolean;
 }
 
 interface ProviderInfo {
   name: string;
-  type: string;
   base_url: string;
   api_key: string;
 }
@@ -154,23 +209,20 @@ function buildBrainTools(
 
 // ── Model Builder ────────────────────────────────────────────────────────
 
-function buildModel(modelId: string, provider: ProviderInfo): Model<"openai-completions"> {
+function buildModel(modelId: string, provider: ProviderInfo): Model<any> {
   const baseUrl = provider.base_url.replace(/\/$/, "");
   const isNonOpenAI = !baseUrl.includes("api.openai.com");
-
   return {
     id: modelId,
     name: modelId,
-    api: "openai-completions",
+    api: "openai-completions" as const,
     provider: provider.name,
-    // Keep /v1 suffix — PI SDK's OpenAI client appends /chat/completions
     baseUrl,
     reasoning: false,
     input: ["text", "image"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 131072,
     maxTokens: 16384,
-    // Non-OpenAI providers (Mistral, oMLX) don't support store/developer role
     compat: isNonOpenAI ? {
       supportsStore: false,
       supportsDeveloperRole: false,
@@ -189,6 +241,7 @@ async function runQuery(queryId: string, payload: QueryPayload) {
   const {
     message, model: modelId, system_prompt, agent_id, session_id,
     cwd, tool_defs, server_url, provider_config, thinking_level,
+    skip_project_context,
   } = payload;
 
   try {
@@ -199,13 +252,29 @@ async function runQuery(queryId: string, payload: QueryPayload) {
     authStorage.setRuntimeApiKey(provider_config.name, provider_config.api_key);
     const modelRegistry = ModelRegistry.inMemory(authStorage);
 
-    const settingsManager = SettingsManager.inMemory({
-      compaction: { enabled: true },
-      retry: { enabled: false },
+    const settingsManager = buildSettingsManager();
+
+    // Build resource loader with packages from Brain Agent config
+    fs.mkdirSync(AGENT_DIR, { recursive: true });
+    const resourceLoader = new DefaultResourceLoader({
+      cwd,
+      agentDir: AGENT_DIR,
+      settingsManager,
+      noPromptTemplates: true,
+      noThemes: true,
     });
+    try { await resourceLoader.reload(); } catch (e) {
+      console.error("[PI] Resource loader reload failed:", e);
+    }
 
     const apiKey = provider_config.api_key;
-    const allTools = [...createCodingTools(cwd), ...brainTools];
+    // createCodingTools → [read, bash, edit, write]
+    // createReadOnlyTools → [read, grep, find, ls] — skip index 0 to avoid duplicate read
+    const builtInTools = [
+      ...createCodingTools(cwd),
+      ...createReadOnlyTools(cwd).slice(1),
+    ];
+    const allTools = [...builtInTools, ...brainTools] as any;
     const { session } = await createAgentSession({
       cwd,
       model,
@@ -215,6 +284,7 @@ async function runQuery(queryId: string, payload: QueryPayload) {
       settingsManager,
       authStorage,
       modelRegistry,
+      resourceLoader,
     });
 
     // Ensure API key reaches the stream function
@@ -222,31 +292,33 @@ async function runQuery(queryId: string, payload: QueryPayload) {
 
     q.session = session;
 
-    // Append project context files (CLAUDE.md, AGENTS.md, .cursorrules) to PI's default prompt
-    // PI SDK provides its own minimal system prompt — we don't override it
-    const contextFiles = ["CLAUDE.md", "AGENTS.md", ".cursorrules"];
-    const seen = new Set<string>();
-    let dir = cwd;
-    let projectContext = "";
-    while (dir && dir !== path.dirname(dir)) {
-      for (const name of contextFiles) {
-        const fp = path.join(dir, name);
-        try {
-          if (fs.existsSync(fp) && !seen.has(fp)) {
-            const content = fs.readFileSync(fp, "utf-8").trim();
-            if (content) {
-              const rel = path.relative(cwd, fp) || name;
-              projectContext += `\n\n# Project Instructions (${rel})\n${content}`;
-              seen.add(fp);
+    // Append project context files (CLAUDE.md, AGENTS.md, .cursorrules) to PI's default prompt.
+    // Skipped for chat mode (skip_project_context=true) — only code mode inherits project files.
+    if (!skip_project_context) {
+      const contextFiles = ["CLAUDE.md", "AGENTS.md", ".cursorrules"];
+      const seen = new Set<string>();
+      let dir = cwd;
+      let projectContext = "";
+      while (dir && dir !== path.dirname(dir)) {
+        for (const name of contextFiles) {
+          const fp = path.join(dir, name);
+          try {
+            if (fs.existsSync(fp) && !seen.has(fp)) {
+              const content = fs.readFileSync(fp, "utf-8").trim();
+              if (content) {
+                const rel = path.relative(cwd, fp) || name;
+                projectContext += `\n\n# Project Instructions (${rel})\n${content}`;
+                seen.add(fp);
+              }
             }
-          }
-        } catch {}
+          } catch {}
+        }
+        if (fs.existsSync(path.join(dir, ".git"))) break;
+        dir = path.dirname(dir);
       }
-      if (fs.existsSync(path.join(dir, ".git"))) break;
-      dir = path.dirname(dir);
-    }
-    if (projectContext) {
-      session.agent.state.systemPrompt += projectContext;
+      if (projectContext) {
+        session.agent.state.systemPrompt += projectContext;
+      }
     }
 
     let tokensIn = 0;
@@ -256,7 +328,6 @@ async function runQuery(queryId: string, payload: QueryPayload) {
 
     session.subscribe((event) => {
       if (q.done) return;
-
       switch (event.type) {
         case "message_update": {
           const mevt = event.assistantMessageEvent;
@@ -320,6 +391,7 @@ async function runQuery(queryId: string, payload: QueryPayload) {
             }
           }
           break;
+
       }
     });
 
@@ -328,13 +400,22 @@ async function runQuery(queryId: string, payload: QueryPayload) {
 
     await session.prompt(message);
 
+    let stats: any = null;
+    try { stats = session.getSessionStats(); } catch (e) {
+      console.error("[PI] getSessionStats failed:", e);
+    }
+
     pushEvent(queryId, "_result", {
       text: fullText,
-      tokens_in: tokensIn,
-      tokens_out: tokensOut,
-      cost: 0,
+      tokens_in: stats?.tokens?.input ?? tokensIn,
+      tokens_out: stats?.tokens?.output ?? tokensOut,
+      tokens_cache_read: stats?.tokens?.cacheRead ?? 0,
+      tokens_cache_write: stats?.tokens?.cacheWrite ?? 0,
+      tokens_total: stats?.tokens?.total ?? (tokensIn + tokensOut),
+      cost: stats?.cost ?? 0,
+      context_usage: stats?.contextUsage ?? null,
       tools: toolCalls,
-      sdk_session_id: null,
+      sdk_session_id: stats?.sessionId ?? null,
     });
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err);
@@ -421,6 +502,123 @@ const server = http.createServer(async (req, res) => {
         jsonResponse(res, { status: "ok" });
       } else {
         jsonResponse(res, { error: "no pending question for this query" }, 404);
+      }
+      return;
+    }
+
+    // ── Package Management Endpoints ──────────────────────────────────────
+
+    if (req.method === "GET" && path === "/packages") {
+      try {
+        const cfg = loadPackageConfig();
+        const pm = buildPackageManager();
+        const configured = pm.listConfiguredPackages();
+        // Merge our enabled/disabled state with SDK's resolved info
+        const packages = cfg.packages.map((p) => {
+          const source = typeof p === "string" ? p : p.source;
+          const enabled = typeof p === "string" || p.enabled !== false;
+          const found = configured.find((c) => c.source === source);
+          return {
+            source,
+            enabled,
+            scope: found?.scope || "user",
+            installedPath: found?.installedPath || null,
+          };
+        });
+        // Resolve to get resource details
+        let resolved: any = null;
+        try {
+          resolved = await pm.resolve(async () => "skip" as const);
+        } catch {}
+        jsonResponse(res, { packages, resolved });
+      } catch (e: any) {
+        jsonResponse(res, { error: e.message }, 500);
+      }
+      return;
+    }
+
+    if (req.method === "POST" && path === "/packages/install") {
+      const body = JSON.parse(await readBody(req)) as { source: string };
+      if (!body.source) { jsonResponse(res, { error: "source required" }, 400); return; }
+      try {
+        const pm = buildPackageManager();
+        await pm.install(body.source);
+        // Add to our config
+        const cfg = loadPackageConfig();
+        const exists = cfg.packages.some((p) =>
+          (typeof p === "string" ? p : p.source) === body.source
+        );
+        if (!exists) {
+          cfg.packages.push(body.source);
+          savePackageConfig(cfg);
+        }
+        jsonResponse(res, { status: "installed", source: body.source });
+      } catch (e: any) {
+        jsonResponse(res, { error: e.message }, 500);
+      }
+      return;
+    }
+
+    if (req.method === "POST" && path === "/packages/remove") {
+      const body = JSON.parse(await readBody(req)) as { source: string };
+      if (!body.source) { jsonResponse(res, { error: "source required" }, 400); return; }
+      try {
+        const pm = buildPackageManager();
+        try { await pm.remove(body.source); } catch {}
+        // Remove from config
+        const cfg = loadPackageConfig();
+        cfg.packages = cfg.packages.filter((p) =>
+          (typeof p === "string" ? p : p.source) !== body.source
+        );
+        savePackageConfig(cfg);
+        jsonResponse(res, { status: "removed", source: body.source });
+      } catch (e: any) {
+        jsonResponse(res, { error: e.message }, 500);
+      }
+      return;
+    }
+
+    if (req.method === "POST" && path === "/packages/toggle") {
+      const body = JSON.parse(await readBody(req)) as { source: string; enabled: boolean };
+      if (!body.source) { jsonResponse(res, { error: "source required" }, 400); return; }
+      try {
+        const cfg = loadPackageConfig();
+        const idx = cfg.packages.findIndex((p) =>
+          (typeof p === "string" ? p : p.source) === body.source
+        );
+        if (idx === -1) { jsonResponse(res, { error: "package not found" }, 404); return; }
+        cfg.packages[idx] = { source: body.source, enabled: body.enabled };
+        savePackageConfig(cfg);
+        jsonResponse(res, { status: "toggled", source: body.source, enabled: body.enabled });
+      } catch (e: any) {
+        jsonResponse(res, { error: e.message }, 500);
+      }
+      return;
+    }
+
+    if (req.method === "GET" && path === "/packages/search") {
+      const query = params.get("q") || "pi-package";
+      try {
+        // Search npm registry for packages tagged with pi-package
+        const npmUrl = `https://registry.npmjs.org/-/v1/search?text=keywords:pi-package+${encodeURIComponent(query)}&size=30`;
+        const npmRes = await fetch(npmUrl, {
+          headers: { "Accept": "application/json" },
+          signal: AbortSignal.timeout(10_000),
+        });
+        const data = await npmRes.json() as any;
+        const results = (data.objects || []).map((obj: any) => ({
+          name: obj.package?.name || "",
+          version: obj.package?.version || "",
+          description: obj.package?.description || "",
+          author: obj.package?.author?.name || obj.package?.publisher?.username || "",
+          keywords: obj.package?.keywords || [],
+          npm_url: obj.package?.links?.npm || "",
+          repository: obj.package?.links?.repository || "",
+          date: obj.package?.date || "",
+        }));
+        jsonResponse(res, { results });
+      } catch (e: any) {
+        jsonResponse(res, { error: e.message }, 500);
       }
       return;
     }

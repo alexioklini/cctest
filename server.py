@@ -231,9 +231,9 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN summary TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
-            # Add compacted flag for lossless context management (migration)
+            # Drop stale compacted column (LCM removed in stage 2d)
             try:
-                conn.execute("ALTER TABLE messages ADD COLUMN compacted INTEGER DEFAULT 0")
+                conn.execute("ALTER TABLE messages DROP COLUMN compacted")
             except sqlite3.OperationalError:
                 pass
             # ── Artifact tables ──
@@ -448,20 +448,14 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=list)
-    def load_messages(session_id, include_compacted=False):
+    def load_messages(session_id):
         with _db_conn() as conn:
-            if include_compacted:
-                rows = conn.execute(
-                    "SELECT id, role, content, metadata, compacted FROM messages WHERE session_id = ? ORDER BY id",
-                    (session_id,)
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT id, role, content, metadata, compacted FROM messages WHERE session_id = ? AND (compacted = 0 OR compacted IS NULL) ORDER BY id",
-                    (session_id,)
-                ).fetchall()
+            rows = conn.execute(
+                "SELECT id, role, content, metadata FROM messages WHERE session_id = ? ORDER BY id",
+                (session_id,)
+            ).fetchall()
             messages = []
-            for mid, role, content, metadata, compacted in rows:
+            for mid, role, content, metadata in rows:
                 try:
                     parsed = json.loads(content)
                 except (json.JSONDecodeError, TypeError):
@@ -474,8 +468,6 @@ class ChatDB:
                             msg["metadata"] = meta
                     except (json.JSONDecodeError, TypeError):
                         pass
-                if compacted:
-                    msg["compacted"] = True
                 messages.append(msg)
             return messages
 
@@ -485,7 +477,7 @@ class ChatDB:
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
             q = ("SELECT s.*, "
-                 "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND (m.compacted = 0 OR m.compacted IS NULL)) as message_count, "
+                 "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) as message_count, "
                  "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.metadata LIKE '%\"files\"%') as has_attachments "
                  "FROM sessions s WHERE 1=1")
             params = []
@@ -690,14 +682,13 @@ class Session:
     """A conversation session with an agent."""
 
     def __init__(self, agent_id: str = "main", model: str | None = None,
-                 api_key: str = "", base_url: str = "", api_type: str = "anthropic",
+                 api_key: str = "", base_url: str = "",
                  max_context: int = 131072, session_id: str | None = None):
         self.id = session_id or uuid.uuid4().hex[:12]
         self.agent_id = agent_id
         self.model = model or ""
         self.api_key = api_key
         self.base_url = base_url
-        self.api_type = api_type
         self.max_context = max_context
         self.messages: list[dict] = []
         self.cancel_token = engine.CancelToken()
@@ -832,7 +823,6 @@ class SessionManager:
                 agent_id=info["agent_id"], model=model,
                 api_key=prov.get("api_key", server_config.get("api_key", "")),
                 base_url=prov.get("base_url", server_config.get("base_url", "")),
-                api_type=prov.get("api_type", server_config.get("api_type", "anthropic")),
                 max_context=engine.get_model_max_context(model) if model else server_config.get("max_context", 131072),
                 session_id=session_id,
             )
@@ -1173,7 +1163,6 @@ loop_manager = LoopManager()
 server_config = {
     "api_key": "",
     "base_url": "http://localhost:8317/v1",
-    "api_type": "anthropic",
     "default_model": "claude-opus-4-5-20251101",
     "max_context": 131072,
 }
@@ -1216,18 +1205,23 @@ def _trigger_warmup(session):
 
             # Build minimal payload — system prompt + tools only, no dummy user message
             # so the KV cache prefix matches any real first request exactly.
-            # Get tool definitions
             allowed = engine._get_agent_tool_names()
-            if session.api_type in ("openai", "mistral"):
-                tools = engine._filter_tools(engine.TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
-                # OpenAI/Mistral API requires at least one message — use system-only
-                messages = [{"role": "system", "content": system_prompt}]
-                endpoint = f"{session.base_url}/chat/completions"
-            else:
-                tools = engine._filter_tools(engine.TOOL_DEFINITIONS, allowed)
-                # Anthropic API requires at least one user message — unavoidable
-                messages = [{"role": "user", "content": "."}]
-                endpoint = f"{session.base_url}/messages"
+            raw_tools = engine._filter_tools(engine.TOOL_DEFINITIONS, allowed)
+            # Wrap to OpenAI tool format for the /chat/completions warmup
+            tools = [{
+                "type": "function",
+                "function": {
+                    "name": td["name"],
+                    "description": td["description"],
+                    "parameters": {
+                        "type": td["input_schema"]["type"],
+                        "properties": td["input_schema"]["properties"],
+                        "required": td["input_schema"].get("required", []),
+                    },
+                },
+            } for td in raw_tools]
+            messages = [{"role": "system", "content": system_prompt}]
+            endpoint = f"{session.base_url}/chat/completions"
 
             payload = {
                 "model": engine.get_api_model_id(session.model),
@@ -1236,27 +1230,15 @@ def _trigger_warmup(session):
                 "stream": False,
                 "tools": tools,
             }
-            if session.api_type not in ("openai", "mistral"):
-                payload["system"] = system_prompt
 
             if session._warmup_cancel.is_set():
                 return
 
-            if session.api_type == "mistral":
-                # Mistral warmup via SDK (replicates Vibe CLI behavior)
-                client = engine._create_mistral_client(session.api_key)
-                vibe_headers = engine._get_mistral_vibe_headers(session.id)
-                vibe_metadata = engine._get_mistral_vibe_metadata(session.id)
-                client.chat.complete(
-                    model=engine.get_api_model_id(session.model), messages=messages, max_tokens=1,
-                    tools=tools, http_headers=vibe_headers, metadata=vibe_metadata,
-                )
-            else:
-                headers = engine.make_headers(session.api_key, session.api_type)
-                data = json.dumps(payload).encode("utf-8")
-                req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    resp.read()  # consume response
+            headers = engine.make_headers(session.api_key)
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                resp.read()  # consume response
 
             if session._warmup_cancel.is_set():
                 print(f"  [warmup] {session.model} cancelled ({session.id[:8]})")
@@ -1660,11 +1642,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         # --- Hooks GET routes ---
         elif path.startswith("/v1/agents/") and path.endswith("/hooks"):
             self._handle_hooks_get(path)
-        # --- Context Management GET routes ---
-        elif path == "/v1/context/config":
-            self._handle_context_config_get()
-        elif path.startswith("/v1/context/stats"):
-            self._handle_context_stats()
         # --- MCP GET routes ---
         elif path == "/v1/mcp/connections":
             self._handle_mcp_list()
@@ -1712,6 +1689,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_file_preview()
         elif path == "/v1/files/tree":
             self._handle_file_tree()
+        elif path == "/v1/code/packages" or path == "/v1/code/packages/search":
+            self._handle_code_packages_get(path)
         elif path == "/v1/code/diff":
             self._handle_code_diff()
         elif path == "/v1/code/status":
@@ -1858,7 +1837,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     prov = self._resolve_provider(new_model)
                     s.api_key = prov["api_key"]
                     s.base_url = prov["base_url"]
-                    s.api_type = prov["api_type"]
                 except Exception:
                     pass
             # Resolve provider for warmup check
@@ -1912,17 +1890,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_node_result()
         elif path == "/v1/nodes/execute":
             self._handle_node_execute()
+        # --- Code mode packages POST routes ---
+        elif path.startswith("/v1/code/packages/"):
+            self._handle_code_packages_post(path)
         # --- Tools config POST routes ---
         elif path == "/v1/tools/config":
             self._handle_tools_config_save()
         # --- Hooks POST routes ---
         elif path.startswith("/v1/agents/") and path.endswith("/hooks"):
             self._handle_hooks_save(path)
-        # --- Context Management POST routes ---
-        elif path == "/v1/context/compact":
-            self._handle_context_compact()
-        elif path == "/v1/context/config":
-            self._handle_context_config_save()
         # --- Channels POST routes ---
         elif path == "/v1/channels":
             self._handle_channels_action()
@@ -2206,7 +2182,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             models = engine.get_enabled_models()
         else:
             models = engine.get_available_models(
-                server_config["api_key"], server_config["base_url"], server_config["api_type"])
+                server_config["api_key"], server_config["base_url"])
         self._send_json({"models": models})
 
     def _handle_list_sessions(self):
@@ -2253,7 +2229,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         parts = path.split("/")
         sid = parts[3]
         session = sessions.get(sid)
-        msgs = ChatDB.load_messages(sid, include_compacted=True)
+        msgs = ChatDB.load_messages(sid)
 
         # Build system prompt for this session's agent
         system_prompt = ""
@@ -2319,7 +2295,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         "sdk": meta.get("sdk", False),
                         "request_payloads": payloads,
                     } if assistant_msg else None,
-                    "compacted": bool(m.get("compacted")),
                 })
                 i = (j + 1) if assistant_msg else (i + 1)
             else:
@@ -2349,10 +2324,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         })
 
     def _handle_get_session_files(self, path):
-        """GET /v1/sessions/<id>/files — returns all files from all messages (including compacted)"""
+        """GET /v1/sessions/<id>/files — returns all files from all messages"""
         parts = path.split("/")
         sid = parts[3]
-        msgs = ChatDB.load_messages(sid, include_compacted=True)
+        msgs = ChatDB.load_messages(sid)
         files = []
         seen = set()
         for m in msgs:
@@ -2634,7 +2609,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _resolve_provider_static(model: str) -> dict:
-        """Find the provider that has the given model. Returns {api_key, base_url, api_type, provider_name}.
+        """Find the provider that has the given model. Returns {api_key, base_url, provider_name}.
         Thread-safe. Delegates to engine.resolve_provider_for_model()."""
         if engine._models_config:
             model = engine.resolve_model(model)
@@ -2653,7 +2628,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             model=model,
             api_key=provider["api_key"],
             base_url=provider["base_url"],
-            api_type=provider["api_type"],
             max_context=body.get("max_context") or engine.get_model_max_context(model),
         )
         # Stamp user ownership
@@ -2716,7 +2690,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             provider = self._resolve_provider(model)
             session.api_key = provider["api_key"]
             session.base_url = provider["base_url"]
-            session.api_type = provider["api_type"]
             provider_name = provider.get("provider_name", "")
             providers_cfg = server_config.get("providers", {})
             warmup_enabled = providers_cfg.get(provider_name, {}).get("prefill_warmup", False)
@@ -2817,7 +2790,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 session.model = model_override
                 session.api_key = provider["api_key"]
                 session.base_url = provider["base_url"]
-                session.api_type = provider["api_type"]
 
         # Auto model selection: if agent uses model="auto", re-resolve per message
         agent_cfg = session.agent.config
@@ -2829,7 +2801,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     session.model = auto_model
                     session.api_key = provider["api_key"]
                     session.base_url = provider["base_url"]
-                    session.api_type = provider["api_type"]
                     session.max_context = engine.get_model_max_context(auto_model)
 
         # Reset cancel token
@@ -2875,32 +2846,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 is_base64 = f["encoding"] == "base64"
                 # Check file size (base64 is ~4/3 of raw)
                 too_large = is_base64 and len(f["content"]) * 3 // 4 > MAX_INLINE_BYTES
-                # OpenAI/Mistral only support image/* as multimodal content blocks
-                api_blocked = session.api_type in ("openai", "mistral") and not mime.startswith("image/")
+                # OpenAI multimodal only supports image/* inline
+                can_inline = mime.startswith("image/")
 
                 if (engine._mime_matches(mime, raw_formats)
-                        and is_base64 and not too_large and not api_blocked):
-                    # Route as multimodal content block — LLM sees raw data
-                    if session.api_type in ("openai", "mistral"):
-                        data_uri = f"data:{mime};base64,{f['content']}"
-                        content_blocks.append({"type": "image_url", "image_url": {"url": data_uri}})
-                    else:
-                        # Anthropic format
-                        if mime.startswith("image/"):
-                            content_blocks.append({
-                                "type": "image",
-                                "source": {"type": "base64", "media_type": mime, "data": f["content"]},
-                            })
-                        elif mime == "application/pdf":
-                            content_blocks.append({
-                                "type": "document",
-                                "source": {"type": "base64", "media_type": mime, "data": f["content"]},
-                            })
-                        else:
-                            content_blocks.append({
-                                "type": "image",
-                                "source": {"type": "base64", "media_type": mime, "data": f["content"]},
-                            })
+                        and is_base64 and not too_large and can_inline):
+                    data_uri = f"data:{mime};base64,{f['content']}"
+                    content_blocks.append({"type": "image_url", "image_url": {"url": data_uri}})
                 else:
                     # Route to disk — agent uses read_document/read_file
                     disk_files.append(f)
@@ -2992,16 +2944,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
 
-        # Check if this provider uses the Agent SDK backend
-        # - anthropic: check provider config `use_sdk` (default true)
-        # - mistral: always direct loop (uses Mistral SDK natively)
-        # - openai: always direct loop
+        # All chat/code requests go through the PI Agent SDK sidecar (port 8422).
         _prov = engine.resolve_provider_for_model(session.model)
-        _prov_cfg = server_config.get("providers", {}).get(_prov.get("provider_name", ""), {})
-        _use_sdk = _prov["api_type"] == "anthropic" and _prov_cfg.get("use_sdk", True)
-
-        # PI SDK sidecar for code mode — works with any provider (OpenAI, Mistral)
-        _use_pi_sdk = session.status == "code"
+        _is_code_mode = session.status == "code"
+        _use_pi_sdk = True  # kept as a no-op flag for readability; all traffic goes to PI
 
         # Pre-processing: tool result budget + microcompact (benefits both SDK and direct paths)
         engine._thread_local.current_session_id = session.id
@@ -3010,339 +2956,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                                               agent_id=session.agent_id)
             session.messages, _mc_freed = engine._microcompact(session.messages, keep_recent=5)
 
-        # Check context and compact (with SSE progress) — skip for SDK agents
-        # SDK manages its own context via session resume + internal compaction
-        if not _use_sdk and not _use_pi_sdk:
-            estimated = engine._estimate_conversation_tokens(session.messages)
-            ctx_cfg = engine._context_manager.get_config() if engine._context_manager else {}
-            threshold_pct = ctx_cfg.get("compact_threshold", 0.75) if ctx_cfg.get("enabled") else engine.COMPACT_THRESHOLD
-            pre_compact_pct = 0
-            if estimated >= int(session.max_context * threshold_pct):
-                pre_compact_pct = int(estimated / session.max_context * 100)
-                sse_line = f"event: compacting\ndata: {json.dumps({'pct': pre_compact_pct, 'tokens': estimated, 'max_tokens': session.max_context})}\n\n"
-                try:
-                    self.wfile.write(sse_line.encode("utf-8"))
-                    self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
-
-            session.messages, was_compacted = engine._check_and_compact(
-                session.messages, session.model, session.api_key,
-                session.base_url, session.api_type,
-                max_tokens=session.max_context,
-                session_id=session.id,
-            )
-            if was_compacted:
-                new_est = engine._estimate_conversation_tokens(session.messages)
-                new_pct = int(new_est / session.max_context * 100)
-                sse_line = f"event: compacted\ndata: {json.dumps({'pct': new_pct, 'tokens': new_est, 'old_pct': pre_compact_pct})}\n\n"
-                try:
-                    self.wfile.write(sse_line.encode("utf-8"))
-                    self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
-
-        event_queue = queue.Queue()
-        created_files = []
         _partial_reply = []  # accumulate text deltas for partial response recovery
         _partial_tools = []  # accumulate tool calls
-        _partial_thinking = []  # accumulate thinking blocks
-        _usage_totals = {"tokens_in": 0, "tokens_out": 0}  # accumulate across tool rounds
-        _request_payloads = []  # capture request snapshots per tool round
-        def event_callback(event_type, data):
-            if event_type == "text_delta":
-                _partial_reply.append(data.get("text", ""))
-            elif event_type in ("file_created", "artifact_updated"):
-                created_files.append(data)
-            elif event_type == "thinking_delta":
-                _partial_thinking.append(data.get("text", ""))
-            elif event_type == "tool_call":
-                name = data.get("name", "")
-                args = data.get("args", {})
-                # Update existing entry if re-emitted with full args, else append
-                if args and _partial_tools and _partial_tools[-1].get("name") == name and not _partial_tools[-1].get("args"):
-                    _partial_tools[-1]["args"] = args
-                else:
-                    _partial_tools.append({"name": name, "args": args})
-            elif event_type == "tool_result":
-                # Attach result to the last matching tool
-                # Web tools get higher cap to preserve reference URLs
-                tool_name = data.get("name", "")
-                cap = 2000 if tool_name in ("exa_search", "web_fetch") else 500
-                for t in reversed(_partial_tools):
-                    if t["name"] == tool_name and "result" not in t:
-                        t["result"] = str(data.get("result", ""))[:cap]
-                        break
-            elif event_type == "usage":
-                _usage_totals["tokens_in"] += data.get("tokens_in", 0)
-                _usage_totals["tokens_out"] += data.get("tokens_out", 0)
-                return  # internal only, don't send to client
-            elif event_type == "request_payload":
-                _request_payloads.append(data)
-                return  # internal only, don't send to client
-            event_queue.put((event_type, data))
 
-        handler_self = self  # capture for closure
-
-        def _rollback_messages(session, sid, target_count):
-            """Rollback session.messages to target_count and remove extras from DB.
-            Handles intermediate tool_use/tool_result messages from the agentic loop."""
-            with session.lock:
-                extras = len(session.messages) - target_count
-                if extras <= 0:
-                    return
-                session.messages = session.messages[:target_count]
-            # Delete the extra messages from DB (they were appended by send_message's tool loop)
-            try:
-                with _db_conn() as conn:
-                    # Get all message IDs for this session, ordered by id
-                    rows = conn.execute(
-                        "SELECT id FROM messages WHERE session_id = ? ORDER BY id",
-                        (sid,)
-                    ).fetchall()
-                    # Keep only the first target_count messages
-                    if len(rows) > target_count:
-                        ids_to_delete = [r[0] for r in rows[target_count:]]
-                        conn.executemany("DELETE FROM messages WHERE id = ?", [(mid,) for mid in ids_to_delete])
-                        conn.commit()
-            except Exception as e:
-                print(f"  [WARN] Message rollback DB cleanup: {e}", flush=True)
-
-        def worker():
-            # Set thread-local agent context (thread-safe, no global mutation)
-            engine._thread_local.memory_store = session.memory
-            agent_config = engine.AgentConfig(session.agent_id)
-            engine._thread_local.current_agent = agent_config
-            engine._thread_local.current_session_id = sid
-
-            # Reset per-request state (prevents cross-session leaks in pooled threads)
-            engine.reset_tool_dedup()
-
-            # Use shared MCP manager (singleton from main())
-            engine._thread_local.mcp_manager = engine._mcp_manager
-
-            # Set plan mode if requested
-            engine._thread_local.plan_mode = (chat_mode == "plan")
-
-            # Set project scope if provided
-            if project_name:
-                session.project = project_name
-                engine._thread_local.project = project_name
-            else:
-                engine._thread_local.project = session.project  # Use session's existing project
-
-            # Set note context for AI-assisted note editing
-            if session.note_context:
-                engine._thread_local.note_context = session.note_context
-            else:
-                engine._thread_local.note_context = None
-
-            # Set attachment image model for read_attachment vision support
-            engine._thread_local.attachment_image_model = server_config.get("attachment_image_model", "")
-
-            # Snapshot message count for rollback on failure
-            _msg_count_before = len(session.messages)
-            _req_start = time.time()
-
-            try:
-                if _use_sdk:
-                    # --- Agent SDK backend ---
-                    # Run SDK in a subprocess to get true streaming (anyio needs
-                    # a clean event loop context for subprocess I/O to work properly)
-                    import sdk_backend
-                    reply = sdk_backend.sdk_query_sync(
-                        session=session,
-                        message=message,
-                        event_callback=event_callback,
-                        cancel_token=session.cancel_token,
-                        thinking_level=thinking_level,
-                    )
-                else:
-                    # --- Standard backend ---
-                    # Use detected purpose from auto-resolve, or fall back to agent's fixed purpose
-                    purpose = session.agent.config.get("model_purpose")
-                    if not purpose and session.agent.config.get("model") == "auto":
-                        purpose = engine.classify_task_purpose(message)
-                    inf_params = engine.get_inference_params(session.model, purpose)
-                    # Apply thinking level from request
-                    if thinking_level and thinking_level != "none":
-                        _THINKING_BUDGETS = {"low": 2048, "medium": 8192, "high": 32768}
-                        inf_params["thinking"] = True
-                        inf_params["thinking_budget"] = _THINKING_BUDGETS.get(thinking_level, 8192)
-                    elif thinking_level == "none":
-                        inf_params.pop("thinking", None)
-                        inf_params.pop("thinking_budget", None)
-                    reply = engine.send_message_with_fallback(
-                        session.messages, session.model, session.api_key,
-                        session.base_url, session.api_type,
-                        silent=True, escape_watcher=session.cancel_token,
-                        event_callback=event_callback,
-                        provider_resolver=handler_self._resolve_provider,
-                        inference_params=inf_params,
-                        purpose=purpose,
-                        session_id=sid,
-                    )
-                if reply:
-                    # Compute cost before saving
-                    session_cost = None
-                    if engine._cost_tracker:
-                        try:
-                            sc = engine._cost_tracker.get_session_cost(sid)
-                            session_cost = round(sc.get("cost", 0.0), 4)
-                        except Exception:
-                            pass
-                    # Build metadata: model, tokens, cost, files, tools, duration, usage
-                    _req_duration = round(time.time() - _req_start, 2)
-                    msg_metadata = {}
-                    msg_metadata["model"] = session.model
-                    msg_metadata["duration"] = _req_duration
-                    msg_metadata["tokens_in"] = _usage_totals["tokens_in"]
-                    msg_metadata["tokens_out"] = _usage_totals["tokens_out"]
-                    if _request_payloads:
-                        msg_metadata["request_payloads"] = _request_payloads
-                    fb_model = getattr(engine._thread_local, '_fallback_model_used', None)
-                    if fb_model:
-                        msg_metadata["model"] = fb_model
-                        msg_metadata["original_model"] = session.model
-                    msg_metadata["tokens"] = engine._estimate_conversation_tokens(session.messages)
-                    if session_cost is not None:
-                        msg_metadata["cost"] = session_cost
-                    if created_files:
-                        msg_metadata["files"] = created_files
-                    if _partial_tools:
-                        msg_metadata["tools"] = _partial_tools
-                    thinking_text = "".join(_partial_thinking).strip()
-                    if thinking_text:
-                        msg_metadata["thinking"] = thinking_text
-                    if _use_sdk:
-                        msg_metadata["sdk"] = True
-                    session.add_message("assistant", reply, metadata=msg_metadata or None)
-                    done_data = {
-                        "text": reply,
-                        "tokens": engine._estimate_conversation_tokens(session.messages),
-                        "max_context": session.max_context,
-                        "model": session.model,
-                        "duration": _req_duration,
-                        "tokens_in": _usage_totals["tokens_in"],
-                        "tokens_out": _usage_totals["tokens_out"],
-                    }
-                    if session_cost is not None:
-                        done_data["cost"] = session_cost
-                    # Include fallback model info if a fallback was used
-                    fb_model = getattr(engine._thread_local, '_fallback_model_used', None)
-                    if fb_model:
-                        done_data["fallback_model"] = fb_model
-                        done_data["original_model"] = session.model
-                    # Include file attachments
-                    if created_files:
-                        done_data["files"] = created_files
-                    # Mark SDK backend usage
-                    if _use_sdk:
-                        done_data["sdk"] = True
-                    event_queue.put(("done", done_data))
-
-                    # Continuous session summarization: refresh memory summary at token thresholds
-                    try:
-                        token_count = engine._estimate_conversation_tokens(session.messages)
-                        last_summary_tokens = getattr(session, '_last_summary_at', 0)
-                        threshold = 10000 if last_summary_tokens == 0 else last_summary_tokens + 5000
-                        if token_count >= threshold:
-                            session._last_summary_at = token_count
-                            engine.trigger_memory_summary_refresh(session.agent_id)
-                    except Exception:
-                        pass
-
-                    # Auto-memory extraction: check if response contains memorable info
-                    try:
-                        am_cfg = engine._get_auto_memory_config(session.agent_id)
-                        min_msg_len = am_cfg.get("min_message_length", 20)
-                        if am_cfg.get("enabled", True) and reply and message and len(message) > min_msg_len:
-                            threading.Thread(
-                                target=engine._auto_memory_extract,
-                                args=(session.agent_id, message, reply[:1000]),
-                                daemon=True,
-                                name=f"auto_memory_{session.agent_id}"
-                            ).start()
-                    except Exception:
-                        pass
-
-                    # Generate chat summary (background, for sidebar display)
-                    try:
-                        if len(session.messages) >= 2 and not session.summary:
-                            threading.Thread(
-                                target=_generate_chat_summary,
-                                args=(session,),
-                                daemon=True,
-                                name=f"chat_summary_{sid}"
-                            ).start()
-                    except Exception:
-                        pass
-
-                    # Index chat transcript for content search (4+ messages, every 4th message or first time)
-                    try:
-                        msg_count = len(session.messages)
-                        if msg_count >= 4 and (msg_count % 4 == 0 or not os.path.isdir(
-                                os.path.join(engine.AGENTS_DIR, session.agent_id, "chats-indexed"))):
-                            threading.Thread(
-                                target=_index_chat_transcript,
-                                args=(session,),
-                                daemon=True,
-                                name=f"chat_index_{sid}"
-                            ).start()
-                    except Exception:
-                        pass
-                else:
-                    # Empty reply — rollback all intermediate messages from tool loop
-                    _rollback_messages(session, sid, _msg_count_before)
-                    event_queue.put(("done", {"text": "", "tokens": 0, "model": session.model}))
-            except engine.TaskCancelled:
-                # Save partial response if any text was streamed
-                partial = "".join(_partial_reply).strip()
-                if partial:
-                    _rollback_messages(session, sid, _msg_count_before)
-                    partial += "\n\n*(Cancelled)*"
-                    meta = {"model": session.model, "partial": True}
-                    if _partial_tools:
-                        meta["tools"] = _partial_tools
-                    session.add_message("assistant", partial, metadata=meta)
-                else:
-                    _rollback_messages(session, sid, _msg_count_before)
-                event_queue.put(("error", {"message": "Cancelled"}))
-            except SystemExit as e:
-                partial = "".join(_partial_reply).strip()
-                if partial:
-                    _rollback_messages(session, sid, _msg_count_before)
-                    partial += f"\n\n*(Engine error: exit code {e.code})*"
-                    meta = {"model": session.model, "partial": True}
-                    if _partial_tools:
-                        meta["tools"] = _partial_tools
-                    session.add_message("assistant", partial, metadata=meta)
-                else:
-                    _rollback_messages(session, sid, _msg_count_before)
-                event_queue.put(("error", {"message": f"Engine fatal error (exit code {e.code})"}))
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                partial = "".join(_partial_reply).strip()
-                if partial:
-                    _rollback_messages(session, sid, _msg_count_before)
-                    partial += f"\n\n*(Error: {str(e)[:200]})*"
-                    meta = {"model": session.model, "partial": True}
-                    if _partial_tools:
-                        meta["tools"] = _partial_tools
-                    session.add_message("assistant", partial, metadata=meta)
-                else:
-                    _rollback_messages(session, sid, _msg_count_before)
-                event_queue.put(("error", {"message": str(e)}))
-            finally:
-                with session.lock:
-                    session._streaming = False
-                # Clean up thread-local state
-                engine._thread_local.current_agent = None
-                engine._thread_local.mcp_manager = None
-                engine._thread_local.memory_store = None
-                engine._thread_local.plan_mode = False
-                event_queue.put(None)  # sentinel
 
         # PI SDK path: proxy to Node.js PI sidecar for code mode
         # Works with any provider (OpenAI, Mistral) — replaces dead Anthropic SDK for code mode
@@ -3370,7 +2986,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             _pi_prov = engine.resolve_provider_for_model(model)
             pi_provider_info = {
                 "name": _pi_prov["provider_name"],
-                "type": _pi_prov["api_type"],
                 "base_url": _pi_prov["base_url"],
                 "api_key": _pi_prov["api_key"],
             }
@@ -3405,7 +3020,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 })
             pi_tool_defs.sort(key=lambda t: t.get("name", ""))
 
-            # CWD: use project folder (code mode) or server CWD
+            # CWD: code mode → project folder; chat mode → server CWD (but we skip project-context walk below)
             pi_cwd = session.project or os.getcwd()
 
             server_port = server_config.get("port", 8420)
@@ -3421,6 +3036,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "provider_config": pi_provider_info,
                 "interactive": _interactive,
                 "thinking_level": thinking_level or "off",
+                "skip_project_context": not _is_code_mode,
             }).encode()
 
             # Tracing
@@ -3455,8 +3071,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                             self.wfile.write(f"event: {_et}\ndata: {json.dumps(_ed)}\n\n".encode())
                             self.wfile.flush()
                         if _et == "text_delta":
-                            _full_text += _ed.get("text", "")
-                            _partial_reply.append(_ed.get("text", ""))
+                            _txt = _ed.get("text", "")
+                            if not isinstance(_txt, str):
+                                _txt = str(_txt) if _txt else ""
+                            _full_text += _txt
+                            _partial_reply.append(_txt)
                         elif _et == "tool_call":
                             name = _ed.get("name", "")
                             args = _ed.get("args", {})
@@ -3479,7 +3098,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                                 "text": _ed.get("text", "") or _full_text,
                                 "tokens_in": _ed.get("tokens_in", 0),
                                 "tokens_out": _ed.get("tokens_out", 0),
+                                "tokens_cache_read": _ed.get("tokens_cache_read", 0),
+                                "tokens_cache_write": _ed.get("tokens_cache_write", 0),
+                                "tokens_total": _ed.get("tokens_total", 0),
                                 "cost": _ed.get("cost", 0),
+                                "context_usage": _ed.get("context_usage"),
+                                "sdk_session_id": _ed.get("sdk_session_id"),
                                 "tools": _ed.get("tools", []) or _tool_calls_list,
                             }
                             break
@@ -3541,6 +3165,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                              "max_context": session.max_context,
                              "model": model, "pi_sdk": True,
                              "tokens_in": r.get("tokens_in", 0), "tokens_out": r.get("tokens_out", 0),
+                             "tokens_cache_read": r.get("tokens_cache_read", 0),
+                             "tokens_cache_write": r.get("tokens_cache_write", 0),
+                             "tokens_total": r.get("tokens_total", 0),
+                             "pi_cost": r.get("cost", 0.0),
+                             "context_usage": r.get("context_usage"),
+                             "sdk_session_id": r.get("sdk_session_id"),
                              "duration": _req_duration}
                 if session_cost is not None:
                     done_data["cost"] = session_cost
@@ -3586,422 +3216,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 pass
             return
 
-        # SDK path: proxy to sidecar process for real-time streaming
-        # (claude_cli import side-effects break anyio subprocess streaming)
-        if _use_sdk:
-            import sdk_backend
-
-            # Rate limiting pre-check
-            if engine._rate_limiter:
-                try:
-                    allowed, reason, _ = engine._rate_limiter.check(session.agent_id)
-                    if not allowed:
-                        try:
-                            self.wfile.write(f"event: error\ndata: {json.dumps({'message': f'Rate limited: {reason}'})}\n\n".encode()); self.wfile.flush()
-                        except (BrokenPipeError, ConnectionResetError):
-                            pass
-                        return
-                except Exception:
-                    pass
-
-            # Build context using claude_cli
-            engine._thread_local.memory_store = session.memory
-            agent_config = engine.AgentConfig(session.agent_id)
-            engine._thread_local.current_agent = agent_config
-            engine._thread_local.project = session.project if hasattr(session, 'project') else None
-            engine._thread_local.note_context = getattr(session, 'note_context', None)
-            system_prompt = engine._build_system_prompt(include_memory_summary=True)
-            model = session.model or "claude-sonnet-4-6"
-            provider_env = sdk_backend.build_provider_env(model)
-            sdk_cfg = agent_config.config.get("agent_sdk", {})
-
-            # External MCP configs — inherit main's, then merge agent's own
-            mcp_configs = {}
-            def _load_mcp_file(path):
-                if not os.path.isfile(path):
-                    return
-                try:
-                    with open(path) as f:
-                        mcp_json = json.load(f)
-                    for name, entry in (mcp_json.get("mcpServers", mcp_json) if isinstance(mcp_json, dict) else {}).items():
-                        if isinstance(entry, dict) and entry.get("command"):
-                            cfg_entry = {"type": "stdio", "command": entry["command"], "args": entry.get("args", [])}
-                            if entry.get("env"):
-                                cfg_entry["env"] = entry["env"]
-                            mcp_configs[name] = cfg_entry
-                except Exception:
-                    pass
-
-            # Load main's MCP servers first (global), then agent's own (override)
-            if session.agent_id != "main":
-                _load_mcp_file(os.path.join(engine.AGENTS_DIR, "main", "mcp.json"))
-            _load_mcp_file(os.path.join(engine.AGENTS_DIR, session.agent_id, "mcp.json"))
-
-            # Build tool definitions for sidecar MCP server
-            # Apply per-agent tool filtering to reduce token overhead
-            allowed_tools = engine._get_agent_tool_names(session.agent_id)
-            tool_defs = []
-            for td in engine.TOOL_DEFINITIONS:
-                if td["name"] in BrainAgentHandler._SDK_NATIVE_TOOLS:
-                    continue
-                if td["name"] not in engine.TOOL_DISPATCH:
-                    continue
-                if allowed_tools is not None and td["name"] not in allowed_tools:
-                    continue
-                desc = td["description"]
-                if isinstance(desc, tuple):
-                    desc = " ".join(desc)
-                tool_defs.append({
-                    "name": td["name"],
-                    "description": desc[:1000],
-                    "input_schema": td["input_schema"],
-                })
-            # Sort tool definitions deterministically for prompt cache stability
-            tool_defs.sort(key=lambda t: t.get("name", ""))
-
-            # Plan mode / workflow tool restrictions → SDK allowed_tools
-            allowed_tools = None
-            if chat_mode == "plan":
-                # Plan mode: read-only tools only
-                allowed_tools = ["Read", "Grep", "Glob", "WebSearch", "WebFetch",
-                                 "memory_recall", "memory_shared", "task_status",
-                                 "schedule_list", "schedule_history", "list_nodes",
-                                 "use_skill", "read_document", "code_graph_query"]
-            workflow_tools = getattr(engine._thread_local, 'workflow_allowed_tools', None)
-            if workflow_tools:
-                allowed_tools = list(workflow_tools)
-
-            # SDK hooks disabled — they cause the SDK to buffer all streaming events.
-            # Hook functionality is handled server-side via /v1/tools/call dispatch instead.
-            hooks_enabled = False
-
-            # Resolve enabled Claude Code plugin paths for SDK
-            cc_plugin_paths = []
-            cc_skill_slugs = agent_config.config.get("claude_code_skills", [])
-            if cc_skill_slugs:
-                all_cc = engine.scan_claude_code_skills()
-                # Build slug → install_path mapping (deduplicate by plugin)
-                seen_plugins = set()
-                for skill in all_cc:
-                    if skill["slug"] in cc_skill_slugs and skill.get("plugin"):
-                        plugin_key = skill["plugin"]
-                        if plugin_key not in seen_plugins:
-                            # Get plugin install path (parent of skills/ dir)
-                            skill_path = skill.get("path", "")
-                            if "/skills/" in skill_path:
-                                plugin_root = skill_path[:skill_path.index("/skills/")]
-                                cc_plugin_paths.append(plugin_root)
-                                seen_plugins.add(plugin_key)
-
-            # Check if SDK session can be resumed (transcript exists on disk)
-            # If not, inject conversation history into the prompt as fallback
-            sdk_prompt = message
-            _can_resume = False
-            if session.sdk_session_id:
-                # Verify the SDK transcript still exists
-                _transcript_dir = os.path.expanduser("~/.claude/projects")
-                if os.path.isdir(_transcript_dir):
-                    # SDK stores transcripts as session_id.json files
-                    for _root, _dirs, _files in os.walk(_transcript_dir):
-                        if any(session.sdk_session_id in f for f in _files):
-                            _can_resume = True
-                            break
-
-            if not _can_resume:
-                # SDK session lost — inject history into prompt
-                session.sdk_session_id = None  # clear stale ID
-                prior_msgs = session.messages[:-1]
-                if prior_msgs:
-                    parts = []
-                    for m in prior_msgs[-20:]:
-                        role = m.get("role", "")
-                        content = m.get("content", "")
-                        if isinstance(content, list):
-                            content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
-                        if content:
-                            label = "Human" if role == "user" else "Assistant"
-                            parts.append(f"{label}: {content[:2000]}")
-                    if parts:
-                        sdk_prompt = "Conversation so far:\n\n" + "\n\n".join(parts) + f"\n\nHuman: {message}"
-
-            server_port = server_config.get("port", 8420)
-            _interactive = body.get("interactive", False)
-            payload = json.dumps({
-                "message": sdk_prompt,
-                "model": model,
-                "system_prompt": system_prompt,
-                "agent_id": session.agent_id,
-                "session_id": sid,
-                "provider_env": provider_env,
-                "sdk_cfg": dict(sdk_cfg),
-                "sdk_session_id": session.sdk_session_id,
-                "thinking_level": thinking_level,
-                "mcp_configs": mcp_configs,
-                "allowed_tools": allowed_tools,
-                "cwd": os.getcwd(),
-                "tool_defs": tool_defs,
-                "server_url": f"http://127.0.0.1:{server_port}",
-                "hooks_enabled": hooks_enabled,
-                "cc_plugin_paths": cc_plugin_paths,
-                "interactive": _interactive,
-            }).encode()
-
-            # Tracing spans
-            _request_span = None
-            if engine._trace_manager:
-                _request_span = engine._trace_manager.start_span(
-                    "request", message[:60] or "user message",
-                    agent=session.agent_id, model=model, session_id=sid)
-
-            try:
-                # Inline REST polling — identical to working mini server code
-                import urllib.request as _urlreq
-                _base = f"http://{sdk_backend.SIDECAR_URL}:{sdk_backend.SIDECAR_PORT}"
-                _req = _urlreq.Request(f"{_base}/query", data=payload,
-                                        headers={"Content-Type": "application/json"})
-                _qid = json.loads(_urlreq.urlopen(_req, timeout=10).read()).get("query_id")
-                # Store sidecar query ID on session for answer forwarding
-                session._sidecar_query_id = _qid
-
-                r = {"text": "", "sdk_session_id": None, "tokens_in": 0,
-                     "tokens_out": 0, "cost": 0.0, "tools": []}
-                _after = 0
-                _full_text = ""
-                _tool_calls_list = []
-                import time as _time
-                _t0 = _time.time()
-                _waiting_input = False
-
-                while _time.time() - _t0 < 600:  # 10min timeout to allow for user input waits
-                    _resp = json.loads(_urlreq.urlopen(
-                        f"{_base}/events/{_qid}?after={_after}", timeout=10).read())
-                    for _ev in _resp["events"]:
-                        _et = _ev["event"]
-                        _ed = _ev["data"]
-                        if _et in ("text_delta", "thinking_delta", "tool_call", "tool_result", "user_input_needed"):
-                            self.wfile.write(f"event: {_et}\ndata: {json.dumps(_ed)}\n\n".encode())
-                            self.wfile.flush()
-                        if _et == "user_input_needed":
-                            _waiting_input = True
-                            _t0 = _time.time()  # Reset timeout while waiting for user input
-                            # Also fire a notification
-                            if _notification_manager:
-                                _notification_manager.notify(
-                                    "user_input", "Agent needs your input",
-                                    f"Agent {session.agent_id} is waiting for your response",
-                                    severity="warning", agent=session.agent_id,
-                                    metadata={"session_id": sid, "query_id": _qid})
-                        elif _et == "text_delta":
-                            _waiting_input = False
-                            _full_text += _ed.get("text", "")
-                            _partial_reply.append(_ed.get("text", ""))
-                        elif _et == "tool_call":
-                            _waiting_input = False
-                            name = _ed.get("name", "")
-                            args = _ed.get("args", {})
-                            # Update existing entry if re-emitted with full args
-                            if args and _partial_tools and _partial_tools[-1].get("name") == name and not _partial_tools[-1].get("args"):
-                                _partial_tools[-1]["args"] = args
-                                if _tool_calls_list and _tool_calls_list[-1].get("name") == name:
-                                    _tool_calls_list[-1] = _ed
-                            else:
-                                _tool_calls_list.append(_ed)
-                                _partial_tools.append({"name": name, "args": args})
-                        elif _et == "tool_result":
-                            # Attach result to the last matching tool entry
-                            _tn = _ed.get("name", "")
-                            _cap = 2000 if _tn in ("exa_search", "web_fetch") else 500
-                            for t in reversed(_partial_tools):
-                                if t["name"] == _tn and "result" not in t:
-                                    t["result"] = str(_ed.get("result", ""))[:_cap]
-                                    break
-                        elif _et == "_result":
-                            r = {
-                                "text": _ed.get("text", "") or _full_text,
-                                "sdk_session_id": _ed.get("sdk_session_id"),
-                                "tokens_in": _ed.get("tokens_in", 0),
-                                "tokens_out": _ed.get("tokens_out", 0),
-                                "cost": _ed.get("cost", 0),
-                                "tools": _ed.get("tools", []) or _tool_calls_list,
-                            }
-                            break
-                    _after = _resp.get("next", _after)
-                    if _resp.get("done"):
-                        break
-                    # Keepalive + poll interval
-                    # Use 500ms interval to reduce GIL contention on the sidecar
-                    # (frequent polling spawns threads on the sidecar that compete
-                    # with the SDK's async event loop for the GIL)
-                    self.wfile.write(b": keepalive\n\n")
-                    self.wfile.flush()
-                    _time.sleep(0.5)
-
-                if not r.get("text") and _full_text:
-                    r["text"] = _full_text
-            except Exception as e:
-                r = {}
-                try:
-                    self.wfile.write(f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n".encode()); self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
-            finally:
-                with session.lock:
-                    session._streaming = False
-
-            # Save response (complete or partial)
-            reply = r.get("text", "") or "".join(_partial_reply).strip()
-            with session.lock:
-                session.sdk_session_id = r.get("sdk_session_id") or session.sdk_session_id
-            is_partial = not r.get("text")  # No _result event = partial/cancelled
-
-            if reply:
-                try:
-                    engine._log_call_cost(model=model, tokens_in=r.get("tokens_in", 0),
-                                          tokens_out=r.get("tokens_out", 0), session_id=sid)
-                except Exception:
-                    pass
-
-                session_cost = None
-                if engine._cost_tracker:
-                    try:
-                        sc = engine._cost_tracker.get_session_cost(sid)
-                        session_cost = round(sc.get("cost", 0.0), 4)
-                    except Exception:
-                        pass
-
-                _req_duration = round(time.time() - _req_start, 2)
-                msg_metadata = {"model": model, "sdk": True,
-                                "tokens_in": r.get("tokens_in", 0),
-                                "tokens_out": r.get("tokens_out", 0),
-                                "tokens_api": r.get("tokens_in", 0) + r.get("tokens_out", 0),
-                                "tokens": engine._estimate_conversation_tokens(session.messages),
-                                "duration": _req_duration}
-                if is_partial:
-                    msg_metadata["partial"] = True
-                if session_cost is not None:
-                    msg_metadata["cost"] = session_cost
-                if r.get("tools") or _partial_tools:
-                    msg_metadata["tools"] = r.get("tools") or _partial_tools
-                session.add_message("assistant", reply, metadata=msg_metadata)
-
-                # Done event (may fail if client disconnected — that's ok)
-                done_data = {"text": reply, "tokens": engine._estimate_conversation_tokens(session.messages),
-                             "max_context": session.max_context,
-                             "model": model, "sdk": True,
-                             "tokens_in": r.get("tokens_in", 0), "tokens_out": r.get("tokens_out", 0),
-                             "duration": _req_duration}
-                if session_cost is not None:
-                    done_data["cost"] = session_cost
-                try:
-                    done_bytes = f"event: done\ndata: {json.dumps(done_data)}\n\n".encode()
-                    self.wfile.write(done_bytes); self.wfile.flush()
-                    
-                except (BrokenPipeError, ConnectionResetError, OSError):
-                    pass
-
-                # Post-response hooks (only for complete responses)
-                if not is_partial:
-                    # Memory summary refresh
-                    try:
-                        token_count = engine._estimate_conversation_tokens(session.messages)
-                        if token_count >= getattr(session, '_last_summary_at', 0) + 5000 or \
-                           (getattr(session, '_last_summary_at', 0) == 0 and token_count >= 10000):
-                            session._last_summary_at = token_count
-                            engine.trigger_memory_summary_refresh(session.agent_id)
-                    except Exception:
-                        pass
-                    # Auto-memory extraction
-                    if hasattr(engine, '_auto_memory_extract'):
-                        try:
-                            auto_cfg = agent_config.config.get("auto_memory", {})
-                            if auto_cfg.get("enabled", True) and len(message) >= auto_cfg.get("min_message_length", 20):
-                                threading.Thread(target=engine._auto_memory_extract,
-                                                 args=(session.agent_id, message, reply[:1000]), daemon=True).start()
-                        except Exception:
-                            pass
-                    # Chat summary generation (for sidebar)
-                    try:
-                        if len(session.messages) >= 2 and not session.summary:
-                            threading.Thread(
-                                target=_generate_chat_summary, args=(session,),
-                                daemon=True, name=f"chat_summary_{sid}").start()
-                    except Exception:
-                        pass
-                    # Transcript indexing (for content search)
-                    try:
-                        msg_count = len(session.messages)
-                        if msg_count >= 4 and (msg_count % 4 == 0 or not os.path.isdir(
-                                os.path.join(engine.AGENTS_DIR, session.agent_id, "chats-indexed"))):
-                            threading.Thread(
-                                target=_index_chat_transcript, args=(session,),
-                                daemon=True, name=f"chat_index_{sid}").start()
-                    except Exception:
-                        pass
-
-            else:
-                # No reply — send explicit error so client doesn't hang
-                try:
-                    self.wfile.write(b'event: error\ndata: {"message":"No response from agent"}\n\n')
-                    self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError, OSError):
-                    pass
-
-            # End tracing span
-            if engine._trace_manager and _request_span:
-                engine._trace_manager.end_span(
-                    _request_span, status="ok" if reply else "error",
-                    tokens_in=r.get("tokens_in", 0), tokens_out=r.get("tokens_out", 0))
-
-            # Audit logging for tool calls
-            if engine._audit_log and _partial_tools:
-                for tc in _partial_tools:
-                    try:
-                        engine._audit_log.log_action(
-                            agent=session.agent_id, action_type="tool_call",
-                            tool_name=tc.get("name", ""),
-                            args=tc.get("args"), result=str(tc.get("result", ""))[:200],
-                            session_id=sid,
-                        )
-                    except Exception:
-                        pass
-
-            # Close connection — SDK path streams directly, must signal end
-            try:
-                self.close_connection = True
-            except Exception:
-                pass
-            return
-
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
-
-        # Stream events to client with keepalive (chunked encoding for HTTP/1.1)
-        try:
-            while True:
-                try:
-                    event = event_queue.get(timeout=5)
-                except queue.Empty:
-                    # If worker thread died, stop waiting
-                    if not t.is_alive() and event_queue.empty():
-                        try:
-                            sse_err = f'event: error\ndata: {json.dumps({"message": "Server worker terminated unexpectedly"})}\n\n'
-                            self.wfile.write(sse_err.encode("utf-8")); self.wfile.flush()
-                        except (BrokenPipeError, ConnectionResetError, OSError):
-                            pass
-                        break
-                    # Send keepalive comment to prevent browser timeout
-                    try:
-                        self.wfile.write(b": keepalive\n\n"); self.wfile.flush()
-                    except (BrokenPipeError, ConnectionResetError, OSError):
-                        break
-                    continue
-                if event is None:
-                    break
-                event_type, data = event
-                sse_line = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
-                self.wfile.write(sse_line.encode("utf-8")); self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError, OSError):
-            pass
 
     # --- Loop Management Endpoints ---
 
@@ -4107,7 +3321,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "api_key": p.get("api_key", "")[:4] + "***" if p.get("api_key") else "",
                 "type": p.get("type", "openai"),
                 "default_model": p.get("default_model", ""),
-                "use_sdk": p.get("use_sdk", True),
                 "models": all_models,
                 "model_count": len(all_models),
                 "enabled_count": len(enabled_models),
@@ -4192,13 +3405,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             p = providers.get(name, {})
             base_url = p.get("base_url", "")
             api_key = p.get("api_key", "")
-            api_type = p.get("type", "openai")
         else:
             base_url = body.get("base_url", "")
             api_key = body.get("api_key", "")
-            api_type = body.get("type", "openai")
         try:
-            models = engine.get_available_models(api_key, base_url, api_type)
+            models = engine.get_available_models(api_key, base_url)
             self._send_json({
                 "status": "ok",
                 "models": len(models),
@@ -6628,14 +5839,16 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             "Example: Input: 'whats weather vienna' → Output: 'What is the weather like in Vienna today?'"
             + context_block
         )
-        messages = [{"role": "user", "content": f"Rewrite this prompt (output ONLY the rewritten version):\n\n{text}"}]
-
         try:
-            result = engine.send_message(
-                messages, refine_model, provider["api_key"],
-                provider["base_url"], provider["api_type"],
-                silent=True, tools=False,
+            pi_result = engine.pi_sidecar_run(
+                message=f"Rewrite this prompt (output ONLY the rewritten version):\n\n{text}",
+                model=refine_model,
+                system_prompt=system_prompt,
+                agent_id="main",
+                tool_defs=[],
+                skip_project_context=True,
             )
+            result = pi_result.get("text", "")
             self._send_json({"refined": result or text, "model": refine_model})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
@@ -6694,28 +5907,34 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             "- Keep the same voice/style unless the user wants a different one\n"
         )
 
-        messages = [{"role": "user", "content": system_block}, {"role": "assistant", "content": "I understand. I'm ready to help you edit this agent's soul.md. What changes would you like to make?"}]
+        # Flatten multi-turn history into a single prompt for PI sidecar
+        transcript_parts = []
         for h in history:
-            messages.append({"role": h["role"], "content": h["content"]})
-        messages.append({"role": "user", "content": message})
+            role = h.get("role", "user")
+            content = h.get("content", "")
+            transcript_parts.append(f"[{role}] {content}")
+        transcript = "\n\n".join(transcript_parts)
+        full_prompt = (f"{transcript}\n\n[user] {message}" if transcript else message)
 
         try:
-            result = engine.send_message(
-                messages, model, provider["api_key"],
-                provider["base_url"], provider["api_type"],
-                silent=True, tools=False,
+            pi_result = engine.pi_sidecar_run(
+                message=full_prompt,
+                model=model,
+                system_prompt=system_block,
+                agent_id=agent_id,
+                tool_defs=[],
+                skip_project_context=True,
             )
+            result = pi_result.get("text", "")
             self._send_json({"reply": result or "", "model": model})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
     def _handle_services_status(self):
         """GET /v1/services — status of all managed services."""
-        import sdk_backend
         uptime = int(time.time() - _server_start_time)
         qmd_running = self._is_qmd_running()
         tg_running = self._is_telegram_running()
-        sdk_running = sdk_backend.is_sidecar_running()
 
         collections = self._qmd_collections() if qmd_running else []
 
@@ -6737,10 +5956,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "status": "running" if qmd_running else "stopped",
                 "port": _QMD_PORT,
                 "collections": collections,
-            },
-            "sdk_sidecar": {
-                "status": "running" if sdk_running else "stopped",
-                "port": sdk_backend.SIDECAR_PORT,
             },
             "pi_sidecar": {
                 "status": "running" if _is_pi_sidecar_running() else "stopped",
@@ -6917,7 +6132,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             if provider_name:
                 server_config["api_key"] = providers[provider_name].get("api_key", "")
                 server_config["base_url"] = providers[provider_name].get("base_url", "")
-                server_config["api_type"] = providers[provider_name].get("type", "anthropic")
             try:
                 config = {}
                 if os.path.exists(config_path):
@@ -7056,98 +6270,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     # --- Context Management handlers ---
 
-    def _handle_context_config_get(self):
-        """GET /v1/context/config — return context management configuration."""
-        if not engine._context_manager:
-            self._send_json(engine._CONTEXT_CONFIG_DEFAULTS)
-            return
-        self._send_json(engine._context_manager.get_config())
-
-    def _handle_context_config_save(self):
-        """POST /v1/context/config — save context management configuration."""
-        body = self._read_json()
-        if not body:
-            self._send_json({"error": "No config provided"}, 400)
-            return
-        if not engine._context_manager:
-            engine._context_manager = engine.ContextManager()
-        engine._context_manager.save_config(body)
-        self._send_json({"status": "saved", "config": engine._context_manager.get_config()})
-
-    def _handle_context_compact(self):
-        """POST /v1/context/compact — manually trigger compaction for a session."""
-        body = self._read_json()
-        session_id = body.get("session_id", "")
-        if not session_id:
-            self._send_json({"error": "Missing session_id"}, 400)
-            return
-        session = sessions.get(session_id)
-        if not session:
-            self._send_json({"error": "Session not found"}, 404)
-            return
-        if not engine._context_manager:
-            self._send_json({"error": "Context manager not initialized"}, 500)
-            return
-        try:
-            before = engine._estimate_conversation_tokens(session.messages)
-            # Force compaction regardless of threshold
-            result = engine._context_manager.check_and_compact(
-                session.messages, session.id, session.model,
-                session.api_key, session.base_url, session.api_type,
-                max_tokens=session.max_context,
-                force=True,
-            )
-            with session.lock:
-                session.messages = result[0]
-            # Persist: mark old messages as compacted, insert new summary messages
-            if result[1]:
-                try:
-                    with _db_conn() as conn:
-                        # Mark ALL existing messages as compacted (preserves originals for search)
-                        conn.execute(
-                            "UPDATE messages SET compacted = 1 WHERE session_id = ? AND (compacted = 0 OR compacted IS NULL)",
-                            (session_id,)
-                        )
-                        # Insert the new compacted message set (summaries + fresh tail)
-                        for msg in session.messages:
-                            role = msg.get("role", "user")
-                            content = msg.get("content", "")
-                            c = json.dumps(content) if not isinstance(content, str) else content
-                            meta = json.dumps(msg.get("metadata", {})) if msg.get("metadata") else ""
-                            conn.execute(
-                                "INSERT INTO messages (session_id, role, content, metadata, compacted) VALUES (?, ?, ?, ?, 0)",
-                                (session_id, role, c, meta)
-                            )
-                        conn.commit()
-                except Exception as e:
-                    print(f"  [WARN] Compact DB persist: {e}", flush=True)
-            after = engine._estimate_conversation_tokens(session.messages)
-            stats = engine._context_manager.get_stats(session_id)
-            self._send_json({
-                "status": "compacted" if result[1] else "no_change",
-                "before_tokens": before,
-                "after_tokens": after,
-                "before_pct": int(before / session.max_context * 100) if session.max_context else 0,
-                "after_pct": int(after / session.max_context * 100) if session.max_context else 0,
-                "stats": stats,
-            })
-        except Exception as e:
-            self._send_json({"error": str(e)}, 500)
-
-    def _handle_context_stats(self):
-        """GET /v1/context/stats?session_id=X — context stats for a session."""
-        from urllib.parse import parse_qs, urlparse
-        qs = parse_qs(urlparse(self.path).query)
-        session_id = (qs.get("session_id") or [""])[0]
-        if not engine._context_manager:
-            self._send_json({"error": "Context manager not initialized"})
-            return
-        if not session_id:
-            self._send_json({"error": "Missing session_id"}, 400)
-            return
-        stats = engine._context_manager.get_stats(session_id)
-        self._send_json(stats)
-
     def _handle_expand_command(self):
         """POST /v1/commands/expand — expand a custom command template.
         Body: {agent, command, args}
@@ -7224,13 +6346,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         if not _qid:
             self._send_json({"error": "no active sidecar query"}, 404)
             return
-        # Forward to sidecar
+        # Forward to PI sidecar
         try:
             import urllib.request as _urlreq
-            import sdk_backend
-            _base = f"http://{sdk_backend.SIDECAR_URL}:{sdk_backend.SIDECAR_PORT}"
+            pi_port = int(os.environ.get("PI_SIDECAR_PORT", "8422"))
             _req = _urlreq.Request(
-                f"{_base}/answer/{_qid}",
+                f"http://127.0.0.1:{pi_port}/answer/{_qid}",
                 data=json.dumps({"answer": answer}).encode(),
                 headers={"Content-Type": "application/json"})
             _urlreq.urlopen(_req, timeout=10)
@@ -7981,6 +7102,48 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         tree = _scan(dir_path)
         self._send_json({"path": dir_path, "tree": tree})
 
+    def _proxy_pi_sidecar(self, pi_path, method="GET", body=None):
+        """Proxy a request to the PI sidecar and return the JSON response."""
+        import urllib.request as _urlreq
+        _port = int(os.environ.get("PI_SIDECAR_PORT", "8422"))
+        base = f"http://127.0.0.1:{_port}"
+        url = f"{base}{pi_path}"
+        data = json.dumps(body).encode() if body else None
+        headers = {"Content-Type": "application/json"} if data else {}
+        req = _urlreq.Request(url, data=data, headers=headers, method=method)
+        try:
+            with _urlreq.urlopen(req, timeout=60) as resp:
+                return json.loads(resp.read().decode())
+        except Exception as e:
+            return {"error": str(e)}
+
+    def _handle_code_packages_get(self, path):
+        """GET /v1/code/packages — list installed packages.
+           GET /v1/code/packages/search?q=... — search npm registry."""
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        if path == "/v1/code/packages/search":
+            q = qs.get("q", [""])[0]
+            pi_path = f"/packages/search?q={q}" if q else "/packages/search"
+            result = self._proxy_pi_sidecar(pi_path)
+        else:
+            result = self._proxy_pi_sidecar("/packages")
+        status = 500 if "error" in result and "packages" not in result else 200
+        self._send_json(result, status)
+
+    def _handle_code_packages_post(self, path):
+        """POST /v1/code/packages/install — install a package.
+           POST /v1/code/packages/remove — remove a package.
+           POST /v1/code/packages/toggle — enable/disable a package."""
+        body = self._read_json()
+        action = path.rsplit("/", 1)[-1]  # install, remove, toggle
+        if action not in ("install", "remove", "toggle"):
+            self._send_json({"error": f"Unknown action: {action}"}, 400)
+            return
+        result = self._proxy_pi_sidecar(f"/packages/{action}", method="POST", body=body)
+        status = 500 if "error" in result else 200
+        self._send_json(result, status)
+
     def _handle_code_diff(self):
         """GET /v1/code/diff?path=<dir>&ref=HEAD — return git diff for Code mode."""
         from urllib.parse import urlparse, parse_qs, unquote
@@ -8518,8 +7681,6 @@ def main():
     parser.add_argument("--port", type=int, default=srv_cfg.get("port", 8420))
     parser.add_argument("--api-key", default=provider.get("api_key", ""))
     parser.add_argument("--base-url", default=provider.get("base_url", "http://localhost:8317/v1"))
-    parser.add_argument("-t", "--api-type", choices=["anthropic", "openai", "mistral"],
-                        default=provider.get("type", "anthropic"))
     parser.add_argument("-m", "--model", default=provider.get("default_model", ""))
     parser.add_argument("--max-context", type=int, default=file_config.get("max_context", 131072))
     args = parser.parse_args()
@@ -8529,7 +7690,6 @@ def main():
     server_config["providers"] = providers
     server_config["api_key"] = args.api_key
     server_config["base_url"] = args.base_url
-    server_config["api_type"] = args.api_type
     server_config["default_model"] = args.model
     server_config["max_context"] = args.max_context
     server_config["port"] = args.port
@@ -8567,7 +7727,6 @@ def main():
     # Initialize engine globals
     engine._delegate_api_key = args.api_key
     engine._delegate_base_url = args.base_url
-    engine._delegate_api_type = args.api_type
     engine._delegate_fallback_model = args.model
 
     # Start scheduler
@@ -8577,10 +7736,6 @@ def main():
     # Start session-scoped loop manager
     loop_manager.start()
     print("Loop manager: started (session-scoped /loop tasks)")
-
-    # Initialize lossless context manager
-    engine._context_manager = engine.ContextManager()
-    print(f"Context manager: {engine.CONTEXT_DB} (lossless, {'enabled' if engine._context_manager.get_config().get('enabled') else 'disabled'})")
 
     # Initialize cost tracking and rate limiting
     engine._cost_tracker = engine.CostTracker()
@@ -8900,7 +8055,7 @@ def main():
     server = ThreadingHTTPServer((args.host, args.port), BrainAgentHandler)
     print(f"Brain Agent Server v{engine.VERSION}")
     print(f"Listening on http://{args.host}:{args.port}")
-    print(f"API: {args.base_url} ({args.api_type})")
+    print(f"API: {args.base_url}")
     print(f"Model: {args.model}")
     print(f"Agents: {', '.join(engine.list_agents())}")
     if engine._scheduler:
@@ -8948,52 +8103,7 @@ def main():
     else:
         print("Telegram: disabled in config")
 
-    # Auto-start SDK sidecar
-    _sdk_sidecar_process = None
-
-    def _start_sdk_sidecar():
-        nonlocal _sdk_sidecar_process
-        import subprocess as _sp
-        sidecar_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sdk_sidecar.py")
-        if not os.path.isfile(sidecar_script):
-            print("SDK sidecar: sdk_sidecar.py not found")
-            return
-        # Check if already running
-        import sdk_backend
-        if sdk_backend.is_sidecar_running():
-            print("SDK sidecar: already running on port 8421")
-            return
-        _sidecar_log = open(os.path.expanduser("~/.brain-agent/sidecar.log"), "a")
-        _sdk_sidecar_process = _sp.Popen(
-            [sys.executable, "-u", sidecar_script],
-            stdout=_sp.DEVNULL, stderr=_sidecar_log,
-            cwd=os.path.dirname(os.path.abspath(__file__)),
-        )
-        # Wait for it to be ready
-        for _ in range(20):
-            time.sleep(0.5)
-            if sdk_backend.is_sidecar_running():
-                print(f"SDK sidecar: started (PID {_sdk_sidecar_process.pid}, port 8421)")
-                return
-        print("SDK sidecar: failed to start within 10s")
-
-    def _sdk_sidecar_watchdog():
-        """Monitor sidecar and restart if it dies."""
-        nonlocal _sdk_sidecar_process
-        import sdk_backend
-        while True:
-            time.sleep(30)
-            if not sdk_backend.is_sidecar_running():
-                print("SDK sidecar: not running, restarting...", flush=True)
-                try:
-                    _start_sdk_sidecar()
-                except Exception as e:
-                    print(f"SDK sidecar restart failed: {e}", flush=True)
-
-    threading.Thread(target=_start_sdk_sidecar, daemon=True, name="sdk-sidecar-start").start()
-    threading.Thread(target=_sdk_sidecar_watchdog, daemon=True, name="sdk-sidecar-watchdog").start()
-
-    # Auto-start PI sidecar (Node.js, for code mode with OpenAI/Mistral providers)
+    # Auto-start PI sidecar (Node.js) — sole agentic loop for chat and code
     _pi_sidecar_process = None
     _PI_SIDECAR_PORT = int(os.environ.get("PI_SIDECAR_PORT", "8422"))
 
@@ -9029,7 +8139,7 @@ def main():
         _pi_log = open(os.path.expanduser("~/.brain-agent/pi-sidecar.log"), "a")
         cmd = [tsx_path, sidecar_script] if tsx_path else [npx_path, "tsx", sidecar_script]
         _pi_sidecar_process = _sp.Popen(
-            cmd, stdout=_sp.DEVNULL, stderr=_pi_log,
+            cmd, stdout=_pi_log, stderr=_pi_log,
             cwd=sidecar_dir,
             env={**os.environ, "PI_SIDECAR_PORT": str(_PI_SIDECAR_PORT)},
         )
@@ -9117,12 +8227,6 @@ def main():
             engine._scheduler.stop()
         if engine._mcp_manager:
             engine._mcp_manager.stop_all()
-        if _sdk_sidecar_process:
-            try:
-                _sdk_sidecar_process.terminate()
-                _sdk_sidecar_process.wait(timeout=3)
-            except Exception:
-                pass
         if _pi_sidecar_process:
             try:
                 _pi_sidecar_process.terminate()

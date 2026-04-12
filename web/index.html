@@ -4275,7 +4275,6 @@ textarea { resize: none; }
     <div class="status-item" id="status-context-wrap" style="display:none">
       <div class="context-bar" title="Context window usage"><div class="context-fill" id="status-context-fill" style="width:0%"></div></div>
       <span class="status-value" id="status-context-label">0%</span>
-      <button class="compact-btn" id="status-compact-btn" onclick="triggerCompact()" title="Compact context" style="display:none">⟳</button>
     </div>
     <div class="status-item" style="margin-left:auto">
       <span class="status-value" id="status-session"></span>
@@ -6678,12 +6677,6 @@ async function sendMessage() {
           showToast(d.message, true);
         }
       },
-      compacting: (d) => {
-        if (isActive()) document.getElementById('spinner-label').textContent = `Compacting... ${d.pct || ''}%`;
-      },
-      compacted: () => {
-        if (isActive()) document.getElementById('spinner-label').textContent = 'Thinking...';
-      },
       done: (d) => {
         console.log('[SSE] done event received', {textLen: (d.text||'').length, tokens: d.tokens, model: d.model, msgCount: chat.messages.length});
         // Finalize assistant message (always update data)
@@ -6790,50 +6783,9 @@ async function sendMessage() {
   }
 }
 
-async function triggerCompact() {
-  const chat = state.activeChat;
-  if (!chat?.sessionId) return;
-  const btn = document.getElementById('status-compact-btn');
-  btn.textContent = '⏳';
-  btn.disabled = true;
-  try {
-    const resp = await API.post('/v1/context/compact', { session_id: chat.sessionId });
-    if (resp.after_tokens) {
-      chat.totalTokens = resp.after_tokens;
-      updateStatusBar();
-    }
-    showToast(`Compacted: ${resp.before_pct || '?'}% → ${resp.after_pct || '?'}%`);
-    // Reload messages to reflect compacted state
-    const data = await API.getSessionMessages(chat.sessionId);
-    const rawMessages = data.messages || [];
-    const expanded = [];
-    for (const msg of rawMessages) {
-      const meta = msg.metadata;
-      if (meta && msg.role === 'assistant') {
-        if (meta.tools?.length) {
-          for (const t of meta.tools) {
-            expanded.push({ role: 'tool_call', name: t.name, args: t.args || {} });
-            if (t.result !== undefined) expanded.push({ role: 'tool_result', name: t.name, result: t.result });
-          }
-        }
-        if (meta.thinking) msg._thinking = meta.thinking;
-        if (meta.cost) msg._cost = meta.cost;
-        if (meta.files) msg._files = meta.files;
-      }
-      expanded.push(msg);
-    }
-    chat.messages = expanded;
-    renderMessages();
-  } catch(e) {
-    showToast('Compact failed: ' + e.message, true);
-  }
-  btn.textContent = '⟳';
-  btn.disabled = false;
-}
-
 async function openInspectModal() {
-  const chat = state.activeChat;
-  if (!chat?.sessionId) { showToast('No active session', true); return; }
+  const sessionId = state.appMode === 'code' ? state.codeSessionId : state.activeChat?.sessionId;
+  if (!sessionId) { showToast('No active session', true); return; }
 
   // Create modal overlay
   const overlay = document.createElement('div');
@@ -6842,7 +6794,7 @@ async function openInspectModal() {
   overlay.innerHTML = `<div class="modal-content wide" style="max-height:90vh;display:flex;flex-direction:column">
     <div style="display:flex;align-items:center;padding:20px 24px 0;gap:12px">
       <h2 style="margin:0;font-size:18px;font-weight:600;color:var(--text-000)">Session Inspector</h2>
-      <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-400)">${esc(chat.sessionId)}</span>
+      <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-400)">${esc(sessionId)}</span>
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()" style="margin-left:auto">&times;</button>
     </div>
     <div id="inspect-body" style="flex:1;overflow-y:auto;padding:16px 24px 24px">
@@ -6852,7 +6804,7 @@ async function openInspectModal() {
   document.body.appendChild(overlay);
 
   try {
-    const data = await API.inspectSession(chat.sessionId);
+    const data = await API.inspectSession(sessionId);
     const body = document.getElementById('inspect-body');
     let html = '';
 
@@ -6929,18 +6881,15 @@ async function openInspectModal() {
 
     for (const ix of (data.interactions || [])) {
       const a = ix.assistant || {};
-      const dimmed = ix.compacted ? 'opacity:0.5;' : '';
-      const compactedBadge = ix.compacted ? '<span style="font-size:10px;background:var(--bg-300);color:var(--text-400);padding:1px 6px;border-radius:4px;margin-left:6px">compacted</span>' : '';
 
       // Speed calculation
       const speed = a.duration > 0 && a.tokens_out > 0 ? Math.round(a.tokens_out / a.duration) : null;
 
-      html += `<div style="${dimmed}border:1px solid var(--border-100);border-radius:10px;margin-bottom:12px;overflow:hidden">`;
+      html += `<div style="border:1px solid var(--border-100);border-radius:10px;margin-bottom:12px;overflow:hidden">`;
 
       // Turn header
       html += `<div style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--bg-100);border-bottom:1px solid var(--border-100)">
         <span style="font-weight:600;color:var(--text-000)">Turn ${ix.turn}</span>
-        ${compactedBadge}
         <span style="margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--text-400)">
           ${a.model ? esc(a.model) : ''}
           ${a.duration ? ' &middot; ' + a.duration.toFixed(1) + 's' : ''}
@@ -7592,7 +7541,6 @@ function updateStatusBar() {
   const wrap = document.getElementById('status-context-wrap');
   const fill = document.getElementById('status-context-fill');
   const label = document.getElementById('status-context-label');
-  const compactBtn = document.getElementById('status-compact-btn');
   // Find last tokens_in from messages (= actual context sent to API)
   let lastApiIn = 0;
   for (let mi = msgs.length - 1; mi >= 0; mi--) {
@@ -7611,7 +7559,6 @@ function updateStatusBar() {
     const fmtK = (n) => n >= 1000 ? (n/1000).toFixed(1) + 'K' : n.toString();
     label.textContent = `${fmtK(contextUsed)} / ${fmtK(chat.maxContext)} (${pct}%)`;
     label.title = `${contextUsed.toLocaleString()} / ${(chat.maxContext).toLocaleString()} tokens (last API input)`;
-    compactBtn.style.display = chat.sessionId && chat.messages.length > 10 ? '' : 'none';
   } else {
     wrap.style.display = 'none';
   }
@@ -8489,9 +8436,6 @@ async function switchGeneralTab(tab, btn) {
   /* ─── MODELS ─── */
   if (tab === 'models') {
     const mc = state.modelsConfig?.models || {};
-    // Build provider type map for provider-specific inference params
-    const provTypeMap = {};
-    (state.providers || []).forEach(p => { provTypeMap[p.name] = p.type || 'openai'; });
     // Group by provider, skipping models from non-existent providers
     const existingProviders = new Set((state.providers || []).map(p => p.name));
     const byProvider = {};
@@ -8524,7 +8468,7 @@ async function switchGeneralTab(tab, btn) {
     for (const prov of provKeys) {
       const models = byProvider[prov];
       const provId = `mdl-prov-${prov.replace(/[^a-zA-Z0-9]/g,'_')}`;
-      const provType = provTypeMap[prov] || 'openai';
+      const isOmlx = prov === 'omlx';
       html += `<div style="margin-bottom:6px;border:1px solid var(--border-100);border-radius:8px;overflow:hidden">
         <div style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:8px 12px;background:var(--bg-100)" onclick="const c=document.getElementById('${provId}');const open=c.style.display!=='none';c.style.display=open?'none':'block';this.querySelector('.mdl-arrow').textContent=open?'▶':'▼'">
           <span class="mdl-arrow" style="font-size:10px;color:var(--text-400)">▼</span>
@@ -8557,16 +8501,11 @@ async function switchGeneralTab(tab, btn) {
               ${mdlInput('mdl-inf-top_p','Top P',inf.top_p,{step:'0.05',min:0,max:1,ph:'1.0'})}
               ${mdlInput('mdl-inf-top_k','Top K',inf.top_k,{min:0,ph:'(none)'})}
               ${mdlInput('mdl-inf-max_tokens','Max Tokens Override',inf.max_tokens,{ph:'(auto)'})}
-              ${provType === 'openai' || provType === 'omlx' ? `
-                ${mdlInput('mdl-inf-frequency_penalty','Freq Penalty',inf.frequency_penalty,{step:'0.1',min:-2,max:2,ph:'0'})}
-                ${mdlInput('mdl-inf-presence_penalty','Pres Penalty',inf.presence_penalty,{step:'0.1',min:-2,max:2,ph:'0'})}
-              ` : ''}
-              ${provType === 'omlx' ? `
+              ${mdlInput('mdl-inf-frequency_penalty','Freq Penalty',inf.frequency_penalty,{step:'0.1',min:-2,max:2,ph:'0'})}
+              ${mdlInput('mdl-inf-presence_penalty','Pres Penalty',inf.presence_penalty,{step:'0.1',min:-2,max:2,ph:'0'})}
+              ${isOmlx ? `
                 ${mdlInput('mdl-inf-min_p','Min P',inf.min_p,{step:'0.01',min:0,max:1,ph:'0'})}
                 ${mdlInput('mdl-inf-repetition_penalty','Rep Penalty',inf.repetition_penalty,{step:'0.1',min:0,max:2,ph:'1.0'})}
-              ` : ''}
-              ${provType === 'mistral' ? `
-                ${mdlInput('mdl-inf-reasoning_effort','Reasoning Effort',inf.reasoning_effort||'',{choices:['','none','low','medium','high']})}
               ` : ''}
               <div style="border-left:1px solid var(--border-100);margin:0 -2px"></div>
               ${mdlInput('mdl-cost-input','Cost In ($/M)',cfg.cost_input,{step:'0.01',min:0,ph:'0'})}
@@ -8610,7 +8549,6 @@ async function switchGeneralTab(tab, btn) {
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
             ${DOT(ok)}
             <span style="font-size:14px;font-weight:500;color:var(--text-000)">${esc(p.name)}</span>
-            ${BADGE(p.type||'unknown')}
             <span style="${MONO};margin-left:auto">${mc} models</span>
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="syncProvider(this,'${esc(p.name)}')">Sync</button>
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="testProvider('${esc(p.name)}')">Test</button>
@@ -8620,35 +8558,19 @@ async function switchGeneralTab(tab, btn) {
           <div style="${MONO};overflow:hidden;text-overflow:ellipsis">${esc(p.base_url||'')}</div>
           ${(p.models||[]).length?`<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${(p.models||[]).slice(0,8).map(m=>{const mid=typeof m==='string'?m:(m.id||m);return BADGE(modelShortName(mid,false));}).join('')}${(p.models||[]).length>8?`<span style="${MONO}">+${(p.models||[]).length-8} more</span>`:''}</div>`:''}
           <div id="${pid}" style="display:none;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-100)">
-            <div style="display:flex;gap:8px">
-              <div style="width:120px"><label class="form-label">Type</label><select class="form-select" id="${pid}-type" onchange="_provSdkVisibility('${pid}',this.value)"><option value="anthropic" ${p.type==='anthropic'?'selected':''}>anthropic</option><option value="openai" ${p.type==='openai'?'selected':''}>openai</option><option value="mistral" ${p.type==='mistral'?'selected':''}>mistral</option></select></div>
-              <div style="flex:1"><label class="form-label">Base URL</label><input class="form-input" id="${pid}-url" value="${esc(p.base_url||'')}"></div>
-            </div>
+            <div><label class="form-label">Base URL</label><input class="form-input" id="${pid}-url" value="${esc(p.base_url||'')}"></div>
             <div><label class="form-label">API Key</label><input class="form-input" id="${pid}-key" type="password" placeholder="${p.api_key||'unchanged'}"></div>
             <div><label class="form-label">Default Model</label><input class="form-input" id="${pid}-model" value="${esc(p.default_model||'')}"></div>
-            <div id="${pid}-sdk-row" style="display:${p.type==='anthropic'?'flex':'none'};align-items:center;gap:8px">
-              <input type="checkbox" id="${pid}-sdk" ${p.use_sdk!==false?'checked':''}>
-              <label for="${pid}-sdk" style="font-size:13px;color:var(--text-200)">Use Agent SDK</label>
-              <span style="font-size:11px;color:var(--text-400)">When enabled, anthropic models use the SDK sidecar for agentic loop</span>
-            </div>
             <div><button class="btn-primary" style="font-size:12px" onclick="saveProviderEdit('${esc(p.name)}','${pid}')">Save</button></div>
           </div>
         </div>`;
       }
       html += `${SEC('Add Provider')}
         <div style="padding:12px;border:1px solid var(--border-200);border-radius:10px;${G('10px')}">
-          <div style="display:flex;gap:8px">
-            <div style="flex:1"><label class="form-label">Name</label><input class="form-input" id="prov-name" placeholder="e.g. my-provider"></div>
-            <div style="width:120px"><label class="form-label">Type</label><select class="form-select" id="prov-type" style="width:100%" onchange="_provSdkVisibility('prov-new',this.value)"><option value="anthropic">anthropic</option><option value="openai">openai</option><option value="mistral">mistral</option></select></div>
-          </div>
+          <div><label class="form-label">Name</label><input class="form-input" id="prov-name" placeholder="e.g. my-provider"></div>
           <div><label class="form-label">Base URL</label><input class="form-input" id="prov-url" placeholder="http://localhost:8081/v1"></div>
           <div><label class="form-label">API Key</label><input class="form-input" id="prov-key" placeholder="sk-..." type="password"></div>
           <div><label class="form-label">Default Model</label><input class="form-input" id="prov-model" placeholder="model-name (optional)"></div>
-          <div id="prov-new-sdk-row" style="display:flex;align-items:center;gap:8px">
-            <input type="checkbox" id="prov-new-sdk" checked>
-            <label for="prov-new-sdk" style="font-size:13px;color:var(--text-200)">Use Agent SDK</label>
-            <span style="font-size:11px;color:var(--text-400)">When enabled, anthropic models use the SDK sidecar for agentic loop</span>
-          </div>
           <div style="display:flex;gap:8px">
             <button class="btn-secondary" onclick="testNewProvider()">Test Connection</button>
             <button class="btn-primary" onclick="saveNewProvider()">Add Provider</button>
@@ -9177,7 +9099,147 @@ async function switchGeneralTab(tab, btn) {
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
         <button class="btn-primary" onclick="saveCodeSettings()" style="padding:8px 20px;font-size:13px">Save Code Settings</button>
       </div>
+
+      ${SEC('Extensions & Packages')}
+      <div style="font-size:13px;color:var(--text-300);margin-bottom:8px">
+        PI Agent SDK extensions add custom tools, skills, and capabilities to every Code mode session.
+        Install packages from npm or git repositories.
+      </div>
+
+      <!-- Install form -->
+      <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px;${G('12px')}">
+        <div style="font-size:12px;font-weight:600;color:var(--text-200)">Install Package</div>
+        <div style="display:flex;gap:8px">
+          <input id="code-pkg-source" type="text" class="form-input" style="flex:1;font-family:var(--font-mono);font-size:12px"
+            placeholder="npm:@scope/package, git:github.com/user/repo, or /local/path">
+          <button class="btn-primary" onclick="codePackageInstall()" style="padding:6px 16px;font-size:12px;white-space:nowrap">Install</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-400)">Supports npm packages, git repos, and local paths. Packages tagged with <code>pi-package</code> on npm are PI SDK extensions.</div>
+      </div>
+
+      <!-- Installed packages list -->
+      <div id="code-pkg-list" style="${G('8px')}">
+        <div style="padding:20px;text-align:center;color:var(--text-400);font-size:13px">Loading packages...</div>
+      </div>
+
+      <!-- Discovery section -->
+      <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px;${G('12px')}">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div style="font-size:12px;font-weight:600;color:var(--text-200)">Discover Packages</div>
+          <a href="https://www.npmjs.com/search?q=keywords%3Api-package" target="_blank" rel="noopener" style="font-size:11px;color:var(--accent-100)">Browse on npm</a>
+        </div>
+        <div style="display:flex;gap:8px">
+          <input id="code-pkg-search" type="text" class="form-input" style="flex:1;font-size:12px" placeholder="Search PI packages..." onkeydown="if(event.key==='Enter')codePackageSearch()">
+          <button class="btn-secondary" onclick="codePackageSearch()" style="padding:6px 16px;font-size:12px">Search</button>
+        </div>
+        <div id="code-pkg-search-results" style="${G('6px')}"></div>
+      </div>
     </div>`);
+
+    // Load installed packages
+    _loadCodePackages();
+  }
+}
+
+async function _loadCodePackages() {
+  const list = document.getElementById('code-pkg-list');
+  if (!list) return;
+  try {
+    const data = await API.get('/v1/code/packages');
+    const pkgs = data.packages || [];
+    if (pkgs.length === 0) {
+      list.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-400);font-size:13px;border:1px dashed var(--border-100);border-radius:8px">No packages installed. Install one above or discover packages below.</div>';
+      return;
+    }
+    list.innerHTML = pkgs.map(p => {
+      const src = p.source;
+      const shortName = src.replace(/^npm:/, '').replace(/^git:/, '').split('/').pop()?.split('@')[0] || src;
+      const typeLabel = src.startsWith('npm:') ? 'npm' : src.startsWith('git:') ? 'git' : src.startsWith('/') || src.startsWith('.') ? 'local' : 'npm';
+      const enabledClass = p.enabled ? 'var(--success)' : 'var(--text-400)';
+      return `<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid var(--border-100);border-radius:8px">
+        <span style="width:7px;height:7px;border-radius:50%;background:${enabledClass};flex-shrink:0"></span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:500;color:var(--text-100);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(shortName)}</div>
+          <div style="font-size:11px;font-family:var(--font-mono);color:var(--text-400);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(src)}</div>
+        </div>
+        <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:var(--bg-200);color:var(--text-400)">${typeLabel}</span>
+        <button onclick="codePackageToggle('${esc(src)}',${!p.enabled})" style="padding:4px 10px;font-size:11px;border-radius:4px;border:1px solid var(--border-100);background:var(--bg-100);color:var(--text-200);cursor:pointer"
+          title="${p.enabled ? 'Disable' : 'Enable'} this package">${p.enabled ? 'Disable' : 'Enable'}</button>
+        <button onclick="codePackageRemove('${esc(src)}')" style="padding:4px 8px;font-size:11px;border-radius:4px;border:1px solid var(--border-100);background:var(--bg-100);color:var(--error);cursor:pointer"
+          title="Remove this package">&times;</button>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    list.innerHTML = `<div style="padding:12px;color:var(--error);font-size:12px">Failed to load packages: ${esc(e.message)}</div>`;
+  }
+}
+
+async function codePackageInstall() {
+  const input = document.getElementById('code-pkg-source');
+  const source = input?.value?.trim();
+  if (!source) { showToast('Enter a package source', true); return; }
+  input.disabled = true;
+  try {
+    showToast('Installing package...');
+    await API.post('/v1/code/packages/install', { source });
+    input.value = '';
+    showToast('Package installed');
+    _loadCodePackages();
+  } catch(e) {
+    showToast('Install failed: ' + e.message, true);
+  } finally {
+    input.disabled = false;
+  }
+}
+
+async function codePackageRemove(source) {
+  if (!confirm(`Remove package?\n${source}`)) return;
+  try {
+    await API.post('/v1/code/packages/remove', { source });
+    showToast('Package removed');
+    _loadCodePackages();
+  } catch(e) { showToast('Remove failed: ' + e.message, true); }
+}
+
+async function codePackageToggle(source, enabled) {
+  try {
+    await API.post('/v1/code/packages/toggle', { source, enabled });
+    showToast(enabled ? 'Package enabled' : 'Package disabled');
+    _loadCodePackages();
+  } catch(e) { showToast('Toggle failed: ' + e.message, true); }
+}
+
+async function codePackageSearch() {
+  const input = document.getElementById('code-pkg-search');
+  const results = document.getElementById('code-pkg-search-results');
+  const q = input?.value?.trim() || '';
+  if (!results) return;
+  results.innerHTML = '<div style="padding:12px;text-align:center;color:var(--text-400);font-size:12px">Searching npm...</div>';
+  try {
+    const data = await API.get(`/v1/code/packages/search?q=${encodeURIComponent(q)}`);
+    const items = data.results || [];
+    if (items.length === 0) {
+      results.innerHTML = '<div style="padding:12px;text-align:center;color:var(--text-400);font-size:12px">No packages found.</div>';
+      return;
+    }
+    results.innerHTML = items.map(pkg => {
+      const npmSource = `npm:${pkg.name}`;
+      const dateStr = pkg.date ? new Date(pkg.date).toLocaleDateString() : '';
+      return `<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--border-100);border-radius:8px">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-size:13px;font-weight:500;color:var(--text-100)">${esc(pkg.name)}</span>
+            <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:var(--bg-200);color:var(--text-400)">v${esc(pkg.version)}</span>
+          </div>
+          <div style="font-size:12px;color:var(--text-300);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pkg.description || 'No description')}</div>
+          <div style="font-size:11px;color:var(--text-400);margin-top:2px">${pkg.author ? esc(pkg.author) : ''}${dateStr ? ' &middot; ' + dateStr : ''}</div>
+        </div>
+        <button onclick="document.getElementById('code-pkg-source').value='${esc(npmSource)}';codePackageInstall()"
+          style="padding:4px 12px;font-size:11px;border-radius:4px;border:1px solid var(--accent-100);background:transparent;color:var(--accent-100);cursor:pointer;white-space:nowrap;flex-shrink:0">Install</button>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    results.innerHTML = `<div style="padding:12px;color:var(--error);font-size:12px">Search failed: ${esc(e.message)}</div>`;
   }
 }
 
@@ -9355,21 +9417,11 @@ async function syncProvider(btn, name) {
   } catch(e) { showToast('Sync failed', true); btn.disabled = false; btn.textContent = 'Sync'; }
 }
 
-function _provSdkVisibility(pid, type) {
-  const row = document.getElementById(`${pid}-sdk-row`);
-  if (row) row.style.display = type === 'anthropic' ? 'flex' : 'none';
-}
-
 async function saveProviderEdit(name, pid) {
-  const type = document.getElementById(`${pid}-type`).value;
   const base_url = document.getElementById(`${pid}-url`).value;
   const api_key = document.getElementById(`${pid}-key`).value;
   const default_model = document.getElementById(`${pid}-model`).value;
-  const provider = { type, base_url, default_model };
-  if (type === 'anthropic') {
-    const sdkEl = document.getElementById(`${pid}-sdk`);
-    if (sdkEl) provider.use_sdk = sdkEl.checked;
-  }
+  const provider = { base_url, default_model };
   if (api_key) provider.api_key = api_key;
   else provider._keep_key = true;
   try {
@@ -9402,7 +9454,6 @@ async function testNewProvider() {
       name: document.getElementById('prov-name')?.value,
       base_url: document.getElementById('prov-url')?.value,
       api_key: document.getElementById('prov-key')?.value,
-      type: document.getElementById('prov-type')?.value,
     });
     res.innerHTML = r.status === 'ok'
       ? `<span style="color:var(--success)">Connected (${r.models||0} models)</span>`
@@ -9413,17 +9464,11 @@ async function testNewProvider() {
 async function saveNewProvider() {
   const name = document.getElementById('prov-name')?.value?.trim();
   if (!name) { showToast('Name required', true); return; }
-  const type = document.getElementById('prov-type')?.value || 'anthropic';
   const provider = {
-    type,
     base_url: document.getElementById('prov-url')?.value || '',
     api_key: document.getElementById('prov-key')?.value || '',
     default_model: document.getElementById('prov-model')?.value || '',
   };
-  if (type === 'anthropic') {
-    const sdkEl = document.getElementById('prov-new-sdk');
-    if (sdkEl) provider.use_sdk = sdkEl.checked;
-  }
   try {
     await API.post('/v1/providers', { action: 'add', name, provider });
     showToast('Provider added');
@@ -13379,6 +13424,7 @@ function switchAppMode(mode) {
     _codeNav();
     setTimeout(_codeNav, 50);
     setTimeout(_codeNav, 200);
+    updateCodeStatusBar();
   } else {
     chatSb?.classList.remove('hidden');
     codeSb?.classList.remove('active');
@@ -13388,6 +13434,7 @@ function switchAppMode(mode) {
     } else {
       navigateTo('welcome');
     }
+    updateStatusBar();
   }
 }
 
@@ -13459,7 +13506,8 @@ function renderCodeSessionList(sessions) {
   const groups = {};
 
   for (const s of sessions) {
-    const d = new Date(s.last_active || s.created || s.timestamp);
+    const raw = s.last_active || s.created_at || s.created || s.timestamp;
+    const d = new Date(raw < 1e12 ? raw * 1000 : raw);
     const ds = d.toDateString();
     let label;
     if (ds === today) label = 'Today';
@@ -13515,6 +13563,7 @@ async function openCodeSession(sessionId, agentId) {
   if (!state.codeSessionTitle) _pollCodeSessionTitle();
   navigateTo('code-chat');
   loadCodeSessions(); // refresh list to highlight active
+  updateCodeStatusBar();
 }
 
 async function archiveCodeSession(sessionId) {
@@ -13579,6 +13628,7 @@ function updateCodeStatusBar() {
       }
       if (m.metadata.tokens_in) lastApiIn = m.metadata.tokens_in;
       if (m.metadata.tokens) lastApiIn = m.metadata.tokens;
+      if (m.metadata.max_context) maxContext = m.metadata.max_context;
     }
   }
   document.getElementById('status-tokens-in').textContent = totalIn ? totalIn.toLocaleString() : '0';
@@ -13589,7 +13639,6 @@ function updateCodeStatusBar() {
   const wrap = document.getElementById('status-context-wrap');
   const fill = document.getElementById('status-context-fill');
   const label = document.getElementById('status-context-label');
-  const compactBtn = document.getElementById('status-compact-btn');
   if (lastApiIn > 0) {
     const pct = Math.min(100, Math.round(lastApiIn / maxContext * 100));
     wrap.style.display = '';
@@ -13597,7 +13646,6 @@ function updateCodeStatusBar() {
     fill.className = 'context-fill' + (pct >= 80 ? ' danger' : pct >= 50 ? ' warn' : '');
     const fmtK = (n) => n >= 1000 ? (n/1000).toFixed(1) + 'K' : n.toString();
     label.textContent = `${fmtK(lastApiIn)} / ${fmtK(maxContext)} (${pct}%)`;
-    if (compactBtn) compactBtn.style.display = 'none';
   } else {
     wrap.style.display = 'none';
   }
