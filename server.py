@@ -1689,12 +1689,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_file_preview()
         elif path == "/v1/files/tree":
             self._handle_file_tree()
-        elif path == "/v1/code/packages" or path == "/v1/code/packages/search":
-            self._handle_code_packages_get(path)
-        elif path == "/v1/code/diff":
-            self._handle_code_diff()
-        elif path == "/v1/code/status":
-            self._handle_code_status()
         elif path == "/v1/artifacts":
             self._handle_artifacts_list()
         elif path == "/v1/artifacts/browse":
@@ -1890,9 +1884,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_node_result()
         elif path == "/v1/nodes/execute":
             self._handle_node_execute()
-        # --- Code mode packages POST routes ---
-        elif path.startswith("/v1/code/packages/"):
-            self._handle_code_packages_post(path)
         # --- Tools config POST routes ---
         elif path == "/v1/tools/config":
             self._handle_tools_config_save()
@@ -2944,9 +2935,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
 
-        # All chat/code requests go through the PI Agent SDK sidecar (port 8422).
+        # All chat requests go through the PI Agent SDK sidecar (port 8422).
         _prov = engine.resolve_provider_for_model(session.model)
-        _is_code_mode = session.status == "code"
         _use_pi_sdk = True  # kept as a no-op flag for readability; all traffic goes to PI
 
         # Pre-processing: tool result budget + microcompact (benefits both SDK and direct paths)
@@ -2960,8 +2950,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         _partial_tools = []  # accumulate tool calls
 
 
-        # PI SDK path: proxy to Node.js PI sidecar for code mode
-        # Works with any provider (OpenAI, Mistral) — replaces dead Anthropic SDK for code mode
+        # PI SDK path: proxy to Node.js PI sidecar.
+        # Works with any provider (OpenAI, Mistral) — replaces dead Anthropic SDK.
         if _use_pi_sdk:
             PI_SIDECAR_PORT = int(os.environ.get("PI_SIDECAR_PORT", "8422"))
             _req_start = time.time()
@@ -3020,7 +3010,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 })
             pi_tool_defs.sort(key=lambda t: t.get("name", ""))
 
-            # CWD: code mode → project folder; chat mode → server CWD (but we skip project-context walk below)
             pi_cwd = session.project or os.getcwd()
 
             server_port = server_config.get("port", 8420)
@@ -3036,7 +3025,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "provider_config": pi_provider_info,
                 "interactive": _interactive,
                 "thinking_level": thinking_level or "off",
-                "skip_project_context": not _is_code_mode,
+                "skip_project_context": True,
             }).encode()
 
             # Tracing
@@ -7101,165 +7090,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
         tree = _scan(dir_path)
         self._send_json({"path": dir_path, "tree": tree})
-
-    def _proxy_pi_sidecar(self, pi_path, method="GET", body=None):
-        """Proxy a request to the PI sidecar and return the JSON response."""
-        import urllib.request as _urlreq
-        _port = int(os.environ.get("PI_SIDECAR_PORT", "8422"))
-        base = f"http://127.0.0.1:{_port}"
-        url = f"{base}{pi_path}"
-        data = json.dumps(body).encode() if body else None
-        headers = {"Content-Type": "application/json"} if data else {}
-        req = _urlreq.Request(url, data=data, headers=headers, method=method)
-        try:
-            with _urlreq.urlopen(req, timeout=60) as resp:
-                return json.loads(resp.read().decode())
-        except Exception as e:
-            return {"error": str(e)}
-
-    def _handle_code_packages_get(self, path):
-        """GET /v1/code/packages — list installed packages.
-           GET /v1/code/packages/search?q=... — search npm registry."""
-        from urllib.parse import urlparse, parse_qs
-        qs = parse_qs(urlparse(self.path).query)
-        if path == "/v1/code/packages/search":
-            q = qs.get("q", [""])[0]
-            pi_path = f"/packages/search?q={q}" if q else "/packages/search"
-            result = self._proxy_pi_sidecar(pi_path)
-        else:
-            result = self._proxy_pi_sidecar("/packages")
-        status = 500 if "error" in result and "packages" not in result else 200
-        self._send_json(result, status)
-
-    def _handle_code_packages_post(self, path):
-        """POST /v1/code/packages/install — install a package.
-           POST /v1/code/packages/remove — remove a package.
-           POST /v1/code/packages/toggle — enable/disable a package."""
-        body = self._read_json()
-        action = path.rsplit("/", 1)[-1]  # install, remove, toggle
-        if action not in ("install", "remove", "toggle"):
-            self._send_json({"error": f"Unknown action: {action}"}, 400)
-            return
-        result = self._proxy_pi_sidecar(f"/packages/{action}", method="POST", body=body)
-        status = 500 if "error" in result else 200
-        self._send_json(result, status)
-
-    def _handle_code_diff(self):
-        """GET /v1/code/diff?path=<dir>&ref=HEAD — return git diff for Code mode."""
-        from urllib.parse import urlparse, parse_qs, unquote
-        qs = parse_qs(urlparse(self.path).query)
-        dir_path = unquote(qs.get("path", [""])[0])
-        ref = qs.get("ref", ["HEAD"])[0]
-        staged = qs.get("staged", ["false"])[0].lower() == "true"
-        if not dir_path or not os.path.isdir(dir_path):
-            self._send_json({"error": "Invalid directory"}, 400)
-            return
-        try:
-            cmd = ["diff", "--stat"]
-            if staged:
-                cmd.append("--cached")
-            if ref and ref != "working":
-                cmd.append(ref)
-            # Scope to subfolder: add pathspec so only changes within dir_path are shown
-            cmd += ["--", dir_path]
-            proc = subprocess.run(
-                ["git", "--no-pager"] + cmd,
-                capture_output=True, cwd=dir_path, timeout=15,
-                env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "PAGER": "cat"},
-            )
-            stat_output = proc.stdout.decode("utf-8", errors="replace").strip()
-
-            # Get full diff too (truncated)
-            cmd2 = ["diff"]
-            if staged:
-                cmd2.append("--cached")
-            if ref and ref != "working":
-                cmd2.append(ref)
-            cmd2 += ["--", dir_path]
-            proc2 = subprocess.run(
-                ["git", "--no-pager"] + cmd2,
-                capture_output=True, cwd=dir_path, timeout=15,
-                env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "PAGER": "cat"},
-            )
-            diff_output = proc2.stdout.decode("utf-8", errors="replace").strip()
-            if len(diff_output) > 50000:
-                diff_output = diff_output[:50000] + "\n... (diff truncated)"
-
-            # Parse stat to get file-level changes
-            files = []
-            added = 0
-            removed = 0
-            for line in stat_output.split("\n"):
-                if "|" in line:
-                    parts = line.split("|")
-                    fname = parts[0].strip()
-                    changes = parts[1].strip()
-                    plus_count = changes.count("+")
-                    minus_count = changes.count("-")
-                    added += plus_count
-                    removed += minus_count
-                    files.append({"file": fname, "added": plus_count, "removed": minus_count, "summary": changes})
-
-            self._send_json({
-                "path": dir_path,
-                "files": files,
-                "added": added,
-                "removed": removed,
-                "stat": stat_output,
-                "diff": diff_output,
-            })
-        except Exception as e:
-            self._send_json({"error": str(e)}, 500)
-
-    def _handle_code_status(self):
-        """GET /v1/code/status?path=<dir> — return git status for Code mode."""
-        from urllib.parse import urlparse, parse_qs, unquote
-        qs = parse_qs(urlparse(self.path).query)
-        dir_path = unquote(qs.get("path", [""])[0])
-        if not dir_path or not os.path.isdir(dir_path):
-            self._send_json({"error": "Invalid directory"}, 400)
-            return
-        try:
-            # Branch info
-            proc_branch = subprocess.run(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                capture_output=True, cwd=dir_path, timeout=10,
-                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-            )
-            branch = proc_branch.stdout.decode().strip() if proc_branch.returncode == 0 else ""
-
-            # Status
-            proc_status = subprocess.run(
-                ["git", "status", "--porcelain", "-b"],
-                capture_output=True, cwd=dir_path, timeout=10,
-                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-            )
-            status_lines = proc_status.stdout.decode("utf-8", errors="replace").strip().split("\n")
-            modified = []
-            staged = []
-            untracked = []
-            for line in status_lines[1:]:
-                if not line.strip():
-                    continue
-                idx, wt = line[0], line[1]
-                fname = line[3:]
-                if idx in ("M", "A", "D", "R"):
-                    staged.append(fname)
-                if wt == "M":
-                    modified.append(fname)
-                elif wt == "?":
-                    untracked.append(fname)
-
-            self._send_json({
-                "path": dir_path,
-                "branch": branch,
-                "modified": modified,
-                "staged": staged,
-                "untracked": untracked,
-                "is_git": proc_branch.returncode == 0,
-            })
-        except Exception as e:
-            self._send_json({"error": str(e)}, 500)
 
     # ── Artifact Endpoints ──
 
