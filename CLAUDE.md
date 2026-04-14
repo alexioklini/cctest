@@ -20,24 +20,19 @@ This file provides guidance to Claude Code when working with this repository.
 ```
 brain.py (gateway)
   ├── server.py (daemon on port 8420, launchd managed)
-  │   ├── claude_cli.py (engine: 30+ tools, agents, memory, scheduler)
-  │   ├── sdk_backend.py (REST polling proxy to sidecar)
+  │   ├── claude_cli.py (engine: 30+ tools, agents, memory, scheduler,
+  │   │                  native agentic loop, Lossless Context Manager)
   │   ├── /mcp endpoint (MCP JSON-RPC: tools/list, tools/call with hooks)
-  │   ├── SQLite: chats.db, scheduler.db
+  │   ├── SQLite: chats.db, scheduler.db, context.db, costs.db
   │   └── MCP server connections
-  ├── sdk_sidecar.py (REST API on port 8421, Anthropic Agent SDK — legacy)
-  │   └── Runs claude_agent_sdk.query() in a clean process (no claude_cli import)
-  ├── pi_sidecar/ (Node.js REST API on port 8422, PI Agent SDK — code mode)
-  │   ├── POST /query, GET /events/{id}, POST /cancel/{id}, POST /answer/{id}
-  │   ├── PI SDK: createAgentSession() with openai-completions provider
-  │   ├── Native tools: read, write, edit, bash (run in Node.js)
-  │   └── Brain Agent tools via HTTP → /v1/tools/call
   ├── qmd mcp --http (daemon on port 8181, hybrid memory search)
   │   └── Collections: one per agent → agents/<name>/*.md
-  ├── tui.py (terminal client)
-  ├── telegram.py (Telegram client)
+  ├── telegram.py (Telegram client, in-process thread)
   └── web/index.html (browser client — Mission Control cockpit)
 ```
+
+All chat goes through the native Python agentic loop in `claude_cli.py`.
+No SDK sidecars. All providers are OpenAI-compatible (Bifrost, Kilo).
 
 ### Web UI (Claude.ai-style)
 
@@ -76,32 +71,6 @@ Key patterns:
 - Artifact panel: resizable right panel (`#artifact-panel`) for viewing generated files with type-aware rendering
 - References panel: resizable right panel (`#references-panel`) for web source cards with screenshot previews
 
-### Code Mode (PI Agent SDK)
-
-Code mode uses the PI Agent SDK (`@mariozechner/pi-coding-agent`) as the agentic loop via a Node.js sidecar process.
-No Brain Agent system prompt or agent configuration is used — PI SDK provides its own minimal prompt + native coding tools.
-
-- **PI Sidecar**: `pi_sidecar/pi_sidecar.ts` — Node.js HTTP server on port 8422, same REST API contract as `sdk_sidecar.py`
-- **REST API**: `POST /query` (start), `GET /events/{id}` (poll), `POST /cancel/{id}` (abort), `POST /answer/{id}` (interactive)
-- **Provider routing**: all models use `openai-completions` API type; non-OpenAI providers get `compat: { supportsStore: false }` to avoid 422 errors
-- **Model `baseUrl`**: must keep `/v1` suffix — PI SDK's OpenAI client appends `/chat/completions` directly
-- **Native tools**: PI SDK provides read, write, edit, bash (run in Node.js, no IPC)
-- **Brain Agent tools**: proxied via HTTP to `/v1/tools/call` endpoint (memory, web, git, etc.)
-- **System prompt**: PI SDK's own 150-word default + `AGENTS.md`/`CLAUDE.md`/`.cursorrules` auto-discovered from project folder up to git root
-- **Server routing**: `_use_pi_sdk = session.status == "code"` — inline REST polling to port 8422, same pattern as Anthropic SDK path
-- **Auto-start**: server.py starts PI sidecar with watchdog thread alongside SDK sidecar
-- **Folder browser GUI**: modal with breadcrumb navigation, lazy-loaded directory listing via `/v1/files/tree?depth=0`, single-click select, double-click navigate, manual path input
-- **File preview**: clicking files in tree opens content in diff panel via `/v1/files/preview` (text, code, images)
-- **SSE streaming**: uses proper two-line `event: type\ndata: json` format (same parser as main chat)
-- **Folder-based projects**: sessions tagged with folder path in `project` field; sidebar shows projects with counts + session list
-- **Session management**: editable session titles in toolbar, archive/delete in sidebar
-- **Composer**: thinking level, AI refine, tool display toggle, Ask/Auto/Plan mode selector, model dropdown (opens above)
-- **Status bar**: shows model, session ID, tokens in/out, speed, context fill — synced via `updateCodeStatusBar()`
-- **Diff scoping**: `git diff --stat HEAD -- <dir>` scopes to project subfolder, not entire repo
-- **`/init` command**: generates `AGENTS.md` by having PI agent analyze the project structure
-- **State**: `codeFolder`, `codeModel`, `codePermission`, `codeThinking`, `codeShowToolCalls`, `codeSessionId`, `codeMessages[]`
-- **Views**: `code-welcome` (folder picker + composer), `code-chat` (file tree + messages + diff panel)
-
 ### Chat File Attachments
 
 Users can attach files in the chat composer. Routing is dynamic based on model capabilities.
@@ -111,10 +80,9 @@ Users can attach files in the chat composer. Routing is dynamic based on model c
 - **Server routing**: checks model's `raw_formats` (MIME patterns) to decide per-file:
   - **Multimodal**: MIME matches `raw_formats` + base64 + <20MB → injected as content block (LLM sees raw data)
   - **Disk**: otherwise → saved to `/tmp/brain-attachments/{session_id}/`, agent uses `read_document`
-- **Multimodal format**: Anthropic `image`/`document` blocks, OpenAI/Mistral `image_url` data URIs
-- **API type guard**: OpenAI/Mistral only support `image/*` as multimodal (no PDF blocks)
+- **Multimodal format**: OpenAI `image_url` data URIs
 - **`raw_formats`**: per-model MIME pattern list in `KNOWN_MODELS` and `config.json` models section
-  - Claude/Qwen/Mistral: `["image/*"]`, Gemini: `["image/*", "application/pdf"]`, text-only: `[]`
+  - Vision models: `["image/*"]`, PDF-capable: `["image/*", "application/pdf"]`, text-only: `[]`
   - Editable in Models tab detail panel, saved via `POST /v1/models/config`
   - `get_model_raw_formats(model)` and `_mime_matches(mime, patterns)` helpers in `claude_cli.py`
 - **Fallback for images**: when model lacks vision, `attachment_image_model` describes via vision LLM; if unconfigured, returns metadata only
@@ -141,41 +109,37 @@ Files generated during chat are treated as artifacts when written to `agents/<na
 - **Browse API**: `GET /v1/artifacts/browse?agent_id=X&limit=N` — returns all artifacts across sessions with text previews
 - **Click-through**: clicking a card in browse view opens the source chat session + artifact panel
 
-### Agent SDK (Agentic Loop)
+### Agentic Loop (Native)
 
-All agents use the Anthropic Agent SDK (Claude Code CLI) as the agentic loop by default.
-The SDK provides built-in tools (Read, Write, Edit, Bash, Grep, Glob, WebFetch, WebSearch),
-context management, and token-efficient file operations.
+All agents use the native Python agentic loop in `claude_cli.py`. OpenAI-compatible
+API shape across the board — no SDK sidecars, no Anthropic wire format, no Mistral
+SDK. Streaming is handled directly with `urllib` + raw socket SSE.
 
-- `sdk_sidecar.py`: REST API on port 8421 — POST /query starts a query, GET /events/{id} polls for events
-- `sdk_backend.py`: Provider env var builder + REST polling proxy (50ms interval with keepalive comments)
-- Must NOT import `claude_cli` in the sidecar — its module side-effects break anyio subprocess streaming
-- Server builds system prompt and provider env using `claude_cli`, then hands off to sidecar via REST
-- `/mcp` endpoint on server: MCP JSON-RPC (initialize, tools/list, tools/call) — sidecar's SDK connects here for custom tools
-- Hooks run server-side in `/mcp` tools/call handler (SDK hook registration causes streaming to buffer — never pass `hooks_enabled: true`)
-- Exception: `AskUserQuestion` PreToolUse hook registered only in interactive mode (matcher scoped to single tool)
-- SDK routing per provider: `"use_sdk": true/false` in provider config (anthropic default true, openai/mistral always direct loop)
-- SDK badge shown in web UI status bar and message footers
-- All paths route through SDK: web UI, TUI interactive, CLI one-shot, scheduled tasks, `_run_delegate`
-- `query_sync` accepts `tool_defs`, `server_url`, `agent_id`, `session_id`, `cancel_fn`, `sdk_session_id`, `return_metadata`
-- All SDK paths fall back to direct API if sidecar is unavailable
-- Claude Code skills: `scan_claude_code_skills()` discovers plugins from `~/.claude`, GUI toggle per agent, `SdkPluginConfig` for SDK loading
-- Tool args capture: sidecar accumulates `input_json_delta` fragments, re-emits `tool_call` with full args on `content_block_stop`
-- Tool call dedup: server and client detect re-emitted tool_calls (same name, now with args) and update in-place
-- Interactive mode: `POST /query` accepts `interactive: true`, sidecar registers AskUserQuestion PreToolUse hook
-- Interactive answer flow: sidecar emits `user_input_needed` SSE event, blocks on `_pending_answers[query_id]`, unblocked by `POST /answer/{query_id}`
-- TUI interactive: `client.chat(..., interactive=True)` enables AskUserQuestion, renders questions with options, sends answers via `client.answer()`
-
-Provider routing for SDK (env vars per provider):
-- `cliproxyapi`: Claude models (Max subscription OAuth) + Gemini, Qwen — `ANTHROPIC_BASE_URL=http://127.0.0.1:8317`
-- `omlx`: Local Crow models — `ANTHROPIC_BASE_URL=http://127.0.0.1:8000`
-- `minimax`: MiniMax M2.5/M2.7 — `ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic`
+- `send_message()` + `send_message_with_fallback()`: top-level entry point with
+  provider fallback, retry with exponential backoff, and transient-error classification
+- `_handle_openai_response()`: streaming response handler, tool-call aggregation,
+  multi-round tool loop, usage accounting, partial-response preservation on cancel/error
+- `_MIDDLEWARE_PIPELINE`: `_middleware_cancel_check`, `_middleware_tool_result_budget`,
+  `_middleware_microcompact`, `_middleware_compress_old`, `_middleware_compaction` —
+  runs between tool rounds to keep context lean
+- `_run_middleware(messages, ...)`: sequential pipeline runner, short-circuits on cancel
+- Tool calls fire through `_execute_tool()`: built-in pre → external pre → execute →
+  built-in post → external post → `_after_file_write()` side-effects
+- Interactive mode: `AskUserQuestion` tool blocks the loop via `_pending_answers[session_id]`
+  and an `Event`, unblocked by `POST /v1/chat/answer`
+- Partial response recovery: on cancel/error, streamed text + tool calls are saved to
+  chat history via `_rollback_messages()` so the user sees what got produced
 
 ### Multi-Provider Routing
 
-The server supports multiple LLM providers (config.json). When a model is selected,
-the server automatically routes to the correct provider based on which one has that model.
-Provider types: `openai` (OpenAI-compatible), `anthropic` (native Anthropic API), and `mistral` (Mistral SDK with Vibe CLI-compatible headers).
+The server supports multiple OpenAI-compatible providers via `config.json`. When a
+model is selected, `resolve_provider_for_model(model)` in `claude_cli.py` resolves
+the credentials — this is the single source of truth used by chat, delegate,
+scheduler, warmup, and all background LLM calls.
+
+Current providers: **Bifrost** (local gateway on port 7777) and **Kilo** (cloud
+gateway). Both are OpenAI-compatible (`/v1/chat/completions`). The `api_type` field
+is always `openai` — Anthropic and Mistral wire formats are no longer supported.
 
 ### Model Management
 
@@ -194,7 +158,7 @@ Per-model config fields (all in config.json `models` section, editable in Models
 - `max_context`: context window size (hard max for compaction)
 - `max_output`: max output tokens per response (thinking models need higher values)
 - `inference`: base inference params (`temperature`, `top_p`, `top_k`, `max_tokens`)
-- Provider-specific inference: `frequency_penalty`/`presence_penalty` (OpenAI/oMLX), `min_p`/`repetition_penalty` (oMLX), `reasoning_effort` (Mistral)
+- Provider-specific inference: `frequency_penalty`/`presence_penalty`, `min_p`/`repetition_penalty`, `reasoning_effort` (varies by model)
 - `cost_input`/`cost_output`: cost per million tokens
 - `raw_formats`: list of MIME patterns the model handles natively as multimodal (e.g. `["image/*", "application/pdf"]`)
 - `presets`: purpose-based inference overrides (e.g. `coding`, `creative`)
@@ -203,21 +167,6 @@ Per-model config fields (all in config.json `models` section, editable in Models
 Thinking model auto-recovery: when `finish_reason == "length"` and visible output is <25% of
 completion tokens (thinking consumed the budget), `max_tokens` is doubled on retry (capped at
 model's `max_context`). Logged to stderr as `[thinking model: boosting max_tokens X → Y]`.
-
-### Mistral Provider (Vibe CLI Integration)
-
-The `mistral` provider type uses the official `mistralai` Python SDK instead of raw HTTP,
-replicating the Vibe CLI's API interaction pattern for Pro subscription key compatibility.
-
-- SDK: `from mistralai.client import Mistral` — handles auth, streaming, tool calling natively
-- Vibe headers: `user-agent: mistral-client-python/Mistral-Vibe/{version}`, `x-affinity: {session_id}`
-- Vibe metadata: `{agent_entrypoint: "cli", client_name: "vibe_cli", ...}` in request body
-- Tool format: OpenAI-style function calling (same as `openai` provider type)
-- System prompt: inserted as first message (same as `openai` provider type)
-- Models: `devstral-small-latest` (Devstral Small), `mistral-vibe-cli-latest` (Devstral 2)
-- `_handle_mistral_response()`: streaming response handler via SDK with full agentic tool loop
-- Warmup uses SDK `chat.complete()` instead of raw urllib
-- `_use_sdk`: always false for mistral — uses Mistral SDK natively via direct agentic loop
 
 ### Token Optimization
 
@@ -267,9 +216,8 @@ Per-agent token config in `agent.json` under `token_config`:
 - QMD path normalization: QMD lowercases paths and converts underscores to hyphens — `/docs` endpoint mirrors this when matching filesystem paths to index entries
 - `/v1/services` returns per-collection health stats: `total`, `indexed`, `embedded`, `stale`, `not_indexed`
 - Smart model routing: `init_models_config()` auto-discovers models from providers, `resolve_model()` picks by purpose
-- Unified provider resolution: `resolve_provider_for_model(model)` in `claude_cli.py` is the single source of truth for model→provider credential resolution (api_key, base_url, api_type, provider_name). Used by all LLM call paths: interactive chat, PI sidecar, SDK sidecar, `_run_delegate`, warmup, background tasks
+- Unified provider resolution: `resolve_provider_for_model(model)` in `claude_cli.py` is the single source of truth for model→provider credential resolution (api_key, base_url, api_type, provider_name). Used by all LLM call paths: chat, `_run_delegate`, warmup, background tasks
 - Provider-scoped models: when multiple providers offer the same model ID, entries are stored as `provider/model_id` with a `base_model_id` field. `get_api_model_id(model)` resolves to the actual API model ID
-- Mistral model discovery uses SDK (`client.models.list()`) instead of raw HTTP (Vibe CLI auth incompatible with plain Bearer)
 - Providers without `/models` endpoint: manually add models via Models tab (model ID + provider + display name)
 - Model display format: `displayName (provider)` everywhere — `modelShortName(mid, withProvider)` controls compact vs full
 - QMD session reuse: `_qmd_session_lock` prevents concurrent threads from creating duplicate MCP sessions
@@ -297,7 +245,7 @@ Per-agent token config in `agent.json` under `token_config`:
 - `get_memory_health(agent_id)`: live stats — total, by_type, stale_count, age_distribution, recall_frequency (hot/warm/cold/never), autodream results, health_score
 - `GET /v1/agents/<id>/memory-health`: full health dashboard data; `trigger_autodream(agent_id)` for manual runs
 - Knowledge graph: auto-discovery (LLM-based, entity extraction, co-recall), graph-aware recall default (1 hop), visualization via Canvas 2D
-- Model-aware max_tokens: Opus 32K, Sonnet 16K, Haiku 8K, MiniMax 32K, configurable via `max_output` in models config
+- Model-aware max_tokens: configurable per model via `max_output` in models config
 - Provider fallback ordering: same provider first, then capabilities, then priority
 - Chat file attachments: files created by agents (write_file/edit_file) appear as viewable/downloadable attachments
 - `get_model_max_output(model)` returns max output tokens based on model family or config
@@ -393,7 +341,7 @@ The server handles multiple concurrent chat requests, scheduled tasks, delegatio
 - **LLM JSON parsing**: `_extract_json_from_llm()` uses `json.JSONDecoder.raw_decode()` — handles nested objects, markdown fences, surrounding text
 - **Entity extraction**: `_RE_CAPITALIZED` requires 3+ char words; `_ENTITY_STOP_PHRASES` filters common false positives
 - **Fallback search**: file reads capped at 32KB to prevent OOM on large files
-- **SDK sidecar**: pending answers set atomically under `_pending_answers_lock`; stale queries evicted via `_evict_stale_queries()` (5min TTL)
+- **Interactive answers**: pending answers set atomically under `_pending_answers_lock`; stale queries evicted via `_evict_stale_queries()` (5min TTL)
 
 ### Agent Teams
 
@@ -498,43 +446,18 @@ Server runs on port 8420 (configurable). Key endpoints:
 - Server: launchd daemon (`com.brain-agent.server.plist`)
 - Telegram: in-process thread (started/stopped via server, no separate daemon)
 - QMD: launchd daemon (`com.brain-agent.qmd.plist`, port 8181) or auto-started by `brain.py start`
-- oMLX: local MLX inference server (`brew services`, port 8000)
-- CLIProxyAPI: local OAuth proxy for Claude models (`brew services`, port 8317)
 - Public: Cloudflare Zero Trust tunnel → `brain.alexklinsky.dev`
 - Tunnel runs on 192.168.4.65 (tunnel: itrmp)
 
-### oMLX (Local MLX Inference)
+### Providers
 
-Local [oMLX](https://github.com/jundot/omlx) instance on port 8000 serves quantized MLX models
-on Apple Silicon. OpenAI-compatible API, no API key needed for local access.
+All providers are OpenAI-compatible. Current providers:
 
-- Models: `~/.omlx/models/` (auto-discovered subdirectories)
-- Current model: `Crow-4B-Opus-4.6-Distill` (4-bit quantized, ~2.5GB)
-- SSD KV cache: `/Volumes/Scratch/omlx-cache` (100GB max, 8GB hot cache in RAM)
-- Admin dashboard: `http://127.0.0.1:8000/admin`
-- Service control: `brew services start/stop/restart omlx`
-- Convert new models: `/opt/homebrew/opt/omlx/libexec/bin/mlx_lm.convert`
+- **Bifrost** — local gateway on `http://localhost:7777/v1`
+- **Kilo** — cloud gateway on `https://api.kilo.ai/api/gateway/v1`
 
-### CLIProxyAPI (Claude OAuth Proxy)
-
-Local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) instance on port 8317 provides
-Claude models via OAuth (no API key costs). Installed via Homebrew, runs as a launchd service.
-
-- Config: `/opt/homebrew/etc/cliproxyapi.conf`
-- Auth tokens: `~/.cli-proxy-api/` (Claude, Gemini, Qwen OAuth)
-- API key for Brain Agent: `brain-agent`
-- Management panel: `http://127.0.0.1:8317/management.html` (secret-key: `brain-agent`)
-- Service control: `brew services start/stop/restart cliproxyapi`
-
-### MiniMax (Cloud LLM Provider)
-
-MiniMax provides M2.5 and M2.7 models via an Anthropic-compatible API.
-
-- Base URL: `https://api.minimax.io/anthropic/v1`
-- API type: `anthropic`
-- No `/models` endpoint — models must be manually configured in `config.json`
-- M2.7 always produces thinking blocks (cannot be disabled)
-- For coding: use `temperature: 0.2`, `max_tokens: 8192` to avoid thinking consuming the budget
+Provider configs live in `config.json` under `providers`. Each entry has `api_key`
+and `base_url`; `type` defaults to `openai` if omitted.
 
 ### QMD (Hybrid Memory Search)
 
