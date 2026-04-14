@@ -8078,7 +8078,7 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
 _delegate_fallback_model: str | None = None
 _delegate_api_key: str = ""
 _delegate_base_url: str = ""
-_delegate_api_type: str = "anthropic"
+_delegate_api_type: str = "openai"
 
 # Provider cache for resolve_provider_for_model
 _provider_cache: dict[str, dict] = {}
