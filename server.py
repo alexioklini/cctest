@@ -1712,10 +1712,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_file_preview()
         elif path == "/v1/files/tree":
             self._handle_file_tree()
-        elif path == "/v1/code/diff":
-            self._handle_code_diff()
-        elif path == "/v1/code/status":
-            self._handle_code_status()
         elif path == "/v1/artifacts":
             self._handle_artifacts_list()
         elif path == "/v1/artifacts/browse":
@@ -7227,123 +7223,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
         tree = _scan(dir_path)
         self._send_json({"path": dir_path, "tree": tree})
-
-    def _handle_code_diff(self):
-        """GET /v1/code/diff?path=<dir>&ref=HEAD — return git diff for Code mode."""
-        from urllib.parse import urlparse, parse_qs, unquote
-        qs = parse_qs(urlparse(self.path).query)
-        dir_path = unquote(qs.get("path", [""])[0])
-        ref = qs.get("ref", ["HEAD"])[0]
-        staged = qs.get("staged", ["false"])[0].lower() == "true"
-        if not dir_path or not os.path.isdir(dir_path):
-            self._send_json({"error": "Invalid directory"}, 400)
-            return
-        try:
-            cmd = ["diff", "--stat"]
-            if staged:
-                cmd.append("--cached")
-            if ref and ref != "working":
-                cmd.append(ref)
-            # Scope to subfolder: add pathspec so only changes within dir_path are shown
-            cmd += ["--", dir_path]
-            proc = subprocess.run(
-                ["git", "--no-pager"] + cmd,
-                capture_output=True, cwd=dir_path, timeout=15,
-                env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "PAGER": "cat"},
-            )
-            stat_output = proc.stdout.decode("utf-8", errors="replace").strip()
-
-            # Get full diff too (truncated)
-            cmd2 = ["diff"]
-            if staged:
-                cmd2.append("--cached")
-            if ref and ref != "working":
-                cmd2.append(ref)
-            cmd2 += ["--", dir_path]
-            proc2 = subprocess.run(
-                ["git", "--no-pager"] + cmd2,
-                capture_output=True, cwd=dir_path, timeout=15,
-                env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "PAGER": "cat"},
-            )
-            diff_output = proc2.stdout.decode("utf-8", errors="replace").strip()
-            if len(diff_output) > 50000:
-                diff_output = diff_output[:50000] + "\n... (diff truncated)"
-
-            # Parse stat to get file-level changes
-            files = []
-            added = 0
-            removed = 0
-            for line in stat_output.split("\n"):
-                if "|" in line:
-                    parts = line.split("|")
-                    fname = parts[0].strip()
-                    changes = parts[1].strip()
-                    plus_count = changes.count("+")
-                    minus_count = changes.count("-")
-                    added += plus_count
-                    removed += minus_count
-                    files.append({"file": fname, "added": plus_count, "removed": minus_count, "summary": changes})
-
-            self._send_json({
-                "path": dir_path,
-                "files": files,
-                "added": added,
-                "removed": removed,
-                "stat": stat_output,
-                "diff": diff_output,
-            })
-        except Exception as e:
-            self._send_json({"error": str(e)}, 500)
-
-    def _handle_code_status(self):
-        """GET /v1/code/status?path=<dir> — return git status for Code mode."""
-        from urllib.parse import urlparse, parse_qs, unquote
-        qs = parse_qs(urlparse(self.path).query)
-        dir_path = unquote(qs.get("path", [""])[0])
-        if not dir_path or not os.path.isdir(dir_path):
-            self._send_json({"error": "Invalid directory"}, 400)
-            return
-        try:
-            # Branch info
-            proc_branch = subprocess.run(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                capture_output=True, cwd=dir_path, timeout=10,
-                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-            )
-            branch = proc_branch.stdout.decode().strip() if proc_branch.returncode == 0 else ""
-
-            # Status
-            proc_status = subprocess.run(
-                ["git", "status", "--porcelain", "-b"],
-                capture_output=True, cwd=dir_path, timeout=10,
-                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-            )
-            status_lines = proc_status.stdout.decode("utf-8", errors="replace").strip().split("\n")
-            modified = []
-            staged = []
-            untracked = []
-            for line in status_lines[1:]:
-                if not line.strip():
-                    continue
-                idx, wt = line[0], line[1]
-                fname = line[3:]
-                if idx in ("M", "A", "D", "R"):
-                    staged.append(fname)
-                if wt == "M":
-                    modified.append(fname)
-                elif wt == "?":
-                    untracked.append(fname)
-
-            self._send_json({
-                "path": dir_path,
-                "branch": branch,
-                "modified": modified,
-                "staged": staged,
-                "untracked": untracked,
-                "is_git": proc_branch.returncode == 0,
-            })
-        except Exception as e:
-            self._send_json({"error": str(e)}, 500)
 
     # ── Artifact Endpoints ──
 
