@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "6.0.0"
-VERSION_DATE = "2026-04-12"
+VERSION = "5.14.0"
+VERSION_DATE = "2026-04-10"
 CHANGELOG = [
-    ("6.0.0", "2026-04-12", "Unified agentic loop — PI Agent SDK sidecar is now the sole agentic loop for chat, code, delegate, and scheduler. Removed: custom Python provider loop (send_message/_handle_openai_response/_handle_anthropic_response/retry+fallback helpers, ~1250 lines), Anthropic SDK sidecar (sdk_sidecar.py + sdk_backend.py + launchd/watchdog, ~700 lines), Mistral SDK native path (_handle_mistral_response + vibe headers/metadata, ~315 lines), Lossless Context Manager (ContextManager class + context.db + context_search/detail/recall tools + /v1/context/* endpoints, ~850 lines), direct-loop middleware pipeline, CLI/TUI entry points (main() + _run_interactive, ~900 lines), TOOL_DEFINITIONS_OPENAI (derived table), messages.compacted column, use_sdk provider flag, api_type enum (anthropic/openai/mistral). Collapsed: provider config is now purely OpenAI-compatible (multi-provider still supported with per-provider base_url/api_key); pi_sidecar buildModel always returns openai-completions; web UI drops Type dropdown, type badge, compact button, LCM SSE handlers. PI sidecar now enables compaction (reserveTokens=16000, keepRecentTokens=8000) + retry, exposes native grep/find/ls tools, emits real getSessionStats() (cost, cache tokens, context_usage) on _result, and honors skip_project_context flag for chat mode (code mode still auto-loads CLAUDE.md/AGENTS.md from project folder). New pi_sidecar_run() helper in claude_cli.py is shared by _handle_chat, _run_delegate, scheduler, _handle_refine, _handle_soul_chat. Total: ~3800 lines of Python + ~200 lines of HTML/JS deleted."),
     ("5.14.0", "2026-04-10", "Unified provider resolution and multi-provider model support. Single resolve_provider_for_model() function in claude_cli.py is now the sole source of truth for model→provider credential resolution — used by interactive chat, PI sidecar (code mode), SDK sidecar, _run_delegate (summaries, auto-memory, scheduled tasks), warmup, and all background LLM calls. Provider-scoped model keys (provider/model_id) support multiple providers offering the same model with different API keys. Mistral model discovery via SDK (client.models.list()) instead of broken raw HTTP. Models tab: All/None buttons per provider for bulk enable/disable. Orphaned models from deleted providers cleaned up on sync. Code mode model dropdown fixed (dropdown-menu class, consistent with chat mode). get_api_model_id() resolves scoped keys to actual API model IDs across all call sites."),
     ("5.13.0", "2026-04-10", "Dynamic attachment routing — file attachments are now routed based on model capabilities instead of browser-side MIME type splitting. New per-model raw_formats config (MIME patterns like image/*, application/pdf) controls which files are sent as multimodal content blocks vs saved to disk for read_document parsing. Server-side unified handler merges body.images and body.files, checks model's raw_formats, and routes accordingly. Vision-capable models see image pixels directly; text-only models get metadata or vision model description via attachment_image_model fallback. Web UI unified: all files go through single _pendingFiles path with image thumbnail previews. Models tab shows editable raw_formats per model. Settings hint warns when no vision capability is configured. Guards: 20MB inline size limit, OpenAI/Mistral restricted to image/* multimodal, Anthropic PDF via document blocks."),
     ("5.11.0", "2026-04-08", "Provider-level SDK routing and auth hardening — Use SDK setting moved from per-agent config to per-provider config. Smart routing: anthropic providers have a configurable use_sdk toggle (default on), mistral always uses Mistral SDK natively, openai always uses direct agentic loop. Provider edit/add forms show the toggle only for anthropic type. Fixed web UI authentication: all raw fetch() calls in agent settings tabs (Soul, Agent, Skills, Memory Health, MCP, Tokens) and Code Mode now use API helper with auth headers — previously these tabs returned empty data when auth was enabled."),
@@ -149,7 +148,7 @@ _web_cache = WebCache()
 READONLY_TOOLS = frozenset({
     "read_file", "list_directory", "search_files", "web_fetch", "exa_search",
     "memory_recall", "memory_shared", "task_status", "list_nodes",
-    "schedule_list",
+    "context_search", "context_detail", "context_recall", "schedule_list",
     "schedule_history", "use_skill", "gmail_inbox", "gmail_read", "gmail_search",
     "read_document",
     "code_graph_build", "code_graph_query",
@@ -453,6 +452,40 @@ TOOL_DEFINITIONS = [
                 "limit": {"type": "integer", "description": "Max results for recall (default: 10)"},
             },
             "required": ["action"],
+        },
+    },
+    {
+        "name": "context_search",
+        "description": "Search through compacted conversation history by keyword. Returns matching message excerpts from earlier in the conversation that have been summarized away.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search keyword or phrase"},
+                "limit": {"type": "integer", "description": "Max results (default: 10)"},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "context_detail",
+        "description": "Expand a specific context summary to see the original messages it was created from. Use summary IDs from the conversation context header.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "summary_id": {"type": "string", "description": "The summary ID to expand"},
+            },
+            "required": ["summary_id"],
+        },
+    },
+    {
+        "name": "context_recall",
+        "description": "Deep recall: search compacted conversation history and get a focused answer about a specific topic from earlier in the conversation. Uses a sub-LLM call to analyze original messages.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "What to recall from earlier conversation"},
+            },
+            "required": ["query"],
         },
     },
     {
@@ -837,14 +870,32 @@ TOOL_DEFINITIONS = [
     },
 ]
 
+# Build OpenAI-compatible format automatically
+TOOL_DEFINITIONS_OPENAI = []
+for _td in TOOL_DEFINITIONS:
+    TOOL_DEFINITIONS_OPENAI.append({
+        "type": "function",
+        "function": {
+            "name": _td["name"],
+            "description": _td["description"],
+            "parameters": {
+                "type": _td["input_schema"]["type"],
+                "properties": _td["input_schema"]["properties"],
+                "required": _td["input_schema"].get("required", []),
+            },
+        },
+    })
+
 # Tool name → definition index for fast lookup
 _TOOL_DEF_INDEX = {td["name"]: td for td in TOOL_DEFINITIONS}
+_TOOL_DEF_OPENAI_INDEX = {td["function"]["name"]: td for td in TOOL_DEFINITIONS_OPENAI}
 
 # Tool groups for per-agent filtering (agents can specify groups or individual tool names)
 TOOL_GROUPS = {
     "core": {"read_file", "write_file", "edit_file", "list_directory", "search_files",
              "execute_command"},
     "memory": {"memory_store", "memory_recall", "memory_delete", "memory_shared"},
+    "context": {"context_search", "context_detail", "context_recall"},
     "web": {"web_fetch", "exa_search"},
     "email": {"gmail_inbox", "gmail_read", "gmail_search", "gmail_send", "gmail_reply"},
     "documents": {"read_document", "write_document", "edit_document"},
@@ -869,6 +920,7 @@ TOKEN_CONFIG_DEFAULTS = {
     "include_tools_guide": True,   # Inject tools.md into system prompt
     "include_memory_summary": True, # Inject memory summary into system prompt
     "memory_summary_cap": 3000,    # Max chars for memory summary injection
+    "compact_threshold": None,     # None = use default (0.60), float = override
     "prompt_caching": True,        # Use Anthropic cache_control on system prompt
     "scheduled_task_tools": True,  # Include full tool schema in scheduled tasks
 }
@@ -905,7 +957,8 @@ def _get_agent_tool_names(agent_id: str | None = None) -> set[str] | None:
     return names
 
 
-def _should_defer_mcp(defer_setting, mcp_tools: list[dict], model: str) -> bool:
+def _should_defer_mcp(defer_setting, mcp_tools: list[dict], model: str,
+                      is_openai: bool = False) -> bool:
     """Decide whether to defer MCP tool schemas.
 
     defer_setting: True (always defer), False (never), "auto" (defer when MCP tokens > 10% of context)
@@ -924,14 +977,22 @@ def _should_defer_mcp(defer_setting, mcp_tools: list[dict], model: str) -> bool:
     return mcp_schema_tokens > threshold
 
 
-def _filter_tools(tool_list: list[dict], allowed: set[str] | None) -> list[dict]:
+def _filter_tools(tool_list: list[dict], allowed: set[str] | None,
+                  is_openai: bool = False) -> list[dict]:
     """Filter a tool definition list to only include allowed tools.
-    Returns tools sorted by name for deterministic ordering (prompt cache stability)."""
+    Returns tools sorted by name for prompt cache stability."""
     if allowed is None:
         filtered = list(tool_list)
+    elif is_openai:
+        filtered = [t for t in tool_list if t["function"]["name"] in allowed]
     else:
         filtered = [t for t in tool_list if t["name"] in allowed]
-    filtered.sort(key=lambda t: t.get("name", ""))
+    # Sort deterministically by tool name for Anthropic prompt cache stability.
+    # Consistent ordering prevents cache misses when tool list is assembled in different order.
+    if is_openai:
+        filtered.sort(key=lambda t: t.get("function", {}).get("name", ""))
+    else:
+        filtered.sort(key=lambda t: t.get("name", ""))
     return filtered
 
 
@@ -7869,137 +7930,17 @@ MAX_DELEGATE_TOOL_ROUNDS = 10  # Limit for delegated/scheduled tasks (timeout is
 _MEMORY_TOOL_NAMES = {"memory_store", "memory_recall", "memory_delete", "memory_shared"}
 
 
-def pi_sidecar_run(
-    message: str,
-    model: str,
-    system_prompt: str,
-    agent_id: str,
-    session_id: str | None = None,
-    tool_defs: list[dict] | None = None,
-    cwd: str | None = None,
-    skip_project_context: bool = True,
-    thinking_level: str = "off",
-    interactive: bool = False,
-    event_callback=None,
-    cancel_token: CancelToken | None = None,
-    timeout: float = 600.0,
-) -> dict:
-    """Run a single PI Agent SDK query through the sidecar.
-
-    Returns a dict with keys: text, tokens_in, tokens_out, cost, tools, context_usage.
-    If event_callback is provided, it is called as callback(event_type, data) for each
-    streaming event (text_delta, thinking_delta, tool_call, tool_result, user_input_needed).
-
-    Shared by _run_delegate (background tasks) and server._handle_chat (live streaming).
-    """
-    import urllib.request as _urlreq
-    import time as _time
-
-    pi_port = int(os.environ.get("PI_SIDECAR_PORT", "8422"))
-    base = f"http://127.0.0.1:{pi_port}"
-
-    prov = resolve_provider_for_model(model)
-    provider_info = {
-        "name": prov["provider_name"],
-        "base_url": prov["base_url"],
-        "api_key": prov["api_key"],
-    }
-    if not provider_info.get("base_url"):
-        raise RuntimeError(f"Cannot resolve provider for model {model}")
-
-    try:
-        server_port = int(os.environ.get("BRAIN_SERVER_PORT", "8420"))
-    except Exception:
-        server_port = 8420
-
-    payload = json.dumps({
-        "message": message,
-        "model": get_api_model_id(model),
-        "system_prompt": system_prompt or "",
-        "agent_id": agent_id,
-        "session_id": session_id,
-        "cwd": cwd or os.getcwd(),
-        "tool_defs": tool_defs or [],
-        "server_url": f"http://127.0.0.1:{server_port}",
-        "provider_config": provider_info,
-        "interactive": interactive,
-        "thinking_level": thinking_level or "off",
-        "skip_project_context": skip_project_context,
-    }).encode()
-
-    req = _urlreq.Request(f"{base}/query", data=payload,
-                          headers={"Content-Type": "application/json"})
-    qid = json.loads(_urlreq.urlopen(req, timeout=10).read()).get("query_id")
-    if not qid:
-        raise RuntimeError("PI sidecar /query returned no query_id")
-
-    result = {
-        "text": "",
-        "tokens_in": 0,
-        "tokens_out": 0,
-        "tokens_cache_read": 0,
-        "tokens_cache_write": 0,
-        "tokens_total": 0,
-        "cost": 0.0,
-        "tools": [],
-        "context_usage": None,
-        "sdk_session_id": None,
-    }
-    after = 0
-    full_text = ""
-    tool_calls: list[dict] = []
-    t0 = _time.time()
-
-    while _time.time() - t0 < timeout:
-        if cancel_token is not None and getattr(cancel_token, "cancelled", False):
-            try:
-                _urlreq.urlopen(_urlreq.Request(f"{base}/cancel/{qid}", method="POST"), timeout=5)
-            except Exception:
-                pass
-            break
-        try:
-            resp = json.loads(_urlreq.urlopen(
-                f"{base}/events/{qid}?after={after}", timeout=10).read())
-        except Exception as e:
-            raise RuntimeError(f"PI sidecar /events poll failed: {e}")
-
-        for ev in resp.get("events", []):
-            et = ev.get("event")
-            ed = ev.get("data", {})
-            if et in ("text_delta", "thinking_delta", "tool_call", "tool_result", "user_input_needed"):
-                if event_callback:
-                    try:
-                        event_callback(et, ed)
-                    except Exception:
-                        pass
-            if et == "text_delta":
-                txt = ed.get("text", "")
-                if not isinstance(txt, str):
-                    txt = str(txt) if txt else ""
-                full_text += txt
-            elif et == "tool_call":
-                tool_calls.append(ed)
-            elif et == "_result":
-                result["text"] = ed.get("text", "") or full_text
-                result["tokens_in"] = ed.get("tokens_in", 0)
-                result["tokens_out"] = ed.get("tokens_out", 0)
-                result["tokens_cache_read"] = ed.get("tokens_cache_read", 0)
-                result["tokens_cache_write"] = ed.get("tokens_cache_write", 0)
-                result["tokens_total"] = ed.get("tokens_total", 0)
-                result["cost"] = ed.get("cost", 0.0)
-                result["context_usage"] = ed.get("context_usage")
-                result["sdk_session_id"] = ed.get("sdk_session_id")
-                result["tools"] = ed.get("tools", []) or tool_calls
-                break
-
-        after = resp.get("next", after)
-        if resp.get("done"):
-            break
-        _time.sleep(0.5)
-
-    if not result["text"] and full_text:
-        result["text"] = full_text
-    return result
+def _resolve_delegate_tools(tools: bool | str, api_type: str) -> list:
+    """Resolve tool definitions for _run_delegate based on tools parameter."""
+    if not tools:
+        return []
+    if tools == "memory_only":
+        allowed = _MEMORY_TOOL_NAMES
+    else:
+        allowed = _get_agent_tool_names()
+    if api_type != "openai" and api_type != "mistral":
+        return _filter_tools(TOOL_DEFINITIONS, allowed)
+    return _filter_tools(TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
 
 
 def _run_delegate(messages: list[dict], model: str, system_prompt: str,
@@ -8008,75 +7949,127 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
                   event_callback=None,
                   inference_params: dict | None = None,
                   tools: bool | str = True) -> str | None:
-    """Run a delegated task through the PI Agent SDK sidecar. Returns the final text.
+    """Run a delegated task in a fresh context. Returns the final text response.
+    Thread-safe: uses thread-local storage for memory instead of swapping globals.
 
     tools: True=all tools, False=no tools, "memory_only"=only memory tools
+
+    Routes through the SDK sidecar when available (better context management).
+    Falls back to direct API call if sidecar is not running.
     """
+    # Resolve provider for this model (single source of truth)
+    _prov = resolve_provider_for_model(model)
+    _model_prov_type = _prov["api_type"]
+    # SDK sidecar only supports Anthropic-compatible providers
+    _sdk_compatible = _model_prov_type in ("anthropic",)
+    try:
+        import sdk_backend
+        if _sdk_compatible and sdk_backend.is_sidecar_running():
+            # Extract prompt from messages
+            prompt = ""
+            for m in messages:
+                if m.get("role") == "user":
+                    content = m.get("content", "")
+                    if isinstance(content, str):
+                        prompt = content
+                    elif isinstance(content, list):
+                        for b in content:
+                            if isinstance(b, dict) and b.get("type") == "text":
+                                prompt += b.get("text", "")
+            if prompt:
+                kwargs = dict(
+                    prompt=prompt, model=model,
+                    system_prompt=system_prompt,
+                    max_turns=1 if not tools else MAX_DELEGATE_TOOL_ROUNDS,
+                )
+                if tools:
+                    # Build tool defs for sidecar MCP server
+                    # Skip SDK-native tools that the sidecar already has
+                    _SDK_NATIVE = {
+                        "read_file", "write_file", "edit_file",
+                        "list_directory", "search_files",
+                        "execute_command", "web_fetch",
+                    }
+                    tool_defs = []
+                    for td in TOOL_DEFINITIONS:
+                        if td["name"] in _SDK_NATIVE:
+                            continue
+                        if td["name"] not in TOOL_DISPATCH:
+                            continue
+                        desc = td["description"]
+                        if isinstance(desc, tuple):
+                            desc = " ".join(desc)
+                        tool_defs.append({
+                            "name": td["name"],
+                            "description": desc[:1000],
+                            "input_schema": td["input_schema"],
+                        })
+                    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+                    agent_id = agent.agent_id if agent else "main"
+                    kwargs["tool_defs"] = tool_defs
+                    kwargs["agent_id"] = agent_id
+                result = sdk_backend.query_sync(**kwargs)
+                if result is not None:
+                    return result
+    except Exception:
+        pass  # Fall through to direct API call
+
+    # Store memory in thread-local so tool_memory_* can find it
     if memory_store:
         _thread_local.memory_store = memory_store
 
-    # Flatten messages → single prompt (PI sidecar is stateless per /query)
-    prompt_parts = []
-    for m in messages:
-        role = m.get("role", "")
-        content = m.get("content", "")
-        if isinstance(content, str):
-            text = content
-        elif isinstance(content, list):
-            text = ""
-            for b in content:
-                if isinstance(b, dict) and b.get("type") == "text":
-                    text += b.get("text", "")
-        else:
-            text = ""
-        if text:
-            prompt_parts.append(f"[{role}] {text}" if role and role != "user" else text)
-    prompt = "\n\n".join(prompt_parts).strip()
-    if not prompt:
-        return ""
+    api_key = _prov["api_key"]
+    base_url = _prov["base_url"]
+    api_type = _prov["api_type"]
 
-    # Build tool defs — skip PI-native tools; respect tools flag
-    _PI_NATIVE = {
-        "read_file", "write_file", "edit_file",
-        "list_directory", "search_files", "execute_command",
+    headers = make_headers(api_key, api_type)
+
+    if api_type == "openai" or api_type == "mistral":
+        endpoint = f"{base_url}/chat/completions"
+        aug_messages = [{"role": "system", "content": system_prompt}] + messages
+    else:
+        endpoint = f"{base_url}/messages"
+        aug_messages = list(messages)
+
+    payload = {
+        "model": get_api_model_id(model),
+        "max_tokens": get_model_max_output(model),
+        "messages": aug_messages,
+        "stream": True,
+        "tools": _resolve_delegate_tools(tools, api_type),
     }
-    tool_defs: list[dict] = []
-    if tools:
-        allowed = _MEMORY_TOOL_NAMES if tools == "memory_only" else _get_agent_tool_names()
-        for td in TOOL_DEFINITIONS:
-            if td["name"] in _PI_NATIVE:
-                continue
-            if td["name"] not in TOOL_DISPATCH:
-                continue
-            if allowed is not None and td["name"] not in allowed:
-                continue
-            desc = td["description"]
-            if isinstance(desc, tuple):
-                desc = " ".join(desc)
-            tool_defs.append({
-                "name": td["name"],
-                "description": desc[:1000],
-                "input_schema": td["input_schema"],
-            })
-
-    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
-    agent_id = agent.agent_id if agent else "main"
+    if inference_params:
+        provider = _models_config.get(model, {}).get("provider", "")
+        _apply_inference_to_payload(payload, inference_params, api_type, provider)
+    if api_type != "openai" and api_type != "mistral":
+        payload["system"] = system_prompt
 
     try:
-        result = pi_sidecar_run(
-            message=prompt,
-            model=model,
-            system_prompt=system_prompt,
-            agent_id=agent_id,
-            session_id=None,
-            tool_defs=tool_defs,
-            cwd=None,
-            skip_project_context=True,
-            thinking_level="off",
-            event_callback=event_callback,
-            cancel_token=cancel_token,
-        )
-        return result.get("text", "") or None
+        # Use stricter tool round limit via thread-local (thread-safe)
+        _thread_local.max_tool_rounds = MAX_DELEGATE_TOOL_ROUNDS
+        try:
+            # Mistral path: use SDK directly
+            if api_type == "mistral":
+                return _handle_mistral_response(
+                    payload, messages, model, api_key, base_url,
+                    api_type, True, True, cancel_token, 0, event_callback)
+
+            data = json.dumps(payload).encode("utf-8")
+            request = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
+
+            with urllib.request.urlopen(request) as response:
+                if api_type == "openai":
+                    return _handle_openai_response(
+                        response, payload, messages, model, api_key, base_url,
+                        api_type, True, True, headers, endpoint,
+                        cancel_token, 0, event_callback)
+                else:
+                    return _handle_anthropic_response(
+                        response, payload, messages, model, api_key, base_url,
+                        api_type, True, True, headers, endpoint,
+                        cancel_token, 0, event_callback)
+        finally:
+            _thread_local.max_tool_rounds = None
     except Exception as e:
         return f"Delegation error: {e}"
 
@@ -8085,6 +8078,7 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
 _delegate_fallback_model: str | None = None
 _delegate_api_key: str = ""
 _delegate_base_url: str = ""
+_delegate_api_type: str = "anthropic"
 
 # Provider cache for resolve_provider_for_model
 _provider_cache: dict[str, dict] = {}
@@ -8093,25 +8087,28 @@ _provider_cache_time: float = 0
 
 
 def resolve_provider_for_model(model: str) -> dict:
-    """Resolve provider credentials for a model. Returns {api_key, base_url, provider_name}.
+    """Resolve provider credentials for a model. Returns {api_key, base_url, api_type, provider_name}.
 
     Single source of truth for model→provider resolution. Uses model config's provider
     field, falls back to delegate defaults. Thread-safe with 60s cache.
-    All providers are OpenAI-compatible.
     """
     global _provider_cache_time
 
+    # Check cache first
     now = time.time()
     with _provider_cache_lock:
         if model in _provider_cache and now - _provider_cache_time < 60:
             return _provider_cache[model].copy()
 
+    # Default: delegate globals (set by server at startup)
     result = {
         "api_key": _delegate_api_key,
         "base_url": _delegate_base_url,
+        "api_type": _delegate_api_type,
         "provider_name": "default",
     }
 
+    # Look up model's configured provider
     model_cfg = _models_config.get(model, {})
     provider_name = model_cfg.get("provider", "")
     if provider_name:
@@ -8123,6 +8120,7 @@ def resolve_provider_for_model(model: str) -> dict:
                 result = {
                     "api_key": prov.get("api_key", ""),
                     "base_url": prov.get("base_url", ""),
+                    "api_type": prov.get("type", "openai"),
                     "provider_name": provider_name,
                 }
         except Exception:
@@ -10015,6 +10013,51 @@ def tool_list_nodes(args: dict) -> str:
         return _err(f"Failed to list nodes: {e}")
 
 
+def tool_context_search(args: dict) -> str:
+    """Search compacted conversation history."""
+    if not _context_manager:
+        return _err("Context manager not initialized")
+    session_id = getattr(_thread_local, 'current_session_id', None) or ""
+    if not session_id:
+        return _err("No active session")
+    query = args.get("query", "")
+    if not query:
+        return _err("Missing query")
+    limit = args.get("limit", 10)
+    results = _context_manager.search(session_id, query, limit=limit)
+    return _ok({"results": results, "count": len(results), "query": query})
+
+
+def tool_context_detail(args: dict) -> str:
+    """Expand a summary to see original messages."""
+    if not _context_manager:
+        return _err("Context manager not initialized")
+    summary_id = args.get("summary_id", "")
+    if not summary_id:
+        return _err("Missing summary_id")
+    detail = _context_manager.get_detail(summary_id)
+    return _ok(detail) if "error" not in detail else _err(detail["error"])
+
+
+def tool_context_recall(args: dict) -> str:
+    """Deep recall from compacted conversation history."""
+    if not _context_manager:
+        return _err("Context manager not initialized")
+    session_id = getattr(_thread_local, 'current_session_id', None) or ""
+    if not session_id:
+        return _err("No active session")
+    query = args.get("query", "")
+    if not query:
+        return _err("Missing query")
+    # Get API credentials from thread local or delegate globals
+    model = getattr(_thread_local, 'current_model', None) or _delegate_fallback_model or ""
+    api_key = _delegate_api_key or ""
+    base_url = _delegate_base_url or ""
+    api_type = _delegate_api_type or "anthropic"
+    result = _context_manager.recall(session_id, query, model, api_key, base_url, api_type)
+    return _ok({"answer": result, "query": query})
+
+
 def tool_schedule_list(args: dict) -> str:
     """List all scheduled tasks."""
     if not _scheduler:
@@ -11687,6 +11730,518 @@ COMPACT_THRESHOLD = 0.75  # compact at 75% full
 KEEP_RECENT_MESSAGES = 6  # always keep the last N messages untouched (legacy fallback)
 CHARS_PER_TOKEN = 4       # conservative estimate
 
+# --- Lossless Context Manager ---
+
+CONTEXT_DB = os.path.join(AGENTS_DIR, "main", "context.db")
+
+_CONTEXT_CONFIG_DEFAULTS = {
+    "enabled": True,
+    "fresh_tail_count": 16,
+    "compact_threshold": 0.60,
+    "summary_target_tokens": 1000,
+    "condense_threshold": 4,
+    "max_depth": 5,
+    "summary_model": "gemini-2.5-flash",
+    "summary_model_fallback": "claude-haiku-4-5-20251001",
+    "messages_per_summary": 10,
+}
+
+_context_db_lock = threading.Lock()
+_context_db_pool: dict[int, sqlite3.Connection] = {}
+
+
+def _context_conn():
+    tid = threading.current_thread().ident
+    with _context_db_lock:
+        conn = _context_db_pool.get(tid)
+        if conn is None:
+            os.makedirs(os.path.dirname(CONTEXT_DB), exist_ok=True)
+            conn = sqlite3.connect(CONTEXT_DB, timeout=10, check_same_thread=False)
+            conn.execute("PRAGMA busy_timeout = 5000")
+            conn.execute("PRAGMA journal_mode = WAL")
+            _context_db_pool[tid] = conn
+    return conn
+
+
+def _context_init_db():
+    conn = _context_conn()
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS summaries (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            depth INTEGER NOT NULL DEFAULT 0,
+            token_count INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            parent_ids TEXT DEFAULT '[]',
+            message_range_start INTEGER NOT NULL,
+            message_range_end INTEGER NOT NULL,
+            created_at REAL DEFAULT (strftime('%s','now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_summary_session ON summaries(session_id);
+        CREATE INDEX IF NOT EXISTS idx_summary_depth ON summaries(session_id, depth);
+        CREATE TABLE IF NOT EXISTS context_config (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+    """)
+    conn.commit()
+
+
+class ContextManager:
+    """Lossless context management with DAG-based hierarchical summarization."""
+
+    def __init__(self):
+        _context_init_db()
+
+    def get_config(self) -> dict:
+        cfg = dict(_CONTEXT_CONFIG_DEFAULTS)
+        try:
+            conn = _context_conn()
+            rows = conn.execute("SELECT key, value FROM context_config").fetchall()
+            for k, v in rows:
+                if k in cfg:
+                    # Coerce types
+                    default = _CONTEXT_CONFIG_DEFAULTS[k]
+                    if isinstance(default, bool):
+                        cfg[k] = v.lower() in ("true", "1", "yes")
+                    elif isinstance(default, int):
+                        cfg[k] = int(v)
+                    elif isinstance(default, float):
+                        cfg[k] = float(v)
+                    else:
+                        cfg[k] = v
+        except Exception:
+            pass
+        return cfg
+
+    def save_config(self, updates: dict):
+        conn = _context_conn()
+        for k, v in updates.items():
+            if k in _CONTEXT_CONFIG_DEFAULTS:
+                conn.execute(
+                    "INSERT OR REPLACE INTO context_config (key, value) VALUES (?, ?)",
+                    (k, str(v))
+                )
+        conn.commit()
+
+    def _resolve_summary_model(self) -> tuple[str | None, str | None]:
+        """Return (primary_model, fallback_model) for context summarization."""
+        cfg = self.get_config()
+        primary = cfg.get("summary_model") or "gemini-2.5-flash"
+        fallback = cfg.get("summary_model_fallback") or "claude-haiku-4-5-20251001"
+        p, f = _resolve_model_with_fallback(primary, fallback, "claude-haiku-4-5-20251001")
+        return p, f
+
+    def _extract_message_text(self, msg: dict) -> str:
+        """Extract plain text from a message (handles string and block content)."""
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            return f"{role}: {content}"
+        elif isinstance(content, list):
+            parts = []
+            for block in content:
+                if isinstance(block, dict):
+                    if block.get("type") == "text":
+                        parts.append(block.get("text", ""))
+                    elif block.get("type") == "tool_use":
+                        parts.append(f"[Tool: {block.get('name', '')}]")
+                    elif block.get("type") == "tool_result":
+                        c = block.get("content", "")
+                        parts.append(f"[Result: {str(c)[:300]}]")
+            return f"{role}: {' '.join(parts)}"
+        return f"{role}: {str(content)[:500]}"
+
+    def summarize_chunk(self, messages: list[dict], session_id: str,
+                        range_start: int, range_end: int,
+                        model: str, api_key: str, base_url: str, api_type: str,
+                        fallback_model: str | None = None) -> str | None:
+        """Summarize a chunk of messages into a leaf summary (depth 0). Returns summary ID."""
+        text_parts = [self._extract_message_text(m) for m in messages]
+        source_text = "\n".join(text_parts)
+
+        summary_text = None
+        try:
+            result = _run_delegate_with_fallback(
+                messages=[{"role": "user", "content": (
+                    "Summarize this conversation segment concisely. Preserve: key facts, decisions, "
+                    "file paths, commands run, errors encountered, and task context. "
+                    "Be factual and specific, not vague. ~200-300 words.\n\n" + source_text
+                )}],
+                primary_model=model, fallback_model=fallback_model,
+                system_prompt="You are a precise conversation summarizer. Output only the summary.",
+                memory_store=None,
+                inference_params={"max_tokens": 2000, "temperature": 0.1},
+                tools=False,
+            )
+            if result and not result.startswith("Delegation error"):
+                summary_text = result.strip()
+        except Exception:
+            pass
+
+        if not summary_text:
+            # Fallback: truncation
+            summary_text = source_text[:3000]
+            if len(source_text) > 3000:
+                summary_text += "\n...(truncated)"
+
+        sid = hashlib.sha256(f"{session_id}:{range_start}:{range_end}:{time.time()}".encode()).hexdigest()[:16]
+        token_count = len(summary_text) // CHARS_PER_TOKEN
+
+        conn = _context_conn()
+        conn.execute(
+            "INSERT OR REPLACE INTO summaries (id, session_id, depth, token_count, content, parent_ids, message_range_start, message_range_end) "
+            "VALUES (?, ?, 0, ?, ?, '[]', ?, ?)",
+            (sid, session_id, token_count, summary_text, range_start, range_end)
+        )
+        conn.commit()
+        return sid
+
+    def condense(self, session_id: str) -> bool:
+        """Merge same-depth summaries into higher-depth summaries. Returns True if any merged."""
+        cfg = self.get_config()
+        threshold = cfg.get("condense_threshold", 4)
+        max_depth = cfg.get("max_depth", 5)
+        conn = _context_conn()
+        merged_any = False
+
+        for depth in range(max_depth):
+            rows = conn.execute(
+                "SELECT id, content, token_count, message_range_start, message_range_end "
+                "FROM summaries WHERE session_id = ? AND depth = ? ORDER BY message_range_start",
+                (session_id, depth)
+            ).fetchall()
+            if len(rows) < threshold:
+                continue
+
+            # Merge all same-depth summaries into one higher-depth summary
+            combined_text = "\n\n---\n\n".join(r[1] for r in rows)
+            parent_ids = [r[0] for r in rows]
+            range_start = rows[0][3]
+            range_end = rows[-1][4]
+
+            # Summarize the combined text
+            c_model, c_fallback = self._resolve_summary_model()
+            condensed_text = None
+            if c_model:
+                try:
+                    result = _run_delegate_with_fallback(
+                        messages=[{"role": "user", "content": (
+                            f"Condense these {len(rows)} conversation summaries into one cohesive summary. "
+                            "Preserve all key facts, decisions, and context. ~300-500 words.\n\n" + combined_text
+                        )}],
+                        primary_model=c_model, fallback_model=c_fallback,
+                        system_prompt="You are a precise summarizer. Output only the condensed summary.",
+                        memory_store=None,
+                        inference_params={"max_tokens": 3000, "temperature": 0.1},
+                        tools=False,
+                    )
+                    if result and not result.startswith("Delegation error"):
+                        condensed_text = result.strip()
+                except Exception:
+                    pass
+
+            if not condensed_text:
+                condensed_text = combined_text[:4000]
+
+            new_id = hashlib.sha256(f"condense:{session_id}:{depth+1}:{time.time()}".encode()).hexdigest()[:16]
+            token_count = len(condensed_text) // CHARS_PER_TOKEN
+
+            conn.execute(
+                "INSERT OR REPLACE INTO summaries (id, session_id, depth, token_count, content, parent_ids, message_range_start, message_range_end) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (new_id, session_id, depth + 1, token_count, condensed_text,
+                 json.dumps(parent_ids), range_start, range_end)
+            )
+            # Remove merged lower-depth summaries
+            conn.executemany("DELETE FROM summaries WHERE id = ?", [(pid,) for pid in parent_ids])
+            conn.commit()
+            merged_any = True
+
+        return merged_any
+
+    def assemble_context(self, session_id: str, messages: list[dict],
+                         system_prompt: str = "", max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS) -> list[dict]:
+        """Assemble context: summaries + fresh tail within token budget."""
+        cfg = self.get_config()
+        fresh_tail_count = cfg.get("fresh_tail_count", 32)
+
+        # Ensure we don't exceed available messages
+        fresh_tail_count = min(fresh_tail_count, len(messages))
+        fresh_tail = messages[-fresh_tail_count:] if fresh_tail_count > 0 else messages
+
+        # Calculate token budget
+        system_tokens = len(system_prompt) // CHARS_PER_TOKEN if system_prompt else 0
+        fresh_tokens = sum(_estimate_tokens_message(m) for m in fresh_tail)
+        response_reserve = 4000  # reserve tokens for response
+        budget = max_tokens - system_tokens - fresh_tokens - response_reserve
+
+        if budget <= 0:
+            return fresh_tail
+
+        # Load summaries, highest depth first
+        conn = _context_conn()
+        rows = conn.execute(
+            "SELECT id, depth, token_count, content, message_range_start, message_range_end "
+            "FROM summaries WHERE session_id = ? ORDER BY depth DESC, message_range_start ASC",
+            (session_id,)
+        ).fetchall()
+
+        if not rows:
+            return fresh_tail
+
+        # Fill budget with summaries
+        summary_parts = []
+        used_tokens = 0
+        for row in rows:
+            sid, depth, tc, content, rs, re_ = row
+            if used_tokens + tc > budget:
+                continue
+            summary_parts.append({
+                "id": sid, "depth": depth, "tokens": tc,
+                "content": content, "range": f"messages {rs}-{re_}"
+            })
+            used_tokens += tc
+
+        if not summary_parts:
+            return fresh_tail
+
+        # Sort by message range for chronological order
+        summary_parts.sort(key=lambda s: s["range"])
+
+        # Build summary message
+        summary_text = "## Compacted Conversation History\n\n"
+        summary_text += "The following summaries cover earlier parts of this conversation. "
+        summary_text += "Use context_search, context_detail, or context_recall tools to access original details.\n\n"
+        for s in summary_parts:
+            summary_text += f"### Summary (depth {s['depth']}, {s['range']})\n{s['content']}\n\n"
+
+        assembled = [
+            {"role": "user", "content": f"[Conversation Context]\n{summary_text}"},
+            {"role": "assistant", "content": "I have the context from our earlier conversation. I can use context_search, context_detail, or context_recall to access specific details if needed."},
+        ]
+        assembled.extend(fresh_tail)
+        return assembled
+
+    def check_and_compact(self, messages: list[dict], session_id: str,
+                          model: str, api_key: str, base_url: str, api_type: str,
+                          system_prompt: str = "",
+                          max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS,
+                          force: bool = False) -> tuple[list[dict], bool]:
+        """Check if compaction needed and perform hierarchical summarization."""
+        cfg = self.get_config()
+        if not cfg.get("enabled", True) and not force:
+            return messages, False
+
+        estimated = _estimate_conversation_tokens(messages, system_prompt)
+        if not force:
+            threshold_pct = cfg.get("compact_threshold", 0.75)
+            threshold = int(max_tokens * threshold_pct)
+            if estimated < threshold:
+                return messages, False
+
+        fresh_tail_count = cfg.get("fresh_tail_count", 32)
+        msgs_per_summary = cfg.get("messages_per_summary", 10)
+
+        # Determine which messages to summarize (everything before fresh tail)
+        if len(messages) <= fresh_tail_count:
+            if force and len(messages) > msgs_per_summary:
+                # Force mode: use half the messages as tail to allow some summarization
+                fresh_tail_count = len(messages) // 2
+            else:
+                return messages, False
+
+        old_messages = messages[:-fresh_tail_count]
+
+        # Find what's already summarized (by checking existing summary ranges)
+        conn = _context_conn()
+        existing = conn.execute(
+            "SELECT MAX(message_range_end) FROM summaries WHERE session_id = ?",
+            (session_id,)
+        ).fetchone()
+        already_summarized = existing[0] if existing and existing[0] else 0
+
+        # Calculate message indices (1-based, relative to session)
+        total_msg_count = len(messages)
+        old_count = len(old_messages)
+
+        # Only summarize messages not yet covered
+        unsummarized_start = already_summarized
+        unsummarized_msgs = old_messages[unsummarized_start:]
+
+        if len(unsummarized_msgs) < msgs_per_summary:
+            # Not enough new messages to summarize, just assemble
+            return self.assemble_context(session_id, messages, system_prompt, max_tokens), True
+
+        # Use summary model (Gemini Flash default, Haiku fallback)
+        summary_model, summary_model_fallback = self._resolve_summary_model()
+        summary_model = summary_model or model
+        summary_model_fallback = summary_model_fallback or model
+
+        pct = int(estimated / max_tokens * 100)
+        logging.info(f"Context {pct}% full (~{estimated:,} tokens), creating hierarchical summaries...")
+
+        # Create leaf summaries in chunks
+        for i in range(0, len(unsummarized_msgs), msgs_per_summary):
+            chunk = unsummarized_msgs[i:i + msgs_per_summary]
+            if len(chunk) < 3:  # skip tiny remnants
+                continue
+            range_start = unsummarized_start + i
+            range_end = unsummarized_start + i + len(chunk)
+            self.summarize_chunk(chunk, session_id, range_start, range_end,
+                                 summary_model, api_key, base_url, api_type,
+                                 fallback_model=summary_model_fallback)
+
+        # Try condensation
+        self.condense(session_id)
+
+        # Assemble final context
+        assembled = self.assemble_context(session_id, messages, system_prompt, max_tokens)
+        new_estimated = _estimate_conversation_tokens(assembled, system_prompt)
+        new_pct = int(new_estimated / max_tokens * 100)
+        logging.info(f"Compacted: {pct}% → {new_pct}% (~{new_estimated:,} tokens)")
+
+        return assembled, True
+
+    def search(self, session_id: str, query: str, regex: bool = False, limit: int = 10) -> list[dict]:
+        """Search original messages in ChatDB by keyword/regex."""
+        results = []
+        try:
+            from server import _db_conn as chat_db_conn
+            conn = chat_db_conn()
+            conn.row_factory = sqlite3.Row
+            if regex:
+                # SQLite doesn't support regex natively, use LIKE as fallback
+                rows = conn.execute(
+                    "SELECT id, role, content, created_at FROM messages WHERE session_id = ? AND content LIKE ? ORDER BY id LIMIT ?",
+                    (session_id, f"%{query}%", limit)
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id, role, content, created_at FROM messages WHERE session_id = ? AND content LIKE ? ORDER BY id LIMIT ?",
+                    (session_id, f"%{query}%", limit)
+                ).fetchall()
+            for r in rows:
+                content = r["content"]
+                # Extract snippet around match
+                idx = content.lower().find(query.lower())
+                if idx >= 0:
+                    start = max(0, idx - 80)
+                    end = min(len(content), idx + len(query) + 120)
+                    snippet = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
+                else:
+                    snippet = content[:200]
+                results.append({
+                    "message_id": r["id"],
+                    "role": r["role"],
+                    "snippet": snippet,
+                    "timestamp": r["created_at"],
+                })
+        except Exception as e:
+            results.append({"error": str(e)})
+        return results
+
+    def get_detail(self, summary_id: str) -> dict:
+        """Get a summary and its original messages."""
+        conn = _context_conn()
+        row = conn.execute(
+            "SELECT * FROM summaries WHERE id = ?", (summary_id,)
+        ).fetchone()
+        if not row:
+            return {"error": f"Summary {summary_id} not found"}
+
+        summary = {
+            "id": row[0], "session_id": row[1], "depth": row[2],
+            "token_count": row[3], "content": row[4],
+            "parent_ids": json.loads(row[5] or "[]"),
+            "message_range": f"{row[6]}-{row[7]}",
+        }
+
+        # Load original messages from ChatDB
+        try:
+            from server import _db_conn as chat_db_conn
+            cconn = chat_db_conn()
+            cconn.row_factory = sqlite3.Row
+            msgs = cconn.execute(
+                "SELECT id, role, content FROM messages WHERE session_id = ? AND id >= ? AND id <= ? ORDER BY id",
+                (row[1], row[6], row[7])
+            ).fetchall()
+            summary["original_messages"] = [{"id": m["id"], "role": m["role"], "content": m["content"][:500]} for m in msgs]
+        except Exception:
+            summary["original_messages"] = []
+
+        return summary
+
+    def recall(self, session_id: str, query: str,
+               model: str, api_key: str, base_url: str, api_type: str) -> str:
+        """Deep recall: search summaries and original messages, then answer with a focused sub-query."""
+        # Find relevant summaries
+        conn = _context_conn()
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, content, message_range_start, message_range_end FROM summaries WHERE session_id = ? ORDER BY depth DESC",
+            (session_id,)
+        ).fetchall()
+
+        relevant_context = []
+        for r in rows:
+            if query.lower() in r["content"].lower():
+                relevant_context.append(r["content"])
+
+        # Also search original messages
+        msg_results = self.search(session_id, query, limit=5)
+        for mr in msg_results:
+            if "snippet" in mr:
+                relevant_context.append(f"[{mr['role']}]: {mr['snippet']}")
+
+        if not relevant_context:
+            return f"No relevant context found for: {query}"
+
+        context_text = "\n\n---\n\n".join(relevant_context[:10])
+        r_model, r_fallback = self._resolve_summary_model()
+        r_model = r_model or model
+
+        try:
+            result = _run_delegate_with_fallback(
+                messages=[{"role": "user", "content": (
+                    f"Based on this conversation history, answer the following query precisely:\n\n"
+                    f"**Query:** {query}\n\n**Context:**\n{context_text}"
+                )}],
+                primary_model=r_model, fallback_model=r_fallback,
+                system_prompt="Answer based only on the provided context. Be specific and cite details.",
+                memory_store=None,
+                inference_params={"max_tokens": 2000, "temperature": 0.1},
+                tools=False,
+            )
+            if result and not result.startswith("Delegation error"):
+                return result.strip()
+        except Exception as e:
+            return f"Recall failed: {e}"
+
+        return f"Could not generate answer for: {query}"
+
+    def get_stats(self, session_id: str) -> dict:
+        """Get context stats for a session."""
+        conn = _context_conn()
+        rows = conn.execute(
+            "SELECT depth, COUNT(*), SUM(token_count) FROM summaries WHERE session_id = ? GROUP BY depth",
+            (session_id,)
+        ).fetchall()
+        depth_stats = {r[0]: {"count": r[1], "tokens": r[2]} for r in rows}
+        total_summaries = sum(s["count"] for s in depth_stats.values())
+        total_tokens = sum(s["tokens"] for s in depth_stats.values())
+        return {
+            "session_id": session_id,
+            "total_summaries": total_summaries,
+            "total_summary_tokens": total_tokens,
+            "depth_distribution": depth_stats,
+            "config": self.get_config(),
+        }
+
+
+_context_manager: ContextManager | None = None
+
+
 def _estimate_tokens_str(text: str) -> int:
     """Estimate token count for a string."""
     return max(1, len(text) // CHARS_PER_TOKEN)
@@ -11723,6 +12278,146 @@ def _estimate_conversation_tokens(messages: list[dict], system_prompt: str = "")
         total += _estimate_tokens_message(msg)
     return total
 
+
+def _compact_conversation(messages: list[dict], model: str, api_key: str,
+                          base_url: str, api_type: str,
+                          max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS) -> list[dict]:
+    """Compact the conversation by summarizing older messages.
+
+    Strategy:
+    1. Keep the last KEEP_RECENT_MESSAGES as-is
+    2. Summarize everything before that into a single system-style message
+    3. If the model is available, use it to summarize; otherwise do a simple truncation
+    """
+    if len(messages) <= KEEP_RECENT_MESSAGES:
+        return messages
+
+    # Split into old and recent
+    recent = messages[-KEEP_RECENT_MESSAGES:]
+    old = messages[:-KEEP_RECENT_MESSAGES]
+
+    # Build a text representation of old messages for summarization
+    old_text_parts = []
+    for msg in old:
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            text_pieces = []
+            for block in content:
+                if isinstance(block, dict):
+                    if block.get("type") == "text":
+                        text_pieces.append(block.get("text", ""))
+                    elif block.get("type") == "tool_use":
+                        text_pieces.append(f"[Called tool: {block.get('name', '')}]")
+                    elif block.get("type") == "tool_result":
+                        c = block.get("content", "")
+                        text_pieces.append(f"[Tool result: {str(c)[:200]}]")
+                    else:
+                        text_pieces.append(f"[{block.get('type', 'block')}]")
+            text = " ".join(text_pieces)
+        else:
+            text = str(content)
+
+        # Truncate individual messages in the summary source
+        if len(text) > 500:
+            text = text[:500] + "..."
+        old_text_parts.append(f"{role}: {text}")
+
+    old_summary_source = "\n".join(old_text_parts)
+
+    # Try to use the model to summarize
+    summary = None
+    try:
+        summary_messages = [{
+            "role": "user",
+            "content": (
+                "Summarize the following conversation history in 2-3 concise paragraphs. "
+                "Focus on: key decisions made, information learned, files modified, "
+                "and current task context. Be factual and brief.\n\n"
+                f"{old_summary_source}"
+            )
+        }]
+        summary = send_message(
+            summary_messages, model, api_key, base_url, api_type,
+            silent=True, tools=False, _tool_round=0,
+        )
+    except Exception:
+        pass
+
+    if not summary:
+        # Fallback: simple truncation
+        if len(old_summary_source) > 2000:
+            summary = old_summary_source[:2000] + "\n...(earlier conversation truncated)"
+        else:
+            summary = old_summary_source
+
+    # Build compacted conversation
+    compacted = [
+        {"role": "user", "content": f"[Previous conversation summary]\n{summary}"},
+        {"role": "assistant", "content": "Understood. I have the context from our previous conversation. How can I help?"},
+    ]
+    compacted.extend(recent)
+
+    return compacted
+
+
+def _check_and_compact(messages: list[dict], model: str, api_key: str,
+                       base_url: str, api_type: str,
+                       system_prompt: str = "",
+                       max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS,
+                       session_id: str = "",
+                       force: bool = False) -> tuple[list[dict], bool]:
+    """Check if conversation needs compaction and do it if necessary.
+
+    Returns (messages, was_compacted).
+    Uses lossless ContextManager if enabled, otherwise falls back to legacy compaction.
+    """
+    # Check for per-agent compact_threshold override
+    tcfg = _get_token_config()
+    agent_threshold = tcfg.get("compact_threshold")
+
+    # Lossless context management (if enabled and session_id available)
+    if _context_manager and session_id:
+        try:
+            cfg = _context_manager.get_config()
+            if cfg.get("enabled", True):
+                # Apply agent-level threshold override if set
+                effective_max = max_tokens
+                if agent_threshold is not None:
+                    # Temporarily adjust max_tokens to shift the threshold
+                    # ContextManager uses its own config threshold internally
+                    pass
+                return _context_manager.check_and_compact(
+                    messages, session_id, model, api_key, base_url, api_type,
+                    system_prompt=system_prompt, max_tokens=max_tokens,
+                )
+        except Exception as e:
+            logging.warning(f"ContextManager failed, falling back to legacy: {e}")
+
+    # Legacy flat compaction
+    estimated = _estimate_conversation_tokens(messages, system_prompt)
+    threshold_pct = agent_threshold if agent_threshold is not None else COMPACT_THRESHOLD
+    threshold = int(max_tokens * threshold_pct)
+
+    if estimated < threshold and not force:
+        return messages, False
+
+    # Show compaction notice
+    pct = int(estimated / max_tokens * 100)
+    print(f"\n  {DIM}⟳ Context {pct}% full (~{estimated:,} tokens), compacting...{RESET}")
+    sys.stdout.flush()
+
+    compacted = _compact_conversation(messages, model, api_key, base_url, api_type, max_tokens)
+    new_estimated = _estimate_conversation_tokens(compacted, system_prompt)
+    new_pct = int(new_estimated / max_tokens * 100)
+    print(f"  {DIM}✔ Compacted: {pct}% → {new_pct}% (~{new_estimated:,} tokens){RESET}")
+
+    return compacted, True
+
+
+# --- Task cancellation ---
 
 class TaskCancelled(Exception):
     """Raised when the user presses Escape to cancel the current task."""
@@ -12142,17 +12837,38 @@ def _inline_format(text: str) -> str:
 
 # --- API functions ---
 
-def make_headers(api_key: str) -> dict:
-    """Build request headers for an OpenAI-compatible provider."""
+def make_headers(api_key: str, api_type: str) -> dict:
+    """Build request headers for the given API type."""
+    if api_type == "openai":
+        return {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+    if api_type == "mistral":
+        return {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
     return {
         "Content-Type": "application/json",
+        "x-api-key": api_key,
         "Authorization": f"Bearer {api_key}",
+        "anthropic-version": "2023-06-01",
     }
 
 
-def get_available_models(api_key: str, base_url: str) -> list[str]:
+def get_available_models(api_key: str, base_url: str, api_type: str) -> list[str]:
     """Fetch available models from the API and return as a list."""
-    headers = make_headers(api_key)
+    # Mistral: use SDK to list models (Vibe CLI auth doesn't work with raw HTTP)
+    if api_type == "mistral":
+        try:
+            client = _create_mistral_client(api_key)
+            result = client.models.list()
+            return [m.id for m in result.data if m.id]
+        except Exception:
+            return []
+
+    headers = make_headers(api_key, api_type)
     request = urllib.request.Request(
         f"{base_url}/models", headers=headers, method="GET",
     )
@@ -12243,7 +12959,7 @@ def init_models_config(providers: dict, existing_models: dict | None = None,
     for name, p in providers.items():
         try:
             models = get_available_models(
-                p.get("api_key", ""), p.get("base_url", ""))
+                p.get("api_key", ""), p.get("base_url", ""), p.get("type", "openai"))
         except Exception:
             models = []
         discovered = set(models)
@@ -12509,9 +13225,48 @@ _INFERENCE_OPENAI_KEYS = {"frequency_penalty", "presence_penalty"}
 _INFERENCE_OMLX_KEYS = {"min_p", "repetition_penalty"}
 
 
-def list_models(api_key: str, base_url: str) -> None:
+def _apply_inference_to_payload(payload: dict, params: dict, api_type: str, provider: str = "") -> None:
+    """Apply resolved inference params to an API payload with provider translation."""
+    if not params:
+        return
+
+    is_omlx = provider == "omlx"
+
+    for key in _INFERENCE_STANDARD_KEYS:
+        if key in params:
+            payload[key] = params[key]
+
+    for key in _INFERENCE_OPENAI_KEYS:
+        if key in params and (api_type == "openai" or is_omlx):
+            payload[key] = params[key]
+
+    for key in _INFERENCE_OMLX_KEYS:
+        if key in params and is_omlx:
+            payload[key] = params[key]
+
+    # Mistral-specific inference keys
+    if api_type == "mistral":
+        if "reasoning_effort" in params:
+            payload["reasoning_effort"] = params["reasoning_effort"]
+
+    # Thinking translation
+    if params.get("thinking"):
+        budget = params.get("thinking_budget", 4096)
+        if api_type == "anthropic":
+            payload["thinking"] = {"type": "enabled", "budget_tokens": budget}
+        elif api_type == "mistral":
+            # Map thinking to Mistral reasoning_effort (Vibe CLI mapping)
+            _thinking_to_reasoning = {"low": "none", "medium": "high", "high": "high"}
+            payload["reasoning_effort"] = _thinking_to_reasoning.get(
+                str(params.get("thinking", "high")), "high"
+            )
+        elif is_omlx:
+            payload.setdefault("chat_template_kwargs", {})["enable_thinking"] = True
+
+
+def list_models(api_key: str, base_url: str, api_type: str) -> None:
     """List available models from the API."""
-    models = get_available_models(api_key, base_url)
+    models = get_available_models(api_key, base_url, api_type)
     if models:
         print("Available models:")
         for model_id in models:
@@ -12523,6 +13278,28 @@ def list_models(api_key: str, base_url: str) -> None:
 def _unescape(text: str) -> str:
     """Unescape literal backslash sequences that some APIs send."""
     return text.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"')
+
+
+def _collect_anthropic(response) -> str:
+    """Parse Anthropic SSE stream silently. Returns full text."""
+    collected = []
+    current_event = None
+    for line in response:
+        line = line.decode("utf-8").strip()
+        if line.startswith("event: "):
+            current_event = line[7:]
+        elif line.startswith("data: "):
+            if current_event == "message_stop":
+                break
+            try:
+                event = json.loads(line[6:])
+                if event.get("type") == "content_block_delta":
+                    delta = event.get("delta", {})
+                    if delta.get("type") == "text_delta":
+                        collected.append(_unescape(delta.get("text", "")))
+            except json.JSONDecodeError:
+                pass
+    return "".join(collected)
 
 
 def _collect_openai(response) -> str:
@@ -12606,6 +13383,7 @@ TOOL_ICONS = {
     "gmail_inbox": "@", "gmail_read": "@", "gmail_search": "@",
     "gmail_send": "@", "gmail_reply": "@",
     "task_status": "?", "task_cancel": "x",
+    "context_search": "c", "context_detail": "c", "context_recall": "c",
     "list_nodes": "n", "schedule_list": "t", "schedule_history": "h",
     "read_document": "D", "write_document": "D", "edit_document": "D",
     "code_graph_build": "G", "code_graph_query": "G", "code_graph_impact": "G", "code_graph_enhance": "G",
@@ -12621,6 +13399,7 @@ TOOL_VERBS = {
     "gmail_inbox": "Inbox", "gmail_read": "Reading Email", "gmail_search": "Searching Email",
     "gmail_send": "Sending Email", "gmail_reply": "Replying",
     "task_status": "Task Status", "task_cancel": "Cancelling",
+    "context_search": "Searching Context", "context_detail": "Context Detail", "context_recall": "Recalling",
     "list_nodes": "Listing Nodes", "schedule_list": "Schedules", "schedule_history": "History",
     "read_document": "Reading Document", "write_document": "Writing Document", "edit_document": "Editing Document",
     "code_graph_build": "Building Graph", "code_graph_query": "Querying Graph", "code_graph_impact": "Impact Analysis", "code_graph_enhance": "Enhancing Graph",
@@ -12917,6 +13696,9 @@ TOOL_DISPATCH = {
     "task_cancel": tool_task_cancel,
     "use_skill": tool_use_skill,
     "list_nodes": tool_list_nodes,
+    "context_search": tool_context_search,
+    "context_detail": tool_context_detail,
+    "context_recall": tool_context_recall,
     "schedule_list": tool_schedule_list,
     "schedule_history": tool_schedule_history,
     "read_document": tool_read_document,
@@ -13343,6 +14125,7 @@ _CONCURRENT_SAFE_TOOLS = {
     "exa_search", "web_fetch",
     "code_graph_query",
     "schedule_list", "schedule_history", "list_nodes", "task_status",
+    "context_search", "context_detail", "context_recall",
     "git_command",  # read-only git commands are safe (status, log, diff, blame)
 }
 
@@ -13572,6 +14355,69 @@ TRANSITION_MAX_TURNS = "max_turns"
 TRANSITION_ABORTED = "aborted"
 
 
+# --- Middleware Pipeline (Phase 9) ---
+# Composable pre-turn middleware for the direct agentic loop.
+# Each middleware: fn(messages, tool_round, event_callback, **ctx) -> (messages, should_continue)
+
+def _middleware_cancel_check(messages, tool_round, event_callback, **ctx):
+    """Check cancel token before each turn."""
+    watcher = ctx.get("escape_watcher")
+    if watcher and watcher.cancelled:
+        raise TaskCancelled()
+    return messages, True
+
+def _middleware_tool_result_budget(messages, tool_round, event_callback, **ctx):
+    """Persist oversized tool results to disk (Layer 1)."""
+    _apply_tool_result_budget(messages, session_id=ctx.get("session_id"))
+    return messages, True
+
+def _middleware_microcompact(messages, tool_round, event_callback, **ctx):
+    """Clear stale tool results every 2 rounds (Layer 2)."""
+    if tool_round > 0 and tool_round % 2 == 0:
+        messages, freed = _microcompact(messages, keep_recent=5)
+    return messages, True
+
+def _middleware_compress_old(messages, tool_round, event_callback, **ctx):
+    """Compress old tool results when accumulated budget exceeded (Layer 3)."""
+    if tool_round > 0:
+        accumulated = getattr(_thread_local, '_tool_results_tokens', 0)
+        if accumulated > MAX_TOOL_RESULTS_TOKENS:
+            _compress_old_tool_results(messages, keep_recent=4)
+    return messages, True
+
+def _middleware_compaction(messages, tool_round, event_callback, **ctx):
+    """Full LLM summarization every 3 rounds (Layer 4)."""
+    if tool_round > 0 and tool_round % 3 == 0:
+        model = ctx.get("model", "")
+        api_key = ctx.get("api_key", "")
+        base_url = ctx.get("base_url", "")
+        api_type = ctx.get("api_type", "")
+        session_id = ctx.get("session_id", "")
+        max_ctx = get_model_max_context(model)
+        messages, compacted = _check_and_compact(
+            messages, model, api_key, base_url, api_type,
+            max_tokens=max_ctx, session_id=session_id,
+        )
+        if compacted and event_callback:
+            event_callback("compacted", {})
+    return messages, True
+
+# Ordered middleware pipeline — runs before each tool-loop iteration
+_MIDDLEWARE_PIPELINE = [
+    _middleware_cancel_check,
+    _middleware_tool_result_budget,
+    _middleware_microcompact,
+    _middleware_compress_old,
+    _middleware_compaction,
+]
+
+def _run_middleware(messages, tool_round, event_callback, **ctx):
+    """Run the pre-turn middleware pipeline. Returns (messages, should_continue)."""
+    for mw in _MIDDLEWARE_PIPELINE:
+        messages, should_continue = mw(messages, tool_round, event_callback, **ctx)
+        if not should_continue:
+            return messages, False
+    return messages, True
 MAX_TOOL_RESULT_CHARS = 30000  # ~7,500 tokens — truncate individual tool results beyond this
 MAX_TOOL_RESULTS_TOKENS = 50000  # Cap accumulated tool results per turn before compressing old ones
 
@@ -13710,6 +14556,7 @@ _MICROCOMPACT_TOOLS = {
 # Tools whose results are context-critical and must never be cleared
 _MICROCOMPACT_EXEMPT = {
     "memory_recall", "memory_shared", "delegate_task", "task_status",
+    "context_search", "context_detail", "context_recall",
 }
 
 def _microcompact(messages: list[dict], keep_recent: int = 5) -> tuple[list[dict], int]:
@@ -13723,31 +14570,50 @@ def _microcompact(messages: list[dict], keep_recent: int = 5) -> tuple[list[dict
     """
     tokens_freed = 0
 
-    # Collect (index, tool_name, content_size) for all tool results (openai shape)
-    tool_entries = []
+    # Collect (index, tool_name, content_size) for all tool results
+    tool_entries = []  # (msg_index, tool_name, content_size, is_openai)
     for i, msg in enumerate(messages):
         if msg.get("role") == "tool":
             content = msg.get("content", "")
             content_size = len(content) if isinstance(content, str) else 0
+            # Try to find the tool name from the preceding assistant message
             tool_name = _find_tool_name_for_result(messages, i, msg.get("tool_call_id"))
-            tool_entries.append((i, tool_name, content_size))
+            tool_entries.append((i, tool_name, content_size, True))
+        elif msg.get("role") == "user" and isinstance(msg.get("content"), list):
+            for block in msg["content"]:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    content = block.get("content", "")
+                    content_size = len(content) if isinstance(content, str) else 0
+                    tool_name = _find_tool_name_for_block(messages, block.get("tool_use_id"))
+                    tool_entries.append((i, tool_name, content_size, False))
 
     # Filter to compactable tools only
     compactable = [e for e in tool_entries
                    if e[1] and e[1] in _MICROCOMPACT_TOOLS and e[1] not in _MICROCOMPACT_EXEMPT]
 
+    # Keep the most recent N, clear the rest
     if len(compactable) <= keep_recent:
         return messages, 0
 
     to_clear = compactable[:-keep_recent]
 
-    for idx, tool_name, content_size in to_clear:
-        if content_size <= 100:
+    cleared_indices = set()
+    for idx, tool_name, content_size, is_openai in to_clear:
+        if content_size <= 100:  # Already cleared or tiny
             continue
         msg = messages[idx]
-        if msg.get("role") == "tool":
+        marker = f"[Old {tool_name} result cleared]"
+        if is_openai and msg.get("role") == "tool":
             tokens_freed += content_size // 4
-            msg["content"] = f"[Old {tool_name} result cleared]"
+            msg["content"] = marker
+        elif isinstance(msg.get("content"), list):
+            for block in msg["content"]:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    content = block.get("content", "")
+                    if isinstance(content, str) and len(content) > 100:
+                        tokens_freed += len(content) // 4
+                        block["content"] = marker
+        cleared_indices.add(idx)
 
     return messages, tokens_freed
 
@@ -13763,6 +14629,19 @@ def _find_tool_name_for_result(messages: list[dict], tool_msg_idx: int,
             for tc in msg["tool_calls"]:
                 if tc.get("id") == tool_call_id:
                     return tc.get("function", {}).get("name")
+    return None
+
+
+def _find_tool_name_for_block(messages: list[dict], tool_use_id: str | None) -> str | None:
+    """Find the tool name for an Anthropic-style tool_result by scanning backwards."""
+    if not tool_use_id:
+        return None
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant" and isinstance(msg.get("content"), list):
+            for block in msg["content"]:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    if block.get("id") == tool_use_id:
+                        return block.get("name")
     return None
 
 
@@ -13982,6 +14861,1279 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
     return system_instruction
 
 
+def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
+                 api_type: str, silent: bool = False,
+                 tools: bool = True,
+                 escape_watcher: EscapeWatcher | CancelToken | None = None,
+                 _tool_round: int = 0,
+                 event_callback=None,
+                 inference_params: dict | None = None,
+                 session_id: str | None = None) -> str | None:
+    """Send messages and stream the response.
+
+    If silent=True, collects without printing (for TUI mode).
+    If tools=True, includes tool definitions and handles tool-use loops.
+    If event_callback is provided, called with (event_type, data) for streaming:
+        ("text_delta", {"text": "..."})
+        ("tool_call", {"name": "...", "args": {...}})
+        ("tool_result", {"name": "...", "result": "..."})
+        ("done", {"text": "full response"})
+        ("error", {"message": "..."})
+    Returns the assistant's full response text on success, None on model-related errors.
+    Raises TaskCancelled if escape_watcher detects cancellation.
+    """
+    # Reset dedup tracker and accumulated token counter at the start of each conversation turn
+    if _tool_round == 0:
+        reset_tool_dedup()
+        _thread_local._tool_results_tokens = 0
+        _thread_local._max_output_recovery_count = 0
+        _thread_local._has_attempted_reactive_compact = False
+        # Start a request-level trace span for the full conversation turn
+        if _trace_manager:
+            agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+            agent_id = agent.agent_id if agent else "main"
+            # Extract message preview for trace name
+            msg_preview = ""
+            if messages:
+                last_msg = messages[-1]
+                content = last_msg.get("content", "")
+                if isinstance(content, str):
+                    msg_preview = content[:60]
+                elif isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            msg_preview = block.get("text", "")[:60]
+                            break
+            request_span = _trace_manager.start_span(
+                "request", msg_preview or "user message",
+                agent=agent_id, model=model, session_id=session_id,
+            )
+            _thread_local.trace_id = request_span["trace_id"]
+            _thread_local.request_trace_span = request_span
+            _thread_local.session_id = session_id
+
+    # Start an LLM call span
+    llm_span = None
+    if _trace_manager:
+        agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+        agent_id = agent.agent_id if agent else "main"
+        parent_span = getattr(_thread_local, 'request_trace_span', None)
+        trace_id = parent_span["trace_id"] if parent_span else getattr(_thread_local, 'trace_id', None)
+        parent_id = parent_span["id"] if parent_span else None
+        llm_span = _trace_manager.start_span(
+            "llm_call", f"{model} call (round {_tool_round})",
+            agent=agent_id, model=model,
+            parent_id=parent_id, trace_id=trace_id, session_id=session_id,
+        )
+        _thread_local.current_trace_span = llm_span
+
+    # Soft stop after max tool rounds — use thread-local override if set (delegation)
+    # Tighter limit for CLIProxyAPI (shares personal OAuth quota)
+    effective_max_rounds = getattr(_thread_local, 'max_tool_rounds', None)
+    if not effective_max_rounds:
+        if ":8317" in base_url or "cliproxy" in base_url.lower():
+            effective_max_rounds = MAX_TOOL_ROUNDS_PROXY
+        else:
+            effective_max_rounds = MAX_TOOL_ROUNDS
+    if _tool_round >= effective_max_rounds:
+        tools = False
+    headers = make_headers(api_key, api_type)
+
+    if api_type == "openai" or api_type == "mistral":
+        endpoint = f"{base_url}/chat/completions"
+    else:
+        endpoint = f"{base_url}/messages"
+
+    # System instruction for the agent
+    # Strip metadata from messages — API providers don't accept extra fields
+    # Keep fields required by OpenAI tool call protocol
+    _ALLOWED_MSG_KEYS = {"role", "content", "tool_calls", "tool_call_id", "name"}
+    augmented_messages = []
+    for msg in messages:
+        clean = {k: v for k, v in msg.items() if k in _ALLOWED_MSG_KEYS}
+        augmented_messages.append(clean)
+    tcfg = _get_token_config()
+    if tools:
+        system_instruction = _build_system_prompt(
+            include_memory_summary=(_tool_round == 0),
+        )
+        if api_type == "openai" or api_type == "mistral":
+            augmented_messages.insert(0, {"role": "system", "content": system_instruction})
+        else:
+            pass  # handled below via payload["system"]
+
+    payload = {
+        "model": get_api_model_id(model),
+        "max_tokens": get_model_max_output(model),
+        "messages": augmented_messages,
+        "stream": True,
+    }
+
+    # Request usage stats in streaming responses (OpenAI-compatible APIs)
+    if api_type == "openai":
+        payload["stream_options"] = {"include_usage": True}
+    # Mistral SDK handles usage internally — no stream_options needed
+
+    # Apply inference parameters (temperature, top_p, thinking, etc.)
+    if inference_params:
+        provider = _models_config.get(model, {}).get("provider", "")
+        _apply_inference_to_payload(payload, inference_params, api_type, provider)
+
+    if tools:
+        mcp_mgr = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
+        allowed = _get_agent_tool_names()
+
+        # Deferred tool loading (Phase 7): skip MCP tool schemas when there are many,
+        # and let the model discover them via tool_search instead
+        defer_mcp = tcfg.get("defer_mcp_tools", "auto")
+        discovered_tools = getattr(_thread_local, '_discovered_tools', set())
+
+        if api_type == "openai" or api_type == "mistral":
+            all_tools = _filter_tools(TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
+            if mcp_mgr:
+                mcp_tools = mcp_mgr.get_tool_definitions_openai()
+                should_defer = _should_defer_mcp(defer_mcp, mcp_tools, model, is_openai=True)
+                if should_defer:
+                    # Only include discovered MCP tools
+                    mcp_tools = [t for t in mcp_tools
+                                 if t.get("function", {}).get("name", "") in discovered_tools]
+                all_tools.extend(mcp_tools)
+                all_tools.sort(key=lambda t: t.get("function", {}).get("name", ""))
+            payload["tools"] = all_tools
+        else:
+            all_tools = _filter_tools(TOOL_DEFINITIONS, allowed)
+            if mcp_mgr:
+                mcp_tools = mcp_mgr.get_tool_definitions()
+                should_defer = _should_defer_mcp(defer_mcp, mcp_tools, model)
+                if should_defer:
+                    # Only include discovered MCP tools
+                    mcp_tools = [t for t in mcp_tools
+                                 if t.get("name", "") in discovered_tools]
+                all_tools.extend(mcp_tools)
+                all_tools.sort(key=lambda t: t.get("name", ""))
+            payload["tools"] = all_tools
+            # Use cache_control for Anthropic prompt caching if enabled
+            if tcfg.get("prompt_caching", True):
+                payload["system"] = [
+                    {"type": "text", "text": system_instruction,
+                     "cache_control": {"type": "ephemeral"}}
+                ]
+            else:
+                payload["system"] = system_instruction
+
+    # Emit request snapshot for inspector
+    if event_callback:
+        # System prompt: from payload["system"] (Anthropic) or first system message (OpenAI)
+        _sys = payload.get("system", "")
+        if isinstance(_sys, list):
+            _sys = "".join(b.get("text", "") for b in _sys if isinstance(b, dict))
+        _tool_defs = payload.get("tools", [])
+        _tool_names = []
+        for _td in _tool_defs:
+            if isinstance(_td, dict):
+                # OpenAI: {"type":"function","function":{"name":...}} or Anthropic: {"name":...}
+                _tn = _td.get("name") or (_td.get("function", {}) or {}).get("name", "")
+                if _tn:
+                    _tool_names.append(_tn)
+        _hist_msgs = []
+        _user_msg = ""
+        for _m in payload.get("messages", []):
+            if _m.get("role") == "system":
+                if not _sys:
+                    _c = _m.get("content", "")
+                    _sys = _c if isinstance(_c, str) else str(_c)
+                continue
+            if _m is payload["messages"][-1] and _m.get("role") == "user":
+                _c = _m.get("content", "")
+                _user_msg = _c if isinstance(_c, str) else str(_c)
+            else:
+                _c = _m.get("content", "")
+                _hist_msgs.append({"role": _m.get("role", ""), "content": _c if isinstance(_c, str) else str(_c)})
+        event_callback("request_payload", {
+            "tool_round": _tool_round,
+            "system_prompt": _sys,
+            "system_tokens": len(_sys) // 4,
+            "tools_count": len(_tool_defs),
+            "tools_tokens": len(json.dumps(_tool_defs)) // 4,
+            "tool_names": _tool_names,
+            "history": _hist_msgs,
+            "history_tokens": sum(len(str(m.get("content", ""))) // 4 for m in _hist_msgs),
+            "user_message": _user_msg,
+            "user_tokens": len(_user_msg) // 4,
+            "total_payload_tokens": len(json.dumps(payload)) // 4,
+        })
+
+    # Check for cancellation before making the request
+    if escape_watcher and escape_watcher.cancelled:
+        raise TaskCancelled()
+
+    # Rate limiter check
+    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    agent_id = agent.agent_id if agent else "main"
+    if _rate_limiter and _tool_round == 0:
+        allowed, reason, _usage_info = _rate_limiter.check(agent_id)
+        if not allowed:
+            raise RuntimeError(reason)
+
+    # Mistral path: use SDK directly (replicates Vibe CLI behavior)
+    if api_type == "mistral":
+        return _handle_mistral_response(
+            payload, messages, model, api_key, base_url,
+            api_type, silent, tools, escape_watcher,
+            _tool_round, event_callback, inference_params, session_id)
+
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint, data=data, headers=headers, method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request) as response:
+            if api_type == "openai":
+                return _handle_openai_response(
+                    response, payload, messages, model, api_key, base_url,
+                    api_type, silent, tools, headers, endpoint, escape_watcher,
+                    _tool_round, event_callback, inference_params, session_id)
+            else:
+                return _handle_anthropic_response(
+                    response, payload, messages, model, api_key, base_url,
+                    api_type, silent, tools, headers, endpoint, escape_watcher,
+                    _tool_round, event_callback, inference_params, session_id)
+
+    except urllib.error.HTTPError as e:
+        error_msg = f"HTTP Error {e.code}: {e.reason}"
+        try:
+            error_body = e.read().decode("utf-8")
+            error_msg += f" — {error_body[:200]}"
+        except:
+            pass
+        if e.code == 400:
+            # Reactive compact recovery (Phase 8): if prompt too long, try compaction
+            _prompt_too_long = ("prompt is too long" in error_msg.lower() or
+                                "maximum context length" in error_msg.lower() or
+                                "too many tokens" in error_msg.lower() or
+                                "context_length_exceeded" in error_msg.lower())
+            _has_attempted = getattr(_thread_local, '_has_attempted_reactive_compact', False)
+            if _prompt_too_long and not _has_attempted and _tool_round > 0:
+                _thread_local._has_attempted_reactive_compact = True
+                logging.info(f"Prompt too long at round {_tool_round}, attempting reactive compact")
+                if event_callback:
+                    event_callback("compacting", {"reason": "prompt_too_long"})
+                # Layer 1: try microcompact
+                messages, mc_freed = _microcompact(messages, keep_recent=3)
+                if mc_freed > 0:
+                    if event_callback:
+                        event_callback("compacted", {"method": "microcompact", "freed": mc_freed})
+                    return send_message(messages, model, api_key, base_url, api_type,
+                                        silent=silent, tools=tools, escape_watcher=escape_watcher,
+                                        _tool_round=_tool_round, event_callback=event_callback,
+                                        inference_params=inference_params, session_id=session_id)
+                # Layer 2: try full LLM compaction
+                _sid = session_id or getattr(_thread_local, 'current_session_id', None) or ""
+                max_ctx = get_model_max_context(model)
+                messages, compacted = _check_and_compact(
+                    messages, model, api_key, base_url, api_type,
+                    max_tokens=max_ctx, session_id=_sid, force=True,
+                )
+                if compacted:
+                    if event_callback:
+                        event_callback("compacted", {"method": "reactive_compact"})
+                    return send_message(messages, model, api_key, base_url, api_type,
+                                        silent=silent, tools=tools, escape_watcher=escape_watcher,
+                                        _tool_round=_tool_round, event_callback=event_callback,
+                                        inference_params=inference_params, session_id=session_id)
+            print(error_msg, file=sys.stderr)
+            _thread_local._last_send_error = {"code": e.code, "message": error_msg, "permanent": True}
+            return None
+        print(error_msg, file=sys.stderr)
+        # Transient errors: return None to trigger retry/fallback
+        _TRANSIENT_CODES = {429, 500, 502, 503, 504, 529}
+        if e.code in _TRANSIENT_CODES:
+            # Store error info for fallback logic
+            _thread_local._last_send_error = {"code": e.code, "message": error_msg}
+            return None
+        # Permanent errors (401, 403, 404, etc.)
+        _thread_local._last_send_error = {"code": e.code, "message": error_msg, "permanent": True}
+        if event_callback:
+            raise RuntimeError(error_msg)
+        sys.exit(1)
+    except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError, OSError) as e:
+        error_msg = f"Connection error: {e}"
+        print(error_msg, file=sys.stderr)
+        _thread_local._last_send_error = {"code": 0, "message": error_msg}
+        return None
+
+
+def _parse_gemma_tool_calls(text: str) -> tuple[list[dict], str]:
+    """Parse gemma4-style tool calls from raw text.
+
+    Format: <|tool_call>call:name{key:<|"|>val<|"|>,...}<tool_call|>
+    Returns (list of tool_use dicts, cleaned text with tool calls removed).
+    """
+    tool_uses = []
+    pattern = r'<\|tool_call>call:(\w+)\{(.*?)\}<tool_call\|>'
+    for match in re.finditer(pattern, text):
+        name = match.group(1)
+        args_raw = match.group(2)
+        # Parse key-value pairs: key:<|"|>value<|"|>
+        args = {}
+        kv_pattern = r'(\w+):<\|"\|>(.*?)<\|"\|>'
+        for kv in re.finditer(kv_pattern, args_raw):
+            args[kv.group(1)] = kv.group(2)
+        tool_uses.append({
+            "id": f"gemma_{_uuid.uuid4().hex[:8]}",
+            "name": name,
+            "input": args,
+            "input_json": json.dumps(args),
+        })
+    cleaned = re.sub(pattern, '', text)
+    return tool_uses, cleaned
+
+
+def _handle_anthropic_response(response, payload, messages, model, api_key,
+                                base_url, api_type, silent, tools,
+                                headers, endpoint,
+                                escape_watcher=None,
+                                _tool_round: int = 0,
+                                event_callback=None,
+                                inference_params: dict | None = None,
+                                session_id: str | None = None) -> str | None:
+    """Handle Anthropic SSE response, including tool-use agentic loop."""
+    # Parse the full SSE stream to get content blocks and stop reason
+    collected_text = []
+    tool_uses = []
+    thinking_blocks = []
+    current_event = None
+    current_block_type = None
+    current_block = {}
+    stop_reason = None
+    _usage_in = 0
+    _usage_out = 0
+
+    for line in response:
+        if escape_watcher and escape_watcher.cancelled:
+            raise TaskCancelled()
+        line = line.decode("utf-8").strip()
+        if line.startswith("event: "):
+            current_event = line[7:]
+        elif line.startswith("data: "):
+            if current_event == "message_stop":
+                break
+            try:
+                event = json.loads(line[6:])
+                etype = event.get("type")
+
+                if etype == "message_start":
+                    msg = event.get("message", {})
+                    usage = msg.get("usage", {})
+                    _usage_in = usage.get("input_tokens", 0)
+
+                elif etype == "error":
+                    err = event.get("error", {})
+                    err_msg = err.get("message", "Unknown API error")
+                    err_type = err.get("type", "error")
+                    if not silent:
+                        print(f"\nAPI error: {err_msg}", file=sys.stderr)
+                    if event_callback:
+                        event_callback("error", {"message": f"{err_type}: {err_msg}"})
+                    # Overload/rate-limit errors are transient — allow retries before fallback
+                    _TRANSIENT_SSE_ERRORS = {"overloaded_error", "rate_limit_error", "api_error"}
+                    is_permanent = err_type not in _TRANSIENT_SSE_ERRORS
+                    _thread_local._last_send_error = {"code": 0, "message": err_msg, "permanent": is_permanent}
+                    return None
+
+                elif etype == "message_delta":
+                    stop_reason = event.get("delta", {}).get("stop_reason")
+                    usage = event.get("usage", {})
+                    if usage.get("output_tokens"):
+                        _usage_out = usage["output_tokens"]
+
+                elif etype == "content_block_start":
+                    block = event.get("content_block", {})
+                    current_block_type = block.get("type")
+                    if current_block_type == "tool_use":
+                        current_block = {
+                            "id": block.get("id"),
+                            "name": block.get("name"),
+                            "input_json": "",
+                        }
+                    elif current_block_type == "thinking":
+                        current_block = {"thinking_text": "", "signature": block.get("signature", "")}
+                        if event_callback:
+                            event_callback("thinking_start", {})
+                    elif current_block_type == "text":
+                        pass  # text handled via deltas
+
+                elif etype == "content_block_delta":
+                    delta = event.get("delta", {})
+                    if delta.get("type") == "text_delta":
+                        text = _unescape(delta.get("text", ""))
+                        if not silent:
+                            print(text, end="", flush=True)
+                        if event_callback:
+                            event_callback("text_delta", {"text": text})
+                        collected_text.append(text)
+                    elif delta.get("type") == "input_json_delta":
+                        current_block["input_json"] += delta.get("partial_json", "")
+                    elif delta.get("type") == "thinking_delta":
+                        thinking_text = delta.get("thinking", "")
+                        if current_block and "thinking_text" in current_block:
+                            current_block["thinking_text"] += thinking_text
+                        if event_callback:
+                            event_callback("thinking_delta", {"text": thinking_text})
+                    elif delta.get("type") == "signature_delta":
+                        sig = delta.get("signature", "")
+                        if current_block and "signature" in current_block:
+                            current_block["signature"] += sig
+
+                elif etype == "content_block_stop":
+                    if current_block_type == "tool_use" and current_block:
+                        try:
+                            current_block["input"] = json.loads(current_block["input_json"])
+                        except json.JSONDecodeError:
+                            current_block["input"] = {}
+                        tool_uses.append(current_block)
+                        current_block = {}
+                    elif current_block_type == "thinking" and current_block:
+                        thinking_text = current_block.get("thinking_text", "")
+                        if thinking_text:
+                            thinking_blocks.append({"text": thinking_text, "signature": current_block.get("signature", "")})
+                        if event_callback:
+                            event_callback("thinking_done", {"text": thinking_text})
+                        current_block = {}
+                    current_block_type = None
+
+            except json.JSONDecodeError:
+                pass
+
+    full_text = "".join(collected_text)
+
+    # Log cost for this API call
+    _log_call_cost(model, _usage_in, _usage_out, session_id, _tool_round)
+
+    # Emit usage event so callers can capture token counts
+    if event_callback:
+        event_callback("usage", {"tokens_in": _usage_in, "tokens_out": _usage_out})
+
+    # End LLM trace span
+    _llm_span = getattr(_thread_local, 'current_trace_span', None)
+    if _trace_manager and _llm_span and _llm_span.get("type") == "llm_call":
+        _trace_manager.end_span(_llm_span, status="ok",
+                                 tokens_in=_usage_in, tokens_out=_usage_out)
+
+    # Max output token recovery (Phase 2): if model hit output limit, auto-resume
+    if stop_reason == "max_tokens" and not tool_uses and full_text:
+        recovery_count = getattr(_thread_local, '_max_output_recovery_count', 0)
+        if recovery_count < MAX_OUTPUT_RECOVERY_LIMIT:
+            _thread_local._max_output_recovery_count = recovery_count + 1
+            if event_callback:
+                event_callback("max_tokens_recovery", {
+                    "attempt": recovery_count + 1,
+                    "max_attempts": MAX_OUTPUT_RECOVERY_LIMIT,
+                })
+            # Build continuation: assistant partial + resume prompt
+            messages.append({"role": "assistant", "content": [{"type": "text", "text": full_text}]})
+            messages.append({"role": "user", "content": _MAX_OUTPUT_RESUME_MSG})
+            return send_message(messages, model, api_key, base_url, api_type,
+                                silent=silent, tools=tools, escape_watcher=escape_watcher,
+                                _tool_round=_tool_round, event_callback=event_callback,
+                                inference_params=inference_params, session_id=session_id)
+
+    # If no tool calls, just return the text
+    if not tool_uses:
+        if not silent and full_text:
+            print()
+        # End request trace span if this is the final response
+        _req_span = getattr(_thread_local, 'request_trace_span', None)
+        if _trace_manager and _req_span:
+            _trace_manager.end_span(_req_span, status="ok",
+                                     tokens_in=_usage_in, tokens_out=_usage_out)
+            _thread_local.request_trace_span = None
+        # Reset recovery counter on successful completion
+        _thread_local._max_output_recovery_count = 0
+        return full_text
+
+    # Tool use detected — execute tools and loop
+    if full_text:
+        print()
+
+    # Build the assistant message content blocks (must include thinking for Anthropic API)
+    assistant_content = []
+    for tb in thinking_blocks:
+        assistant_content.append({
+            "type": "thinking",
+            "thinking": tb["text"],
+            "signature": tb.get("signature", ""),
+        })
+    if full_text:
+        assistant_content.append({"type": "text", "text": full_text})
+    for tu in tool_uses:
+        assistant_content.append({
+            "type": "tool_use",
+            "id": tu["id"],
+            "name": tu["name"],
+            "input": tu["input"],
+        })
+
+    # Add assistant message to conversation
+    messages.append({"role": "assistant", "content": assistant_content})
+
+    # Execute tools with concurrent-safe parallelism (Phase 5)
+    batch_calls = [{"id": tu["id"], "name": tu["name"], "input": tu["input"]} for tu in tool_uses]
+    batch_results = _execute_tools_batch(batch_calls, event_callback=event_callback)
+
+    tool_results = []
+    for br in batch_results:
+        tool_results.append({
+            "type": "tool_result",
+            "tool_use_id": br["tool_use_id"],
+            "content": _sanitize_tool_result(
+                next((tc["name"] for tc in batch_calls if tc["id"] == br["tool_use_id"]), ""),
+                br["result"],
+            ),
+        })
+
+    messages.append({"role": "user", "content": tool_results})
+
+    # Track accumulated tool result tokens
+    accumulated = sum(
+        _estimate_tokens_str(str(tr.get("content", ""))) for tr in tool_results
+    ) + getattr(_thread_local, '_tool_results_tokens', 0)
+    _thread_local._tool_results_tokens = accumulated
+
+    # Run middleware pipeline (context management, compaction, cancel check)
+    _sid = session_id or getattr(_thread_local, 'current_session_id', None) or ""
+    messages, should_continue = _run_middleware(
+        messages, _tool_round, event_callback,
+        model=model, api_key=api_key, base_url=base_url, api_type=api_type,
+        session_id=_sid, escape_watcher=escape_watcher,
+    )
+
+    # Recurse to get the model's final response (or more tool calls)
+    return send_message(messages, model, api_key, base_url, api_type,
+                        silent=silent, tools=tools, escape_watcher=escape_watcher,
+                        _tool_round=_tool_round + 1, event_callback=event_callback,
+                        inference_params=inference_params, session_id=session_id)
+
+
+def _handle_openai_response(response, payload, messages, model, api_key,
+                             base_url, api_type, silent, tools,
+                             headers, endpoint,
+                             escape_watcher=None,
+                             _tool_round: int = 0,
+                             event_callback=None,
+                             inference_params: dict | None = None,
+                             session_id: str | None = None) -> str | None:
+    """Handle OpenAI SSE response, including tool-use agentic loop."""
+    collected_text = []
+    tool_calls_map = {}  # index -> {id, name, arguments_str}
+    _usage_in = 0
+    _usage_out = 0
+    finish_reason = None
+
+    for line in response:
+        if escape_watcher and escape_watcher.cancelled:
+            raise TaskCancelled()
+        line = line.decode("utf-8").strip()
+        if not line.startswith("data: "):
+            continue
+        payload_str = line[6:]
+        if payload_str == "[DONE]":
+            break
+        try:
+            event = json.loads(payload_str)
+            # Extract usage from final chunk (OpenAI stream_options)
+            usage = event.get("usage")
+            if usage:
+                _usage_in = usage.get("prompt_tokens", 0)
+                _usage_out = usage.get("completion_tokens", 0)
+            choices = event.get("choices", [])
+            if not choices:
+                continue
+            # Track finish reason for max_tokens recovery
+            fr = choices[0].get("finish_reason")
+            if fr:
+                finish_reason = fr
+            delta = choices[0].get("delta") or {}
+            content = delta.get("content")
+            if content:
+                content = _unescape(content)
+                if not silent:
+                    print(content, end="", flush=True)
+                if event_callback:
+                    event_callback("text_delta", {"text": content})
+                collected_text.append(content)
+
+            # Accumulate tool calls (guard against null — Gemini returns tool_calls: null)
+            for tc in (delta.get("tool_calls") or []):
+                idx = tc.get("index", 0)
+                if idx not in tool_calls_map:
+                    tool_calls_map[idx] = {
+                        "id": tc.get("id", ""),
+                        "name": tc.get("function", {}).get("name", ""),
+                        "arguments": "",
+                    }
+                if tc.get("id"):
+                    tool_calls_map[idx]["id"] = tc["id"]
+                if tc.get("function", {}).get("name"):
+                    tool_calls_map[idx]["name"] = tc["function"]["name"]
+                tool_calls_map[idx]["arguments"] += tc.get("function", {}).get("arguments", "")
+
+        except json.JSONDecodeError:
+            pass
+
+    full_text = "".join(collected_text)
+
+    # Parse gemma4-style tool calls from raw text (oMLX doesn't convert these)
+    if not tool_calls_map and "<|tool_call>" in full_text:
+        parsed, cleaned = _parse_gemma_tool_calls(full_text)
+        if parsed:
+            for i, tc in enumerate(parsed):
+                tool_calls_map[i] = {
+                    "id": tc["id"],
+                    "name": tc["name"],
+                    "arguments": json.dumps(tc["input"]),
+                }
+            full_text = cleaned.strip()
+            collected_text = [full_text] if full_text else []
+
+    # Log cost for this API call
+    _log_call_cost(model, _usage_in, _usage_out, session_id, _tool_round)
+
+    # Emit usage event so callers can capture token counts
+    if event_callback:
+        event_callback("usage", {"tokens_in": _usage_in, "tokens_out": _usage_out})
+
+    # End LLM trace span (OpenAI handler)
+    _llm_span_oai = getattr(_thread_local, 'current_trace_span', None)
+    if _trace_manager and _llm_span_oai and _llm_span_oai.get("type") == "llm_call":
+        _trace_manager.end_span(_llm_span_oai, status="ok",
+                                 tokens_in=_usage_in, tokens_out=_usage_out)
+
+    # Detect truncated tool calls: finish_reason == "length" with incomplete JSON args
+    if finish_reason == "length" and tool_calls_map:
+        has_truncated = False
+        for tc in tool_calls_map.values():
+            try:
+                json.loads(tc["arguments"])
+            except (json.JSONDecodeError, ValueError):
+                has_truncated = True
+                break
+        if has_truncated:
+            print(f"[thinking model: truncated tool call detected, discarding incomplete tools]",
+                  file=sys.stderr)
+            tool_calls_map.clear()
+
+    # Max output token recovery (Phase 2): if model hit output limit, auto-resume
+    if finish_reason == "length" and not tool_calls_map:
+        recovery_count = getattr(_thread_local, '_max_output_recovery_count', 0)
+        if recovery_count < MAX_OUTPUT_RECOVERY_LIMIT:
+            _thread_local._max_output_recovery_count = recovery_count + 1
+            if event_callback:
+                event_callback("max_tokens_recovery", {
+                    "attempt": recovery_count + 1,
+                    "max_attempts": MAX_OUTPUT_RECOVERY_LIMIT,
+                })
+            # Thinking models consume max_tokens with invisible reasoning tokens.
+            # If visible output is <25% of completion budget, double max_tokens.
+            recovery_params = dict(inference_params) if inference_params else {}
+            visible_tokens = len(full_text) // 4
+            current_max = payload.get("max_tokens", get_model_max_output(model))
+            if _usage_out > 0 and visible_tokens < _usage_out * 0.25:
+                max_cap = get_model_max_context(model)
+                boosted = min(current_max * 2, max_cap)
+                if boosted > current_max:
+                    recovery_params["max_tokens"] = boosted
+                    print(f"[thinking model: boosting max_tokens {current_max} → {boosted}]",
+                          file=sys.stderr)
+            # Build continuation: assistant partial + resume prompt
+            if full_text:
+                messages.append({"role": "assistant", "content": full_text})
+                messages.append({"role": "user", "content": _MAX_OUTPUT_RESUME_MSG})
+                return send_message(messages, model, api_key, base_url, api_type,
+                                    silent=silent, tools=tools, escape_watcher=escape_watcher,
+                                    _tool_round=_tool_round, event_callback=event_callback,
+                                    inference_params=recovery_params, session_id=session_id)
+        # Recovery exhausted or no text to resume from — inform the user
+        current_max = payload.get("max_tokens", get_model_max_output(model))
+        hint = (f"Output token limit reached (max_tokens={current_max}) and recovery "
+                f"attempts exhausted ({MAX_OUTPUT_RECOVERY_LIMIT}/{MAX_OUTPUT_RECOVERY_LIMIT}). "
+                f"This model may be using too many tokens on internal reasoning. "
+                f"Try: increase max_output in model settings, use a simpler prompt, "
+                f"or switch to a non-thinking model.")
+        print(f"[max_tokens exhausted] {hint}", file=sys.stderr)
+        if event_callback:
+            event_callback("max_tokens_exhausted", {
+                "message": hint,
+                "max_tokens": current_max,
+                "model": model,
+            })
+        if full_text:
+            full_text += f"\n\n⚠️ *{hint}*"
+        else:
+            full_text = f"⚠️ *{hint}*"
+        _thread_local._max_output_recovery_count = 0
+        return full_text
+
+    if not tool_calls_map:
+        if not silent and full_text:
+            print()
+        # End request trace span for final response
+        _req_span_oai = getattr(_thread_local, 'request_trace_span', None)
+        if _trace_manager and _req_span_oai:
+            _trace_manager.end_span(_req_span_oai, status="ok",
+                                     tokens_in=_usage_in, tokens_out=_usage_out)
+            _thread_local.request_trace_span = None
+        # Reset recovery counter on successful completion
+        _thread_local._max_output_recovery_count = 0
+        return full_text
+
+    if full_text:
+        print()
+
+    # Build assistant message with tool_calls
+    assistant_msg = {"role": "assistant", "content": full_text or None}
+    tc_list = []
+    for idx in sorted(tool_calls_map.keys()):
+        tc = tool_calls_map[idx]
+        tc_list.append({
+            "id": tc["id"],
+            "type": "function",
+            "function": {"name": tc["name"], "arguments": tc["arguments"]},
+        })
+    assistant_msg["tool_calls"] = tc_list
+    messages.append(assistant_msg)
+
+    # Execute tools with concurrent-safe parallelism (Phase 5)
+    batch_calls = []
+    for tc in tc_list:
+        try:
+            args = json.loads(tc["function"]["arguments"])
+        except json.JSONDecodeError:
+            args = {}
+        batch_calls.append({"id": tc["id"], "name": tc["function"]["name"], "input": args})
+
+    batch_results = _execute_tools_batch(batch_calls, event_callback=event_callback)
+
+    for br in batch_results:
+        sanitized = _sanitize_tool_result(
+            next((bc["name"] for bc in batch_calls if bc["id"] == br["tool_use_id"]), ""),
+            br["result"],
+        )
+        messages.append({
+            "role": "tool",
+            "tool_call_id": br["tool_use_id"],
+            "content": sanitized,
+        })
+
+    # Run middleware pipeline (context management, compaction, cancel check)
+    _sid = session_id or getattr(_thread_local, 'current_session_id', None) or ""
+    messages, should_continue = _run_middleware(
+        messages, _tool_round, event_callback,
+        model=model, api_key=api_key, base_url=base_url, api_type=api_type,
+        session_id=_sid, escape_watcher=escape_watcher,
+    )
+
+    return send_message(messages, model, api_key, base_url, api_type,
+                        silent=silent, tools=tools, escape_watcher=escape_watcher,
+                        _tool_round=_tool_round + 1, event_callback=event_callback,
+                        inference_params=inference_params, session_id=session_id)
+
+
+# --- Mistral SDK integration (replicates Vibe CLI behavior) ---
+
+_VIBE_VERSION = "2.5.0"
+
+def _get_mistral_vibe_headers(session_id: str | None = None) -> dict:
+    """Build Vibe CLI-compatible HTTP headers for Mistral API calls."""
+    return {
+        "user-agent": f"mistral-client-python/Mistral-Vibe/{_VIBE_VERSION}",
+        "x-affinity": session_id or "brain-agent",
+    }
+
+def _get_mistral_vibe_metadata(session_id: str | None = None) -> dict:
+    """Build Vibe CLI-compatible metadata for Mistral API calls."""
+    return {
+        "agent_entrypoint": "cli",
+        "agent_version": _VIBE_VERSION,
+        "client_name": "vibe_cli",
+        "client_version": _VIBE_VERSION,
+        "session_id": session_id or "brain-agent",
+        "is_user_prompt": "true",
+        "call_type": "main_call",
+    }
+
+def _create_mistral_client(api_key: str):
+    """Create a Mistral SDK client instance."""
+    from mistralai.client import Mistral
+    return Mistral(api_key=api_key)
+
+
+def _handle_mistral_response(payload, messages, model, api_key,
+                              base_url, api_type, silent, tools,
+                              escape_watcher=None,
+                              _tool_round: int = 0,
+                              event_callback=None,
+                              inference_params: dict | None = None,
+                              session_id: str | None = None) -> str | None:
+    """Handle Mistral SDK streaming response, including tool-use agentic loop.
+
+    Uses the official mistralai SDK with Vibe CLI-compatible headers/metadata
+    to replicate the Vibe CLI's API interaction pattern.
+    """
+    collected_text = []
+    tool_calls_map = {}  # index -> {id, name, arguments_str}
+    _usage_in = 0
+    _usage_out = 0
+    finish_reason = None
+
+    client = _create_mistral_client(api_key)
+    vibe_headers = _get_mistral_vibe_headers(session_id)
+    vibe_metadata = _get_mistral_vibe_metadata(session_id)
+
+    # Build SDK call kwargs from payload
+    sdk_kwargs = {
+        "model": payload["model"],
+        "messages": payload["messages"],
+        "max_tokens": payload.get("max_tokens"),
+        "http_headers": vibe_headers,
+        "metadata": vibe_metadata,
+    }
+    if payload.get("tools"):
+        sdk_kwargs["tools"] = payload["tools"]
+    if payload.get("temperature") is not None:
+        sdk_kwargs["temperature"] = payload["temperature"]
+    if payload.get("top_p") is not None:
+        sdk_kwargs["top_p"] = payload["top_p"]
+    if payload.get("reasoning_effort"):
+        sdk_kwargs["reasoning_effort"] = payload["reasoning_effort"]
+
+    try:
+        stream = client.chat.stream(**sdk_kwargs)
+    except Exception as e:
+        error_msg = f"Mistral SDK error: {e}"
+        print(error_msg, file=sys.stderr)
+        _thread_local._last_send_error = {"code": 0, "message": error_msg}
+        return None
+
+    try:
+        for event in stream:
+            if escape_watcher and escape_watcher.cancelled:
+                raise TaskCancelled()
+
+            data = event.data
+            if not data or not data.choices:
+                # Check for usage on non-choice events
+                if data and data.usage:
+                    _usage_in = data.usage.prompt_tokens or 0
+                    _usage_out = data.usage.completion_tokens or 0
+                continue
+
+            choice = data.choices[0]
+
+            # Track finish reason
+            if choice.finish_reason:
+                finish_reason = choice.finish_reason
+
+            # Extract usage when available
+            if data.usage:
+                _usage_in = data.usage.prompt_tokens or 0
+                _usage_out = data.usage.completion_tokens or 0
+
+            delta = choice.delta
+            if not delta:
+                continue
+
+            # Text content
+            content = delta.content
+            if content:
+                content = _unescape(content)
+                if not silent:
+                    print(content, end="", flush=True)
+                if event_callback:
+                    event_callback("text_delta", {"text": content})
+                collected_text.append(content)
+
+            # Tool calls (same structure as OpenAI)
+            if delta.tool_calls:
+                for tc in delta.tool_calls:
+                    # SDK tool call deltas use index-based accumulation
+                    idx = getattr(tc, 'index', 0) or 0
+                    if idx not in tool_calls_map:
+                        tool_calls_map[idx] = {
+                            "id": getattr(tc, 'id', '') or "",
+                            "name": "",
+                            "arguments": "",
+                        }
+                    if getattr(tc, 'id', None):
+                        tool_calls_map[idx]["id"] = tc.id
+                    fn = getattr(tc, 'function', None)
+                    if fn:
+                        if getattr(fn, 'name', None):
+                            tool_calls_map[idx]["name"] = fn.name
+                        if getattr(fn, 'arguments', None):
+                            tool_calls_map[idx]["arguments"] += fn.arguments
+
+    except TaskCancelled:
+        raise
+    except Exception as e:
+        error_msg = f"Mistral stream error: {e}"
+        print(error_msg, file=sys.stderr)
+        # If we got partial text, continue with it
+        if not collected_text:
+            _thread_local._last_send_error = {"code": 0, "message": error_msg}
+            return None
+
+    full_text = "".join(collected_text)
+
+    # Log cost for this API call
+    _log_call_cost(model, _usage_in, _usage_out, session_id, _tool_round)
+
+    # Emit usage event
+    if event_callback:
+        event_callback("usage", {"tokens_in": _usage_in, "tokens_out": _usage_out})
+
+    # End LLM trace span
+    _llm_span = getattr(_thread_local, 'current_trace_span', None)
+    if _trace_manager and _llm_span and _llm_span.get("type") == "llm_call":
+        _trace_manager.end_span(_llm_span, status="ok",
+                                 tokens_in=_usage_in, tokens_out=_usage_out)
+
+    # Detect truncated tool calls: finish_reason == "length" with tool_calls whose
+    # arguments are invalid JSON means the model ran out of tokens mid-tool-call
+    # (common with thinking models like Devstral 2 that consume budget on reasoning).
+    # Discard the incomplete tool calls and treat as text-only for recovery.
+    if finish_reason == "length" and tool_calls_map:
+        has_truncated = False
+        for tc in tool_calls_map.values():
+            try:
+                json.loads(tc["arguments"])
+            except (json.JSONDecodeError, ValueError):
+                has_truncated = True
+                break
+        if has_truncated:
+            print(f"[thinking model: truncated tool call detected, discarding incomplete tools]",
+                  file=sys.stderr)
+            tool_calls_map.clear()
+
+    # Max output token recovery
+    if finish_reason == "length" and not tool_calls_map:
+        recovery_count = getattr(_thread_local, '_max_output_recovery_count', 0)
+        if recovery_count < MAX_OUTPUT_RECOVERY_LIMIT:
+            _thread_local._max_output_recovery_count = recovery_count + 1
+            if event_callback:
+                event_callback("max_tokens_recovery", {
+                    "attempt": recovery_count + 1,
+                    "max_attempts": MAX_OUTPUT_RECOVERY_LIMIT,
+                })
+            # Thinking models (e.g. Devstral 2) consume max_tokens with invisible
+            # reasoning tokens. Detect this: if visible output is <25% of the
+            # completion budget, double max_tokens for the retry so the model has
+            # room for both thinking and output.
+            recovery_params = dict(inference_params) if inference_params else {}
+            visible_tokens = len(full_text) // 4  # rough char-to-token estimate
+            current_max = payload.get("max_tokens", get_model_max_output(model))
+            if _usage_out > 0 and visible_tokens < _usage_out * 0.25:
+                max_cap = get_model_max_context(model)
+                boosted = min(current_max * 2, max_cap)
+                if boosted > current_max:
+                    recovery_params["max_tokens"] = boosted
+                    print(f"[thinking model: boosting max_tokens {current_max} → {boosted}]",
+                          file=sys.stderr)
+            if full_text:
+                messages.append({"role": "assistant", "content": full_text})
+                messages.append({"role": "user", "content": _MAX_OUTPUT_RESUME_MSG})
+                return send_message(messages, model, api_key, base_url, api_type,
+                                    silent=silent, tools=tools, escape_watcher=escape_watcher,
+                                    _tool_round=_tool_round, event_callback=event_callback,
+                                    inference_params=recovery_params, session_id=session_id)
+        # Recovery exhausted or no text to resume from — inform the user
+        current_max = payload.get("max_tokens", get_model_max_output(model))
+        hint = (f"Output token limit reached (max_tokens={current_max}) and recovery "
+                f"attempts exhausted ({MAX_OUTPUT_RECOVERY_LIMIT}/{MAX_OUTPUT_RECOVERY_LIMIT}). "
+                f"This model may be using too many tokens on internal reasoning. "
+                f"Try: increase max_output in model settings, use a simpler prompt, "
+                f"or switch to a non-thinking model.")
+        print(f"[max_tokens exhausted] {hint}", file=sys.stderr)
+        if event_callback:
+            event_callback("max_tokens_exhausted", {
+                "message": hint,
+                "max_tokens": current_max,
+                "model": model,
+            })
+        # Return whatever text we have (may be empty)
+        if full_text:
+            full_text += f"\n\n⚠️ *{hint}*"
+        else:
+            full_text = f"⚠️ *{hint}*"
+        _thread_local._max_output_recovery_count = 0
+        return full_text
+
+    if not tool_calls_map:
+        if not silent and full_text:
+            print()
+        # End request trace span
+        _req_span = getattr(_thread_local, 'request_trace_span', None)
+        if _trace_manager and _req_span:
+            _trace_manager.end_span(_req_span, status="ok",
+                                     tokens_in=_usage_in, tokens_out=_usage_out)
+            _thread_local.request_trace_span = None
+        _thread_local._max_output_recovery_count = 0
+        return full_text
+
+    if full_text:
+        print()
+
+    # Build assistant message with tool_calls (OpenAI format)
+    assistant_msg = {"role": "assistant", "content": full_text or None}
+    tc_list = []
+    for idx in sorted(tool_calls_map.keys()):
+        tc = tool_calls_map[idx]
+        tc_list.append({
+            "id": tc["id"],
+            "type": "function",
+            "function": {"name": tc["name"], "arguments": tc["arguments"]},
+        })
+    assistant_msg["tool_calls"] = tc_list
+    messages.append(assistant_msg)
+
+    # Execute tools (same as OpenAI path)
+    batch_calls = []
+    for tc in tc_list:
+        try:
+            args = json.loads(tc["function"]["arguments"])
+        except json.JSONDecodeError:
+            args = {}
+        batch_calls.append({"id": tc["id"], "name": tc["function"]["name"], "input": args})
+
+    batch_results = _execute_tools_batch(batch_calls, event_callback=event_callback)
+
+    for br in batch_results:
+        sanitized = _sanitize_tool_result(
+            next((bc["name"] for bc in batch_calls if bc["id"] == br["tool_use_id"]), ""),
+            br["result"],
+        )
+        messages.append({
+            "role": "tool",
+            "tool_call_id": br["tool_use_id"],
+            "content": sanitized,
+        })
+
+    # Run middleware pipeline
+    _sid = session_id or getattr(_thread_local, 'current_session_id', None) or ""
+    messages, should_continue = _run_middleware(
+        messages, _tool_round, event_callback,
+        model=model, api_key=api_key, base_url=base_url, api_type=api_type,
+        session_id=_sid, escape_watcher=escape_watcher,
+    )
+
+    return send_message(messages, model, api_key, base_url, api_type,
+                        silent=silent, tools=tools, escape_watcher=escape_watcher,
+                        _tool_round=_tool_round + 1, event_callback=event_callback,
+                        inference_params=inference_params, session_id=session_id)
+
+
+def _classify_error_transient(error_info: dict | None) -> bool:
+    """Check if the last send error is transient (retryable) vs permanent."""
+    if not error_info:
+        return True  # Unknown error, assume transient
+    if error_info.get("permanent"):
+        return False
+    code = error_info.get("code", 0)
+    # Transient: 429, 500, 502, 503, 504, 529, connection errors (code=0)
+    return code in {0, 429, 500, 502, 503, 504, 529}
+
+
+def _retry_with_backoff(messages, model, api_key, base_url, api_type,
+                        silent, tools, escape_watcher, event_callback,
+                        inference_params, session_id, max_retries=2):
+    """Try sending a message with exponential backoff retries for transient errors.
+
+    Returns (result, last_error_info). result is None if all retries failed.
+    """
+    _thread_local._last_send_error = None
+    result = send_message(messages, model, api_key, base_url, api_type,
+                          silent=silent, tools=tools, escape_watcher=escape_watcher,
+                          event_callback=event_callback,
+                          inference_params=inference_params,
+                          session_id=session_id)
+    if result is not None:
+        return result, None
+
+    error_info = getattr(_thread_local, '_last_send_error', None)
+    # If permanent error, don't retry
+    if not _classify_error_transient(error_info):
+        return None, error_info
+
+    # Retry with exponential backoff
+    for attempt in range(1, max_retries + 1):
+        delay = min(1.0 * (2 ** (attempt - 1)), 30.0) + random.uniform(0, 0.5)
+        error_msg = (error_info or {}).get("message", "unknown error")
+        print(f"  Retrying {model} in {delay:.1f}s (attempt {attempt}/{max_retries}, error: {error_msg})", flush=True)
+        if event_callback:
+            event_callback("fallback", {
+                "status": "retry",
+                "model": model,
+                "attempt": attempt,
+                "max_retries": max_retries,
+                "delay": round(delay, 1),
+                "reason": error_msg,
+            })
+        time.sleep(delay)
+
+        # Check for cancellation
+        if escape_watcher and escape_watcher.cancelled:
+            from claude_cli import TaskCancelled
+            raise TaskCancelled()
+
+        _thread_local._last_send_error = None
+        result = send_message(messages, model, api_key, base_url, api_type,
+                              silent=silent, tools=tools, escape_watcher=escape_watcher,
+                              event_callback=event_callback,
+                              inference_params=inference_params,
+                              session_id=session_id)
+        if result is not None:
+            return result, None
+
+        error_info = getattr(_thread_local, '_last_send_error', None)
+        if not _classify_error_transient(error_info):
+            break  # Permanent error, stop retrying
+
+    return None, error_info
+
+
+def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
+                               base_url: str, api_type: str,
+                               silent: bool = False,
+                               tools: bool = True,
+                               escape_watcher=None,
+                               event_callback=None,
+                               provider_resolver=None,
+                               inference_params: dict | None = None,
+                               purpose: str | None = None,
+                               session_id: str | None = None) -> str | None:
+    """Send messages with retry + fallback chain.
+
+    Retry logic: transient errors (502, 503, 429, timeout) retry 2x with exponential backoff.
+    Permanent errors (400, 401, 404) skip retries and go straight to fallback.
+    Fallbacks field in _models_config: ordered list of fallback model IDs.
+    If provider_resolver is provided, it's called with (model) -> {api_key, base_url, api_type}.
+    Emits ("fallback", {...}) events via event_callback for UI display.
+    """
+    # Track which model actually responded (for done event)
+    _thread_local._fallback_model_used = None
+
+    # Snapshot message count before primary attempt — if it fails mid-tool-loop,
+    # intermediate messages must be stripped before trying fallback models
+    msg_count_original = len(messages)
+
+    # Try primary model with retries
+    result, error_info = _retry_with_backoff(
+        messages, model, api_key, base_url, api_type,
+        silent, tools, escape_watcher, event_callback,
+        inference_params, session_id, max_retries=2)
+    if result is not None:
+        return result
+
+    # Strip any intermediate tool-loop messages from failed primary attempt
+    if len(messages) > msg_count_original:
+        del messages[msg_count_original:]
+
+    primary_error = (error_info or {}).get("message", "unknown error")
+
+    # Build fallback list — use explicit fallbacks from config, then capability-aware auto-fallback
+    fallback_models = []
+    if _models_config:
+        model_cfg = _models_config.get(model, {})
+        explicit_fallbacks = model_cfg.get("fallbacks", [])
+        if explicit_fallbacks:
+            fallback_models = list(explicit_fallbacks)
+        else:
+            # Auto-build fallback order: same provider first, then by priority
+            failed_provider = model_cfg.get("provider", "")
+            failed_caps = set(model_cfg.get("capabilities", []))
+            candidates = []
+            for mid, cfg in _models_config.items():
+                if mid == model or not cfg.get("enabled", True):
+                    continue
+                same_provider = 1 if cfg.get("provider") == failed_provider else 0
+                matching_caps = len(failed_caps & set(cfg.get("capabilities", [])))
+                priority = cfg.get("priority", 0)
+                # Sort key: same provider first, then capability match, then priority
+                candidates.append((mid, same_provider, matching_caps, priority))
+            candidates.sort(key=lambda x: (x[1], x[2], x[3]), reverse=True)
+            fallback_models = [mid for mid, _, _, _ in candidates]
+    else:
+        fallback_models = get_available_models(api_key, base_url, api_type)
+
+    if not fallback_models:
+        msg = f"Error: Model '{model}' is not available and no fallback models found."
+        print(msg, file=sys.stderr)
+        if event_callback:
+            raise RuntimeError(msg)
+        sys.exit(1)
+
+    tried_models = {model}
+    for fallback_model in fallback_models:
+        if fallback_model in tried_models:
+            continue
+        tried_models.add(fallback_model)
+
+        # Re-resolve provider for fallback model
+        fb_api_key, fb_base_url, fb_api_type = api_key, base_url, api_type
+        if provider_resolver:
+            try:
+                prov = provider_resolver(fallback_model)
+                fb_api_key = prov.get("api_key", api_key)
+                fb_base_url = prov.get("base_url", base_url)
+                fb_api_type = prov.get("api_type", api_type)
+            except Exception:
+                continue
+
+        print(f"Note: Model '{model}' failed, trying fallback '{fallback_model}'.", flush=True)
+        if event_callback:
+            event_callback("fallback", {
+                "status": "switch",
+                "from": model,
+                "to": fallback_model,
+                "reason": primary_error,
+            })
+
+        fb_params = get_inference_params(fallback_model, purpose)
+        # Snapshot message count: if fallback uses different api_type, tool-loop
+        # messages will be in the wrong format and must be stripped after success
+        msg_count_before = len(messages)
+        result, fb_error = _retry_with_backoff(
+            messages, fallback_model, fb_api_key, fb_base_url, fb_api_type,
+            silent, tools, escape_watcher, event_callback,
+            fb_params, session_id, max_retries=1)
+        if result is not None:
+            # Strip intermediate tool-loop messages appended by the fallback model.
+            # These corrupt the session: different api_type → wrong message format,
+            # same api_type → thinking blocks with invalid/missing signatures.
+            # The final text reply is returned; server adds it properly to session.
+            if len(messages) > msg_count_before:
+                del messages[msg_count_before:]
+            _thread_local._fallback_model_used = fallback_model
+            # Log fallback event to cost tracker
+            if _cost_tracker:
+                try:
+                    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+                    agent_id = agent.agent_id if agent else "main"
+                    logging.info(f"Fallback: {model} -> {fallback_model} for agent {agent_id} (reason: {primary_error})")
+                except Exception:
+                    pass
+            return result
+
+    msg = f"Error: No working models found. Tried: {', '.join(tried_models)}"
+    print(msg, file=sys.stderr)
+    if event_callback:
+        raise RuntimeError(msg)
+    sys.exit(1)
+
+
+# --- TUI helpers ---
+
 def _draw_status_bar(model: str, history: list[dict] | None = None,
                      max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS) -> None:
     """Draw a status bar on the last terminal line with black background."""
@@ -14042,3 +16194,981 @@ def _restore_scroll_region() -> None:
 
 # --- Main ---
 
+def main():
+    parser = argparse.ArgumentParser(
+        description=f"Brain Agent v{VERSION} — Agentic CLI for LLM APIs"
+    )
+    parser.add_argument(
+        "message", nargs="?",
+        help="Message to send (or use -i for interactive mode)",
+    )
+    parser.add_argument(
+        "-m", "--model", default="claude-opus-4-5-20251101",
+        help="Model to use (default: claude-opus-4-5-20251101)",
+    )
+    parser.add_argument(
+        "-i", "--interactive", action="store_true",
+        help="Interactive mode - continuous chat",
+    )
+    parser.add_argument(
+        "-l", "--list-models", action="store_true",
+        help="List available models and exit",
+    )
+    parser.add_argument(
+        "--api-key", default="sk-Xk7kOHpIpZkLutwnyxHpRO9jn4ZwyPaS",
+        help="API key for authentication",
+    )
+    parser.add_argument(
+        "--base-url", default="http://localhost:8317/v1",
+        help="Base URL for the API (default: http://localhost:8317/v1)",
+    )
+    parser.add_argument(
+        "-t", "--api-type", choices=["anthropic", "openai", "mistral"], default="anthropic",
+        help="API type: anthropic or openai (default: anthropic)",
+    )
+    parser.add_argument(
+        "--max-context", type=int, default=DEFAULT_MAX_CONTEXT_TOKENS,
+        help=f"Max context window in tokens (default: {DEFAULT_MAX_CONTEXT_TOKENS})",
+    )
+    parser.add_argument(
+        "--agent", default="main",
+        help="Agent ID to start with (default: 'main')",
+    )
+
+    args = parser.parse_args()
+
+    if args.list_models:
+        list_models(args.api_key, args.base_url, args.api_type)
+        sys.exit(0)
+
+    if args.interactive:
+        _run_interactive(args)
+        sys.exit(0)
+
+    # Single-message mode
+    if not args.message:
+        parser.print_help()
+        sys.exit(1)
+
+    # Try SDK sidecar first for consistent tool loop
+    reply = None
+    try:
+        import sdk_backend
+        if sdk_backend.is_sidecar_running():
+            # Set up agent context for system prompt
+            agent_cfg = AgentConfig(args.agent)
+            _thread_local.current_agent = agent_cfg
+            _thread_local.memory_store = MemoryStore(args.agent)
+            system_prompt = _build_system_prompt(include_memory_summary=True)
+            provider_env = sdk_backend.build_provider_env(args.model)
+
+            # Build tool defs for sidecar MCP
+            tool_defs = []
+            for td in TOOL_DEFINITIONS:
+                if td["name"] in ("read_file", "write_file", "edit_file",
+                                   "list_directory", "search_files", "execute_command",
+                                   "web_fetch"):
+                    continue  # SDK has native equivalents
+                if td["name"] not in TOOL_DISPATCH:
+                    continue
+                desc = td["description"]
+                if isinstance(desc, tuple):
+                    desc = " ".join(desc)
+                tool_defs.append({
+                    "name": td["name"],
+                    "description": desc[:1000],
+                    "input_schema": td["input_schema"],
+                })
+
+            reply = sdk_backend.query_sync(
+                prompt=args.message, model=args.model,
+                system_prompt=system_prompt, max_turns=30,
+                tool_defs=tool_defs,
+                agent_id=args.agent,
+            )
+    except Exception:
+        pass  # Fall through to direct API
+
+    # Fallback: direct API call
+    if reply is None:
+        messages = [{"role": "user", "content": args.message}]
+        reply = send_message_with_fallback(
+            messages, args.model, args.api_key, args.base_url, args.api_type,
+            silent=True)
+    if reply:
+        print(render_markdown(reply))
+
+
+def _print_greeting(model: str, agent_id: str = "default") -> None:
+    """Print the Brain Agent startup banner."""
+    cwd = os.getcwd()
+    latest = CHANGELOG[0] if CHANGELOG else None
+
+    # Color definitions for gradient brain
+    C1 = "\033[38;5;213m"  # pink
+    C2 = "\033[38;5;177m"  # purple
+    C3 = "\033[38;5;141m"  # lavender
+    C4 = "\033[38;5;105m"  # blue-purple
+    C5 = "\033[38;5;69m"   # blue
+    C6 = "\033[38;5;33m"   # deep blue
+    CO = "\033[38;5;208m"  # orange accent
+
+    brain = [
+        f"  {C1}    ⣀⣀⣤⣤⣤⣤⣤⣤⣀⣀    {RESET}",
+        f"  {C1}  ⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦  {RESET}",
+        f"  {C2} ⣾⣿⣿⡟⠛⠛⣿⣿⡟⠛⠛⣿⣿⣿⣷ {RESET}",
+        f"  {C2}⣸⣿⣿⡇  ⣸⣿⣿⡇  ⢸⣿⣿⣿⣇{RESET}",
+        f"  {C3}⣿⣿⣿⣇  ⣿⣿⣿⣇  ⣸⣿⣿⣿⣿{RESET}",
+        f"  {C3}⢿⣿⣿⣿⣦⣤⣿⣿⣿⣦⣤⣾⣿⣿⣿⡿{RESET}",
+        f"  {C4} ⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟ {RESET}",
+        f"  {C5}  ⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋  {RESET}",
+        f"  {C6}    ⠉⠛⠿⣿⣿⣿⠿⠛⠉    {RESET}",
+    ]
+
+    # Title with gradient
+    title = (
+        f"  {C1}B{C2}r{C3}a{C4}i{C5}n{RESET} "
+        f"{CO}{BOLD}Agent{RESET}"
+    )
+    ver = f" {DIM}v{VERSION}{RESET}"
+    agent_label = f" {DIM}│{RESET} {CYAN}{BOLD}{agent_id}{RESET}" if agent_id != "main" else ""
+
+    print()
+    for line in brain:
+        print(line)
+    print()
+    print(f"  {title}{ver}{agent_label}")
+    print()
+
+    # Info section with dim separators
+    sep = f"{DIM}·{RESET}"
+    print(f"  {DIM}Model{RESET}  {GREEN}{model}{RESET}")
+    print(f"  {DIM}Path{RESET}   {DIM}{cwd}{RESET}")
+
+    # Agents
+    agents = list_agents()
+    if len(agents) > 1:
+        agent_list = []
+        for a in agents:
+            if a == agent_id:
+                agent_list.append(f"{CYAN}{BOLD}{a}{RESET}")
+            else:
+                agent_list.append(f"{DIM}{a}{RESET}")
+        print(f"  {DIM}Agents{RESET} {' {0} '.format(sep).join(agent_list)}")
+
+    # Skills count
+    if _current_agent:
+        skills = _current_agent.list_skills()
+        if skills:
+            skill_names = [s["name"] for s in skills[:5]]
+            more = f" {DIM}+{len(skills)-5} more{RESET}" if len(skills) > 5 else ""
+            print(f"  {DIM}Skills{RESET} {DIM}{', '.join(skill_names)}{more}{RESET}")
+
+    # Scheduled tasks count
+    if _scheduler:
+        schedules = _scheduler.list_all()
+        active = sum(1 for s in schedules if s["enabled"])
+        if schedules:
+            print(f"  {DIM}Tasks{RESET}  {DIM}{active} scheduled ({len(schedules)} total){RESET}")
+
+    print()
+    print(f"  {DIM}Commands  /new /agent /model /models /tools /schedule{RESET}")
+    print(f"  {DIM}Controls  Esc cancel · o toggle tools · exit quit{RESET}")
+
+    if latest:
+        print(f"\n  {DIM}↑ v{latest[0]}: {latest[2]}{RESET}")
+
+    print()
+
+
+# --- Slash commands registry ---
+
+SLASH_COMMANDS = {
+    "/help":     "Show this help",
+    "/about":    "Show version and changelog",
+    "/new":      "Start a new conversation",
+    "/agent":    "Switch agent or list agents",
+    "/model":    "Switch model",
+    "/models":   "List available models",
+    "/tools":    "Toggle tool call display",
+    "/schedule": "Manage scheduled tasks (list/add/pause/resume/delete/history)",
+}
+
+
+def _print_help() -> None:
+    """Print help for all slash commands."""
+    print()
+    print(f"  {BOLD}Commands{RESET}")
+    print()
+    for cmd, desc in SLASH_COMMANDS.items():
+        print(f"  {GREEN}{BOLD}{cmd:12s}{RESET} {DIM}{desc}{RESET}")
+    print()
+    print(f"  {BOLD}Schedule subcommands{RESET}")
+    print()
+    for sub, desc in [
+        ("list", "List all scheduled tasks"),
+        ("add", "Create a new scheduled task"),
+        ("pause NAME", "Pause a task"),
+        ("resume NAME", "Resume a task"),
+        ("delete NAME", "Delete a task"),
+        ("history", "Show execution history"),
+    ]:
+        print(f"  {GREEN}{BOLD}  {sub:16s}{RESET} {DIM}{desc}{RESET}")
+    print()
+    print(f"  {BOLD}Keyboard{RESET}")
+    print()
+    for key, desc in [
+        ("Esc", "Cancel current request"),
+        ("Tab", "Autocomplete slash commands"),
+        ("Up/Down", "Input history"),
+        ("Ctrl+A/E", "Beginning/end of line"),
+        ("Ctrl+W", "Delete word backward"),
+        ("Ctrl+U", "Clear line"),
+        ("o", "Toggle tool output (when hidden)"),
+    ]:
+        print(f"  {YELLOW}{key:12s}{RESET} {DIM}{desc}{RESET}")
+    print()
+
+
+def _print_about() -> None:
+    """Print version info and changelog."""
+    print()
+    print(f"  {BOLD}Brain Agent{RESET}  {GREEN}{BOLD}v{VERSION}{RESET}  {DIM}{VERSION_DATE}{RESET}")
+    print()
+    print(f"  {BOLD}Changelog{RESET}")
+    print()
+    for v, date, changes in CHANGELOG[:8]:
+        print(f"  {GREEN}{BOLD}v{v}{RESET}  {DIM}{date}{RESET}")
+        # Word-wrap changes at ~72 chars
+        words = changes.split()
+        line = "    "
+        for word in words:
+            if len(line) + len(word) + 1 > 76:
+                print(f"{DIM}{line}{RESET}")
+                line = "    " + word
+            else:
+                line = line + (" " if line.strip() else "") + word
+        if line.strip():
+            print(f"{DIM}{line}{RESET}")
+        print()
+
+
+def _select_menu(items: list[str], prompt: str = "Select",
+                 labels: list[str] | None = None,
+                 active: str | None = None) -> str | None:
+    """Interactive arrow-key selection menu. Returns selected item or None on Esc/Ctrl-C."""
+    if not items:
+        return None
+    display = labels if labels and len(labels) == len(items) else items
+    selected = 0
+    # Find active item
+    if active and active in items:
+        selected = items.index(active)
+
+    fd = sys.stdin.fileno()
+    try:
+        old_settings = termios.tcgetattr(fd)
+    except termios.error:
+        return None
+
+    # Count lines we'll draw so we can clean up
+    menu_lines = len(items)
+
+    try:
+        new_settings = termios.tcgetattr(fd)
+        new_settings[3] = new_settings[3] & ~(termios.ICANON | termios.ECHO)
+        new_settings[6][termios.VMIN] = 0
+        new_settings[6][termios.VTIME] = 0
+        termios.tcsetattr(fd, termios.TCSANOW, new_settings)
+
+        # Draw initial menu
+        print(f"\n  {DIM}{prompt}:{RESET}")
+        for i, label in enumerate(display):
+            _draw_menu_item(i, label, i == selected, items[i] == active if active else False)
+        sys.stdout.flush()
+
+        while True:
+            if select.select([fd], [], [], 0.1)[0]:
+                ch = os.read(fd, 1)
+                if ch == b'\r' or ch == b'\n':  # Enter
+                    break
+                elif ch == b'\x1b':  # Escape or arrow
+                    seq1 = os.read(fd, 1) if select.select([fd], [], [], 0.05)[0] else b''
+                    if seq1 == b'[':
+                        seq2 = os.read(fd, 1) if select.select([fd], [], [], 0.05)[0] else b''
+                        if seq2 == b'A':  # Up
+                            selected = (selected - 1) % len(items)
+                        elif seq2 == b'B':  # Down
+                            selected = (selected + 1) % len(items)
+                        else:
+                            # Bare Esc or unknown sequence — cancel
+                            _erase_menu(menu_lines + 1)
+                            return None
+                    else:
+                        # Bare Esc — cancel
+                        _erase_menu(menu_lines + 1)
+                        return None
+                elif ch == b'\x03':  # Ctrl-C
+                    _erase_menu(menu_lines + 1)
+                    return None
+                else:
+                    continue
+
+                # Redraw menu
+                # Move cursor up to start of menu
+                sys.stdout.write(f"\033[{menu_lines}A")
+                for i, label in enumerate(display):
+                    sys.stdout.write(f"\r\033[K")
+                    _draw_menu_item(i, label, i == selected, items[i] == active if active else False)
+                sys.stdout.flush()
+
+        # Erase menu after selection
+        _erase_menu(menu_lines + 1)
+        return items[selected]
+
+    except Exception:
+        return None
+    finally:
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        except termios.error:
+            pass
+
+
+def _draw_menu_item(idx: int, label: str, is_selected: bool, is_active: bool):
+    """Draw a single menu item line."""
+    marker = f"{CYAN}{BOLD}❯{RESET}" if is_selected else " "
+    active_tag = f" {GREEN}(active){RESET}" if is_active else ""
+    if is_selected:
+        print(f"  {marker} {BOLD}{label}{RESET}{active_tag}")
+    else:
+        print(f"  {marker} {DIM}{label}{RESET}{active_tag}")
+
+
+def _erase_menu(lines: int):
+    """Erase N lines above cursor."""
+    for _ in range(lines):
+        sys.stdout.write(f"\033[A\r\033[K")
+    sys.stdout.flush()
+
+
+def _readline(prompt: str, input_history: list[str], history_idx_ref: list[int],
+              completions: list[str] | None = None) -> str | None:
+    """Read a line with arrow-key history navigation and inline editing.
+
+    Returns the entered string, or None on Ctrl-C / Ctrl-D.
+    input_history is a list of previous inputs (newest last).
+    history_idx_ref is a single-element list holding the current browse index.
+    """
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        sys.stdout.write(prompt)
+        sys.stdout.flush()
+
+        buf = []        # current line characters
+        pos = 0         # cursor position within buf
+        saved_line = "" # stash current input when browsing history
+        hist_idx = len(input_history)  # start past the end (= new input)
+
+        while True:
+            ch = os.read(fd, 1)
+
+            if ch == b'\r' or ch == b'\n':  # Enter
+                # Move cursor to end, print newline
+                if pos < len(buf):
+                    sys.stdout.write(f"\033[{len(buf) - pos}C")
+                sys.stdout.write("\r\n")
+                sys.stdout.flush()
+                return "".join(buf)
+
+            elif ch == b'\x03':  # Ctrl-C
+                sys.stdout.write("\r\n")
+                sys.stdout.flush()
+                return None
+
+            elif ch == b'\x04':  # Ctrl-D
+                if not buf:
+                    sys.stdout.write("\r\n")
+                    sys.stdout.flush()
+                    return None
+                # Otherwise ignore
+
+            elif ch == b'\x7f' or ch == b'\x08':  # Backspace
+                if pos > 0:
+                    buf.pop(pos - 1)
+                    pos -= 1
+                    # Redraw from cursor position
+                    tail = "".join(buf[pos:])
+                    sys.stdout.write(f"\033[D{tail} \033[{len(tail) + 1}D")
+                    sys.stdout.flush()
+
+            elif ch == b'\x15':  # Ctrl-U: clear line
+                if pos > 0:
+                    sys.stdout.write(f"\033[{pos}D")
+                sys.stdout.write(" " * len(buf))
+                if len(buf) > 0:
+                    sys.stdout.write(f"\033[{len(buf)}D")
+                buf.clear()
+                pos = 0
+                sys.stdout.flush()
+
+            elif ch == b'\x01':  # Ctrl-A: beginning of line
+                if pos > 0:
+                    sys.stdout.write(f"\033[{pos}D")
+                    pos = 0
+                    sys.stdout.flush()
+
+            elif ch == b'\x05':  # Ctrl-E: end of line
+                if pos < len(buf):
+                    sys.stdout.write(f"\033[{len(buf) - pos}C")
+                    pos = len(buf)
+                    sys.stdout.flush()
+
+            elif ch == b'\x17':  # Ctrl-W: delete word backward
+                if pos > 0:
+                    old_pos = pos
+                    # Skip trailing spaces
+                    while pos > 0 and buf[pos - 1] == ' ':
+                        pos -= 1
+                    # Skip word
+                    while pos > 0 and buf[pos - 1] != ' ':
+                        pos -= 1
+                    deleted = old_pos - pos
+                    del buf[pos:old_pos]
+                    sys.stdout.write(f"\033[{deleted}D")
+                    tail = "".join(buf[pos:])
+                    sys.stdout.write(f"{tail}{' ' * deleted}")
+                    sys.stdout.write(f"\033[{len(tail) + deleted}D")
+                    sys.stdout.flush()
+
+            elif ch == b'\x1b':  # Escape sequence
+                seq1 = os.read(fd, 1)
+                if seq1 == b'[':
+                    seq2 = os.read(fd, 1)
+
+                    if seq2 == b'A':  # Up arrow
+                        if hist_idx > 0:
+                            if hist_idx == len(input_history):
+                                saved_line = "".join(buf)
+                            hist_idx -= 1
+                            _replace_line(buf, pos, input_history[hist_idx])
+                            buf[:] = list(input_history[hist_idx])
+                            pos = len(buf)
+
+                    elif seq2 == b'B':  # Down arrow
+                        if hist_idx < len(input_history):
+                            hist_idx += 1
+                            if hist_idx == len(input_history):
+                                _replace_line(buf, pos, saved_line)
+                                buf[:] = list(saved_line)
+                            else:
+                                _replace_line(buf, pos, input_history[hist_idx])
+                                buf[:] = list(input_history[hist_idx])
+                            pos = len(buf)
+
+                    elif seq2 == b'C':  # Right arrow
+                        if pos < len(buf):
+                            sys.stdout.write("\033[C")
+                            pos += 1
+                            sys.stdout.flush()
+
+                    elif seq2 == b'D':  # Left arrow
+                        if pos > 0:
+                            sys.stdout.write("\033[D")
+                            pos -= 1
+                            sys.stdout.flush()
+
+                    elif seq2 == b'H':  # Home
+                        if pos > 0:
+                            sys.stdout.write(f"\033[{pos}D")
+                            pos = 0
+                            sys.stdout.flush()
+
+                    elif seq2 == b'F':  # End
+                        if pos < len(buf):
+                            sys.stdout.write(f"\033[{len(buf) - pos}C")
+                            pos = len(buf)
+                            sys.stdout.flush()
+
+                    elif seq2 == b'3':  # Delete key (ESC [ 3 ~)
+                        seq3 = os.read(fd, 1)  # consume '~'
+                        if pos < len(buf):
+                            buf.pop(pos)
+                            tail = "".join(buf[pos:])
+                            sys.stdout.write(f"{tail} \033[{len(tail) + 1}D")
+                            sys.stdout.flush()
+
+                # Bare Escape — ignore (don't break input)
+
+            elif ch == b'\t':  # Tab — autocomplete
+                current = "".join(buf)
+                comp_list = completions or list(SLASH_COMMANDS.keys())
+                if current.startswith("/"):
+                    matches = [c for c in comp_list if c.startswith(current)]
+                    if len(matches) == 1:
+                        # Single match — complete it
+                        completion = matches[0]
+                        # Add space after completed command
+                        if not completion.endswith(" "):
+                            completion += " "
+                        _replace_line(buf, pos, completion)
+                        buf[:] = list(completion)
+                        pos = len(buf)
+                    elif len(matches) > 1:
+                        # Multiple matches — find common prefix
+                        prefix = os.path.commonprefix(matches)
+                        if len(prefix) > len(current):
+                            _replace_line(buf, pos, prefix)
+                            buf[:] = list(prefix)
+                            pos = len(buf)
+                        else:
+                            # Show options briefly below
+                            sys.stdout.write(f"\n  {DIM}{' '.join(matches)}{RESET}")
+                            sys.stdout.write(f"\033[A")  # move back up
+                            # Redraw prompt + buffer
+                            sys.stdout.write(f"\r{prompt}{''.join(buf)}")
+                            sys.stdout.flush()
+
+            elif ch >= b' ':  # Printable character
+                char = ch.decode("utf-8", errors="replace")
+                buf.insert(pos, char)
+                pos += 1
+                tail = "".join(buf[pos:])
+                sys.stdout.write(f"{char}{tail}")
+                if tail:
+                    sys.stdout.write(f"\033[{len(tail)}D")
+                sys.stdout.flush()
+
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+def _replace_line(buf: list, pos: int, new_text: str) -> None:
+    """Clear the current input line and write new_text."""
+    # Move cursor to start of input
+    if pos > 0:
+        sys.stdout.write(f"\033[{pos}D")
+    # Clear old content
+    sys.stdout.write(" " * len(buf))
+    if len(buf) > 0:
+        sys.stdout.write(f"\033[{len(buf)}D")
+    # Write new content
+    sys.stdout.write(new_text)
+    sys.stdout.flush()
+
+
+
+def _switch_agent(agent_id: str, args) -> tuple[str, AgentConfig]:
+    """Switch to a different agent. Returns (model, agent_config)."""
+    global _current_agent, _memory_store, _mcp_manager
+    agent = AgentConfig(agent_id)
+    _current_agent = agent
+    _memory_store = MemoryStore(agent_id=agent_id, base_dir=agent.memory_dir)
+
+    # Load MCP servers: reuse shared manager if available, else create one
+    if not _mcp_manager:
+        _mcp_manager = MCPManager()
+    else:
+        _mcp_manager.stop_all()
+    main_mcp = os.path.join(AGENTS_DIR, "main", "mcp.json")
+    _mcp_manager.load_config(main_mcp)
+    if agent_id != "main":
+        _mcp_manager.load_config(agent.mcp_config_path)
+
+    model = agent.preferred_model or args.model
+    return model, agent
+
+
+def _run_interactive(args):
+    """Run the interactive TUI chat loop."""
+    global _memory_store, _current_agent
+    global _delegate_fallback_model, _delegate_api_key, _delegate_base_url, _delegate_api_type
+
+    history = []
+    input_history = []   # list of previous user inputs for arrow-key recall
+    history_idx = [0]    # mutable ref for current position
+
+    # Store API config for delegation
+    _delegate_api_key = args.api_key
+    _delegate_base_url = args.base_url
+    _delegate_api_type = args.api_type
+    _delegate_fallback_model = args.model
+
+    # SDK session tracking (for resume across turns)
+    _run_interactive._sdk_sid = None
+
+    # Initialize agent
+    current_model, _ = _switch_agent(args.agent, args)
+
+    # Start scheduler
+    global _scheduler
+    _scheduler = Scheduler()
+    _scheduler.start()
+
+    # Ensure memory summary schedules
+    try:
+        ensure_memory_summary_schedules()
+    except Exception:
+        pass
+
+    # Initialize background task runner
+    global _task_runner
+    _task_runner = TaskRunner()
+
+    # Clear screen and move cursor to top
+    sys.stdout.write("\033[2J\033[H")
+    sys.stdout.flush()
+
+    _setup_scroll_region()
+    _draw_status_bar(current_model, history, args.max_context)
+
+    # Handle terminal resize
+    def _on_resize(signum, frame):
+        _setup_scroll_region()
+        _draw_status_bar(current_model, history, args.max_context)
+
+    old_sigwinch = signal.signal(signal.SIGWINCH, _on_resize)
+
+    # Startup greeting
+    _print_greeting(current_model, args.agent)
+
+    try:
+        while True:
+            # Read input with history support
+            message = _readline(f"\n{BOLD}{GREEN}❯{RESET} ", input_history, history_idx)
+            if message is None:
+                print(f"{DIM}Bye!{RESET}")
+                break
+
+            stripped = message.strip().lower()
+
+            if stripped in ("exit", "quit"):
+                print(f"{DIM}Bye!{RESET}")
+                break
+
+            if stripped == "/help":
+                _print_help()
+                continue
+
+            if stripped == "/about":
+                _print_about()
+                continue
+
+            if stripped == "/new":
+                history = []
+                print(f"\n{DIM}{'─' * 40}{RESET}")
+                print(f"{DIM}  New chat started{RESET}")
+                print(f"{DIM}{'─' * 40}{RESET}")
+                _draw_status_bar(current_model, history, args.max_context)
+                continue
+
+            if stripped == "/tools":
+                global _show_tools
+                _show_tools = not _show_tools
+                state = f"{GREEN}visible{RESET}" if _show_tools else f"{DIM}hidden{RESET}"
+                print(f"  {DIM}Tool display:{RESET} {state}")
+                continue
+
+            if stripped.startswith("/agent"):
+                arg = message.strip()[6:].strip()
+                agents = list_agents()
+                if arg:
+                    if arg not in agents:
+                        print(f"  {DIM}Creating new agent:{RESET} {BOLD}{arg}{RESET}")
+                    current_model, _ = _switch_agent(arg, args)
+                    history = []
+                    print(f"  {DIM}Switched to agent:{RESET} {BOLD}{arg}{RESET} {DIM}(model: {current_model}){RESET}")
+                else:
+                    # Build labels with descriptions
+                    labels = []
+                    for aid in agents:
+                        cfg = AgentConfig(aid)
+                        model_info = f" [{cfg.preferred_model}]" if cfg.preferred_model else ""
+                        labels.append(f"{aid}{model_info} — {cfg.description}")
+                    current_aid = _current_agent.agent_id if _current_agent else "main"
+                    choice = _select_menu(agents, "Select agent", labels=labels, active=current_aid)
+                    if choice:
+                        current_model, _ = _switch_agent(choice, args)
+                        history = []
+                        print(f"  {DIM}Switched to agent:{RESET} {BOLD}{choice}{RESET} {DIM}(model: {current_model}){RESET}")
+                _draw_status_bar(current_model, history, args.max_context)
+                continue
+
+            if stripped.startswith("/schedule"):
+                arg = message.strip()[9:].strip()
+                if not _scheduler:
+                    print(f"  {DIM}Scheduler not running{RESET}")
+                    continue
+
+                if arg == "" or arg == "list":
+                    # List schedules
+                    schedules = _scheduler.list_all()
+                    if not schedules:
+                        print(f"\n  {DIM}No scheduled tasks{RESET}")
+                    else:
+                        print()
+                        for s in schedules:
+                            status = f"{GREEN}active{RESET}" if s["enabled"] else f"{DIM}paused{RESET}"
+                            next_r = s.get("next_run", "")[:16] if s.get("next_run") else "—"
+                            print(f"  {BOLD}{s['name']}{RESET} [{status}] {DIM}{s['schedule']}{RESET}")
+                            print(f"    {DIM}agent:{RESET} {s['agent']}  {DIM}next:{RESET} {next_r}")
+                            print(f"    {DIM}task:{RESET} {s['task'][:60]}")
+                    continue
+
+                elif arg == "add":
+                    # Interactive add
+                    print(f"\n  {DIM}Add scheduled task{RESET}")
+                    name = _readline(f"  {DIM}Name:{RESET} ", [], [0])
+                    if not name or not name.strip():
+                        continue
+                    name = name.strip()
+                    task = _readline(f"  {DIM}Task:{RESET} ", [], [0])
+                    if not task or not task.strip():
+                        continue
+                    task = task.strip()
+                    schedule = _readline(f"  {DIM}Schedule (every Xm/Xh/Xd, daily HH:MM, weekly DOW HH:MM):{RESET} ", [], [0])
+                    if not schedule or not schedule.strip():
+                        continue
+                    schedule = schedule.strip()
+                    agent = _readline(f"  {DIM}Agent (default: main):{RESET} ", [], [0])
+                    agent = agent.strip() if agent and agent.strip() else "main"
+                    model_in = _readline(f"  {DIM}Model (default: current):{RESET} ", [], [0])
+                    model_val = model_in.strip() if model_in and model_in.strip() else None
+
+                    result = _scheduler.add(name, task, schedule, agent, model_val)
+                    if result.get("error"):
+                        print(f"  {RED}{result['error']}{RESET}")
+                    else:
+                        print(f"  {GREEN}✔ Created:{RESET} {BOLD}{name}{RESET} — next run: {result.get('next_run', '')[:16]}")
+                    continue
+
+                elif arg.startswith("pause "):
+                    name = arg[6:].strip()
+                    result = _scheduler.pause(name)
+                    if result.get("error"):
+                        print(f"  {RED}{result['error']}{RESET}")
+                    else:
+                        print(f"  {DIM}Paused:{RESET} {name}")
+                    continue
+
+                elif arg.startswith("resume "):
+                    name = arg[7:].strip()
+                    result = _scheduler.resume(name)
+                    if result.get("error"):
+                        print(f"  {RED}{result['error']}{RESET}")
+                    else:
+                        print(f"  {GREEN}Resumed:{RESET} {name} — next: {result.get('next_run', '')[:16]}")
+                    continue
+
+                elif arg.startswith("delete ") or arg.startswith("rm "):
+                    name = arg.split(" ", 1)[1].strip()
+                    result = _scheduler.remove(name)
+                    if result.get("error"):
+                        print(f"  {RED}{result['error']}{RESET}")
+                    else:
+                        print(f"  {DIM}Deleted:{RESET} {name}")
+                    continue
+
+                elif arg == "history":
+                    history_items = _scheduler.get_history(limit=10)
+                    if not history_items:
+                        print(f"\n  {DIM}No execution history{RESET}")
+                    else:
+                        print()
+                        for h in history_items:
+                            status_color = GREEN if h["status"] == "success" else RED
+                            print(f"  {status_color}{h['status']}{RESET} {BOLD}{h['schedule_name']}{RESET} {DIM}({h['finished_at'][:16]}){RESET}")
+                            if h.get("result"):
+                                preview = h["result"][:80].replace("\n", " ")
+                                print(f"    {DIM}{preview}{RESET}")
+                    continue
+
+                else:
+                    print(f"  {DIM}Usage: /schedule [list|add|pause NAME|resume NAME|delete NAME|history]{RESET}")
+                    continue
+
+            if stripped == "/models":
+                models = get_available_models(args.api_key, args.base_url, args.api_type)
+                if models:
+                    choice = _select_menu(models, "Select model", active=current_model)
+                    if choice:
+                        current_model = choice
+                        print(f"  {DIM}Switched to:{RESET} {BOLD}{current_model}{RESET}")
+                        _draw_status_bar(current_model, history, args.max_context)
+                else:
+                    print(f"  {DIM}No models available{RESET}")
+                continue
+
+            if stripped.startswith("/model"):
+                arg = message.strip()[6:].strip()
+                models = get_available_models(args.api_key, args.base_url, args.api_type)
+                if arg:
+                    current_model = arg
+                    print(f"  {DIM}Switched to:{RESET} {BOLD}{current_model}{RESET}")
+                elif models:
+                    choice = _select_menu(models, "Select model", active=current_model)
+                    if choice:
+                        current_model = choice
+                        print(f"  {DIM}Switched to:{RESET} {BOLD}{current_model}{RESET}")
+                else:
+                    print(f"  {DIM}No models available. Use: /model <name>{RESET}")
+                _draw_status_bar(current_model, history, args.max_context)
+                continue
+
+            # Custom slash commands (from agent's commands.json + .claude/commands/*.md)
+            if message.strip().startswith("/"):
+                cmd_name = message.strip().split()[0][1:].lower()
+                cmd_args = message.strip()[len(cmd_name)+2:].strip()
+                agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+                if agent:
+                    for cmd in agent.load_commands():
+                        if (cmd.get("name", "").lower() == cmd_name or
+                                cmd.get("slug", "").lower() == cmd_name):
+                            message = AgentConfig.expand_command(cmd, cmd_args)
+                            print(f"  {DIM}Running /{cmd_name}{RESET}")
+                            break
+
+            if not message.strip():
+                continue
+
+            # Save to input history (dedup consecutive)
+            if not input_history or input_history[-1] != message.strip():
+                input_history.append(message.strip())
+
+            # Send message
+            history.append({"role": "user", "content": message})
+            _reset_tool_tracking()
+
+            # Check context window and compact if needed
+            history, was_compacted = _check_and_compact(
+                history, current_model, args.api_key, args.base_url,
+                args.api_type, max_tokens=args.max_context,
+            )
+
+            # Start spinner and escape watcher
+            spinner = Spinner(current_model)
+            escape_watcher = EscapeWatcher()
+            spinner.start()
+            escape_watcher.start()
+
+            cancelled = False
+            reply = None
+            try:
+                # Try SDK sidecar first
+                _sdk_ok = False
+                try:
+                    import sdk_backend
+                    if sdk_backend.is_sidecar_running():
+                        system_prompt = _build_system_prompt(include_memory_summary=True)
+                        # Build tool defs (skip SDK-native tools)
+                        _SDK_NATIVE = {"read_file", "write_file", "edit_file",
+                                       "list_directory", "search_files",
+                                       "execute_command", "web_fetch"}
+                        tool_defs = []
+                        for td in TOOL_DEFINITIONS:
+                            if td["name"] in _SDK_NATIVE or td["name"] not in TOOL_DISPATCH:
+                                continue
+                            desc = td["description"]
+                            if isinstance(desc, tuple):
+                                desc = " ".join(desc)
+                            tool_defs.append({
+                                "name": td["name"],
+                                "description": desc[:1000],
+                                "input_schema": td["input_schema"],
+                            })
+                        agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+                        agent_id = agent.agent_id if agent else "main"
+
+                        meta = sdk_backend.query_sync(
+                            prompt=message, model=current_model,
+                            system_prompt=system_prompt, max_turns=30,
+                            tool_defs=tool_defs,
+                            agent_id=agent_id,
+                            cancel_fn=lambda: escape_watcher.cancelled,
+                            sdk_session_id=getattr(_run_interactive, '_sdk_sid', None),
+                            return_metadata=True,
+                        )
+                        if meta is not None:
+                            reply = meta.get("text")
+                            # Track SDK session for resume on next turn
+                            if meta.get("sdk_session_id"):
+                                _run_interactive._sdk_sid = meta["sdk_session_id"]
+                            _sdk_ok = True
+                        elif escape_watcher.cancelled:
+                            cancelled = True
+                            _sdk_ok = True
+                except Exception:
+                    pass  # Fall through to direct API
+
+                # Fallback: direct API call
+                if not _sdk_ok and not cancelled:
+                    reply = send_message_with_fallback(
+                        history, current_model, args.api_key, args.base_url,
+                        args.api_type, silent=True, escape_watcher=escape_watcher)
+            except TaskCancelled:
+                cancelled = True
+                reply = None
+            finally:
+                elapsed = spinner.stop()
+                escape_watcher.stop()
+
+            if cancelled:
+                # Remove the user message that was cancelled
+                history.pop()
+                print(f"\n{DIM}✘ Cancelled (Esc){RESET}")
+                _draw_status_bar(current_model, history, args.max_context)
+                continue
+
+            if reply:
+                history.append({"role": "assistant", "content": reply})
+
+                # Render formatted response
+                print()
+                rendered = render_markdown(reply)
+                print(rendered)
+
+                # Completion message
+                verb = spinner.verb.rstrip("ing")
+                # Make past tense
+                past = spinner.verb[:-3] + "ed" if spinner.verb.endswith("ing") else spinner.verb
+                if spinner.verb == "Thinking":
+                    past = "Thought"
+                elif spinner.verb == "Weaving":
+                    past = "Woven"
+                elif spinner.verb == "Computing":
+                    past = "Computed"
+                elif spinner.verb == "Brewing":
+                    past = "Brewed"
+                elif spinner.verb == "Baking":
+                    past = "Baked"
+                elif spinner.verb == "Crafting":
+                    past = "Crafted"
+                elif spinner.verb == "Conjuring":
+                    past = "Conjured"
+                elif spinner.verb == "Composing":
+                    past = "Composed"
+                elif spinner.verb == "Contemplating":
+                    past = "Contemplated"
+                elif spinner.verb == "Pondering":
+                    past = "Pondered"
+
+                print(f"\n{DIM}✻ {past} for {elapsed:.0f}s{RESET}")
+            else:
+                print(f"\n{DIM}(no response){RESET}")
+
+            # Restore status bar after response
+            _draw_status_bar(current_model, history, args.max_context)
+
+    finally:
+        if _scheduler:
+            _scheduler.stop()
+        if _mcp_manager:
+            _mcp_manager.stop_all()
+        signal.signal(signal.SIGWINCH, old_sigwinch)
+        _restore_scroll_region()
+
+
+if __name__ == "__main__":
+    main()
