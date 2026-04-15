@@ -49,7 +49,6 @@
     "include_tools_guide": true,
     "include_memory_summary": true,
     "memory_summary_cap": 2000,
-    "prompt_caching": true,
     "compact_threshold": 0.7,
     "scheduled_task_tools": false
   },

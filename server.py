@@ -1696,6 +1696,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_tools_config_get()
         elif path == "/v1/tools/status":
             self._handle_tools_status()
+        elif path == "/v1/tools/breakdown":
+            self._handle_tools_breakdown()
         elif path == "/v1/files/download":
             self._handle_file_download()
         elif path == "/v1/files/preview":
@@ -2980,7 +2982,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         _partial_reply = []  # accumulate text deltas for partial response recovery
         _partial_tools = []  # accumulate tool calls
         _partial_thinking = []  # accumulate thinking blocks
-        _usage_totals = {"tokens_in": 0, "tokens_out": 0}  # accumulate across tool rounds
+        _usage_totals = {"tokens_in": 0, "tokens_out": 0, "last_tokens_in": 0}  # cumulative across tool rounds; last_tokens_in = most recent round only
         _request_payloads = []  # capture request snapshots per tool round
         def event_callback(event_type, data):
             if event_type == "text_delta":
@@ -3009,6 +3011,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             elif event_type == "usage":
                 _usage_totals["tokens_in"] += data.get("tokens_in", 0)
                 _usage_totals["tokens_out"] += data.get("tokens_out", 0)
+                _usage_totals["last_tokens_in"] = data.get("tokens_in", 0)
                 return  # internal only, don't send to client
             elif event_type == "request_payload":
                 _request_payloads.append(data)
@@ -3118,6 +3121,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     msg_metadata["duration"] = _req_duration
                     msg_metadata["tokens_in"] = _usage_totals["tokens_in"]
                     msg_metadata["tokens_out"] = _usage_totals["tokens_out"]
+                    msg_metadata["last_tokens_in"] = _usage_totals["last_tokens_in"]
                     if _request_payloads:
                         msg_metadata["request_payloads"] = _request_payloads
                     fb_model = getattr(engine._thread_local, '_fallback_model_used', None)
@@ -3143,6 +3147,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         "duration": _req_duration,
                         "tokens_in": _usage_totals["tokens_in"],
                         "tokens_out": _usage_totals["tokens_out"],
+                        "last_tokens_in": _usage_totals["last_tokens_in"],
                     }
                     if session_cost is not None:
                         done_data["cost"] = session_cost
@@ -5408,6 +5413,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "default_provider": next((name for name, p in server_config.get("providers", {}).items() if p.get("default_model") == server_config.get("default_model")), ""),
                 "default_model": server_config.get("default_model", ""),
                 "attachment_image_model": server_config.get("attachment_image_model", ""),
+                "max_session_cost_usd": float(server_config.get("cost_limits", {}).get("max_session_cost_usd", 0) or 0),
             },
             "qmd": {
                 "status": "running" if qmd_running else "stopped",
@@ -5548,6 +5554,29 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 return
             result["attachment_image_model"] = aim
 
+        # --- Max session cost (soft warning; 0/None disables) ---
+        if "max_session_cost_usd" in body:
+            try:
+                mc = float(body.get("max_session_cost_usd") or 0)
+            except (TypeError, ValueError):
+                mc = 0.0
+            if mc < 0:
+                mc = 0.0
+            cost_limits = server_config.setdefault("cost_limits", {})
+            cost_limits["max_session_cost_usd"] = mc
+            try:
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                config.setdefault("cost_limits", {})["max_session_cost_usd"] = mc
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+                return
+            result["max_session_cost_usd"] = mc
+
         if not result:
             self._send_json({"error": "No valid fields to update"}, 400)
             return
@@ -5592,6 +5621,28 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
     def _handle_tools_status(self):
         """GET /v1/tools/status — return tool availability and status."""
         self._send_json(engine.get_tool_status())
+
+    def _handle_tools_breakdown(self):
+        """GET /v1/tools/breakdown?agent=<id> — per-group token cost of tool definitions."""
+        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+        agent_id = params.get("agent", "main")
+        try:
+            agent = engine.AgentConfig(agent_id)
+        except Exception as e:
+            self._send_json({"error": f"Agent not found: {agent_id} ({e})"}, 404)
+            return
+        prev_agent = getattr(engine._thread_local, "current_agent", None)
+        prev_mcp = getattr(engine._thread_local, "mcp_manager", None)
+        try:
+            engine._thread_local.current_agent = agent
+            # Use the live MCP manager so connected MCP servers are measured.
+            engine._thread_local.mcp_manager = engine._mcp_manager
+            breakdown = engine.get_tool_breakdown(agent_id)
+        finally:
+            engine._thread_local.current_agent = prev_agent
+            engine._thread_local.mcp_manager = prev_mcp
+        self._send_json(breakdown)
 
     def _handle_tools_config_save(self):
         """POST /v1/tools/config — save tool configuration."""
@@ -6990,6 +7041,7 @@ def main():
     server_config["telegram_enabled"] = file_config.get("telegram", {}).get("enabled", True)
     attachments_cfg = file_config.get("attachments", {})
     server_config["attachment_image_model"] = attachments_cfg.get("image_model", "")
+    server_config["cost_limits"] = file_config.get("cost_limits", {}) or {}
 
     # Initialize models config
     existing_models = file_config.get("models")

@@ -119,7 +119,6 @@ Tab or → accepts into the textarea, Enter on empty input accepts + sends, Esca
   - `enabled` (bool, default true) — feature toggle
   - `model` (string, default empty) — override model ID; empty = reuse session model
   - `max_words` (int, default 15) — soft cap on suggestion length
-  - `require_cache` (bool, default false) — only run when agent has `token_config.prompt_caching` enabled
 - **Config**: edit `agent.json` directly (no dedicated UI after mempalace migration)
 - **Client module**: `NextPrompt` in `web/index.html` — fetch-token stale guard, active-session
   guard, dismiss-on-type, placeholder-based rendering (no overlay positioning)
@@ -196,21 +195,85 @@ Per-agent token config in `agent.json` under `token_config`:
     "tool_groups": ["core", "context", "web", "delegation", "git", "skills", "nodes", "scheduler"],
     "extra_tools": [],
     "include_tools_guide": true,
-    "prompt_caching": true,
     "compact_threshold": 0.70,
-    "scheduled_task_tools": false
+    "scheduled_task_tools": false,
+    "mcp_tool_filter": null,
+    "mcp_tool_exclude": null
   }
 }
 ```
 
 - `tool_groups`: subset of groups (core, context, web, email, documents, delegation, code_graph, git, scheduler, mcp, skills, nodes). `null` = all tools
 - `include_tools_guide`: inject tools.md into system prompt (~400 tokens)
-- `prompt_caching`: Anthropic `cache_control` on system prompt blocks
 - `compact_threshold`: override context compaction threshold (0.0-1.0), null = default 0.60
 - `scheduled_task_tools`: include full tool schema in scheduled tasks
+- `mcp_tool_filter`: list of exact names or fnmatch globs (e.g. `"mcp_mempalace_*"`); only matching MCP tools are sent. `null` = all allowed
+- `mcp_tool_exclude`: list applied after `mcp_tool_filter`; matching tools are dropped
 - System prompt cached per-session (60s TTL) to avoid disk I/O on tool loops
 - `_filter_tools()` and `_get_agent_tool_names()` handle filtering for both custom loop and SDK paths
-- GUI: Tokens tab in agent config modal
+- GUI: Tokens tab in agent config modal with **Tool Definition Cost** card and **Measure** button
+
+### Per-Agent Runtime Limits
+
+Optional `limits` block in `agent.json` overrides global defaults for a specific agent:
+
+```json
+"limits": {
+  "max_tool_rounds": 15,
+  "tool_result_char_limit": 30000,
+  "tool_results_total_tokens": 50000,
+  "context_safety_ratio": 0.95
+}
+```
+
+- `max_tool_rounds`: soft cap; after this, `tools=False` is passed to the next round. **Hard stop** at `1.5 * max_tool_rounds` terminates the loop entirely.
+- `tool_result_char_limit`: individual tool result truncation point (per `_sanitize_tool_result`)
+- `tool_results_total_tokens`: accumulated tool-result budget per turn before `_compress_old_tool_results` kicks in
+- `context_safety_ratio`: pre-flight check in `send_message` raises `RuntimeError` if estimated prompt tokens exceed `max_context * ratio` (default 0.95), avoiding provider 400s
+- Resolved via `_get_agent_limits()` with defaults from `AGENT_LIMITS_DEFAULTS`
+
+### Session Cost Soft Warnings
+
+Global `cost_limits.max_session_cost_usd` in `config.json`, editable via Settings → Server → Cost Limits in the web UI.
+
+- Status bar shows `$ X.XX` next to the context-fill bar whenever the session has any cost data
+- 70% of limit → amber warning triangle
+- 90% of limit → red triangle + **one-time modal per session** (localStorage key `cost-warning-shown:<session_id>`)
+- No hard abort — this is purely advisory
+- 0 or missing limit → status bar still shows cost, no warnings
+- Per-call cost comes from the `done` SSE event's `cost` field (already computed by `CostTracker.get_session_cost`)
+- When the model has no pricing in `_cost_rates`, status bar shows `$0.00` with a tooltip explaining the rate is unknown
+
+### Tool Definition Cost Measurement
+
+`GET /v1/tools/breakdown?agent=<id>` returns per-group and per-tool token cost with schema decomposition:
+
+```json
+{
+  "groups": [{"name", "source", "tool_count", "tokens",
+              "name_tokens", "desc_tokens", "schema_tokens",
+              "tools": [{"name", "tokens", "name_tokens", "desc_tokens", "schema_tokens", "param_count"}]}],
+  "total_tokens": N, "builtin_tokens": N, "mcp_tokens": N,
+  "max_context": N, "model": "…",
+  "deferrable_mcp": {"deferred": bool, "tokens_saved_if_deferred": N, "threshold": N}
+}
+```
+
+- `source`: `"builtin"` for brain-internal tools, `"mcp"` for MCP server tools (grouped by server via `MCPManager._tool_to_server`)
+- Schema decomposition (`name_tokens` + `desc_tokens` + `schema_tokens`) lets callers see *why* a tool is expensive
+- UI marks tools with schema >60% of total as ⚠ (amber) — these are the cheapest to reduce
+- UI **Measure** button in Tokens tab fetches the breakdown on demand
+- Per-tool checkboxes in the MCP rows write `token_config.mcp_tool_filter` directly via **Save selection as filter**
+
+### OpenAI-Only Wire Format (v7.2.0)
+
+Brain is now OpenAI-wire only. All providers (Bifrost, Kilo, future additions) must be OpenAI-compatible.
+
+- `_handle_anthropic_response`, `_handle_mistral_response`, and mistral SDK helpers (`_VIBE_VERSION`, `_get_mistral_vibe_*`, `_create_mistral_client`) were removed in v7.2.0
+- `send_message` and `_run_delegate` always build OpenAI chat/completions payloads and always call `_handle_openai_response`
+- `make_headers`, `get_available_models`, `_apply_inference_to_payload`, `list_models` all collapsed to single-format paths
+- `api_type` parameter is still threaded through function signatures for compatibility; Purge B will remove it entirely
+- `TOOL_DEFINITIONS` (Anthropic flat shape) is retained as **internal source of truth** for tool lookups/display; `TOOL_DEFINITIONS_OPENAI` is derived from it for the wire format
 
 ### Key Patterns
 

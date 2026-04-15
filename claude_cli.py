@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "7.1.0"
+VERSION = "7.2.0"
 VERSION_DATE = "2026-04-15"
 CHANGELOG = [
+    ("7.2.0", "2026-04-15", "Token optimization, cost guardrails, and Anthropic/Mistral wire-format purge. Status bar now shows last-round prompt tokens (not cumulative across tool rounds) so 'context used' reflects the real next-call size. Hard tool-round cap at 1.5× the soft limit stops runaway loops. Per-agent runtime limits in agent.json 'limits' block: max_tool_rounds, tool_result_char_limit, tool_results_total_tokens, context_safety_ratio. Pre-flight context guardrail raises before provider 400s when estimated prompt exceeds max_context * safety_ratio. Session cost soft warnings: 70% amber triangle, 90% red + one-time modal per session, configurable global max_session_cost_usd in Settings → Server → Cost Limits. Built-in cost rate table expanded: OpenAI (gpt-4o/4.1/o1/o3/o4-mini), Mistral, Gemini, Grok, DeepSeek, local-model zeros. New GET /v1/tools/breakdown endpoint measures per-group + per-tool token cost with schema decomposition (name/description/schema). Tokens tab shows the breakdown with heavy-schema ⚠ markers. MCP improvements: redundant '<server>_' prefix stripped from tool names (mcp_mempalace_mempalace_search → mcp_mempalace_search, ~260 tok saved on mempalace alone), '[MCP:server]' description prefix dropped, per-agent MCP tool filter/exclude in token_config with fnmatch globs, UI checkbox-save directly from breakdown view. Removed prompt_caching token_config field (no-op outside Anthropic wire format). Purge A of Anthropic/Mistral wire formats: _handle_anthropic_response (224 lines), _handle_mistral_response + mistral SDK helpers (291 lines), _collect_anthropic/_stream_anthropic, and all api_type branching in send_message/_run_delegate/make_headers/get_available_models/_apply_inference_to_payload/list_models collapsed to OpenAI-only paths. ~600 lines removed. api_type parameter still threaded through signatures (Purge B pending). All providers are OpenAI-compatible (Bifrost, Kilo)."),
     ("7.0.0", "2026-04-14", "Native agentic loop restored. The v6.0.0 PI Agent SDK unification is reverted: the Node.js pi_sidecar process, the Anthropic Agent SDK sidecar (sdk_sidecar.py / sdk_backend.py), and all Mistral SDK paths are removed. Chat, delegate, scheduler, refine, and soul_chat all flow through the native Python agentic loop (send_message / _handle_openai_response / middleware pipeline). The Lossless Context Manager (ContextManager + context.db) is back as the compaction engine — SSE compacting/compacted events and the /v1/context/* endpoints work again. Interpretation B: all providers are OpenAI-compatible (Bifrost, Kilo). api_type is always 'openai'; Anthropic and Mistral wire formats are gone. Code mode is removed from both UI and server (was tied to PI). The /v1/tools/call and /v1/hooks/run endpoints are deleted — Brain tools run in-process through _execute_tool() which fires hooks natively. Net diff: server.py -1100 lines, pi_sidecar/ directory deleted. See stage commits dcf73a4..30468b1."),
     ("5.14.0", "2026-04-10", "Unified provider resolution and multi-provider model support. Single resolve_provider_for_model() function in claude_cli.py is now the sole source of truth for model→provider credential resolution — used by interactive chat, PI sidecar (code mode), SDK sidecar, _run_delegate (summaries, auto-memory, scheduled tasks), warmup, and all background LLM calls. Provider-scoped model keys (provider/model_id) support multiple providers offering the same model with different API keys. Mistral model discovery via SDK (client.models.list()) instead of broken raw HTTP. Models tab: All/None buttons per provider for bulk enable/disable. Orphaned models from deleted providers cleaned up on sync. Code mode model dropdown fixed (dropdown-menu class, consistent with chat mode). get_api_model_id() resolves scoped keys to actual API model IDs across all call sites."),
     ("5.13.0", "2026-04-10", "Dynamic attachment routing — file attachments are now routed based on model capabilities instead of browser-side MIME type splitting. New per-model raw_formats config (MIME patterns like image/*, application/pdf) controls which files are sent as multimodal content blocks vs saved to disk for read_document parsing. Server-side unified handler merges body.images and body.files, checks model's raw_formats, and routes accordingly. Vision-capable models see image pixels directly; text-only models get metadata or vision model description via attachment_image_model fallback. Web UI unified: all files go through single _pendingFiles path with image thumbnail previews. Models tab shows editable raw_formats per model. Settings hint warns when no vision capability is configured. Guards: 20MB inline size limit, OpenAI/Mistral restricted to image/* multimodal, Anthropic PDF via document blocks."),
@@ -856,9 +857,51 @@ TOKEN_CONFIG_DEFAULTS = {
     "include_memory_summary": False, # MemPalace migration: built-in memory summary disabled
     "memory_summary_cap": 3000,    # (unused after migration; agents query mempalace MCP directly)
     "compact_threshold": None,     # None = use default (0.60), float = override
-    "prompt_caching": True,        # Use Anthropic cache_control on system prompt
     "scheduled_task_tools": True,  # Include full tool schema in scheduled tasks
+    "mcp_tool_filter": None,       # None = all MCP tools; list of patterns (exact or fnmatch glob) to allow
+    "mcp_tool_exclude": None,      # None = exclude nothing; list of patterns applied after filter
 }
+
+
+def _filter_mcp_tools(mcp_tools: list[dict], is_openai: bool = False) -> list[dict]:
+    """Apply per-agent MCP tool allow/deny patterns from token_config.
+
+    Patterns match the prefixed LLM-facing name (e.g., "mcp_mempalace_search").
+    Supports fnmatch glob syntax: "mcp_mempalace_*", "mcp_mempalace_diary_*".
+    `mcp_tool_filter`: if set, only matching tools are kept.
+    `mcp_tool_exclude`: applied after filter; matching tools are dropped.
+    """
+    if not mcp_tools:
+        return mcp_tools
+    tcfg = _get_token_config()
+    allow = tcfg.get("mcp_tool_filter")
+    deny = tcfg.get("mcp_tool_exclude")
+    if not allow and not deny:
+        return mcp_tools
+    import fnmatch
+
+    def _name_of(t: dict) -> str:
+        if is_openai:
+            return (t.get("function", {}) or {}).get("name", "")
+        return t.get("name", "")
+
+    def _matches_any(name: str, patterns) -> bool:
+        if not patterns:
+            return False
+        for p in patterns:
+            if p == name or fnmatch.fnmatchcase(name, p):
+                return True
+        return False
+
+    result = []
+    for t in mcp_tools:
+        n = _name_of(t)
+        if allow and not _matches_any(n, allow):
+            continue
+        if deny and _matches_any(n, deny):
+            continue
+        result.append(t)
+    return result
 
 
 def _get_token_config(agent_id: str | None = None) -> dict:
@@ -910,6 +953,151 @@ def _should_defer_mcp(defer_setting, mcp_tools: list[dict], model: str,
     max_ctx = get_model_max_context(model)
     threshold = max_ctx * 0.10  # 10% of context window
     return mcp_schema_tokens > threshold
+
+
+def get_tool_breakdown(agent_id: str | None = None) -> dict:
+    """Measure tool-definition token cost by group and individual tool.
+
+    Each tool row is decomposed into:
+      name_tokens / desc_tokens / schema_tokens / total_tokens
+    so callers can see WHY a tool is expensive (usually: bloated input_schema).
+
+    Token estimation uses len(json.dumps(x)) // 4 — same method as the request-payload snapshot.
+    """
+
+    def _tok(obj) -> int:
+        if obj is None:
+            return 0
+        if isinstance(obj, str):
+            return len(obj) // 4
+        try:
+            return len(json.dumps(obj)) // 4
+        except (TypeError, ValueError):
+            return 0
+
+    def _decompose(td: dict) -> dict:
+        name = td.get("name") or (td.get("function", {}) or {}).get("name", "")
+        desc = td.get("description") or (td.get("function", {}) or {}).get("description", "")
+        if isinstance(desc, (list, tuple)):
+            desc = " ".join(str(x) for x in desc)
+        schema = td.get("input_schema")
+        if schema is None:
+            schema = (td.get("function", {}) or {}).get("parameters", {})
+        name_tok = _tok(name)
+        desc_tok = _tok(desc)
+        schema_tok = _tok(schema)
+        total_tok = _tok(td)
+        # Track schema complexity for at-a-glance diagnosis
+        props = {}
+        required_count = 0
+        if isinstance(schema, dict):
+            props = schema.get("properties", {}) or {}
+            required_count = len(schema.get("required", []) or [])
+        return {
+            "name": name,
+            "desc": (desc[:200] + "...") if isinstance(desc, str) and len(desc) > 200 else desc,
+            "name_tokens": name_tok,
+            "desc_tokens": desc_tok,
+            "schema_tokens": schema_tok,
+            "tokens": total_tok,  # alias for sorting
+            "total_tokens": total_tok,
+            "param_count": len(props) if isinstance(props, dict) else 0,
+            "required_count": required_count,
+        }
+
+    # Reverse index for built-in tools: tool name -> group name
+    name_to_group: dict[str, str] = {}
+    for gname, names in TOOL_GROUPS.items():
+        for n in names:
+            name_to_group[n] = gname
+
+    groups: dict[str, dict] = {}
+
+    def _bump(gname: str, source: str, tool_info: dict):
+        key = f"{source}:{gname}"
+        g = groups.setdefault(key, {
+            "name": gname, "source": source,
+            "tool_count": 0, "tokens": 0, "tools": [],
+            "name_tokens": 0, "desc_tokens": 0, "schema_tokens": 0,
+        })
+        g["tool_count"] += 1
+        g["tokens"] += tool_info["total_tokens"]
+        g["name_tokens"] += tool_info["name_tokens"]
+        g["desc_tokens"] += tool_info["desc_tokens"]
+        g["schema_tokens"] += tool_info["schema_tokens"]
+        g["tools"].append(tool_info)
+
+    # --- Built-in tools ---
+    for td in TOOL_DEFINITIONS:
+        name = td.get("name", "")
+        if not name:
+            continue
+        info = _decompose(td)
+        gname = name_to_group.get(name, "other")
+        _bump(gname, "builtin", info)
+
+    # --- MCP tools (grouped by actual server, via authoritative _tool_to_server map) ---
+    mcp_mgr = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
+    mcp_tools_list: list[dict] = []
+    tool_to_server: dict[str, str] = {}
+    if mcp_mgr:
+        try:
+            mcp_tools_list = mcp_mgr.get_tool_definitions() or []
+            mcp_tools_list = _filter_mcp_tools(mcp_tools_list, is_openai=False)
+            # Access the manager's reverse map safely.
+            tool_to_server = dict(getattr(mcp_mgr, '_tool_to_server', {}) or {})
+        except Exception:
+            mcp_tools_list = []
+            tool_to_server = {}
+    for td in mcp_tools_list:
+        name = td.get("name", "")
+        if not name:
+            continue
+        info = _decompose(td)
+        server = tool_to_server.get(name)
+        if not server:
+            # Fallback: parse "mcp_<server>_<tool>" prefix (current MCPManager naming)
+            if name.startswith("mcp_"):
+                rest = name[4:]
+                # Take everything up to the first underscore as server name.
+                # This is approximate — server names containing underscores will land in "mcp".
+                server = rest.split("_", 1)[0] if "_" in rest else rest
+            else:
+                server = "mcp"
+        _bump(server or "mcp", "mcp", info)
+
+    # Sort tools within each group by token cost descending
+    group_list = []
+    for g in groups.values():
+        g["tools"].sort(key=lambda t: t["total_tokens"], reverse=True)
+        group_list.append(g)
+    group_list.sort(key=lambda g: g["tokens"], reverse=True)
+
+    total_tokens = sum(g["tokens"] for g in group_list)
+    total_count = sum(g["tool_count"] for g in group_list)
+
+    # Deferral status: would MCP be auto-deferred for the agent's current model?
+    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    model = (agent.config.get("model") if agent else "") or ""
+    max_ctx = get_model_max_context(model) if model else 0
+    mcp_tokens = sum(g["tokens"] for g in group_list if g["source"] == "mcp")
+    threshold = int(max_ctx * 0.10) if max_ctx else 0
+    deferred = bool(mcp_tools_list) and threshold > 0 and mcp_tokens > threshold
+
+    return {
+        "groups": group_list,
+        "total_tokens": total_tokens,
+        "total_count": total_count,
+        "builtin_tokens": sum(g["tokens"] for g in group_list if g["source"] == "builtin"),
+        "mcp_tokens": mcp_tokens,
+        "model": model,
+        "max_context": max_ctx,
+        "deferrable_mcp": {
+            "deferred": deferred,
+            "tokens_saved_if_deferred": mcp_tokens if deferred else 0,
+            "threshold": threshold,
+        },
+    }
 
 
 def _filter_tools(tool_list: list[dict], allowed: set[str] | None,
@@ -2612,6 +2800,40 @@ class MCPSSEClient:
             return None
 
 
+def _mcp_prefixed_name(server_name: str, raw_tool_name: str) -> str:
+    """Build the LLM-facing tool name for an MCP tool.
+
+    Strips a redundant leading "<server>_" from the raw tool name so servers
+    that already namespace their tools (e.g., mempalace returns "mempalace_search")
+    don't end up as "mcp_mempalace_mempalace_search".
+    """
+    redundant = f"{server_name}_"
+    if raw_tool_name.startswith(redundant):
+        raw_tool_name = raw_tool_name[len(redundant):]
+    return f"mcp_{server_name}_{raw_tool_name}"
+
+
+def _mcp_raw_name(server_name: str, prefixed_name: str, client_tools: list) -> str:
+    """Reverse of _mcp_prefixed_name: return the raw tool name the server expects.
+
+    Needed because the prefix-stripping above hides "<server>_" from the wire name.
+    We look up the matching raw name in the client's tool list so dispatch still works.
+    """
+    prefix = f"mcp_{server_name}_"
+    if not prefixed_name.startswith(prefix):
+        return prefixed_name
+    suffix = prefixed_name[len(prefix):]
+    # First: exact match against raw tool names
+    raw_names = [t.get("name", "") for t in client_tools]
+    if suffix in raw_names:
+        return suffix
+    # Second: server-prefixed form (the one we stripped)
+    server_prefixed = f"{server_name}_{suffix}"
+    if server_prefixed in raw_names:
+        return server_prefixed
+    return suffix  # give up; let the server reject it
+
+
 class MCPManager:
     """Manages MCP server connections for an agent. Thread-safe."""
 
@@ -2656,7 +2878,7 @@ class MCPManager:
                 with self._lock:
                     self.clients[name] = client
                     for tool in client.tools:
-                        tool_name = f"mcp_{name}_{tool['name']}"
+                        tool_name = _mcp_prefixed_name(name, tool["name"])
                         self._tool_to_server[tool_name] = name
                 count += 1
         return count
@@ -2668,10 +2890,10 @@ class MCPManager:
             clients_snapshot = list(self.clients.items())
         for server_name, client in clients_snapshot:
             for tool in client.tools:
-                prefixed_name = f"mcp_{server_name}_{tool['name']}"
+                prefixed_name = _mcp_prefixed_name(server_name, tool["name"])
                 defs.append({
                     "name": prefixed_name,
-                    "description": f"[MCP:{server_name}] {tool.get('description', '')}",
+                    "description": tool.get("description", ""),
                     "input_schema": tool.get("inputSchema", {
                         "type": "object", "properties": {}, "required": [],
                     }),
@@ -2703,8 +2925,7 @@ class MCPManager:
             client = self.clients.get(server_name) if server_name else None
         if not server_name or not client:
             return json.dumps({"error": f"MCP tool '{prefixed_name}' not found"})
-        prefix = f"mcp_{server_name}_"
-        original_name = prefixed_name[len(prefix):]
+        original_name = _mcp_raw_name(server_name, prefixed_name, list(client.tools))
         return client.call_tool(original_name, arguments)
 
     def is_mcp_tool(self, name: str) -> bool:
@@ -2740,7 +2961,7 @@ class MCPManager:
             with self._lock:
                 self.clients[name] = client
                 for tool in client.tools:
-                    tool_name = f"mcp_{name}_{tool['name']}"
+                    tool_name = _mcp_prefixed_name(name, tool["name"])
                     self._tool_to_server[tool_name] = name
             return {
                 "status": "connected",
@@ -6581,9 +6802,8 @@ def _get_next_prompt_config(agent_id: str) -> dict:
 
     Fields:
       enabled: bool — feature toggle (default True)
-      model: str — override model ID; empty = reuse session model (cache-warm)
+      model: str — override model ID; empty = reuse session model
       max_words: int — soft cap on suggestion length (default 15)
-      require_cache: bool — only run when agent has prompt_caching enabled (default False)
     """
     cfg = AgentConfig(agent_id).config
     nps = cfg.get("next_prompt_suggestions", {})
@@ -6593,7 +6813,6 @@ def _get_next_prompt_config(agent_id: str) -> dict:
         "enabled": nps.get("enabled", True),
         "model": nps.get("model", ""),
         "max_words": int(nps.get("max_words", 15)),
-        "require_cache": bool(nps.get("require_cache", False)),
     }
 
 
@@ -6601,8 +6820,8 @@ def generate_next_prompt_suggestion(session) -> str | None:
     """Generate a short "next user prompt" suggestion based on the session's
     conversation so far. Returns the raw suggestion text, or None if disabled/unavailable.
 
-    Reuses the session's current model by default for prompt-cache warmth.
-    An override model can be set via agent.json `next_prompt_suggestions.model`.
+    Reuses the session's current model by default; an override model can be set
+    via agent.json `next_prompt_suggestions.model`.
     """
     try:
         cfg = _get_next_prompt_config(session.agent_id)
@@ -6616,16 +6835,6 @@ def generate_next_prompt_suggestion(session) -> str | None:
         # Require at least one assistant response before suggesting
         if not any(m.get("role") == "assistant" for m in messages):
             return None
-
-        # Cache-warmth gate (optional)
-        if cfg.get("require_cache"):
-            try:
-                agent_cfg = AgentConfig(session.agent_id).config
-                tcfg = agent_cfg.get("token_config", {}) or {}
-                if not tcfg.get("prompt_caching", True):
-                    return None
-            except Exception:
-                pass
 
         max_words = max(3, min(40, cfg.get("max_words", 15)))
         instruction = (
@@ -7981,7 +8190,7 @@ MAX_DELEGATE_TOOL_ROUNDS = 10  # Limit for delegated/scheduled tasks (timeout is
 _MEMORY_TOOL_NAMES = {"memory_store", "memory_recall", "memory_delete", "memory_shared"}
 
 
-def _resolve_delegate_tools(tools: bool | str, api_type: str) -> list:
+def _resolve_delegate_tools(tools: bool | str) -> list:
     """Resolve tool definitions for _run_delegate based on tools parameter."""
     if not tools:
         return []
@@ -7989,8 +8198,6 @@ def _resolve_delegate_tools(tools: bool | str, api_type: str) -> list:
         allowed = _MEMORY_TOOL_NAMES
     else:
         allowed = _get_agent_tool_names()
-    if api_type != "openai" and api_type != "mistral":
-        return _filter_tools(TOOL_DEFINITIONS, allowed)
     return _filter_tools(TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
 
 
@@ -8004,66 +8211,8 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
     Thread-safe: uses thread-local storage for memory instead of swapping globals.
 
     tools: True=all tools, False=no tools, "memory_only"=only memory tools
-
-    Routes through the SDK sidecar when available (better context management).
-    Falls back to direct API call if sidecar is not running.
     """
-    # Resolve provider for this model (single source of truth)
     _prov = resolve_provider_for_model(model)
-    _model_prov_type = _prov["api_type"]
-    # SDK sidecar only supports Anthropic-compatible providers
-    _sdk_compatible = _model_prov_type in ("anthropic",)
-    try:
-        import sdk_backend
-        if _sdk_compatible and sdk_backend.is_sidecar_running():
-            # Extract prompt from messages
-            prompt = ""
-            for m in messages:
-                if m.get("role") == "user":
-                    content = m.get("content", "")
-                    if isinstance(content, str):
-                        prompt = content
-                    elif isinstance(content, list):
-                        for b in content:
-                            if isinstance(b, dict) and b.get("type") == "text":
-                                prompt += b.get("text", "")
-            if prompt:
-                kwargs = dict(
-                    prompt=prompt, model=model,
-                    system_prompt=system_prompt,
-                    max_turns=1 if not tools else MAX_DELEGATE_TOOL_ROUNDS,
-                )
-                if tools:
-                    # Build tool defs for sidecar MCP server
-                    # Skip SDK-native tools that the sidecar already has
-                    _SDK_NATIVE = {
-                        "read_file", "write_file", "edit_file",
-                        "list_directory", "search_files",
-                        "execute_command", "web_fetch",
-                    }
-                    tool_defs = []
-                    for td in TOOL_DEFINITIONS:
-                        if td["name"] in _SDK_NATIVE:
-                            continue
-                        if td["name"] not in TOOL_DISPATCH:
-                            continue
-                        desc = td["description"]
-                        if isinstance(desc, tuple):
-                            desc = " ".join(desc)
-                        tool_defs.append({
-                            "name": td["name"],
-                            "description": desc[:1000],
-                            "input_schema": td["input_schema"],
-                        })
-                    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
-                    agent_id = agent.agent_id if agent else "main"
-                    kwargs["tool_defs"] = tool_defs
-                    kwargs["agent_id"] = agent_id
-                result = sdk_backend.query_sync(**kwargs)
-                if result is not None:
-                    return result
-    except Exception:
-        pass  # Fall through to direct API call
 
     # Store memory in thread-local so tool_memory_* can find it
     if memory_store:
@@ -8074,51 +8223,31 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
     api_type = _prov["api_type"]
 
     headers = make_headers(api_key, api_type)
-
-    if api_type == "openai" or api_type == "mistral":
-        endpoint = f"{base_url}/chat/completions"
-        aug_messages = [{"role": "system", "content": system_prompt}] + messages
-    else:
-        endpoint = f"{base_url}/messages"
-        aug_messages = list(messages)
+    endpoint = f"{base_url}/chat/completions"
+    aug_messages = [{"role": "system", "content": system_prompt}] + messages
 
     payload = {
         "model": get_api_model_id(model),
         "max_tokens": get_model_max_output(model),
         "messages": aug_messages,
         "stream": True,
-        "tools": _resolve_delegate_tools(tools, api_type),
+        "stream_options": {"include_usage": True},
+        "tools": _resolve_delegate_tools(tools),
     }
     if inference_params:
         provider = _models_config.get(model, {}).get("provider", "")
         _apply_inference_to_payload(payload, inference_params, api_type, provider)
-    if api_type != "openai" and api_type != "mistral":
-        payload["system"] = system_prompt
 
     try:
-        # Use stricter tool round limit via thread-local (thread-safe)
         _thread_local.max_tool_rounds = MAX_DELEGATE_TOOL_ROUNDS
         try:
-            # Mistral path: use SDK directly
-            if api_type == "mistral":
-                return _handle_mistral_response(
-                    payload, messages, model, api_key, base_url,
-                    api_type, True, True, cancel_token, 0, event_callback)
-
             data = json.dumps(payload).encode("utf-8")
             request = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
-
             with urllib.request.urlopen(request) as response:
-                if api_type == "openai":
-                    return _handle_openai_response(
-                        response, payload, messages, model, api_key, base_url,
-                        api_type, True, True, headers, endpoint,
-                        cancel_token, 0, event_callback)
-                else:
-                    return _handle_anthropic_response(
-                        response, payload, messages, model, api_key, base_url,
-                        api_type, True, True, headers, endpoint,
-                        cancel_token, 0, event_callback)
+                return _handle_openai_response(
+                    response, payload, messages, model, api_key, base_url,
+                    api_type, True, True, headers, endpoint,
+                    cancel_token, 0, event_callback)
         finally:
             _thread_local.max_tool_rounds = None
     except Exception as e:
@@ -9358,10 +9487,79 @@ _cost_rates: dict[str, dict[str, float]] = {
     "claude-haiku-3.5":           {"input": 0.80,  "output": 4.0},
     "claude-3-5-haiku-20241022":  {"input": 0.80,  "output": 4.0},
     "claude-3-7-sonnet-20250219": {"input": 3.0,   "output": 15.0},
-    # Prefix patterns for future model IDs
+    # OpenAI
+    "gpt-4o":                     {"input": 2.50,  "output": 10.0},
+    "gpt-4o-2024-11-20":          {"input": 2.50,  "output": 10.0},
+    "gpt-4o-2024-08-06":          {"input": 2.50,  "output": 10.0},
+    "gpt-4o-mini":                {"input": 0.15,  "output": 0.60},
+    "gpt-4o-mini-2024-07-18":     {"input": 0.15,  "output": 0.60},
+    "gpt-4.1":                    {"input": 2.0,   "output": 8.0},
+    "gpt-4.1-mini":               {"input": 0.40,  "output": 1.60},
+    "gpt-4.1-nano":               {"input": 0.10,  "output": 0.40},
+    "o1":                         {"input": 15.0,  "output": 60.0},
+    "o1-mini":                    {"input": 3.0,   "output": 12.0},
+    "o3":                         {"input": 2.0,   "output": 8.0},
+    "o3-mini":                    {"input": 1.10,  "output": 4.40},
+    "o4-mini":                    {"input": 1.10,  "output": 4.40},
+    # Mistral
+    "mistral-large-latest":       {"input": 2.0,   "output": 6.0},
+    "mistral-large-2411":         {"input": 2.0,   "output": 6.0},
+    "mistral-medium-latest":      {"input": 0.40,  "output": 2.0},
+    "mistral-small-latest":       {"input": 0.20,  "output": 0.60},
+    "mistral-small-2603":         {"input": 0.20,  "output": 0.60},
+    "mistralai/mistral-small-2603": {"input": 0.20, "output": 0.60},
+    "codestral-latest":           {"input": 0.30,  "output": 0.90},
+    "codestral-2508":             {"input": 0.30,  "output": 0.90},
+    "devstral-medium-latest":     {"input": 0.40,  "output": 2.0},
+    "devstral-small-2507":        {"input": 0.10,  "output": 0.30},
+    "magistral-medium-latest":    {"input": 2.0,   "output": 5.0},
+    "magistral-small-2509":       {"input": 0.50,  "output": 1.50},
+    "ministral-8b-latest":        {"input": 0.10,  "output": 0.10},
+    "ministral-3b-latest":        {"input": 0.04,  "output": 0.04},
+    "pixtral-large-latest":       {"input": 2.0,   "output": 6.0},
+    # Google Gemini
+    "gemini-2.5-pro":             {"input": 1.25,  "output": 10.0},
+    "gemini-2.5-flash":           {"input": 0.30,  "output": 2.50},
+    "gemini-2.5-flash-lite":      {"input": 0.10,  "output": 0.40},
+    "gemini-2.0-flash":           {"input": 0.10,  "output": 0.40},
+    "gemini-2.0-flash-lite":      {"input": 0.075, "output": 0.30},
+    "gemini-1.5-pro":             {"input": 1.25,  "output": 5.0},
+    "gemini-1.5-flash":           {"input": 0.075, "output": 0.30},
+    # xAI Grok
+    "grok-2":                     {"input": 2.0,   "output": 10.0},
+    "grok-2-latest":              {"input": 2.0,   "output": 10.0},
+    "grok-3":                     {"input": 3.0,   "output": 15.0},
+    "grok-3-mini":                {"input": 0.30,  "output": 0.50},
+    # DeepSeek
+    "deepseek-chat":              {"input": 0.27,  "output": 1.10},
+    "deepseek-reasoner":          {"input": 0.55,  "output": 2.19},
+    # Local / free (explicit zero so they're not reported as "unknown")
+    "OMLX/":                      {"input": 0.0,   "output": 0.0},
+    "Bifrost/local":              {"input": 0.0,   "output": 0.0},
+    # Prefix patterns for future / aliased model IDs (checked after exact matches)
     "claude-opus":                {"input": 15.0,  "output": 75.0},
     "claude-sonnet":              {"input": 3.0,   "output": 15.0},
     "claude-haiku":               {"input": 0.80,  "output": 4.0},
+    "gpt-4o-mini":                {"input": 0.15,  "output": 0.60},
+    "gpt-4o":                     {"input": 2.50,  "output": 10.0},
+    "gpt-4.1-nano":               {"input": 0.10,  "output": 0.40},
+    "gpt-4.1-mini":               {"input": 0.40,  "output": 1.60},
+    "gpt-4.1":                    {"input": 2.0,   "output": 8.0},
+    "mistral-large":              {"input": 2.0,   "output": 6.0},
+    "mistral-medium":             {"input": 0.40,  "output": 2.0},
+    "mistral-small":              {"input": 0.20,  "output": 0.60},
+    "codestral":                  {"input": 0.30,  "output": 0.90},
+    "devstral-medium":            {"input": 0.40,  "output": 2.0},
+    "devstral-small":             {"input": 0.10,  "output": 0.30},
+    "magistral-medium":           {"input": 2.0,   "output": 5.0},
+    "magistral-small":            {"input": 0.50,  "output": 1.50},
+    "gemini-2.5-pro":             {"input": 1.25,  "output": 10.0},
+    "gemini-2.5-flash-lite":      {"input": 0.10,  "output": 0.40},
+    "gemini-2.5-flash":           {"input": 0.30,  "output": 2.50},
+    "gemini-2.0-flash-lite":      {"input": 0.075, "output": 0.30},
+    "gemini-2.0-flash":           {"input": 0.10,  "output": 0.40},
+    "gemini-1.5-pro":             {"input": 1.25,  "output": 5.0},
+    "gemini-1.5-flash":           {"input": 0.075, "output": 0.30},
 }
 
 
@@ -10091,7 +10289,7 @@ def tool_context_recall(args: dict) -> str:
     model = getattr(_thread_local, 'current_model', None) or _delegate_fallback_model or ""
     api_key = _delegate_api_key or ""
     base_url = _delegate_base_url or ""
-    api_type = _delegate_api_type or "anthropic"
+    api_type = _delegate_api_type or "openai"
     result = _context_manager.recall(session_id, query, model, api_key, base_url, api_type)
     return _ok({"answer": result, "query": query})
 
@@ -12875,37 +13073,16 @@ def _inline_format(text: str) -> str:
 
 # --- API functions ---
 
-def make_headers(api_key: str, api_type: str) -> dict:
-    """Build request headers for the given API type."""
-    if api_type == "openai":
-        return {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        }
-    if api_type == "mistral":
-        return {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        }
+def make_headers(api_key: str, api_type: str = "openai") -> dict:
+    """Build request headers. All providers are OpenAI-compatible."""
     return {
         "Content-Type": "application/json",
-        "x-api-key": api_key,
         "Authorization": f"Bearer {api_key}",
-        "anthropic-version": "2023-06-01",
     }
 
 
-def get_available_models(api_key: str, base_url: str, api_type: str) -> list[str]:
+def get_available_models(api_key: str, base_url: str, api_type: str = "openai") -> list[str]:
     """Fetch available models from the API and return as a list."""
-    # Mistral: use SDK to list models (Vibe CLI auth doesn't work with raw HTTP)
-    if api_type == "mistral":
-        try:
-            client = _create_mistral_client(api_key)
-            result = client.models.list()
-            return [m.id for m in result.data if m.id]
-        except Exception:
-            return []
-
     headers = make_headers(api_key, api_type)
     request = urllib.request.Request(
         f"{base_url}/models", headers=headers, method="GET",
@@ -13263,8 +13440,8 @@ _INFERENCE_OPENAI_KEYS = {"frequency_penalty", "presence_penalty"}
 _INFERENCE_OMLX_KEYS = {"min_p", "repetition_penalty"}
 
 
-def _apply_inference_to_payload(payload: dict, params: dict, api_type: str, provider: str = "") -> None:
-    """Apply resolved inference params to an API payload with provider translation."""
+def _apply_inference_to_payload(payload: dict, params: dict, api_type: str = "openai", provider: str = "") -> None:
+    """Apply resolved inference params to an OpenAI-compatible payload."""
     if not params:
         return
 
@@ -13275,34 +13452,23 @@ def _apply_inference_to_payload(payload: dict, params: dict, api_type: str, prov
             payload[key] = params[key]
 
     for key in _INFERENCE_OPENAI_KEYS:
-        if key in params and (api_type == "openai" or is_omlx):
+        if key in params:
             payload[key] = params[key]
 
     for key in _INFERENCE_OMLX_KEYS:
         if key in params and is_omlx:
             payload[key] = params[key]
 
-    # Mistral-specific inference keys
-    if api_type == "mistral":
-        if "reasoning_effort" in params:
-            payload["reasoning_effort"] = params["reasoning_effort"]
+    # reasoning_effort is passed through verbatim for providers that support it
+    if "reasoning_effort" in params:
+        payload["reasoning_effort"] = params["reasoning_effort"]
 
-    # Thinking translation
-    if params.get("thinking"):
-        budget = params.get("thinking_budget", 4096)
-        if api_type == "anthropic":
-            payload["thinking"] = {"type": "enabled", "budget_tokens": budget}
-        elif api_type == "mistral":
-            # Map thinking to Mistral reasoning_effort (Vibe CLI mapping)
-            _thinking_to_reasoning = {"low": "none", "medium": "high", "high": "high"}
-            payload["reasoning_effort"] = _thinking_to_reasoning.get(
-                str(params.get("thinking", "high")), "high"
-            )
-        elif is_omlx:
-            payload.setdefault("chat_template_kwargs", {})["enable_thinking"] = True
+    # Thinking: OpenAI-wire equivalent is enable_thinking in chat_template_kwargs (oMLX extension)
+    if params.get("thinking") and is_omlx:
+        payload.setdefault("chat_template_kwargs", {})["enable_thinking"] = True
 
 
-def list_models(api_key: str, base_url: str, api_type: str) -> None:
+def list_models(api_key: str, base_url: str, api_type: str = "openai") -> None:
     """List available models from the API."""
     models = get_available_models(api_key, base_url, api_type)
     if models:
@@ -13316,28 +13482,6 @@ def list_models(api_key: str, base_url: str, api_type: str) -> None:
 def _unescape(text: str) -> str:
     """Unescape literal backslash sequences that some APIs send."""
     return text.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"')
-
-
-def _collect_anthropic(response) -> str:
-    """Parse Anthropic SSE stream silently. Returns full text."""
-    collected = []
-    current_event = None
-    for line in response:
-        line = line.decode("utf-8").strip()
-        if line.startswith("event: "):
-            current_event = line[7:]
-        elif line.startswith("data: "):
-            if current_event == "message_stop":
-                break
-            try:
-                event = json.loads(line[6:])
-                if event.get("type") == "content_block_delta":
-                    delta = event.get("delta", {})
-                    if delta.get("type") == "text_delta":
-                        collected.append(_unescape(delta.get("text", "")))
-            except json.JSONDecodeError:
-                pass
-    return "".join(collected)
 
 
 def _collect_openai(response) -> str:
@@ -13360,30 +13504,6 @@ def _collect_openai(response) -> str:
                     collected.append(_unescape(content))
         except json.JSONDecodeError:
             pass
-    return "".join(collected)
-
-
-def _stream_anthropic(response) -> str:
-    """Parse Anthropic SSE stream with live output. Returns full text."""
-    collected = []
-    current_event = None
-    for line in response:
-        line = line.decode("utf-8").strip()
-        if line.startswith("event: "):
-            current_event = line[7:]
-        elif line.startswith("data: "):
-            if current_event == "message_stop":
-                break
-            try:
-                event = json.loads(line[6:])
-                if event.get("type") == "content_block_delta":
-                    delta = event.get("delta", {})
-                    if delta.get("type") == "text_delta":
-                        text = _unescape(delta.get("text", ""))
-                        print(text, end="", flush=True)
-                        collected.append(text)
-            except json.JSONDecodeError:
-                pass
     return "".join(collected)
 
 
@@ -14407,7 +14527,8 @@ def _middleware_compress_old(messages, tool_round, event_callback, **ctx):
     """Compress old tool results when accumulated budget exceeded (Layer 3)."""
     if tool_round > 0:
         accumulated = getattr(_thread_local, '_tool_results_tokens', 0)
-        if accumulated > MAX_TOOL_RESULTS_TOKENS:
+        _limit = _get_agent_limits().get("tool_results_total_tokens", MAX_TOOL_RESULTS_TOKENS)
+        if accumulated > _limit:
             _compress_old_tool_results(messages, keep_recent=4)
     return messages, True
 
@@ -14447,6 +14568,28 @@ def _run_middleware(messages, tool_round, event_callback, **ctx):
 MAX_TOOL_RESULT_CHARS = 30000  # ~7,500 tokens — truncate individual tool results beyond this
 MAX_TOOL_RESULTS_TOKENS = 50000  # Cap accumulated tool results per turn before compressing old ones
 
+# Per-agent runtime limits (overridable via agent.json "limits" block)
+AGENT_LIMITS_DEFAULTS = {
+    "max_tool_rounds": MAX_TOOL_ROUNDS,
+    "tool_result_char_limit": MAX_TOOL_RESULT_CHARS,
+    "tool_results_total_tokens": MAX_TOOL_RESULTS_TOKENS,
+    "context_safety_ratio": 0.95,
+}
+
+
+def _get_agent_limits(agent_id: str | None = None) -> dict:
+    """Get runtime limits for an agent, merged with defaults."""
+    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    result = dict(AGENT_LIMITS_DEFAULTS)
+    if not agent:
+        return result
+    cfg = agent.config.get("limits", {})
+    if isinstance(cfg, dict):
+        for k in AGENT_LIMITS_DEFAULTS:
+            if k in cfg and cfg[k] is not None:
+                result[k] = cfg[k]
+    return result
+
 # Base64 image data pattern (matches "data": "...long base64..." in JSON)
 _BASE64_DATA_RE = re.compile(r'"data"\s*:\s*"[A-Za-z0-9+/=]{500,}"')
 # Raw base64 strings > 1000 chars inside quotes
@@ -14465,9 +14608,10 @@ def _sanitize_tool_result(name: str, result: str) -> str:
     result = _BASE64_RAW_RE.sub('[base64 data removed]', result)
 
     # Truncate oversized results
-    if len(result) > MAX_TOOL_RESULT_CHARS:
-        result = result[:MAX_TOOL_RESULT_CHARS] + \
-            f"\n\n[Result truncated from {len(result):,} to {MAX_TOOL_RESULT_CHARS:,} chars]"
+    _char_limit = _get_agent_limits().get("tool_result_char_limit", MAX_TOOL_RESULT_CHARS)
+    if len(result) > _char_limit:
+        result = result[:_char_limit] + \
+            f"\n\n[Result truncated from {len(result):,} to {_char_limit:,} chars]"
     return result
 
 
@@ -14943,24 +15087,23 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         )
         _thread_local.current_trace_span = llm_span
 
-    # Soft stop after max tool rounds — use thread-local override if set (delegation)
-    # Tighter limit for CLIProxyAPI (shares personal OAuth quota)
+    # Soft stop after max tool rounds — use thread-local override if set (delegation),
+    # then per-agent limits, then CLIProxyAPI tightening, else global default.
+    _agent_limits = _get_agent_limits()
     effective_max_rounds = getattr(_thread_local, 'max_tool_rounds', None)
     if not effective_max_rounds:
         if ":8317" in base_url or "cliproxy" in base_url.lower():
             effective_max_rounds = MAX_TOOL_ROUNDS_PROXY
         else:
-            effective_max_rounds = MAX_TOOL_ROUNDS
+            effective_max_rounds = _agent_limits["max_tool_rounds"]
     if _tool_round >= effective_max_rounds:
         tools = False
+    # Hard stop: terminate the loop entirely at 1.5x the soft cap to prevent runaway recursion
+    if _tool_round >= int(effective_max_rounds * 1.5):
+        return "[Tool round limit reached — stopping to prevent runaway loop. Check chat for partial progress.]"
     headers = make_headers(api_key, api_type)
+    endpoint = f"{base_url}/chat/completions"
 
-    if api_type == "openai" or api_type == "mistral":
-        endpoint = f"{base_url}/chat/completions"
-    else:
-        endpoint = f"{base_url}/messages"
-
-    # System instruction for the agent
     # Strip metadata from messages — API providers don't accept extra fields
     # Keep fields required by OpenAI tool call protocol
     _ALLOWED_MSG_KEYS = {"role", "content", "tool_calls", "tool_call_id", "name"}
@@ -14973,22 +15116,15 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         system_instruction = _build_system_prompt(
             include_memory_summary=(_tool_round == 0),
         )
-        if api_type == "openai" or api_type == "mistral":
-            augmented_messages.insert(0, {"role": "system", "content": system_instruction})
-        else:
-            pass  # handled below via payload["system"]
+        augmented_messages.insert(0, {"role": "system", "content": system_instruction})
 
     payload = {
         "model": get_api_model_id(model),
         "max_tokens": get_model_max_output(model),
         "messages": augmented_messages,
         "stream": True,
+        "stream_options": {"include_usage": True},
     }
-
-    # Request usage stats in streaming responses (OpenAI-compatible APIs)
-    if api_type == "openai":
-        payload["stream_options"] = {"include_usage": True}
-    # Mistral SDK handles usage internally — no stream_options needed
 
     # Apply inference parameters (temperature, top_p, thinking, etc.)
     if inference_params:
@@ -14999,56 +15135,32 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         mcp_mgr = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
         allowed = _get_agent_tool_names()
 
-        # Deferred tool loading (Phase 7): skip MCP tool schemas when there are many,
+        # Deferred tool loading: skip MCP tool schemas when there are many,
         # and let the model discover them via tool_search instead
         defer_mcp = tcfg.get("defer_mcp_tools", "auto")
         discovered_tools = getattr(_thread_local, '_discovered_tools', set())
 
-        if api_type == "openai" or api_type == "mistral":
-            all_tools = _filter_tools(TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
-            if mcp_mgr:
-                mcp_tools = mcp_mgr.get_tool_definitions_openai()
-                should_defer = _should_defer_mcp(defer_mcp, mcp_tools, model, is_openai=True)
-                if should_defer:
-                    # Only include discovered MCP tools
-                    mcp_tools = [t for t in mcp_tools
-                                 if t.get("function", {}).get("name", "") in discovered_tools]
-                all_tools.extend(mcp_tools)
-                all_tools.sort(key=lambda t: t.get("function", {}).get("name", ""))
-            payload["tools"] = all_tools
-        else:
-            all_tools = _filter_tools(TOOL_DEFINITIONS, allowed)
-            if mcp_mgr:
-                mcp_tools = mcp_mgr.get_tool_definitions()
-                should_defer = _should_defer_mcp(defer_mcp, mcp_tools, model)
-                if should_defer:
-                    # Only include discovered MCP tools
-                    mcp_tools = [t for t in mcp_tools
-                                 if t.get("name", "") in discovered_tools]
-                all_tools.extend(mcp_tools)
-                all_tools.sort(key=lambda t: t.get("name", ""))
-            payload["tools"] = all_tools
-            # Use cache_control for Anthropic prompt caching if enabled
-            if tcfg.get("prompt_caching", True):
-                payload["system"] = [
-                    {"type": "text", "text": system_instruction,
-                     "cache_control": {"type": "ephemeral"}}
-                ]
-            else:
-                payload["system"] = system_instruction
+        all_tools = _filter_tools(TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
+        if mcp_mgr:
+            mcp_tools = mcp_mgr.get_tool_definitions_openai()
+            mcp_tools = _filter_mcp_tools(mcp_tools, is_openai=True)
+            should_defer = _should_defer_mcp(defer_mcp, mcp_tools, model, is_openai=True)
+            if should_defer:
+                mcp_tools = [t for t in mcp_tools
+                             if t.get("function", {}).get("name", "") in discovered_tools]
+            all_tools.extend(mcp_tools)
+            all_tools.sort(key=lambda t: t.get("function", {}).get("name", ""))
+        payload["tools"] = all_tools
 
     # Emit request snapshot for inspector
     if event_callback:
-        # System prompt: from payload["system"] (Anthropic) or first system message (OpenAI)
-        _sys = payload.get("system", "")
-        if isinstance(_sys, list):
-            _sys = "".join(b.get("text", "") for b in _sys if isinstance(b, dict))
+        # System prompt: from first system message (OpenAI wire format)
+        _sys = ""
         _tool_defs = payload.get("tools", [])
         _tool_names = []
         for _td in _tool_defs:
             if isinstance(_td, dict):
-                # OpenAI: {"type":"function","function":{"name":...}} or Anthropic: {"name":...}
-                _tn = _td.get("name") or (_td.get("function", {}) or {}).get("name", "")
+                _tn = (_td.get("function", {}) or {}).get("name", "")
                 if _tn:
                     _tool_names.append(_tn)
         _hist_msgs = []
@@ -15079,6 +15191,23 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
             "total_payload_tokens": len(json.dumps(payload)) // 4,
         })
 
+    # Context safety pre-flight: refuse the request if estimated prompt tokens
+    # exceed (max_context * safety_ratio). Prevents provider 400s and runaway bills.
+    try:
+        _est_prompt_tokens = len(json.dumps(payload)) // 4
+        _max_ctx = get_model_max_context(model) or 0
+        _safety_ratio = float(_agent_limits.get("context_safety_ratio", 0.95))
+        if _max_ctx and _est_prompt_tokens > int(_max_ctx * _safety_ratio):
+            raise RuntimeError(
+                f"Context would exceed {int(_safety_ratio*100)}% of max_context "
+                f"(~{_est_prompt_tokens:,} / {_max_ctx:,} tokens). "
+                f"Compact the chat or switch to a larger-context model."
+            )
+    except RuntimeError:
+        raise
+    except Exception:
+        pass  # estimation failures should never block a request
+
     # Check for cancellation before making the request
     if escape_watcher and escape_watcher.cancelled:
         raise TaskCancelled()
@@ -15091,13 +15220,6 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         if not allowed:
             raise RuntimeError(reason)
 
-    # Mistral path: use SDK directly (replicates Vibe CLI behavior)
-    if api_type == "mistral":
-        return _handle_mistral_response(
-            payload, messages, model, api_key, base_url,
-            api_type, silent, tools, escape_watcher,
-            _tool_round, event_callback, inference_params, session_id)
-
     data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         endpoint, data=data, headers=headers, method="POST",
@@ -15105,16 +15227,10 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
 
     try:
         with urllib.request.urlopen(request) as response:
-            if api_type == "openai":
-                return _handle_openai_response(
-                    response, payload, messages, model, api_key, base_url,
-                    api_type, silent, tools, headers, endpoint, escape_watcher,
-                    _tool_round, event_callback, inference_params, session_id)
-            else:
-                return _handle_anthropic_response(
-                    response, payload, messages, model, api_key, base_url,
-                    api_type, silent, tools, headers, endpoint, escape_watcher,
-                    _tool_round, event_callback, inference_params, session_id)
+            return _handle_openai_response(
+                response, payload, messages, model, api_key, base_url,
+                api_type, silent, tools, headers, endpoint, escape_watcher,
+                _tool_round, event_callback, inference_params, session_id)
 
     except urllib.error.HTTPError as e:
         error_msg = f"HTTP Error {e.code}: {e.reason}"
@@ -15206,230 +15322,6 @@ def _parse_gemma_tool_calls(text: str) -> tuple[list[dict], str]:
     return tool_uses, cleaned
 
 
-def _handle_anthropic_response(response, payload, messages, model, api_key,
-                                base_url, api_type, silent, tools,
-                                headers, endpoint,
-                                escape_watcher=None,
-                                _tool_round: int = 0,
-                                event_callback=None,
-                                inference_params: dict | None = None,
-                                session_id: str | None = None) -> str | None:
-    """Handle Anthropic SSE response, including tool-use agentic loop."""
-    # Parse the full SSE stream to get content blocks and stop reason
-    collected_text = []
-    tool_uses = []
-    thinking_blocks = []
-    current_event = None
-    current_block_type = None
-    current_block = {}
-    stop_reason = None
-    _usage_in = 0
-    _usage_out = 0
-
-    for line in response:
-        if escape_watcher and escape_watcher.cancelled:
-            raise TaskCancelled()
-        line = line.decode("utf-8").strip()
-        if line.startswith("event: "):
-            current_event = line[7:]
-        elif line.startswith("data: "):
-            if current_event == "message_stop":
-                break
-            try:
-                event = json.loads(line[6:])
-                etype = event.get("type")
-
-                if etype == "message_start":
-                    msg = event.get("message", {})
-                    usage = msg.get("usage", {})
-                    _usage_in = usage.get("input_tokens", 0)
-
-                elif etype == "error":
-                    err = event.get("error", {})
-                    err_msg = err.get("message", "Unknown API error")
-                    err_type = err.get("type", "error")
-                    if not silent:
-                        print(f"\nAPI error: {err_msg}", file=sys.stderr)
-                    if event_callback:
-                        event_callback("error", {"message": f"{err_type}: {err_msg}"})
-                    # Overload/rate-limit errors are transient — allow retries before fallback
-                    _TRANSIENT_SSE_ERRORS = {"overloaded_error", "rate_limit_error", "api_error"}
-                    is_permanent = err_type not in _TRANSIENT_SSE_ERRORS
-                    _thread_local._last_send_error = {"code": 0, "message": err_msg, "permanent": is_permanent}
-                    return None
-
-                elif etype == "message_delta":
-                    stop_reason = event.get("delta", {}).get("stop_reason")
-                    usage = event.get("usage", {})
-                    if usage.get("output_tokens"):
-                        _usage_out = usage["output_tokens"]
-
-                elif etype == "content_block_start":
-                    block = event.get("content_block", {})
-                    current_block_type = block.get("type")
-                    if current_block_type == "tool_use":
-                        current_block = {
-                            "id": block.get("id"),
-                            "name": block.get("name"),
-                            "input_json": "",
-                        }
-                    elif current_block_type == "thinking":
-                        current_block = {"thinking_text": "", "signature": block.get("signature", "")}
-                        if event_callback:
-                            event_callback("thinking_start", {})
-                    elif current_block_type == "text":
-                        pass  # text handled via deltas
-
-                elif etype == "content_block_delta":
-                    delta = event.get("delta", {})
-                    if delta.get("type") == "text_delta":
-                        text = _unescape(delta.get("text", ""))
-                        if not silent:
-                            print(text, end="", flush=True)
-                        if event_callback:
-                            event_callback("text_delta", {"text": text})
-                        collected_text.append(text)
-                    elif delta.get("type") == "input_json_delta":
-                        current_block["input_json"] += delta.get("partial_json", "")
-                    elif delta.get("type") == "thinking_delta":
-                        thinking_text = delta.get("thinking", "")
-                        if current_block and "thinking_text" in current_block:
-                            current_block["thinking_text"] += thinking_text
-                        if event_callback:
-                            event_callback("thinking_delta", {"text": thinking_text})
-                    elif delta.get("type") == "signature_delta":
-                        sig = delta.get("signature", "")
-                        if current_block and "signature" in current_block:
-                            current_block["signature"] += sig
-
-                elif etype == "content_block_stop":
-                    if current_block_type == "tool_use" and current_block:
-                        try:
-                            current_block["input"] = json.loads(current_block["input_json"])
-                        except json.JSONDecodeError:
-                            current_block["input"] = {}
-                        tool_uses.append(current_block)
-                        current_block = {}
-                    elif current_block_type == "thinking" and current_block:
-                        thinking_text = current_block.get("thinking_text", "")
-                        if thinking_text:
-                            thinking_blocks.append({"text": thinking_text, "signature": current_block.get("signature", "")})
-                        if event_callback:
-                            event_callback("thinking_done", {"text": thinking_text})
-                        current_block = {}
-                    current_block_type = None
-
-            except json.JSONDecodeError:
-                pass
-
-    full_text = "".join(collected_text)
-
-    # Log cost for this API call
-    _log_call_cost(model, _usage_in, _usage_out, session_id, _tool_round)
-
-    # Emit usage event so callers can capture token counts
-    if event_callback:
-        event_callback("usage", {"tokens_in": _usage_in, "tokens_out": _usage_out})
-
-    # End LLM trace span
-    _llm_span = getattr(_thread_local, 'current_trace_span', None)
-    if _trace_manager and _llm_span and _llm_span.get("type") == "llm_call":
-        _trace_manager.end_span(_llm_span, status="ok",
-                                 tokens_in=_usage_in, tokens_out=_usage_out)
-
-    # Max output token recovery (Phase 2): if model hit output limit, auto-resume
-    if stop_reason == "max_tokens" and not tool_uses and full_text:
-        recovery_count = getattr(_thread_local, '_max_output_recovery_count', 0)
-        if recovery_count < MAX_OUTPUT_RECOVERY_LIMIT:
-            _thread_local._max_output_recovery_count = recovery_count + 1
-            if event_callback:
-                event_callback("max_tokens_recovery", {
-                    "attempt": recovery_count + 1,
-                    "max_attempts": MAX_OUTPUT_RECOVERY_LIMIT,
-                })
-            # Build continuation: assistant partial + resume prompt
-            messages.append({"role": "assistant", "content": [{"type": "text", "text": full_text}]})
-            messages.append({"role": "user", "content": _MAX_OUTPUT_RESUME_MSG})
-            return send_message(messages, model, api_key, base_url, api_type,
-                                silent=silent, tools=tools, escape_watcher=escape_watcher,
-                                _tool_round=_tool_round, event_callback=event_callback,
-                                inference_params=inference_params, session_id=session_id)
-
-    # If no tool calls, just return the text
-    if not tool_uses:
-        if not silent and full_text:
-            print()
-        # End request trace span if this is the final response
-        _req_span = getattr(_thread_local, 'request_trace_span', None)
-        if _trace_manager and _req_span:
-            _trace_manager.end_span(_req_span, status="ok",
-                                     tokens_in=_usage_in, tokens_out=_usage_out)
-            _thread_local.request_trace_span = None
-        # Reset recovery counter on successful completion
-        _thread_local._max_output_recovery_count = 0
-        return full_text
-
-    # Tool use detected — execute tools and loop
-    if full_text:
-        print()
-
-    # Build the assistant message content blocks (must include thinking for Anthropic API)
-    assistant_content = []
-    for tb in thinking_blocks:
-        assistant_content.append({
-            "type": "thinking",
-            "thinking": tb["text"],
-            "signature": tb.get("signature", ""),
-        })
-    if full_text:
-        assistant_content.append({"type": "text", "text": full_text})
-    for tu in tool_uses:
-        assistant_content.append({
-            "type": "tool_use",
-            "id": tu["id"],
-            "name": tu["name"],
-            "input": tu["input"],
-        })
-
-    # Add assistant message to conversation
-    messages.append({"role": "assistant", "content": assistant_content})
-
-    # Execute tools with concurrent-safe parallelism (Phase 5)
-    batch_calls = [{"id": tu["id"], "name": tu["name"], "input": tu["input"]} for tu in tool_uses]
-    batch_results = _execute_tools_batch(batch_calls, event_callback=event_callback)
-
-    tool_results = []
-    for br in batch_results:
-        tool_results.append({
-            "type": "tool_result",
-            "tool_use_id": br["tool_use_id"],
-            "content": _sanitize_tool_result(
-                next((tc["name"] for tc in batch_calls if tc["id"] == br["tool_use_id"]), ""),
-                br["result"],
-            ),
-        })
-
-    messages.append({"role": "user", "content": tool_results})
-
-    # Track accumulated tool result tokens
-    accumulated = sum(
-        _estimate_tokens_str(str(tr.get("content", ""))) for tr in tool_results
-    ) + getattr(_thread_local, '_tool_results_tokens', 0)
-    _thread_local._tool_results_tokens = accumulated
-
-    # Run middleware pipeline (context management, compaction, cancel check)
-    _sid = session_id or getattr(_thread_local, 'current_session_id', None) or ""
-    messages, should_continue = _run_middleware(
-        messages, _tool_round, event_callback,
-        model=model, api_key=api_key, base_url=base_url, api_type=api_type,
-        session_id=_sid, escape_watcher=escape_watcher,
-    )
-
-    # Recurse to get the model's final response (or more tool calls)
-    return send_message(messages, model, api_key, base_url, api_type,
-                        silent=silent, tools=tools, escape_watcher=escape_watcher,
-                        _tool_round=_tool_round + 1, event_callback=event_callback,
-                        inference_params=inference_params, session_id=session_id)
 
 
 def _handle_openai_response(response, payload, messages, model, api_key,
@@ -15656,297 +15548,6 @@ def _handle_openai_response(response, payload, messages, model, api_key,
                         inference_params=inference_params, session_id=session_id)
 
 
-# --- Mistral SDK integration (replicates Vibe CLI behavior) ---
-
-_VIBE_VERSION = "2.5.0"
-
-def _get_mistral_vibe_headers(session_id: str | None = None) -> dict:
-    """Build Vibe CLI-compatible HTTP headers for Mistral API calls."""
-    return {
-        "user-agent": f"mistral-client-python/Mistral-Vibe/{_VIBE_VERSION}",
-        "x-affinity": session_id or "brain-agent",
-    }
-
-def _get_mistral_vibe_metadata(session_id: str | None = None) -> dict:
-    """Build Vibe CLI-compatible metadata for Mistral API calls."""
-    return {
-        "agent_entrypoint": "cli",
-        "agent_version": _VIBE_VERSION,
-        "client_name": "vibe_cli",
-        "client_version": _VIBE_VERSION,
-        "session_id": session_id or "brain-agent",
-        "is_user_prompt": "true",
-        "call_type": "main_call",
-    }
-
-def _create_mistral_client(api_key: str):
-    """Create a Mistral SDK client instance."""
-    from mistralai.client import Mistral
-    return Mistral(api_key=api_key)
-
-
-def _handle_mistral_response(payload, messages, model, api_key,
-                              base_url, api_type, silent, tools,
-                              escape_watcher=None,
-                              _tool_round: int = 0,
-                              event_callback=None,
-                              inference_params: dict | None = None,
-                              session_id: str | None = None) -> str | None:
-    """Handle Mistral SDK streaming response, including tool-use agentic loop.
-
-    Uses the official mistralai SDK with Vibe CLI-compatible headers/metadata
-    to replicate the Vibe CLI's API interaction pattern.
-    """
-    collected_text = []
-    tool_calls_map = {}  # index -> {id, name, arguments_str}
-    _usage_in = 0
-    _usage_out = 0
-    finish_reason = None
-
-    client = _create_mistral_client(api_key)
-    vibe_headers = _get_mistral_vibe_headers(session_id)
-    vibe_metadata = _get_mistral_vibe_metadata(session_id)
-
-    # Build SDK call kwargs from payload
-    sdk_kwargs = {
-        "model": payload["model"],
-        "messages": payload["messages"],
-        "max_tokens": payload.get("max_tokens"),
-        "http_headers": vibe_headers,
-        "metadata": vibe_metadata,
-    }
-    if payload.get("tools"):
-        sdk_kwargs["tools"] = payload["tools"]
-    if payload.get("temperature") is not None:
-        sdk_kwargs["temperature"] = payload["temperature"]
-    if payload.get("top_p") is not None:
-        sdk_kwargs["top_p"] = payload["top_p"]
-    if payload.get("reasoning_effort"):
-        sdk_kwargs["reasoning_effort"] = payload["reasoning_effort"]
-
-    try:
-        stream = client.chat.stream(**sdk_kwargs)
-    except Exception as e:
-        error_msg = f"Mistral SDK error: {e}"
-        print(error_msg, file=sys.stderr)
-        _thread_local._last_send_error = {"code": 0, "message": error_msg}
-        return None
-
-    try:
-        for event in stream:
-            if escape_watcher and escape_watcher.cancelled:
-                raise TaskCancelled()
-
-            data = event.data
-            if not data or not data.choices:
-                # Check for usage on non-choice events
-                if data and data.usage:
-                    _usage_in = data.usage.prompt_tokens or 0
-                    _usage_out = data.usage.completion_tokens or 0
-                continue
-
-            choice = data.choices[0]
-
-            # Track finish reason
-            if choice.finish_reason:
-                finish_reason = choice.finish_reason
-
-            # Extract usage when available
-            if data.usage:
-                _usage_in = data.usage.prompt_tokens or 0
-                _usage_out = data.usage.completion_tokens or 0
-
-            delta = choice.delta
-            if not delta:
-                continue
-
-            # Text content
-            content = delta.content
-            if content:
-                content = _unescape(content)
-                if not silent:
-                    print(content, end="", flush=True)
-                if event_callback:
-                    event_callback("text_delta", {"text": content})
-                collected_text.append(content)
-
-            # Tool calls (same structure as OpenAI)
-            if delta.tool_calls:
-                for tc in delta.tool_calls:
-                    # SDK tool call deltas use index-based accumulation
-                    idx = getattr(tc, 'index', 0) or 0
-                    if idx not in tool_calls_map:
-                        tool_calls_map[idx] = {
-                            "id": getattr(tc, 'id', '') or "",
-                            "name": "",
-                            "arguments": "",
-                        }
-                    if getattr(tc, 'id', None):
-                        tool_calls_map[idx]["id"] = tc.id
-                    fn = getattr(tc, 'function', None)
-                    if fn:
-                        if getattr(fn, 'name', None):
-                            tool_calls_map[idx]["name"] = fn.name
-                        if getattr(fn, 'arguments', None):
-                            tool_calls_map[idx]["arguments"] += fn.arguments
-
-    except TaskCancelled:
-        raise
-    except Exception as e:
-        error_msg = f"Mistral stream error: {e}"
-        print(error_msg, file=sys.stderr)
-        # If we got partial text, continue with it
-        if not collected_text:
-            _thread_local._last_send_error = {"code": 0, "message": error_msg}
-            return None
-
-    full_text = "".join(collected_text)
-
-    # Log cost for this API call
-    _log_call_cost(model, _usage_in, _usage_out, session_id, _tool_round)
-
-    # Emit usage event
-    if event_callback:
-        event_callback("usage", {"tokens_in": _usage_in, "tokens_out": _usage_out})
-
-    # End LLM trace span
-    _llm_span = getattr(_thread_local, 'current_trace_span', None)
-    if _trace_manager and _llm_span and _llm_span.get("type") == "llm_call":
-        _trace_manager.end_span(_llm_span, status="ok",
-                                 tokens_in=_usage_in, tokens_out=_usage_out)
-
-    # Detect truncated tool calls: finish_reason == "length" with tool_calls whose
-    # arguments are invalid JSON means the model ran out of tokens mid-tool-call
-    # (common with thinking models like Devstral 2 that consume budget on reasoning).
-    # Discard the incomplete tool calls and treat as text-only for recovery.
-    if finish_reason == "length" and tool_calls_map:
-        has_truncated = False
-        for tc in tool_calls_map.values():
-            try:
-                json.loads(tc["arguments"])
-            except (json.JSONDecodeError, ValueError):
-                has_truncated = True
-                break
-        if has_truncated:
-            print(f"[thinking model: truncated tool call detected, discarding incomplete tools]",
-                  file=sys.stderr)
-            tool_calls_map.clear()
-
-    # Max output token recovery
-    if finish_reason == "length" and not tool_calls_map:
-        recovery_count = getattr(_thread_local, '_max_output_recovery_count', 0)
-        if recovery_count < MAX_OUTPUT_RECOVERY_LIMIT:
-            _thread_local._max_output_recovery_count = recovery_count + 1
-            if event_callback:
-                event_callback("max_tokens_recovery", {
-                    "attempt": recovery_count + 1,
-                    "max_attempts": MAX_OUTPUT_RECOVERY_LIMIT,
-                })
-            # Thinking models (e.g. Devstral 2) consume max_tokens with invisible
-            # reasoning tokens. Detect this: if visible output is <25% of the
-            # completion budget, double max_tokens for the retry so the model has
-            # room for both thinking and output.
-            recovery_params = dict(inference_params) if inference_params else {}
-            visible_tokens = len(full_text) // 4  # rough char-to-token estimate
-            current_max = payload.get("max_tokens", get_model_max_output(model))
-            if _usage_out > 0 and visible_tokens < _usage_out * 0.25:
-                max_cap = get_model_max_context(model)
-                boosted = min(current_max * 2, max_cap)
-                if boosted > current_max:
-                    recovery_params["max_tokens"] = boosted
-                    print(f"[thinking model: boosting max_tokens {current_max} → {boosted}]",
-                          file=sys.stderr)
-            if full_text:
-                messages.append({"role": "assistant", "content": full_text})
-                messages.append({"role": "user", "content": _MAX_OUTPUT_RESUME_MSG})
-                return send_message(messages, model, api_key, base_url, api_type,
-                                    silent=silent, tools=tools, escape_watcher=escape_watcher,
-                                    _tool_round=_tool_round, event_callback=event_callback,
-                                    inference_params=recovery_params, session_id=session_id)
-        # Recovery exhausted or no text to resume from — inform the user
-        current_max = payload.get("max_tokens", get_model_max_output(model))
-        hint = (f"Output token limit reached (max_tokens={current_max}) and recovery "
-                f"attempts exhausted ({MAX_OUTPUT_RECOVERY_LIMIT}/{MAX_OUTPUT_RECOVERY_LIMIT}). "
-                f"This model may be using too many tokens on internal reasoning. "
-                f"Try: increase max_output in model settings, use a simpler prompt, "
-                f"or switch to a non-thinking model.")
-        print(f"[max_tokens exhausted] {hint}", file=sys.stderr)
-        if event_callback:
-            event_callback("max_tokens_exhausted", {
-                "message": hint,
-                "max_tokens": current_max,
-                "model": model,
-            })
-        # Return whatever text we have (may be empty)
-        if full_text:
-            full_text += f"\n\n⚠️ *{hint}*"
-        else:
-            full_text = f"⚠️ *{hint}*"
-        _thread_local._max_output_recovery_count = 0
-        return full_text
-
-    if not tool_calls_map:
-        if not silent and full_text:
-            print()
-        # End request trace span
-        _req_span = getattr(_thread_local, 'request_trace_span', None)
-        if _trace_manager and _req_span:
-            _trace_manager.end_span(_req_span, status="ok",
-                                     tokens_in=_usage_in, tokens_out=_usage_out)
-            _thread_local.request_trace_span = None
-        _thread_local._max_output_recovery_count = 0
-        return full_text
-
-    if full_text:
-        print()
-
-    # Build assistant message with tool_calls (OpenAI format)
-    assistant_msg = {"role": "assistant", "content": full_text or None}
-    tc_list = []
-    for idx in sorted(tool_calls_map.keys()):
-        tc = tool_calls_map[idx]
-        tc_list.append({
-            "id": tc["id"],
-            "type": "function",
-            "function": {"name": tc["name"], "arguments": tc["arguments"]},
-        })
-    assistant_msg["tool_calls"] = tc_list
-    messages.append(assistant_msg)
-
-    # Execute tools (same as OpenAI path)
-    batch_calls = []
-    for tc in tc_list:
-        try:
-            args = json.loads(tc["function"]["arguments"])
-        except json.JSONDecodeError:
-            args = {}
-        batch_calls.append({"id": tc["id"], "name": tc["function"]["name"], "input": args})
-
-    batch_results = _execute_tools_batch(batch_calls, event_callback=event_callback)
-
-    for br in batch_results:
-        sanitized = _sanitize_tool_result(
-            next((bc["name"] for bc in batch_calls if bc["id"] == br["tool_use_id"]), ""),
-            br["result"],
-        )
-        messages.append({
-            "role": "tool",
-            "tool_call_id": br["tool_use_id"],
-            "content": sanitized,
-        })
-
-    # Run middleware pipeline
-    _sid = session_id or getattr(_thread_local, 'current_session_id', None) or ""
-    messages, should_continue = _run_middleware(
-        messages, _tool_round, event_callback,
-        model=model, api_key=api_key, base_url=base_url, api_type=api_type,
-        session_id=_sid, escape_watcher=escape_watcher,
-    )
-
-    return send_message(messages, model, api_key, base_url, api_type,
-                        silent=silent, tools=tools, escape_watcher=escape_watcher,
-                        _tool_round=_tool_round + 1, event_callback=event_callback,
-                        inference_params=inference_params, session_id=session_id)
 
 
 def _classify_error_transient(error_info: dict | None) -> bool:

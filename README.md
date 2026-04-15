@@ -54,8 +54,10 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
 ### Infrastructure
 - **Multi-provider routing** — OpenAI-compatible gateways (Bifrost local, Kilo cloud); single source of truth via `resolve_provider_for_model()`
 - **Provider fallback** — exponential backoff retry with ordered fallback chains, message history rollback on mid-tool-loop failures, transient SSE error detection
-- **Token optimization** — per-agent tool group filtering, Anthropic prompt caching (cache_control), system prompt caching (60s TTL), compact threshold override, scheduled task tool restriction, tools.md trimmed to essentials, context fill display with manual compact button
-- **Cost tracking + Rate limiting** — per-agent spend monitoring, budgets, throttling
+- **Token optimization** — per-agent tool group filtering, per-agent MCP tool allow/deny patterns, MCP redundant-prefix stripping, system prompt caching (60s TTL), compact threshold override, scheduled task tool restriction, tools.md trimmed to essentials, context fill display (last-round prompt size) with manual compact button
+- **Tool definition cost measurement** — `/v1/tools/breakdown` endpoint with per-group + per-tool schema decomposition (name/description/schema split), surfaced in agent settings → Tokens tab
+- **Runtime limits** — per-agent `limits` block (max tool rounds, tool result size caps, context safety ratio); hard stop at 1.5× soft cap prevents runaway tool loops; pre-flight context guardrail rejects requests before they hit the provider
+- **Cost tracking + Rate limiting** — per-agent spend monitoring, budgets, throttling; session cost soft warnings with amber/red thresholds and one-time modal at 90% of configurable global limit; built-in rate table for OpenAI/Mistral/Gemini/Grok/DeepSeek
 - **Observability** — span-based tracing for LLM calls and tool execution
 - **Audit trail** — append-only log of all agent actions, searchable, CSV export
 - **Notifications** — webhook, email (SMTP), in-app alerts for task events

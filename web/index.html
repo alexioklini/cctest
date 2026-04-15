@@ -3503,6 +3503,11 @@ textarea { resize: none; }
       <div class="context-bar" title="Context window usage"><div class="context-fill" id="status-context-fill" style="width:0%"></div></div>
       <span class="status-value" id="status-context-label">0%</span>
     </div>
+    <div class="status-item" id="status-cost-wrap" style="display:none" title="Session cost">
+      <span class="status-label" id="status-cost-warn" style="display:none;color:var(--warning);font-weight:600">&#9888;</span>
+      <span class="status-label">$</span>
+      <span class="status-value" id="status-cost-label">0.00</span>
+    </div>
     <div class="status-item" style="margin-left:auto">
       <span class="status-value" id="status-session"></span>
       <button class="compact-btn" onclick="openInspectModal()" title="Inspect session" style="font-size:13px;padding:1px 6px">&#x1F50D;</button>
@@ -4931,6 +4936,7 @@ async function sendMessage() {
         if (d.max_context) chat.maxContext = d.max_context;
         if (d.model) chat.model = d.model;
         const tokIn = d.tokens_in || 0;
+        const lastTokIn = d.last_tokens_in || tokIn;
         const tokOut = d.tokens_out || 0;
         const dur = d.duration || 0;
         const estOut = tokOut || Math.ceil((d.text || chat.streamingText || '').length / 4);
@@ -4939,14 +4945,15 @@ async function sendMessage() {
         assistantMsg.metadata = {
           ...(assistantMsg.metadata || {}),
           tokens_in: tokIn,
+          last_tokens_in: lastTokIn,
           tokens_out: tokOut || estOut,
           duration: dur,
         };
         if (dur > 0 && estOut > 0) {
           chat._lastSpeed = Math.round(estOut / dur);
         }
-        if (tokIn > 0) chat._lastApiIn = tokIn;
-        if (d.cost) assistantMsg._cost = d.cost;
+        if (lastTokIn > 0) chat._lastApiIn = lastTokIn;
+        if (d.cost !== undefined) { assistantMsg._cost = d.cost || 0; chat._sessionCost = d.cost || 0; }
         if (d.files?.length) assistantMsg._files = d.files;
         else if (chat.files.length) assistantMsg._files = chat.files;
         if (chat.thinkingText) assistantMsg._thinking = chat.thinkingText;
@@ -5152,14 +5159,12 @@ async function openInspectModal() {
               <!-- Token breakdown bar -->
               <div style="display:flex;gap:0;height:6px;margin-bottom:8px;border-radius:3px;overflow:hidden">
                 <div style="flex:${p.system_tokens||1};background:#8b5cf6" title="System"></div>
-                ${memTokens ? `<div style="flex:${memTokens};background:#e89234" title="Memory"></div>` : ''}
                 <div style="flex:${p.tools_tokens||1};background:var(--accent-brand)" title="Tools"></div>
                 <div style="flex:${p.history_tokens||1};background:var(--text-400)" title="History"></div>
                 <div style="flex:${p.user_tokens||1};background:var(--success)" title="User"></div>
               </div>
               <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:11px;margin-bottom:8px">
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:#8b5cf6"></span>System ~${(p.system_tokens||0).toLocaleString()}</span>
-                ${memTokens ? `<span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:#e89234"></span>Memory ~${memTokens.toLocaleString()}</span>` : ''}
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:var(--accent-brand)"></span>Tools (${p.tools_count||0}) ~${(p.tools_tokens||0).toLocaleString()}</span>
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:var(--text-400)"></span>History (${(p.history||[]).length} msgs) ~${(p.history_tokens||0).toLocaleString()}</span>
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:var(--success)"></span>User ~${(p.user_tokens||0).toLocaleString()}</span>
@@ -5776,11 +5781,12 @@ function updateStatusBar() {
   const wrap = document.getElementById('status-context-wrap');
   const fill = document.getElementById('status-context-fill');
   const label = document.getElementById('status-context-label');
-  // Find last tokens_in from messages (= actual context sent to API)
+  // Find last-round prompt tokens (= size of the most recent API call, not cumulative across tool rounds)
   let lastApiIn = 0;
   for (let mi = msgs.length - 1; mi >= 0; mi--) {
-    if (msgs[mi].role === 'assistant' && msgs[mi].metadata?.tokens_in) {
-      lastApiIn = msgs[mi].metadata.tokens_in;
+    const md = msgs[mi].metadata;
+    if (msgs[mi].role === 'assistant' && md && (md.last_tokens_in || md.tokens_in)) {
+      lastApiIn = md.last_tokens_in || md.tokens_in;
       break;
     }
   }
@@ -5797,6 +5803,86 @@ function updateStatusBar() {
   } else {
     wrap.style.display = 'none';
   }
+
+  // Session cost indicator (soft warnings at 70%/90%, no hard abort)
+  const costWrap = document.getElementById('status-cost-wrap');
+  const costLabel = document.getElementById('status-cost-label');
+  const costWarn = document.getElementById('status-cost-warn');
+  let sessionCost = 0;
+  let sawCostField = false;
+  for (let mi = msgs.length - 1; mi >= 0; mi--) {
+    const m = msgs[mi];
+    if (m.role === 'assistant' && m._cost !== undefined) {
+      sessionCost = m._cost || 0;
+      sawCostField = true;
+      break;
+    }
+  }
+  if (chat._sessionCost !== undefined) { sessionCost = chat._sessionCost || 0; sawCostField = true; }
+  const maxCost = state.maxSessionCostUsd || 0;
+  if (sawCostField) {
+    costWrap.style.display = '';
+    if (sessionCost <= 0) {
+      costLabel.textContent = '0.00';
+      costLabel.style.color = 'var(--text-400)';
+      costWarn.style.display = 'none';
+      costWrap.title = 'Session cost: $0.00 — no pricing configured for this model. Set cost_input/cost_output in Settings → Models.';
+      return;
+    }
+    costLabel.textContent = sessionCost < 1 ? sessionCost.toFixed(3) : sessionCost.toFixed(2);
+    if (maxCost > 0) {
+      const costPct = sessionCost / maxCost;
+      costWrap.title = `Session cost: $${sessionCost.toFixed(4)} / $${maxCost.toFixed(2)} (${Math.round(costPct*100)}%)`;
+      if (costPct >= 0.9) {
+        costWarn.style.display = '';
+        costWarn.style.color = 'var(--error)';
+        costLabel.style.color = 'var(--error)';
+        maybeShowCostModal(chat, sessionCost, maxCost);
+      } else if (costPct >= 0.7) {
+        costWarn.style.display = '';
+        costWarn.style.color = 'var(--warning)';
+        costLabel.style.color = 'var(--warning)';
+      } else {
+        costWarn.style.display = 'none';
+        costLabel.style.color = '';
+      }
+    } else {
+      costWrap.title = `Session cost: $${sessionCost.toFixed(4)} (no limit configured)`;
+      costWarn.style.display = 'none';
+      costLabel.style.color = '';
+    }
+  } else {
+    costWrap.style.display = 'none';
+  }
+}
+
+function maybeShowCostModal(chat, cost, maxCost) {
+  if (!chat || !chat.sessionId) return;
+  const key = 'cost-warning-shown:' + chat.sessionId;
+  if (localStorage.getItem(key)) return;
+  localStorage.setItem(key, '1');
+  const pct = Math.round((cost / maxCost) * 100);
+  const html = `
+    <div class="modal-overlay" id="cost-warning-modal" style="display:flex">
+      <div class="modal" style="max-width:480px">
+        <div class="modal-header">
+          <div class="modal-title" style="color:var(--error)">&#9888; Session cost warning</div>
+        </div>
+        <div class="modal-body">
+          <p>This session has used <strong>$${cost.toFixed(4)}</strong> of the
+          <strong>$${maxCost.toFixed(2)}</strong> soft limit (<strong>${pct}%</strong>).</p>
+          <p style="color:var(--text-300);font-size:13px;margin-top:12px">
+          This is a soft warning only — the session will continue. You can raise or disable the
+          limit in Settings &rarr; Server &rarr; Cost Limits.</p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-primary" onclick="document.getElementById('cost-warning-modal').remove()">Got it</button>
+        </div>
+      </div>
+    </div>`;
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  document.body.appendChild(div.firstElementChild);
 }
 
 function scrollToBottom() {
@@ -6614,6 +6700,7 @@ async function switchGeneralTab(tab, btn) {
     try {
       const svc = await API.getServices();
       const srv = svc.server || {};
+      state.maxSessionCostUsd = parseFloat(srv.max_session_cost_usd || 0) || 0;
       let svcRows = '';
       for (const [name, info] of Object.entries(svc)) {
         if (typeof info !== 'object') continue;
@@ -6658,6 +6745,13 @@ async function switchGeneralTab(tab, btn) {
           const hasImageModel = !!(srv.attachment_image_model);
           return (!hasVision && !hasImageModel) ? `<div style="font-size:11px;color:var(--warning, #b45309);margin-top:4px;padding:6px 8px;border-radius:6px;background:var(--bg-200)">&#9888; Your default model does not support vision and no image description model is configured. Attached images will only return basic metadata (dimensions, format).</div>` : '';
         })()}
+        ${SEC('Cost Limits')}
+        <div style="display:flex;gap:8px;align-items:center">
+          <span style="font-size:12px;color:var(--text-300);min-width:130px">Max session cost (USD)</span>
+          <input class="form-input" id="srv-max-session-cost" type="number" step="0.01" min="0" value="${(srv.max_session_cost_usd||0).toFixed(2)}" style="flex:1" placeholder="0 = disabled">
+          <button class="btn-secondary" onclick="API.post('/v1/services/server',{max_session_cost_usd:parseFloat(document.getElementById('srv-max-session-cost').value)||0}).then(r=>{state.maxSessionCostUsd=r.max_session_cost_usd||0;showToast('Cost limit updated')}).catch(e=>showToast('Failed',true))">Set</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-400);margin-top:2px">Soft limit (no abort). Warning triangle at 70%, modal at 90%. Set 0 to disable.</div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <button class="btn-secondary" onclick="API.restartServer().then(()=>showToast('Server restarting...')).catch(e=>showToast('Failed',true))">Restart Server</button>
         </div>
@@ -8171,17 +8265,23 @@ async function switchAgentTab(agentId, tab, btn) {
           </div>
 
           <div style="border:1px solid var(--border);border-radius:8px;padding:14px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              <div style="font-size:13px;font-weight:600;color:var(--text-100);flex:1">Tool Definition Cost</div>
+              <button class="btn-secondary" style="font-size:11px;padding:2px 10px" onclick="_loadToolBreakdown('${esc(agentId)}')">Measure</button>
+            </div>
+            <div style="font-size:11px;color:var(--text-400);margin-bottom:8px">
+              Measures how many tokens each tool group contributes to every request. Use this to decide which groups to disable above.
+            </div>
+            <div id="tok-breakdown" style="font-size:12px;color:var(--text-300)">Click Measure to fetch.</div>
+          </div>
+
+          <div style="border:1px solid var(--border);border-radius:8px;padding:14px">
             <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">System Prompt</div>
             <div style="display:grid;gap:8px">
               <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-200);cursor:pointer">
                 <input type="checkbox" id="tok-tools-guide" ${tcfg.include_tools_guide !== false ? 'checked' : ''}
                   style="accent-color:var(--accent)">
                 Include tools.md guide (~400 tokens)
-              </label>
-              <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-200);cursor:pointer">
-                <input type="checkbox" id="tok-prompt-cache" ${tcfg.prompt_caching !== false ? 'checked' : ''}
-                  style="accent-color:var(--accent)">
-                Anthropic prompt caching (cache_control on system prompt)
               </label>
             </div>
           </div>
@@ -8229,7 +8329,6 @@ window._saveTokenConfig = async function(agentId) {
   const tcfg = {
     tool_groups: groups,
     include_tools_guide: document.getElementById('tok-tools-guide')?.checked ?? true,
-    prompt_caching: document.getElementById('tok-prompt-cache')?.checked ?? true,
     scheduled_task_tools: document.getElementById('tok-sched-tools')?.checked ?? true,
   };
 
@@ -8245,6 +8344,170 @@ window._saveTokenConfig = async function(agentId) {
       content: JSON.stringify(cfg, null, 2)
     });
     showToast('Token config saved');
+  } catch(e) { showToast('Error: ' + e.message, true); }
+};
+
+window._loadToolBreakdown = async function(agentId) {
+  const container = document.getElementById('tok-breakdown');
+  if (!container) return;
+  container.innerHTML = '<span style="color:var(--text-400)">Measuring...</span>';
+  try {
+    // Load current filter from agent.json so checkboxes reflect saved state
+    try {
+      const agentFile = await API.get(`/v1/agents/${agentId}/file?name=agent.json`);
+      const cfg = JSON.parse(agentFile.content || '{}');
+      const flt = cfg.token_config?.mcp_tool_filter || null;
+      state._mcpFilter = flt;
+      state._mcpFilterEnabled = Array.isArray(flt) ? flt : null;
+    } catch(_) { state._mcpFilter = null; state._mcpFilterEnabled = null; }
+    const b = await API.get(`/v1/tools/breakdown?agent=${encodeURIComponent(agentId)}`);
+    const groups = b.groups || [];
+    const total = b.total_tokens || 0;
+    const builtin = b.builtin_tokens || 0;
+    const mcp = b.mcp_tokens || 0;
+    const defer = b.deferrable_mcp || {};
+
+    const bar = (n, max) => {
+      const pct = max > 0 ? Math.round((n / max) * 100) : 0;
+      return `<div style="flex:1;height:5px;background:var(--bg-200);border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:var(--accent-brand)"></div></div>`;
+    };
+
+    const segBar = (nm, ds, sc) => {
+      const tot = nm + ds + sc || 1;
+      return `<div style="display:flex;gap:0;height:4px;border-radius:2px;overflow:hidden;min-width:80px">
+        <div style="flex:${nm};background:#8b5cf6" title="name ${nm} tok"></div>
+        <div style="flex:${ds};background:var(--accent-brand)" title="description ${ds} tok"></div>
+        <div style="flex:${sc};background:var(--success)" title="schema ${sc} tok"></div>
+      </div>`;
+    };
+
+    const filterSet = new Set(state._mcpFilterEnabled || []);
+    const filterActive = (state._mcpFilter && state._mcpFilter.length > 0);
+
+    const toolRow = (t, isMcp) => {
+      const schemaPct = t.total_tokens > 0 ? Math.round((t.schema_tokens / t.total_tokens) * 100) : 0;
+      const heavy = schemaPct >= 60 && t.schema_tokens >= 100;
+      const checked = isMcp ? (filterActive ? (filterSet.has(t.name) ? 'checked' : '') : 'checked') : '';
+      const checkbox = isMcp
+        ? `<input type="checkbox" data-mcp-tool="${esc(t.name)}" ${checked} style="accent-color:var(--accent-brand);margin-right:6px" onchange="_updateMcpFilterSelection(this)">`
+        : '';
+      return `<div style="display:grid;grid-template-columns:${isMcp?'18px ':''}1fr 90px 50px 50px 50px 60px;gap:8px;padding:3px 0;font-size:11px;color:var(--text-300);align-items:center;border-top:1px dashed var(--border-050)">
+        ${checkbox}
+        <span style="font-family:var(--font-mono);color:${heavy?'var(--warning)':'var(--text-200)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc((t.desc||'').toString())}">${esc(t.name)}${heavy?' &#9888;':''}</span>
+        ${segBar(t.name_tokens, t.desc_tokens, t.schema_tokens)}
+        <span style="text-align:right;color:#8b5cf6" title="name">${t.name_tokens}</span>
+        <span style="text-align:right;color:var(--accent-brand)" title="description">${t.desc_tokens}</span>
+        <span style="text-align:right;color:var(--success)" title="schema (${t.param_count} params)">${t.schema_tokens}</span>
+        <span style="text-align:right;font-weight:600;color:var(--text-100)">${t.total_tokens.toLocaleString()}</span>
+      </div>`;
+    };
+
+    const rows = groups.map(g => {
+      const isMcp = g.source === 'mcp';
+      const header = `<div style="display:grid;grid-template-columns:${isMcp?'18px ':''}1fr 90px 50px 50px 50px 60px;gap:8px;padding:2px 0 4px;font-size:9px;color:var(--text-400);text-transform:uppercase;border-bottom:1px solid var(--border-050)">
+        ${isMcp?'<span></span>':''}<span>Tool</span><span style="text-align:center">Split</span>
+        <span style="text-align:right">Name</span><span style="text-align:right">Desc</span><span style="text-align:right">Schema</span><span style="text-align:right">Total</span>
+      </div>`;
+      const tools = (g.tools || []).map(t => toolRow(t, isMcp)).join('');
+      return `<details style="border-top:1px solid var(--border-050)">
+        <summary style="cursor:pointer;padding:6px 0;display:flex;align-items:center;gap:8px">
+          <span style="font-size:10px;padding:1px 6px;border-radius:3px;background:var(--bg-200);color:var(--text-400);text-transform:uppercase">${esc(g.source)}</span>
+          <span style="font-size:12px;color:var(--text-200);min-width:100px">${esc(g.name)}</span>
+          <span style="font-size:11px;color:var(--text-400)">${g.tool_count} tools</span>
+          <div style="flex:1;min-width:40px;max-width:150px">${bar(g.tokens, total)}</div>
+          ${segBar(g.name_tokens||0, g.desc_tokens||0, g.schema_tokens||0)}
+          <span style="font-size:12px;font-family:var(--font-mono);min-width:60px;text-align:right;color:var(--text-200)">${g.tokens.toLocaleString()}</span>
+        </summary>
+        <div style="padding:4px 0 8px 20px">
+          ${header}
+          ${tools}
+        </div>
+      </details>`;
+    }).join('');
+
+    const mcpActions = (mcp > 0) ? `
+      <div style="margin-top:12px;padding:10px;border:1px solid var(--border-050);border-radius:6px;background:var(--bg-100)">
+        <div style="font-size:11px;color:var(--text-300);margin-bottom:6px">
+          <b>MCP tool filter:</b> check only the MCP tools this agent should see. Unchecked tools will be excluded from every request.
+          ${filterActive ? `<span style="color:var(--warning)">&nbsp;(filter currently active)</span>` : ''}
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn-secondary" style="font-size:11px;padding:2px 10px" onclick="_saveMcpFilter('${esc(agentId)}', false)">Save selection as filter</button>
+          <button class="btn-secondary" style="font-size:11px;padding:2px 10px" onclick="_clearMcpFilter('${esc(agentId)}')">Clear filter (allow all)</button>
+          <button class="btn-secondary" style="font-size:11px;padding:2px 10px" onclick="_toggleAllMcp(true)">Check all</button>
+          <button class="btn-secondary" style="font-size:11px;padding:2px 10px" onclick="_toggleAllMcp(false)">Uncheck all</button>
+        </div>
+      </div>` : '';
+
+    const legend = `<div style="display:flex;gap:14px;margin-top:6px;font-size:10px;color:var(--text-400)">
+      <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:#8b5cf6;border-radius:2px"></span>Name</span>
+      <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:var(--accent-brand);border-radius:2px"></span>Description</span>
+      <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;background:var(--success);border-radius:2px"></span>Schema (parameters)</span>
+      <span style="display:flex;align-items:center;gap:4px;margin-left:auto">&#9888; = schema &gt;60% of total</span>
+    </div>`;
+
+    const deferNote = defer.deferred
+      ? `<div style="margin-top:10px;padding:8px 10px;border-radius:6px;background:var(--bg-200);font-size:11px;color:var(--text-300)">&#9888; MCP deferral <b>active</b> — ~${(defer.tokens_saved_if_deferred||0).toLocaleString()} MCP tokens currently excluded from requests until <code>tool_search</code> discovers them. Threshold: ${(defer.threshold||0).toLocaleString()} tokens.</div>`
+      : (mcp > 0
+          ? `<div style="margin-top:10px;padding:8px 10px;border-radius:6px;background:var(--bg-200);font-size:11px;color:var(--text-400)">MCP tools (${mcp.toLocaleString()} tok) are below the 10% auto-defer threshold (${(defer.threshold||0).toLocaleString()} tok) — all MCP schemas are included every request.</div>`
+          : '');
+
+    container.innerHTML = `
+      <div style="display:flex;gap:16px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border-050)">
+        <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase">Total</div><div style="font-size:18px;font-weight:600;color:var(--text-100)">${total.toLocaleString()}</div><div style="font-size:10px;color:var(--text-400)">tokens / request</div></div>
+        <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase">Built-in</div><div style="font-size:14px;color:var(--text-200)">${builtin.toLocaleString()}</div></div>
+        <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase">MCP</div><div style="font-size:14px;color:var(--text-200)">${mcp.toLocaleString()}</div></div>
+        ${b.max_context ? `<div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase">% of ctx</div><div style="font-size:14px;color:var(--text-200)">${(total/b.max_context*100).toFixed(1)}%</div></div>` : ''}
+      </div>
+      ${rows}
+      ${legend}
+      ${mcpActions}
+      ${deferNote}
+    `;
+  } catch(e) {
+    container.innerHTML = `<span style="color:var(--error)">Failed: ${esc(e.message)}</span>`;
+  }
+};
+
+window._updateMcpFilterSelection = function(el) {
+  // No-op placeholder; _saveMcpFilter reads DOM state directly on click.
+};
+
+window._toggleAllMcp = function(checked) {
+  document.querySelectorAll('#tok-breakdown input[data-mcp-tool]').forEach(i => { i.checked = !!checked; });
+};
+
+window._saveMcpFilter = async function(agentId, silent) {
+  const checked = Array.from(document.querySelectorAll('#tok-breakdown input[data-mcp-tool]:checked'))
+    .map(i => i.getAttribute('data-mcp-tool'));
+  const all = Array.from(document.querySelectorAll('#tok-breakdown input[data-mcp-tool]'));
+  if (!all.length) { showToast('No MCP tools to filter'); return; }
+  try {
+    const res = await API.get(`/v1/agents/${agentId}/file?name=agent.json`);
+    const cfg = JSON.parse(res.content || '{}');
+    cfg.token_config = cfg.token_config || {};
+    // If everything is checked, treat as "no filter" so the config stays clean
+    cfg.token_config.mcp_tool_filter = (checked.length === all.length) ? null : checked;
+    await API.post(`/v1/agents/${encodeURIComponent(agentId)}/file`, {
+      name: 'agent.json',
+      content: JSON.stringify(cfg, null, 2)
+    });
+    if (!silent) showToast(checked.length === all.length ? 'Filter cleared (all tools allowed)' : `Filter saved: ${checked.length} of ${all.length} tools allowed`);
+    _loadToolBreakdown(agentId);
+  } catch(e) { showToast('Error: ' + e.message, true); }
+};
+
+window._clearMcpFilter = async function(agentId) {
+  try {
+    const res = await API.get(`/v1/agents/${agentId}/file?name=agent.json`);
+    const cfg = JSON.parse(res.content || '{}');
+    if (cfg.token_config) { cfg.token_config.mcp_tool_filter = null; }
+    await API.post(`/v1/agents/${encodeURIComponent(agentId)}/file`, {
+      name: 'agent.json',
+      content: JSON.stringify(cfg, null, 2)
+    });
+    showToast('Filter cleared');
+    _loadToolBreakdown(agentId);
   } catch(e) { showToast('Error: ' + e.message, true); }
 };
 
@@ -10923,13 +11186,14 @@ async function init() {
 
   // Load initial data
   try {
-    const [statusData, agentsData, modelsData, providersData, teamsData, modelsConfigData] = await Promise.all([
+    const [statusData, agentsData, modelsData, providersData, teamsData, modelsConfigData, servicesData] = await Promise.all([
       API.getStatus().catch(() => null),
       API.getAgents().catch(() => ({agents:[]})),
       API.getModels().catch(() => ({models:[]})),
       API.getProviders().catch(() => []),
       API.getTeams().catch(() => ({})),
       API.getModelsConfig().catch(() => ({})),
+      API.getServices().catch(() => ({})),
     ]);
 
     state.connected = !!statusData;
@@ -10939,6 +11203,7 @@ async function init() {
     state.providers = Array.isArray(providersData) ? providersData : (providersData.providers || []);
     state.teamStructure = teamsData || {};
     state.modelsConfig = modelsConfigData || {};
+    state.maxSessionCostUsd = parseFloat((servicesData.server || {}).max_session_cost_usd || 0) || 0;
 
     // Update user menu / connection indicator
     renderUserMenu();
