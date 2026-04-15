@@ -14092,21 +14092,9 @@ def _after_file_write(path: str, action: str = "created", agent_id: str = ""):
     Replaces scattered _maybe_qmd_reindex(), _extract_entities(), file_created calls."""
     is_artifact = _is_artifact_path(path)
 
-    # 1. QMD reindex (skip for artifacts)
-    if not is_artifact:
-        _maybe_qmd_reindex(path)
-
-    # 2. Entity extraction + knowledge graph (skip for artifacts)
-    if path.endswith(".md") and agent_id and not is_artifact:
-        try:
-            with open(path, "r") as f:
-                raw = f.read()
-            fm, body = _parse_frontmatter(raw)
-            entities = _extract_entities(body)
-            if entities:
-                _update_entity_index(agent_id, os.path.basename(path), entities)
-        except Exception:
-            pass
+    # MemPalace migration: QMD reindex + entity extraction + KG update removed.
+    # Memory layer is now mempalace MCP — agents file content via
+    # mempalace_add_drawer themselves; QMD/KG are no longer in the picture.
 
     # 3. File/artifact event emission (for UI)
     ecb = getattr(_thread_local, 'event_callback', None)
