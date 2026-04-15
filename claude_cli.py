@@ -6185,8 +6185,9 @@ Current date and time: {now.strftime('%Y-%m-%d %H:%M')}"""
 
 
 def ensure_memory_summary_schedules():
-    """Ensure scheduler entries exist for all agents with memory_summary enabled.
-    Called once on server/CLI startup after scheduler is initialized."""
+    """MemPalace migration: disabled. Memory summary pipeline replaced by mempalace MCP."""
+    return
+    # --- legacy implementation kept for reference ---
     if not _scheduler:
         return
     agents = list_agents()
@@ -6690,16 +6691,9 @@ def generate_next_prompt_suggestion(session) -> str | None:
 
 
 def _auto_memory_extract(agent_id: str, user_message: str, assistant_response: str):
-    """Background: check if the conversation exchange contains info worth auto-storing.
-    Uses lightweight heuristics first, then optional LLM for borderline cases."""
-    # Set thread-local context for this background thread
-    _thread_local.current_agent = AgentConfig(agent_id)
-    _thread_local.memory_store = MemoryStore(agent_id)
-    try:
-        _auto_memory_extract_inner(agent_id, user_message, assistant_response)
-    finally:
-        _thread_local.current_agent = None
-        _thread_local.memory_store = None
+    """MemPalace migration: disabled. Auto-memory extraction replaced by mempalace MCP
+    (agents are expected to call mempalace_add_drawer / mempalace_diary_write themselves)."""
+    return
 
 
 def _auto_memory_extract_inner(agent_id: str, user_message: str, assistant_response: str):
@@ -7095,7 +7089,9 @@ Be selective — only report meaningful relationships, not superficial ones."""
 
 
 def ensure_relationship_discovery_schedules():
-    """Ensure scheduler entries exist for all agents with relationship_discovery enabled."""
+    """MemPalace migration: disabled. Relationship discovery replaced by mempalace KG."""
+    return
+    # --- legacy implementation kept for reference ---
     if not _scheduler:
         return
     agents = list_agents()
@@ -7633,7 +7629,10 @@ def get_autodream_status(agent_id: str) -> dict | None:
 
 
 def trigger_autodream(agent_id: str):
-    """Run all autodream passes and produce a health report. Background thread."""
+    """MemPalace migration: disabled. Autodream consolidation replaced by mempalace's
+    own dedup/staleness/conflict passes (or simply the verbatim philosophy)."""
+    return
+    # --- legacy implementation kept for reference ---
     ad_cfg = _get_autodream_config(agent_id)
     if not ad_cfg.get("enabled"):
         return
