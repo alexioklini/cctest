@@ -2696,6 +2696,9 @@ class MCPManager:
         except (json.JSONDecodeError, OSError):
             return 0
 
+        if isinstance(config, dict) and isinstance(config.get("mcpServers"), dict):
+            config = config["mcpServers"]
+
         count = 0
         for name, cfg in config.items():
             transport = cfg.get("transport", "stdio")
