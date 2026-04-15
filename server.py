@@ -5018,31 +5018,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     @classmethod
     def _qmd_trigger_update(cls, delay: float = 2.0) -> None:
-        """Schedule qmd update+embed after `delay` seconds, cancelling any pending one."""
-        with cls._qmd_update_lock:
-            if cls._qmd_update_timer is not None:
-                cls._qmd_update_timer.cancel()
-            def _run():
-                cls._qmd_run(["update"], timeout=120)
-                cls._qmd_run(["embed"], timeout=300)
-            cls._qmd_update_timer = threading.Timer(delay, _run)
-            cls._qmd_update_timer.daemon = True
-            cls._qmd_update_timer.start()
+        """MemPalace migration: no-op. QMD is no longer used."""
+        return
 
     @staticmethod
     def _qmd_run(args: list, timeout: int = 10) -> bool:
-        """Run a qmd command. Returns True on success."""
-        qmd_bin = BrainAgentHandler._find_qmd()
-        if not qmd_bin:
-            return False
-        try:
-            env = os.environ.copy()
-            env["PATH"] = os.path.dirname(qmd_bin) + ":" + env.get("PATH", "")
-            r = subprocess.run([qmd_bin] + args, capture_output=True, text=True,
-                               timeout=timeout, env=env)
-            return r.returncode == 0
-        except Exception:
-            return False
+        """MemPalace migration: no-op. QMD is no longer used."""
+        return False
 
     def _qmd_register_collection(self, agent_id: str, agent_dir: str) -> None:
         """Add a QMD collection for an agent if QMD is running and collection doesn't exist.
@@ -5062,13 +5044,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _is_qmd_running() -> bool:
-        """Check if QMD is reachable with a lightweight socket connect (no session created)."""
-        import socket
-        try:
-            with socket.create_connection(("localhost", _QMD_PORT), timeout=1):
-                return True
-        except (OSError, socket.timeout):
-            return False
+        """MemPalace migration: QMD is no longer used; always return False so all
+        QMD-dependent code paths short-circuit silently."""
+        return False
 
     @staticmethod
     def _is_telegram_running() -> bool:
@@ -8076,7 +8054,9 @@ def main():
             except Exception:
                 pass
 
-    threading.Thread(target=_qmd_index_keeper, daemon=True, name="qmd-index-keeper").start()
+    # MemPalace migration: QMD index keeper thread disabled; memory layer is now
+    # mempalace MCP. The _qmd_index_keeper() function above is dead code and will
+    # be removed in C8 cleanup.
 
     # Start server
     server = ThreadingHTTPServer((args.host, args.port), BrainAgentHandler)
