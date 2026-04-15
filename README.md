@@ -12,44 +12,39 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
        │                │                │
        └────────────────┼────────────────┘
                         │ HTTP/SSE
-                ┌───────┴───────┐  REST  ┌──────────────────┐
-                │   server.py   │◄──────▶│  sdk_sidecar.py  │
-                │  ┌──────────┐ │ poll   │  (REST API on    │
-                │  │Scheduler │ │ events │   port 8421)     │
-                │  │Memory    │ │        └────────┬─────────┘
-                │  │/mcp (MCP)│◄─── MCP HTTP ────┘
-                │  │Hooks     │ │              │
-                │  │Sessions  │ │              ▼
-                │  └──────────┘ │     LLM API (oMLX / Claude)
+                ┌───────┴───────┐
+                │   server.py   │
+                │  ┌──────────┐ │
+                │  │Scheduler │ │
+                │  │/mcp (MCP)│ │
+                │  │Hooks     │ │
+                │  │Sessions  │ │
+                │  └──────────┘ │──▶ LLM providers (Bifrost, Kilo)
                 └───────┬───────┘
-                        │──▶ QMD (hybrid search, port 8181)
-                        └──▶ MCP servers, Gmail, Exa, tools
+                        │──▶ MemPalace MCP (memory)
+                        └──▶ other MCP servers, Gmail, Exa, tools
 ```
 
 ## Features
 
 ### Core
-- **Multi-agent system** — agents with personalities (`soul.md`), avatars, teams, memory, model preferences
-- **30+ built-in tools** — file ops, shell, search, web, Gmail, memory, delegation, scheduling, MCP
+- **Multi-agent system** — agents with personalities (`soul.md`), avatars, teams, model preferences
+- **30+ built-in tools** — file ops, shell, search, web, Gmail, delegation, scheduling, MCP
+- **Memory via MCP** — long-term memory is provided by the [MemPalace](https://github.com/) MCP server, wired per-agent in `mcp.json`
 - **Projects** — per-agent scoped workspaces with documents, watched folders, and chat scoping
 - **Agent workflows** — YAML-defined multi-step pipelines with approval gates and variable substitution
 - **Custom slash commands** — user-defined prompt templates with `{{variable}}` interpolation
 
 ### Frontends
-- **Web UI** — Claude.ai-style sidebar layout with multi-view navigation (Chat, Chats, Projects, Knowledge Graph, Customize), light/dark themes with Anthropic fonts
+- **Web UI** — Claude.ai-style sidebar layout with multi-view navigation (Chat, Chats, Projects, Artifacts, Scheduled, Customize), light/dark themes with Anthropic fonts
 - **TUI** — Rich + prompt_toolkit, 50+ slash commands, autocomplete
 - **Multi-messaging** — adapter framework for Telegram + future Discord/Slack channels
 - **Remote nodes** — lightweight agents on remote machines with centralized management, launchd install, settings UI
 
 ### Intelligence
-- **Knowledge graph memory** — QMD hybrid search (BM25 + vector + LLM reranking) with relationship traversal and auto-discovery
-- **Auto memory** — automatic memory creation from conversations (corrections, decisions, preferences) via background LLM extraction
-- **Autodream consolidation** — nightly memory maintenance: deduplication, staleness detection, conflict resolution, skill candidate identification, health scoring with live status tracking
-- **Continuous summarization** — memory summary refreshes at token thresholds during active conversations
-- **Knowledge graph visualization** — interactive force-directed canvas with search, filtering, relationship discovery
+- **MemPalace memory (MCP)** — agents store and recall memories by calling MemPalace MCP tools. Consolidation, dedup, and retrieval strategy live inside MemPalace, not in brain-agent
 - **Project notes** — markdown notes with AI-assisted editing (uses write_file/edit_file tools), folder organization, auto-reload
 - **Document ingestion (RAG)** — PDF, DOCX, HTML, URL parsing with auto-chunking and watched folders
-- **Chat transcript indexing** — conversations indexed in QMD for semantic search across all chat history
 - **LLM chat summaries** — auto-generated one-line summaries for sidebar display
 - **Plan mode** — read-only analysis that disables write tools
 - **LLM input refinement** — context-aware prompt improvement before sending
@@ -57,9 +52,9 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
 - **Chat file attachments** — files created by agents appear as viewable/downloadable attachments in chat and sidebar
 
 ### Infrastructure
-- **Multi-provider routing** — auto-routing across Anthropic, OpenAI-compatible, MiniMax, Kilo, local oMLX
+- **Multi-provider routing** — OpenAI-compatible gateways (Bifrost local, Kilo cloud); single source of truth via `resolve_provider_for_model()`
 - **Provider fallback** — exponential backoff retry with ordered fallback chains, message history rollback on mid-tool-loop failures, transient SSE error detection
-- **Token optimization** — per-agent tool group filtering (13 groups), Anthropic prompt caching (cache_control), system prompt caching (60s TTL), configurable memory summary cap, compact threshold override, scheduled task tool restriction, tools.md trimmed to essentials, context fill display with manual compact button
+- **Token optimization** — per-agent tool group filtering, Anthropic prompt caching (cache_control), system prompt caching (60s TTL), compact threshold override, scheduled task tool restriction, tools.md trimmed to essentials, context fill display with manual compact button
 - **Cost tracking + Rate limiting** — per-agent spend monitoring, budgets, throttling
 - **Observability** — span-based tracing for LLM calls and tool execution
 - **Audit trail** — append-only log of all agent actions, searchable, CSV export
@@ -112,7 +107,7 @@ brain-agent/
   adapters.py           # Multi-messaging adapter framework (Telegram, Discord, Slack)
   notifications.py      # Notification manager (webhook, email, in-app)
   node.py               # Remote node agent (runs on remote machines)
-  claude_cli.py         # Core engine: tools, agents, memory, MCP, scheduler
+  claude_cli.py         # Core engine: tools, agents, MCP, scheduler
   config.json           # Provider config (not in git)
   config.example.json   # Config template
   tools.md              # Global tool usage guide
@@ -121,14 +116,13 @@ brain-agent/
   agents/
     main/               # Default orchestrator agent
       soul.md           # Personality, role, instructions
-      agent.json        # Config: description, model, avatar, max_context, rate_limits
+      agent.json        # Config: description, model, avatar, rate_limits
       commands.json     # Custom slash commands
-      mcp.json          # MCP server connections (global)
+      mcp.json          # MCP server connections (includes MemPalace memory server)
       gmail.json        # Gmail credentials (not in git)
       skills/           # Installed skills
       workflows/        # YAML workflow definitions
       projects/         # Per-project scoped workspaces
-      *.md              # Memory files (indexed by QMD)
       chats.db          # Chat history
       scheduler.db      # Scheduled tasks
       costs.db          # Cost tracking
@@ -165,10 +159,6 @@ brain-agent/
 | `gmail_search` | Search with Gmail syntax |
 | `gmail_send` | Send email |
 | `gmail_reply` | Reply preserving threading |
-| `memory_store` | Save to agent's memory |
-| `memory_recall` | Search agent's memory (QMD hybrid search) |
-| `memory_shared` | Read/write main agent's shared memory |
-| `memory_delete` | Delete a memory |
 | `delegate_task` | Delegate to another agent (sync/async) |
 | `task_status` | Check background task status |
 | `task_cancel` | Cancel running background task |
@@ -193,7 +183,7 @@ Access at `http://127.0.0.1:8420/` after starting the server.
 - **Tool display** — collapsible tool blocks with full args, persisted across reloads, toggle to hide/show
 - **Interactive agents** — agents can ask clarifying questions (AskUserQuestion) in TUI with selectable options
 - **Chats browser** — searchable list with All/Archived tabs
-- **Agent config** — modal with tabs: Soul (AI-assisted editing), Settings, Skills, MCP, Schedule, Projects, Workflows, Commands, Memory
+- **Agent config** — modal with tabs: Soul (AI-assisted editing), Agent, Skills, Hooks, Schedule, MCP, Tokens
 - **Settings dashboard** — vertical nav with grouped sections: System, Agents, Monitoring, Data
 - **Cost display** — per-session and per-message cost in status bar
 - **Light/dark theme** — Anthropic Sans/Serif/Mono fonts, warm palette, toggle saved to localStorage
@@ -202,11 +192,10 @@ Access at `http://127.0.0.1:8420/` after starting the server.
 
 Each agent has:
 - **`soul.md`** — personality, role, capabilities
-- **`agent.json`** — config: display name, description, model, avatar, max_context
-- **Own memory** — QMD-indexed markdown files with hybrid search (BM25 + vector + reranking)
+- **`agent.json`** — config: display name, description, model, avatar
+- **Memory** — provided by the MemPalace MCP server wired per-agent in `mcp.json`
 - **Own skills** — agent-specific + inherits main's global skills
 - **Own MCP servers** — agent-specific + inherits main's global servers
-- **Shared memory** — all agents can read/write main's memory
 
 Agents see each other via the **agent registry** and can delegate tasks. Pause/delete agents (except main). Custom display names and pixel art avatars.
 
@@ -268,31 +257,27 @@ Each task runs with a specified agent and model in its own context. Results stor
 {
   "server": {"host": "0.0.0.0", "port": 8420},
   "providers": {
-    "omlx": {
-      "base_url": "http://127.0.0.1:8000/v1",
+    "bifrost": {
+      "base_url": "http://127.0.0.1:7777/v1",
       "api_key": "",
-      "type": "openai",
-      "default_model": "Crow-4B-Opus-4.6-Distill"
+      "type": "openai"
     },
-    "claude": {
-      "base_url": "http://127.0.0.1:8317/v1",
-      "api_key": "brain-agent",
-      "type": "anthropic",
-      "default_model": "claude-opus-4-6"
+    "kilo": {
+      "base_url": "https://api.kilo.ai/api/gateway/v1",
+      "api_key": "...",
+      "type": "openai"
     }
   },
-  "default_provider": "omlx",
-  "max_context": 131072,
+  "default_provider": "kilo",
   "telegram": {"bot_token": "...", "allowed_users": [123456]}
 }
 ```
 
-**Multi-provider routing:** The server automatically routes API calls to the correct provider based on which model is selected. No manual switching needed — select `claude-opus-4-6` and it routes to Claude via CLIProxyAPI, select `Crow-4B-Opus-4.6-Distill` and it routes to the local oMLX server.
+**Multi-provider routing:** `resolve_provider_for_model(model)` in `claude_cli.py` is the single source of truth for mapping a model ID to provider credentials. All paths (chat, delegate, scheduler, warmup) use it.
 
-**oMLX (Local MLX Inference):** A local [oMLX](https://github.com/jundot/omlx) instance on port 8000 serves quantized MLX models on Apple Silicon. Models are stored in `~/.omlx/models/` and auto-discovered. Install: `brew install jundot/omlx/omlx`, start: `brew services start omlx`. Admin dashboard at `http://127.0.0.1:8000/admin`.
-
-**CLIProxyAPI (Claude OAuth Proxy):** A local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) instance on port 8317 provides Claude models via OAuth — no API key costs. Also serves Gemini and Qwen models from stored OAuth tokens. Install: `brew install cliproxyapi`, login: `cliproxyapi -claude-login`, start: `brew services start cliproxyapi`. Management panel at `http://127.0.0.1:8317/`.
-```
+All providers are OpenAI-compatible (`/v1/chat/completions`). Current first-party gateways:
+- **Bifrost** — local gateway on `http://localhost:7777/v1`
+- **Kilo** — cloud gateway on `https://api.kilo.ai/api/gateway/v1`
 
 ### `agent.json`
 
@@ -301,8 +286,7 @@ Each task runs with a specified agent and model in its own context. Results stor
   "display_name": "Research Assistant",
   "description": "Deep research and analysis",
   "model": "model-name",
-  "avatar": "scientist",
-  "max_context": 32768
+  "avatar": "scientist"
 }
 ```
 
@@ -335,9 +319,6 @@ Each task runs with a specified agent and model in its own context. Results stor
 | GET | `/v1/agents/activity` | Active agent tasks/chats |
 | GET | `/v1/models/config` | Model routing configuration |
 | POST | `/v1/models/config` | Save model routing config |
-| GET | `/v1/services/qmd/docs` | List/read QMD indexed documents with index health |
-| POST | `/v1/services/qmd/docs` | Save document (auto-triggers reindex) |
-| DELETE | `/v1/services/qmd/docs` | Delete document |
 | POST | `/v1/agents/rename` | Rename agent |
 | POST | `/v1/restart` | Restart server |
 | GET/POST | `/v1/agents/{id}/projects` | Project CRUD |
@@ -358,8 +339,6 @@ Each task runs with a specified agent and model in its own context. Results stor
 | GET/POST | `/v1/nodes` | Remote node management |
 | GET/POST | `/v1/mcp/connections` | Dynamic MCP connections |
 | GET | `/v1/mcp/registry` | MCP server templates |
-| GET | `/v1/agents/{id}/memories` | List memories with content |
-| DELETE | `/v1/agents/{id}/memories` | Delete memory by name |
 | POST | `/v1/agents/{id}/soul-chat` | AI-assisted soul.md editing |
 | POST | `/v1/chat/answer` | Answer agent's AskUserQuestion |
 
@@ -367,6 +346,9 @@ Each task runs with a specified agent and model in its own context. Results stor
 
 | Version | Date | Changes |
 |---|---|---|
+| 8.0.0 | 2026-04-15 | **MemPalace migration (C1–C10)**: memory moved fully to an external MCP server. Removed all built-in memory code paths: `memory_store`/`recall`/`shared`/`delete` tools, QMD hybrid search daemon and indexer, knowledge graph view + auto-discovery + relationship discovery, autodream consolidation, auto memory extraction, memory summary injection, continuous summarization, entity index, and all `/v1/agents/{id}/memories`, `/memory-health`, `/memory-summary`, `/graph*`, `/v1/services/qmd*` HTTP endpoints. Web UI Memory tab and Knowledge Graph view stripped. Old per-agent `*.md` memory files deleted from disk (soul.md preserved). Memory is now entirely agent-driven via MemPalace `mcp_*` tool calls |
+| 7.1.0 | 2026-04-08 | Next-Prompt Suggestions (Claude Code-style composer ghost text) |
+| 7.0.0 | 2026-04-02 | Native agentic loop restored; PI and Anthropic SDK sidecars removed |
 | 5.3.0 | 2026-03-31 | Claude.ai-style web UI rewrite (sidebar + multi-view, Anthropic fonts, warm themes). Tool call blocks with full args persist across reloads. Interactive mode: agents ask questions via AskUserQuestion with TUI support. New endpoints: memory CRUD, soul.md AI editing, MCP registry. Sidecar captures input_json_delta for tool args |
 | 5.2.0 | 2026-03-29 | Mission Control cockpit — dashboard-first UI with agent cards, cost feed, team badges, session cache |
 | 5.1.0 | 2026-03-28 | Real-time streaming + Claude Code skills. Sidecar rewritten as REST API for true token-by-token streaming. MCP tools via /mcp JSON-RPC endpoint. Hooks moved server-side (SDK hooks caused buffering). Claude Code plugin GUI: browse, install, toggle 121 plugins per agent. SDK audit: @tool decorator, allowed_tools, correct hook signatures |
