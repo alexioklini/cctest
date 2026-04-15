@@ -521,6 +521,11 @@ textarea { resize: none; }
   width: 100%;
 }
 .composer-input::placeholder { color: var(--text-400); }
+.composer-input.has-suggestion::placeholder {
+  color: var(--text-300);
+  font-style: italic;
+  opacity: 0.75;
+}
 
 .composer-footer {
   display: flex;
@@ -4156,6 +4161,78 @@ function updateSendButton() {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   NEXT-PROMPT SUGGESTIONS (ghost text in composer)
+   ═══════════════════════════════════════════════════════════ */
+const NextPrompt = {
+  _suggestion: null,
+  _origPlaceholder: null,
+  _fetchToken: 0,
+
+  _input() {
+    return document.getElementById('chat-input');
+  },
+
+  clear() {
+    this._suggestion = null;
+    const input = this._input();
+    if (!input) return;
+    input.classList.remove('has-suggestion');
+    if (this._origPlaceholder != null) {
+      input.placeholder = this._origPlaceholder;
+    }
+  },
+
+  set(text) {
+    const input = this._input();
+    if (!input || !text) return;
+    // Only show if input is empty — otherwise we'd stomp what the user typed
+    if (input.value.length > 0) return;
+    this._suggestion = text;
+    if (this._origPlaceholder == null) this._origPlaceholder = input.placeholder || '';
+    input.placeholder = text;
+    input.classList.add('has-suggestion');
+  },
+
+  accept({ submit = false } = {}) {
+    const input = this._input();
+    const text = this._suggestion;
+    if (!input || !text) return false;
+    input.value = text;
+    this.clear();
+    autoResizeInput(input);
+    updateSendButton();
+    if (submit) {
+      sendMessage();
+    } else {
+      input.focus();
+      const end = input.value.length;
+      try { input.setSelectionRange(end, end); } catch (e) {}
+    }
+    return true;
+  },
+
+  active() {
+    return !!this._suggestion;
+  },
+
+  async fetchFor(sessionId) {
+    if (!sessionId) return;
+    const token = ++this._fetchToken;
+    try {
+      const data = await API.get(`/v1/sessions/${encodeURIComponent(sessionId)}/next-prompt`);
+      // Drop stale responses if a newer fetch was issued in the meantime
+      if (token !== this._fetchToken) return;
+      // Drop if the active session changed while we were waiting
+      if (state.activeChat?.sessionId !== sessionId) return;
+      const text = (data?.suggestion || '').trim();
+      if (text) this.set(text);
+    } catch (e) {
+      // Silent — suggestions are best-effort
+    }
+  },
+};
+
+/* ═══════════════════════════════════════════════════════════
    NAVIGATION
    ═══════════════════════════════════════════════════════════ */
 function navigateTo(view, opts) {
@@ -5679,6 +5756,7 @@ async function ensureSession(chat) {
 }
 
 async function openSession(sessionId, agentId) {
+  NextPrompt.clear();
   // Abort any running stream before switching
   const prevChat = state.activeChat;
   if (prevChat?.streaming) {
@@ -5771,6 +5849,7 @@ async function openSession(sessionId, agentId) {
 }
 
 function newChat() {
+  NextPrompt.clear();
   if (!state.activeAgentId) {
     if (state.agents.length) selectAgent(state.agents[0].name);
     else return;
@@ -5860,8 +5939,16 @@ async function sendMessage() {
     ? document.getElementById('welcome-input')
     : document.getElementById('chat-input');
 
+  // If composer is empty but a ghost-text suggestion is active, accept it and use that
+  if (NextPrompt.active() && !(input?.value?.trim())) {
+    NextPrompt.accept({ submit: false });
+  }
+
   let text = input?.value?.trim();
   if (!text && !state._pendingImages.length && !state._pendingFiles.length) return;
+
+  // Clear any stale suggestion — user is sending something new
+  NextPrompt.clear();
 
   // Ensure agent selected
   if (!state.activeAgentId) {
@@ -6082,6 +6169,11 @@ async function sendMessage() {
 
         // Reload sessions for sidebar
         loadAgentSessions(chat.agent);
+
+        // Fetch a "next prompt" suggestion for the composer ghost text (best-effort)
+        if (isActive()) {
+          NextPrompt.fetchFor(chat.sessionId);
+        }
       },
       error: (d) => {
         chat.streaming = false;
@@ -8992,13 +9084,15 @@ async function switchAgentTab(agentId, tab, btn) {
       const amEnabled = amCfg.enabled !== false;
       const adCfg = summary?.autodream || {};
       const adEnabled = adCfg.enabled !== false;
+      const npsCfg = summary?.next_prompt_suggestions || {};
+      const npsEnabled = npsCfg.enabled !== false;
       const memories = memData?.memories || [];
       const resolvedModels = summary?.resolved_models || {};
       const mc = state.modelsConfig?.models || {};
       const modelOptions = Object.entries(mc).filter(([,c])=>c.enabled).sort((a,b)=>(b[1].priority||0)-(a[1].priority||0));
       const modelSelect = (id, current) => `<select id="${id}" class="form-select" style="font-size:11px;max-width:200px"><option value="">Auto</option>${modelOptions.map(([mid])=>`<option value="${esc(mid)}"${mid===current?' selected':''}>${esc(modelShortName(mid))}</option>`).join('')}</select>`;
 
-      let html = '<div style="padding:16px;display:grid;gap:16px">';
+      let html = '<div style="padding:16px;display:grid;grid-template-columns:minmax(0,1fr);gap:16px">';
 
       // ── Memory Summary ──
       html += `
@@ -9078,6 +9172,38 @@ async function switchAgentTab(agentId, tab, btn) {
             <span style="font-size:11px;color:var(--text-400)">Fallback:</span>
             ${modelSelect('mem-am-fallback', resolvedModels.auto_memory?.fallback || '')}
             <button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="_memSetModel('${esc(agentId)}','set_auto_memory_model',document.getElementById('mem-am-model').value,document.getElementById('mem-am-fallback').value)">Save</button>
+          </div>
+        </div>
+      `;
+
+      // ── Next-Prompt Suggestions ──
+      html += `
+        <div style="border-top:1px solid var(--border);padding-top:14px">
+          <div style="font-size:14px;font-weight:600;color:var(--text-100);margin-bottom:4px">Next-Prompt Suggestions</div>
+          <div style="font-size:11px;color:var(--text-400);margin-bottom:8px">
+            Ghost-text hint in the composer predicting your next likely message after each assistant reply. Press Tab or → to accept. Reuses the session model by default for prompt-cache warmth.
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span style="width:8px;height:8px;border-radius:50%;background:${npsEnabled ? 'var(--success)' : 'var(--error)'}"></span>
+            <span style="font-size:12px;color:var(--text-300)">${npsEnabled ? 'Enabled' : 'Disabled'}</span>
+            <span style="font-size:11px;font-family:var(--font-mono);color:var(--text-400)">max ${npsCfg.max_words || 15} words${npsCfg.require_cache ? ' · cache required' : ''}</span>
+            <div style="margin-left:auto">
+              <button class="btn-secondary" style="font-size:11px;padding:3px 10px" onclick="_memToggleNPS('${esc(agentId)}',${!npsEnabled})">${npsEnabled ? 'Disable' : 'Enable'}</button>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
+            <span style="font-size:11px;color:var(--text-400)">Model:</span>
+            <select id="mem-nps-model" class="form-select" style="font-size:11px;max-width:220px">
+              <option value="">Session model (cache-warm)</option>
+              ${modelOptions.map(([mid])=>`<option value="${esc(mid)}"${mid===(npsCfg.model||'')?' selected':''}>${esc(modelShortName(mid))}</option>`).join('')}
+            </select>
+            <span style="font-size:11px;color:var(--text-400)">Max words:</span>
+            <input id="mem-nps-maxwords" type="number" min="3" max="40" value="${npsCfg.max_words || 15}" class="form-input" style="font-size:11px;width:60px;padding:3px 6px" />
+            <label style="font-size:11px;color:var(--text-400);display:flex;align-items:center;gap:4px">
+              <input type="checkbox" id="mem-nps-reqcache" ${npsCfg.require_cache ? 'checked' : ''} />
+              require cache
+            </label>
+            <button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="_memSaveNPS('${esc(agentId)}')">Save</button>
           </div>
         </div>
       `;
@@ -10202,6 +10328,32 @@ window._memToggleAM = async function(agentId, enabled) {
   try {
     await API.post(`/v1/agents/${encodeURIComponent(agentId)}/memory-summary`, { action: 'toggle_auto_memory', enabled });
     showToast('Auto memory ' + (enabled ? 'enabled' : 'disabled'));
+    switchAgentTab(agentId, 'memory');
+  } catch(e) { showToast('Error: ' + e.message, true); }
+};
+
+window._memToggleNPS = async function(agentId, enabled) {
+  try {
+    await API.post(`/v1/agents/${encodeURIComponent(agentId)}/memory-summary`, {
+      action: 'set_next_prompt_config',
+      next_prompt_suggestions: { enabled: !!enabled },
+    });
+    showToast('Next-prompt suggestions ' + (enabled ? 'enabled' : 'disabled'));
+    switchAgentTab(agentId, 'memory');
+  } catch(e) { showToast('Error: ' + e.message, true); }
+};
+
+window._memSaveNPS = async function(agentId) {
+  try {
+    const model = document.getElementById('mem-nps-model')?.value || '';
+    const maxWordsRaw = document.getElementById('mem-nps-maxwords')?.value;
+    const maxWords = Math.max(3, Math.min(40, parseInt(maxWordsRaw || '15', 10) || 15));
+    const requireCache = !!document.getElementById('mem-nps-reqcache')?.checked;
+    await API.post(`/v1/agents/${encodeURIComponent(agentId)}/memory-summary`, {
+      action: 'set_next_prompt_config',
+      next_prompt_suggestions: { model, max_words: maxWords, require_cache: requireCache },
+    });
+    showToast('Next-prompt suggestions saved');
     switchAgentTab(agentId, 'memory');
   } catch(e) { showToast('Error: ' + e.message, true); }
 };
@@ -11903,11 +12055,36 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// Tab / ArrowRight to accept next-prompt ghost-text suggestion (chat input only)
+document.addEventListener('keydown', function(e) {
+  if (e.target?.id !== 'chat-input') return;
+  if (!NextPrompt.active()) return;
+  const input = e.target;
+  // Tab accepts + edits; ArrowRight accepts only when cursor is at end of an empty input
+  if (e.key === 'Tab' && !e.shiftKey) {
+    if (input.value.length === 0) {
+      e.preventDefault();
+      NextPrompt.accept({ submit: false });
+    }
+  } else if (e.key === 'ArrowRight') {
+    if (input.value.length === 0) {
+      e.preventDefault();
+      NextPrompt.accept({ submit: false });
+    }
+  } else if (e.key === 'Escape') {
+    NextPrompt.clear();
+  }
+}, true);
+
 // Input event for slash popup
 ['welcome-input', 'chat-input'].forEach(id => {
   const el = document.getElementById(id);
   if (!el) return;
   el.addEventListener('input', function() {
+    // Any typing dismisses an active suggestion (chat-input only)
+    if (id === 'chat-input' && NextPrompt.active() && this.value.length > 0) {
+      NextPrompt.clear();
+    }
     if (this.value.startsWith('/') && this.value.length > 0) {
       showSlashPopup(this);
     } else {

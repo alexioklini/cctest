@@ -109,6 +109,29 @@ Files generated during chat are treated as artifacts when written to `agents/<na
 - **Browse API**: `GET /v1/artifacts/browse?agent_id=X&limit=N` — returns all artifacts across sessions with text previews
 - **Click-through**: clicking a card in browse view opens the source chat session + artifact panel
 
+### Next-Prompt Suggestions (Ghost Text)
+
+Claude Code-style composer ghost text: after each assistant response, the web UI fetches a
+short predicted-next-user-message and shows it as dimmed placeholder text in the chat input.
+Tab or → accepts into the textarea, Enter on empty input accepts + sends, Escape or typing dismisses.
+
+- **Endpoint**: `GET /v1/sessions/<id>/next-prompt` — synchronous; runs a small LLM call reusing
+  the session's messages with a meta-instruction to predict the next user message under N words
+- **Cache reuse**: by default uses the session's current model so the call hits the same prompt
+  cache as the main chat (near-free). An override model can be set, at the cost of breaking cache reuse
+- **Config** in `agent.json` → `next_prompt_suggestions`:
+  - `enabled` (bool, default true) — feature toggle
+  - `model` (string, default empty) — override model ID; empty = reuse session model
+  - `max_words` (int, default 15) — soft cap on suggestion length
+  - `require_cache` (bool, default false) — only run when agent has `token_config.prompt_caching` enabled
+- **Config UI**: Agent config modal → Memory tab → Next-Prompt Suggestions card
+  (toggle, model dropdown, max-words, require-cache checkbox)
+- **Client module**: `NextPrompt` in `web/index.html` — fetch-token stale guard, active-session
+  guard, dismiss-on-type, placeholder-based rendering (no overlay positioning)
+- **Engine**: `generate_next_prompt_suggestion(session)` in `claude_cli.py` — strips metadata
+  fields from messages, resolves provider via `resolve_provider_for_model`, calls
+  `send_message_with_fallback` with `tools=False` and a tiny max_tokens budget
+
 ### Agentic Loop (Native)
 
 All agents use the native Python agentic loop in `claude_cli.py`. OpenAI-compatible
@@ -418,6 +441,7 @@ MCP: mcp_* (dynamic, from connected MCP servers)
 Server runs on port 8420 (configurable). Key endpoints:
 - `POST /v1/chat` — SSE streaming with keepalive
 - `POST /v1/chat/answer` — deliver user answer to interactive AskUserQuestion
+- `GET /v1/sessions/<id>/next-prompt` — predicted next-user-message for composer ghost text
 - `POST /v1/sessions` — auto-resolves provider from model
 - `GET /v1/schedule/running` — live task monitoring
 - `POST /v1/skills/browse` — searches 7000+ skills from ClawHub

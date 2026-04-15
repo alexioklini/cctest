@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "7.0.0"
-VERSION_DATE = "2026-04-14"
+VERSION = "7.1.0"
+VERSION_DATE = "2026-04-15"
 CHANGELOG = [
     ("7.0.0", "2026-04-14", "Native agentic loop restored. The v6.0.0 PI Agent SDK unification is reverted: the Node.js pi_sidecar process, the Anthropic Agent SDK sidecar (sdk_sidecar.py / sdk_backend.py), and all Mistral SDK paths are removed. Chat, delegate, scheduler, refine, and soul_chat all flow through the native Python agentic loop (send_message / _handle_openai_response / middleware pipeline). The Lossless Context Manager (ContextManager + context.db) is back as the compaction engine — SSE compacting/compacted events and the /v1/context/* endpoints work again. Interpretation B: all providers are OpenAI-compatible (Bifrost, Kilo). api_type is always 'openai'; Anthropic and Mistral wire formats are gone. Code mode is removed from both UI and server (was tied to PI). The /v1/tools/call and /v1/hooks/run endpoints are deleted — Brain tools run in-process through _execute_tool() which fires hooks natively. Net diff: server.py -1100 lines, pi_sidecar/ directory deleted. See stage commits dcf73a4..30468b1."),
     ("5.14.0", "2026-04-10", "Unified provider resolution and multi-provider model support. Single resolve_provider_for_model() function in claude_cli.py is now the sole source of truth for model→provider credential resolution — used by interactive chat, PI sidecar (code mode), SDK sidecar, _run_delegate (summaries, auto-memory, scheduled tasks), warmup, and all background LLM calls. Provider-scoped model keys (provider/model_id) support multiple providers offering the same model with different API keys. Mistral model discovery via SDK (client.models.list()) instead of broken raw HTTP. Models tab: All/None buttons per provider for bulk enable/disable. Orphaned models from deleted providers cleaned up on sync. Code mode model dropdown fixed (dropdown-menu class, consistent with chat mode). get_api_model_id() resolves scoped keys to actual API model IDs across all call sites."),
@@ -6636,6 +6636,120 @@ def _get_auto_memory_config(agent_id: str) -> dict:
         "model": am.get("model", ""),
         "model_fallback": am.get("model_fallback", ""),
     }
+
+
+def _get_next_prompt_config(agent_id: str) -> dict:
+    """Read next_prompt_suggestions settings from agent.json, merging with defaults.
+
+    Fields:
+      enabled: bool — feature toggle (default True)
+      model: str — override model ID; empty = reuse session model (cache-warm)
+      max_words: int — soft cap on suggestion length (default 15)
+      require_cache: bool — only run when agent has prompt_caching enabled (default False)
+    """
+    cfg = AgentConfig(agent_id).config
+    nps = cfg.get("next_prompt_suggestions", {})
+    if not isinstance(nps, dict):
+        nps = {}
+    return {
+        "enabled": nps.get("enabled", True),
+        "model": nps.get("model", ""),
+        "max_words": int(nps.get("max_words", 15)),
+        "require_cache": bool(nps.get("require_cache", False)),
+    }
+
+
+def generate_next_prompt_suggestion(session) -> str | None:
+    """Generate a short "next user prompt" suggestion based on the session's
+    conversation so far. Returns the raw suggestion text, or None if disabled/unavailable.
+
+    Reuses the session's current model by default for prompt-cache warmth.
+    An override model can be set via agent.json `next_prompt_suggestions.model`.
+    """
+    try:
+        cfg = _get_next_prompt_config(session.agent_id)
+        if not cfg.get("enabled", True):
+            return None
+
+        messages = list(session.messages or [])
+        if not messages:
+            return None
+
+        # Require at least one assistant response before suggesting
+        if not any(m.get("role") == "assistant" for m in messages):
+            return None
+
+        # Cache-warmth gate (optional)
+        if cfg.get("require_cache"):
+            try:
+                agent_cfg = AgentConfig(session.agent_id).config
+                tcfg = agent_cfg.get("token_config", {}) or {}
+                if not tcfg.get("prompt_caching", True):
+                    return None
+            except Exception:
+                pass
+
+        max_words = max(3, min(40, cfg.get("max_words", 15)))
+        instruction = (
+            "Based on the conversation above, predict the user's most likely "
+            f"next message. Respond with ONLY that message text (no quotes, no preamble, "
+            f"no explanation). Keep it under {max_words} words. If nothing plausible "
+            "comes to mind, respond with the single token: NONE"
+        )
+
+        # Strip metadata fields the API rejects (mirror augmented_messages pattern)
+        clean_msgs = []
+        for m in messages:
+            if not isinstance(m, dict):
+                continue
+            role = m.get("role")
+            content = m.get("content")
+            if role in ("user", "assistant", "system") and content is not None:
+                clean_msgs.append({"role": role, "content": content})
+
+        if not clean_msgs:
+            return None
+
+        clean_msgs.append({"role": "user", "content": instruction})
+
+        override_model = (cfg.get("model") or "").strip()
+        model = override_model or session.model
+        if not model:
+            return None
+
+        prov = resolve_provider_for_model(model)
+
+        text = send_message_with_fallback(
+            clean_msgs,
+            model,
+            prov.get("api_key", ""),
+            prov.get("base_url", ""),
+            prov.get("api_type", "openai"),
+            silent=True,
+            tools=False,
+            event_callback=None,
+            provider_resolver=resolve_provider_for_model,
+            inference_params={"max_tokens": 80, "temperature": 0.7},
+            purpose="next_prompt_suggestion",
+            session_id=None,
+        )
+        if not text:
+            return None
+        text = text.strip().strip('"').strip("'")
+        if not text or text.upper().startswith("NONE"):
+            return None
+        # Soft word cap
+        words = text.split()
+        if len(words) > max_words * 2:
+            text = " ".join(words[: max_words * 2])
+        # Strip trailing punctuation artifacts from tiny models
+        return text[:300]
+    except Exception as e:
+        try:
+            sys.stderr.write(f"[next_prompt_suggestion] error: {e}\n")
+        except Exception:
+            pass
+        return None
 
 
 def _auto_memory_extract(agent_id: str, user_message: str, assistant_response: str):

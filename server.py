@@ -1584,6 +1584,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_get_session_files(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/messages"):
             self._handle_get_messages(path)
+        elif path.startswith("/v1/sessions/") and path.endswith("/next-prompt"):
+            self._handle_next_prompt_suggestion(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/warmup"):
             sid = path.split("/")[3]
             s = sessions.get(sid)
@@ -2184,6 +2186,37 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 resp["summary"] = info.get("summary", "")
                 resp["title"] = info.get("title", "")
         self._send_json(resp)
+
+    def _handle_next_prompt_suggestion(self, path):
+        """GET /v1/sessions/<id>/next-prompt — generate a "predicted next user message"
+        suggestion for the composer ghost-text. Synchronous: calls the LLM using the
+        session's current messages (or an override model) and returns the text.
+        Returns {"suggestion": "..."} or {"suggestion": null} when disabled/empty.
+        """
+        parts = path.split("/")
+        sid = parts[3]
+        session = sessions.get(sid)
+        if not session:
+            self._send_json({"suggestion": None, "error": "session_not_found"}, 404)
+            return
+        try:
+            cfg = engine._get_next_prompt_config(session.agent_id)
+            if not cfg.get("enabled", True):
+                self._send_json({"suggestion": None, "config": cfg})
+                return
+            # Set thread-local agent context so LLM call picks up the right config
+            engine._thread_local.current_agent = engine.AgentConfig(session.agent_id)
+            try:
+                text = engine.generate_next_prompt_suggestion(session)
+            finally:
+                engine._thread_local.current_agent = None
+            self._send_json({
+                "suggestion": text,
+                "model_used": (cfg.get("model") or session.model),
+                "config": cfg,
+            })
+        except Exception as e:
+            self._send_json({"suggestion": None, "error": str(e)}, 500)
 
     def _handle_session_inspect(self, path):
         """GET /v1/sessions/<id>/inspect — full session debug view."""
@@ -5336,6 +5369,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             rd_stats = engine.get_graph_stats(agent_id) if hasattr(engine, 'get_graph_stats') else {}
             am_config = engine._get_auto_memory_config(agent_id)
             ad_config = engine._get_autodream_config(agent_id)
+            nps_config = engine._get_next_prompt_config(agent_id)
             # Resolve actual models used by each pipeline
             ms_primary = config.get("model") or "Crow-9B-HERETIC-4.6-MLX-8bit"
             ms_fallback = config.get("model_fallback") or "claude-sonnet-4-6"
@@ -5350,6 +5384,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "config": config,
                 "auto_memory": am_config,
                 "autodream": ad_config,
+                "next_prompt_suggestions": nps_config,
                 "relationship_discovery": {
                     "config": rd_config,
                     "stats": rd_stats,
@@ -5417,6 +5452,27 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             with open(cfg_path, "w") as f:
                 json.dump(cfg, f, indent=2)
             self._send_json({"status": "updated", "enabled": bool(enabled), "agent": agent_id})
+        elif action == "set_next_prompt_config":
+            nps = body.get("next_prompt_suggestions", {})
+            if not isinstance(nps, dict):
+                nps = {}
+            agent_cfg = engine.AgentConfig(agent_id)
+            cfg = agent_cfg.config
+            current = cfg.get("next_prompt_suggestions", {})
+            if not isinstance(current, dict):
+                current = {}
+            for key in ("enabled", "model", "max_words", "require_cache"):
+                if key in nps:
+                    current[key] = nps[key]
+            cfg["next_prompt_suggestions"] = current
+            cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
+            with open(cfg_path, "w") as f:
+                json.dump(cfg, f, indent=2)
+            self._send_json({
+                "status": "updated",
+                "agent": agent_id,
+                "next_prompt_suggestions": engine._get_next_prompt_config(agent_id),
+            })
         elif action == "toggle_autodream":
             enabled = body.get("enabled", True)
             agent_cfg = engine.AgentConfig(agent_id)
