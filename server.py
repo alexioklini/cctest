@@ -690,14 +690,13 @@ class Session:
     """A conversation session with an agent."""
 
     def __init__(self, agent_id: str = "main", model: str | None = None,
-                 api_key: str = "", base_url: str = "", api_type: str = "anthropic",
+                 api_key: str = "", base_url: str = "",
                  max_context: int = 131072, session_id: str | None = None):
         self.id = session_id or uuid.uuid4().hex[:12]
         self.agent_id = agent_id
         self.model = model or ""
         self.api_key = api_key
         self.base_url = base_url
-        self.api_type = api_type
         self.max_context = max_context
         self.messages: list[dict] = []
         self.cancel_token = engine.CancelToken()
@@ -832,7 +831,6 @@ class SessionManager:
                 agent_id=info["agent_id"], model=model,
                 api_key=prov.get("api_key", server_config.get("api_key", "")),
                 base_url=prov.get("base_url", server_config.get("base_url", "")),
-                api_type=prov.get("api_type", server_config.get("api_type", "anthropic")),
                 max_context=engine.get_model_max_context(model) if model else server_config.get("max_context", 131072),
                 session_id=session_id,
             )
@@ -1173,7 +1171,6 @@ loop_manager = LoopManager()
 server_config = {
     "api_key": "",
     "base_url": "http://localhost:8317/v1",
-    "api_type": "anthropic",
     "default_model": "claude-opus-4-5-20251101",
     "max_context": 131072,
 }
@@ -1216,18 +1213,10 @@ def _trigger_warmup(session):
 
             # Build minimal payload — system prompt + tools only, no dummy user message
             # so the KV cache prefix matches any real first request exactly.
-            # Get tool definitions
             allowed = engine._get_agent_tool_names()
-            if session.api_type in ("openai", "mistral"):
-                tools = engine._filter_tools(engine.TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
-                # OpenAI/Mistral API requires at least one message — use system-only
-                messages = [{"role": "system", "content": system_prompt}]
-                endpoint = f"{session.base_url}/chat/completions"
-            else:
-                tools = engine._filter_tools(engine.TOOL_DEFINITIONS, allowed)
-                # Anthropic API requires at least one user message — unavoidable
-                messages = [{"role": "user", "content": "."}]
-                endpoint = f"{session.base_url}/messages"
+            tools = engine._filter_tools(engine.TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
+            messages = [{"role": "system", "content": system_prompt}]
+            endpoint = f"{session.base_url}/chat/completions"
 
             payload = {
                 "model": engine.get_api_model_id(session.model),
@@ -1236,27 +1225,15 @@ def _trigger_warmup(session):
                 "stream": False,
                 "tools": tools,
             }
-            if session.api_type not in ("openai", "mistral"):
-                payload["system"] = system_prompt
 
             if session._warmup_cancel.is_set():
                 return
 
-            if session.api_type == "mistral":
-                # Mistral warmup via SDK (replicates Vibe CLI behavior)
-                client = engine._create_mistral_client(session.api_key)
-                vibe_headers = engine._get_mistral_vibe_headers(session.id)
-                vibe_metadata = engine._get_mistral_vibe_metadata(session.id)
-                client.chat.complete(
-                    model=engine.get_api_model_id(session.model), messages=messages, max_tokens=1,
-                    tools=tools, http_headers=vibe_headers, metadata=vibe_metadata,
-                )
-            else:
-                headers = engine.make_headers(session.api_key, session.api_type)
-                data = json.dumps(payload).encode("utf-8")
-                req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    resp.read()  # consume response
+            headers = engine.make_headers(session.api_key)
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                resp.read()  # consume response
 
             if session._warmup_cancel.is_set():
                 print(f"  [warmup] {session.model} cancelled ({session.id[:8]})")
@@ -1836,7 +1813,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     prov = self._resolve_provider(new_model)
                     s.api_key = prov["api_key"]
                     s.base_url = prov["base_url"]
-                    s.api_type = prov["api_type"]
                 except Exception:
                     pass
             # Resolve provider for warmup check
@@ -2123,7 +2099,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             models = engine.get_enabled_models()
         else:
             models = engine.get_available_models(
-                server_config["api_key"], server_config["base_url"], server_config["api_type"])
+                server_config["api_key"], server_config["base_url"])
         self._send_json({"models": models})
 
     def _handle_list_sessions(self):
@@ -2582,7 +2558,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _resolve_provider_static(model: str) -> dict:
-        """Find the provider that has the given model. Returns {api_key, base_url, api_type, provider_name}.
+        """Find the provider that has the given model. Returns {api_key, base_url, provider_name}.
         Thread-safe. Delegates to engine.resolve_provider_for_model()."""
         if engine._models_config:
             model = engine.resolve_model(model)
@@ -2601,7 +2577,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             model=model,
             api_key=provider["api_key"],
             base_url=provider["base_url"],
-            api_type=provider["api_type"],
             max_context=body.get("max_context") or engine.get_model_max_context(model),
         )
         # Stamp user ownership
@@ -2664,7 +2639,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             provider = self._resolve_provider(model)
             session.api_key = provider["api_key"]
             session.base_url = provider["base_url"]
-            session.api_type = provider["api_type"]
             provider_name = provider.get("provider_name", "")
             providers_cfg = server_config.get("providers", {})
             warmup_enabled = providers_cfg.get(provider_name, {}).get("prefill_warmup", False)
@@ -2765,7 +2739,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 session.model = model_override
                 session.api_key = provider["api_key"]
                 session.base_url = provider["base_url"]
-                session.api_type = provider["api_type"]
 
         # Auto model selection: if agent uses model="auto", re-resolve per message
         agent_cfg = session.agent.config
@@ -2777,7 +2750,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     session.model = auto_model
                     session.api_key = provider["api_key"]
                     session.base_url = provider["base_url"]
-                    session.api_type = provider["api_type"]
                     session.max_context = engine.get_model_max_context(auto_model)
 
         # Reset cancel token
@@ -2823,32 +2795,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 is_base64 = f["encoding"] == "base64"
                 # Check file size (base64 is ~4/3 of raw)
                 too_large = is_base64 and len(f["content"]) * 3 // 4 > MAX_INLINE_BYTES
-                # OpenAI/Mistral only support image/* as multimodal content blocks
-                api_blocked = session.api_type in ("openai", "mistral") and not mime.startswith("image/")
+                # OpenAI wire format only supports image/* as multimodal content blocks
+                api_blocked = not mime.startswith("image/")
 
                 if (engine._mime_matches(mime, raw_formats)
                         and is_base64 and not too_large and not api_blocked):
-                    # Route as multimodal content block — LLM sees raw data
-                    if session.api_type in ("openai", "mistral"):
-                        data_uri = f"data:{mime};base64,{f['content']}"
-                        content_blocks.append({"type": "image_url", "image_url": {"url": data_uri}})
-                    else:
-                        # Anthropic format
-                        if mime.startswith("image/"):
-                            content_blocks.append({
-                                "type": "image",
-                                "source": {"type": "base64", "media_type": mime, "data": f["content"]},
-                            })
-                        elif mime == "application/pdf":
-                            content_blocks.append({
-                                "type": "document",
-                                "source": {"type": "base64", "media_type": mime, "data": f["content"]},
-                            })
-                        else:
-                            content_blocks.append({
-                                "type": "image",
-                                "source": {"type": "base64", "media_type": mime, "data": f["content"]},
-                            })
+                    # Route as multimodal content block — LLM sees raw data as image_url data URI
+                    data_uri = f"data:{mime};base64,{f['content']}"
+                    content_blocks.append({"type": "image_url", "image_url": {"url": data_uri}})
                 else:
                     # Route to disk — agent uses read_document/read_file
                     disk_files.append(f)
@@ -2963,7 +2917,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
         session.messages, was_compacted = engine._check_and_compact(
             session.messages, session.model, session.api_key,
-            session.base_url, session.api_type,
+            session.base_url,
             max_tokens=session.max_context,
             session_id=session.id,
         )
@@ -3097,7 +3051,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     inf_params.pop("thinking_budget", None)
                 reply = engine.send_message_with_fallback(
                     session.messages, session.model, session.api_key,
-                    session.base_url, session.api_type,
+                    session.base_url,
                     silent=True, escape_watcher=session.cancel_token,
                     event_callback=event_callback,
                     provider_resolver=handler_self._resolve_provider,
@@ -3485,13 +3439,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             p = providers.get(name, {})
             base_url = p.get("base_url", "")
             api_key = p.get("api_key", "")
-            api_type = p.get("type", "openai")
         else:
             base_url = body.get("base_url", "")
             api_key = body.get("api_key", "")
-            api_type = body.get("type", "openai")
         try:
-            models = engine.get_available_models(api_key, base_url, api_type)
+            models = engine.get_available_models(api_key, base_url)
             self._send_json({
                 "status": "ok",
                 "models": len(models),
@@ -5316,7 +5268,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         try:
             result = engine.send_message(
                 messages, refine_model, provider["api_key"],
-                provider["base_url"], provider["api_type"],
+                provider["base_url"],
                 silent=True, tools=False,
             )
             self._send_json({"refined": result or text, "model": refine_model})
@@ -5385,7 +5337,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         try:
             result = engine.send_message(
                 messages, model, provider["api_key"],
-                provider["base_url"], provider["api_type"],
+                provider["base_url"],
                 silent=True, tools=False,
             )
             self._send_json({"reply": result or "", "model": model})
@@ -5520,7 +5472,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             if provider_name:
                 server_config["api_key"] = providers[provider_name].get("api_key", "")
                 server_config["base_url"] = providers[provider_name].get("base_url", "")
-                server_config["api_type"] = providers[provider_name].get("type", "anthropic")
             try:
                 config = {}
                 if os.path.exists(config_path):
@@ -5741,7 +5692,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             # Force compaction regardless of threshold
             result = engine._context_manager.check_and_compact(
                 session.messages, session.id, session.model,
-                session.api_key, session.base_url, session.api_type,
+                session.api_key, session.base_url,
                 max_tokens=session.max_context,
                 force=True,
             )
@@ -7023,8 +6974,6 @@ def main():
     parser.add_argument("--port", type=int, default=srv_cfg.get("port", 8420))
     parser.add_argument("--api-key", default=provider.get("api_key", ""))
     parser.add_argument("--base-url", default=provider.get("base_url", "http://localhost:8317/v1"))
-    parser.add_argument("-t", "--api-type", choices=["anthropic", "openai", "mistral"],
-                        default=provider.get("type", "anthropic"))
     parser.add_argument("-m", "--model", default=provider.get("default_model", ""))
     parser.add_argument("--max-context", type=int, default=file_config.get("max_context", 131072))
     args = parser.parse_args()
@@ -7034,7 +6983,6 @@ def main():
     server_config["providers"] = providers
     server_config["api_key"] = args.api_key
     server_config["base_url"] = args.base_url
-    server_config["api_type"] = args.api_type
     server_config["default_model"] = args.model
     server_config["max_context"] = args.max_context
     server_config["port"] = args.port
@@ -7073,7 +7021,6 @@ def main():
     # Initialize engine globals
     engine._delegate_api_key = args.api_key
     engine._delegate_base_url = args.base_url
-    engine._delegate_api_type = args.api_type
     engine._delegate_fallback_model = args.model
 
     # Start scheduler
@@ -7408,7 +7355,7 @@ def main():
     server = ThreadingHTTPServer((args.host, args.port), BrainAgentHandler)
     print(f"Brain Agent Server v{engine.VERSION}")
     print(f"Listening on http://{args.host}:{args.port}")
-    print(f"API: {args.base_url} ({args.api_type})")
+    print(f"API: {args.base_url}")
     print(f"Model: {args.model}")
     print(f"Agents: {', '.join(engine.list_agents())}")
     if engine._scheduler:

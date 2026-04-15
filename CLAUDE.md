@@ -155,8 +155,9 @@ the credentials — this is the single source of truth used by chat, delegate,
 scheduler, warmup, and all background LLM calls.
 
 Current providers: **Bifrost** (local gateway on port 7777) and **Kilo** (cloud
-gateway). Both are OpenAI-compatible (`/v1/chat/completions`). The `api_type` field
-is always `openai` — Anthropic and Mistral wire formats are no longer supported.
+gateway). Both are OpenAI-compatible (`/v1/chat/completions`). Anthropic and
+Mistral wire formats are no longer supported — the `api_type` concept was
+removed in v7.3.0 (Purge B).
 
 ### Model Management
 
@@ -272,7 +273,7 @@ Brain is now OpenAI-wire only. All providers (Bifrost, Kilo, future additions) m
 - `_handle_anthropic_response`, `_handle_mistral_response`, and mistral SDK helpers (`_VIBE_VERSION`, `_get_mistral_vibe_*`, `_create_mistral_client`) were removed in v7.2.0
 - `send_message` and `_run_delegate` always build OpenAI chat/completions payloads and always call `_handle_openai_response`
 - `make_headers`, `get_available_models`, `_apply_inference_to_payload`, `list_models` all collapsed to single-format paths
-- `api_type` parameter is still threaded through function signatures for compatibility; Purge B will remove it entirely
+- `api_type` parameter fully removed from all function signatures (Purge B, v7.3.0). Providers return only `{api_key, base_url, provider_name}`.
 - `TOOL_DEFINITIONS` (Anthropic flat shape) is retained as **internal source of truth** for tool lookups/display; `TOOL_DEFINITIONS_OPENAI` is derived from it for the wire format
 
 ### Key Patterns
@@ -288,7 +289,7 @@ Brain is now OpenAI-wire only. All providers (Bifrost, Kilo, future additions) m
 - `_run_delegate` uses thread-local `max_tool_rounds` override (no global mutation)
 - Memory is provided by the MemPalace MCP server (see MemPalace section below) — no built-in memory tools
 - Smart model routing: `init_models_config()` auto-discovers models from providers, `resolve_model()` picks by purpose
-- Unified provider resolution: `resolve_provider_for_model(model)` in `claude_cli.py` is the single source of truth for model→provider credential resolution (api_key, base_url, api_type, provider_name). Used by all LLM call paths: chat, `_run_delegate`, warmup, background tasks
+- Unified provider resolution: `resolve_provider_for_model(model)` in `claude_cli.py` is the single source of truth for model→provider credential resolution (api_key, base_url, provider_name). Used by all LLM call paths: chat, `_run_delegate`, warmup, background tasks
 - Provider-scoped models: when multiple providers offer the same model ID, entries are stored as `provider/model_id` with a `base_model_id` field. `get_api_model_id(model)` resolves to the actual API model ID
 - Providers without `/models` endpoint: manually add models via Models tab (model ID + provider + display name)
 - Model display format: `displayName (provider)` everywhere — `modelShortName(mid, withProvider)` controls compact vs full

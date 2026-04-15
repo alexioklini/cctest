@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "7.2.0"
+VERSION = "7.3.0"
 VERSION_DATE = "2026-04-15"
 CHANGELOG = [
+    ("7.3.0", "2026-04-15", "Purge B: api_type parameter fully removed from all function signatures. Follow-up to v7.2.0 Purge A. send_message, send_message_with_fallback, _retry_with_backoff, _run_delegate, _compact_conversation, _check_and_compact, ContextManager.recall/summarize_chunk/check_and_compact, make_headers, get_available_models, _apply_inference_to_payload, list_models, _handle_openai_response — all lose the api_type parameter. resolve_provider_for_model now returns {api_key, base_url, provider_name} (no api_type). Session.api_type field removed. server_config['api_type'] removed. CLI --api-type flag removed from both claude_cli.py and server.py argparse. _delegate_api_type global removed. All attachment routing branches in server.py _handle_chat collapsed to the single OpenAI image_url path (Anthropic document blocks gone). Warmup path in server.py simplified. Net effect: ~30 signatures cleaned up, ~60 call sites updated, provider config schema simplified. All providers are OpenAI-compatible (Bifrost, Kilo); re-adding an Anthropic-direct provider would require reintroducing wire-format branching."),
     ("7.2.0", "2026-04-15", "Token optimization, cost guardrails, and Anthropic/Mistral wire-format purge. Status bar now shows last-round prompt tokens (not cumulative across tool rounds) so 'context used' reflects the real next-call size. Hard tool-round cap at 1.5× the soft limit stops runaway loops. Per-agent runtime limits in agent.json 'limits' block: max_tool_rounds, tool_result_char_limit, tool_results_total_tokens, context_safety_ratio. Pre-flight context guardrail raises before provider 400s when estimated prompt exceeds max_context * safety_ratio. Session cost soft warnings: 70% amber triangle, 90% red + one-time modal per session, configurable global max_session_cost_usd in Settings → Server → Cost Limits. Built-in cost rate table expanded: OpenAI (gpt-4o/4.1/o1/o3/o4-mini), Mistral, Gemini, Grok, DeepSeek, local-model zeros. New GET /v1/tools/breakdown endpoint measures per-group + per-tool token cost with schema decomposition (name/description/schema). Tokens tab shows the breakdown with heavy-schema ⚠ markers. MCP improvements: redundant '<server>_' prefix stripped from tool names (mcp_mempalace_mempalace_search → mcp_mempalace_search, ~260 tok saved on mempalace alone), '[MCP:server]' description prefix dropped, per-agent MCP tool filter/exclude in token_config with fnmatch globs, UI checkbox-save directly from breakdown view. Removed prompt_caching token_config field (no-op outside Anthropic wire format). Purge A of Anthropic/Mistral wire formats: _handle_anthropic_response (224 lines), _handle_mistral_response + mistral SDK helpers (291 lines), _collect_anthropic/_stream_anthropic, and all api_type branching in send_message/_run_delegate/make_headers/get_available_models/_apply_inference_to_payload/list_models collapsed to OpenAI-only paths. ~600 lines removed. api_type parameter still threaded through signatures (Purge B pending). All providers are OpenAI-compatible (Bifrost, Kilo)."),
     ("7.0.0", "2026-04-14", "Native agentic loop restored. The v6.0.0 PI Agent SDK unification is reverted: the Node.js pi_sidecar process, the Anthropic Agent SDK sidecar (sdk_sidecar.py / sdk_backend.py), and all Mistral SDK paths are removed. Chat, delegate, scheduler, refine, and soul_chat all flow through the native Python agentic loop (send_message / _handle_openai_response / middleware pipeline). The Lossless Context Manager (ContextManager + context.db) is back as the compaction engine — SSE compacting/compacted events and the /v1/context/* endpoints work again. Interpretation B: all providers are OpenAI-compatible (Bifrost, Kilo). api_type is always 'openai'; Anthropic and Mistral wire formats are gone. Code mode is removed from both UI and server (was tied to PI). The /v1/tools/call and /v1/hooks/run endpoints are deleted — Brain tools run in-process through _execute_tool() which fires hooks natively. Net diff: server.py -1100 lines, pi_sidecar/ directory deleted. See stage commits dcf73a4..30468b1."),
     ("5.14.0", "2026-04-10", "Unified provider resolution and multi-provider model support. Single resolve_provider_for_model() function in claude_cli.py is now the sole source of truth for model→provider credential resolution — used by interactive chat, PI sidecar (code mode), SDK sidecar, _run_delegate (summaries, auto-memory, scheduled tasks), warmup, and all background LLM calls. Provider-scoped model keys (provider/model_id) support multiple providers offering the same model with different API keys. Mistral model discovery via SDK (client.models.list()) instead of broken raw HTTP. Models tab: All/None buttons per provider for bulk enable/disable. Orphaned models from deleted providers cleaned up on sync. Code mode model dropdown fixed (dropdown-menu class, consistent with chat mode). get_api_model_id() resolves scoped keys to actual API model IDs across all call sites."),
@@ -6871,7 +6872,6 @@ def generate_next_prompt_suggestion(session) -> str | None:
             model,
             prov.get("api_key", ""),
             prov.get("base_url", ""),
-            prov.get("api_type", "openai"),
             silent=True,
             tools=False,
             event_callback=None,
@@ -8220,9 +8220,8 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
 
     api_key = _prov["api_key"]
     base_url = _prov["base_url"]
-    api_type = _prov["api_type"]
 
-    headers = make_headers(api_key, api_type)
+    headers = make_headers(api_key)
     endpoint = f"{base_url}/chat/completions"
     aug_messages = [{"role": "system", "content": system_prompt}] + messages
 
@@ -8236,7 +8235,7 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
     }
     if inference_params:
         provider = _models_config.get(model, {}).get("provider", "")
-        _apply_inference_to_payload(payload, inference_params, api_type, provider)
+        _apply_inference_to_payload(payload, inference_params, provider)
 
     try:
         _thread_local.max_tool_rounds = MAX_DELEGATE_TOOL_ROUNDS
@@ -8246,7 +8245,7 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
             with urllib.request.urlopen(request) as response:
                 return _handle_openai_response(
                     response, payload, messages, model, api_key, base_url,
-                    api_type, True, True, headers, endpoint,
+                    True, True, headers, endpoint,
                     cancel_token, 0, event_callback)
         finally:
             _thread_local.max_tool_rounds = None
@@ -8258,7 +8257,6 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
 _delegate_fallback_model: str | None = None
 _delegate_api_key: str = ""
 _delegate_base_url: str = ""
-_delegate_api_type: str = "openai"
 
 # Provider cache for resolve_provider_for_model
 _provider_cache: dict[str, dict] = {}
@@ -8267,7 +8265,7 @@ _provider_cache_time: float = 0
 
 
 def resolve_provider_for_model(model: str) -> dict:
-    """Resolve provider credentials for a model. Returns {api_key, base_url, api_type, provider_name}.
+    """Resolve provider credentials for a model. Returns {api_key, base_url, provider_name}.
 
     Single source of truth for model→provider resolution. Uses model config's provider
     field, falls back to delegate defaults. Thread-safe with 60s cache.
@@ -8284,7 +8282,6 @@ def resolve_provider_for_model(model: str) -> dict:
     result = {
         "api_key": _delegate_api_key,
         "base_url": _delegate_base_url,
-        "api_type": _delegate_api_type,
         "provider_name": "default",
     }
 
@@ -8300,7 +8297,6 @@ def resolve_provider_for_model(model: str) -> dict:
                 result = {
                     "api_key": prov.get("api_key", ""),
                     "base_url": prov.get("base_url", ""),
-                    "api_type": prov.get("type", "openai"),
                     "provider_name": provider_name,
                 }
         except Exception:
@@ -10289,8 +10285,7 @@ def tool_context_recall(args: dict) -> str:
     model = getattr(_thread_local, 'current_model', None) or _delegate_fallback_model or ""
     api_key = _delegate_api_key or ""
     base_url = _delegate_base_url or ""
-    api_type = _delegate_api_type or "openai"
-    result = _context_manager.recall(session_id, query, model, api_key, base_url, api_type)
+    result = _context_manager.recall(session_id, query, model, api_key, base_url)
     return _ok({"answer": result, "query": query})
 
 
@@ -12090,7 +12085,7 @@ class ContextManager:
 
     def summarize_chunk(self, messages: list[dict], session_id: str,
                         range_start: int, range_end: int,
-                        model: str, api_key: str, base_url: str, api_type: str,
+                        model: str, api_key: str, base_url: str,
                         fallback_model: str | None = None) -> str | None:
         """Summarize a chunk of messages into a leaf summary (depth 0). Returns summary ID."""
         text_parts = [self._extract_message_text(m) for m in messages]
@@ -12260,7 +12255,7 @@ class ContextManager:
         return assembled
 
     def check_and_compact(self, messages: list[dict], session_id: str,
-                          model: str, api_key: str, base_url: str, api_type: str,
+                          model: str, api_key: str, base_url: str,
                           system_prompt: str = "",
                           max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS,
                           force: bool = False) -> tuple[list[dict], bool]:
@@ -12325,7 +12320,7 @@ class ContextManager:
             range_start = unsummarized_start + i
             range_end = unsummarized_start + i + len(chunk)
             self.summarize_chunk(chunk, session_id, range_start, range_end,
-                                 summary_model, api_key, base_url, api_type,
+                                 summary_model, api_key, base_url,
                                  fallback_model=summary_model_fallback)
 
         # Try condensation
@@ -12409,7 +12404,7 @@ class ContextManager:
         return summary
 
     def recall(self, session_id: str, query: str,
-               model: str, api_key: str, base_url: str, api_type: str) -> str:
+               model: str, api_key: str, base_url: str) -> str:
         """Deep recall: search summaries and original messages, then answer with a focused sub-query."""
         # Find relevant summaries
         conn = _context_conn()
@@ -12516,7 +12511,7 @@ def _estimate_conversation_tokens(messages: list[dict], system_prompt: str = "")
 
 
 def _compact_conversation(messages: list[dict], model: str, api_key: str,
-                          base_url: str, api_type: str,
+                          base_url: str,
                           max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS) -> list[dict]:
     """Compact the conversation by summarizing older messages.
 
@@ -12576,7 +12571,7 @@ def _compact_conversation(messages: list[dict], model: str, api_key: str,
             )
         }]
         summary = send_message(
-            summary_messages, model, api_key, base_url, api_type,
+            summary_messages, model, api_key, base_url,
             silent=True, tools=False, _tool_round=0,
         )
     except Exception:
@@ -12600,7 +12595,7 @@ def _compact_conversation(messages: list[dict], model: str, api_key: str,
 
 
 def _check_and_compact(messages: list[dict], model: str, api_key: str,
-                       base_url: str, api_type: str,
+                       base_url: str,
                        system_prompt: str = "",
                        max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS,
                        session_id: str = "",
@@ -12626,7 +12621,7 @@ def _check_and_compact(messages: list[dict], model: str, api_key: str,
                     # ContextManager uses its own config threshold internally
                     pass
                 return _context_manager.check_and_compact(
-                    messages, session_id, model, api_key, base_url, api_type,
+                    messages, session_id, model, api_key, base_url,
                     system_prompt=system_prompt, max_tokens=max_tokens,
                 )
         except Exception as e:
@@ -12645,7 +12640,7 @@ def _check_and_compact(messages: list[dict], model: str, api_key: str,
     print(f"\n  {DIM}⟳ Context {pct}% full (~{estimated:,} tokens), compacting...{RESET}")
     sys.stdout.flush()
 
-    compacted = _compact_conversation(messages, model, api_key, base_url, api_type, max_tokens)
+    compacted = _compact_conversation(messages, model, api_key, base_url, max_tokens)
     new_estimated = _estimate_conversation_tokens(compacted, system_prompt)
     new_pct = int(new_estimated / max_tokens * 100)
     print(f"  {DIM}✔ Compacted: {pct}% → {new_pct}% (~{new_estimated:,} tokens){RESET}")
@@ -13073,7 +13068,7 @@ def _inline_format(text: str) -> str:
 
 # --- API functions ---
 
-def make_headers(api_key: str, api_type: str = "openai") -> dict:
+def make_headers(api_key: str) -> dict:
     """Build request headers. All providers are OpenAI-compatible."""
     return {
         "Content-Type": "application/json",
@@ -13081,9 +13076,9 @@ def make_headers(api_key: str, api_type: str = "openai") -> dict:
     }
 
 
-def get_available_models(api_key: str, base_url: str, api_type: str = "openai") -> list[str]:
+def get_available_models(api_key: str, base_url: str) -> list[str]:
     """Fetch available models from the API and return as a list."""
-    headers = make_headers(api_key, api_type)
+    headers = make_headers(api_key)
     request = urllib.request.Request(
         f"{base_url}/models", headers=headers, method="GET",
     )
@@ -13174,7 +13169,7 @@ def init_models_config(providers: dict, existing_models: dict | None = None,
     for name, p in providers.items():
         try:
             models = get_available_models(
-                p.get("api_key", ""), p.get("base_url", ""), p.get("type", "openai"))
+                p.get("api_key", ""), p.get("base_url", ""))
         except Exception:
             models = []
         discovered = set(models)
@@ -13440,7 +13435,7 @@ _INFERENCE_OPENAI_KEYS = {"frequency_penalty", "presence_penalty"}
 _INFERENCE_OMLX_KEYS = {"min_p", "repetition_penalty"}
 
 
-def _apply_inference_to_payload(payload: dict, params: dict, api_type: str = "openai", provider: str = "") -> None:
+def _apply_inference_to_payload(payload: dict, params: dict, provider: str = "") -> None:
     """Apply resolved inference params to an OpenAI-compatible payload."""
     if not params:
         return
@@ -13468,9 +13463,9 @@ def _apply_inference_to_payload(payload: dict, params: dict, api_type: str = "op
         payload.setdefault("chat_template_kwargs", {})["enable_thinking"] = True
 
 
-def list_models(api_key: str, base_url: str, api_type: str = "openai") -> None:
+def list_models(api_key: str, base_url: str) -> None:
     """List available models from the API."""
-    models = get_available_models(api_key, base_url, api_type)
+    models = get_available_models(api_key, base_url)
     if models:
         print("Available models:")
         for model_id in models:
@@ -14538,11 +14533,10 @@ def _middleware_compaction(messages, tool_round, event_callback, **ctx):
         model = ctx.get("model", "")
         api_key = ctx.get("api_key", "")
         base_url = ctx.get("base_url", "")
-        api_type = ctx.get("api_type", "")
         session_id = ctx.get("session_id", "")
         max_ctx = get_model_max_context(model)
         messages, compacted = _check_and_compact(
-            messages, model, api_key, base_url, api_type,
+            messages, model, api_key, base_url,
             max_tokens=max_ctx, session_id=session_id,
         )
         if compacted and event_callback:
@@ -15022,7 +15016,7 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
 
 
 def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
-                 api_type: str, silent: bool = False,
+                 silent: bool = False,
                  tools: bool = True,
                  escape_watcher: EscapeWatcher | CancelToken | None = None,
                  _tool_round: int = 0,
@@ -15101,7 +15095,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     # Hard stop: terminate the loop entirely at 1.5x the soft cap to prevent runaway recursion
     if _tool_round >= int(effective_max_rounds * 1.5):
         return "[Tool round limit reached — stopping to prevent runaway loop. Check chat for partial progress.]"
-    headers = make_headers(api_key, api_type)
+    headers = make_headers(api_key)
     endpoint = f"{base_url}/chat/completions"
 
     # Strip metadata from messages — API providers don't accept extra fields
@@ -15129,7 +15123,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     # Apply inference parameters (temperature, top_p, thinking, etc.)
     if inference_params:
         provider = _models_config.get(model, {}).get("provider", "")
-        _apply_inference_to_payload(payload, inference_params, api_type, provider)
+        _apply_inference_to_payload(payload, inference_params, provider)
 
     if tools:
         mcp_mgr = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
@@ -15229,7 +15223,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         with urllib.request.urlopen(request) as response:
             return _handle_openai_response(
                 response, payload, messages, model, api_key, base_url,
-                api_type, silent, tools, headers, endpoint, escape_watcher,
+                silent, tools, headers, endpoint, escape_watcher,
                 _tool_round, event_callback, inference_params, session_id)
 
     except urllib.error.HTTPError as e:
@@ -15256,7 +15250,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                 if mc_freed > 0:
                     if event_callback:
                         event_callback("compacted", {"method": "microcompact", "freed": mc_freed})
-                    return send_message(messages, model, api_key, base_url, api_type,
+                    return send_message(messages, model, api_key, base_url,
                                         silent=silent, tools=tools, escape_watcher=escape_watcher,
                                         _tool_round=_tool_round, event_callback=event_callback,
                                         inference_params=inference_params, session_id=session_id)
@@ -15264,13 +15258,13 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                 _sid = session_id or getattr(_thread_local, 'current_session_id', None) or ""
                 max_ctx = get_model_max_context(model)
                 messages, compacted = _check_and_compact(
-                    messages, model, api_key, base_url, api_type,
+                    messages, model, api_key, base_url,
                     max_tokens=max_ctx, session_id=_sid, force=True,
                 )
                 if compacted:
                     if event_callback:
                         event_callback("compacted", {"method": "reactive_compact"})
-                    return send_message(messages, model, api_key, base_url, api_type,
+                    return send_message(messages, model, api_key, base_url,
                                         silent=silent, tools=tools, escape_watcher=escape_watcher,
                                         _tool_round=_tool_round, event_callback=event_callback,
                                         inference_params=inference_params, session_id=session_id)
@@ -15325,7 +15319,7 @@ def _parse_gemma_tool_calls(text: str) -> tuple[list[dict], str]:
 
 
 def _handle_openai_response(response, payload, messages, model, api_key,
-                             base_url, api_type, silent, tools,
+                             base_url, silent, tools,
                              headers, endpoint,
                              escape_watcher=None,
                              _tool_round: int = 0,
@@ -15458,7 +15452,7 @@ def _handle_openai_response(response, payload, messages, model, api_key,
             if full_text:
                 messages.append({"role": "assistant", "content": full_text})
                 messages.append({"role": "user", "content": _MAX_OUTPUT_RESUME_MSG})
-                return send_message(messages, model, api_key, base_url, api_type,
+                return send_message(messages, model, api_key, base_url,
                                     silent=silent, tools=tools, escape_watcher=escape_watcher,
                                     _tool_round=_tool_round, event_callback=event_callback,
                                     inference_params=recovery_params, session_id=session_id)
@@ -15538,11 +15532,11 @@ def _handle_openai_response(response, payload, messages, model, api_key,
     _sid = session_id or getattr(_thread_local, 'current_session_id', None) or ""
     messages, should_continue = _run_middleware(
         messages, _tool_round, event_callback,
-        model=model, api_key=api_key, base_url=base_url, api_type=api_type,
+        model=model, api_key=api_key, base_url=base_url,
         session_id=_sid, escape_watcher=escape_watcher,
     )
 
-    return send_message(messages, model, api_key, base_url, api_type,
+    return send_message(messages, model, api_key, base_url,
                         silent=silent, tools=tools, escape_watcher=escape_watcher,
                         _tool_round=_tool_round + 1, event_callback=event_callback,
                         inference_params=inference_params, session_id=session_id)
@@ -15561,7 +15555,7 @@ def _classify_error_transient(error_info: dict | None) -> bool:
     return code in {0, 429, 500, 502, 503, 504, 529}
 
 
-def _retry_with_backoff(messages, model, api_key, base_url, api_type,
+def _retry_with_backoff(messages, model, api_key, base_url,
                         silent, tools, escape_watcher, event_callback,
                         inference_params, session_id, max_retries=2):
     """Try sending a message with exponential backoff retries for transient errors.
@@ -15569,7 +15563,7 @@ def _retry_with_backoff(messages, model, api_key, base_url, api_type,
     Returns (result, last_error_info). result is None if all retries failed.
     """
     _thread_local._last_send_error = None
-    result = send_message(messages, model, api_key, base_url, api_type,
+    result = send_message(messages, model, api_key, base_url,
                           silent=silent, tools=tools, escape_watcher=escape_watcher,
                           event_callback=event_callback,
                           inference_params=inference_params,
@@ -15604,7 +15598,7 @@ def _retry_with_backoff(messages, model, api_key, base_url, api_type,
             raise TaskCancelled()
 
         _thread_local._last_send_error = None
-        result = send_message(messages, model, api_key, base_url, api_type,
+        result = send_message(messages, model, api_key, base_url,
                               silent=silent, tools=tools, escape_watcher=escape_watcher,
                               event_callback=event_callback,
                               inference_params=inference_params,
@@ -15620,7 +15614,7 @@ def _retry_with_backoff(messages, model, api_key, base_url, api_type,
 
 
 def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
-                               base_url: str, api_type: str,
+                               base_url: str,
                                silent: bool = False,
                                tools: bool = True,
                                escape_watcher=None,
@@ -15634,7 +15628,7 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
     Retry logic: transient errors (502, 503, 429, timeout) retry 2x with exponential backoff.
     Permanent errors (400, 401, 404) skip retries and go straight to fallback.
     Fallbacks field in _models_config: ordered list of fallback model IDs.
-    If provider_resolver is provided, it's called with (model) -> {api_key, base_url, api_type}.
+    If provider_resolver is provided, it's called with (model) -> {api_key, base_url}.
     Emits ("fallback", {...}) events via event_callback for UI display.
     """
     # Track which model actually responded (for done event)
@@ -15646,7 +15640,7 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
 
     # Try primary model with retries
     result, error_info = _retry_with_backoff(
-        messages, model, api_key, base_url, api_type,
+        messages, model, api_key, base_url,
         silent, tools, escape_watcher, event_callback,
         inference_params, session_id, max_retries=2)
     if result is not None:
@@ -15681,7 +15675,7 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
             candidates.sort(key=lambda x: (x[1], x[2], x[3]), reverse=True)
             fallback_models = [mid for mid, _, _, _ in candidates]
     else:
-        fallback_models = get_available_models(api_key, base_url, api_type)
+        fallback_models = get_available_models(api_key, base_url)
 
     if not fallback_models:
         msg = f"Error: Model '{model}' is not available and no fallback models found."
@@ -15697,13 +15691,12 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
         tried_models.add(fallback_model)
 
         # Re-resolve provider for fallback model
-        fb_api_key, fb_base_url, fb_api_type = api_key, base_url, api_type
+        fb_api_key, fb_base_url = api_key, base_url
         if provider_resolver:
             try:
                 prov = provider_resolver(fallback_model)
                 fb_api_key = prov.get("api_key", api_key)
                 fb_base_url = prov.get("base_url", base_url)
-                fb_api_type = prov.get("api_type", api_type)
             except Exception:
                 continue
 
@@ -15717,17 +15710,15 @@ def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
             })
 
         fb_params = get_inference_params(fallback_model, purpose)
-        # Snapshot message count: if fallback uses different api_type, tool-loop
-        # messages will be in the wrong format and must be stripped after success
+        # Snapshot message count: if the fallback fails mid-tool-loop, intermediate
+        # messages will corrupt the session (thinking blocks with invalid signatures).
         msg_count_before = len(messages)
         result, fb_error = _retry_with_backoff(
-            messages, fallback_model, fb_api_key, fb_base_url, fb_api_type,
+            messages, fallback_model, fb_api_key, fb_base_url,
             silent, tools, escape_watcher, event_callback,
             fb_params, session_id, max_retries=1)
         if result is not None:
             # Strip intermediate tool-loop messages appended by the fallback model.
-            # These corrupt the session: different api_type → wrong message format,
-            # same api_type → thinking blocks with invalid/missing signatures.
             # The final text reply is returned; server adds it properly to session.
             if len(messages) > msg_count_before:
                 del messages[msg_count_before:]
@@ -15840,10 +15831,6 @@ def main():
         help="Base URL for the API (default: http://localhost:8317/v1)",
     )
     parser.add_argument(
-        "-t", "--api-type", choices=["anthropic", "openai", "mistral"], default="anthropic",
-        help="API type: anthropic or openai (default: anthropic)",
-    )
-    parser.add_argument(
         "--max-context", type=int, default=DEFAULT_MAX_CONTEXT_TOKENS,
         help=f"Max context window in tokens (default: {DEFAULT_MAX_CONTEXT_TOKENS})",
     )
@@ -15855,7 +15842,7 @@ def main():
     args = parser.parse_args()
 
     if args.list_models:
-        list_models(args.api_key, args.base_url, args.api_type)
+        list_models(args.api_key, args.base_url)
         sys.exit(0)
 
     if args.interactive:
@@ -15910,7 +15897,7 @@ def main():
     if reply is None:
         messages = [{"role": "user", "content": args.message}]
         reply = send_message_with_fallback(
-            messages, args.model, args.api_key, args.base_url, args.api_type,
+            messages, args.model, args.api_key, args.base_url,
             silent=True)
     if reply:
         print(render_markdown(reply))
@@ -16401,7 +16388,7 @@ def _switch_agent(agent_id: str, args) -> tuple[str, AgentConfig]:
 def _run_interactive(args):
     """Run the interactive TUI chat loop."""
     global _memory_store, _current_agent
-    global _delegate_fallback_model, _delegate_api_key, _delegate_base_url, _delegate_api_type
+    global _delegate_fallback_model, _delegate_api_key, _delegate_base_url
 
     history = []
     input_history = []   # list of previous user inputs for arrow-key recall
@@ -16410,7 +16397,6 @@ def _run_interactive(args):
     # Store API config for delegation
     _delegate_api_key = args.api_key
     _delegate_base_url = args.base_url
-    _delegate_api_type = args.api_type
     _delegate_fallback_model = args.model
 
     # SDK session tracking (for resume across turns)
@@ -16607,7 +16593,7 @@ def _run_interactive(args):
                     continue
 
             if stripped == "/models":
-                models = get_available_models(args.api_key, args.base_url, args.api_type)
+                models = get_available_models(args.api_key, args.base_url)
                 if models:
                     choice = _select_menu(models, "Select model", active=current_model)
                     if choice:
@@ -16620,7 +16606,7 @@ def _run_interactive(args):
 
             if stripped.startswith("/model"):
                 arg = message.strip()[6:].strip()
-                models = get_available_models(args.api_key, args.base_url, args.api_type)
+                models = get_available_models(args.api_key, args.base_url)
                 if arg:
                     current_model = arg
                     print(f"  {DIM}Switched to:{RESET} {BOLD}{current_model}{RESET}")
@@ -16661,7 +16647,7 @@ def _run_interactive(args):
             # Check context window and compact if needed
             history, was_compacted = _check_and_compact(
                 history, current_model, args.api_key, args.base_url,
-                args.api_type, max_tokens=args.max_context,
+                max_tokens=args.max_context,
             )
 
             # Start spinner and escape watcher
@@ -16723,7 +16709,7 @@ def _run_interactive(args):
                 if not _sdk_ok and not cancelled:
                     reply = send_message_with_fallback(
                         history, current_model, args.api_key, args.base_url,
-                        args.api_type, silent=True, escape_watcher=escape_watcher)
+                        silent=True, escape_watcher=escape_watcher)
             except TaskCancelled:
                 cancelled = True
                 reply = None
