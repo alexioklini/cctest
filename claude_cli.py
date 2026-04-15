@@ -385,76 +385,10 @@ TOOL_DEFINITIONS = [
             "required": ["query"],
         },
     },
-    {
-        "name": "memory_store",
-        "description": (
-            "Store a memory for later recall. Use this to remember important information, "
-            "user preferences, decisions, project context, or anything that should persist "
-            "across conversations. Memories are searchable by keyword."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "Short unique name for this memory (used as identifier)"},
-                "content": {"type": "string", "description": "The memory content to store"},
-                "description": {"type": "string", "description": "One-line description for search indexing"},
-                "type": {"type": "string", "description": "Memory type", "enum": ["user", "project", "feedback", "reference", "general"]},
-            },
-            "required": ["name", "content"],
-        },
-    },
-    {
-        "name": "memory_recall",
-        "description": (
-            "Search and recall stored memories. Use this when you need context from previous "
-            "conversations, user preferences, project decisions, or any previously stored information. "
-            "Returns matching memories ranked by relevance, plus related memories discovered via "
-            "the knowledge graph (automatically follows relationship links for richer context)."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query (keywords). Leave empty to list all memories."},
-                "limit": {"type": "integer", "description": "Max results (default: 10)"},
-                "type": {"type": "string", "description": "Filter by memory type", "enum": ["user", "project", "feedback", "reference", "general"]},
-            },
-            "required": [],
-        },
-    },
-    {
-        "name": "memory_delete",
-        "description": "Delete a stored memory by name.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "Name of the memory to delete"},
-            },
-            "required": ["name"],
-        },
-    },
-    {
-        "name": "memory_shared",
-        "description": (
-            "Access shared memory at global or team scope. Global scope (default) accesses the main agent's "
-            "memory containing infrastructure, user preferences, and project-wide decisions. "
-            "Team scope accesses the team head's memory for team-level knowledge. "
-            "Use this when you need context that isn't in your own memory."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "action": {"type": "string", "description": "Action to perform", "enum": ["recall", "store"]},
-                "scope": {"type": "string", "description": "Memory scope: 'global' for main agent (default), 'team' for team head's memory", "enum": ["global", "team"], "default": "global"},
-                "query": {"type": "string", "description": "Search query for recall, or empty to list all"},
-                "name": {"type": "string", "description": "Memory name (required for store)"},
-                "content": {"type": "string", "description": "Content to store (required for store)"},
-                "description": {"type": "string", "description": "One-line description (for store)"},
-                "type": {"type": "string", "description": "Memory type", "enum": ["user", "project", "feedback", "reference", "general"]},
-                "limit": {"type": "integer", "description": "Max results for recall (default: 10)"},
-            },
-            "required": ["action"],
-        },
-    },
+    # MemPalace migration: built-in memory_* tools unregistered from the
+    # LLM-facing schema. Built-in implementations (tool_memory_*) and dispatch
+    # remain in place for internal callers. Agents now use mcp_mempalace_*
+    # tools exposed by the mempalace MCP server (see agents/main/mcp.json).
     {
         "name": "context_search",
         "description": "Search through compacted conversation history by keyword. Returns matching message excerpts from earlier in the conversation that have been summarized away.",
@@ -895,7 +829,7 @@ _TOOL_DEF_OPENAI_INDEX = {td["function"]["name"]: td for td in TOOL_DEFINITIONS_
 TOOL_GROUPS = {
     "core": {"read_file", "write_file", "edit_file", "list_directory", "search_files",
              "execute_command"},
-    "memory": {"memory_store", "memory_recall", "memory_delete", "memory_shared"},
+    # "memory" group removed — superseded by mempalace MCP server
     "context": {"context_search", "context_detail", "context_recall"},
     "web": {"web_fetch", "exa_search"},
     "email": {"gmail_inbox", "gmail_read", "gmail_search", "gmail_send", "gmail_reply"},
@@ -911,7 +845,7 @@ TOOL_GROUPS = {
 }
 
 # Default tool groups included for all agents (if no explicit config)
-DEFAULT_TOOL_GROUPS = {"core", "memory", "context", "web", "delegation", "git", "skills",
+DEFAULT_TOOL_GROUPS = {"core", "context", "web", "delegation", "git", "skills",
                        "nodes", "scheduler", "mcp"}
 
 
@@ -919,8 +853,8 @@ TOKEN_CONFIG_DEFAULTS = {
     "tool_groups": None,           # None = all tools, list = specific groups from TOOL_GROUPS
     "extra_tools": None,           # Additional individual tool names beyond groups
     "include_tools_guide": True,   # Inject tools.md into system prompt
-    "include_memory_summary": True, # Inject memory summary into system prompt
-    "memory_summary_cap": 3000,    # Max chars for memory summary injection
+    "include_memory_summary": False, # MemPalace migration: built-in memory summary disabled
+    "memory_summary_cap": 3000,    # (unused after migration; agents query mempalace MCP directly)
     "compact_threshold": None,     # None = use default (0.60), float = override
     "prompt_caching": True,        # Use Anthropic cache_control on system prompt
     "scheduled_task_tools": True,  # Include full tool schema in scheduled tasks
@@ -2695,6 +2629,9 @@ class MCPManager:
                 config = json.load(f)
         except (json.JSONDecodeError, OSError):
             return 0
+
+        if isinstance(config, dict) and isinstance(config.get("mcpServers"), dict):
+            config = config["mcpServers"]
 
         count = 0
         for name, cfg in config.items():
@@ -6248,8 +6185,9 @@ Current date and time: {now.strftime('%Y-%m-%d %H:%M')}"""
 
 
 def ensure_memory_summary_schedules():
-    """Ensure scheduler entries exist for all agents with memory_summary enabled.
-    Called once on server/CLI startup after scheduler is initialized."""
+    """MemPalace migration: disabled. Memory summary pipeline replaced by mempalace MCP."""
+    return
+    # --- legacy implementation kept for reference ---
     if not _scheduler:
         return
     agents = list_agents()
@@ -6753,16 +6691,9 @@ def generate_next_prompt_suggestion(session) -> str | None:
 
 
 def _auto_memory_extract(agent_id: str, user_message: str, assistant_response: str):
-    """Background: check if the conversation exchange contains info worth auto-storing.
-    Uses lightweight heuristics first, then optional LLM for borderline cases."""
-    # Set thread-local context for this background thread
-    _thread_local.current_agent = AgentConfig(agent_id)
-    _thread_local.memory_store = MemoryStore(agent_id)
-    try:
-        _auto_memory_extract_inner(agent_id, user_message, assistant_response)
-    finally:
-        _thread_local.current_agent = None
-        _thread_local.memory_store = None
+    """MemPalace migration: disabled. Auto-memory extraction replaced by mempalace MCP
+    (agents are expected to call mempalace_add_drawer / mempalace_diary_write themselves)."""
+    return
 
 
 def _auto_memory_extract_inner(agent_id: str, user_message: str, assistant_response: str):
@@ -7158,7 +7089,9 @@ Be selective — only report meaningful relationships, not superficial ones."""
 
 
 def ensure_relationship_discovery_schedules():
-    """Ensure scheduler entries exist for all agents with relationship_discovery enabled."""
+    """MemPalace migration: disabled. Relationship discovery replaced by mempalace KG."""
+    return
+    # --- legacy implementation kept for reference ---
     if not _scheduler:
         return
     agents = list_agents()
@@ -7696,7 +7629,10 @@ def get_autodream_status(agent_id: str) -> dict | None:
 
 
 def trigger_autodream(agent_id: str):
-    """Run all autodream passes and produce a health report. Background thread."""
+    """MemPalace migration: disabled. Autodream consolidation replaced by mempalace's
+    own dedup/staleness/conflict passes (or simply the verbatim philosophy)."""
+    return
+    # --- legacy implementation kept for reference ---
     ad_cfg = _get_autodream_config(agent_id)
     if not ad_cfg.get("enabled"):
         return
@@ -9253,21 +9189,8 @@ class Scheduler:
             "- Provide a concise result summary within 3-5 tool calls maximum.\n"
             "- If you can't find what you need in 2 searches, summarize what you have and stop.\n\n"
         )
-        # Inject memory summary for context (skip for the summary task itself)
+        # MemPalace migration: scheduled-task memory summary injection removed.
         tcfg = target.config.get("token_config", {})
-        if not name.startswith("_memory_summary_") and tcfg.get("include_memory_summary", True):
-            try:
-                mem_summary = get_memory_summary(agent_id)
-                if mem_summary:
-                    cap = tcfg.get("memory_summary_cap", 3000)
-                    if len(mem_summary) > cap:
-                        mem_summary = mem_summary[:cap] + "\n...(truncated)"
-                    system_prompt += (
-                        "MEMORY SUMMARY (auto-generated synthesis of recent activity — use as context):\n"
-                        f"{mem_summary}\n\n"
-                    )
-            except Exception:
-                pass
         if tools_guide and tcfg.get("include_tools_guide", True):
             system_prompt += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
 
@@ -14169,21 +14092,9 @@ def _after_file_write(path: str, action: str = "created", agent_id: str = ""):
     Replaces scattered _maybe_qmd_reindex(), _extract_entities(), file_created calls."""
     is_artifact = _is_artifact_path(path)
 
-    # 1. QMD reindex (skip for artifacts)
-    if not is_artifact:
-        _maybe_qmd_reindex(path)
-
-    # 2. Entity extraction + knowledge graph (skip for artifacts)
-    if path.endswith(".md") and agent_id and not is_artifact:
-        try:
-            with open(path, "r") as f:
-                raw = f.read()
-            fm, body = _parse_frontmatter(raw)
-            entities = _extract_entities(body)
-            if entities:
-                _update_entity_index(agent_id, os.path.basename(path), entities)
-        except Exception:
-            pass
+    # MemPalace migration: QMD reindex + entity extraction + KG update removed.
+    # Memory layer is now mempalace MCP — agents file content via
+    # mempalace_add_drawer themselves; QMD/KG are no longer in the picture.
 
     # 3. File/artifact event emission (for UI)
     ecb = getattr(_thread_local, 'event_callback', None)
@@ -14850,21 +14761,11 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
         "- All agents can read from shared memory; store shared facts there too\n"
         "- Check shared memory when your own memory doesn't have what you need\n\n"
     )
-    # Inject memory summary (auto-generated synthesis) if available
+    # MemPalace migration: built-in memory summary injection removed.
+    # Agents now query mempalace MCP tools (mempalace_status, mempalace_search,
+    # mempalace_kg_query, mempalace_diary_read) on their own when they need
+    # context.
     tcfg = _get_token_config()
-    if include_memory_summary and tcfg.get("include_memory_summary", True):
-        try:
-            mem_summary = get_memory_summary(agent_id)
-            if mem_summary:
-                cap = tcfg.get("memory_summary_cap", 3000)
-                if len(mem_summary) > cap:
-                    mem_summary = mem_summary[:cap] + "\n...(truncated)"
-                system_instruction += (
-                    "MEMORY SUMMARY (auto-generated synthesis of recent activity — use as context):\n"
-                    f"{mem_summary}\n\n"
-                )
-        except Exception:
-            pass
     # Inject project context if a project is active
     active_project = getattr(_thread_local, 'project', None)
     if active_project:

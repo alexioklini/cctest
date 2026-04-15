@@ -1,5 +1,15 @@
 {
   "mcpServers": {
+    "mempalace": {
+      "transport": "stdio",
+      "command": "/Users/alexander/.mempalace/venv/bin/python",
+      "args": [
+        "-m",
+        "mempalace.mcp_server",
+        "--palace",
+        "/Users/alexander/.mempalace/brain"
+      ]
+    },
     "puppeteer": {
       "transport": "stdio",
       "command": "npx",

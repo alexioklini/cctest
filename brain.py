@@ -193,11 +193,7 @@ def show_status(config: dict):
     except Exception as e:
         print(f"Server: error ({e})")
 
-    # QMD status
-    if is_qmd_running():
-        print(f"QMD:    running (port {QMD_PORT})")
-    else:
-        print("QMD:    not running")
+    # MemPalace migration: QMD removed; memory now via mempalace MCP.
 
 
 def show_config(config: dict):
@@ -307,8 +303,7 @@ def stop_qmd():
 
 
 def ensure_server(config: dict):
-    """Start server and QMD if not running."""
-    start_qmd()
+    """Start server if not running."""
     if not is_server_running(config):
         start_server(config)
         if not is_server_running(config):
@@ -379,11 +374,9 @@ def main():
 
     if command == "start":
         fg = "--foreground" in extra or "-f" in extra
-        start_qmd()
         start_server(config, foreground=fg)
     elif command == "stop":
         stop_server(config)
-        stop_qmd()
     elif command == "restart":
         restart_server(config)
     elif command == "status":

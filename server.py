@@ -1632,16 +1632,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_teams_get()
         elif path == "/v1/services":
             self._handle_services_status()
-        elif path.startswith("/v1/services/qmd/docs"):
-            self._handle_qmd_docs()
         elif path.startswith("/v1/services/log"):
             self._handle_service_log()
-        elif path.startswith("/v1/agents/") and path.endswith("/memories"):
-            self._handle_agent_memories_list(path)
-        elif path.startswith("/v1/agents/") and path.endswith("/memory-summary"):
-            self._handle_memory_summary_get(path)
-        elif path.startswith("/v1/agents/") and path.endswith("/memory-health"):
-            self._handle_memory_health_get(path)
         elif path.startswith("/v1/agents/") and path.endswith("/commands"):
             self._handle_agent_commands_get(path)
         elif path == "/v1/costs":
@@ -1683,10 +1675,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_list_projects(path)
         elif path.startswith("/v1/agents/") and path.endswith("/ingested"):
             self._handle_list_ingested(path)
-        elif path.startswith("/v1/agents/") and path.endswith("/graph/stats"):
-            self._handle_agent_graph_stats(path)
-        elif path.startswith("/v1/agents/") and path.endswith("/graph"):
-            self._handle_agent_graph(path)
         elif path == "/v1/skills/claude-code":
             self._handle_cc_skills_list()
         elif path == "/v1/notifications":
@@ -1814,10 +1802,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_settings_commands()
         elif path == "/v1/restart":
             self._handle_restart()
-        elif path == "/v1/services/qmd":
-            self._handle_qmd_action()
-        elif path.startswith("/v1/services/qmd/docs"):
-            self._handle_qmd_doc_save()
         elif path == "/v1/teams":
             self._handle_teams_post()
         elif path.startswith("/v1/workflows/executions/") and path.endswith("/approve"):
@@ -1832,8 +1816,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_telegram_action()
         elif path == "/v1/services/server":
             self._handle_server_config()
-        elif path.startswith("/v1/agents/") and path.endswith("/memory-summary"):
-            self._handle_memory_summary_post(path)
         elif path == "/v1/cache/clear":
             engine._web_cache.clear()
             self._send_json({"status": "cleared"})
@@ -1895,8 +1877,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_project_ingest(path)
         elif path.startswith("/v1/agents/") and path.endswith("/projects"):
             self._handle_create_project(path)
-        elif path.startswith("/v1/agents/") and path.endswith("/graph/discover"):
-            self._handle_agent_graph_discover(path)
         elif path.startswith("/v1/agents/") and path.endswith("/ingest"):
             self._handle_agent_ingest(path)
         # --- Nodes POST routes ---
@@ -1970,8 +1950,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         pass
             else:
                 self._send_json({"error": "Session not found"}, 404)
-        elif path.startswith("/v1/services/qmd/docs"):
-            self._handle_qmd_doc_delete()
         # --- Projects & Ingestion DELETE routes ---
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/notes/" in path:
             self._handle_notes(path, "DELETE")
@@ -1983,8 +1961,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_agent_ingested_delete(path)
         elif path.startswith("/v1/agents/") and "/workflows/" in path:
             self._handle_workflow_delete(path)
-        elif path.startswith("/v1/agents/") and path.endswith("/memories"):
-            self._handle_agent_memory_delete(path)
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -4046,190 +4022,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         else:
             self._send_json(result)
 
-    def _handle_agent_graph(self, path: str):
-        """GET /v1/agents/{id}/graph?project=<optional> — knowledge graph of agent memories."""
-        from urllib.parse import urlparse, parse_qs
-        agent_id = self._parse_agent_from_path(path)
-        if not agent_id:
-            self._send_json({"error": "Missing agent ID"}, 400)
-            return
-
-        qs = parse_qs(urlparse(self.path).query)
-        project = (qs.get("project") or [""])[0]
-
-        agent_dir = os.path.join(engine.AGENTS_DIR, agent_id)
-        if not os.path.isdir(agent_dir):
-            self._send_json({"error": f"Agent not found: {agent_id}"}, 404)
-            return
-
-        # Determine directories to scan
-        scan_dirs = []  # (dir_path, source_label)
-        scan_dirs.append((agent_dir, "agent"))
-        if project:
-            proj_dir = os.path.join(agent_dir, "projects", project)
-            if os.path.isdir(proj_dir):
-                scan_dirs.append((proj_dir, f"project:{project}"))
-            proj_ingest = os.path.join(proj_dir, "ingested")
-            if os.path.isdir(proj_ingest):
-                scan_dirs.append((proj_ingest, f"project:{project}"))
-        # Also scan agent-level ingested dir
-        agent_ingest = os.path.join(agent_dir, "ingested")
-        if os.path.isdir(agent_ingest):
-            scan_dirs.append((agent_ingest, "agent"))
-
-        nodes = []
-        edges = []
-        seen_ids = set()
-        ignore_files = {"soul.md", "tools.md"}
-
-        for scan_dir, source_label in scan_dirs:
-            for dirpath, _, filenames in os.walk(scan_dir):
-                # Skip nested agent subdirs that aren't ingested/projects/chats-indexed
-                rel_to_agent = os.path.relpath(dirpath, agent_dir)
-                if rel_to_agent not in (".", "ingested", "chats-indexed") and not rel_to_agent.startswith("projects"):
-                    if rel_to_agent not in ("skills",):
-                        continue
-
-                for fname in sorted(filenames):
-                    if not fname.endswith(".md") or fname in ignore_files:
-                        continue
-                    fpath = os.path.join(dirpath, fname)
-                    rel = os.path.relpath(fpath, agent_dir)
-
-                    if rel in seen_ids:
-                        continue
-                    seen_ids.add(rel)
-
-                    try:
-                        stat = os.stat(fpath)
-                        with open(fpath, "r", errors="replace") as f:
-                            raw = f.read()  # full file for search
-                        fm, body = engine._parse_frontmatter(raw)
-                    except Exception:
-                        continue
-
-                    # Determine type and name
-                    mem_type = fm.get("type", "general")
-                    is_ingested = fname.startswith("ingest-") or fm.get("source", "")
-                    if is_ingested:
-                        mem_type = "ingested"
-                    name = fm.get("name") or fm.get("title") or fname.replace(".md", "").replace("_", " ").replace("-", " ")
-
-                    # Source info
-                    node_source = source_label
-                    if is_ingested and fm.get("source"):
-                        node_source = fm["source"]
-
-                    # Chunk info
-                    chunk_index = None
-                    total_chunks = None
-                    try:
-                        ci = fm.get("chunk_index", "")
-                        if ci != "":
-                            chunk_index = int(ci)
-                        tc = fm.get("total_chunks", "")
-                        if tc != "":
-                            total_chunks = int(tc)
-                    except (ValueError, TypeError):
-                        pass
-
-                    description = fm.get("description", "").strip('"').strip("'")
-                    # Full body for client-side search, truncated for display
-                    snippet = body.replace("\n", " ").strip() if body else ""
-
-                    nodes.append({
-                        "id": rel,
-                        "name": name.strip('"').strip("'"),
-                        "type": mem_type,
-                        "description": description,
-                        "snippet": snippet,
-                        "source": node_source,
-                        "size": stat.st_size,
-                        "modified": stat.st_mtime,
-                        "chunk_index": chunk_index,
-                        "total_chunks": total_chunks,
-                    })
-
-                    # Extract edges from 'related' frontmatter
-                    import re as _re
-                    related_files = _re.findall(r'file:\s*(\S+\.md)', raw)
-                    related_types = _re.findall(r'type:\s*(prev_chunk|next_chunk|same_source|references|same_topic|depends_on|contradicts|extends|co_recalled|same_folder)', raw)
-                    for i, ref_file in enumerate(related_files):
-                        edge_type = related_types[i] if i < len(related_types) else "references"
-                        # Resolve ref_file: if it already contains a /, treat as relative to agent dir
-                        # Otherwise resolve relative to the current file's directory
-                        if "/" in ref_file or os.path.exists(os.path.join(agent_dir, ref_file)):
-                            ref_rel = ref_file
-                        elif os.path.dirname(rel):
-                            ref_rel = os.path.join(os.path.dirname(rel), ref_file)
-                        else:
-                            ref_rel = ref_file
-                        edges.append({
-                            "from": rel,
-                            "to": ref_rel,
-                            "type": edge_type,
-                        })
-
-        # Detect sequential ingested chunks that might lack explicit related links
-        # Group by source hash prefix
-        ingest_groups = {}
-        for node in nodes:
-            if node["type"] == "ingested" and node["chunk_index"] is not None:
-                # Extract source hash from filename pattern: ingest-{hash}-{idx}.md
-                base = os.path.basename(node["id"])
-                parts = base.split("-")
-                if len(parts) >= 3:
-                    src_hash = parts[1]
-                    ingest_groups.setdefault(src_hash, []).append(node)
-
-        existing_edges = {(e["from"], e["to"]) for e in edges}
-        for src_hash, group in ingest_groups.items():
-            group.sort(key=lambda n: n["chunk_index"] or 0)
-            for i in range(len(group) - 1):
-                edge_key = (group[i]["id"], group[i + 1]["id"])
-                if edge_key not in existing_edges:
-                    edges.append({
-                        "from": group[i]["id"],
-                        "to": group[i + 1]["id"],
-                        "type": "next_chunk",
-                    })
-                    existing_edges.add(edge_key)
-
-        self._send_json({
-            "agent": agent_id,
-            "project": project or None,
-            "nodes": nodes,
-            "edges": edges,
-        })
-
-    def _handle_agent_graph_stats(self, path: str):
-        """GET /v1/agents/{id}/graph/stats — knowledge graph statistics."""
-        agent_id = self._parse_agent_from_path(path)
-        if not agent_id:
-            self._send_json({"error": "Missing agent ID"}, 400)
-            return
-        try:
-            stats = engine.get_graph_stats(agent_id)
-            self._send_json(stats)
-        except Exception as e:
-            self._send_json({"error": str(e)}, 500)
-
-    def _handle_agent_graph_discover(self, path: str):
-        """POST /v1/agents/{id}/graph/discover — trigger relationship discovery."""
-        agent_id = self._parse_agent_from_path(path)
-        if not agent_id:
-            self._send_json({"error": "Missing agent ID"}, 400)
-            return
-        agent_dir = os.path.join(engine.AGENTS_DIR, agent_id)
-        if not os.path.isdir(agent_dir):
-            self._send_json({"error": f"Agent not found: {agent_id}"}, 404)
-            return
-        try:
-            engine.trigger_relationship_discovery(agent_id)
-            self._send_json({"status": "discovery_started", "agent": agent_id})
-        except Exception as e:
-            self._send_json({"error": str(e)}, 500)
-
     def _handle_agents_activity(self):
         """GET /v1/agents/activity — which agents are currently doing something."""
         activity = {}  # agent_id -> list of activity types
@@ -5018,31 +4810,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     @classmethod
     def _qmd_trigger_update(cls, delay: float = 2.0) -> None:
-        """Schedule qmd update+embed after `delay` seconds, cancelling any pending one."""
-        with cls._qmd_update_lock:
-            if cls._qmd_update_timer is not None:
-                cls._qmd_update_timer.cancel()
-            def _run():
-                cls._qmd_run(["update"], timeout=120)
-                cls._qmd_run(["embed"], timeout=300)
-            cls._qmd_update_timer = threading.Timer(delay, _run)
-            cls._qmd_update_timer.daemon = True
-            cls._qmd_update_timer.start()
+        """MemPalace migration: no-op. QMD is no longer used."""
+        return
 
     @staticmethod
     def _qmd_run(args: list, timeout: int = 10) -> bool:
-        """Run a qmd command. Returns True on success."""
-        qmd_bin = BrainAgentHandler._find_qmd()
-        if not qmd_bin:
-            return False
-        try:
-            env = os.environ.copy()
-            env["PATH"] = os.path.dirname(qmd_bin) + ":" + env.get("PATH", "")
-            r = subprocess.run([qmd_bin] + args, capture_output=True, text=True,
-                               timeout=timeout, env=env)
-            return r.returncode == 0
-        except Exception:
-            return False
+        """MemPalace migration: no-op. QMD is no longer used."""
+        return False
 
     def _qmd_register_collection(self, agent_id: str, agent_dir: str) -> None:
         """Add a QMD collection for an agent if QMD is running and collection doesn't exist.
@@ -5062,13 +4836,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _is_qmd_running() -> bool:
-        """Check if QMD is reachable with a lightweight socket connect (no session created)."""
-        import socket
-        try:
-            with socket.create_connection(("localhost", _QMD_PORT), timeout=1):
-                return True
-        except (OSError, socket.timeout):
-            return False
+        """MemPalace migration: QMD is no longer used; always return False so all
+        QMD-dependent code paths short-circuit silently."""
+        return False
 
     @staticmethod
     def _is_telegram_running() -> bool:
@@ -5170,433 +4940,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         except Exception:
             pass
         return []
-
-    def _handle_qmd_docs(self):
-        """GET /v1/services/qmd/docs?collection=<name>[&file=<filename>] — list or read indexed docs."""
-        from urllib.parse import urlparse, parse_qs
-        qs = parse_qs(urlparse(self.path).query)
-        collection = (qs.get("collection") or [""])[0]
-        filename = (qs.get("file") or [""])[0]
-
-        if not collection:
-            self._send_json({"error": "collection required"}, 400)
-            return
-
-        agent_dir = os.path.join(engine.AGENTS_DIR, collection)
-        if not os.path.isdir(agent_dir):
-            self._send_json({"error": f"Collection dir not found: {agent_dir}"}, 404)
-            return
-
-        if filename:
-            fpath, err = self._qmd_safe_path(collection, filename)
-            if err:
-                self._send_json({"error": err}, 400)
-                return
-            if not os.path.isfile(fpath):
-                self._send_json({"error": "File not found"}, 404)
-                return
-            try:
-                with open(fpath, "r", errors="replace") as f:
-                    content = f.read()
-                self._send_json({"file": filename, "collection": collection, "content": content})
-            except OSError as e:
-                self._send_json({"error": str(e)}, 500)
-        else:
-            # List all .md files recursively (matches QMD pattern **/*.md)
-            files = []
-            # Load QMD index data for this collection
-            qmd_index = {}  # rel_path -> {hash, embedded_at}
-            try:
-                import sqlite3 as _sqlite3
-                idx_path = os.path.expanduser("~/.cache/qmd/index.sqlite")
-                if os.path.isfile(idx_path):
-                    conn = _sqlite3.connect(idx_path, timeout=2)
-                    conn.row_factory = _sqlite3.Row
-                    rows = conn.execute(
-                        "SELECT d.path, d.hash, "
-                        "  (SELECT cv.embedded_at FROM content_vectors cv WHERE cv.hash = d.hash LIMIT 1) AS embedded_at "
-                        "FROM documents d WHERE d.collection = ? AND d.active = 1",
-                        (collection,),
-                    ).fetchall()
-                    for r in rows:
-                        qmd_index[r["path"].lower()] = {
-                            "hash": r["hash"],
-                            "embedded_at": r["embedded_at"],
-                        }
-                    conn.close()
-            except Exception:
-                pass  # Index unavailable — degrade gracefully
-            try:
-                import hashlib as _hashlib
-                for dirpath, _, filenames in os.walk(agent_dir):
-                    for fname in sorted(filenames):
-                        if fname.endswith(".md"):
-                            fpath = os.path.join(dirpath, fname)
-                            rel = os.path.relpath(fpath, agent_dir)
-                            stat = os.stat(fpath)
-                            entry = {
-                                "name": rel,
-                                "size": stat.st_size,
-                                "modified": stat.st_mtime,
-                            }
-                            # QMD normalizes paths: lowercase + underscores→hyphens
-                            idx = qmd_index.get(rel.lower().replace("_", "-"))
-                            if idx:
-                                # Compute current file hash to compare with indexed hash
-                                try:
-                                    with open(fpath, "rb") as fh:
-                                        file_hash = _hashlib.sha256(fh.read()).hexdigest()
-                                    entry["indexed"] = True
-                                    entry["embedded_at"] = idx["embedded_at"]
-                                    entry["current"] = (file_hash == idx["hash"])
-                                except OSError:
-                                    entry["indexed"] = True
-                                    entry["embedded_at"] = idx["embedded_at"]
-                                    entry["current"] = None
-                            else:
-                                entry["indexed"] = False
-                            files.append(entry)
-                files.sort(key=lambda f: f["name"])
-            except OSError as e:
-                self._send_json({"error": str(e)}, 500)
-                return
-            self._send_json({"collection": collection, "files": files})
-
-    def _qmd_safe_path(self, collection: str, filename: str):
-        """Resolve and validate a file path within a collection. Returns fpath or None."""
-        agent_dir = os.path.join(engine.AGENTS_DIR, collection)
-        if not os.path.isdir(agent_dir):
-            return None, "Collection not found"
-        fpath = os.path.normpath(os.path.join(agent_dir, filename))
-        if not fpath.startswith(agent_dir + os.sep) or not fpath.endswith(".md"):
-            return None, "Invalid filename"
-        return fpath, None
-
-    def _handle_qmd_doc_save(self):
-        """POST /v1/services/qmd/docs — save content to a file."""
-        from urllib.parse import urlparse, parse_qs
-        qs = parse_qs(urlparse(self.path).query)
-        collection = (qs.get("collection") or [""])[0]
-        filename = (qs.get("file") or [""])[0]
-        if not collection or not filename:
-            self._send_json({"error": "collection and file required"}, 400)
-            return
-        fpath, err = self._qmd_safe_path(collection, filename)
-        if err:
-            self._send_json({"error": err}, 400)
-            return
-        body = self._read_json()
-        content = body.get("content", "")
-        try:
-            os.makedirs(os.path.dirname(fpath), exist_ok=True)
-            with open(fpath, "w") as f:
-                f.write(content)
-            self._send_json({"status": "saved", "file": filename})
-            self._qmd_trigger_update()
-        except OSError as e:
-            self._send_json({"error": str(e)}, 500)
-
-    def _handle_qmd_doc_delete(self):
-        """DELETE /v1/services/qmd/docs — delete a file."""
-        from urllib.parse import urlparse, parse_qs
-        qs = parse_qs(urlparse(self.path).query)
-        collection = (qs.get("collection") or [""])[0]
-        filename = (qs.get("file") or [""])[0]
-        if not collection or not filename:
-            self._send_json({"error": "collection and file required"}, 400)
-            return
-        # Protect non-memory files: soul.md and agent.json are managed elsewhere
-        if filename in ("soul.md", "agent.json", "mcp.json", "gmail.json"):
-            self._send_json({"error": f"{filename} cannot be deleted here"}, 403)
-            return
-        fpath, err = self._qmd_safe_path(collection, filename)
-        if err:
-            self._send_json({"error": err}, 400)
-            return
-        if not os.path.isfile(fpath):
-            self._send_json({"error": "File not found"}, 404)
-            return
-        try:
-            os.remove(fpath)
-            self._send_json({"status": "deleted", "file": filename})
-            self._qmd_trigger_update()
-        except OSError as e:
-            self._send_json({"error": str(e)}, 500)
-
-    def _handle_agent_memories_list(self, path):
-        """GET /v1/agents/<id>/memories — list all memory files with frontmatter and content."""
-        parts = path.split("/")
-        agent_id = parts[3]
-        from urllib.parse import unquote
-        agent_id = unquote(agent_id)
-        try:
-            ms = engine.MemoryStore(agent_id)
-            memories = ms.list_all()
-            self._send_json({"agent": agent_id, "memories": memories, "count": len(memories)})
-        except Exception as e:
-            self._send_json({"error": str(e)}, 500)
-
-    def _handle_agent_memory_delete(self, path):
-        """DELETE /v1/agents/<id>/memories?name=X — delete a memory by name."""
-        parts = path.split("/")
-        agent_id = parts[3]
-        from urllib.parse import unquote
-        agent_id = unquote(agent_id)
-        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
-        params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
-        name = unquote(params.get("name", ""))
-        if not name:
-            self._send_json({"error": "name parameter required"}, 400)
-            return
-        try:
-            ms = engine.MemoryStore(agent_id)
-            result = ms.delete(name)
-            if "error" in result:
-                self._send_json(result, 404)
-            else:
-                self._send_json(result)
-        except Exception as e:
-            self._send_json({"error": str(e)}, 500)
-
-    def _handle_memory_summary_get(self, path):
-        """GET /v1/agents/<id>/memory-summary — get memory summary content, config, and relationship discovery status."""
-        parts = path.split("/")
-        agent_id = parts[3]
-        try:
-            summary = engine.get_memory_summary(agent_id)
-            config = engine._get_memory_summary_config(agent_id)
-            rd_config = engine._get_relationship_discovery_config(agent_id)
-            rd_stats = engine.get_graph_stats(agent_id) if hasattr(engine, 'get_graph_stats') else {}
-            am_config = engine._get_auto_memory_config(agent_id)
-            ad_config = engine._get_autodream_config(agent_id)
-            nps_config = engine._get_next_prompt_config(agent_id)
-            # Resolve actual models used by each pipeline
-            ms_primary = config.get("model") or "Crow-9B-HERETIC-4.6-MLX-8bit"
-            ms_fallback = config.get("model_fallback") or "claude-sonnet-4-6"
-            rd_primary = rd_config.get("model") or "mistral-small"
-            rd_fallback = rd_config.get("model_fallback") or "claude-haiku-4-5-20251001"
-            ad_model = ad_config.get("model") or "claude-haiku-4-5-20251001"
-            am_primary = am_config.get("model") or ""
-            am_fallback = am_config.get("model_fallback") or ""
-            self._send_json({
-                "agent": agent_id,
-                "summary": summary or "",
-                "config": config,
-                "auto_memory": am_config,
-                "autodream": ad_config,
-                "next_prompt_suggestions": nps_config,
-                "relationship_discovery": {
-                    "config": rd_config,
-                    "stats": rd_stats,
-                },
-                "resolved_models": {
-                    "memory_summary": {"primary": ms_primary, "fallback": ms_fallback},
-                    "relationship_discovery": {"primary": rd_primary, "fallback": rd_fallback},
-                    "autodream": {"primary": ad_model},
-                    "auto_memory": {"primary": am_primary, "fallback": am_fallback},
-                },
-            })
-        except Exception as e:
-            self._send_json({"error": str(e)}, 500)
-
-    def _handle_memory_summary_post(self, path):
-        """POST /v1/agents/<id>/memory-summary — update, reset, or refresh memory summary."""
-        parts = path.split("/")
-        agent_id = parts[3]
-        body = self._read_json()
-        action = body.get("action", "")
-
-        if action == "update":
-            # Direct edit of the summary content
-            content = body.get("content", "")
-            ms = engine.MemoryStore(agent_id)
-            ms.store("Memory Summary", content,
-                     description="Auto-generated synthesis of recent conversations and task executions, updated periodically",
-                     mem_type="general")
-            self._send_json({"status": "updated", "agent": agent_id})
-        elif action == "reset":
-            result = engine.reset_memory_summary(agent_id)
-            self._send_json(result)
-        elif action == "refresh":
-            engine.trigger_memory_summary_refresh(agent_id)
-            self._send_json({"status": "refresh_scheduled", "agent": agent_id})
-        elif action == "discover":
-            engine.trigger_relationship_discovery(agent_id)
-            self._send_json({"status": "discovery_scheduled", "agent": agent_id})
-        elif action == "toggle_discovery":
-            enabled = body.get("enabled", True)
-            # Update agent.json
-            agent_cfg = engine.AgentConfig(agent_id)
-            cfg = agent_cfg.config
-            rd = cfg.get("relationship_discovery", {})
-            if not isinstance(rd, dict):
-                rd = {}
-            rd["enabled"] = bool(enabled)
-            cfg["relationship_discovery"] = rd
-            cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
-            with open(cfg_path, "w") as f:
-                json.dump(cfg, f, indent=2)
-            engine.ensure_relationship_discovery_schedules()
-            self._send_json({"status": "updated", "enabled": bool(enabled), "agent": agent_id})
-        elif action == "toggle_auto_memory":
-            enabled = body.get("enabled", True)
-            # Update agent.json
-            agent_cfg = engine.AgentConfig(agent_id)
-            cfg = agent_cfg.config
-            am = cfg.get("auto_memory", {})
-            if not isinstance(am, dict):
-                am = {}
-            am["enabled"] = bool(enabled)
-            cfg["auto_memory"] = am
-            cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
-            with open(cfg_path, "w") as f:
-                json.dump(cfg, f, indent=2)
-            self._send_json({"status": "updated", "enabled": bool(enabled), "agent": agent_id})
-        elif action == "set_next_prompt_config":
-            nps = body.get("next_prompt_suggestions", {})
-            if not isinstance(nps, dict):
-                nps = {}
-            agent_cfg = engine.AgentConfig(agent_id)
-            cfg = agent_cfg.config
-            current = cfg.get("next_prompt_suggestions", {})
-            if not isinstance(current, dict):
-                current = {}
-            for key in ("enabled", "model", "max_words", "require_cache"):
-                if key in nps:
-                    current[key] = nps[key]
-            cfg["next_prompt_suggestions"] = current
-            cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
-            with open(cfg_path, "w") as f:
-                json.dump(cfg, f, indent=2)
-            self._send_json({
-                "status": "updated",
-                "agent": agent_id,
-                "next_prompt_suggestions": engine._get_next_prompt_config(agent_id),
-            })
-        elif action == "toggle_autodream":
-            enabled = body.get("enabled", True)
-            agent_cfg = engine.AgentConfig(agent_id)
-            cfg = agent_cfg.config
-            ad = cfg.get("autodream", {})
-            if not isinstance(ad, dict):
-                ad = {}
-            ad["enabled"] = bool(enabled)
-            cfg["autodream"] = ad
-            cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
-            with open(cfg_path, "w") as f:
-                json.dump(cfg, f, indent=2)
-            self._send_json({"status": "updated", "enabled": bool(enabled), "agent": agent_id})
-        elif action == "set_memory_summary_model":
-            model = body.get("model")
-            fallback = body.get("model_fallback")
-            agent_cfg = engine.AgentConfig(agent_id)
-            cfg = agent_cfg.config
-            ms = cfg.get("memory_summary", {})
-            if not isinstance(ms, dict):
-                ms = {}
-            if model:
-                ms["model"] = model
-            else:
-                ms.pop("model", None)
-            if fallback:
-                ms["model_fallback"] = fallback
-            else:
-                ms.pop("model_fallback", None)
-            cfg["memory_summary"] = ms
-            cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
-            with open(cfg_path, "w") as f:
-                json.dump(cfg, f, indent=2)
-            engine.ensure_memory_summary_schedules()
-            self._send_json({"status": "updated", "model": model or "default", "agent": agent_id})
-        elif action == "set_relationship_discovery_model":
-            model = body.get("model")
-            fallback = body.get("model_fallback")
-            agent_cfg = engine.AgentConfig(agent_id)
-            cfg = agent_cfg.config
-            rd = cfg.get("relationship_discovery", {})
-            if not isinstance(rd, dict):
-                rd = {}
-            if model:
-                rd["model"] = model
-            else:
-                rd.pop("model", None)
-            if fallback:
-                rd["model_fallback"] = fallback
-            else:
-                rd.pop("model_fallback", None)
-            cfg["relationship_discovery"] = rd
-            cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
-            with open(cfg_path, "w") as f:
-                json.dump(cfg, f, indent=2)
-            engine.ensure_relationship_discovery_schedules()
-            self._send_json({"status": "updated", "model": model or "default", "agent": agent_id})
-        elif action == "run_autodream":
-            engine.trigger_autodream(agent_id)
-            self._send_json({"status": "autodream_scheduled", "agent": agent_id})
-        elif action == "set_autodream_model":
-            model = body.get("model")
-            fallback = body.get("model_fallback")
-            agent_cfg = engine.AgentConfig(agent_id)
-            cfg = agent_cfg.config
-            ad = cfg.get("autodream", {})
-            if not isinstance(ad, dict):
-                ad = {}
-            if model:
-                ad["model"] = model
-            else:
-                ad.pop("model", None)
-            if fallback:
-                ad["model_fallback"] = fallback
-            else:
-                ad.pop("model_fallback", None)
-            cfg["autodream"] = ad
-            cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
-            with open(cfg_path, "w") as f:
-                json.dump(cfg, f, indent=2)
-            self._send_json({"status": "updated", "model": model or "auto", "agent": agent_id})
-        elif action == "set_auto_memory_model":
-            model = body.get("model")
-            fallback = body.get("model_fallback")
-            agent_cfg = engine.AgentConfig(agent_id)
-            cfg = agent_cfg.config
-            am = cfg.get("auto_memory", {})
-            if not isinstance(am, dict):
-                am = {}
-            if model:
-                am["model"] = model
-            else:
-                am.pop("model", None)
-            if fallback:
-                am["model_fallback"] = fallback
-            else:
-                am.pop("model_fallback", None)
-            cfg["auto_memory"] = am
-            cfg_path = os.path.join(engine.AGENTS_DIR, agent_id, "agent.json")
-            with open(cfg_path, "w") as f:
-                json.dump(cfg, f, indent=2)
-            self._send_json({"status": "updated", "model": model or "auto", "agent": agent_id})
-        elif action == "promote_skill":
-            memory_name = body.get("memory_name", "")
-            if not memory_name:
-                self._send_json({"error": "memory_name required"}, 400)
-                return
-            result = engine.promote_memory_to_skill(agent_id, memory_name)
-            if "error" in result:
-                self._send_json(result, 400)
-            else:
-                self._send_json(result)
-        else:
-            self._send_json({"error": f"Unknown action: {action}"}, 400)
-
-    def _handle_memory_health_get(self, path):
-        """GET /v1/agents/<id>/memory-health — live memory health stats + autodream status."""
-        parts = path.split("/")
-        agent_id = parts[3]
-        try:
-            health = engine.get_memory_health(agent_id)
-            self._send_json(health)
-        except Exception as e:
-            self._send_json({"error": str(e)}, 500)
 
     def _handle_costs(self):
         """GET /v1/costs?agent=X&hours=24 — cost stats."""
@@ -6110,77 +5453,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"name": name, "lines": tail, "total": len(all_lines)})
         except Exception as e:
             self._send_json({"name": name, "lines": [], "error": str(e)})
-
-    def _handle_qmd_action(self):
-        """POST /v1/services/qmd — start/stop/reindex QMD."""
-        body = self._read_json()
-        action = body.get("action", "")
-
-        if action == "start":
-            if self._is_qmd_running():
-                self._send_json({"status": "already_running"})
-                return
-            qmd_bin = self._find_qmd()
-            if not qmd_bin:
-                self._send_json({"error": "qmd not installed"}, 500)
-                return
-            base = os.path.dirname(os.path.abspath(__file__))
-            log = open(os.path.expanduser("~/.brain-agent/qmd.log"), "a")
-            # Ensure qmd's node version is first in PATH
-            qmd_env = os.environ.copy()
-            qmd_node_dir = os.path.dirname(qmd_bin)
-            qmd_env["PATH"] = qmd_node_dir + ":" + qmd_env.get("PATH", "")
-            subprocess.Popen(
-                [qmd_bin, "mcp", "--http", "--port", str(_QMD_PORT)],
-                stdout=log, stderr=log, env=qmd_env,
-                start_new_session=True, cwd=base)
-            for _ in range(10):
-                time.sleep(0.5)
-                if self._is_qmd_running():
-                    self._send_json({"status": "started"})
-                    return
-            self._send_json({"status": "starting"})
-
-        elif action == "stop":
-            if os.path.exists(_QMD_PID_FILE):
-                try:
-                    with open(_QMD_PID_FILE) as f:
-                        pid = int(f.read().strip())
-                    os.kill(pid, signal.SIGTERM)
-                    self._send_json({"status": "stopped"})
-                    return
-                except Exception:
-                    pass
-            try:
-                r = subprocess.run(["lsof", "-ti", f"tcp:{_QMD_PORT}"],
-                                   capture_output=True, text=True, timeout=3)
-                for pid_str in r.stdout.strip().split("\n"):
-                    if pid_str.strip():
-                        os.kill(int(pid_str), signal.SIGTERM)
-            except Exception:
-                pass
-            self._send_json({"status": "stopped"})
-
-        elif action == "reindex":
-            collection = body.get("collection")
-            qmd_bin = self._find_qmd()
-            if not qmd_bin:
-                self._send_json({"error": "qmd not installed"}, 500)
-                return
-            reindex_env = os.environ.copy()
-            reindex_env["PATH"] = os.path.dirname(qmd_bin) + ":" + reindex_env.get("PATH", "")
-            def do_reindex():
-                _cleanup_orphaned_chat_indexes()
-                subprocess.run([qmd_bin, "update"], capture_output=True, timeout=30, env=reindex_env)
-                if collection:
-                    subprocess.run([qmd_bin, "embed", "-c", collection], capture_output=True, timeout=60, env=reindex_env)
-                else:
-                    subprocess.run([qmd_bin, "embed"], capture_output=True, timeout=60, env=reindex_env)
-            threading.Thread(target=do_reindex, daemon=True).start()
-            self._send_json({"status": "reindexing", "collection": collection or "all"})
-
-        else:
-            self._send_json({"error": f"Unknown action: {action}"}, 400)
 
     def _handle_telegram_action(self):
         """POST /v1/services/telegram — start/stop/restart/enable/disable Telegram."""
@@ -8076,7 +7348,9 @@ def main():
             except Exception:
                 pass
 
-    threading.Thread(target=_qmd_index_keeper, daemon=True, name="qmd-index-keeper").start()
+    # MemPalace migration: QMD index keeper thread disabled; memory layer is now
+    # mempalace MCP. The _qmd_index_keeper() function above is dead code and will
+    # be removed in C8 cleanup.
 
     # Start server
     server = ThreadingHTTPServer((args.host, args.port), BrainAgentHandler)
@@ -8105,7 +7379,6 @@ def main():
     print("  GET  /v1/costs          — cost stats")
     print("  GET  /v1/costs/daily    — daily cost breakdown")
     print("  GET  /v1/tasks          — background tasks")
-    print("  GET  /v1/agents/{id}/graph    — knowledge graph of agent memories")
     print("  GET  /v1/agents/{id}/workflows — list workflows")
     print("  POST /v1/agents/{id}/workflows — save workflow")
     print("  POST /v1/agents/{id}/workflows/{name}/run — run workflow")
