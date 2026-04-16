@@ -3487,6 +3487,9 @@ textarea { resize: none; }
     <div class="status-item">
       <span class="status-model" id="status-model"></span>
     </div>
+    <div class="status-item" id="status-exec-mode" style="display:none">
+      <span style="font-size:9px;font-weight:600;background:#7c3aed;color:#fff;padding:1px 5px;border-radius:3px;letter-spacing:0.5px">CLIENT</span>
+    </div>
     <div class="status-item" title="Input tokens (total)">
       <span class="status-label">In:</span>
       <span class="status-value" id="status-tokens-in">0</span>
@@ -3826,6 +3829,169 @@ class API {
     }
   }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   CLIENT EXECUTION MODE — proxy LLM + web tools through browser
+   ═══════════════════════════════════════════════════════════ */
+const ClientProxy = {
+  enabled: false,
+  providers: {},
+  exaApiKey: '',
+
+  async init() {
+    try {
+      const cfg = await API.get('/v1/config/execution-mode');
+      this.enabled = cfg.execution_mode === 'client';
+      if (this.enabled) {
+        this.providers = cfg.providers || {};
+        this.exaApiKey = cfg.exa_api_key || '';
+        console.log('[ClientProxy] Enabled — LLM calls + web tools execute in browser');
+      }
+    } catch (e) {
+      console.warn('[ClientProxy] Failed to check execution mode:', e.message);
+    }
+  },
+
+  async handleProxyRequest(sessionId, data) {
+    if (data.type === 'llm') {
+      await this._proxyLLM(sessionId, data);
+    }
+  },
+
+  async handleProxyTool(sessionId, data) {
+    const { tool_call_id, name, args } = data;
+    let result;
+    try {
+      if (name === 'web_fetch') {
+        result = await this._execWebFetch(args);
+      } else if (name === 'exa_search') {
+        result = await this._execExaSearch(args);
+      } else {
+        result = JSON.stringify({ error: `Unknown proxy tool: ${name}` });
+      }
+    } catch (e) {
+      result = JSON.stringify({ error: `${name}: ${e.message}` });
+    }
+    try {
+      await API.post('/v1/chat/proxy-tool-result', {
+        session_id: sessionId,
+        tool_call_id,
+        result,
+      });
+    } catch (e) {
+      console.error('[ClientProxy] Failed to send tool result:', e);
+    }
+  },
+
+  async _proxyLLM(sessionId, data) {
+    const { endpoint, headers, payload } = data;
+    try {
+      let resp;
+      try {
+        resp = await fetch(endpoint, {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch (fetchErr) {
+        console.error('[ClientProxy] Fetch failed (likely CORS):', fetchErr);
+        await API.post('/v1/chat/proxy-response', {
+          session_id: sessionId,
+          type: 'error',
+          message: `Failed to reach LLM provider: ${fetchErr.message}. If CORS error, the provider must set Access-Control-Allow-Origin headers for browser requests.`,
+        });
+        return;
+      }
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        await API.post('/v1/chat/proxy-response', {
+          session_id: sessionId,
+          type: 'error',
+          message: `HTTP ${resp.status}: ${errText.slice(0, 500)}`,
+        });
+        return;
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(value, { stream: true });
+        const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+        if (lines.length) {
+          await API.post('/v1/chat/proxy-response', {
+            session_id: sessionId,
+            type: 'chunks',
+            lines,
+          });
+        }
+      }
+      await API.post('/v1/chat/proxy-response', {
+        session_id: sessionId,
+        type: 'done',
+      });
+    } catch (e) {
+      try {
+        await API.post('/v1/chat/proxy-response', {
+          session_id: sessionId,
+          type: 'error',
+          message: e.message,
+        });
+      } catch (_) {}
+    }
+  },
+
+  async _execWebFetch(args) {
+    const url = args.url || '';
+    const method = args.method || 'GET';
+    const hdrs = args.headers || {};
+    const body = args.body || null;
+    const maxLength = args.max_length || 50000;
+
+    const fetchOpts = { method, headers: hdrs };
+    if (body) fetchOpts.body = body;
+
+    const resp = await fetch(url, fetchOpts);
+    let text = await resp.text();
+    if (text.length > maxLength) text = text.slice(0, maxLength) + '\n... (truncated)';
+    return JSON.stringify({ url, status: resp.status, length: text.length, content: text });
+  },
+
+  async _execExaSearch(args) {
+    const query = args.query || '';
+    const numResults = args.num_results || 5;
+    const category = args.category || null;
+
+    const body = {
+      query,
+      type: 'auto',
+      num_results: numResults,
+      contents: { highlights: { max_characters: 4000 } },
+    };
+    if (category) body.category = category;
+
+    const resp = await fetch('https://api.exa.ai/search', {
+      method: 'POST',
+      headers: {
+        'x-api-key': this.exaApiKey,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    const results = (data.results || []).map(r => ({
+      title: r.title || '',
+      link: r.url || '',
+      snippet: (r.highlights || []).join(' '),
+    }));
+    const searchInfo = { query, results, result_count: results.length };
+    if (category) searchInfo.category = category;
+    if (!results.length) searchInfo.message = 'No search results found. Try a different query.';
+    return JSON.stringify(searchInfo, null, 1);
+  },
+};
+
 
 /* ═══════════════════════════════════════════════════════════
    APPLICATION STATE
@@ -4926,6 +5092,15 @@ async function sendMessage() {
           showToast(d.message, true);
         }
       },
+      proxy_request: (d) => {
+        if (ClientProxy.enabled) {
+          ClientProxy.handleProxyRequest(chat.sessionId, d)
+            .catch(e => showToast('Proxy error: ' + e.message, true));
+        }
+      },
+      proxy_tool: (d) => {
+        if (ClientProxy.enabled) ClientProxy.handleProxyTool(chat.sessionId, d).catch(e => console.error('[ClientProxy] proxy_tool handler error:', e));
+      },
       done: (d) => {
         console.log('[SSE] done event received', {textLen: (d.text||'').length, tokens: d.tokens, model: d.model, msgCount: chat.messages.length});
         // Finalize assistant message (always update data)
@@ -5066,7 +5241,12 @@ async function openInspectModal() {
 
     // --- Summary bar ---
     const t = data.totals || {};
-    html += `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px">
+    const sessionExecMode = (data.interactions || []).find(ix => ix.assistant?.execution_mode)?.assistant?.execution_mode || 'server';
+    html += `<div style="display:grid;grid-template-columns:repeat(${sessionExecMode === 'client' ? 6 : 5},1fr);gap:12px;margin-bottom:20px">
+      ${sessionExecMode === 'client' ? `<div style="background:#7c3aed22;border:1px solid #7c3aed44;border-radius:10px;padding:12px;text-align:center">
+        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Execution</div>
+        <div style="font-size:16px;font-weight:600;color:#7c3aed;margin-top:4px">CLIENT</div>
+      </div>` : ''}
       <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
         <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Turns</div>
         <div style="font-size:20px;font-weight:600;color:var(--text-000);margin-top:4px">${t.turns || 0}</div>
@@ -5132,8 +5312,12 @@ async function openInspectModal() {
       html += `<div style="border:1px solid var(--border-100);border-radius:10px;margin-bottom:12px;overflow:hidden">`;
 
       // Turn header
+      const execMode = a.execution_mode || 'server';
+      const execBadge = execMode === 'client'
+        ? '<span style="font-size:10px;background:#7c3aed;color:#fff;padding:1px 6px;border-radius:4px;margin-left:4px" title="LLM call executed in browser (client proxy mode)">CLIENT</span>'
+        : '';
       html += `<div style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--bg-100);border-bottom:1px solid var(--border-100)">
-        <span style="font-weight:600;color:var(--text-000)">Turn ${ix.turn}</span>
+        <span style="font-weight:600;color:var(--text-000)">Turn ${ix.turn}</span>${execBadge}
         <span style="margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--text-400)">
           ${a.model ? esc(a.model) : ''}
           ${a.duration ? ' &middot; ' + a.duration.toFixed(1) + 's' : ''}
@@ -5742,6 +5926,8 @@ function updateStatusBar() {
   document.getElementById('status-agent').textContent = state.activeAgentId || '';
   document.getElementById('status-model').textContent = modelShortName(chat.model);
   document.getElementById('status-session').textContent = chat.sessionId ? chat.sessionId.substring(0,8) : '';
+  const execModeEl = document.getElementById('status-exec-mode');
+  if (execModeEl) execModeEl.style.display = ClientProxy.enabled ? '' : 'none';
 
   // Warmup indicator
   let warmupEl = document.getElementById('status-warmup');
@@ -6753,6 +6939,36 @@ async function switchGeneralTab(tab, btn) {
           <button class="btn-secondary" onclick="API.post('/v1/services/server',{max_session_cost_usd:parseFloat(document.getElementById('srv-max-session-cost').value)||0}).then(r=>{state.maxSessionCostUsd=r.max_session_cost_usd||0;showToast('Cost limit updated')}).catch(e=>showToast('Failed',true))">Set</button>
         </div>
         <div style="font-size:11px;color:var(--text-400);margin-top:2px">Soft limit (no abort). Warning triangle at 70%, modal at 90%. Set 0 to disable.</div>
+        ${SEC('Execution Mode')}
+        <div style="display:flex;gap:8px;align-items:center">
+          <select class="form-select" id="srv-execution-mode" style="flex:1" onchange="document.getElementById('srv-proxy-tools-section').style.display=this.value==='client'?'block':'none'">
+            <option value="server" ${(srv.execution_mode||'server')==='server'?'selected':''}>Server (default)</option>
+            <option value="client" ${(srv.execution_mode||'server')==='client'?'selected':''}>Client (air-gapped server)</option>
+          </select>
+          <button class="btn-secondary" onclick="const m=document.getElementById('srv-execution-mode').value;const tools=[...document.querySelectorAll('.proxy-tool-cb:checked')].map(c=>c.value);API.post('/v1/services/server',{execution_mode:m,client_proxy_tools:tools}).then(()=>{ClientProxy.enabled=(m==='client');if(m==='client')ClientProxy.init();showToast('Execution mode: '+m)}).catch(e=>showToast(e.message||'Failed',true))">Set</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-400);margin-top:2px">
+          <b>Server</b>: LLM calls and web tools execute on the server (requires internet).<br>
+          <b>Client</b>: LLM calls and web tools are proxied through the browser. Use when the server has no internet access but clients do.
+        </div>
+        ${(srv.execution_mode||'server')==='client'?'<div style="font-size:11px;color:var(--warning, #b45309);margin-top:4px;padding:6px 8px;border-radius:6px;background:var(--bg-200)">&#9888; Client execution mode is active. LLM provider calls and web tool requests will be routed through connected browser clients.</div>':''}
+        ${(() => {
+          const proxyTools = srv.client_proxy_tools || ['web_fetch', 'exa_search'];
+          const proxySet = new Set(proxyTools);
+          const allTools = srv.available_tools || [];
+          const isClient = (srv.execution_mode||'server') === 'client';
+          return '<div id="srv-proxy-tools-section" style="margin-top:8px;display:' + (isClient ? 'block' : 'none') + '">'
+            + '<div style="font-size:12px;font-weight:500;color:var(--text-200);margin-bottom:6px">Tools proxied through browser:</div>'
+            + '<div style="font-size:11px;color:var(--text-400);margin-bottom:6px">Selected tools will execute in the browser instead of on the server. Only select tools that require internet access (the browser must have a JS handler for each).</div>'
+            + '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:2px;max-height:200px;overflow-y:auto;border:1px solid var(--border-100);border-radius:8px;padding:6px">'
+            + allTools.map(name =>
+              '<label style="display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:4px;cursor:pointer;font-size:11px;color:var(--text-200)">'
+              + '<input type="checkbox" class="proxy-tool-cb" value="' + esc(name) + '"' + (proxySet.has(name) ? ' checked' : '') + '>'
+              + '<code style="font-size:10px;color:var(--text-300)">' + esc(name) + '</code>'
+              + '</label>'
+            ).join('')
+            + '</div></div>';
+        })()}
         <div style="display:flex;gap:8px;margin-top:8px">
           <button class="btn-secondary" onclick="API.restartServer().then(()=>showToast('Server restarting...')).catch(e=>showToast('Failed',true))">Restart Server</button>
         </div>
@@ -11426,7 +11642,7 @@ async function init() {
 
   // Load initial data
   try {
-    const [statusData, agentsData, modelsData, providersData, teamsData, modelsConfigData, servicesData] = await Promise.all([
+    const [statusData, agentsData, modelsData, providersData, teamsData, modelsConfigData, servicesData, _] = await Promise.all([
       API.getStatus().catch(() => null),
       API.getAgents().catch(() => ({agents:[]})),
       API.getModels().catch(() => ({models:[]})),
@@ -11434,6 +11650,7 @@ async function init() {
       API.getTeams().catch(() => ({})),
       API.getModelsConfig().catch(() => ({})),
       API.getServices().catch(() => ({})),
+      ClientProxy.init(),
     ]);
 
     state.connected = !!statusData;

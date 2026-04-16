@@ -15,11 +15,11 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
                 ┌───────┴───────┐
                 │   server.py   │
                 │  ┌──────────┐ │
-                │  │Scheduler │ │
-                │  │/mcp (MCP)│ │
+                │  │Scheduler │ │  server mode: server ──▶ LLM providers
+                │  │/mcp (MCP)│ │  client mode: browser ◀─proxy─▶ LLM providers
                 │  │Hooks     │ │
                 │  │Sessions  │ │
-                │  └──────────┘ │──▶ LLM providers (Bifrost, Kilo)
+                │  └──────────┘ │
                 └───────┬───────┘
                         │──▶ MemPalace (in-process, auto-mined)
                         └──▶ other MCP servers, Gmail, Exa, tools
@@ -52,6 +52,7 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
 - **Chat file attachments** — files created by agents appear as viewable/downloadable attachments in chat and sidebar
 
 ### Infrastructure
+- **Client execution mode** — for air-gapped servers where the browser has internet but the server doesn't. LLM calls and web tools (configurable) are proxied through the browser via SSE events; local tools run on the server. Configurable in Settings → Server → Execution Mode
 - **Multi-provider routing** — OpenAI-compatible gateways (Bifrost local, Kilo cloud); single source of truth via `resolve_provider_for_model()`
 - **Provider fallback** — exponential backoff retry with ordered fallback chains, message history rollback on mid-tool-loop failures, transient SSE error detection
 - **Token optimization** — per-agent tool group filtering, per-agent MCP tool allow/deny patterns, MCP redundant-prefix stripping, system prompt caching (60s TTL), compact threshold override, scheduled task tool restriction, tools.md trimmed to essentials, context fill display (last-round prompt size) with manual compact button

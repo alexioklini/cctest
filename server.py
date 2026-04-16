@@ -1769,6 +1769,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_costs_daily()
         elif path == "/v1/cache/stats":
             self._send_json(engine._web_cache.stats())
+        elif path == "/v1/config/execution-mode":
+            self._handle_execution_mode_get()
         # --- Traces & Audit GET routes ---
         elif path == "/v1/traces" or path.startswith("/v1/traces?"):
             self._handle_traces_list()
@@ -1890,6 +1892,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_chat()
         elif path == "/v1/chat/cancel":
             self._handle_cancel()
+        elif path == "/v1/chat/proxy-response":
+            self._handle_proxy_response()
+        elif path == "/v1/chat/proxy-tool-result":
+            self._handle_proxy_tool_result()
         elif path == "/v1/sessions/manage":
             self._handle_manage_session()
         elif path == "/v1/agents/switch":
@@ -2392,6 +2398,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         "tokens_total": meta.get("tokens", 0),
                         "duration": meta.get("duration", 0),
                         "model": meta.get("model", ""),
+                        "execution_mode": meta.get("execution_mode", "server"),
                         "cost": meta.get("cost", 0),
                         "tools": meta.get("tools", []),
                         "thinking": bool(meta.get("thinking")),
@@ -2829,6 +2836,60 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         session.cancel_token.cancel()
         self._send_json({"status": "cancelled"})
 
+    def _handle_execution_mode_get(self):
+        """GET /v1/config/execution-mode — return execution mode and provider credentials for client proxy."""
+        mode = server_config.get("execution_mode", "server")
+        result = {"execution_mode": mode}
+        if mode == "client":
+            providers = server_config.get("providers", {})
+            result["providers"] = {}
+            for name, prov in providers.items():
+                result["providers"][name] = {
+                    "api_key": prov.get("api_key", ""),
+                    "base_url": prov.get("base_url", ""),
+                }
+            tcfg = engine.get_tool_config()
+            exa_cfg = tcfg.get("exa_search", {})
+            result["exa_api_key"] = exa_cfg.get("api_key", "") or os.environ.get("EXA_API_KEY", "")
+        self._send_json(result)
+
+    def _handle_proxy_response(self):
+        """POST /v1/chat/proxy-response — browser sends proxied LLM response chunks."""
+        body = self._read_json()
+        sid = body.get("session_id", "")
+        msg_type = body.get("type", "")
+        if not sid:
+            self._send_json({"error": "session_id required"}, 400)
+            return
+        channel = engine.get_proxy_channel(sid)
+        if msg_type == "chunk":
+            data = body.get("data", "")
+            channel.feed_llm_line(data)
+        elif msg_type == "chunks":
+            for line in body.get("lines", []):
+                channel.feed_llm_line(line)
+        elif msg_type == "done":
+            channel.feed_llm_done()
+        elif msg_type == "error":
+            channel.feed_llm_error(body.get("message", "Unknown error"))
+        else:
+            self._send_json({"error": f"Unknown type: {msg_type}"}, 400)
+            return
+        self._send_json({"ok": True})
+
+    def _handle_proxy_tool_result(self):
+        """POST /v1/chat/proxy-tool-result — browser sends proxied web tool results."""
+        body = self._read_json()
+        sid = body.get("session_id", "")
+        tool_call_id = body.get("tool_call_id", "")
+        result = body.get("result", "")
+        if not sid or not tool_call_id:
+            self._send_json({"error": "session_id and tool_call_id required"}, 400)
+            return
+        channel = engine.get_proxy_channel(sid)
+        channel.feed_tool_result(tool_call_id, result)
+        self._send_json({"ok": True})
+
     def _handle_chat(self):
         """Handle chat request with SSE streaming."""
         body = self._read_json()
@@ -3241,6 +3302,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     _req_duration = round(time.time() - _req_start, 2)
                     msg_metadata = {}
                     msg_metadata["model"] = session.model
+                    msg_metadata["execution_mode"] = server_config.get("execution_mode", "server")
                     msg_metadata["duration"] = _req_duration
                     msg_metadata["tokens_in"] = _usage_totals["tokens_in"]
                     msg_metadata["tokens_out"] = _usage_totals["tokens_out"]
@@ -3267,6 +3329,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         "tokens": engine._estimate_conversation_tokens(session.messages),
                         "max_context": session.max_context,
                         "model": session.model,
+                        "execution_mode": server_config.get("execution_mode", "server"),
                         "duration": _req_duration,
                         "tokens_in": _usage_totals["tokens_in"],
                         "tokens_out": _usage_totals["tokens_out"],
@@ -3385,6 +3448,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 engine._thread_local.mcp_manager = None
                 engine._thread_local.memory_store = None
                 engine._thread_local.plan_mode = False
+                engine.cleanup_proxy_channel(sid)
                 event_queue.put(None)  # sentinel
 
 
@@ -5532,6 +5596,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "default_model": server_config.get("default_model", ""),
                 "attachment_image_model": server_config.get("attachment_image_model", ""),
                 "max_session_cost_usd": float(server_config.get("cost_limits", {}).get("max_session_cost_usd", 0) or 0),
+                "execution_mode": server_config.get("execution_mode", "server"),
+                "client_proxy_tools": server_config.get("client_proxy_tools", engine._CLIENT_PROXY_TOOLS_DEFAULT),
+                "available_tools": sorted(engine.TOOL_DISPATCH.keys()),
             },
             "telegram": {
                 "status": "running" if tg_running else "stopped",
@@ -5688,6 +5755,49 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 500)
                 return
             result["max_session_cost_usd"] = mc
+
+        # --- Execution mode ---
+        if "execution_mode" in body:
+            mode = body["execution_mode"]
+            if mode not in ("server", "client"):
+                self._send_json({"error": "execution_mode must be 'server' or 'client'"}, 400)
+                return
+            server_config["execution_mode"] = mode
+            engine._execution_mode_cache = mode
+            engine._execution_mode_cache_time = time.time()
+            try:
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                config["execution_mode"] = mode
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+                return
+            result["execution_mode"] = mode
+
+        # --- Client proxy tools ---
+        if "client_proxy_tools" in body:
+            tools_list = body["client_proxy_tools"]
+            if not isinstance(tools_list, list):
+                self._send_json({"error": "client_proxy_tools must be a list"}, 400)
+                return
+            server_config["client_proxy_tools"] = tools_list
+            engine._client_proxy_tools_cache = set(tools_list) if tools_list else None
+            try:
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                config["client_proxy_tools"] = tools_list
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+                return
+            result["client_proxy_tools"] = tools_list
 
         if not result:
             self._send_json({"error": "No valid fields to update"}, 400)
@@ -7110,6 +7220,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ct)
         self.send_header("Content-Length", len(data))
+        if ext == "html":
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.end_headers()
         self.wfile.write(data)
 
@@ -7387,6 +7499,8 @@ def main():
     attachments_cfg = file_config.get("attachments", {})
     server_config["attachment_image_model"] = attachments_cfg.get("image_model", "")
     server_config["cost_limits"] = file_config.get("cost_limits", {}) or {}
+    server_config["execution_mode"] = file_config.get("execution_mode", "server")
+    server_config["client_proxy_tools"] = file_config.get("client_proxy_tools", engine._CLIENT_PROXY_TOOLS_DEFAULT)
 
     # Initialize models config
     existing_models = file_config.get("models")
@@ -7414,6 +7528,12 @@ def main():
         print(f"Auth: enabled (registration: {'open' if _auth_mod.registration_enabled() else 'closed'})")
     else:
         print("Auth: disabled (single-user mode)")
+
+    exec_mode = server_config.get("execution_mode", "server")
+    if exec_mode == "client":
+        print(f"Execution mode: CLIENT (LLM calls + web tools proxied through browser)")
+    else:
+        print(f"Execution mode: server (default)")
 
     # Initialize engine globals
     engine._delegate_api_key = args.api_key

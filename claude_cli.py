@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "7.5.0"
+VERSION = "7.6.0"
 VERSION_DATE = "2026-04-16"
 CHANGELOG = [
+    ("7.6.0", "2026-04-16", "Client execution mode for air-gapped corporate deployments. When the server has no internet but browser clients do, set execution_mode to 'client' in config.json or Settings → Server. LLM inference calls are proxied through the browser: server emits proxy_request SSE events with the full payload, browser calls the provider's /chat/completions endpoint, streams chunks back via POST /v1/chat/proxy-response. Web-accessing tools (web_fetch, exa_search) are similarly proxied via POST /v1/chat/proxy-tool-result. All local tools (file ops, git, shell, code graph, mempalace, etc.) continue executing on the server. ProxyChannel class in claude_cli.py provides thread-safe queue bridging between the agentic loop and browser. Configurable proxy tool list in Settings GUI — any tool can be routed through the browser. Session inspector shows purple CLIENT badge on turns executed via proxy. Status bar shows CLIENT badge when mode is active. Provider credentials relayed to browser via GET /v1/config/execution-mode. Requires CORS-enabled LLM providers (Mistral API, OpenAI API, Bifrost local proxy all confirmed working). Chrome is the primary supported browser."),
     ("7.5.0", "2026-04-16", "Per-user MemPalace memory isolation, admin dashboard, and session delete cleanup. Wings now use user_id/agent_id format so each user's chat memories are isolated by default — shared wings (brain_code, mined source) remain globally visible. mempalace_query auto-scopes to the current user: bare agent names are prefixed with user_id, unfiltered searches post-filter to exclude other users' wings. user_id propagated via _thread_local to chat workers and delegate tasks. Chat sync writes user-scoped wings; sessions without a user_id (pre-auth, system) fall back to bare agent_id. Session.user_id field added, loaded from DB on restore, set from auth at creation. New MemPalace admin dashboard tab in General Settings — overview stats (drawers, closets, wings, rooms, edges, DB size), knowledge graph counts, daemon status, per-wing breakdown with user-scoped vs shared badges and room chips, tunnel list, write-ahead log activity with operation badges, and anomaly detection (sparse wings, stale sync, disabled daemons, high drawer/closet ratio). GET /v1/mempalace/stats endpoint aggregates data from MemPalace collections, graph, KG, WAL, and chat_mempalace_sync cursor table. Session delete now purges associated MemPalace drawers and closets (background thread matching source_file prefix session/<sid>) and cleans up the sync cursor row — archive leaves memories intact."),
     ("7.4.0", "2026-04-16", "MemPalace direct integration — replaces the MCP stdio server with in-process Python imports. Single built-in mempalace_query tool (hybrid BM25+vector+closet search) replaces ~15 mcp_mempalace_* tools. Two background daemons in server.py: mempalace-miner (auto-mines source tree + artifacts every 30 min) and mempalace-chat-sync (mirrors chat turns, session summaries, attachment metadata, and web references into MemPalace drawers every 60s with closet rebuilds). No manual 'mempalace mine' runs needed — palace stays up to date automatically. Config in config.json 'mempalace' block with mine sources, chat_sync roles/tool allowlist, and closet toggle. New 'memory' tool group in DEFAULT_TOOL_GROUPS. chat_mempalace_sync cursor table in chats.db tracks sync progress. Also fixes newChat() not clearing chatTitle (stale title from previous session shown on new chats)."),
     ("7.3.0", "2026-04-15", "Purge B: api_type parameter fully removed from all function signatures. Follow-up to v7.2.0 Purge A. send_message, send_message_with_fallback, _retry_with_backoff, _run_delegate, _compact_conversation, _check_and_compact, ContextManager.recall/summarize_chunk/check_and_compact, make_headers, get_available_models, _apply_inference_to_payload, list_models, _handle_openai_response — all lose the api_type parameter. resolve_provider_for_model now returns {api_key, base_url, provider_name} (no api_type). Session.api_type field removed. server_config['api_type'] removed. CLI --api-type flag removed from both claude_cli.py and server.py argparse. _delegate_api_type global removed. All attachment routing branches in server.py _handle_chat collapsed to the single OpenAI image_url path (Anthropic document blocks gone). Warmup path in server.py simplified. Net effect: ~30 signatures cleaned up, ~60 call sites updated, provider config schema simplified. All providers are OpenAI-compatible (Bifrost, Kilo); re-adding an Anthropic-direct provider would require reintroducing wire-format branching."),
@@ -75,6 +76,7 @@ import logging
 import glob as globmod
 import json
 import os
+import queue
 import random
 import re
 import select
@@ -12923,6 +12925,140 @@ class EscapeWatcher:
                 pass
 
 
+# --- Client Execution Mode (proxy LLM + web tools through browser) ---
+
+_execution_mode_cache = None
+_execution_mode_cache_time = 0.0
+_client_proxy_tools_cache = None
+
+_CLIENT_PROXY_TOOLS_DEFAULT = ["web_fetch", "exa_search"]
+
+def _get_execution_mode() -> str:
+    """Read execution_mode from config.json. 30s cache. Returns 'server' or 'client'."""
+    global _execution_mode_cache, _execution_mode_cache_time, _client_proxy_tools_cache
+    now = time.time()
+    if _execution_mode_cache is not None and (now - _execution_mode_cache_time) < 30:
+        return _execution_mode_cache
+    cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+    mode = "server"
+    try:
+        with open(cfg_path) as f:
+            cfg = json.load(f)
+        mode = cfg.get("execution_mode", "server") or "server"
+        tools = cfg.get("client_proxy_tools")
+        _client_proxy_tools_cache = set(tools) if isinstance(tools, list) else None
+    except (OSError, json.JSONDecodeError):
+        pass
+    _execution_mode_cache = mode
+    _execution_mode_cache_time = now
+    return mode
+
+
+def _get_client_proxy_tools() -> set:
+    """Return the set of tool names to proxy through the browser in client mode."""
+    _get_execution_mode()
+    if _client_proxy_tools_cache is not None:
+        return _client_proxy_tools_cache
+    return set(_CLIENT_PROXY_TOOLS_DEFAULT)
+
+
+class ProxyChannel:
+    """Thread-safe channel for proxying LLM calls and web tool execution through a browser client.
+
+    In client execution mode, the agentic loop emits proxy_request/proxy_tool events via
+    event_callback, then blocks on this channel waiting for the browser to stream back results.
+    """
+
+    def __init__(self):
+        self.response_queue = queue.Queue()
+        self.tool_results = {}  # tool_call_id -> result string
+        self._tool_events = {}  # tool_call_id -> threading.Event
+
+    def wait_for_llm_lines(self, escape_watcher=None):
+        """Yield SSE lines from the browser's proxied LLM response.
+        Implements the same iterator interface as urllib response (for line in response:).
+        """
+        while True:
+            if escape_watcher and escape_watcher.cancelled:
+                raise TaskCancelled()
+            try:
+                item = self.response_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                raise item
+            yield item.encode("utf-8") if isinstance(item, str) else item
+
+    def feed_llm_line(self, line: str):
+        """Browser sends an SSE line from the provider response."""
+        self.response_queue.put(line)
+
+    def feed_llm_done(self):
+        """Browser signals the LLM response stream is complete."""
+        self.response_queue.put(None)
+
+    def feed_llm_error(self, message: str):
+        """Browser signals an error during LLM call."""
+        self.response_queue.put(RuntimeError(f"Client proxy error: {message}"))
+
+    def request_tool_result(self, tool_call_id: str) -> threading.Event:
+        """Create a wait event for a proxied tool result."""
+        evt = threading.Event()
+        self._tool_events[tool_call_id] = evt
+        return evt
+
+    def feed_tool_result(self, tool_call_id: str, result: str):
+        """Browser sends the result of a proxied web tool."""
+        self.tool_results[tool_call_id] = result
+        evt = self._tool_events.pop(tool_call_id, None)
+        if evt:
+            evt.set()
+
+    def get_tool_result(self, tool_call_id: str, timeout: float = 120.0,
+                        escape_watcher=None) -> str:
+        """Block until the browser returns the tool result."""
+        evt = self._tool_events.get(tool_call_id)
+        if not evt:
+            evt = self.request_tool_result(tool_call_id)
+        start = time.time()
+        while not evt.wait(timeout=1.0):
+            if escape_watcher and escape_watcher.cancelled:
+                raise TaskCancelled()
+            if time.time() - start > timeout:
+                return json.dumps({"error": f"Client proxy timeout after {timeout}s"})
+        return self.tool_results.pop(tool_call_id, json.dumps({"error": "No result received"}))
+
+    def reset(self):
+        """Clear state for a new LLM call."""
+        while not self.response_queue.empty():
+            try:
+                self.response_queue.get_nowait()
+            except queue.Empty:
+                break
+        self.tool_results.clear()
+        self._tool_events.clear()
+
+
+_proxy_channels = {}  # session_id -> ProxyChannel
+_proxy_channels_lock = threading.Lock()
+
+
+def get_proxy_channel(session_id: str) -> ProxyChannel:
+    """Get or create a proxy channel for a session."""
+    with _proxy_channels_lock:
+        if session_id not in _proxy_channels:
+            _proxy_channels[session_id] = ProxyChannel()
+        return _proxy_channels[session_id]
+
+
+def cleanup_proxy_channel(session_id: str):
+    """Remove proxy channel when session is done."""
+    with _proxy_channels_lock:
+        _proxy_channels.pop(session_id, None)
+
+
 # --- Spinner ---
 
 SPINNER_CHARS = ["·", "✢", "✳", "∗", "✻", "✽"]
@@ -14608,9 +14744,25 @@ def _execute_tool(name: str, args: dict) -> str:
     result_status = "success"
     result = None
     try:
+        # Client execution mode: proxy web tools through connected browser
+        if _get_execution_mode() == "client" and name in _get_client_proxy_tools():
+            _cb = getattr(_thread_local, 'event_callback', None)
+            _sid = getattr(_thread_local, 'current_session_id', None) or ""
+            _tcid = getattr(_thread_local, 'tool_use_id', None) or name
+            if _cb and _sid:
+                channel = get_proxy_channel(_sid)
+                channel.request_tool_result(_tcid)
+                _cb("proxy_tool", {
+                    "tool_call_id": _tcid,
+                    "name": name,
+                    "args": args,
+                })
+                ew = getattr(_thread_local, '_escape_watcher', None)
+                result = channel.get_tool_result(_tcid, escape_watcher=ew)
+            else:
+                result = _err(f"Client execution mode requires an active browser connection for {name}")
         # Check MCP tools first (prefer thread-local for concurrent requests)
-        mcp = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
-        if mcp and mcp.is_mcp_tool(name):
+        elif (mcp := (getattr(_thread_local, 'mcp_manager', None) or _mcp_manager)) and mcp.is_mcp_tool(name):
             result = mcp.call_tool(name, args)
         else:
             fn = TOOL_DISPATCH.get(name)
@@ -15231,6 +15383,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         _thread_local._tool_results_tokens = 0
         _thread_local._max_output_recovery_count = 0
         _thread_local._has_attempted_reactive_compact = False
+        _thread_local._escape_watcher = escape_watcher
         # Start a request-level trace span for the full conversation turn
         if _trace_manager:
             agent = getattr(_thread_local, 'current_agent', None) or _current_agent
@@ -15404,6 +15557,31 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
             raise RuntimeError(reason)
 
     data = json.dumps(payload).encode("utf-8")
+
+    # Client execution mode: proxy LLM call through connected browser
+    _exec_mode = _get_execution_mode()
+    if _exec_mode == "client" and event_callback and session_id:
+        channel = get_proxy_channel(session_id)
+        channel.reset()
+        event_callback("proxy_request", {
+            "type": "llm",
+            "endpoint": endpoint,
+            "headers": headers,
+            "payload": json.loads(data.decode("utf-8")),
+        })
+        try:
+            proxy_iter = channel.wait_for_llm_lines(escape_watcher)
+            return _handle_openai_response(
+                proxy_iter, payload, messages, model, api_key, base_url,
+                silent, tools, headers, endpoint, escape_watcher,
+                _tool_round, event_callback, inference_params, session_id)
+        except RuntimeError as e:
+            error_msg = str(e)
+            print(f"  [proxy] LLM proxy error: {error_msg[:200]}", file=sys.stderr, flush=True)
+            if event_callback:
+                event_callback("error", {"message": error_msg})
+            return None
+
     request = urllib.request.Request(
         endpoint, data=data, headers=headers, method="POST",
     )

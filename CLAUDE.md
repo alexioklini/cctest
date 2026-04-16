@@ -159,6 +159,36 @@ gateway). Both are OpenAI-compatible (`/v1/chat/completions`). Anthropic and
 Mistral wire formats are no longer supported — the `api_type` concept was
 removed in v7.3.0 (Purge B).
 
+### Client Execution Mode
+
+For corporate environments where the server is air-gapped (no internet access) but
+browser clients have internet, set `"execution_mode": "client"` in `config.json`.
+
+In this mode, the agentic loop stays on the server but LLM API calls and web-accessing
+tools (`web_fetch`, `exa_search`) are proxied through the connected browser client:
+
+- **LLM calls**: server emits `proxy_request` SSE event with full payload → browser calls
+  the provider's `/chat/completions` endpoint → streams response back via `POST /v1/chat/proxy-response`
+- **Web tools**: server emits `proxy_tool` SSE event → browser executes the fetch/search →
+  returns result via `POST /v1/chat/proxy-tool-result`
+- **Local tools** (file ops, git, shell, code graph, etc.) execute on the server as normal
+
+Key components:
+- `ProxyChannel` class in `claude_cli.py`: thread-safe queue bridging server agentic loop ↔ browser
+- `_get_execution_mode()` / `_get_client_proxy_tools()`: reads `config.json` with 30s cache
+- `client_proxy_tools`: configurable list of tool names routed through browser (default: `web_fetch`, `exa_search`)
+- `GET /v1/config/execution-mode`: returns mode + provider credentials for browser to use
+- `POST /v1/chat/proxy-response`: browser relays LLM streaming chunks (types: `chunk`, `chunks`, `done`, `error`)
+- `POST /v1/chat/proxy-tool-result`: browser returns web tool execution results
+- `ClientProxy` module in `web/index.html`: handles proxy SSE events, executes LLM/web calls
+- Session inspector: purple `CLIENT` badge on turns executed via proxy
+- Status bar: purple `CLIENT` badge when mode is active
+- Requires CORS-enabled LLM providers (Mistral API, OpenAI API, Bifrost confirmed working)
+- Chrome is the primary supported browser
+
+Config: `config.json` → `"execution_mode": "server"` (default) or `"client"`, `"client_proxy_tools": [...]`
+GUI: Settings → Server → Execution Mode (dropdown + proxy tools checklist)
+
 ### Model Management
 
 Models have a configurable `display_name` (default = shortname derived from model ID). All UI
