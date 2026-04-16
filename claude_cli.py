@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "7.3.0"
-VERSION_DATE = "2026-04-15"
+VERSION = "7.4.0"
+VERSION_DATE = "2026-04-16"
 CHANGELOG = [
+    ("7.4.0", "2026-04-16", "MemPalace direct integration — replaces the MCP stdio server with in-process Python imports. Single built-in mempalace_query tool (hybrid BM25+vector+closet search) replaces ~15 mcp_mempalace_* tools. Two background daemons in server.py: mempalace-miner (auto-mines source tree + artifacts every 30 min) and mempalace-chat-sync (mirrors chat turns, session summaries, attachment metadata, and web references into MemPalace drawers every 60s with closet rebuilds). No manual 'mempalace mine' runs needed — palace stays up to date automatically. Config in config.json 'mempalace' block with mine sources, chat_sync roles/tool allowlist, and closet toggle. New 'memory' tool group in DEFAULT_TOOL_GROUPS. chat_mempalace_sync cursor table in chats.db tracks sync progress. Also fixes newChat() not clearing chatTitle (stale title from previous session shown on new chats)."),
     ("7.3.0", "2026-04-15", "Purge B: api_type parameter fully removed from all function signatures. Follow-up to v7.2.0 Purge A. send_message, send_message_with_fallback, _retry_with_backoff, _run_delegate, _compact_conversation, _check_and_compact, ContextManager.recall/summarize_chunk/check_and_compact, make_headers, get_available_models, _apply_inference_to_payload, list_models, _handle_openai_response — all lose the api_type parameter. resolve_provider_for_model now returns {api_key, base_url, provider_name} (no api_type). Session.api_type field removed. server_config['api_type'] removed. CLI --api-type flag removed from both claude_cli.py and server.py argparse. _delegate_api_type global removed. All attachment routing branches in server.py _handle_chat collapsed to the single OpenAI image_url path (Anthropic document blocks gone). Warmup path in server.py simplified. Net effect: ~30 signatures cleaned up, ~60 call sites updated, provider config schema simplified. All providers are OpenAI-compatible (Bifrost, Kilo); re-adding an Anthropic-direct provider would require reintroducing wire-format branching."),
     ("7.2.0", "2026-04-15", "Token optimization, cost guardrails, and Anthropic/Mistral wire-format purge. Status bar now shows last-round prompt tokens (not cumulative across tool rounds) so 'context used' reflects the real next-call size. Hard tool-round cap at 1.5× the soft limit stops runaway loops. Per-agent runtime limits in agent.json 'limits' block: max_tool_rounds, tool_result_char_limit, tool_results_total_tokens, context_safety_ratio. Pre-flight context guardrail raises before provider 400s when estimated prompt exceeds max_context * safety_ratio. Session cost soft warnings: 70% amber triangle, 90% red + one-time modal per session, configurable global max_session_cost_usd in Settings → Server → Cost Limits. Built-in cost rate table expanded: OpenAI (gpt-4o/4.1/o1/o3/o4-mini), Mistral, Gemini, Grok, DeepSeek, local-model zeros. New GET /v1/tools/breakdown endpoint measures per-group + per-tool token cost with schema decomposition (name/description/schema). Tokens tab shows the breakdown with heavy-schema ⚠ markers. MCP improvements: redundant '<server>_' prefix stripped from tool names (mcp_mempalace_mempalace_search → mcp_mempalace_search, ~260 tok saved on mempalace alone), '[MCP:server]' description prefix dropped, per-agent MCP tool filter/exclude in token_config with fnmatch globs, UI checkbox-save directly from breakdown view. Removed prompt_caching token_config field (no-op outside Anthropic wire format). Purge A of Anthropic/Mistral wire formats: _handle_anthropic_response (224 lines), _handle_mistral_response + mistral SDK helpers (291 lines), _collect_anthropic/_stream_anthropic, and all api_type branching in send_message/_run_delegate/make_headers/get_available_models/_apply_inference_to_payload/list_models collapsed to OpenAI-only paths. ~600 lines removed. api_type parameter still threaded through signatures (Purge B pending). All providers are OpenAI-compatible (Bifrost, Kilo)."),
     ("7.0.0", "2026-04-14", "Native agentic loop restored. The v6.0.0 PI Agent SDK unification is reverted: the Node.js pi_sidecar process, the Anthropic Agent SDK sidecar (sdk_sidecar.py / sdk_backend.py), and all Mistral SDK paths are removed. Chat, delegate, scheduler, refine, and soul_chat all flow through the native Python agentic loop (send_message / _handle_openai_response / middleware pipeline). The Lossless Context Manager (ContextManager + context.db) is back as the compaction engine — SSE compacting/compacted events and the /v1/context/* endpoints work again. Interpretation B: all providers are OpenAI-compatible (Bifrost, Kilo). api_type is always 'openai'; Anthropic and Mistral wire formats are gone. Code mode is removed from both UI and server (was tied to PI). The /v1/tools/call and /v1/hooks/run endpoints are deleted — Brain tools run in-process through _execute_tool() which fires hooks natively. Net diff: server.py -1100 lines, pi_sidecar/ directory deleted. See stage commits dcf73a4..30468b1."),
@@ -388,9 +389,54 @@ TOOL_DEFINITIONS = [
         },
     },
     # MemPalace migration: built-in memory_* tools unregistered from the
-    # LLM-facing schema. Built-in implementations (tool_memory_*) and dispatch
-    # remain in place for internal callers. Agents now use mcp_mempalace_*
-    # tools exposed by the mempalace MCP server (see agents/main/mcp.json).
+    # LLM-facing schema. Agents now query MemPalace directly via mempalace_query
+    # below, which imports mempalace.searcher in-process (no MCP, no subprocess).
+    # Mining is handled by background daemons in server.py; the user never runs
+    # `mempalace mine` by hand.
+    {
+        "name": "mempalace_query",
+        "description": (
+            "Search long-term memory (MemPalace). Returns verbatim snippets "
+            "(drawers) from past conversations, code, references, and "
+            "attachments that match the query. Use this whenever the user "
+            "asks about something they (or the agent) said before, a "
+            "previously-mentioned project, a past decision, or code you've "
+            "seen in this repo. Hybrid BM25+vector ranking; the daemon keeps "
+            "the palace up to date automatically."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What to search for. Natural language or keywords.",
+                },
+                "wing": {
+                    "type": "string",
+                    "description": (
+                        "Optional wing filter. Typically an agent id (e.g. 'main') "
+                        "for chat/reference memories, or 'brain_code' for source/artifacts. "
+                        "Omit to search all wings."
+                    ),
+                },
+                "room": {
+                    "type": "string",
+                    "description": (
+                        "Optional room filter: chat, chat_summary, chat_attachment, "
+                        "reference, document, artifacts, or any other configured room. "
+                        "Omit to search all rooms in the wing."
+                    ),
+                },
+                "n_results": {
+                    "type": "integer",
+                    "description": "Max drawers to return (default 5, max 25).",
+                    "minimum": 1,
+                    "maximum": 25,
+                },
+            },
+            "required": ["query"],
+        },
+    },
     {
         "name": "context_search",
         "description": "Search through compacted conversation history by keyword. Returns matching message excerpts from earlier in the conversation that have been summarized away.",
@@ -831,7 +877,7 @@ _TOOL_DEF_OPENAI_INDEX = {td["function"]["name"]: td for td in TOOL_DEFINITIONS_
 TOOL_GROUPS = {
     "core": {"read_file", "write_file", "edit_file", "list_directory", "search_files",
              "execute_command"},
-    # "memory" group removed — superseded by mempalace MCP server
+    "memory": {"mempalace_query"},
     "context": {"context_search", "context_detail", "context_recall"},
     "web": {"web_fetch", "exa_search"},
     "email": {"gmail_inbox", "gmail_read", "gmail_search", "gmail_send", "gmail_reply"},
@@ -847,7 +893,7 @@ TOOL_GROUPS = {
 }
 
 # Default tool groups included for all agents (if no explicit config)
-DEFAULT_TOOL_GROUPS = {"core", "context", "web", "delegation", "git", "skills",
+DEFAULT_TOOL_GROUPS = {"core", "memory", "context", "web", "delegation", "git", "skills",
                        "nodes", "scheduler", "mcp"}
 
 
@@ -2546,6 +2592,126 @@ def exa_search(query: str, num_results: int = 5, category: str | None = None,
         return json.dumps({"query": query, "results": [], "error": f"HTTP {e.code}: {error_body}"})
     except Exception as e:
         return json.dumps({"query": query, "results": [], "error": str(e)})
+
+
+# --- MemPalace (direct, in-process) ---
+#
+# MemPalace ships as a Python package in its own venv. We import it lazily
+# (only on first call) so Brain startup stays fast and missing installs are
+# soft failures. No MCP, no subprocess — `mempalace.searcher.search` runs
+# in-process and goes straight to Chroma.
+
+_mempalace_import_lock = threading.Lock()
+_mempalace_imported = False
+_mempalace_config_cache = None
+_mempalace_config_cache_time = 0.0
+
+
+def _load_mempalace_config() -> dict:
+    """Read the 'mempalace' block from config.json. 10s cache."""
+    global _mempalace_config_cache, _mempalace_config_cache_time
+    now = time.time()
+    if _mempalace_config_cache is not None and (now - _mempalace_config_cache_time) < 10:
+        return _mempalace_config_cache
+    cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+    block = {}
+    try:
+        with open(cfg_path) as f:
+            block = json.load(f).get("mempalace", {}) or {}
+    except (OSError, json.JSONDecodeError):
+        block = {}
+    _mempalace_config_cache = block
+    _mempalace_config_cache_time = now
+    return block
+
+
+def _ensure_mempalace_importable() -> tuple[bool, str]:
+    """Add the mempalace venv site-packages to sys.path if configured. Idempotent."""
+    global _mempalace_imported
+    if _mempalace_imported:
+        return True, ""
+    with _mempalace_import_lock:
+        if _mempalace_imported:
+            return True, ""
+        cfg = _load_mempalace_config()
+        site_packages = cfg.get("venv_site_packages", "")
+        if site_packages and os.path.isdir(site_packages) and site_packages not in sys.path:
+            sys.path.insert(0, site_packages)
+        try:
+            import mempalace.searcher  # noqa: F401  — probe import
+        except ImportError as e:
+            return False, f"mempalace package not importable: {e} (venv_site_packages={site_packages!r})"
+        _mempalace_imported = True
+        return True, ""
+
+
+def tool_mempalace_query(args: dict) -> str:
+    """Query MemPalace. Returns ranked drawers as a JSON list."""
+    cfg = _load_mempalace_config()
+    if not cfg.get("enabled", True):
+        return _err("mempalace: disabled in config.json (mempalace.enabled = false)")
+    palace_path = cfg.get("palace_path", "")
+    if not palace_path:
+        return _err("mempalace: no palace_path configured in config.json")
+    if not os.path.isdir(palace_path):
+        return _err(f"mempalace: palace_path does not exist: {palace_path}")
+
+    ok, err = _ensure_mempalace_importable()
+    if not ok:
+        return _err(err)
+
+    query = (args.get("query") or "").strip()
+    if not query:
+        return _err("mempalace_query: 'query' is required")
+    wing = args.get("wing") or None
+    room = args.get("room") or None
+    n_results = args.get("n_results") or 5
+    try:
+        n_results = max(1, min(25, int(n_results)))
+    except (TypeError, ValueError):
+        n_results = 5
+
+    try:
+        # Use the programmatic API (search_memories), not the printing CLI
+        # entry point (search). search_memories returns a dict with a 'results'
+        # list already enriched with closet boosts + BM25 rerank.
+        from mempalace.searcher import search_memories
+        results = search_memories(
+            query=query,
+            palace_path=palace_path,
+            wing=wing,
+            room=room,
+            n_results=n_results,
+        )
+    except Exception as e:
+        return _err(f"mempalace_query: {type(e).__name__}: {e}")
+
+    if isinstance(results, dict) and results.get("error"):
+        return _err(f"mempalace_query: {results.get('error')}")
+
+    # Normalize and trim. Cap each drawer text at 2000 chars so one hit
+    # can't balloon the turn.
+    drawers = []
+    for r in (results or {}).get("results", [])[:n_results]:
+        if not isinstance(r, dict):
+            continue
+        drawers.append({
+            "wing": r.get("wing", ""),
+            "room": r.get("room", ""),
+            "source_file": r.get("source_file", ""),
+            "similarity": r.get("similarity"),
+            "matched_via": r.get("matched_via", "drawer"),
+            "text": (r.get("text") or "")[:2000],
+        })
+
+    return _ok({
+        "query": query,
+        "wing": wing,
+        "room": room,
+        "count": len(drawers),
+        "total_before_filter": (results or {}).get("total_before_filter"),
+        "drawers": drawers,
+    })
 
 
 # --- MCP Client ---
@@ -13835,6 +14001,7 @@ TOOL_DISPATCH = {
         num_results=args.get("num_results", 5),
         category=args.get("category"),
     ),
+    "mempalace_query": tool_mempalace_query,
     "memory_store": tool_memory_store,
     "memory_recall": tool_memory_recall,
     "memory_delete": tool_memory_delete,

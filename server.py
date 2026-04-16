@@ -3,6 +3,9 @@
 
 import argparse
 import asyncio
+import contextlib
+import hashlib
+import io
 import json
 import os
 import queue
@@ -277,6 +280,17 @@ class ChatDB:
                 pass
             conn.execute("CREATE INDEX IF NOT EXISTS idx_session_user ON sessions(user_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_artifact_user ON artifacts(user_id)")
+            # ── MemPalace chat-sync cursor ──
+            # Tracks which messages have already been mirrored into MemPalace,
+            # per session. `last_message_id` is the highest messages.id filed so far.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS chat_mempalace_sync (
+                    session_id TEXT PRIMARY KEY,
+                    last_message_id INTEGER NOT NULL DEFAULT 0,
+                    last_summary_hash TEXT DEFAULT '',
+                    updated_at REAL DEFAULT (strftime('%s','now'))
+                )
+            """)
             conn.commit()
 
     # ── Artifact CRUD ──
@@ -478,6 +492,88 @@ class ChatDB:
                     msg["compacted"] = True
                 messages.append(msg)
             return messages
+
+    # ── MemPalace chat-sync cursor helpers ──
+
+    @staticmethod
+    @_db_safe(default=list)
+    def mempalace_sessions_needing_sync():
+        """Return sessions whose max(messages.id) > last synced id (or have never been synced).
+
+        Returns a list of dicts: {session_id, agent_id, summary, last_message_id_filed, max_message_id}.
+        Uses a left join so sessions with no prior cursor row show up as last_message_id_filed=0.
+        """
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""
+                SELECT s.id as session_id,
+                       s.agent_id as agent_id,
+                       COALESCE(s.summary, '') as summary,
+                       COALESCE(c.last_message_id, 0) as last_message_id_filed,
+                       COALESCE(c.last_summary_hash, '') as last_summary_hash,
+                       (SELECT MAX(id) FROM messages WHERE session_id = s.id) as max_message_id
+                FROM sessions s
+                LEFT JOIN chat_mempalace_sync c ON c.session_id = s.id
+                WHERE s.status != 'incognito'
+            """).fetchall()
+            out = []
+            for r in rows:
+                d = dict(r)
+                if (d.get("max_message_id") or 0) > (d.get("last_message_id_filed") or 0):
+                    out.append(d)
+                elif d.get("summary") and not d.get("last_summary_hash"):
+                    # Summary was generated after the last sync — still needs one pass.
+                    out.append(d)
+            return out
+
+    @staticmethod
+    @_db_safe(default=list)
+    def mempalace_load_new_messages(session_id, after_id):
+        """Return messages with id > after_id for a session, including compacted rows
+        (we want a lossless mirror, not a live-context view)."""
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, role, content, metadata FROM messages "
+                "WHERE session_id = ? AND id > ? ORDER BY id",
+                (session_id, after_id)
+            ).fetchall()
+            out = []
+            for mid, role, content, metadata in rows:
+                try:
+                    parsed = json.loads(content)
+                except (json.JSONDecodeError, TypeError):
+                    parsed = content
+                meta = None
+                if metadata:
+                    try:
+                        meta = json.loads(metadata)
+                    except (json.JSONDecodeError, TypeError):
+                        meta = None
+                out.append({"id": mid, "role": role, "content": parsed, "metadata": meta})
+            return out
+
+    @staticmethod
+    @_db_safe(default=None)
+    def mempalace_update_cursor(session_id, last_message_id, last_summary_hash=None):
+        with _db_conn() as conn:
+            if last_summary_hash is None:
+                conn.execute("""
+                    INSERT INTO chat_mempalace_sync (session_id, last_message_id, updated_at)
+                    VALUES (?, ?, strftime('%s','now'))
+                    ON CONFLICT(session_id) DO UPDATE SET
+                        last_message_id = excluded.last_message_id,
+                        updated_at = excluded.updated_at
+                """, (session_id, int(last_message_id)))
+            else:
+                conn.execute("""
+                    INSERT INTO chat_mempalace_sync (session_id, last_message_id, last_summary_hash, updated_at)
+                    VALUES (?, ?, ?, strftime('%s','now'))
+                    ON CONFLICT(session_id) DO UPDATE SET
+                        last_message_id = excluded.last_message_id,
+                        last_summary_hash = excluded.last_summary_hash,
+                        updated_at = excluded.updated_at
+                """, (session_id, int(last_message_id), last_summary_hash))
+            conn.commit()
 
     @staticmethod
     @_db_safe(default=list)
@@ -7441,6 +7537,373 @@ def main():
                 pass
 
     threading.Thread(target=_file_change_watcher, daemon=True, name="file-change-watcher").start()
+
+    # MemPalace background miner — keeps the palace up to date without the
+    # user running `mempalace mine` by hand. Idempotent (skips already-filed
+    # content via content hash), so re-running every 30 min is cheap.
+    def _mempalace_miner_loop():
+        mcfg = engine._load_mempalace_config()
+        if not mcfg.get("enabled", True):
+            print("MemPalace miner: disabled (mempalace.enabled = false)")
+            return
+        mine_cfg = mcfg.get("mine", {}) or {}
+        if not mine_cfg.get("enabled", True):
+            print("MemPalace miner: disabled (mempalace.mine.enabled = false)")
+            return
+        # Ensure the mempalace package is importable (sets up sys.path once).
+        ok, err = engine._ensure_mempalace_importable()
+        if not ok:
+            print(f"MemPalace miner: {err}")
+            return
+        try:
+            from mempalace import miner as mp_miner
+        except Exception as e:
+            print(f"MemPalace miner: import failed: {e}")
+            return
+
+        palace_path = mcfg.get("palace_path", "")
+        interval = int(mine_cfg.get("interval_seconds", 1800))
+        respect_git = bool(mine_cfg.get("respect_gitignore", True))
+
+        # Small startup delay so we don't compete with initial provider probes.
+        time.sleep(15)
+
+        while True:
+            # Re-read config each cycle so edits apply without restart.
+            mcfg2 = engine._load_mempalace_config()
+            if not mcfg2.get("enabled", True):
+                return
+            sources = (mcfg2.get("mine") or {}).get("sources", []) or []
+            for src in sources:
+                project_dir = src.get("project_dir", "")
+                if not project_dir or not os.path.isdir(project_dir):
+                    continue
+                wing_override = src.get("wing")
+                src_respect_git = bool(src.get("respect_gitignore", respect_git))
+                # Capture miner stdout — it prints a human-readable summary.
+                buf = io.StringIO()
+                try:
+                    with contextlib.redirect_stdout(buf):
+                        mp_miner.mine(
+                            project_dir=project_dir,
+                            palace_path=palace_path,
+                            wing_override=wing_override,
+                            agent="brain-auto",
+                            respect_gitignore=src_respect_git,
+                        )
+                    out = buf.getvalue().strip()
+                    # Extract just the "Drawers filed: N" summary line if present.
+                    summary_line = ""
+                    for line in out.splitlines():
+                        s = line.strip()
+                        if s.startswith("Drawers filed"):
+                            summary_line = s
+                            break
+                    print(f"[mempalace-miner] {project_dir}: {summary_line or 'done'}")
+                except Exception as e:
+                    print(f"[mempalace-miner] {project_dir}: {type(e).__name__}: {e}")
+            # Re-read interval so edits take effect on the next cycle.
+            next_interval = int(((mcfg2.get("mine") or {}).get("interval_seconds", interval)))
+            time.sleep(max(60, next_interval))
+
+    threading.Thread(target=_mempalace_miner_loop, daemon=True, name="mempalace-miner").start()
+
+    def _extract_references_from_tool_payload(tool_name, payload):
+        """Turn a tool_result payload into a list of {title, url, snippet} dicts.
+
+        Mirrors web/index.html's `extractReferencesFromToolResult` but server-side.
+        Defensive against both raw dicts and JSON-string payloads.
+        """
+        if payload is None:
+            return []
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (json.JSONDecodeError, ValueError):
+                # Plain text — treat the whole thing as a single "snippet" record
+                # only if it looks non-trivial. For web_fetch raw HTML we'd still
+                # want to ingest, so take the first 4k chars.
+                txt = payload.strip()
+                if not txt:
+                    return []
+                return [{"title": tool_name, "url": "", "snippet": txt[:4000]}]
+        if not isinstance(payload, dict):
+            return []
+
+        refs = []
+        # exa_search shape: {query, results: [{title, link, snippet}, ...]}
+        if tool_name == "exa_search" or "results" in payload:
+            for r in payload.get("results", []) or []:
+                if not isinstance(r, dict):
+                    continue
+                refs.append({
+                    "title": r.get("title", "") or r.get("name", ""),
+                    "url": r.get("link", "") or r.get("url", ""),
+                    "snippet": (r.get("snippet", "") or r.get("highlight", ""))[:3000],
+                })
+        # web_fetch shape: {url, status, length, content}
+        elif tool_name == "web_fetch" or "content" in payload:
+            content = payload.get("content", "") or payload.get("text", "")
+            if content:
+                refs.append({
+                    "title": payload.get("title", "") or tool_name,
+                    "url": payload.get("url", ""),
+                    "snippet": content[:4000],
+                })
+        # read_document shape: varies by parser; usually {pages|sheets|text}
+        elif tool_name == "read_document":
+            text = (
+                payload.get("text")
+                or payload.get("content")
+                or json.dumps(payload, ensure_ascii=False)[:4000]
+            )
+            refs.append({
+                "title": payload.get("filename", "") or payload.get("path", "") or "document",
+                "url": payload.get("path", ""),
+                "snippet": text[:4000],
+            })
+        return refs
+
+    # MemPalace chat-sync daemon — mirrors chat turns, session summaries,
+    # attachment metadata, and allowlisted tool_result references from
+    # chats.db into MemPalace drawers. Rebuilds closets per (wing, room,
+    # source_file) group so chat memories rank on par with mined code.
+    def _mempalace_chat_sync_loop():
+        mcfg = engine._load_mempalace_config()
+        if not mcfg.get("enabled", True):
+            return
+        sync_cfg = mcfg.get("chat_sync", {}) or {}
+        if not sync_cfg.get("enabled", True):
+            print("MemPalace chat-sync: disabled")
+            return
+        ok, err = engine._ensure_mempalace_importable()
+        if not ok:
+            print(f"MemPalace chat-sync: {err}")
+            return
+        # Ensure downstream mempalace.mcp_server uses the right palace path.
+        palace_path = mcfg.get("palace_path", "")
+        if palace_path:
+            os.environ.setdefault("MEMPALACE_PALACE_PATH", palace_path)
+        try:
+            from mempalace.mcp_server import tool_add_drawer
+            from mempalace.palace import (
+                get_closets_collection,
+                build_closet_lines,
+                purge_file_closets,
+                upsert_closet_lines,
+            )
+        except Exception as e:
+            print(f"MemPalace chat-sync: import failed: {e}")
+            return
+
+        # Small delay so we don't fight the miner on cold start.
+        time.sleep(20)
+
+        while True:
+            try:
+                mcfg2 = engine._load_mempalace_config()
+                if not mcfg2.get("enabled", True):
+                    return
+                sync_cfg2 = mcfg2.get("chat_sync", {}) or {}
+                if not sync_cfg2.get("enabled", True):
+                    time.sleep(60)
+                    continue
+
+                include_roles = set(sync_cfg2.get("include_roles", ["user", "assistant"]))
+                include_tool_results = set(sync_cfg2.get("include_tool_results", []) or [])
+                max_chars = int(sync_cfg2.get("max_chars_per_message", 8000))
+                include_summary = bool(sync_cfg2.get("include_session_summary", True))
+                do_attach_meta = bool(sync_cfg2.get("attachment_metadata_drawer", True))
+                do_closets = bool(sync_cfg2.get("build_closets", True))
+                closet_head = int(sync_cfg2.get("closet_content_head_chars", 5000))
+                default_room = sync_cfg2.get("room", "chat")
+
+                closets_col = None
+                if do_closets:
+                    try:
+                        closets_col = get_closets_collection(palace_path, create=True)
+                    except Exception as ce:
+                        print(f"[mempalace-chat-sync] closets collection unavailable: {ce}")
+                        closets_col = None
+
+                pending = ChatDB.mempalace_sessions_needing_sync() or []
+                total_new = 0
+                for session_row in pending:
+                    sid = session_row["session_id"]
+                    agent_id = session_row.get("agent_id") or "main"
+                    after_id = int(session_row.get("last_message_id_filed") or 0)
+                    max_msg_id = int(session_row.get("max_message_id") or 0)
+                    # MemPalace sanitizes wing/room names internally; pass the
+                    # agent id as-is. If it contains illegal chars, tool_add_drawer
+                    # will surface the error on the first call.
+                    wing = agent_id
+
+                    new_messages = ChatDB.mempalace_load_new_messages(sid, after_id) or []
+                    # Per (wing, room, source_file) → list[(drawer_id, text)] for closet rebuild.
+                    dirty_groups: dict[tuple, list] = {}
+
+                    def _file_drawer(w, r, content, source_file):
+                        if not content:
+                            return False
+                        content = content[:max_chars]
+                        try:
+                            res = tool_add_drawer(
+                                wing=w,
+                                room=r,
+                                content=content,
+                                source_file=source_file,
+                                added_by="brain-chat-sync",
+                            )
+                        except Exception as ex:
+                            print(f"[mempalace-chat-sync] add_drawer failed: {ex}")
+                            return False
+                        if not isinstance(res, dict) or not res.get("success"):
+                            return False
+                        if res.get("reason") == "already_exists":
+                            return False  # don't count dedup hits toward closet rebuild
+                        group_key = (w, r, source_file)
+                        dirty_groups.setdefault(group_key, []).append(
+                            (res.get("drawer_id", ""), content)
+                        )
+                        return True
+
+                    new_last_id = after_id
+                    for msg in new_messages:
+                        mid = int(msg.get("id") or 0)
+                        new_last_id = max(new_last_id, mid)
+                        role = (msg.get("role") or "").strip()
+                        content = msg.get("content")
+                        meta = msg.get("metadata") or {}
+
+                        # Normal chat turns.
+                        if role in include_roles:
+                            if isinstance(content, str):
+                                text = content
+                            else:
+                                try:
+                                    text = json.dumps(content, ensure_ascii=False)
+                                except Exception:
+                                    text = str(content)
+                            body = f"[{role}] {text}".strip()
+                            if body:
+                                source_file = f"session/{sid}"
+                                if _file_drawer(wing, default_room, body, source_file):
+                                    total_new += 1
+
+                        # Attachment metadata.
+                        if do_attach_meta and isinstance(meta, dict):
+                            files = meta.get("files") or []
+                            if isinstance(files, list):
+                                for f in files:
+                                    if not isinstance(f, dict):
+                                        continue
+                                    fname = f.get("name") or f.get("filename") or "unknown"
+                                    fmime = f.get("mime") or f.get("type") or "application/octet-stream"
+                                    fsize = f.get("size") or 0
+                                    body = (
+                                        f"[attachment from {role or 'message'} "
+                                        f"in session {sid}#{mid}]\n"
+                                        f"filename: {fname}\n"
+                                        f"mime: {fmime}\n"
+                                        f"size: {fsize} bytes"
+                                    )
+                                    source_file = f"session/{sid}#attach/{mid}/{fname}"
+                                    if _file_drawer(wing, "chat_attachment", body, source_file):
+                                        total_new += 1
+
+                        # Tool-result references (allowlisted tools only).
+                        if role == "tool" and include_tool_results and isinstance(content, (list, dict, str)):
+                            # Brain stores tool results in several shapes; try to
+                            # extract (tool_name, payload) pairs defensively.
+                            tool_entries = []
+                            if isinstance(content, list):
+                                for item in content:
+                                    if isinstance(item, dict):
+                                        tname = item.get("name") or item.get("tool_name") or ""
+                                        payload = item.get("content") or item.get("result") or item
+                                        tool_entries.append((tname, payload))
+                            elif isinstance(content, dict):
+                                tname = content.get("name") or content.get("tool_name") or ""
+                                payload = content.get("content") or content.get("result") or content
+                                tool_entries.append((tname, payload))
+                            elif isinstance(meta, dict) and meta.get("tool_name"):
+                                tool_entries.append((meta.get("tool_name"), content))
+
+                            for tname, payload in tool_entries:
+                                if tname not in include_tool_results:
+                                    continue
+                                # Parse payload into a list of reference records.
+                                refs = _extract_references_from_tool_payload(tname, payload)
+                                for idx, ref in enumerate(refs):
+                                    ref_body = (
+                                        f"[{tname} result from session {sid}#{mid}]\n"
+                                        f"title: {ref.get('title','')}\n"
+                                        f"url: {ref.get('url','')}\n\n"
+                                        f"{ref.get('snippet','')}"
+                                    )
+                                    source_file = f"session/{sid}#tool/{tname}/{mid}/{idx}"
+                                    if _file_drawer(wing, "reference", ref_body, source_file):
+                                        total_new += 1
+
+                    # Session summary — low-frequency text worth indexing separately.
+                    summary_hash = ""
+                    if include_summary:
+                        summary = (session_row.get("summary") or "").strip()
+                        if summary:
+                            summary_hash = hashlib.sha256(summary.encode("utf-8")).hexdigest()[:16]
+                            if summary_hash != (session_row.get("last_summary_hash") or ""):
+                                body = f"[session summary for {sid}]\n{summary}"
+                                source_file = f"session/{sid}#summary"
+                                if _file_drawer(wing, "chat_summary", body, source_file):
+                                    total_new += 1
+
+                    # Rebuild closets per dirty group.
+                    if closets_col is not None and dirty_groups:
+                        for (w, r, source_file), items in dirty_groups.items():
+                            drawer_ids = [did for did, _ in items if did]
+                            if not drawer_ids:
+                                continue
+                            concatenated = "\n\n".join(txt for _, txt in items)[:closet_head]
+                            try:
+                                purge_file_closets(closets_col, source_file)
+                                lines = build_closet_lines(
+                                    source_file=source_file,
+                                    drawer_ids=drawer_ids,
+                                    content=concatenated,
+                                    wing=w,
+                                    room=r,
+                                )
+                                if lines:
+                                    closet_id_base = (
+                                        f"{w}_{r}_"
+                                        + hashlib.sha256(source_file.encode("utf-8")).hexdigest()[:12]
+                                    )
+                                    upsert_closet_lines(
+                                        closets_col,
+                                        closet_id_base,
+                                        lines,
+                                        {"source_file": source_file, "wing": w, "room": r},
+                                    )
+                            except Exception as ce:
+                                print(f"[mempalace-chat-sync] closet rebuild failed for {source_file}: {ce}")
+
+                    # Advance cursor even if nothing new was filed (all dedup'd) —
+                    # otherwise we keep re-scanning the same tail forever.
+                    ChatDB.mempalace_update_cursor(
+                        sid,
+                        max(new_last_id, max_msg_id),
+                        last_summary_hash=summary_hash or session_row.get("last_summary_hash") or "",
+                    )
+
+                if total_new:
+                    print(f"[mempalace-chat-sync] filed {total_new} new drawer(s) across {len(pending)} session(s)")
+            except Exception as e:
+                print(f"[mempalace-chat-sync] cycle error: {type(e).__name__}: {e}")
+
+            next_interval = int((engine._load_mempalace_config().get("chat_sync") or {}).get("interval_seconds", 60))
+            time.sleep(max(15, next_interval))
+
+    threading.Thread(target=_mempalace_chat_sync_loop, daemon=True, name="mempalace-chat-sync").start()
 
     # Start enabled messaging channels
     def _start_channels():

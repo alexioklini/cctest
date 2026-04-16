@@ -21,7 +21,7 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
                 │  │Sessions  │ │
                 │  └──────────┘ │──▶ LLM providers (Bifrost, Kilo)
                 └───────┬───────┘
-                        │──▶ MemPalace MCP (memory)
+                        │──▶ MemPalace (in-process, auto-mined)
                         └──▶ other MCP servers, Gmail, Exa, tools
 ```
 
@@ -29,8 +29,8 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
 
 ### Core
 - **Multi-agent system** — agents with personalities (`soul.md`), avatars, teams, model preferences
-- **30+ built-in tools** — file ops, shell, search, web, Gmail, delegation, scheduling, MCP
-- **Memory via MCP** — long-term memory is provided by the [MemPalace](https://github.com/) MCP server, wired per-agent in `mcp.json`
+- **30+ built-in tools** — file ops, shell, search, web, Gmail, delegation, scheduling, memory, MCP
+- **MemPalace memory (direct)** — `mempalace_query` tool searches long-term memory in-process (no MCP subprocess). Background daemons auto-mine source code, artifacts, chat history, web references, and attachment metadata into MemPalace drawers with closet index rebuilds
 - **Projects** — per-agent scoped workspaces with documents, watched folders, and chat scoping
 - **Agent workflows** — YAML-defined multi-step pipelines with approval gates and variable substitution
 - **Custom slash commands** — user-defined prompt templates with `{{variable}}` interpolation
@@ -42,7 +42,7 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
 - **Remote nodes** — lightweight agents on remote machines with centralized management, launchd install, settings UI
 
 ### Intelligence
-- **MemPalace memory (MCP)** — agents store and recall memories by calling MemPalace MCP tools. Consolidation, dedup, and retrieval strategy live inside MemPalace, not in brain-agent
+- **MemPalace memory** — single `mempalace_query` tool with hybrid BM25+vector+closet ranking. `mempalace-miner` daemon auto-mines configured source dirs every 30 min; `mempalace-chat-sync` daemon mirrors chat turns, summaries, references, and attachment metadata every 60s. No manual mining, no MCP subprocess
 - **Project notes** — markdown notes with AI-assisted editing (uses write_file/edit_file tools), folder organization, auto-reload
 - **Document ingestion (RAG)** — PDF, DOCX, HTML, URL parsing with auto-chunking and watched folders
 - **LLM chat summaries** — auto-generated one-line summaries for sidebar display

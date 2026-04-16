@@ -440,7 +440,7 @@ Code graph: code_graph_build, code_graph_query, code_graph_impact (AST-based, 14
 Shell: execute_command (non-interactive only, see tools.md for banned commands)
 Web: web_fetch, exa_search
 Gmail: gmail_inbox, gmail_read, gmail_search, gmail_send, gmail_reply
-Memory: provided by MemPalace MCP server (mcp_* tools)
+Memory: mempalace_query (direct in-process, no MCP — see MemPalace section below)
 Agents: delegate_task, task_status, task_cancel
 Skills: use_skill
 Git: git_command (status, diff, log, branch, commit, stash, blame, show, tag, remote)
@@ -493,27 +493,85 @@ All providers are OpenAI-compatible. Current providers:
 Provider configs live in `config.json` under `providers`. Each entry has `api_key`
 and `base_url`; `type` defaults to `openai` if omitted.
 
-### MemPalace (Memory via MCP)
+### MemPalace (Direct Integration)
 
-All memory is now provided by the **MemPalace** MCP server, not by built-in engine code.
-Agents recall and store memories by calling its `mcp_*` tools; nothing in `claude_cli.py`
-reads or writes memory files directly, and there are no HTTP endpoints for memory
-management in `server.py`.
+Memory is powered by **MemPalace**, imported directly as a Python package — no MCP,
+no subprocess, no manual `mempalace mine` runs. A single built-in tool queries the
+palace, and two background daemons keep it up to date automatically.
 
-- **Wiring**: configured in each agent's `mcp.json` as an MCP server entry; loaded at
-  agent init alongside other MCP servers
-- **Tools**: exposed as `mcp_*` tools filtered through the normal MCP tool pipeline
-  (pre/post hooks, dedup, budget middleware)
-- **No built-in memory tools**: `memory_store`, `memory_recall`, `memory_shared`,
-  `memory_delete`, entity extraction, autodream, relationship discovery, memory-summary
-  injection, QMD hybrid search, and the Knowledge Graph view are all removed
-- **No built-in background pipelines**: the nightly Memory Summary → Relationship
-  Discovery → Autodream chain, `_auto_memory_extract`, and QMD reindex on file-write
-  are all no-ops in the current server; any consolidation now happens inside MemPalace
-- **Agent directories**: `agents/<name>/` still holds `soul.md`, `agent.json`, skills,
-  and mcp.json, but the loose top-level `*.md` memory files were removed in the
-  mempalace migration (see commits tagged `mempalace migration C*`)
+**Vocabulary** (from MemPalace's own taxonomy):
+- **Drawer** — atomic verbatim memory chunk (~800 chars), deterministic content-hash id
+- **Closet** — auto-built index layer; packed `topic|entities|→drawer_ids` pointer lines that boost search ranking
+- **Room** — topic bucket inside a wing (`chat`, `chat_summary`, `chat_attachment`, `reference`, `document`, `artifacts`, ...)
+- **Wing** — top-level namespace; one per agent id (e.g. `main`) plus `brain_code` for the source tree
+- **Hall** — intra-wing room graph edge (read-only, used by MemPalace navigation)
+- **Tunnel** — cross-wing room connection (read-only)
 
-Historical note: the previous system (QMD + MemoryStore + autodream + KG) lived in
-`claude_cli.py` and `server.py` and was torn down across C1–C10 of the mempalace
-migration. See `git log --grep "mempalace"` for the migration sequence.
+**The query tool** — `mempalace_query` (claude_cli.py):
+- Lives in the `memory` tool group (now in `DEFAULT_TOOL_GROUPS`)
+- Lazy-imports `mempalace.searcher.search_memories` on first call; no MCP subprocess
+- Parameters: `query` (required), `wing`, `room`, `n_results`
+- Uses hybrid BM25+vector search with closet ranking boosts; returns normalized
+  drawers with `similarity`, `matched_via`, `source_file`, and text (capped at 2KB)
+- Reads `config.json` → `mempalace` block via `_load_mempalace_config()` (10s cache)
+- Adds venv site-packages to `sys.path` via `_ensure_mempalace_importable()` (idempotent)
+
+**Background daemon 1 — `mempalace-miner` (server.py, startup region):**
+- Runs every `mempalace.mine.interval_seconds` (default 1800s)
+- Iterates `mempalace.mine.sources[]` and calls `mempalace.miner.mine()` per source
+- Idempotent: skips already-filed content via content hash; re-runs are cheap
+- Captures miner stdout into the server log as `[mempalace-miner] ...` summary lines
+- Handles any source tree, including `agents/<name>/artifacts/` for agent-generated files
+
+**Background daemon 2 — `mempalace-chat-sync` (server.py, startup region):**
+- Runs every `mempalace.chat_sync.interval_seconds` (default 60s)
+- Polls `chats.db` via `ChatDB.mempalace_sessions_needing_sync()` (joins `sessions` →
+  `chat_mempalace_sync` cursor table) and mirrors new content into MemPalace drawers:
+  - **Chat turns** (user/assistant) → `wing=<agent_id>`, `room=chat`, `source_file=session/<sid>`
+  - **Session summaries** → `room=chat_summary`, `source_file=session/<sid>#summary`, content-hashed to avoid re-ingest
+  - **Attachment metadata** (filename/mime/size, not bytes) → `room=chat_attachment`
+  - **Allowlisted tool_result references** (default: `exa_search`, `web_fetch`, `read_document`) → `room=reference`, one drawer per result
+- Uses `mempalace.mcp_server.tool_add_drawer` (the function, not the server) for direct
+  in-process Chroma upserts. Reads `MEMPALACE_PALACE_PATH` env var, which the daemon
+  sets from `mempalace.palace_path` before importing
+- **Closet rebuild per dirty group**: after drawer-writes, groups by `(wing, room, source_file)`
+  and calls `purge_file_closets` + `build_closet_lines` + `upsert_closet_lines` from
+  `mempalace.palace`. Chat memories rank on par with mined code; otherwise they'd be
+  second-class (drawers alone search fine but miss the closet boost). Gated by
+  `mempalace.chat_sync.build_closets` config toggle.
+
+**Cursor table** (`chat_mempalace_sync` in `chats.db`):
+```sql
+CREATE TABLE chat_mempalace_sync (
+  session_id TEXT PRIMARY KEY,
+  last_message_id INTEGER NOT NULL DEFAULT 0,
+  last_summary_hash TEXT DEFAULT '',
+  updated_at REAL DEFAULT (strftime('%s','now'))
+)
+```
+
+**Config** (`config.json` → `mempalace` block):
+```json
+{
+  "enabled": true,
+  "palace_path": "/Users/alexander/.mempalace/brain",
+  "venv_site_packages": "/Users/alexander/.mempalace/venv/lib/python3.14/site-packages",
+  "mine": { "enabled": true, "interval_seconds": 1800, "sources": [...], "respect_gitignore": true },
+  "chat_sync": {
+    "enabled": true, "interval_seconds": 60,
+    "room": "chat",
+    "include_roles": ["user", "assistant"],
+    "include_tool_results": ["exa_search", "web_fetch", "read_document"],
+    "include_session_summary": true, "attachment_metadata_drawer": true,
+    "max_chars_per_message": 8000,
+    "build_closets": true, "closet_content_head_chars": 5000
+  }
+}
+```
+
+**What's explicitly not mined (v1):**
+- Attachment *bytes* (ephemeral in `/tmp/brain-attachments/`, binary, MemPalace is text-only — only metadata lands)
+- Artifact history (prior versions in `artifact_versions` blobs); the latest version is mined via the file miner because it's on disk
+- `tool_call`/`tool_result` for tools not in the `include_tool_results` allowlist (shell output, file reads, git diffs, etc.)
+
+**Historical context:** This replaces the previous MCP-server integration where MemPalace ran as a stdio subprocess exposing ~15 `mcp_mempalace_*` tools and the user had to run `mempalace mine` manually. The in-process path removes the subprocess, shrinks the tool surface to one, and automates mining. The prior in-tree memory system (QMD + MemoryStore + autodream + KG) was torn down during the `mempalace migration C1–C10` commits; this change further collapses the MCP layer. See `git log --grep "mempalace"` for history.
