@@ -1,6 +1,11 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  // Server connection
+  getServerUrl: () => ipcRenderer.invoke('get-server-url'),
+  setServerUrl: (url) => ipcRenderer.invoke('set-server-url', url),
+  checkServer: (url) => ipcRenderer.invoke('check-server', url),
+
   // CORS-free web fetch via Node.js main process
   webFetch: (opts) => ipcRenderer.invoke('web-fetch', opts),
 
