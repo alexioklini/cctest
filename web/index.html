@@ -7350,29 +7350,42 @@ async function switchGeneralTab(tab, btn) {
         return wrap;
       }
 
-      function _mpDrawerLeaf(d, depth) {
-        const row = document.createElement('div');
-        row.style.cssText = 'padding:4px 8px;padding-left:'+(12+depth*20)+'px;font-size:11px;border-radius:4px';
-        row.onmouseenter = () => row.style.background = 'var(--bg-200)';
-        row.onmouseleave = () => row.style.background = '';
+      function _mpDrawerNode(d, depth) {
         const ts = d.filed_at ? new Date(d.filed_at).toLocaleString() : '';
-        row.innerHTML = '<div style="display:flex;gap:6px;align-items:center">' +
-          '<span style="width:12px"></span>' +
-          '<span style="font-size:11px">\uD83D\uDCC4</span>' +
-          '<span style="font-family:var(--font-mono);color:var(--text-400);font-size:10px">' + esc(d.id.slice(7,25)) + '</span>' +
-          (d.hall ? '<span style="font-size:9px;padding:1px 4px;border-radius:3px;background:'+(hallColors[d.hall]||'var(--bg-300)')+';color:rgba(0,0,0,0.6)">'+esc(d.hall)+'</span>' : '') +
-          '<span style="font-size:10px;color:var(--text-400)">' + esc(ts) + '</span>' +
-          '</div>' +
-          '<div style="margin-left:30px;color:var(--text-300);font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:60px;overflow:hidden">' + esc(d.text) + '</div>';
-        return row;
+        const hallBadge = d.hall ? '<span style="font-size:9px;padding:1px 4px;border-radius:3px;background:'+(hallColors[d.hall]||'var(--bg-300)')+';color:rgba(0,0,0,0.6)">'+esc(d.hall)+'</span>' : '';
+        const summary = d.id.slice(7,22);
+        return _mpTreeNode('\uD83D\uDCC4', summary, ts, hallBadge, depth, (ch) => {
+          const detail = document.createElement('div');
+          detail.style.cssText = 'padding:6px 8px;padding-left:'+(12+(depth+1)*20)+'px;font-size:11px;color:var(--text-200);white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto;background:var(--bg-100);border-radius:4px;margin:2px 8px';
+          detail.innerHTML = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px">' +
+            '<span style="font-family:var(--font-mono);font-size:10px;color:var(--text-400)">' + esc(d.id) + '</span>' +
+            '<span style="font-size:10px;color:var(--text-400)">' + esc(d.added_by) + '</span>' +
+            (d.source_file ? '<span style="font-size:10px;color:var(--text-400)">' + esc(d.source_file) + '</span>' : '') +
+          '</div>' + esc(d.text);
+          ch.appendChild(detail);
+        });
+      }
+
+      function _mpClosetNode(c, depth) {
+        const summary = c.id.slice(0, 25);
+        return _mpTreeNode('\uD83D\uDDC4\uFE0F', summary, (c.drawer_count||0)+' refs', '', depth, (ch) => {
+          const detail = document.createElement('div');
+          detail.style.cssText = 'padding:6px 8px;padding-left:'+(12+(depth+1)*20)+'px;font-size:10px;font-family:var(--font-mono);color:var(--text-300);white-space:pre-wrap;word-break:break-word;max-height:160px;overflow-y:auto;background:var(--bg-100);border-radius:4px;margin:2px 8px';
+          detail.textContent = c.text;
+          ch.appendChild(detail);
+        });
       }
 
       async function _mpLoadDrawers(container, wing, room, depth) {
         try {
           const data = await API.get('/v1/mempalace/drawers?wing='+encodeURIComponent(wing)+'&room='+encodeURIComponent(room));
           const drawers = data.drawers || [];
-          if (!drawers.length) { container.innerHTML = '<div style="padding:4px 8px;padding-left:'+(12+depth*20)+'px;color:var(--text-400);font-size:11px">Empty</div>'; return; }
-          for (const d of drawers) container.appendChild(_mpDrawerLeaf(d, depth));
+          const closets = data.closets || [];
+          if (!drawers.length && !closets.length) { container.innerHTML = '<div style="padding:4px 8px;padding-left:'+(12+depth*20)+'px;color:var(--text-400);font-size:11px">Empty</div>'; return; }
+          if (closets.length) {
+            for (const c of closets) container.appendChild(_mpClosetNode(c, depth));
+          }
+          for (const d of drawers) container.appendChild(_mpDrawerNode(d, depth));
         } catch(e) { container.innerHTML = '<div style="color:var(--error);padding:4px 12px;font-size:11px">Failed to load</div>'; }
       }
 
@@ -7416,7 +7429,7 @@ async function switchGeneralTab(tab, btn) {
                     try {
                       const data = await API.get('/v1/mempalace/drawers?wing='+encodeURIComponent(wname)+'&room='+encodeURIComponent(rname));
                       const filtered = (data.drawers||[]).filter(dr => dr.hall === hname);
-                      for (const d of filtered) ch2.appendChild(_mpDrawerLeaf(d, d2));
+                      for (const d of filtered) ch2.appendChild(_mpDrawerNode(d, d2));
                     } catch(e) {}
                   }
                 }));

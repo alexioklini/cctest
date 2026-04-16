@@ -6003,7 +6003,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            from mempalace.palace import get_collection
+            from mempalace.palace import get_collection, get_closets_collection
             col = get_collection(palace_path, create=False)
             result = col.get(include=["metadatas", "documents"])
             drawers = []
@@ -6024,7 +6024,29 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     "added_by": meta.get("added_by", ""),
                     "text": (doc or "")[:300],
                 })
-            self._send_json({"drawers": drawers, "count": len(drawers)})
+            closets = []
+            try:
+                ccol = get_closets_collection(palace_path, create=False)
+                if ccol:
+                    cresult = ccol.get(include=["metadatas", "documents"])
+                    for cid, cmeta, cdoc in zip(cresult["ids"], cresult["metadatas"], cresult["documents"]):
+                        c_wing = cmeta.get("wing", "")
+                        c_room = cmeta.get("room", "")
+                        if wing and c_wing != wing:
+                            continue
+                        if room and c_room != room:
+                            continue
+                        closets.append({
+                            "id": cid,
+                            "wing": c_wing,
+                            "room": c_room,
+                            "source_file": cmeta.get("source_file", ""),
+                            "drawer_count": cmeta.get("drawer_count", 0),
+                            "text": (cdoc or "")[:300],
+                        })
+            except Exception:
+                pass
+            self._send_json({"drawers": drawers, "count": len(drawers), "closets": closets})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
