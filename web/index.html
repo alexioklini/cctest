@@ -318,10 +318,18 @@ textarea { resize: none; }
   color: var(--text-500);
   padding: 8px 16px 4px;
 }
+.chat-sidebar-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
 .sb-sessions-list {
   flex: 1;
   overflow-y: auto;
   padding: 0 8px;
+  min-height: 0;
 }
 .sb-session-item {
   display: flex;
@@ -3077,17 +3085,11 @@ textarea { resize: none; }
 if (window.electronAPI && window.electronAPI.platform === 'darwin') {
   const s = document.createElement('style');
   s.textContent = `
-    /* Drag bar — fixed strip across entire top of window */
-    body::before {
-      content: '';
-      position: fixed;
-      top: 0; left: 0; right: 0;
-      height: 36px;
+    /* Drag regions — sidebar header and page header act as title bar */
+    .sb-header, .page-header {
       -webkit-app-region: drag;
-      z-index: 9999;
-      pointer-events: auto;
     }
-    /* Interactive elements in the drag zone must be clickable */
+    /* Interactive elements must be no-drag */
     button, a, select, input, textarea, .sb-nav-item, .sb-session-item,
     .sb-user-section, .model-selector, .sb-agent-selector,
     .page-header-title, .page-header-right, .sb-header button,

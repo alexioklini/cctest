@@ -423,9 +423,13 @@ ipcMain.on('proxy-fetch-stream', async (event, { url, method, headers, body }) =
 
 // ─── Auto-update (Squirrel via update.electronjs.org) ───────────────
 function setupAutoUpdater() {
-  if (app.isPackaged === false) return; // skip in dev
+  if (!app.isPackaged) {
+    console.log('[autoUpdater] Skipped — running in dev mode. Install from .dmg/.exe to test auto-update.');
+    return;
+  }
 
   const feedURL = `https://update.electronjs.org/alexioklini/cctest/${process.platform}-${process.arch}/${app.getVersion()}`;
+  console.log('[autoUpdater] Feed URL:', feedURL);
 
   try {
     autoUpdater.setFeedURL({ url: feedURL });
@@ -434,8 +438,12 @@ function setupAutoUpdater() {
     return;
   }
 
+  autoUpdater.on('checking-for-update', () => {
+    console.log('[autoUpdater] Checking for update...');
+  });
+
   autoUpdater.on('error', (err) => {
-    console.error('[autoUpdater]', err.message);
+    console.error('[autoUpdater] Error:', err.message);
   });
 
   autoUpdater.on('update-available', () => {
@@ -443,7 +451,7 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.on('update-not-available', () => {
-    console.log('[autoUpdater] Up to date');
+    console.log('[autoUpdater] Up to date (v' + app.getVersion() + ')');
   });
 
   autoUpdater.on('update-downloaded', (_event, releaseNotes, releaseName) => {
