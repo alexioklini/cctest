@@ -2734,11 +2734,23 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             base_url=provider["base_url"],
             max_context=body.get("max_context") or engine.get_model_max_context(model),
         )
-        # Stamp user ownership
+        # Stamp user ownership (for MemPalace wing scoping)
         auth_user = getattr(self, '_auth_user', None)
-        if auth_user and auth_user.get("id") and auth_user["id"] != "__system__":
-            session.user_id = auth_user["id"]
-            ChatDB.update_session_user(session.id, auth_user["id"])
+        uid = ""
+        if auth_user and auth_user.get("id"):
+            if auth_user["id"] != "__system__":
+                uid = auth_user["id"]
+            else:
+                # Auth disabled — resolve to the first real user (typically the sole admin)
+                try:
+                    users = _auth_mod.AuthDB.list_users()
+                    if users:
+                        uid = users[0]["id"]
+                except Exception:
+                    pass
+        if uid:
+            session.user_id = uid
+            ChatDB.update_session_user(session.id, uid)
         project = body.get("project", "")
         if project:
             session.project = project
