@@ -467,6 +467,7 @@ Server runs on port 8420 (configurable). Key endpoints:
 - `GET /v1/mcp/registry` — list available MCP server templates
 - `GET /v1/costs` — cost stats (agent, hours params)
 - `GET /v1/costs/daily` — daily cost breakdown (agent, days params)
+- `GET /v1/mempalace/stats` — palace overview: drawers, closets, wings, rooms, graph, KG, WAL, sync status, anomalies
 - `GET /v1/sessions?project=X` — list sessions filtered by project
 - `GET /v1/agents/<id>/projects` — list projects with instructions, doc_count, status
 - `POST /v1/agents/<id>/projects` — create project (name, description)
@@ -503,14 +504,33 @@ palace, and two background daemons keep it up to date automatically.
 - **Drawer** — atomic verbatim memory chunk (~800 chars), deterministic content-hash id
 - **Closet** — auto-built index layer; packed `topic|entities|→drawer_ids` pointer lines that boost search ranking
 - **Room** — topic bucket inside a wing (`chat`, `chat_summary`, `chat_attachment`, `reference`, `document`, `artifacts`, ...)
-- **Wing** — top-level namespace; one per agent id (e.g. `main`) plus `brain_code` for the source tree
+- **Wing** — top-level namespace; format `user_id/agent_id` for per-user isolation (e.g. `17368b/main`), or bare name for shared content (e.g. `brain_code`)
 - **Hall** — intra-wing room graph edge (read-only, used by MemPalace navigation)
-- **Tunnel** — cross-wing room connection (read-only)
+- **Tunnel** — cross-wing room connection (read-only, future: automatic tunneling for cross-user/team sharing)
+
+**Per-user memory isolation** (v7.5.0):
+- Chat sync writes drawers to `wing=user_id/agent_id` (e.g. `17368b/main`)
+- Sessions without a user_id (pre-auth, system tasks) use bare `agent_id`
+- `mempalace_query` auto-scopes: bare agent names (e.g. `"main"`) are prefixed with
+  `_thread_local.current_user_id`; unfiltered searches post-filter to exclude other
+  users' per-user wings while keeping shared wings (no `/`) visible
+- Shared wings like `brain_code` (mined source tree) remain globally accessible
+- `user_id` propagated via `_thread_local.current_user_id` in chat workers and delegate tasks
+- Future: automatic tunneling for cross-user/team/project memory sharing
+
+**Session delete cleanup** (v7.5.0):
+- `delete_session` purges MemPalace drawers + closets whose `source_file` starts with
+  `session/<sid>` via `_purge_mempalace_session()` (background thread)
+- Also cleans up the `chat_mempalace_sync` cursor row
+- `delete_all` runs the same purge per session
+- Archive leaves drawers intact (memory persists, session just hidden from UI)
 
 **The query tool** — `mempalace_query` (claude_cli.py):
 - Lives in the `memory` tool group (now in `DEFAULT_TOOL_GROUPS`)
 - Lazy-imports `mempalace.searcher.search_memories` on first call; no MCP subprocess
 - Parameters: `query` (required), `wing`, `room`, `n_results`
+- Auto-scopes wing to current user when `_thread_local.current_user_id` is set
+- When no wing filter + user known: over-fetches 3x then post-filters to exclude other users' wings
 - Uses hybrid BM25+vector search with closet ranking boosts; returns normalized
   drawers with `similarity`, `matched_via`, `source_file`, and text (capped at 2KB)
 - Reads `config.json` → `mempalace` block via `_load_mempalace_config()` (10s cache)
@@ -527,7 +547,7 @@ palace, and two background daemons keep it up to date automatically.
 - Runs every `mempalace.chat_sync.interval_seconds` (default 60s)
 - Polls `chats.db` via `ChatDB.mempalace_sessions_needing_sync()` (joins `sessions` →
   `chat_mempalace_sync` cursor table) and mirrors new content into MemPalace drawers:
-  - **Chat turns** (user/assistant) → `wing=<agent_id>`, `room=chat`, `source_file=session/<sid>`
+  - **Chat turns** (user/assistant) → `wing=<user_id>/<agent_id>`, `room=chat`, `source_file=session/<sid>`
   - **Session summaries** → `room=chat_summary`, `source_file=session/<sid>#summary`, content-hashed to avoid re-ingest
   - **Attachment metadata** (filename/mime/size, not bytes) → `room=chat_attachment`
   - **Allowlisted tool_result references** (default: `exa_search`, `web_fetch`, `read_document`) → `room=reference`, one drawer per result

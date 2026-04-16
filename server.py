@@ -184,6 +184,52 @@ def _db_safe(default=None):
     return decorator
 
 
+def _purge_mempalace_session(session_id: str):
+    """Remove MemPalace drawers and closets for a deleted session (background thread)."""
+    def _do_purge():
+        try:
+            mcfg = engine._load_mempalace_config()
+            if not mcfg.get("enabled", True):
+                return
+            palace_path = mcfg.get("palace_path", "")
+            if not palace_path or not os.path.isdir(palace_path):
+                return
+            ok, err = engine._ensure_mempalace_importable()
+            if not ok:
+                return
+            from mempalace.palace import get_collection, get_closets_collection
+
+            prefix = f"session/{session_id}"
+
+            # Purge drawers
+            col = get_collection(palace_path, create=False)
+            if col:
+                result = col.get(include=["metadatas"])
+                ids_to_delete = [
+                    did for did, m in zip(result["ids"], result["metadatas"])
+                    if (m.get("source_file") or "").startswith(prefix)
+                ]
+                if ids_to_delete:
+                    col.delete(ids=ids_to_delete)
+                    print(f"[mempalace-purge] deleted {len(ids_to_delete)} drawer(s) for session {session_id[:8]}")
+
+            # Purge closets referencing those source files
+            ccol = get_closets_collection(palace_path, create=False)
+            if ccol:
+                result = ccol.get(include=["metadatas"])
+                cids = [
+                    cid for cid, m in zip(result["ids"], result["metadatas"])
+                    if (m.get("source_file") or "").startswith(prefix)
+                ]
+                if cids:
+                    ccol.delete(ids=cids)
+                    print(f"[mempalace-purge] deleted {len(cids)} closet(s) for session {session_id[:8]}")
+        except Exception as e:
+            print(f"[mempalace-purge] error for {session_id[:8]}: {type(e).__name__}: {e}")
+
+    threading.Thread(target=_do_purge, daemon=True, name=f"mp-purge-{session_id[:8]}").start()
+
+
 class ChatDB:
     """SQLite persistence for chat sessions and messages."""
 
@@ -500,7 +546,7 @@ class ChatDB:
     def mempalace_sessions_needing_sync():
         """Return sessions whose max(messages.id) > last synced id (or have never been synced).
 
-        Returns a list of dicts: {session_id, agent_id, summary, last_message_id_filed, max_message_id}.
+        Returns a list of dicts: {session_id, agent_id, user_id, summary, last_message_id_filed, max_message_id}.
         Uses a left join so sessions with no prior cursor row show up as last_message_id_filed=0.
         """
         with _db_conn() as conn:
@@ -508,6 +554,7 @@ class ChatDB:
             rows = conn.execute("""
                 SELECT s.id as session_id,
                        s.agent_id as agent_id,
+                       COALESCE(s.user_id, '') as user_id,
                        COALESCE(s.summary, '') as summary,
                        COALESCE(c.last_message_id, 0) as last_message_id_filed,
                        COALESCE(c.last_summary_hash, '') as last_summary_hash,
@@ -692,7 +739,9 @@ class ChatDB:
         with _db_conn() as conn:
             conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
             conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            conn.execute("DELETE FROM chat_mempalace_sync WHERE session_id = ?", (session_id,))
             conn.commit()
+        _purge_mempalace_session(session_id)
 
     @staticmethod
     @_db_safe(default=None)
@@ -778,7 +827,10 @@ class ChatDB:
                 placeholders = ",".join("?" * len(sids))
                 conn.execute(f"DELETE FROM messages WHERE session_id IN ({placeholders})", sids)
                 conn.execute(f"DELETE FROM sessions WHERE id IN ({placeholders})", sids)
+                conn.execute(f"DELETE FROM chat_mempalace_sync WHERE session_id IN ({placeholders})", sids)
                 conn.commit()
+            for sid in sids:
+                _purge_mempalace_session(sid)
             return sids
 
 
@@ -802,6 +854,7 @@ class Session:
         self.status = "active"
         self.lock = threading.Lock()
 
+        self.user_id: str = ""  # Owner user id (for MemPalace wing scoping)
         self.project: str | None = None  # Active project name (for scoped chat)
         self.note_context: str | None = None  # Note content for AI-assisted editing
         self.summary: str = ""  # LLM-generated chat summary for sidebar
@@ -867,6 +920,7 @@ class Session:
                 self.last_active = info.get("last_active", self.last_active)
                 self.project = info.get("project", "") or None
                 self.summary = info.get("summary", "") or ""
+                self.user_id = info.get("user_id", "") or ""
 
 
 class SessionManager:
@@ -1732,6 +1786,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_context_config_get()
         elif path.startswith("/v1/context/stats"):
             self._handle_context_stats()
+        # --- MemPalace GET routes ---
+        elif path == "/v1/mempalace/stats":
+            self._handle_mempalace_stats()
         # --- MCP GET routes ---
         elif path == "/v1/mcp/connections":
             self._handle_mcp_list()
@@ -2678,6 +2735,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         # Stamp user ownership
         auth_user = getattr(self, '_auth_user', None)
         if auth_user and auth_user.get("id") and auth_user["id"] != "__system__":
+            session.user_id = auth_user["id"]
             ChatDB.update_session_user(session.id, auth_user["id"])
         project = body.get("project", "")
         if project:
@@ -3100,6 +3158,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             agent_config = engine.AgentConfig(session.agent_id)
             engine._thread_local.current_agent = agent_config
             engine._thread_local.current_session_id = sid
+            engine._thread_local.current_user_id = session.user_id or ""
 
             # Reset per-request state (prevents cross-session leaks in pooled threads)
             engine.reset_tool_dedup()
@@ -5443,10 +5502,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
     def _handle_services_status(self):
         """GET /v1/services — status of all managed services."""
         uptime = int(time.time() - _server_start_time)
-        qmd_running = self._is_qmd_running()
         tg_running = self._is_telegram_running()
-
-        collections = self._qmd_collections() if qmd_running else []
 
         self._send_json({
             "server": {
@@ -5462,11 +5518,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "default_model": server_config.get("default_model", ""),
                 "attachment_image_model": server_config.get("attachment_image_model", ""),
                 "max_session_cost_usd": float(server_config.get("cost_limits", {}).get("max_session_cost_usd", 0) or 0),
-            },
-            "qmd": {
-                "status": "running" if qmd_running else "stopped",
-                "port": _QMD_PORT,
-                "collections": collections,
             },
             "telegram": {
                 "status": "running" if tg_running else "stopped",
@@ -5748,6 +5799,146 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "saved", "hooks": body})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
+
+    # --- MemPalace handlers ---
+
+    def _handle_mempalace_stats(self):
+        """GET /v1/mempalace/stats — palace overview for admin dashboard."""
+        mcfg = engine._load_mempalace_config()
+        if not mcfg.get("enabled", True):
+            self._send_json({"enabled": False, "error": "MemPalace disabled in config"})
+            return
+        palace_path = mcfg.get("palace_path", "")
+        if not palace_path or not os.path.isdir(palace_path):
+            self._send_json({"enabled": True, "error": f"Palace path not found: {palace_path}"})
+            return
+
+        ok, err = engine._ensure_mempalace_importable()
+        if not ok:
+            self._send_json({"enabled": True, "error": err})
+            return
+
+        try:
+            from mempalace.mcp_server import tool_status, tool_get_taxonomy, tool_list_tunnels, tool_graph_stats, tool_kg_stats
+            from mempalace.palace import get_closets_collection
+
+            status = tool_status()
+            taxonomy = tool_get_taxonomy()
+            tunnels = tool_list_tunnels()
+            graph = tool_graph_stats()
+
+            # Closet count
+            closet_count = 0
+            try:
+                closets_col = get_closets_collection(palace_path, create=False)
+                if closets_col:
+                    closet_count = closets_col.count()
+            except Exception:
+                pass
+
+            # Knowledge graph stats
+            kg = {}
+            try:
+                kg = tool_kg_stats()
+            except Exception:
+                pass
+
+            # Chat sync stats from cursor table
+            sync_stats = {"synced_sessions": 0, "total_drawers_filed": 0, "last_sync": None}
+            try:
+                with _db_conn() as conn:
+                    row = conn.execute("""
+                        SELECT COUNT(*) as cnt,
+                               SUM(last_message_id) as total_msgs,
+                               MAX(updated_at) as last_update
+                        FROM chat_mempalace_sync
+                    """).fetchone()
+                    if row:
+                        sync_stats["synced_sessions"] = row[0] or 0
+                        sync_stats["total_drawers_filed"] = row[1] or 0
+                        sync_stats["last_sync"] = row[2]
+            except Exception:
+                pass
+
+            # Mining config summary
+            mine_cfg = mcfg.get("mine", {})
+            chat_sync_cfg = mcfg.get("chat_sync", {})
+
+            # Palace file size
+            palace_size_mb = 0
+            try:
+                db_path = os.path.join(palace_path, "chroma.sqlite3")
+                if os.path.exists(db_path):
+                    palace_size_mb = round(os.path.getsize(db_path) / (1024 * 1024), 2)
+            except Exception:
+                pass
+
+            # WAL recent activity (last 100 entries)
+            wal_activity = {"total_ops": 0, "recent_ops": [], "ops_by_type": {}}
+            try:
+                wal_path = os.path.join(os.path.dirname(palace_path), "wal", "write_log.jsonl")
+                if os.path.exists(wal_path):
+                    lines = []
+                    with open(wal_path, "r") as f:
+                        for line in f:
+                            lines.append(line)
+                    wal_activity["total_ops"] = len(lines)
+                    for line in lines[-50:]:
+                        try:
+                            entry = json.loads(line)
+                            wal_activity["recent_ops"].append({
+                                "timestamp": entry.get("timestamp", ""),
+                                "operation": entry.get("operation", ""),
+                                "wing": (entry.get("params") or {}).get("wing", ""),
+                                "room": (entry.get("params") or {}).get("room", ""),
+                            })
+                            op = entry.get("operation", "unknown")
+                            wal_activity["ops_by_type"][op] = wal_activity["ops_by_type"].get(op, 0) + 1
+                        except (json.JSONDecodeError, KeyError):
+                            pass
+                    wal_activity["recent_ops"] = wal_activity["recent_ops"][-20:]
+            except Exception:
+                pass
+
+            # Wing breakdown with user isolation info
+            wings_detail = {}
+            tax = taxonomy.get("taxonomy", {})
+            for wing_name, rooms in tax.items():
+                is_user_scoped = "/" in wing_name
+                user_id = wing_name.split("/")[0] if is_user_scoped else None
+                wings_detail[wing_name] = {
+                    "rooms": rooms,
+                    "drawer_count": sum(rooms.values()),
+                    "room_count": len(rooms),
+                    "user_scoped": is_user_scoped,
+                    "user_id": user_id,
+                }
+
+            self._send_json({
+                "enabled": True,
+                "palace_path": palace_path,
+                "palace_size_mb": palace_size_mb,
+                "total_drawers": status.get("total_drawers", 0),
+                "total_closets": closet_count,
+                "wings": wings_detail,
+                "wing_count": len(wings_detail),
+                "room_count": status.get("total_rooms", len(set(r for rooms in tax.values() for r in rooms))),
+                "graph": graph,
+                "tunnels": tunnels,
+                "knowledge_graph": kg,
+                "chat_sync": sync_stats,
+                "wal": wal_activity,
+                "config": {
+                    "mine_enabled": mine_cfg.get("enabled", True),
+                    "mine_interval_s": mine_cfg.get("interval_seconds", 1800),
+                    "mine_sources": len(mine_cfg.get("sources", [])),
+                    "chat_sync_enabled": chat_sync_cfg.get("enabled", True),
+                    "chat_sync_interval_s": chat_sync_cfg.get("interval_seconds", 60),
+                    "chat_sync_build_closets": chat_sync_cfg.get("build_closets", True),
+                },
+            })
+        except Exception as e:
+            self._send_json({"enabled": True, "error": f"Failed to gather stats: {type(e).__name__}: {e}"}, 500)
 
     # --- Context Management handlers ---
 
@@ -7731,12 +7922,12 @@ def main():
                 for session_row in pending:
                     sid = session_row["session_id"]
                     agent_id = session_row.get("agent_id") or "main"
+                    session_user_id = session_row.get("user_id") or ""
                     after_id = int(session_row.get("last_message_id_filed") or 0)
                     max_msg_id = int(session_row.get("max_message_id") or 0)
-                    # MemPalace sanitizes wing/room names internally; pass the
-                    # agent id as-is. If it contains illegal chars, tool_add_drawer
-                    # will surface the error on the first call.
-                    wing = agent_id
+                    # Wing = user_id/agent_id for per-user isolation.
+                    # Sessions without a user_id (pre-auth or system) use bare agent_id.
+                    wing = f"{session_user_id}/{agent_id}" if session_user_id else agent_id
 
                     new_messages = ChatDB.mempalace_load_new_messages(sid, after_id) or []
                     # Per (wing, room, source_file) → list[(drawer_id, text)] for closet rebuild.

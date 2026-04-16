@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "7.4.0"
+VERSION = "7.5.0"
 VERSION_DATE = "2026-04-16"
 CHANGELOG = [
+    ("7.5.0", "2026-04-16", "Per-user MemPalace memory isolation, admin dashboard, and session delete cleanup. Wings now use user_id/agent_id format so each user's chat memories are isolated by default — shared wings (brain_code, mined source) remain globally visible. mempalace_query auto-scopes to the current user: bare agent names are prefixed with user_id, unfiltered searches post-filter to exclude other users' wings. user_id propagated via _thread_local to chat workers and delegate tasks. Chat sync writes user-scoped wings; sessions without a user_id (pre-auth, system) fall back to bare agent_id. Session.user_id field added, loaded from DB on restore, set from auth at creation. New MemPalace admin dashboard tab in General Settings — overview stats (drawers, closets, wings, rooms, edges, DB size), knowledge graph counts, daemon status, per-wing breakdown with user-scoped vs shared badges and room chips, tunnel list, write-ahead log activity with operation badges, and anomaly detection (sparse wings, stale sync, disabled daemons, high drawer/closet ratio). GET /v1/mempalace/stats endpoint aggregates data from MemPalace collections, graph, KG, WAL, and chat_mempalace_sync cursor table. Session delete now purges associated MemPalace drawers and closets (background thread matching source_file prefix session/<sid>) and cleans up the sync cursor row — archive leaves memories intact."),
     ("7.4.0", "2026-04-16", "MemPalace direct integration — replaces the MCP stdio server with in-process Python imports. Single built-in mempalace_query tool (hybrid BM25+vector+closet search) replaces ~15 mcp_mempalace_* tools. Two background daemons in server.py: mempalace-miner (auto-mines source tree + artifacts every 30 min) and mempalace-chat-sync (mirrors chat turns, session summaries, attachment metadata, and web references into MemPalace drawers every 60s with closet rebuilds). No manual 'mempalace mine' runs needed — palace stays up to date automatically. Config in config.json 'mempalace' block with mine sources, chat_sync roles/tool allowlist, and closet toggle. New 'memory' tool group in DEFAULT_TOOL_GROUPS. chat_mempalace_sync cursor table in chats.db tracks sync progress. Also fixes newChat() not clearing chatTitle (stale title from previous session shown on new chats)."),
     ("7.3.0", "2026-04-15", "Purge B: api_type parameter fully removed from all function signatures. Follow-up to v7.2.0 Purge A. send_message, send_message_with_fallback, _retry_with_backoff, _run_delegate, _compact_conversation, _check_and_compact, ContextManager.recall/summarize_chunk/check_and_compact, make_headers, get_available_models, _apply_inference_to_payload, list_models, _handle_openai_response — all lose the api_type parameter. resolve_provider_for_model now returns {api_key, base_url, provider_name} (no api_type). Session.api_type field removed. server_config['api_type'] removed. CLI --api-type flag removed from both claude_cli.py and server.py argparse. _delegate_api_type global removed. All attachment routing branches in server.py _handle_chat collapsed to the single OpenAI image_url path (Anthropic document blocks gone). Warmup path in server.py simplified. Net effect: ~30 signatures cleaned up, ~60 call sites updated, provider config schema simplified. All providers are OpenAI-compatible (Bifrost, Kilo); re-adding an Anthropic-direct provider would require reintroducing wire-format branching."),
     ("7.2.0", "2026-04-15", "Token optimization, cost guardrails, and Anthropic/Mistral wire-format purge. Status bar now shows last-round prompt tokens (not cumulative across tool rounds) so 'context used' reflects the real next-call size. Hard tool-round cap at 1.5× the soft limit stops runaway loops. Per-agent runtime limits in agent.json 'limits' block: max_tool_rounds, tool_result_char_limit, tool_results_total_tokens, context_safety_ratio. Pre-flight context guardrail raises before provider 400s when estimated prompt exceeds max_context * safety_ratio. Session cost soft warnings: 70% amber triangle, 90% red + one-time modal per session, configurable global max_session_cost_usd in Settings → Server → Cost Limits. Built-in cost rate table expanded: OpenAI (gpt-4o/4.1/o1/o3/o4-mini), Mistral, Gemini, Grok, DeepSeek, local-model zeros. New GET /v1/tools/breakdown endpoint measures per-group + per-tool token cost with schema decomposition (name/description/schema). Tokens tab shows the breakdown with heavy-schema ⚠ markers. MCP improvements: redundant '<server>_' prefix stripped from tool names (mcp_mempalace_mempalace_search → mcp_mempalace_search, ~260 tok saved on mempalace alone), '[MCP:server]' description prefix dropped, per-agent MCP tool filter/exclude in token_config with fnmatch globs, UI checkbox-save directly from breakdown view. Removed prompt_caching token_config field (no-op outside Anthropic wire format). Purge A of Anthropic/Mistral wire formats: _handle_anthropic_response (224 lines), _handle_mistral_response + mistral SDK helpers (291 lines), _collect_anthropic/_stream_anthropic, and all api_type branching in send_message/_run_delegate/make_headers/get_available_models/_apply_inference_to_payload/list_models collapsed to OpenAI-only paths. ~600 lines removed. api_type parameter still threaded through signatures (Purge B pending). All providers are OpenAI-compatible (Bifrost, Kilo)."),
@@ -414,9 +415,10 @@ TOOL_DEFINITIONS = [
                 "wing": {
                     "type": "string",
                     "description": (
-                        "Optional wing filter. Typically an agent id (e.g. 'main') "
-                        "for chat/reference memories, or 'brain_code' for source/artifacts. "
-                        "Omit to search all wings."
+                        "Optional wing filter. Pass an agent id (e.g. 'main') to "
+                        "search that agent's chat memories — auto-scoped to the "
+                        "current user. Pass 'brain_code' for source/artifacts. "
+                        "Omit to search all accessible wings."
                     ),
                 },
                 "room": {
@@ -2664,6 +2666,12 @@ def tool_mempalace_query(args: dict) -> str:
     if not query:
         return _err("mempalace_query: 'query' is required")
     wing = args.get("wing") or None
+    # Auto-scope to current user's wing for per-user memory isolation.
+    # LLM can pass a bare agent_id (e.g. "main"); we prepend user_id/.
+    # Explicit full paths (containing "/") are left as-is.
+    current_user_id = getattr(_thread_local, "current_user_id", "") or ""
+    if current_user_id and wing and "/" not in wing:
+        wing = f"{current_user_id}/{wing}"
     room = args.get("room") or None
     n_results = args.get("n_results") or 5
     try:
@@ -2671,17 +2679,20 @@ def tool_mempalace_query(args: dict) -> str:
     except (TypeError, ValueError):
         n_results = 5
 
+    # When no wing filter and user is known, over-fetch then post-filter to
+    # exclude other users' per-user wings (those with "/" where prefix != user_id).
+    # Shared wings (no "/", e.g. "brain_code") remain visible to all users.
+    _needs_user_filter = bool(current_user_id and not wing)
+    fetch_n = n_results * 3 if _needs_user_filter else n_results
+
     try:
-        # Use the programmatic API (search_memories), not the printing CLI
-        # entry point (search). search_memories returns a dict with a 'results'
-        # list already enriched with closet boosts + BM25 rerank.
         from mempalace.searcher import search_memories
         results = search_memories(
             query=query,
             palace_path=palace_path,
             wing=wing,
             room=room,
-            n_results=n_results,
+            n_results=fetch_n,
         )
     except Exception as e:
         return _err(f"mempalace_query: {type(e).__name__}: {e}")
@@ -2689,10 +2700,17 @@ def tool_mempalace_query(args: dict) -> str:
     if isinstance(results, dict) and results.get("error"):
         return _err(f"mempalace_query: {results.get('error')}")
 
-    # Normalize and trim. Cap each drawer text at 2000 chars so one hit
-    # can't balloon the turn.
+    raw_results = (results or {}).get("results", [])
+    if _needs_user_filter:
+        def _visible(r):
+            w = r.get("wing", "")
+            if "/" not in w:
+                return True  # shared wing (brain_code, etc.)
+            return w.startswith(current_user_id + "/")
+        raw_results = [r for r in raw_results if isinstance(r, dict) and _visible(r)]
+
     drawers = []
-    for r in (results or {}).get("results", [])[:n_results]:
+    for r in raw_results[:n_results]:
         if not isinstance(r, dict):
             continue
         drawers.append({
@@ -8500,6 +8518,8 @@ class TaskRunner:
         """Submit a task to run in a background thread. Returns task_id."""
         task_id = _uuid.uuid4().hex[:8]
         cancel_flag = threading.Event()
+        # Capture caller's user_id for MemPalace wing scoping in the child thread
+        caller_user_id = getattr(_thread_local, "current_user_id", "") or ""
 
         with self._lock:
             self._tasks[task_id] = {
@@ -8516,7 +8536,7 @@ class TaskRunner:
             self._cancel_flags[task_id] = cancel_flag
 
         thread = threading.Thread(
-            target=self._run_task, args=(task_id, agent_id, task, model, cancel_flag),
+            target=self._run_task, args=(task_id, agent_id, task, model, cancel_flag, caller_user_id),
             daemon=True)
         self._threads[task_id] = thread
         thread.start()
@@ -8550,7 +8570,8 @@ class TaskRunner:
         return self.get_status(task_id)
 
     def _run_task(self, task_id: str, agent_id: str, task: str,
-                  model: str | None, cancel_flag: threading.Event):
+                  model: str | None, cancel_flag: threading.Event,
+                  caller_user_id: str = ""):
         """Execute a task in a background thread."""
         target = AgentConfig(agent_id)
         target_memory = MemoryStore(agent_id, base_dir=target.memory_dir)
@@ -8611,6 +8632,7 @@ class TaskRunner:
             _thread_local.delegate_agent_id = agent_id
             _thread_local.current_agent = target
             _thread_local.memory_store = target_memory
+            _thread_local.current_user_id = caller_user_id
             if cancel_flag.is_set():
                 status = "cancelled"
             else:

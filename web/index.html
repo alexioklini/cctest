@@ -6566,9 +6566,9 @@ function openGeneralSettings() {
       <button class="modal-tab" onclick="switchGeneralTab('agents',this)">Agents</button>
       <button class="modal-tab" onclick="switchGeneralTab('teams',this)">Teams</button>
       <button class="modal-tab" onclick="switchGeneralTab('nodes',this)">Nodes</button>
-      <button class="modal-tab" onclick="switchGeneralTab('qmd',this)">QMD</button>
       <button class="modal-tab" onclick="switchGeneralTab('context',this)">Context</button>
       <button class="modal-tab" onclick="switchGeneralTab('costs',this)">Costs</button>
+      <button class="modal-tab" onclick="switchGeneralTab('mempalace',this)">MemPalace</button>
       <button class="modal-tab" onclick="switchGeneralTab('tools',this)">Tools</button>
     </div>
     <div class="modal-body" id="general-tab-content" style="flex:1;overflow-y:auto;padding:0">
@@ -7055,125 +7055,6 @@ async function switchGeneralTab(tab, btn) {
     } catch(e) { C.innerHTML = P('<div style="color:var(--text-400)">Nodes not available</div>'); }
   }
 
-  /* ─── QMD ─── */
-  if (tab === 'qmd') {
-    try {
-      const svc = await API.getServices().catch(()=>({}));
-      const qmd = svc.qmd || {};
-      const running = qmd.status === 'running';
-      const colls = qmd.collections || [];
-      const totalFiles = colls.reduce((s,c)=>(s+(c.total!=null?c.total:(parseInt(c.files)||0))),0);
-      const totalCurrent = colls.reduce((s,c)=>(s+(c.indexed||0)),0);
-      const totalStale = colls.reduce((s,c)=>(s+(c.stale||0)),0);
-      const totalNot = colls.reduce((s,c)=>(s+(c.not_indexed||0)),0);
-
-      let html = `<div style="${G('12px')}">
-        <div style="display:flex;align-items:center;gap:8px">
-          ${DOT(running)}<span style="font-size:14px;font-weight:500;color:var(--text-100)">QMD</span>
-          <span style="font-size:12px;color:${running?'var(--success)':'var(--error)'}">${running?'Running':'Stopped'}</span>
-          ${qmd.port?`<span style="${MONO}">:${qmd.port}</span>`:''}
-          <div style="margin-left:auto;display:flex;gap:6px">
-            <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="API.post('/v1/services/qmd',{action:'reindex'}).then(()=>showToast('Reindexing...')).catch(e=>showToast('Failed',true))">Reindex All</button>
-          </div>
-        </div>
-        <div style="display:flex;gap:12px;flex-wrap:wrap">
-          <div style="padding:10px 16px;background:var(--bg-200);border-radius:8px;text-align:center">
-            <div style="font-size:18px;font-weight:600;color:var(--text-000)">${totalFiles}</div>
-            <div style="font-size:11px;color:var(--text-400)">Total</div>
-          </div>
-          <div style="padding:10px 16px;background:var(--bg-200);border-radius:8px;text-align:center">
-            <div style="font-size:18px;font-weight:600;color:var(--success)">${totalCurrent}</div>
-            <div style="font-size:11px;color:var(--text-400)">Current</div>
-          </div>
-          <div style="padding:10px 16px;background:var(--bg-200);border-radius:8px;text-align:center">
-            <div style="font-size:18px;font-weight:600;color:var(--warning)">${totalStale}</div>
-            <div style="font-size:11px;color:var(--text-400)">Stale</div>
-          </div>
-          <div style="padding:10px 16px;background:var(--bg-200);border-radius:8px;text-align:center">
-            <div style="font-size:18px;font-weight:600;color:var(--text-400)">${totalNot}</div>
-            <div style="font-size:11px;color:var(--text-400)">Not indexed</div>
-          </div>
-        </div>
-        ${SEC('Collections')}`;
-      for (const col of colls) {
-        const name = col.name;
-        const total = col.total != null ? col.total : (parseInt(col.files) || 0);
-        const cur = col.indexed || 0;
-        const st = col.stale || 0;
-        const ni = col.not_indexed || 0;
-        const allGood = total > 0 && cur === total && st === 0 && ni === 0;
-        const statsItems = [];
-        statsItems.push(`<span style="color:var(--success)">${cur} current</span>`);
-        if (st > 0) statsItems.push(`<span style="color:var(--warning)">${st} stale</span>`);
-        if (ni > 0) statsItems.push(`<span style="color:var(--text-400)">${ni} unindexed</span>`);
-        const collId = 'qmd-coll-' + name.replace(/[^a-zA-Z0-9]/g,'_');
-        html += `<div style="border:1px solid var(--border-100);border-radius:8px;overflow:hidden">
-          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;user-select:none" onclick="window._qmdToggleColl('${esc(name)}','${collId}',this)">
-            <svg class="qmd-chev" style="width:12px;height:12px;flex-shrink:0;transition:transform .15s;color:var(--text-400)" viewBox="0 0 12 12"><path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-            ${allGood?DOT(true):''}
-            <span style="font-size:13px;font-weight:500;color:var(--text-100);flex:1">${esc(name)}</span>
-            <span style="${MONO}">${total} files</span>
-            <span style="font-size:11px">${statsItems.join(' / ')}</span>
-            <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="event.stopPropagation();API.post('/v1/services/qmd',{action:'reindex',collection:'${esc(name)}'}).then(()=>showToast('Reindexing ${esc(name)}...')).catch(e=>showToast('Failed',true))">Reindex</button>
-          </div>
-          <div id="${collId}" style="display:none;border-top:1px solid var(--border-100);background:var(--bg-200)"></div>
-        </div>`;
-      }
-      if (!colls.length) html += `<div style="color:var(--text-400);font-size:12px">No collections found</div>`;
-      html += '</div>';
-      C.innerHTML = P(html);
-
-      // Accordion toggle + lazy-load files
-      window._qmdToggleColl = async function(collName, collId, headerEl) {
-        const body = document.getElementById(collId);
-        if (!body) return;
-        const chev = headerEl.querySelector('.qmd-chev');
-        if (body.style.display !== 'none') {
-          body.style.display = 'none';
-          if (chev) chev.style.transform = '';
-          return;
-        }
-        body.style.display = 'block';
-        if (chev) chev.style.transform = 'rotate(90deg)';
-        // Load files if not yet loaded
-        if (!body.dataset.loaded) {
-          body.innerHTML = '<div style="padding:10px 12px;font-size:11px;color:var(--text-400)">Loading...</div>';
-          try {
-            const data = await API.get('/v1/services/qmd/docs?collection=' + encodeURIComponent(collName));
-            const files = data.files || [];
-            if (!files.length) {
-              body.innerHTML = '<div style="padding:10px 12px;font-size:12px;color:var(--text-400)">No files</div>';
-            } else {
-              let fhtml = '<div style="display:grid;gap:0">';
-              for (const f of files) {
-                let statusDot, statusLabel;
-                if (f.current === true) { statusDot = 'var(--success)'; statusLabel = 'Current'; }
-                else if (f.current === false && f.indexed) { statusDot = 'var(--warning)'; statusLabel = 'Stale'; }
-                else if (f.indexed && f.current === null) { statusDot = 'var(--warning)'; statusLabel = 'Unknown'; }
-                else { statusDot = 'var(--text-500)'; statusLabel = 'Not indexed'; }
-                const embStr = f.embedded_at ? new Date(f.embedded_at).toLocaleDateString() : '';
-                const modStr = f.modified ? new Date(f.modified * 1000).toLocaleDateString() : '';
-                const sizeStr = f.size < 1024 ? f.size + 'B' : (f.size/1024).toFixed(1) + 'KB';
-                fhtml += `<div style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--border-050);font-size:11px">
-                  <span style="width:7px;height:7px;border-radius:50%;background:${statusDot};flex-shrink:0" title="${statusLabel}"></span>
-                  <span style="flex:1;color:var(--text-200);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(f.name)}">${esc(f.name)}</span>
-                  <span style="color:var(--text-500);min-width:44px;text-align:right">${sizeStr}</span>
-                  <span style="color:var(--text-500);min-width:68px;text-align:right" title="Modified">${modStr}</span>
-                  <span style="min-width:72px;text-align:right;color:${statusDot === 'var(--success)' ? 'var(--success)' : statusDot === 'var(--warning)' ? 'var(--warning)' : 'var(--text-500)'}">${statusLabel}</span>
-                </div>`;
-              }
-              fhtml += '</div>';
-              body.innerHTML = fhtml;
-            }
-            body.dataset.loaded = '1';
-          } catch(e) {
-            body.innerHTML = '<div style="padding:10px 12px;font-size:11px;color:var(--error)">Failed to load files</div>';
-          }
-        }
-      };
-    } catch(e) { C.innerHTML = P('<div style="color:var(--text-400)">QMD not available</div>'); }
-  }
-
   /* ─── CONTEXT ─── */
   if (tab === 'context') {
     try {
@@ -7234,6 +7115,184 @@ async function switchGeneralTab(tab, btn) {
       if (!(daily.daily||[]).length) html += '<div style="padding:20px;text-align:center;color:var(--text-400)">No cost data</div>';
       C.innerHTML = P(html + '</div>');
     } catch(e) { C.innerHTML = P('<div style="color:var(--text-400)">Cost data not available</div>'); }
+  }
+
+  /* ─── MEMPALACE ─── */
+  if (tab === 'mempalace') {
+    try {
+      const mp = await API.get('/v1/mempalace/stats');
+      if (!mp.enabled) {
+        C.innerHTML = P(`<div style="${G('12px')}"><div style="color:var(--text-400)">MemPalace is disabled in config.json</div></div>`);
+        return;
+      }
+      if (mp.error) {
+        C.innerHTML = P(`<div style="color:var(--error)">${esc(mp.error)}</div>`);
+        return;
+      }
+
+      const STAT = (val, label, color='var(--accent-brand)') => `<div style="padding:12px 20px;background:var(--bg-200);border-radius:8px;text-align:center;min-width:110px">
+        <div style="font-size:22px;font-weight:600;color:${color}">${val}</div>
+        <div style="font-size:11px;color:var(--text-400)">${label}</div>
+      </div>`;
+
+      // Overview stats
+      const statsRow = `<div style="display:flex;gap:12px;flex-wrap:wrap">
+        ${STAT(mp.total_drawers.toLocaleString(), 'Drawers')}
+        ${STAT(mp.total_closets.toLocaleString(), 'Closets')}
+        ${STAT(mp.wing_count, 'Wings')}
+        ${STAT(mp.room_count, 'Rooms')}
+        ${STAT((mp.graph?.total_edges||0), 'Edges')}
+        ${STAT((mp.graph?.tunnel_rooms||0), 'Tunnel Rooms')}
+        ${STAT(mp.palace_size_mb + ' MB', 'DB Size', 'var(--text-200)')}
+      </div>`;
+
+      // Knowledge graph stats
+      const kg = mp.knowledge_graph || {};
+      const kgRow = kg.entities ? `<div style="display:flex;gap:12px;flex-wrap:wrap">
+        ${STAT(kg.entities, 'Entities', 'var(--accent-purple,#8b5cf6)')}
+        ${STAT(kg.current_facts, 'Current Facts', 'var(--accent-purple,#8b5cf6)')}
+        ${STAT(kg.expired_facts, 'Expired Facts', 'var(--text-400)')}
+        ${STAT((kg.relationship_types||[]).length, 'Relation Types', 'var(--accent-purple,#8b5cf6)')}
+      </div>` : `<div style="color:var(--text-400);font-size:12px">Knowledge graph not available</div>`;
+
+      // Wings breakdown
+      const wings = mp.wings || {};
+      const sortedWings = Object.entries(wings).sort((a,b) => b[1].drawer_count - a[1].drawer_count);
+      const userWings = sortedWings.filter(([,v]) => v.user_scoped);
+      const sharedWings = sortedWings.filter(([,v]) => !v.user_scoped);
+
+      const wingRow = (name, info) => {
+        const scope = info.user_scoped
+          ? `<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:var(--bg-300);color:var(--text-300)">user: ${esc(info.user_id)}</span>`
+          : `<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:color-mix(in srgb, var(--accent-brand) 15%, transparent);color:var(--accent-brand)">shared</span>`;
+        const topRooms = Object.entries(info.rooms || {}).sort((a,b)=>b[1]-a[1]).slice(0,5);
+        const roomChips = topRooms.map(([r,c]) => `<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:var(--bg-300);color:var(--text-300)">${esc(r)} (${c})</span>`).join(' ');
+        return `<div style="${ROW};flex-wrap:wrap">
+          <span style="font-weight:500;flex:1;min-width:140px">${esc(name)}</span>
+          ${scope}
+          <span style="${MONO}">${info.drawer_count} drawers</span>
+          <span style="${MONO}">${info.room_count} rooms</span>
+          <div style="width:100%;display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">${roomChips}</div>
+        </div>`;
+      };
+
+      let wingsHtml = '';
+      if (sharedWings.length) {
+        wingsHtml += sharedWings.map(([n,i]) => wingRow(n,i)).join('');
+      }
+      if (userWings.length) {
+        wingsHtml += `<div style="font-size:11px;color:var(--text-400);margin:8px 0 4px">User-Scoped Wings (${userWings.length})</div>`;
+        wingsHtml += userWings.map(([n,i]) => wingRow(n,i)).join('');
+      }
+
+      // Chat sync status
+      const sync = mp.chat_sync || {};
+      const syncTime = sync.last_sync ? new Date(sync.last_sync * 1000).toLocaleString() : 'never';
+      const syncRow = `<div style="${ROW}">
+        ${DOT(!!sync.last_sync)} <span style="flex:1">Chat Sync</span>
+        <span style="${MONO}">${sync.synced_sessions} sessions synced</span>
+        <span style="${MONO}">last: ${esc(syncTime)}</span>
+      </div>`;
+
+      // Daemons config
+      const cfg = mp.config || {};
+      const daemonRows = `
+        <div style="${ROW}">
+          ${DOT(cfg.mine_enabled)} <span style="flex:1">Miner</span>
+          <span style="${MONO}">every ${Math.round(cfg.mine_interval_s/60)}m</span>
+          <span style="${MONO}">${cfg.mine_sources} source(s)</span>
+        </div>
+        <div style="${ROW}">
+          ${DOT(cfg.chat_sync_enabled)} <span style="flex:1">Chat Sync</span>
+          <span style="${MONO}">every ${cfg.chat_sync_interval_s}s</span>
+          ${cfg.chat_sync_build_closets ? BADGE('closets','var(--success)') : BADGE('no closets')}
+        </div>
+      `;
+
+      // Tunnels
+      const tunnelList = (mp.tunnels || {}).tunnels || [];
+      let tunnelsHtml = '';
+      if (tunnelList.length) {
+        tunnelsHtml = tunnelList.map(t => `<div style="${ROW}">
+          <span style="${MONO}">${esc(t.source_wing||'')}/${esc(t.source_room||'')}</span>
+          <span style="color:var(--text-400)">\u2194</span>
+          <span style="${MONO}">${esc(t.target_wing||'')}/${esc(t.target_room||'')}</span>
+          ${t.label ? `<span style="font-size:11px;color:var(--text-300)">${esc(t.label)}</span>` : ''}
+        </div>`).join('');
+      } else {
+        tunnelsHtml = `<div style="color:var(--text-400);font-size:12px">No explicit tunnels configured</div>`;
+      }
+
+      // Recent WAL activity
+      const wal = mp.wal || {};
+      let walHtml = '';
+      if (wal.total_ops) {
+        const opTypes = Object.entries(wal.ops_by_type || {}).sort((a,b)=>b[1]-a[1]);
+        const opBadges = opTypes.map(([op,n]) => `<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:var(--bg-300);color:var(--text-300)">${esc(op)}: ${n}</span>`).join(' ');
+        const recentOps = (wal.recent_ops || []).slice(-10).reverse();
+        const recentRows = recentOps.map(o => {
+          const ts = o.timestamp ? new Date(o.timestamp).toLocaleString() : '';
+          return `<div style="display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--border-100)">
+            <span style="${MONO};min-width:140px">${esc(ts)}</span>
+            <span style="font-size:11px;font-weight:500;min-width:100px">${esc(o.operation)}</span>
+            <span style="${MONO}">${esc(o.wing)}${o.room ? '/' + esc(o.room) : ''}</span>
+          </div>`;
+        }).join('');
+        walHtml = `<div style="${G('8px')}">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <span style="font-size:12px;color:var(--text-300)">${wal.total_ops.toLocaleString()} total operations</span>
+            ${opBadges}
+          </div>
+          <div style="max-height:200px;overflow-y:auto">${recentRows}</div>
+        </div>`;
+      } else {
+        walHtml = `<div style="color:var(--text-400);font-size:12px">No write-ahead log entries</div>`;
+      }
+
+      // Anomaly detection
+      let anomalies = [];
+      if (mp.total_drawers > 0 && mp.total_closets === 0) anomalies.push('No closets built — search ranking may be degraded');
+      if (mp.total_drawers > 10000) anomalies.push(`Large palace (${mp.total_drawers.toLocaleString()} drawers) — search may slow down`);
+      const emptyWings = sortedWings.filter(([,v]) => v.drawer_count < 3);
+      if (emptyWings.length) anomalies.push(`${emptyWings.length} wing(s) with <3 drawers: ${emptyWings.map(([n])=>n).join(', ')}`);
+      if (!cfg.chat_sync_enabled) anomalies.push('Chat sync is disabled — new conversations are not being memorized');
+      if (!cfg.mine_enabled) anomalies.push('Miner is disabled — file changes are not being indexed');
+      if (sync.last_sync && (Date.now()/1000 - sync.last_sync) > 600) anomalies.push('Last chat sync was over 10 minutes ago');
+      const orphanRatio = mp.total_closets > 0 ? mp.total_drawers / mp.total_closets : 0;
+      if (orphanRatio > 20 && mp.total_drawers > 100) anomalies.push(`High drawer/closet ratio (${Math.round(orphanRatio)}:1) — many drawers may lack closet coverage`);
+
+      const anomalyHtml = anomalies.length
+        ? anomalies.map(a => `<div style="${ROW};border-color:color-mix(in srgb, var(--warning,#f59e0b) 40%, transparent)">
+            <span style="color:var(--warning,#f59e0b)">\u26A0</span>
+            <span style="font-size:12px">${esc(a)}</span>
+          </div>`).join('')
+        : `<div style="${ROW};border-color:color-mix(in srgb, var(--success) 30%, transparent)">${DOT(true)} <span style="font-size:12px;color:var(--text-300)">No anomalies detected</span></div>`;
+
+      C.innerHTML = P(`<div style="${G('16px')}">
+        ${SEC('Overview')}
+        ${statsRow}
+
+        ${SEC('Knowledge Graph')}
+        ${kgRow}
+
+        ${anomalies.length ? SEC('Anomalies') + anomalyHtml : ''}
+
+        ${SEC('Daemons')}
+        ${daemonRows}
+        ${syncRow}
+
+        ${SEC('Wings (' + sortedWings.length + ')')}
+        <div style="${G('6px')}">${wingsHtml || '<div style="color:var(--text-400);font-size:12px">No wings</div>'}</div>
+
+        ${SEC('Tunnels')}
+        ${tunnelsHtml}
+
+        ${SEC('Write-Ahead Log')}
+        ${walHtml}
+
+        <div style="font-size:10px;color:var(--text-400);margin-top:8px">Palace: ${esc(mp.palace_path)}</div>
+      </div>`);
+    } catch(e) { C.innerHTML = P(`<div style="color:var(--error)">Failed to load MemPalace stats: ${esc(e.message||e)}</div>`); }
   }
 
   /* ─── TOOLS ─── */
