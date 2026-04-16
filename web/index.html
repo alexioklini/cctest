@@ -7136,17 +7136,31 @@ async function switchGeneralTab(tab, btn) {
       </div>`;
 
       // Overview stats
+      const hallEntries = Object.entries(mp.halls || {});
       const statsRow = `<div style="display:flex;gap:12px;flex-wrap:wrap">
         ${STAT(mp.total_drawers.toLocaleString(), 'Drawers')}
         ${STAT(mp.total_closets.toLocaleString(), 'Closets')}
         ${STAT(mp.wing_count, 'Wings')}
         ${STAT(mp.room_count, 'Rooms')}
-        ${STAT((mp.graph?.total_edges||0), 'Edges')}
-        ${STAT((mp.graph?.tunnel_rooms||0), 'Tunnel Rooms')}
+        ${STAT(hallEntries.length, 'Halls')}
+        ${STAT((mp.graph?.tunnel_rooms||0), 'Tunnels')}
         ${STAT(mp.palace_size_mb + ' MB', 'DB Size', 'var(--text-200)')}
       </div>`;
 
-      // Knowledge graph stats — hidden until KG auto-extraction is implemented
+      // Hall breakdown
+      const hallColors = {'memory':'#7cb5e8','technical':'#e8927c','emotions':'#d4a0e8','consciousness':'#7ce8d8','general':'#c8c8c8'};
+      const hallsHtml = hallEntries.length ? hallEntries.sort((a,b) => b[1].count - a[1].count).map(([name, info]) => {
+        const color = hallColors[name] || '#e8d87c';
+        const roomChips = Object.entries(info.rooms || {}).sort((a,b)=>b[1]-a[1]).map(([r,c]) =>
+          `<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:var(--bg-300);color:var(--text-300)">${esc(r)} (${c})</span>`
+        ).join(' ');
+        return `<div style="${ROW}">
+          <span style="width:10px;height:10px;border-radius:2px;background:${color};flex-shrink:0"></span>
+          <span style="font-weight:500;min-width:100px">${esc(name)}</span>
+          <span style="${MONO}">${info.count} drawers</span>
+          <div style="display:flex;gap:4px;flex-wrap:wrap">${roomChips}</div>
+        </div>`;
+      }).join('') : '';
 
       // Treemap color palette
       const _tmColors = ['#e8927c','#7cb5e8','#7ce8a4','#d4a0e8','#e8d87c','#7ce8d8','#e87ca0','#a0c8e8','#c8e87c','#e8b47c'];
@@ -7269,6 +7283,8 @@ async function switchGeneralTab(tab, btn) {
         </div>
         <div id="mp-treemap" style="width:100%;height:260px;border-radius:8px;overflow:hidden;position:relative;background:var(--bg-200)"></div>
         <div id="mp-treemap-detail" style="display:none;margin-top:8px;max-height:200px;overflow-y:auto"></div>
+
+        ${hallsHtml ? SEC('Halls') + '<div style="' + G('6px') + '">' + hallsHtml + '</div>' : ''}
 
         ${anomalies.length ? SEC('Anomalies') + anomalyHtml : ''}
 

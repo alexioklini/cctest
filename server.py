@@ -5936,12 +5936,36 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     "user_name": _user_names.get(user_id, user_id) if user_id else None,
                 }
 
+            # Hall stats from drawer metadata
+            halls = {}
+            try:
+                all_meta = status.get("_all_meta") or []
+                if not all_meta:
+                    from mempalace.palace import get_collection as _gc
+                    _dcol = _gc(palace_path, create=False)
+                    if _dcol:
+                        _dr = _dcol.get(include=["metadatas"])
+                        all_meta = _dr.get("metadatas", [])
+                for m in all_meta:
+                    h = m.get("hall", "")
+                    if not h:
+                        continue
+                    if h not in halls:
+                        halls[h] = {"count": 0, "rooms": {}}
+                    halls[h]["count"] += 1
+                    r = m.get("room", "")
+                    if r:
+                        halls[h]["rooms"][r] = halls[h]["rooms"].get(r, 0) + 1
+            except Exception:
+                pass
+
             self._send_json({
                 "enabled": True,
                 "palace_path": palace_path,
                 "palace_size_mb": palace_size_mb,
                 "total_drawers": status.get("total_drawers", 0),
                 "total_closets": closet_count,
+                "halls": halls,
                 "wings": wings_detail,
                 "wing_count": len(wings_detail),
                 "room_count": status.get("total_rooms", len(set(r for rooms in tax.values() for r in rooms))),
