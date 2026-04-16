@@ -12931,7 +12931,7 @@ _execution_mode_cache = None
 _execution_mode_cache_time = 0.0
 _client_proxy_tools_cache = None
 
-_CLIENT_PROXY_TOOLS_DEFAULT = ["web_fetch", "exa_search"]
+_CLIENT_PROXY_TOOLS_DEFAULT = ["exa_search"]
 
 def _get_execution_mode() -> str:
     """Read execution_mode from config.json. 30s cache. Returns 'server' or 'client'."""

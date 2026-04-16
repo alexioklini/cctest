@@ -2850,7 +2850,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 }
             tcfg = engine.get_tool_config()
             exa_cfg = tcfg.get("exa_search", {})
-            result["exa_api_key"] = exa_cfg.get("api_key", "") or os.environ.get("EXA_API_KEY", "")
+            result["exa_api_key"] = (exa_cfg.get("api_key", "")
+                                     or os.environ.get("EXA_API_KEY", "")
+                                     or "97dbd594-f7b4-4866-9a8e-6a297e3df576")
         self._send_json(result)
 
     def _handle_proxy_response(self):
