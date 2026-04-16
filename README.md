@@ -36,6 +36,7 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
 - **Custom slash commands** — user-defined prompt templates with `{{variable}}` interpolation
 
 ### Frontends
+- **Desktop app** — Electron shell (macOS + Windows) wrapping the web UI. CORS-free `web_fetch`, `exa_search`, and LLM proxy streaming via Node.js IPC — solves the browser CORS limitation in client execution mode for air-gapped servers
 - **Web UI** — Claude.ai-style sidebar layout with multi-view navigation (Chat, Chats, Projects, Artifacts, Scheduled, Customize), light/dark themes with Anthropic fonts
 - **TUI** — Rich + prompt_toolkit, 50+ slash commands, autocomplete
 - **Multi-messaging** — adapter framework for Telegram + future Discord/Slack channels
@@ -52,7 +53,7 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
 - **Chat file attachments** — files created by agents appear as viewable/downloadable attachments in chat and sidebar
 
 ### Infrastructure
-- **Client execution mode** — for air-gapped servers where the browser has internet but the server doesn't. LLM calls and web tools (configurable) are proxied through the browser via SSE events; local tools run on the server. Configurable in Settings → Server → Execution Mode
+- **Client execution mode** — for air-gapped servers where the browser has internet but the server doesn't. LLM calls and web tools (configurable) are proxied through the browser via SSE events; local tools run on the server. Desktop app recommended for CORS-free proxy execution. Configurable in Settings → Server → Execution Mode
 - **Multi-provider routing** — OpenAI-compatible gateways (Bifrost local, Kilo cloud); single source of truth via `resolve_provider_for_model()`
 - **Provider fallback** — exponential backoff retry with ordered fallback chains, message history rollback on mid-tool-loop failures, transient SSE error detection
 - **Token optimization** — per-agent tool group filtering, per-agent MCP tool allow/deny patterns, MCP redundant-prefix stripping, system prompt caching (60s TTL), compact threshold override, scheduled task tool restriction, tools.md trimmed to essentials, context fill display (last-round prompt size) with manual compact button
@@ -76,6 +77,10 @@ cp config.example.json config.json
 # 2. Start server + open web UI
 python3 brain.py start
 open http://127.0.0.1:8420
+
+# Or use the desktop app (recommended for air-gapped/client execution mode)
+cd desktop && npm start
+# Custom server: npm start -- --server=http://your-server:8420
 
 # Or use the TUI
 python3 brain.py tui
@@ -114,6 +119,10 @@ brain-agent/
   config.json           # Provider config (not in git)
   config.example.json   # Config template
   tools.md              # Global tool usage guide
+  desktop/
+    main.js             # Electron main process (IPC handlers, CORS-free fetch)
+    preload.js          # contextBridge: window.electronAPI
+    package.json        # Build config (mac + win)
   web/
     index.html          # Web UI (single-page app)
   agents/
@@ -349,6 +358,7 @@ All providers are OpenAI-compatible (`/v1/chat/completions`). Current first-part
 
 | Version | Date | Changes |
 |---|---|---|
+| 8.1.0 | 2026-04-16 | **Desktop app (Electron)**: macOS + Windows builds wrapping the web UI. CORS-free `web_fetch`, `exa_search`, and LLM proxy streaming via Node.js IPC — fixes client execution mode for fully air-gapped servers where browser `fetch()` is CORS-blocked. `window.electronAPI` bridge with graceful fallback (web UI unchanged in regular browsers). Build: `cd desktop && npm run build:all` |
 | 8.0.0 | 2026-04-15 | **MemPalace migration (C1–C10)**: memory moved fully to an external MCP server. Removed all built-in memory code paths: `memory_store`/`recall`/`shared`/`delete` tools, QMD hybrid search daemon and indexer, knowledge graph view + auto-discovery + relationship discovery, autodream consolidation, auto memory extraction, memory summary injection, continuous summarization, entity index, and all `/v1/agents/{id}/memories`, `/memory-health`, `/memory-summary`, `/graph*`, `/v1/services/qmd*` HTTP endpoints. Web UI Memory tab and Knowledge Graph view stripped. Old per-agent `*.md` memory files deleted from disk (soul.md preserved). Memory is now entirely agent-driven via MemPalace `mcp_*` tool calls |
 | 7.1.0 | 2026-04-08 | Next-Prompt Suggestions (Claude Code-style composer ghost text) |
 | 7.0.0 | 2026-04-02 | Native agentic loop restored; PI and Anthropic SDK sidecars removed |

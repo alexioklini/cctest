@@ -11,6 +11,7 @@ This file provides guidance to Claude Code when working with this repository.
 - **`tui.py`** — Terminal frontend (Rich + prompt_toolkit)
 - **`telegram.py`** — Telegram bot frontend
 - **`web/index.html`** — Web UI (single-page app, light/dark theme)
+- **`desktop/`** — Electron desktop app (macOS + Windows), CORS-free proxy for air-gapped client mode
 - **`tools.md`** — Global tool usage guide (loaded into system prompt at runtime)
 - **`config.json`** — Provider config, server settings, Telegram config (not in git)
 - **`agents/`** — Per-agent directories with soul.md, agent.json, skills, mcp
@@ -26,6 +27,7 @@ brain.py (gateway)
   │   ├── SQLite: chats.db, scheduler.db, context.db, costs.db
   │   └── MCP server connections (memory via MemPalace MCP server)
   ├── telegram.py (Telegram client, in-process thread)
+  ├── desktop/ (Electron app — CORS-free proxy for air-gapped client mode)
   └── web/index.html (browser client — Mission Control cockpit)
 ```
 
@@ -188,6 +190,28 @@ Key components:
 
 Config: `config.json` → `"execution_mode": "server"` (default) or `"client"`, `"client_proxy_tools": [...]`
 GUI: Settings → Server → Execution Mode (dropdown + proxy tools checklist)
+
+### Desktop App (Electron)
+
+Electron shell that loads the web UI from the Brain server and provides CORS-free network
+access via Node.js IPC. Required for client execution mode on fully air-gapped servers where
+browser `fetch()` is blocked by CORS on arbitrary URLs.
+
+- **`desktop/main.js`**: Electron main process — `BrowserWindow` loads `serverUrl` (default
+  `http://localhost:8420`), IPC handlers for `web-fetch`, `exa-search`, `proxy-fetch-stream`
+  using Node.js `http`/`https` modules (no CORS restrictions)
+- **`desktop/preload.js`**: `contextBridge.exposeInMainWorld('electronAPI', ...)` — exposes
+  `webFetch()`, `exaSearch()`, `proxyFetchStream()` + stream event listeners
+- **Web UI integration**: `ClientProxy._execWebFetch`, `_execExaSearch`, `_proxyLLM` check
+  `window.electronAPI` first; if present, route through Electron IPC; otherwise fall back to
+  browser `fetch()` (no changes when running in a regular browser)
+- **LLM streaming**: `_proxyLLMElectron()` uses `ipcRenderer.send('proxy-fetch-stream', ...)`
+  with `onStreamChunk`/`onStreamEnd`/`onStreamError` callbacks, relaying chunks to server
+  via `POST /v1/chat/proxy-response`
+- **Redirect handling**: `nodeFetchWithRedirects()` follows 301/302/303/307/308 up to 5 hops
+- **Server URL**: configurable via `--server=http://host:port` command line argument
+- **Build**: `npm run build:mac` (dmg + zip), `npm run build:win` (nsis + zip), `npm run build:all`
+- **Run**: `cd desktop && npm start` or `npm start -- --server=http://host:8420`
 
 ### Model Management
 

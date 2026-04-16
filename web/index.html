@@ -3886,6 +3886,11 @@ const ClientProxy = {
   async _proxyLLM(sessionId, data) {
     const { endpoint, headers, payload } = data;
     try {
+      // Electron: stream LLM via Node.js main process (no CORS)
+      if (window.electronAPI) {
+        await this._proxyLLMElectron(sessionId, endpoint, headers, payload);
+        return;
+      }
       let resp;
       try {
         resp = await fetch(endpoint, {
@@ -3941,12 +3946,50 @@ const ClientProxy = {
     }
   },
 
+  async _proxyLLMElectron(sessionId, endpoint, headers, payload) {
+    return new Promise((resolve) => {
+      window.electronAPI.removeStreamListeners();
+      window.electronAPI.onStreamChunk(async (chunk) => {
+        const lines = chunk.split('\n').map(l => l.trim()).filter(l => l);
+        if (lines.length) {
+          await API.post('/v1/chat/proxy-response', {
+            session_id: sessionId,
+            type: 'chunks',
+            lines,
+          });
+        }
+      });
+      window.electronAPI.onStreamEnd(async () => {
+        window.electronAPI.removeStreamListeners();
+        await API.post('/v1/chat/proxy-response', { session_id: sessionId, type: 'done' });
+        resolve();
+      });
+      window.electronAPI.onStreamError(async (msg) => {
+        window.electronAPI.removeStreamListeners();
+        await API.post('/v1/chat/proxy-response', { session_id: sessionId, type: 'error', message: msg });
+        resolve();
+      });
+      window.electronAPI.proxyFetchStream({
+        url: endpoint,
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      });
+    });
+  },
+
   async _execWebFetch(args) {
     const url = args.url || '';
     const method = args.method || 'GET';
     const hdrs = args.headers || {};
     const body = args.body || null;
     const maxLength = args.max_length || 50000;
+
+    // Electron: CORS-free fetch via Node.js main process
+    if (window.electronAPI) {
+      const res = await window.electronAPI.webFetch({ url, method, headers: hdrs, body, maxLength });
+      return JSON.stringify(res);
+    }
 
     const fetchOpts = { method, headers: hdrs };
     if (body) fetchOpts.body = body;
@@ -3961,6 +4004,21 @@ const ClientProxy = {
     const query = args.query || '';
     const numResults = args.num_results || 5;
     const category = args.category || null;
+
+    // Electron: CORS-free Exa search via Node.js main process
+    if (window.electronAPI) {
+      const data = await window.electronAPI.exaSearch({ query, numResults, category, apiKey: this.exaApiKey });
+      if (data.error) return JSON.stringify(data);
+      const results = (data.results || []).map(r => ({
+        title: r.title || '',
+        link: r.url || '',
+        snippet: (r.highlights || []).join(' '),
+      }));
+      const searchInfo = { query, results, result_count: results.length };
+      if (category) searchInfo.category = category;
+      if (!results.length) searchInfo.message = 'No search results found. Try a different query.';
+      return JSON.stringify(searchInfo, null, 1);
+    }
 
     const body = {
       query,

@@ -12,3 +12,6 @@ gmail.json
 sample.docx
 memory.md
 pi_sidecar/node_modules/
+desktop/node_modules/
+desktop/dist/
+desktop/icons/icon.iconset/
