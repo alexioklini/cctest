@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, shell, autoUpdater, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -421,7 +421,53 @@ ipcMain.on('proxy-fetch-stream', async (event, { url, method, headers, body }) =
   }
 });
 
-app.whenReady().then(createWindow);
+// ─── Auto-update (Squirrel via update.electronjs.org) ───────────────
+function setupAutoUpdater() {
+  if (app.isPackaged === false) return; // skip in dev
+
+  const feedURL = `https://update.electronjs.org/alexioklini/cctest/${process.platform}-${process.arch}/${app.getVersion()}`;
+
+  try {
+    autoUpdater.setFeedURL({ url: feedURL });
+  } catch (e) {
+    console.error('[autoUpdater] setFeedURL failed:', e.message);
+    return;
+  }
+
+  autoUpdater.on('error', (err) => {
+    console.error('[autoUpdater]', err.message);
+  });
+
+  autoUpdater.on('update-available', () => {
+    console.log('[autoUpdater] Update available, downloading...');
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    console.log('[autoUpdater] Up to date');
+  });
+
+  autoUpdater.on('update-downloaded', (_event, releaseNotes, releaseName) => {
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Update Ready',
+      message: `Version ${releaseName || 'new'} has been downloaded.`,
+      detail: 'The app will restart to apply the update.',
+      buttons: ['Restart Now', 'Later'],
+      defaultId: 0,
+    }).then(({ response }) => {
+      if (response === 0) autoUpdater.quitAndInstall();
+    });
+  });
+
+  // Check now, then every 4 hours
+  autoUpdater.checkForUpdates();
+  setInterval(() => autoUpdater.checkForUpdates(), 4 * 60 * 60 * 1000);
+}
+
+app.whenReady().then(() => {
+  createWindow();
+  setupAutoUpdater();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

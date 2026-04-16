@@ -20,17 +20,28 @@
     "productName": "Brain Agent",
     "mac": {
       "category": "public.app-category.productivity",
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "icon": "icons/icon.icns"
     },
     "win": {
-      "target": ["nsis", "zip"],
+      "target": [
+        "nsis",
+        "zip"
+      ],
       "icon": "icons/icon.ico"
     },
     "files": [
       "main.js",
       "preload.js",
       "icons/**"
-    ]
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "alexioklini",
+      "repo": "cctest"
+    }
   }
 }
