@@ -7940,7 +7940,9 @@ def main():
             os.environ.setdefault("MEMPALACE_PALACE_PATH", palace_path)
         try:
             from mempalace.mcp_server import tool_add_drawer
+            from mempalace.miner import detect_hall
             from mempalace.palace import (
+                get_collection as _get_drawers_col,
                 get_closets_collection,
                 build_closet_lines,
                 purge_file_closets,
@@ -8015,9 +8017,23 @@ def main():
                             return False
                         if res.get("reason") == "already_exists":
                             return False  # don't count dedup hits toward closet rebuild
+                        # Stamp hall metadata (tool_add_drawer doesn't support it natively)
+                        drawer_id = res.get("drawer_id", "")
+                        if drawer_id:
+                            try:
+                                hall = detect_hall(content)
+                                dcol = _get_drawers_col(palace_path, create=False)
+                                if dcol and hall:
+                                    existing = dcol.get(ids=[drawer_id], include=["metadatas", "documents"])
+                                    if existing and existing["ids"]:
+                                        meta = dict(existing["metadatas"][0])
+                                        meta["hall"] = hall
+                                        dcol.upsert(ids=[drawer_id], documents=existing["documents"], metadatas=[meta])
+                            except Exception:
+                                pass  # non-critical
                         group_key = (w, r, source_file)
                         dirty_groups.setdefault(group_key, []).append(
-                            (res.get("drawer_id", ""), content)
+                            (drawer_id, content)
                         )
                         return True
 
