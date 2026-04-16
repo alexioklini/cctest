@@ -7148,7 +7148,7 @@ async function switchGeneralTab(tab, btn) {
 
       // Knowledge graph stats
       const kg = mp.knowledge_graph || {};
-      const kgRow = kg.entities ? `<div style="display:flex;gap:12px;flex-wrap:wrap">
+      const kgRow = kg.entities !== undefined ? `<div style="display:flex;gap:12px;flex-wrap:wrap">
         ${STAT(kg.entities, 'Entities', 'var(--accent-purple,#8b5cf6)')}
         ${STAT(kg.current_facts, 'Current Facts', 'var(--accent-purple,#8b5cf6)')}
         ${STAT(kg.expired_facts, 'Expired Facts', 'var(--text-400)')}
@@ -7163,7 +7163,7 @@ async function switchGeneralTab(tab, btn) {
 
       const wingRow = (name, info) => {
         const scope = info.user_scoped
-          ? `<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:var(--bg-300);color:var(--text-300)">user: ${esc(info.user_id)}</span>`
+          ? `<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:var(--bg-300);color:var(--text-300)">${esc(info.user_name || info.user_id)}</span>`
           : `<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:color-mix(in srgb, var(--accent-brand) 15%, transparent);color:var(--accent-brand)">shared</span>`;
         const topRooms = Object.entries(info.rooms || {}).sort((a,b)=>b[1]-a[1]).slice(0,5);
         const roomChips = topRooms.map(([r,c]) => `<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:var(--bg-300);color:var(--text-300)">${esc(r)} (${c})</span>`).join(' ');
@@ -7185,16 +7185,9 @@ async function switchGeneralTab(tab, btn) {
         wingsHtml += userWings.map(([n,i]) => wingRow(n,i)).join('');
       }
 
-      // Chat sync status
+      // Daemons config + chat sync status merged
       const sync = mp.chat_sync || {};
       const syncTime = sync.last_sync ? new Date(sync.last_sync * 1000).toLocaleString() : 'never';
-      const syncRow = `<div style="${ROW}">
-        ${DOT(!!sync.last_sync)} <span style="flex:1">Chat Sync</span>
-        <span style="${MONO}">${sync.synced_sessions} sessions synced</span>
-        <span style="${MONO}">last: ${esc(syncTime)}</span>
-      </div>`;
-
-      // Daemons config
       const cfg = mp.config || {};
       const daemonRows = `
         <div style="${ROW}">
@@ -7206,6 +7199,8 @@ async function switchGeneralTab(tab, btn) {
           ${DOT(cfg.chat_sync_enabled)} <span style="flex:1">Chat Sync</span>
           <span style="${MONO}">every ${cfg.chat_sync_interval_s}s</span>
           ${cfg.chat_sync_build_closets ? BADGE('closets','var(--success)') : BADGE('no closets')}
+          <span style="${MONO}">${sync.synced_sessions} sessions</span>
+          <span style="${MONO}">last: ${esc(syncTime)}</span>
         </div>
       `;
 
@@ -7279,7 +7274,6 @@ async function switchGeneralTab(tab, btn) {
 
         ${SEC('Daemons')}
         ${daemonRows}
-        ${syncRow}
 
         ${SEC('Wings (' + sortedWings.length + ')')}
         <div style="${G('6px')}">${wingsHtml || '<div style="color:var(--text-400);font-size:12px">No wings</div>'}</div>

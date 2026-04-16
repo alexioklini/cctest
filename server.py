@@ -5903,6 +5903,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             # Wing breakdown with user isolation info
             wings_detail = {}
             tax = taxonomy.get("taxonomy", {})
+            # Build user_id → display_name lookup
+            _user_names = {}
+            try:
+                for u in _auth_mod.AuthDB.list_users():
+                    _user_names[u["id"]] = u.get("display_name") or u.get("username") or u["id"]
+            except Exception:
+                pass
             for wing_name, rooms in tax.items():
                 is_user_scoped = "/" in wing_name
                 user_id = wing_name.split("/")[0] if is_user_scoped else None
@@ -5912,6 +5919,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     "room_count": len(rooms),
                     "user_scoped": is_user_scoped,
                     "user_id": user_id,
+                    "user_name": _user_names.get(user_id, user_id) if user_id else None,
                 }
 
             self._send_json({
