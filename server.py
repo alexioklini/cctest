@@ -6018,6 +6018,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     "id": did,
                     "wing": m_wing,
                     "room": m_room,
+                    "hall": meta.get("hall", ""),
                     "source_file": meta.get("source_file", ""),
                     "filed_at": meta.get("filed_at", ""),
                     "added_by": meta.get("added_by", ""),

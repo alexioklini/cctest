@@ -7162,8 +7162,7 @@ async function switchGeneralTab(tab, btn) {
         </div>`;
       }).join('') : '';
 
-      // Treemap color palette
-      const _tmColors = ['#e8927c','#7cb5e8','#7ce8a4','#d4a0e8','#e8d87c','#7ce8d8','#e87ca0','#a0c8e8','#c8e87c','#e8b47c'];
+
 
       // Wings breakdown
       const wings = mp.wings || {};
@@ -7277,25 +7276,17 @@ async function switchGeneralTab(tab, btn) {
         ${SEC('Overview')}
         ${statsRow}
 
-        ${SEC('Palace Map')}
-        <div id="mp-treemap-breadcrumb" style="display:flex;gap:4px;align-items:center;font-size:12px;margin-bottom:8px;min-height:20px">
-          <span style="color:var(--accent-brand);font-weight:500;cursor:default">All Wings</span>
+        ${SEC('Palace Explorer')}
+        <div id="mp-tree-tabs" style="display:flex;gap:0;margin-bottom:8px">
+          <button class="modal-tab active" onclick="mpTreeSwitch('wings',this)" style="padding:6px 14px;font-size:12px">Wings</button>
+          <button class="modal-tab" onclick="mpTreeSwitch('tunnels',this)" style="padding:6px 14px;font-size:12px">Tunnels</button>
         </div>
-        <div id="mp-treemap" style="width:100%;height:260px;border-radius:8px;overflow:hidden;position:relative;background:var(--bg-200)"></div>
-        <div id="mp-treemap-detail" style="display:none;margin-top:8px;max-height:200px;overflow-y:auto"></div>
-
-        ${hallsHtml ? SEC('Halls') + '<div style="' + G('6px') + '">' + hallsHtml + '</div>' : ''}
+        <div id="mp-tree" style="max-height:400px;overflow-y:auto;border:1px solid var(--border-100);border-radius:8px;padding:4px 0"></div>
 
         ${anomalies.length ? SEC('Anomalies') + anomalyHtml : ''}
 
         ${SEC('Daemons')}
         ${daemonRows}
-
-        ${SEC('Wings (' + sortedWings.length + ')')}
-        <div style="${G('6px')}">${wingsHtml || '<div style="color:var(--text-400);font-size:12px">No wings</div>'}</div>
-
-        ${SEC('Tunnels')}
-        ${tunnelsHtml}
 
         ${SEC('Write-Ahead Log')}
         ${walHtml}
@@ -7303,248 +7294,170 @@ async function switchGeneralTab(tab, btn) {
         <div style="font-size:10px;color:var(--text-400);margin-top:8px">Palace: ${esc(mp.palace_path)}</div>
       </div>`);
 
-      // --- Treemap rendering ---
-      setTimeout(() => {
-        const container = document.getElementById('mp-treemap');
-        const breadcrumb = document.getElementById('mp-treemap-breadcrumb');
-        const detail = document.getElementById('mp-treemap-detail');
-        if (!container) return;
+      // --- Palace tree view ---
+      const _mpUNames = {};
+      for (const [wn, wi] of Object.entries(mp.wings || {})) {
+        if (wi.user_name) _mpUNames[wi.user_id] = wi.user_name;
+      }
+      function _mpFriendly(name) {
+        if (name.includes('/')) { const [u,a] = name.split('/',2); return (_mpUNames[u]||u.slice(0,6)) + ' / ' + a; }
+        return name;
+      }
+      const _mpWings = mp.wings || {};
+      const _mpHalls = mp.halls || {};
+      const _mpTunnels = ((mp.tunnels || {}).tunnels || []);
 
-        const _userNames = {};
-        for (const [wn, wi] of Object.entries(mp.wings || {})) {
-          if (wi.user_name) _userNames[wi.user_id] = wi.user_name;
+      function _mpIcon(type) {
+        const icons = {wing:'\uD83D\uDCE6',room:'\uD83D\uDCBB',drawer:'\uD83D\uDCC4',closet:'\uD83D\uDDC4',hall:'\uD83D\uDEA7',tunnel:'\uD83D\uDD17'};
+        return icons[type]||'\u25CF';
+      }
+      function _mpBadge(t,c) { return '<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:var(--bg-300);color:'+c+'">'+esc(t)+'</span>'; }
+      function _mpCount(n,label) { return '<span style="font-size:10px;font-family:var(--font-mono);color:var(--text-400)">'+n+' '+label+'</span>'; }
+
+      function _mpTreeNode(icon, label, count, badge, depth, expandFn) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 8px;padding-left:'+(12+depth*20)+'px;cursor:pointer;border-radius:4px;font-size:12px';
+        row.onmouseenter = () => row.style.background = 'var(--bg-200)';
+        row.onmouseleave = () => row.style.background = '';
+        const arrow = document.createElement('span');
+        arrow.style.cssText = 'font-size:9px;color:var(--text-400);width:12px;text-align:center;flex-shrink:0;transition:transform 0.15s;pointer-events:none';
+        arrow.textContent = expandFn ? '\u25B6' : '';
+        row.appendChild(arrow);
+        const ic = document.createElement('span');
+        ic.style.cssText = 'font-size:12px;flex-shrink:0;pointer-events:none';
+        ic.textContent = icon;
+        row.appendChild(ic);
+        const lbl = document.createElement('span');
+        lbl.style.cssText = 'font-weight:500;color:var(--text-100);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;pointer-events:none';
+        lbl.textContent = label;
+        row.appendChild(lbl);
+        if (count) { const c = document.createElement('span'); c.style.cssText='font-size:10px;font-family:var(--font-mono);color:var(--text-400);pointer-events:none'; c.textContent=count; row.appendChild(c); }
+        if (badge) { const b = document.createElement('span'); b.style.pointerEvents='none'; b.innerHTML = badge; row.appendChild(b); }
+        const children = document.createElement('div');
+        children.style.display = 'none';
+        let expanded = false;
+        if (expandFn) {
+          row.onclick = async () => {
+            expanded = !expanded;
+            arrow.style.transform = expanded ? 'rotate(90deg)' : '';
+            if (expanded && !children.dataset.loaded) { children.dataset.loaded='1'; await expandFn(children, depth+1); }
+            children.style.display = expanded ? '' : 'none';
+          };
         }
+        const wrap = document.createElement('div');
+        wrap.appendChild(row);
+        wrap.appendChild(children);
+        return wrap;
+      }
 
-        function friendlyWing(name) {
-          if (name.includes('/')) {
-            const [uid, agent] = name.split('/', 2);
-            return (_userNames[uid] || uid.slice(0,6)) + ' / ' + agent;
-          }
-          return name;
+      function _mpDrawerLeaf(d, depth) {
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:4px 8px;padding-left:'+(12+depth*20)+'px;font-size:11px;border-radius:4px';
+        row.onmouseenter = () => row.style.background = 'var(--bg-200)';
+        row.onmouseleave = () => row.style.background = '';
+        const ts = d.filed_at ? new Date(d.filed_at).toLocaleString() : '';
+        row.innerHTML = '<div style="display:flex;gap:6px;align-items:center">' +
+          '<span style="width:12px"></span>' +
+          '<span style="font-size:11px">\uD83D\uDCC4</span>' +
+          '<span style="font-family:var(--font-mono);color:var(--text-400);font-size:10px">' + esc(d.id.slice(7,25)) + '</span>' +
+          (d.hall ? '<span style="font-size:9px;padding:1px 4px;border-radius:3px;background:'+(hallColors[d.hall]||'var(--bg-300)')+';color:rgba(0,0,0,0.6)">'+esc(d.hall)+'</span>' : '') +
+          '<span style="font-size:10px;color:var(--text-400)">' + esc(ts) + '</span>' +
+          '</div>' +
+          '<div style="margin-left:30px;color:var(--text-300);font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:60px;overflow:hidden">' + esc(d.text) + '</div>';
+        return row;
+      }
+
+      async function _mpLoadDrawers(container, wing, room, depth) {
+        try {
+          const data = await API.get('/v1/mempalace/drawers?wing='+encodeURIComponent(wing)+'&room='+encodeURIComponent(room));
+          const drawers = data.drawers || [];
+          if (!drawers.length) { container.innerHTML = '<div style="padding:4px 8px;padding-left:'+(12+depth*20)+'px;color:var(--text-400);font-size:11px">Empty</div>'; return; }
+          for (const d of drawers) container.appendChild(_mpDrawerLeaf(d, depth));
+        } catch(e) { container.innerHTML = '<div style="color:var(--error);padding:4px 12px;font-size:11px">Failed to load</div>'; }
+      }
+
+      function _mpRenderWingsTree(tree) {
+        tree.innerHTML = '';
+        const sorted = Object.entries(_mpWings).sort((a,b) => b[1].drawer_count - a[1].drawer_count);
+        if (!sorted.length) { tree.innerHTML = '<div style="padding:12px;color:var(--text-400);font-size:12px">No wings</div>'; return; }
+
+        // Section A: Rooms view
+        const secA = document.createElement('div');
+        secA.innerHTML = '<div style="font-size:11px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;padding:8px 12px">By Room</div>';
+        for (const [wname, winfo] of sorted) {
+          const scopeBadge = winfo.user_scoped ? _mpBadge(winfo.user_name||winfo.user_id,'var(--text-300)') : _mpBadge('shared','var(--accent-brand)');
+          const wNode = _mpTreeNode(_mpIcon('wing'), _mpFriendly(wname), winfo.drawer_count+' drawers', scopeBadge, 0, (ch, d) => {
+            const rooms = Object.entries(winfo.rooms||{}).sort((a,b)=>b[1]-a[1]);
+            for (const [rname, rcount] of rooms) {
+              ch.appendChild(_mpTreeNode(_mpIcon('room'), rname, rcount+' drawers', '', d, (ch2, d2) => _mpLoadDrawers(ch2, wname, rname, d2)));
+            }
+          });
+          secA.appendChild(wNode);
         }
+        tree.appendChild(secA);
 
-        // Squarified treemap — Bruls/Huizing/van Wijk algorithm
-        function squarify(items, x0, y0, W, H) {
-          const sorted = [...items].sort((a, b) => b.value - a.value);
-          const totalArea = W * H;
-          const totalVal = sorted.reduce((s, it) => s + it.value, 0);
-          if (!totalVal || !sorted.length) return [];
-          // Normalize values to areas
-          const normed = sorted.map(it => ({ ...it, area: (it.value / totalVal) * totalArea }));
-          return _squarifyRows(normed, { x: x0, y: y0, w: W, h: H });
-        }
-
-        function _squarifyRows(items, rect) {
-          if (!items.length) return [];
-          if (items.length === 1) {
-            return [{ ...items[0], x: rect.x, y: rect.y, w: rect.w, h: rect.h }];
-          }
-          const rects = [];
-          let remaining = [...items];
-          let r = { ...rect };
-
-          while (remaining.length) {
-            const shortSide = Math.min(r.w, r.h);
-            let row = [remaining[0]];
-            let rowArea = remaining[0].area;
-            remaining = remaining.slice(1);
-
-            let prevWorst = _worst(row, rowArea, shortSide);
-            while (remaining.length) {
-              const next = remaining[0];
-              const testArea = rowArea + next.area;
-              const testWorst = _worst([...row, next], testArea, shortSide);
-              if (testWorst <= prevWorst) {
-                row.push(next);
-                rowArea = testArea;
-                remaining = remaining.slice(1);
-                prevWorst = testWorst;
-              } else {
-                break;
+        // Section B: Halls view
+        const hallEntries = Object.entries(_mpHalls).sort((a,b) => b[1].count - a[1].count);
+        if (hallEntries.length) {
+          const secB = document.createElement('div');
+          secB.style.borderTop = '1px solid var(--border-100)';
+          secB.style.marginTop = '8px';
+          secB.innerHTML = '<div style="font-size:11px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;padding:8px 12px">By Hall</div>';
+          for (const [hname, hinfo] of hallEntries) {
+            const color = hallColors[hname] || '#e8d87c';
+            const dot = '<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:'+color+';margin-right:2px"></span>';
+            const hNode = _mpTreeNode(_mpIcon('hall'), hname, hinfo.count+' drawers', dot, 0, (ch, d) => {
+              const hRooms = Object.entries(hinfo.rooms||{}).sort((a,b)=>b[1]-a[1]);
+              for (const [rname, rcount] of hRooms) {
+                ch.appendChild(_mpTreeNode(_mpIcon('room'), rname, rcount+' drawers', '', d, async (ch2, d2) => {
+                  // Load drawers for this room, filtered to this hall
+                  for (const [wname] of sorted) {
+                    if (!(wname in _mpWings) || !(_mpWings[wname].rooms||{})[rname]) continue;
+                    try {
+                      const data = await API.get('/v1/mempalace/drawers?wing='+encodeURIComponent(wname)+'&room='+encodeURIComponent(rname));
+                      const filtered = (data.drawers||[]).filter(dr => dr.hall === hname);
+                      for (const d of filtered) ch2.appendChild(_mpDrawerLeaf(d, d2));
+                    } catch(e) {}
+                  }
+                }));
               }
-            }
-
-            // Lay out this row
-            const rowFrac = rowArea / (r.w * r.h);
-            if (r.w >= r.h) {
-              const rowW = Math.round(r.w * rowFrac);
-              let yOff = 0;
-              for (const it of row) {
-                const itH = Math.max(Math.round(r.h * (it.area / rowArea)), 1);
-                rects.push({ ...it, x: r.x, y: r.y + yOff, w: Math.max(rowW, 1), h: itH });
-                yOff += itH;
-              }
-              r = { x: r.x + rowW, y: r.y, w: r.w - rowW, h: r.h };
-            } else {
-              const rowH = Math.round(r.h * rowFrac);
-              let xOff = 0;
-              for (const it of row) {
-                const itW = Math.max(Math.round(r.w * (it.area / rowArea)), 1);
-                rects.push({ ...it, x: r.x + xOff, y: r.y, w: itW, h: Math.max(rowH, 1) });
-                xOff += itW;
-              }
-              r = { x: r.x, y: r.y + rowH, w: r.w, h: r.h - rowH };
-            }
+            });
+            secB.appendChild(hNode);
           }
-          return rects;
+          tree.appendChild(secB);
         }
+      }
 
-        function _worst(row, rowArea, shortSide) {
-          if (shortSide <= 0 || rowArea <= 0) return Infinity;
-          const s2 = shortSide * shortSide;
-          let mx = 0, mn = Infinity;
-          for (const it of row) {
-            if (it.area > mx) mx = it.area;
-            if (it.area < mn) mn = it.area;
-          }
-          const ra2 = rowArea * rowArea;
-          return Math.max((s2 * mx) / ra2, ra2 / (s2 * mn));
+      function _mpRenderTunnelsTree(tree) {
+        tree.innerHTML = '';
+        if (!_mpTunnels.length) {
+          tree.innerHTML = '<div style="padding:12px;color:var(--text-400);font-size:12px">No tunnels configured</div>';
+          return;
         }
-
-        function renderBreadcrumb(parts) {
-          breadcrumb.innerHTML = '';
-          for (let i = 0; i < parts.length; i++) {
-            const part = parts[i];
-            const span = document.createElement('span');
-            if (part.onClick) {
-              span.style.cssText = 'color:var(--accent-brand);cursor:pointer;font-weight:500';
-              span.onclick = part.onClick;
-            } else {
-              span.style.cssText = 'color:var(--text-200);font-weight:500';
-            }
-            span.textContent = part.label;
-            breadcrumb.appendChild(span);
-            if (i < parts.length - 1) {
-              const sep = document.createElement('span');
-              sep.style.color = 'var(--text-400)';
-              sep.textContent = ' \u203A ';
-              breadcrumb.appendChild(sep);
-            }
-          }
+        for (const t of _mpTunnels) {
+          const label = (t.source_wing||'')+'/'+( t.source_room||'') + ' \u2194 ' + (t.target_wing||'')+'/'+(t.target_room||'');
+          const tNode = _mpTreeNode(_mpIcon('tunnel'), t.label || label, '', '', 0, (ch, d) => {
+            // Source side
+            ch.appendChild(_mpTreeNode(_mpIcon('room'), (t.source_room||'') + ' (' + _mpFriendly(t.source_wing||'') + ')', '', '', d,
+              (ch2, d2) => _mpLoadDrawers(ch2, t.source_wing, t.source_room, d2)));
+            // Target side
+            ch.appendChild(_mpTreeNode(_mpIcon('room'), (t.target_room||'') + ' (' + _mpFriendly(t.target_wing||'') + ')', '', '', d,
+              (ch2, d2) => _mpLoadDrawers(ch2, t.target_wing, t.target_room, d2)));
+          });
+          tree.appendChild(tNode);
         }
+      }
 
-        function renderLevel(items, breadcrumbParts, onClick) {
-          container.innerHTML = '';
-          detail.style.display = 'none';
-          const W = container.clientWidth, H = container.clientHeight;
-          if (!items.length) {
-            container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-400);font-size:13px">No data</div>';
-            renderBreadcrumb(breadcrumbParts);
-            return;
-          }
-          const rects = squarify(items, 0, 0, W, H);
-          for (const r of rects) {
-            const el = document.createElement('div');
-            el.style.cssText = 'position:absolute;overflow:hidden;box-sizing:border-box;border:2px solid var(--bg-000);border-radius:4px;cursor:pointer;transition:filter 0.15s;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:6px;text-align:center';
-            el.style.left = r.x + 'px';
-            el.style.top = r.y + 'px';
-            el.style.width = r.w + 'px';
-            el.style.height = r.h + 'px';
-            el.style.background = r.color || 'var(--bg-300)';
-            if (r.w > 50 && r.h > 28) {
-              const lbl = document.createElement('div');
-              lbl.style.cssText = 'font-size:11px;font-weight:600;color:rgba(0,0,0,0.7);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%';
-              lbl.textContent = r.label;
-              el.appendChild(lbl);
-            }
-            if (r.w > 40 && r.h > 42) {
-              const cnt = document.createElement('div');
-              cnt.style.cssText = 'font-size:10px;color:rgba(0,0,0,0.45);margin-top:2px';
-              cnt.textContent = r.value + (r.value === 1 ? ' drawer' : ' drawers');
-              el.appendChild(cnt);
-            }
-            el.title = r.label + ': ' + r.value + ' drawers';
-            el.onmouseenter = () => el.style.filter = 'brightness(1.08)';
-            el.onmouseleave = () => el.style.filter = '';
-            el.onclick = () => onClick(r);
-            container.appendChild(el);
-          }
-          renderBreadcrumb(breadcrumbParts);
-        }
+      window.mpTreeSwitch = function(tab, btn) {
+        if (btn) { btn.closest('#mp-tree-tabs').querySelectorAll('.modal-tab').forEach(t => t.classList.remove('active')); btn.classList.add('active'); }
+        const tree = document.getElementById('mp-tree');
+        if (!tree) return;
+        if (tab === 'wings') _mpRenderWingsTree(tree);
+        else if (tab === 'tunnels') _mpRenderTunnelsTree(tree);
+      };
+      setTimeout(() => { const t = document.getElementById('mp-tree'); if (t) _mpRenderWingsTree(t); }, 50);
 
-        // Level 1: Wings
-        function showWings() {
-          const items = sortedWings.map(([name, info], i) => ({
-            label: friendlyWing(name),
-            value: info.drawer_count,
-            color: _tmColors[i % _tmColors.length],
-            _wing: name, _info: info
-          }));
-          renderLevel(items, [{ label: 'All Wings' }], (r) => showRooms(r._wing, r._info, r.color));
-        }
-
-        // Level 2: Rooms within a wing
-        function showRooms(wingName, wingInfo, wingColor) {
-          const rooms = Object.entries(wingInfo.rooms || {}).sort((a,b) => b[1] - a[1]);
-          const items = rooms.map(([rname, count], i) => ({
-            label: rname,
-            value: count,
-            color: _tmColors[i % _tmColors.length] + 'cc',
-            _wing: wingName, _room: rname
-          }));
-          renderLevel(items,
-            [{ label: 'All Wings', onClick: showWings }, { label: friendlyWing(wingName) }],
-            (r) => showDrawers(r._wing, r._room)
-          );
-        }
-
-        // Level 3: Drawers grouped by source
-        async function showDrawers(wingName, roomName) {
-          container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-400);font-size:13px">Loading...</div>';
-          detail.style.display = 'none';
-          try {
-            const data = await API.get('/v1/mempalace/drawers?wing=' + encodeURIComponent(wingName) + '&room=' + encodeURIComponent(roomName));
-            const drawers = data.drawers || [];
-            const groups = {};
-            for (const d of drawers) {
-              const src = d.source_file || '(no source)';
-              if (!groups[src]) groups[src] = [];
-              groups[src].push(d);
-            }
-            const items = Object.entries(groups).sort((a,b) => b[1].length - a[1].length).map(([src, ds], i) => ({
-              label: src.replace(/^session\//, 's/'),
-              value: ds.length,
-              color: _tmColors[i % _tmColors.length] + 'aa',
-              _drawers: ds, _source: src
-            }));
-            const wingInfo = (mp.wings || {})[wingName] || {};
-            renderLevel(items,
-              [
-                { label: 'All Wings', onClick: showWings },
-                { label: friendlyWing(wingName), onClick: () => showRooms(wingName, wingInfo, _tmColors[0]) },
-                { label: roomName }
-              ],
-              (r) => showDrawerDetail(r._drawers, r._source, wingName, roomName, wingInfo)
-            );
-          } catch(e) {
-            container.innerHTML = '<div style="padding:20px;color:var(--error)">Failed to load drawers</div>';
-          }
-        }
-
-        // Level 4: Drawer detail list
-        function showDrawerDetail(drawers, source, wingName, roomName, wingInfo) {
-          detail.style.display = 'block';
-          detail.innerHTML = drawers.map(d => {
-            const ts = d.filed_at ? new Date(d.filed_at).toLocaleString() : '';
-            return '<div style="padding:8px 10px;border:1px solid var(--border-100);border-radius:6px;margin-bottom:4px">' +
-              '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">' +
-                '<span style="font-size:10px;font-family:var(--font-mono);color:var(--text-400)">' + esc(d.id.slice(0,20)) + '</span>' +
-                '<span style="font-size:10px;color:var(--text-400)">' + esc(ts) + '</span>' +
-                '<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:var(--bg-300);color:var(--text-300)">' + esc(d.added_by) + '</span>' +
-              '</div>' +
-              '<div style="font-size:12px;color:var(--text-200);white-space:pre-wrap;word-break:break-word">' + esc(d.text) + '</div>' +
-            '</div>';
-          }).join('');
-          renderBreadcrumb([
-            { label: 'All Wings', onClick: showWings },
-            { label: friendlyWing(wingName), onClick: () => showRooms(wingName, wingInfo, _tmColors[0]) },
-            { label: roomName, onClick: () => showDrawers(wingName, roomName) },
-            { label: source.replace(/^session\//, 's/') }
-          ]);
-        }
-
-        showWings();
-      }, 50);
+      // (treemap code removed — replaced by tree view above)
 
     } catch(e) { C.innerHTML = P(`<div style="color:var(--error)">Failed to load MemPalace stats: ${esc(e.message||e)}</div>`); }
   }
