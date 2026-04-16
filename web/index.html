@@ -7148,6 +7148,9 @@ async function switchGeneralTab(tab, btn) {
 
       // Knowledge graph stats — hidden until KG auto-extraction is implemented
 
+      // Treemap color palette
+      const _tmColors = ['#e8927c','#7cb5e8','#7ce8a4','#d4a0e8','#e8d87c','#7ce8d8','#e87ca0','#a0c8e8','#c8e87c','#e8b47c'];
+
       // Wings breakdown
       const wings = mp.wings || {};
       const sortedWings = Object.entries(wings).sort((a,b) => b[1].drawer_count - a[1].drawer_count);
@@ -7260,6 +7263,13 @@ async function switchGeneralTab(tab, btn) {
         ${SEC('Overview')}
         ${statsRow}
 
+        ${SEC('Palace Map')}
+        <div id="mp-treemap-breadcrumb" style="display:flex;gap:4px;align-items:center;font-size:12px;margin-bottom:8px;min-height:20px">
+          <span style="color:var(--accent-brand);font-weight:500;cursor:default">All Wings</span>
+        </div>
+        <div id="mp-treemap" style="width:100%;height:260px;border-radius:8px;overflow:hidden;position:relative;background:var(--bg-200)"></div>
+        <div id="mp-treemap-detail" style="display:none;margin-top:8px;max-height:200px;overflow-y:auto"></div>
+
         ${anomalies.length ? SEC('Anomalies') + anomalyHtml : ''}
 
         ${SEC('Daemons')}
@@ -7276,6 +7286,317 @@ async function switchGeneralTab(tab, btn) {
 
         <div style="font-size:10px;color:var(--text-400);margin-top:8px">Palace: ${esc(mp.palace_path)}</div>
       </div>`);
+
+      // --- Treemap rendering ---
+      setTimeout(() => {
+        const container = document.getElementById('mp-treemap');
+        const breadcrumb = document.getElementById('mp-treemap-breadcrumb');
+        const detail = document.getElementById('mp-treemap-detail');
+        if (!container) return;
+
+        const _userNames = {};
+        for (const [wn, wi] of Object.entries(mp.wings || {})) {
+          if (wi.user_name) _userNames[wi.user_id] = wi.user_name;
+        }
+
+        function friendlyWing(name) {
+          if (name.includes('/')) {
+            const [uid, agent] = name.split('/', 2);
+            return (_userNames[uid] || uid.slice(0,6)) + ' / ' + agent;
+          }
+          return name;
+        }
+
+        function layoutTreemap(items, w, h) {
+          const total = items.reduce((s, it) => s + it.value, 0);
+          if (!total) return [];
+          const rects = [];
+          let x = 0, y = 0, rw = w, rh = h;
+          const sorted = [...items].sort((a, b) => b.value - a.value);
+          for (let i = 0; i < sorted.length; i++) {
+            const frac = sorted[i].value / (total - items.slice(0, i).reduce((s, it2) => sorted.indexOf(it2) < i ? s + it2.value : s, 0));
+            const ratio = sorted[i].value / total;
+            let bw, bh;
+            if (rw >= rh) {
+              bw = Math.round(rw * ratio / (items.slice(i).reduce((s, it2) => s + it2.value, 0) / total || 1));
+              bw = Math.max(bw, 2);
+              bh = rh;
+              rects.push({ ...sorted[i], x, y, w: bw, h: bh });
+              x += bw;
+              rw -= bw;
+            } else {
+              bh = Math.round(rh * ratio / (items.slice(i).reduce((s, it2) => s + it2.value, 0) / total || 1));
+              bh = Math.max(bh, 2);
+              bw = rw;
+              rects.push({ ...sorted[i], x, y, w: bw, h: bh });
+              y += bh;
+              rh -= bh;
+            }
+            // recalc remaining total
+            total; // keep
+          }
+          return rects;
+        }
+
+        // Simpler slice-and-dice layout
+        function sliceDice(items, x0, y0, w, h, horizontal) {
+          const total = items.reduce((s, it) => s + it.value, 0);
+          if (!total || !items.length) return [];
+          const rects = [];
+          let offset = 0;
+          for (const item of items) {
+            const frac = item.value / total;
+            if (horizontal) {
+              const bw = Math.max(Math.round(w * frac), 1);
+              rects.push({ ...item, x: x0 + offset, y: y0, w: bw, h });
+              offset += bw;
+            } else {
+              const bh = Math.max(Math.round(h * frac), 1);
+              rects.push({ ...item, x: x0, y: y0 + offset, w, h: bh });
+              offset += bh;
+            }
+          }
+          return rects;
+        }
+
+        // Squarified treemap layout
+        function squarify(items, x0, y0, w, h) {
+          const sorted = [...items].sort((a, b) => b.value - a.value);
+          const total = sorted.reduce((s, it) => s + it.value, 0);
+          if (!total || !sorted.length) return [];
+          const rects = [];
+          let cx = x0, cy = y0, cw = w, ch = h, remaining = total;
+
+          let row = [], rowSum = 0;
+          for (const item of sorted) {
+            const testRow = [...row, item];
+            const testSum = rowSum + item.value;
+            if (row.length === 0 || _worstRatio(testRow, testSum, cw, ch, remaining) <= _worstRatio(row, rowSum, cw, ch, remaining)) {
+              row = testRow;
+              rowSum = testSum;
+            } else {
+              const laid = _layRow(row, rowSum, cx, cy, cw, ch, remaining);
+              rects.push(...laid.rects);
+              cx = laid.cx; cy = laid.cy; cw = laid.cw; ch = laid.ch;
+              remaining -= rowSum;
+              row = [item];
+              rowSum = item.value;
+            }
+          }
+          if (row.length) {
+            const laid = _layRow(row, rowSum, cx, cy, cw, ch, remaining);
+            rects.push(...laid.rects);
+          }
+          return rects;
+        }
+
+        function _worstRatio(row, rowSum, cw, ch, remaining) {
+          const side = Math.min(cw, ch);
+          const frac = rowSum / remaining;
+          const rowLen = cw >= ch ? ch * frac : cw * frac;
+          if (rowLen <= 0) return Infinity;
+          let worst = 0;
+          for (const it of row) {
+            const s = (it.value / rowSum) * (cw >= ch ? cw : ch);
+            const r = Math.max(s / rowLen, rowLen / s);
+            if (r > worst) worst = r;
+          }
+          return worst;
+        }
+
+        function _layRow(row, rowSum, cx, cy, cw, ch, remaining) {
+          const rects = [];
+          const frac = rowSum / remaining;
+          const horizontal = cw >= ch;
+          const rowThickness = horizontal ? Math.round(ch * frac) : Math.round(cw * frac);
+          let offset = 0;
+          for (const item of row) {
+            const itemFrac = item.value / rowSum;
+            if (horizontal) {
+              const bw = Math.max(Math.round(cw * itemFrac), 1);
+              rects.push({ ...item, x: cx + offset, y: cy, w: bw, h: rowThickness });
+              offset += bw;
+            } else {
+              const bh = Math.max(Math.round(ch * itemFrac), 1);
+              rects.push({ ...item, x: cx, y: cy + offset, w: rowThickness, h: bh });
+              offset += bh;
+            }
+          }
+          if (horizontal) {
+            return { rects, cx, cy: cy + rowThickness, cw, ch: ch - rowThickness };
+          } else {
+            return { rects, cx: cx + rowThickness, cy, cw: cw - rowThickness, ch };
+          }
+        }
+
+        function renderLevel(items, breadcrumbParts, onClick) {
+          container.innerHTML = '';
+          detail.style.display = 'none';
+          const W = container.clientWidth, H = container.clientHeight;
+          if (!items.length) {
+            container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-400);font-size:13px">No data</div>';
+            return;
+          }
+          const rects = squarify(items, 0, 0, W, H);
+          for (const r of rects) {
+            const el = document.createElement('div');
+            el.style.cssText = 'position:absolute;overflow:hidden;box-sizing:border-box;border:1.5px solid var(--bg-000);border-radius:3px;cursor:pointer;transition:filter 0.15s;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:4px;text-align:center';
+            el.style.left = r.x + 'px';
+            el.style.top = r.y + 'px';
+            el.style.width = r.w + 'px';
+            el.style.height = r.h + 'px';
+            el.style.background = r.color || 'var(--bg-300)';
+            const showLabel = r.w > 50 && r.h > 30;
+            const showCount = r.w > 40 && r.h > 45;
+            if (showLabel) {
+              const lbl = document.createElement('div');
+              lbl.style.cssText = 'font-size:11px;font-weight:600;color:rgba(0,0,0,0.75);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%';
+              lbl.textContent = r.label;
+              el.appendChild(lbl);
+            }
+            if (showCount) {
+              const cnt = document.createElement('div');
+              cnt.style.cssText = 'font-size:10px;color:rgba(0,0,0,0.5)';
+              cnt.textContent = r.value + (r.value === 1 ? ' drawer' : ' drawers');
+              el.appendChild(cnt);
+            }
+            el.title = r.label + ': ' + r.value + ' drawers';
+            el.onmouseenter = () => el.style.filter = 'brightness(1.1)';
+            el.onmouseleave = () => el.style.filter = '';
+            el.onclick = () => onClick(r);
+            container.appendChild(el);
+          }
+          // Breadcrumb
+          breadcrumb.innerHTML = '';
+          for (let i = 0; i < breadcrumbParts.length; i++) {
+            const part = breadcrumbParts[i];
+            const span = document.createElement('span');
+            if (part.onClick) {
+              span.style.cssText = 'color:var(--accent-brand);cursor:pointer;font-weight:500';
+              span.onclick = part.onClick;
+            } else {
+              span.style.cssText = 'color:var(--text-200);font-weight:500';
+            }
+            span.textContent = part.label;
+            breadcrumb.appendChild(span);
+            if (i < breadcrumbParts.length - 1) {
+              const sep = document.createElement('span');
+              sep.style.color = 'var(--text-400)';
+              sep.textContent = ' \u203A ';
+              breadcrumb.appendChild(sep);
+            }
+          }
+        }
+
+        // Level 1: Wings
+        function showWings() {
+          const items = sortedWings.map(([name, info], i) => ({
+            label: friendlyWing(name),
+            value: info.drawer_count,
+            color: _tmColors[i % _tmColors.length],
+            _wing: name, _info: info
+          }));
+          renderLevel(items, [{ label: 'All Wings' }], (r) => showRooms(r._wing, r._info, r.color));
+        }
+
+        // Level 2: Rooms within a wing
+        function showRooms(wingName, wingInfo, wingColor) {
+          const rooms = Object.entries(wingInfo.rooms || {}).sort((a,b) => b[1] - a[1]);
+          const baseHue = _tmColors.indexOf(wingColor);
+          const items = rooms.map(([rname, count], i) => {
+            const h = document.createElement('canvas');
+            return {
+              label: rname,
+              value: count,
+              color: _tmColors[(baseHue + i + 1) % _tmColors.length] + 'cc',
+              _wing: wingName, _room: rname
+            };
+          });
+          renderLevel(items,
+            [{ label: 'All Wings', onClick: showWings }, { label: friendlyWing(wingName) }],
+            (r) => showDrawers(r._wing, r._room)
+          );
+        }
+
+        // Level 3: Drawers within a room
+        async function showDrawers(wingName, roomName) {
+          container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-400);font-size:13px">Loading drawers...</div>';
+          breadcrumb.innerHTML = '';
+          detail.style.display = 'none';
+          try {
+            const data = await API.get('/v1/mempalace/drawers?wing=' + encodeURIComponent(wingName) + '&room=' + encodeURIComponent(roomName));
+            const drawers = data.drawers || [];
+            // Group by source_file
+            const groups = {};
+            for (const d of drawers) {
+              const src = d.source_file || '(no source)';
+              if (!groups[src]) groups[src] = [];
+              groups[src].push(d);
+            }
+            const items = Object.entries(groups).sort((a,b) => b[1].length - a[1].length).map(([src, ds], i) => ({
+              label: src.replace(/^session\//, 's/'),
+              value: ds.length,
+              color: _tmColors[i % _tmColors.length] + 'aa',
+              _drawers: ds, _source: src
+            }));
+            const wingInfo = (mp.wings || {})[wingName] || {};
+            renderLevel(items,
+              [
+                { label: 'All Wings', onClick: showWings },
+                { label: friendlyWing(wingName), onClick: () => showRooms(wingName, wingInfo, _tmColors[0]) },
+                { label: roomName }
+              ],
+              (r) => showDrawerDetail(r._drawers, r._source, wingName, roomName, wingInfo)
+            );
+          } catch(e) {
+            container.innerHTML = '<div style="padding:20px;color:var(--error)">Failed to load drawers</div>';
+          }
+        }
+
+        // Level 4: Drawer detail list
+        function showDrawerDetail(drawers, source, wingName, roomName, wingInfo) {
+          detail.style.display = 'block';
+          detail.innerHTML = drawers.map(d => {
+            const ts = d.filed_at ? new Date(d.filed_at).toLocaleString() : '';
+            return '<div style="padding:8px 10px;border:1px solid var(--border-100);border-radius:6px;margin-bottom:4px">' +
+              '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">' +
+                '<span style="font-size:10px;font-family:var(--font-mono);color:var(--text-400)">' + esc(d.id.slice(0,20)) + '</span>' +
+                '<span style="font-size:10px;color:var(--text-400)">' + esc(ts) + '</span>' +
+                '<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:var(--bg-300);color:var(--text-300)">' + esc(d.added_by) + '</span>' +
+              '</div>' +
+              '<div style="font-size:12px;color:var(--text-200);white-space:pre-wrap;word-break:break-word">' + esc(d.text) + '</div>' +
+            '</div>';
+          }).join('');
+          // Update breadcrumb
+          breadcrumb.innerHTML = '';
+          const parts = [
+            { label: 'All Wings', onClick: showWings },
+            { label: friendlyWing(wingName), onClick: () => showRooms(wingName, wingInfo, _tmColors[0]) },
+            { label: roomName, onClick: () => showDrawers(wingName, roomName) },
+            { label: source.replace(/^session\//, 's/') }
+          ];
+          for (let i = 0; i < parts.length; i++) {
+            const span = document.createElement('span');
+            if (parts[i].onClick) {
+              span.style.cssText = 'color:var(--accent-brand);cursor:pointer;font-weight:500';
+              span.onclick = parts[i].onClick;
+            } else {
+              span.style.cssText = 'color:var(--text-200);font-weight:500';
+            }
+            span.textContent = parts[i].label;
+            breadcrumb.appendChild(span);
+            if (i < parts.length - 1) {
+              const sep = document.createElement('span');
+              sep.style.color = 'var(--text-400)';
+              sep.textContent = ' \u203A ';
+              breadcrumb.appendChild(sep);
+            }
+          }
+        }
+
+        showWings();
+      }, 50);
+
     } catch(e) { C.innerHTML = P(`<div style="color:var(--error)">Failed to load MemPalace stats: ${esc(e.message||e)}</div>`); }
   }
 

@@ -1789,6 +1789,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         # --- MemPalace GET routes ---
         elif path == "/v1/mempalace/stats":
             self._handle_mempalace_stats()
+        elif path.startswith("/v1/mempalace/drawers"):
+            self._handle_mempalace_drawers()
         # --- MCP GET routes ---
         elif path == "/v1/mcp/connections":
             self._handle_mcp_list()
@@ -5947,6 +5949,47 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             })
         except Exception as e:
             self._send_json({"enabled": True, "error": f"Failed to gather stats: {type(e).__name__}: {e}"}, 500)
+
+    def _handle_mempalace_drawers(self):
+        """GET /v1/mempalace/drawers?wing=X&room=Y — list drawers for treemap drill-down."""
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        wing = (params.get("wing") or [None])[0]
+        room = (params.get("room") or [None])[0]
+
+        mcfg = engine._load_mempalace_config()
+        palace_path = mcfg.get("palace_path", "")
+        if not palace_path or not os.path.isdir(palace_path):
+            self._send_json({"error": "Palace not found"}, 404)
+            return
+        ok, err = engine._ensure_mempalace_importable()
+        if not ok:
+            self._send_json({"error": err}, 500)
+            return
+
+        try:
+            from mempalace.palace import get_collection
+            col = get_collection(palace_path, create=False)
+            result = col.get(include=["metadatas", "documents"])
+            drawers = []
+            for did, meta, doc in zip(result["ids"], result["metadatas"], result["documents"]):
+                m_wing = meta.get("wing", "")
+                m_room = meta.get("room", "")
+                if wing and m_wing != wing:
+                    continue
+                if room and m_room != room:
+                    continue
+                drawers.append({
+                    "id": did,
+                    "wing": m_wing,
+                    "room": m_room,
+                    "source_file": meta.get("source_file", ""),
+                    "filed_at": meta.get("filed_at", ""),
+                    "added_by": meta.get("added_by", ""),
+                    "text": (doc or "")[:300],
+                })
+            self._send_json({"drawers": drawers, "count": len(drawers)})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
 
     # --- Context Management handlers ---
 
