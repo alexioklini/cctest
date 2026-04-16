@@ -7146,14 +7146,7 @@ async function switchGeneralTab(tab, btn) {
         ${STAT(mp.palace_size_mb + ' MB', 'DB Size', 'var(--text-200)')}
       </div>`;
 
-      // Knowledge graph stats
-      const kg = mp.knowledge_graph || {};
-      const kgRow = kg.entities !== undefined ? `<div style="display:flex;gap:12px;flex-wrap:wrap">
-        ${STAT(kg.entities, 'Entities', 'var(--accent-purple,#8b5cf6)')}
-        ${STAT(kg.current_facts, 'Current Facts', 'var(--accent-purple,#8b5cf6)')}
-        ${STAT(kg.expired_facts, 'Expired Facts', 'var(--text-400)')}
-        ${STAT((kg.relationship_types||[]).length, 'Relation Types', 'var(--accent-purple,#8b5cf6)')}
-      </div>` : `<div style="color:var(--text-400);font-size:12px">Knowledge graph not available</div>`;
+      // Knowledge graph stats — hidden until KG auto-extraction is implemented
 
       // Wings breakdown
       const wings = mp.wings || {};
@@ -7266,9 +7259,6 @@ async function switchGeneralTab(tab, btn) {
       C.innerHTML = P(`<div style="${G('16px')}">
         ${SEC('Overview')}
         ${statsRow}
-
-        ${SEC('Knowledge Graph')}
-        ${kgRow}
 
         ${anomalies.length ? SEC('Anomalies') + anomalyHtml : ''}
 
