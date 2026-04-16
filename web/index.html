@@ -3072,6 +3072,38 @@ textarea { resize: none; }
 .role-badge.poweruser { background: #dbeafe; color: #1e40af; }
 .role-badge.user { background: #f0fdf4; color: #166534; }
 </style>
+<script>
+// Electron: inject platform CSS for window dragging and title bar inset
+if (window.electronAPI && window.electronAPI.platform === 'darwin') {
+  const s = document.createElement('style');
+  s.textContent = `
+    /* Drag bar — fixed strip across entire top of window */
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 36px;
+      -webkit-app-region: drag;
+      z-index: 9999;
+      pointer-events: auto;
+    }
+    /* Interactive elements in the drag zone must be clickable */
+    button, a, select, input, textarea, .sb-nav-item, .sb-session-item,
+    .sb-user-section, .model-selector, .sb-agent-selector,
+    .page-header-title, .page-header-right, .sb-header button,
+    [onclick], [role="button"] {
+      -webkit-app-region: no-drag;
+    }
+    /* Push content below traffic lights */
+    #sidebar { padding-top: 36px; }
+    .page-header { padding-top: 8px; }
+    #welcome-view { padding-top: 36px; }
+    #chats-view, #projects-view, #project-detail-view,
+    #settings-view, #artifacts-view, #schedule-view { padding-top: 36px; }
+  `;
+  document.head.appendChild(s);
+}
+</script>
 </head>
 <body>
 <!-- ═══════════════════════════════════════════════════════════
