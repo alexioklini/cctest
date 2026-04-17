@@ -331,6 +331,11 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN save_to_memory INTEGER DEFAULT 0")
             except sqlite3.OperationalError:
                 pass
+            # Add caveman_mode (migration): 0=off, 1=lite, 2=full, 3=ultra
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN caveman_mode INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
             # ── MemPalace chat-sync cursor ──
             # Tracks which messages have already been mirrored into MemPalace,
             # per session. `last_message_id` is the highest messages.id filed so far.
@@ -513,6 +518,15 @@ class ChatDB:
         """Update memory mode: 0=off, 1=on (explicit save all), 2=auto (classifier decides)."""
         with _db_conn() as conn:
             conn.execute("UPDATE sessions SET save_to_memory = ? WHERE id = ?",
+                        (int(value), session_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_session_caveman_mode(session_id, value):
+        """Update caveman mode: 0=off, 1=lite, 2=full, 3=ultra."""
+        with _db_conn() as conn:
+            conn.execute("UPDATE sessions SET caveman_mode = ? WHERE id = ?",
                         (int(value), session_id))
             conn.commit()
 
@@ -883,6 +897,7 @@ class Session:
         self.sdk_session_id: str | None = None  # Agent SDK session ID for resume
         self._last_summary_at = 0  # Token count at last continuous summary
         self.save_to_memory: bool = False  # User toggle: always file to MemPalace
+        self.caveman_mode: int = 0  # 0=off, 1=lite, 2=full, 3=ultra
 
         # Warmup state
         self._warmup_done = threading.Event()
@@ -946,6 +961,7 @@ class Session:
                 self.summary = info.get("summary", "") or ""
                 self.user_id = info.get("user_id", "") or ""
                 self.save_to_memory = bool(info.get("save_to_memory", 0))
+                self.caveman_mode = int(info.get("caveman_mode", 0) or 0)
 
 
 class SessionManager:
@@ -2324,11 +2340,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             resp["total_tokens"] = engine._estimate_conversation_tokens(session.messages)
             resp["summary"] = session.summary or ""
             resp["title"] = session.title or ""
+            resp["caveman_mode"] = session.caveman_mode
         else:
             info = ChatDB.get_session_info(sid)
             if info:
                 resp["summary"] = info.get("summary", "")
                 resp["title"] = info.get("title", "")
+                resp["caveman_mode"] = int(info.get("caveman_mode", 0) or 0)
         self._send_json(resp)
 
     def _handle_next_prompt_suggestion(self, path):
@@ -2752,6 +2770,17 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             if s:
                 s.save_to_memory = mode
             self._send_json({"status": "ok", "save_to_memory": mode, "session_id": sid})
+        elif action == "caveman_mode":
+            mode = max(0, min(3, int(body.get("mode", 0))))
+            ChatDB.update_session_caveman_mode(sid, mode)
+            s = sessions.get(sid)
+            if s:
+                s.caveman_mode = mode
+            # Invalidate system prompt cache for this session
+            for k in list(engine._system_prompt_cache):
+                if k.startswith(sid):
+                    del engine._system_prompt_cache[k]
+            self._send_json({"status": "ok", "caveman_mode": mode, "session_id": sid})
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)
 
@@ -3306,6 +3335,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             else:
                 engine._thread_local.note_context = None
 
+            # Set caveman modes: chat-level (session toggle) + system-level (model config)
+            engine._thread_local.caveman_chat = session.caveman_mode
+            model_cfg = engine._models_config.get(session.model, {}) if engine._models_config else {}
+            engine._thread_local.caveman_system = int(model_cfg.get("caveman_system", 0) or 0)
+
             # Set attachment image model for read_attachment vision support
             engine._thread_local.attachment_image_model = server_config.get("attachment_image_model", "")
 
@@ -3497,6 +3531,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 engine._thread_local.mcp_manager = None
                 engine._thread_local.memory_store = None
                 engine._thread_local.plan_mode = False
+                engine._thread_local.caveman_chat = 0
+                engine._thread_local.caveman_system = 0
                 engine.cleanup_proxy_channel(sid)
                 event_queue.put(None)  # sentinel
 

@@ -47,6 +47,7 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
 - **Project notes** — markdown notes with AI-assisted editing (uses write_file/edit_file tools), folder organization, auto-reload
 - **Document ingestion (RAG)** — PDF, DOCX, HTML, URL parsing with auto-chunking and watched folders
 - **LLM chat summaries** — auto-generated one-line summaries for sidebar display
+- **Caveman mode (dual)** — two independent compression levels (0-3): system-level (per-model, compresses system prompt text) and chat-level (per-session toggle, controls response verbosity). Chat mode persists across sessions
 - **Plan mode** — read-only analysis that disables write tools
 - **LLM input refinement** — context-aware prompt improvement before sending
 - **Multi-modal** — image upload with vision model support

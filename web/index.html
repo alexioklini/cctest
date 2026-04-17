@@ -3347,6 +3347,9 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
               <button class="composer-btn" id="btn-save-to-memory" onclick="toggleSaveToMemory()" title="Save to memory: off">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><circle cx="12" cy="12" r="3"/><path d="M12 5v2M12 17v2M5 12h2M17 12h2"/></svg>
               </button>
+              <button class="composer-btn" id="btn-caveman" onclick="toggleCavemanMode()" title="Caveman mode: off">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 00-7 7c0 3 1.5 5 3 6.5V18a2 2 0 002 2h4a2 2 0 002-2v-2.5c1.5-1.5 3-3.5 3-6.5a7 7 0 00-7-7z"/><path d="M9 22h6M10 18v4M14 18v4"/></svg>
+              </button>
             </div>
             <div class="composer-footer-right">
               <span class="model-selector-btn" id="chat-model-selector" onclick="toggleModelDropdown(event)">
@@ -4204,6 +4207,7 @@ const state = {
         _streamTimerInterval: null,
         saveToMemory: defMode === 1,
         memoryMode: defMode === 1 ? 'on' : defMode === 2 ? 'auto' : 'off',
+        cavemanMode: 0,
       };
     }
     return this.agentChats[agentId];
@@ -4489,6 +4493,7 @@ async function loadAgentSessions(agentId) {
         const memVal = parseInt(sess.save_to_memory) || 0;
         chat.saveToMemory = memVal === 1;
         chat.memoryMode = memVal === 1 ? 'on' : memVal === 2 ? 'auto' : 'off';
+        chat.cavemanMode = parseInt(sess.caveman_mode) || 0;
       }
     }
   } catch(e) { console.error('loadAgentSessions:', e); }
@@ -4860,6 +4865,15 @@ async function ensureSession(chat) {
     if (chat._sessionGen !== gen) return null;
     chat.sessionId = data.session_id;
     if (data.max_context) chat.maxContext = data.max_context;
+    // Restore user's last caveman chat mode for new sessions
+    const savedCaveman = parseInt(localStorage.getItem('caveman-chat-mode')) || 0;
+    if (savedCaveman > 0) {
+      chat.cavemanMode = savedCaveman;
+      API.post('/v1/sessions/manage', {
+        action: 'caveman_mode', session_id: chat.sessionId, mode: savedCaveman,
+      }).catch(() => {});
+      updateStatusBar();
+    }
     // Show warmup indicator if provider supports it
     if (data.warmup) {
       startWarmupPoll(chat);
@@ -4906,6 +4920,7 @@ async function openSession(sessionId, agentId) {
     if (data.model) chat.model = data.model;
     if (data.max_context) chat.maxContext = data.max_context;
     chat.chatTitle = data.summary || data.title || '';
+    chat.cavemanMode = parseInt(data.caveman_mode) || 0;
 
     // Reconstruct tool blocks from metadata and extract per-message fields
     const expanded = [];
@@ -6100,6 +6115,25 @@ function updateStatusBar() {
     }
   }
 
+  // Caveman mode toggle: color-coded by level
+  const cavBtn = document.getElementById('btn-caveman');
+  if (cavBtn) {
+    const cm = chat.cavemanMode || 0;
+    if (cm === 1) {
+      cavBtn.style.color = 'var(--warning, #f59e0b)';
+      cavBtn.title = 'Caveman: lite — click to cycle';
+    } else if (cm === 2) {
+      cavBtn.style.color = 'var(--success, #22c55e)';
+      cavBtn.title = 'Caveman: full — click to cycle';
+    } else if (cm === 3) {
+      cavBtn.style.color = '#ef4444';
+      cavBtn.title = 'Caveman: ultra — click to cycle';
+    } else {
+      cavBtn.style.color = '';
+      cavBtn.title = 'Caveman mode: off — click to cycle';
+    }
+  }
+
   // Warmup indicator
   let warmupEl = document.getElementById('status-warmup');
   if (!warmupEl) {
@@ -7225,6 +7259,8 @@ async function switchGeneralTab(tab, btn) {
               ${mdlInput('mdl-cost-input','Cost In ($/M)',cfg.cost_input,{step:'0.01',min:0,ph:'0'})}
               ${mdlInput('mdl-cost-output','Cost Out ($/M)',cfg.cost_output,{step:'0.01',min:0,ph:'0'})}
               <div style="border-left:1px solid var(--border-100);margin:0 -2px"></div>
+              <div style="border-left:1px solid var(--border-100);margin:0 -2px"></div>
+              ${mdlInput('mdl-caveman-system','Caveman System',cfg.caveman_system||0,{type:'number',min:0,max:3,ph:'0'})}
               <div style="grid-column:1/-1"><label class="form-label" style="font-size:11px">Raw Formats <span style="color:var(--text-400);font-weight:400">(MIME patterns the model handles natively as multimodal)</span></label><input class="form-input mdl-raw-formats" value="${esc((cfg.raw_formats||[]).join(', '))}" placeholder="e.g. image/*, application/pdf" style="font-size:12px"></div>
             </div>
           </div>
@@ -8176,6 +8212,9 @@ async function saveModelsConfig() {
       if (re) inf.reasoning_effort = re;
       mc[mid].inference = Object.keys(inf).length > 0 ? inf : undefined;
       if (!mc[mid].inference) delete mc[mid].inference;
+      // Caveman system level (per-model system prompt compression)
+      const cavSys = readNum(row, 'mdl-caveman-system');
+      if (cavSys) mc[mid].caveman_system = cavSys; else delete mc[mid].caveman_system;
       // Raw formats
       const rawFmt = row.querySelector('.mdl-raw-formats')?.value?.trim();
       if (rawFmt) {
@@ -11354,6 +11393,23 @@ async function toggleSaveToMemory() {
     chat.memoryMode = next;
     updateStatusBar();
     const labels = { on: 'Memory: on — all messages saved', auto: 'Memory: auto — LLM classifier decides', off: 'Memory: off' };
+    showToast(labels[next]);
+  } catch(e) { showToast('Failed: ' + e.message, true); }
+}
+
+async function toggleCavemanMode() {
+  const chat = state.activeChat;
+  if (!chat || !chat.sessionId) return;
+  const next = ((chat.cavemanMode || 0) + 1) % 4;
+  try {
+    await API.post('/v1/sessions/manage', {
+      action: 'caveman_mode', session_id: chat.sessionId,
+      mode: next,
+    });
+    chat.cavemanMode = next;
+    localStorage.setItem('caveman-chat-mode', String(next));
+    updateStatusBar();
+    const labels = { 0: 'Caveman: off', 1: 'Caveman: lite — removes filler', 2: 'Caveman: full — telegraphic', 3: 'Caveman: ultra — max compression' };
     showToast(labels[next]);
   } catch(e) { showToast('Failed: ' + e.message, true); }
 }

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "7.7.0"
-VERSION_DATE = "2026-04-16"
+VERSION = "7.7.1"
+VERSION_DATE = "2026-04-17"
 CHANGELOG = [
+    ("7.7.1", "2026-04-17", "Split caveman mode into two independent settings. System-level caveman (per-model in Models tab config, 0-3) compresses the system prompt itself — prepends a compression prefix and applies rule-based text reduction (strip whitespace, remove filler words, collapse markdown, remove examples at higher levels). Chat-level caveman (per-session toggle in composer, 0-3) controls response style as before. User's last chat caveman level is persisted to localStorage and auto-applied to new sessions. Both modes compose independently: system-level sets baseline prompt compression, chat-level appends response style instruction."),
     ("7.7.0", "2026-04-17", "MemPalace reliability + smart memory gating. Fixed client proxy SSE line-splitting that silently dropped tool calls in proxy mode (TCP chunk boundaries splitting data: lines). Fixed save_session wiping user_id on every message (INSERT OR REPLACE → ON CONFLICT preserving existing values). Fixed per-user wing separator (/ → -- to comply with MemPalace sanitize_name). System prompt updated to reference mempalace_query instead of old memory_store tools. New save_chat_to_memory tool lets the model explicitly save a conversation when the user asks. New LLM-based chat sync classifier gate — configurable model classifies each message pair as fact/preference/decision/reference (file) or generic/refusal/chitchat (skip) before filing to MemPalace. Configurable min_turns threshold skips short throwaway chats. Three-state memory toggle per session: on (green, save all), auto (amber, classifier decides), off (grey, skip). Default mode for new chats configurable in Settings → MemPalace. Connection health monitor with status bar indicator (green/red dot, 10s polling). Status bar visible on all views. Retry on transient MemPalace query errors. Settings UI for classifier model, min turns, file categories, and default mode."),
     ("7.6.0", "2026-04-16", "Client execution mode for air-gapped corporate deployments. When the server has no internet but browser clients do, set execution_mode to 'client' in config.json or Settings → Server. LLM inference calls are proxied through the browser: server emits proxy_request SSE events with the full payload, browser calls the provider's /chat/completions endpoint, streams chunks back via POST /v1/chat/proxy-response. Web-accessing tools (web_fetch, exa_search) are similarly proxied via POST /v1/chat/proxy-tool-result. All local tools (file ops, git, shell, code graph, mempalace, etc.) continue executing on the server. ProxyChannel class in claude_cli.py provides thread-safe queue bridging between the agentic loop and browser. Configurable proxy tool list in Settings GUI — any tool can be routed through the browser. Session inspector shows purple CLIENT badge on turns executed via proxy. Status bar shows CLIENT badge when mode is active. Provider credentials relayed to browser via GET /v1/config/execution-mode. Requires CORS-enabled LLM providers (Mistral API, OpenAI API, Bifrost local proxy all confirmed working). Chrome is the primary supported browser."),
     ("7.5.0", "2026-04-16", "Per-user MemPalace memory isolation, admin dashboard, and session delete cleanup. Wings now use user_id/agent_id format so each user's chat memories are isolated by default — shared wings (brain_code, mined source) remain globally visible. mempalace_query auto-scopes to the current user: bare agent names are prefixed with user_id, unfiltered searches post-filter to exclude other users' wings. user_id propagated via _thread_local to chat workers and delegate tasks. Chat sync writes user-scoped wings; sessions without a user_id (pre-auth, system) fall back to bare agent_id. Session.user_id field added, loaded from DB on restore, set from auth at creation. New MemPalace admin dashboard tab in General Settings — overview stats (drawers, closets, wings, rooms, edges, DB size), knowledge graph counts, daemon status, per-wing breakdown with user-scoped vs shared badges and room chips, tunnel list, write-ahead log activity with operation badges, and anomaly detection (sparse wings, stale sync, disabled daemons, high drawer/closet ratio). GET /v1/mempalace/stats endpoint aggregates data from MemPalace collections, graph, KG, WAL, and chat_mempalace_sync cursor table. Session delete now purges associated MemPalace drawers and closets (background thread matching source_file prefix session/<sid>) and cleans up the sync cursor row — archive leaves memories intact."),
@@ -170,6 +171,74 @@ PLAN_MODE_PROMPT = (
     "or delegate tasks. Instead, describe a detailed plan of what you WOULD do, "
     "including specific file paths, commands, and steps.\n"
 )
+
+CAVEMAN_CHAT_PROMPTS = {
+    1: (  # lite
+        "\n\nRESPONSE STYLE — LITE COMPRESSION: "
+        "Remove filler words (just, really, basically, actually, honestly). "
+        "Remove hedging (might, could, perhaps — be definitive). "
+        "No pleasantries or greetings. Keep grammar intact. "
+        "Code blocks, URLs, paths, commands unchanged.\n"
+    ),
+    2: (  # full
+        "\n\nRESPONSE STYLE — CAVEMAN MODE: "
+        "Terse like caveman. Technical substance exact. Only fluff die. "
+        "Drop: articles, filler (just/really/basically), pleasantries, hedging. "
+        "Fragments OK. Short synonyms. Code unchanged. "
+        "Pattern: [thing] [action] [reason]. [next step]. ACTIVE EVERY RESPONSE.\n"
+    ),
+    3: (  # ultra
+        "\n\nRESPONSE STYLE — ULTRA CAVEMAN: "
+        "Max compression. Abbreviate everything. No articles, no filler, no hedging, "
+        "no pleasantries, no complete sentences needed. Telegraphic style. "
+        "Use symbols (→ = > &) over words. Lists over prose. "
+        "Code/URLs/paths unchanged. ACTIVE EVERY RESPONSE.\n"
+    ),
+}
+
+CAVEMAN_SYSTEM_PROMPTS = {
+    1: (  # lite — strip verbose examples, collapse whitespace
+        "SYSTEM PROMPT COMPRESSION ACTIVE (lite): The instructions below are authoritative "
+        "but may be verbose. Ignore stylistic padding in them. Focus on substance.\n\n"
+    ),
+    2: (  # full — aggressive compression prefix
+        "SYSTEM PROMPT COMPRESSION ACTIVE (full): Instructions below heavily compressed. "
+        "Interpret telegraphically. Fragments = complete thoughts. "
+        "Abbreviations, symbols, shorthand all valid.\n\n"
+    ),
+    3: (  # ultra — max compression prefix
+        "SYSTEM PROMPT COMPRESSION ACTIVE (ultra): All instructions below max-compressed. "
+        "Interpret minimal syntax. No prose expected in instructions. "
+        "Symbol-heavy, list-only, zero redundancy.\n\n"
+    ),
+}
+
+
+def _caveman_compress_text(text: str, level: int) -> str:
+    """Apply rule-based compression to system prompt text based on caveman level."""
+    import re
+    if level <= 0:
+        return text
+    if level >= 1:
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r'  +', ' ', text)
+        text = re.sub(r'(?m)^[ \t]+', '', text)
+    if level >= 2:
+        for word in ['please ', 'Please ', 'kindly ', 'Kindly ', 'Note that ', 'note that ',
+                      'It is important to ', 'it is important to ', 'Make sure to ', 'make sure to ',
+                      'Be sure to ', 'be sure to ', 'Remember to ', 'remember to ']:
+            text = text.replace(word, '')
+        text = re.sub(r'\b(the|a|an|The|A|An) (?=[A-Z])', '', text)
+        text = re.sub(r'(?m)^#+\s+', '', text)
+        text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
+        text = re.sub(r'(?m)^---+$', '', text)
+    if level >= 3:
+        text = re.sub(r'\b(you should|you can|you may|You should|You can|You may)\b', '', text)
+        text = re.sub(r'\b(For example|for example|e\.g\.|i\.e\.),?\s*[^.]*\.', '', text)
+        text = re.sub(r'\b(that is|which is|this is|these are|there are)\b', '', text)
+        text = re.sub(r'  +', ' ', text)
+        text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
 
 
 # --- Tool Definitions ---
@@ -15274,7 +15343,9 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
     """
     import time as _time
     session_id = getattr(_thread_local, 'current_session_id', None) or ""
-    cache_key = f"{session_id}:{include_memory_summary}"
+    caveman_chat = getattr(_thread_local, 'caveman_chat', 0) or 0
+    caveman_system = getattr(_thread_local, 'caveman_system', 0) or 0
+    cache_key = f"{session_id}:{include_memory_summary}:{caveman_chat}:{caveman_system}"
     cached = _system_prompt_cache.get(cache_key)
     if cached and (_time.time() - cached[1]) < _SYSTEM_PROMPT_CACHE_TTL:
         return cached[0]
@@ -15417,6 +15488,12 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
 
     if tools_guide and tcfg.get("include_tools_guide", True):
         system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
+    # Apply system-level caveman compression (from model config)
+    if caveman_system and caveman_system in CAVEMAN_SYSTEM_PROMPTS:
+        system_instruction = CAVEMAN_SYSTEM_PROMPTS[caveman_system] + _caveman_compress_text(system_instruction, caveman_system)
+    # Append chat-level caveman mode instruction (from session toggle)
+    if caveman_chat and caveman_chat in CAVEMAN_CHAT_PROMPTS:
+        system_instruction += CAVEMAN_CHAT_PROMPTS[caveman_chat]
     # Append plan mode prompt if active
     if getattr(_thread_local, 'plan_mode', False):
         system_instruction += PLAN_MODE_PROMPT

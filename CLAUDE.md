@@ -240,6 +240,20 @@ Thinking model auto-recovery: when `finish_reason == "length"` and visible outpu
 completion tokens (thinking consumed the budget), `max_tokens` is doubled on retry (capped at
 model's `max_context`). Logged to stderr as `[thinking model: boosting max_tokens X → Y]`.
 
+### Caveman Mode (Dual)
+
+Two independent caveman settings that compose:
+
+- **System-level** (`caveman_system`, per-model in `models` config, 0-3): compresses the system prompt itself. Set in Models tab detail panel. Prepends a compression meta-instruction and applies `_caveman_compress_text()` — rule-based text reduction at increasing levels:
+  - 1 (lite): collapse whitespace, strip leading indent
+  - 2 (full): remove filler phrases, strip markdown headers/bold/horizontal rules, drop articles before capitalized words
+  - 3 (ultra): remove hedging phrases, strip examples/explanations, collapse aggressively
+- **Chat-level** (`caveman_mode` in sessions DB, per-session toggle, 0-3): appends response style instruction (`CAVEMAN_CHAT_PROMPTS`). Toggled via composer button, cycles 0→1→2→3→0.
+  - User's last chat-level mode is persisted to `localStorage('caveman-chat-mode')` and auto-applied to new sessions via `ensureSession()`
+- **Thread-locals**: `_thread_local.caveman_system` (from model config) and `_thread_local.caveman_chat` (from session). Both set in `server.py` chat worker, cleaned up in finally block
+- **Cache key**: `_build_system_prompt` cache includes both values to avoid stale prompts
+- **UI**: Models tab has `Caveman System` number input (0-3); composer button cycles chat mode with color coding (off/amber/green/red)
+
 ### Token Optimization
 
 Per-agent token config in `agent.json` under `token_config`:
