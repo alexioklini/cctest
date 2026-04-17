@@ -968,6 +968,9 @@ textarea { resize: none; }
 }
 .attach-card:hover { border-color: var(--accent-brand); box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
 .attach-card img { width: 100%; height: 100%; object-fit: cover; }
+.attach-card-file { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 6px; background: var(--bg-200); }
+.attach-file-ext { font-size: 11px; font-weight: 600; color: var(--accent-brand); text-transform: uppercase; }
+.attach-file-name { font-size: 9px; color: var(--text-300); text-align: center; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-all; line-height: 1.2; }
 .attach-fullview {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
   padding: 16px; overflow: auto; gap: 12px;
@@ -10338,27 +10341,52 @@ function collectChatAttachments() {
   for (let i = 0; i < chat.messages.length; i++) {
     const msg = chat.messages[i];
     if (msg.role !== 'human' && msg.role !== 'user') continue;
-    // From msg.images (legacy) and msg.files with preview (unified path)
+    // From msg.images (legacy)
     if (msg.images?.length) {
       for (const img of msg.images) {
         const url = img.preview || (img.data ? `data:${img.type || 'image/png'};base64,${img.data}` : null);
-        if (url) attachments.push({ url, name: img.name || 'Image', msgIndex: i });
+        if (url) attachments.push({ url, name: img.name || 'Image', isImage: true, msgIndex: i });
       }
     }
+    // From msg.files (unified path — all file types)
     if (msg.files?.length) {
       for (const f of msg.files) {
-        if (f.preview) attachments.push({ url: f.preview, name: f.name || 'Image', msgIndex: i });
-        else if (f.data && f.type?.startsWith('image/')) attachments.push({ url: `data:${f.type};base64,${f.data}`, name: f.name || 'Image', msgIndex: i });
+        const isImg = f.type?.startsWith('image/');
+        if (f.preview) {
+          attachments.push({ url: f.preview, name: f.name || 'Image', isImage: true, msgIndex: i });
+        } else if (f.data && isImg) {
+          attachments.push({ url: `data:${f.type};base64,${f.data}`, name: f.name || 'Image', isImage: true, msgIndex: i });
+        } else {
+          attachments.push({ name: f.name || 'File', type: f.type || '', isImage: false, msgIndex: i });
+        }
       }
     }
     // From content blocks (DB restore)
     if (Array.isArray(msg.content)) {
       for (const block of msg.content) {
         if (block.type === 'image_url' && block.image_url?.url) {
-          attachments.push({ url: block.image_url.url, name: 'Image', msgIndex: i });
+          attachments.push({ url: block.image_url.url, name: 'Image', isImage: true, msgIndex: i });
         } else if (block.type === 'image' && block.source?.data) {
           const mt = block.source.media_type || 'image/png';
-          attachments.push({ url: `data:${mt};base64,${block.source.data}`, name: 'Image', msgIndex: i });
+          attachments.push({ url: `data:${mt};base64,${block.source.data}`, name: 'Image', isImage: true, msgIndex: i });
+        }
+      }
+    }
+    // From text content — detect disk-saved file notices (DB restore for non-image files)
+    const textContent = typeof msg.content === 'string' ? msg.content : (Array.isArray(msg.content) ? msg.content.find(b => b.type === 'text')?.text : '') || '';
+    const fileNoticeMatch = textContent.match(/\[User attached files saved to disk[^\]]*\]\n([\s\S]*?)$/);
+    if (fileNoticeMatch) {
+      const pathLines = fileNoticeMatch[1].trim().split('\n');
+      for (const line of pathLines) {
+        const pathMatch = line.match(/^\s*-\s*(.+)$/);
+        if (pathMatch) {
+          const fpath = pathMatch[1].trim();
+          const fname = fpath.split('/').pop();
+          const ext = fname.split('.').pop()?.toLowerCase() || '';
+          const isImg = ['png','jpg','jpeg','gif','webp','svg','bmp','ico'].includes(ext);
+          if (!attachments.some(a => a.name === fname)) {
+            attachments.push({ name: fname, type: '', isImage: isImg, msgIndex: i });
+          }
         }
       }
     }
@@ -10380,9 +10408,13 @@ function renderAttachmentsPane() {
   }
   empty.style.display = 'none';
   grid.style.display = '';
-  grid.innerHTML = attachments.map((a, i) =>
-    `<div class="attach-card" onclick="showAttachmentFullview(${i})"><img src="${a.url}" alt="${esc(a.name)}" loading="lazy"></div>`
-  ).join('');
+  grid.innerHTML = attachments.map((a, i) => {
+    if (a.isImage && a.url) {
+      return `<div class="attach-card" onclick="showAttachmentFullview(${i})"><img src="${a.url}" alt="${esc(a.name)}" loading="lazy"></div>`;
+    }
+    const ext = a.name?.split('.').pop()?.toUpperCase() || 'FILE';
+    return `<div class="attach-card attach-card-file" title="${esc(a.name)}"><div class="attach-file-ext">${esc(ext)}</div><div class="attach-file-name">${esc(a.name)}</div></div>`;
+  }).join('');
 }
 
 function showAttachmentFullview(index) {
