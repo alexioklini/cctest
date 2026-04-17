@@ -326,6 +326,11 @@ class ChatDB:
                 pass
             conn.execute("CREATE INDEX IF NOT EXISTS idx_session_user ON sessions(user_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_artifact_user ON artifacts(user_id)")
+            # Add save_to_memory flag (migration)
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN save_to_memory INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
             # ── MemPalace chat-sync cursor ──
             # Tracks which messages have already been mirrored into MemPalace,
             # per session. `last_message_id` is the highest messages.id filed so far.
@@ -484,8 +489,14 @@ class ChatDB:
     def save_session(sid, agent_id, model, title, status, created_at, last_active, project="", summary="", user_id=""):
         with _db_conn() as conn:
             conn.execute("""
-                INSERT OR REPLACE INTO sessions (id, agent_id, model, title, status, created_at, last_active, project, summary, user_id)
+                INSERT INTO sessions (id, agent_id, model, title, status, created_at, last_active, project, summary, user_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    agent_id=excluded.agent_id, model=excluded.model, title=excluded.title,
+                    status=excluded.status, created_at=excluded.created_at, last_active=excluded.last_active,
+                    project=excluded.project,
+                    summary=CASE WHEN excluded.summary != '' THEN excluded.summary ELSE sessions.summary END,
+                    user_id=CASE WHEN excluded.user_id != '' THEN excluded.user_id ELSE sessions.user_id END
             """, (sid, agent_id, model, title, status, created_at, last_active, project or "", summary or "", user_id or ""))
             conn.commit()
 
@@ -494,6 +505,15 @@ class ChatDB:
     def update_session_user(session_id, user_id):
         with _db_conn() as conn:
             conn.execute("UPDATE sessions SET user_id = ? WHERE id = ?", (user_id, session_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_session_save_to_memory(session_id, value):
+        """Update memory mode: 0=off, 1=on (explicit save all), 2=auto (classifier decides)."""
+        with _db_conn() as conn:
+            conn.execute("UPDATE sessions SET save_to_memory = ? WHERE id = ?",
+                        (int(value), session_id))
             conn.commit()
 
     @staticmethod
@@ -556,9 +576,11 @@ class ChatDB:
                        s.agent_id as agent_id,
                        COALESCE(s.user_id, '') as user_id,
                        COALESCE(s.summary, '') as summary,
+                       COALESCE(s.save_to_memory, 0) as save_to_memory,
                        COALESCE(c.last_message_id, 0) as last_message_id_filed,
                        COALESCE(c.last_summary_hash, '') as last_summary_hash,
-                       (SELECT MAX(id) FROM messages WHERE session_id = s.id) as max_message_id
+                       (SELECT MAX(id) FROM messages WHERE session_id = s.id) as max_message_id,
+                       (SELECT COUNT(*) FROM messages WHERE session_id = s.id) as message_count
                 FROM sessions s
                 LEFT JOIN chat_mempalace_sync c ON c.session_id = s.id
                 WHERE s.status != 'incognito'
@@ -860,6 +882,7 @@ class Session:
         self.summary: str = ""  # LLM-generated chat summary for sidebar
         self.sdk_session_id: str | None = None  # Agent SDK session ID for resume
         self._last_summary_at = 0  # Token count at last continuous summary
+        self.save_to_memory: bool = False  # User toggle: always file to MemPalace
 
         # Warmup state
         self._warmup_done = threading.Event()
@@ -888,7 +911,8 @@ class Session:
                 self.title = title
         ChatDB.save_message(self.id, role, content, metadata=metadata)
         ChatDB.save_session(self.id, self.agent_id, self.model, self.title,
-                           self.status, self.created_at, self.last_active, self.project or "")
+                           self.status, self.created_at, self.last_active, self.project or "",
+                           user_id=self.user_id)
 
     def switch_agent(self, agent_id: str, model: str | None = None):
         """Switch this session to a different agent (and optionally model)."""
@@ -921,6 +945,7 @@ class Session:
                 self.project = info.get("project", "") or None
                 self.summary = info.get("summary", "") or ""
                 self.user_id = info.get("user_id", "") or ""
+                self.save_to_memory = bool(info.get("save_to_memory", 0))
 
 
 class SessionManager:
@@ -1791,6 +1816,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         # --- MemPalace GET routes ---
         elif path == "/v1/mempalace/stats":
             self._handle_mempalace_stats()
+        elif path == "/v1/mempalace/classifier":
+            self._handle_mempalace_classifier_get()
         elif path.startswith("/v1/mempalace/drawers"):
             self._handle_mempalace_drawers()
         # --- MCP GET routes ---
@@ -1956,6 +1983,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_telegram_action()
         elif path == "/v1/services/server":
             self._handle_server_config()
+        elif path == "/v1/mempalace/classifier":
+            self._handle_mempalace_classifier_save()
         elif path == "/v1/cache/clear":
             engine._web_cache.clear()
             self._send_json({"status": "cleared"})
@@ -2712,6 +2741,17 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 with s.lock:
                     s.summary = title
             self._send_json({"status": "renamed", "session_id": sid, "title": title})
+        elif action == "save_to_memory":
+            # 0=off, 1=on, 2=auto
+            mode = body.get("mode", None)
+            if mode is None:
+                mode = 1 if body.get("value", False) else 0
+            mode = max(0, min(2, int(mode)))
+            ChatDB.update_session_save_to_memory(sid, mode)
+            s = sessions.get(sid)
+            if s:
+                s.save_to_memory = mode
+            self._send_json({"status": "ok", "save_to_memory": mode, "session_id": sid})
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)
 
@@ -2758,6 +2798,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         if uid:
             session.user_id = uid
             ChatDB.update_session_user(session.id, uid)
+        # Set default memory mode from classifier config
+        mcfg = engine._load_mempalace_config()
+        clf_cfg = (mcfg.get("chat_sync", {}) or {}).get("classifier", {}) or {}
+        default_mem = int(clf_cfg.get("default_mode", 0))
+        if default_mem:
+            session.save_to_memory = default_mem
+            ChatDB.update_session_save_to_memory(session.id, default_mem)
         project = body.get("project", "")
         if project:
             session.project = project
@@ -5928,6 +5975,49 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     # --- MemPalace handlers ---
 
+    def _handle_mempalace_classifier_get(self):
+        """GET /v1/mempalace/classifier — return classifier config."""
+        mcfg = engine._load_mempalace_config()
+        sync_cfg = mcfg.get("chat_sync", {}) or {}
+        clf = sync_cfg.get("classifier", {}) or {}
+        self._send_json({
+            "enabled": clf.get("enabled", False),
+            "model": clf.get("model", ""),
+            "min_turns": clf.get("min_turns", 0),
+            "default_mode": clf.get("default_mode", 0),
+            "categories_to_file": clf.get("categories_to_file",
+                ["fact", "preference", "decision", "reference"]),
+        })
+
+    def _handle_mempalace_classifier_save(self):
+        """POST /v1/mempalace/classifier — save classifier config."""
+        body = self._read_json()
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        try:
+            config = {}
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    config = json.load(f)
+            mp = config.setdefault("mempalace", {})
+            cs = mp.setdefault("chat_sync", {})
+            clf = cs.setdefault("classifier", {})
+            if "enabled" in body:
+                clf["enabled"] = bool(body["enabled"])
+            if "model" in body:
+                clf["model"] = str(body["model"])
+            if "categories_to_file" in body:
+                clf["categories_to_file"] = list(body["categories_to_file"])
+            if "min_turns" in body:
+                clf["min_turns"] = max(0, int(body["min_turns"]))
+            if "default_mode" in body:
+                clf["default_mode"] = max(0, min(2, int(body["default_mode"])))
+            with open(config_path, "w") as f:
+                json.dump(config, f, indent=2)
+            engine._mempalace_config_cache = None
+            self._send_json({"status": "saved", "classifier": clf})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
     def _handle_mempalace_stats(self):
         """GET /v1/mempalace/stats — palace overview for admin dashboard."""
         mcfg = engine._load_mempalace_config()
@@ -6037,8 +6127,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             for wing_name, rooms in tax.items():
-                is_user_scoped = "/" in wing_name
-                user_id = wing_name.split("/")[0] if is_user_scoped else None
+                is_user_scoped = "--" in wing_name
+                user_id = wing_name.split("--")[0] if is_user_scoped else None
                 wings_detail[wing_name] = {
                     "rooms": rooms,
                     "drawer_count": sum(rooms.values()),
@@ -8143,6 +8233,14 @@ def main():
                 closet_head = int(sync_cfg2.get("closet_content_head_chars", 5000))
                 default_room = sync_cfg2.get("room", "chat")
 
+                # Classifier gate config
+                clf_cfg = sync_cfg2.get("classifier", {}) or {}
+                clf_enabled = bool(clf_cfg.get("enabled", False))
+                clf_model = clf_cfg.get("model", "")
+                clf_file_categories = set(clf_cfg.get("categories_to_file",
+                    ["fact", "preference", "decision", "reference"]))
+                clf_min_turns = int(clf_cfg.get("min_turns", 0))
+
                 closets_col = None
                 if do_closets:
                     try:
@@ -8159,9 +8257,24 @@ def main():
                     session_user_id = session_row.get("user_id") or ""
                     after_id = int(session_row.get("last_message_id_filed") or 0)
                     max_msg_id = int(session_row.get("max_message_id") or 0)
-                    # Wing = user_id/agent_id for per-user isolation.
+                    # save_to_memory: 0=off, 1=on (save all), 2=auto (classifier/min_turns)
+                    mem_mode = int(session_row.get("save_to_memory") or 0)
+                    msg_count = int(session_row.get("message_count") or 0)
+
+                    # Off: skip entirely
+                    if mem_mode == 0:
+                        ChatDB.mempalace_update_cursor(sid, max_msg_id)
+                        continue
+
+                    # Auto/On: check min_turns (on=1 bypasses, auto=2 respects)
+                    if mem_mode == 2 and clf_min_turns > 0 and msg_count < clf_min_turns:
+                        ChatDB.mempalace_update_cursor(sid, max_msg_id)
+                        continue
+
+                    # Wing = user_id--agent_id for per-user isolation (-- separator;
+                    # MemPalace sanitize_name rejects /).
                     # Sessions without a user_id (pre-auth or system) use bare agent_id.
-                    wing = f"{session_user_id}/{agent_id}" if session_user_id else agent_id
+                    wing = f"{session_user_id}--{agent_id}" if session_user_id else agent_id
 
                     new_messages = ChatDB.mempalace_load_new_messages(sid, after_id) or []
                     # Per (wing, room, source_file) → list[(drawer_id, text)] for closet rebuild.
@@ -8207,6 +8320,35 @@ def main():
                         return True
 
                     new_last_id = after_id
+
+                    # Build classifier skip-set: message IDs to skip based on LLM classification.
+                    # Skip classifier entirely if user toggled save_to_memory on this session.
+                    _clf_skip_ids: set[int] = set()
+                    if clf_enabled and clf_model and mem_mode == 2:
+                        i = 0
+                        while i < len(new_messages):
+                            m = new_messages[i]
+                            m_role = (m.get("role") or "").strip()
+                            m_id = int(m.get("id") or 0)
+                            # Pair user+assistant for classification
+                            if m_role == "user" and i + 1 < len(new_messages):
+                                nxt = new_messages[i + 1]
+                                nxt_role = (nxt.get("role") or "").strip()
+                                nxt_id = int(nxt.get("id") or 0)
+                                if nxt_role == "assistant":
+                                    u_text = str(m.get("content") or "")[:2000]
+                                    a_text = str(nxt.get("content") or "")[:2000]
+                                    category = engine.classify_chat_for_memory(
+                                        u_text, a_text, clf_model)
+                                    if category and category not in clf_file_categories:
+                                        _clf_skip_ids.add(m_id)
+                                        _clf_skip_ids.add(nxt_id)
+                                        print(f"[mempalace-classifier] skip ({category}): "
+                                              f"{u_text[:60]}", flush=True)
+                                    i += 2
+                                    continue
+                            i += 1
+
                     for msg in new_messages:
                         mid = int(msg.get("id") or 0)
                         new_last_id = max(new_last_id, mid)
@@ -8216,6 +8358,8 @@ def main():
 
                         # Normal chat turns.
                         if role in include_roles:
+                            if mid in _clf_skip_ids:
+                                continue
                             if isinstance(content, str):
                                 text = content
                             else:
@@ -8343,6 +8487,67 @@ def main():
             time.sleep(max(15, next_interval))
 
     threading.Thread(target=_mempalace_chat_sync_loop, daemon=True, name="mempalace-chat-sync").start()
+
+    def _save_chat_to_memory_callback(session_id: str) -> dict:
+        """Enable save_to_memory on a session and trigger immediate sync."""
+        # Set mode=1 (on) on session
+        s = sessions.get(session_id)
+        if s:
+            s.save_to_memory = 1
+        ChatDB.update_session_save_to_memory(session_id, 1)
+        # Reset sync cursor to re-sync from beginning
+        ChatDB.mempalace_update_cursor(session_id, 0)
+        # Trigger sync in background thread
+        def _do_sync():
+            try:
+                mcfg = engine._load_mempalace_config()
+                if not mcfg.get("enabled", True):
+                    return
+                palace_path = mcfg.get("palace_path", "")
+                if not palace_path:
+                    return
+                sync_cfg = mcfg.get("chat_sync", {}) or {}
+                max_chars = int(sync_cfg.get("max_chars_per_message", 8000))
+                default_room = sync_cfg.get("room", "chat")
+                include_roles = set(sync_cfg.get("include_roles", ["user", "assistant"]))
+                ok, _ = engine._ensure_mempalace_importable()
+                if not ok:
+                    return
+                from mempalace.mcp_server import tool_add_drawer
+                info = ChatDB.get_session_info(session_id)
+                if not info:
+                    return
+                agent_id = info.get("agent_id", "main")
+                user_id = info.get("user_id", "")
+                wing = f"{user_id}--{agent_id}" if user_id else agent_id
+                msgs = ChatDB.mempalace_load_new_messages(session_id, 0) or []
+                filed = 0
+                for msg in msgs:
+                    role = (msg.get("role") or "").strip()
+                    if role not in include_roles:
+                        continue
+                    content = msg.get("content")
+                    text = content if isinstance(content, str) else str(content)
+                    body = f"[{role}] {text}"[:max_chars]
+                    if body.strip():
+                        try:
+                            res = tool_add_drawer(wing=wing, room=default_room,
+                                                  content=body, source_file=f"session/{session_id}",
+                                                  added_by="brain-chat-sync")
+                            if res.get("success") and res.get("reason") != "already_exists":
+                                filed += 1
+                        except Exception:
+                            pass
+                max_id = max((int(m.get("id") or 0) for m in msgs), default=0)
+                if max_id:
+                    ChatDB.mempalace_update_cursor(session_id, max_id)
+                print(f"[mempalace-sync] immediate: filed {filed} drawer(s) for {session_id[:8]}", flush=True)
+            except Exception as e:
+                print(f"[mempalace-sync] immediate sync error: {e}", flush=True)
+        threading.Thread(target=_do_sync, daemon=True).start()
+        return {"saved": True, "session_id": session_id}
+
+    engine._save_chat_to_memory_callback = _save_chat_to_memory_callback
 
     # Start enabled messaging channels
     def _start_channels():

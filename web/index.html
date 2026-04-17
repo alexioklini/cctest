@@ -2859,6 +2859,14 @@ textarea { resize: none; }
 .status-bar .status-value { font-family: var(--font-mono); color: var(--text-300); }
 .status-bar .status-agent { font-weight: 500; color: var(--accent-brand); }
 .status-bar .status-model { color: var(--text-300); }
+.connection-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  transition: background 0.3s ease, box-shadow 0.3s ease;
+}
+.connection-dot.connected { background: var(--success, #22c55e); box-shadow: 0 0 4px var(--success, #22c55e); }
+.connection-dot.disconnected { background: var(--error, #ef4444); box-shadow: 0 0 4px var(--error, #ef4444); animation: pulse-dot 1.5s infinite; }
+.connection-dot.connecting { background: var(--warning, #f59e0b); box-shadow: 0 0 4px var(--warning, #f59e0b); }
+@keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
 /* Context progress bar */
 .context-bar {
@@ -3336,6 +3344,9 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
               <button class="composer-btn" id="btn-toggle-tools" onclick="toggleToolDisplay()" title="Toggle tool calls">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
               </button>
+              <button class="composer-btn" id="btn-save-to-memory" onclick="toggleSaveToMemory()" title="Save to memory: off">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><circle cx="12" cy="12" r="3"/><path d="M12 5v2M12 17v2M5 12h2M17 12h2"/></svg>
+              </button>
             </div>
             <div class="composer-footer-right">
               <span class="model-selector-btn" id="chat-model-selector" onclick="toggleModelDropdown(event)">
@@ -3527,6 +3538,9 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 
   <!-- Status bar -->
   <div class="status-bar" id="status-bar">
+    <div class="status-item" id="status-connection" title="Server: checking...">
+      <span class="connection-dot disconnected" id="status-connection-dot"></span>
+    </div>
     <div class="status-item">
       <span class="status-agent" id="status-agent">main</span>
     </div>
@@ -3964,11 +3978,14 @@ const ClientProxy = {
       }
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
+      let lineBuf = '';
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        const text = decoder.decode(value, { stream: true });
-        const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+        lineBuf += decoder.decode(value, { stream: true });
+        const parts = lineBuf.split('\n');
+        lineBuf = parts.pop();
+        const lines = parts.map(l => l.trim()).filter(l => l);
         if (lines.length) {
           await API.post('/v1/chat/proxy-response', {
             session_id: sessionId,
@@ -3976,6 +3993,13 @@ const ClientProxy = {
             lines,
           });
         }
+      }
+      if (lineBuf.trim()) {
+        await API.post('/v1/chat/proxy-response', {
+          session_id: sessionId,
+          type: 'chunks',
+          lines: [lineBuf.trim()],
+        });
       }
       await API.post('/v1/chat/proxy-response', {
         session_id: sessionId,
@@ -3994,9 +4018,13 @@ const ClientProxy = {
 
   async _proxyLLMElectron(sessionId, endpoint, headers, payload) {
     return new Promise((resolve) => {
+      let lineBuf = '';
       window.electronAPI.removeStreamListeners();
       window.electronAPI.onStreamChunk(async (chunk) => {
-        const lines = chunk.split('\n').map(l => l.trim()).filter(l => l);
+        lineBuf += chunk;
+        const parts = lineBuf.split('\n');
+        lineBuf = parts.pop();
+        const lines = parts.map(l => l.trim()).filter(l => l);
         if (lines.length) {
           await API.post('/v1/chat/proxy-response', {
             session_id: sessionId,
@@ -4006,6 +4034,13 @@ const ClientProxy = {
         }
       });
       window.electronAPI.onStreamEnd(async () => {
+        if (lineBuf.trim()) {
+          await API.post('/v1/chat/proxy-response', {
+            session_id: sessionId,
+            type: 'chunks',
+            lines: [lineBuf.trim()],
+          });
+        }
         window.electronAPI.removeStreamListeners();
         await API.post('/v1/chat/proxy-response', { session_id: sessionId, type: 'done' });
         resolve();
@@ -4154,6 +4189,7 @@ const state = {
   ensureAgentChat(agentId) {
     if (!this.agentChats[agentId]) {
       const agent = this.agents.find(a => (a.id || a.name) === agentId);
+      const defMode = parseInt((this.mempalaceClassifier || {}).default_mode) || 0;
       this.agentChats[agentId] = {
         sessionId: null,
         agent: agentId,
@@ -4166,6 +4202,8 @@ const state = {
         files: [],
         _streamStartTime: null,
         _streamTimerInterval: null,
+        saveToMemory: defMode === 1,
+        memoryMode: defMode === 1 ? 'on' : defMode === 2 ? 'auto' : 'off',
       };
     }
     return this.agentChats[agentId];
@@ -4347,7 +4385,7 @@ function navigateTo(view, opts) {
     case 'welcome':
       document.getElementById('welcome-view').style.display = '';
       updatePageHeader('Brain Agent');
-      document.getElementById('status-bar').style.display = 'none';
+      document.getElementById('status-bar').style.display = '';
       break;
 
     case 'chat':
@@ -4359,21 +4397,21 @@ function navigateTo(view, opts) {
     case 'chats':
       document.getElementById('chats-view').classList.add('active');
       updatePageHeader('Chats');
-      document.getElementById('status-bar').style.display = 'none';
+      document.getElementById('status-bar').style.display = '';
       loadChatsList();
       break;
 
     case 'projects':
       document.getElementById('projects-view').classList.add('active');
       updatePageHeader('Projects');
-      document.getElementById('status-bar').style.display = 'none';
+      document.getElementById('status-bar').style.display = '';
       loadProjectsList();
       break;
 
     case 'project-detail':
       document.getElementById('project-detail-view').classList.add('active');
       updatePageHeader(opts?.projectName || 'Project');
-      document.getElementById('status-bar').style.display = 'none';
+      document.getElementById('status-bar').style.display = '';
       if (opts?.agentId && opts?.projectName) {
         loadProjectDetail(opts.agentId, opts.projectName);
       }
@@ -4382,14 +4420,14 @@ function navigateTo(view, opts) {
     case 'artifacts':
       document.getElementById('artifacts-view').classList.add('active');
       updatePageHeader('Artifacts');
-      document.getElementById('status-bar').style.display = 'none';
+      document.getElementById('status-bar').style.display = '';
       loadArtifactsBrowse();
       break;
 
     case 'scheduled':
       document.getElementById('scheduled-view').classList.add('active');
       updatePageHeader('Scheduled');
-      document.getElementById('status-bar').style.display = 'none';
+      document.getElementById('status-bar').style.display = '';
       loadScheduledView();
       break;
 
@@ -4448,6 +4486,9 @@ async function loadAgentSessions(agentId) {
           chat.chatTitle = serverTitle;
           if (state.currentView === 'chat') updateChatView();
         }
+        const memVal = parseInt(sess.save_to_memory) || 0;
+        chat.saveToMemory = memVal === 1;
+        chat.memoryMode = memVal === 1 ? 'on' : memVal === 2 ? 'auto' : 'off';
       }
     }
   } catch(e) { console.error('loadAgentSessions:', e); }
@@ -6039,6 +6080,26 @@ function updateStatusBar() {
   const execModeEl = document.getElementById('status-exec-mode');
   if (execModeEl) execModeEl.style.display = ClientProxy.enabled ? '' : 'none';
 
+  // Save-to-memory toggle: green=on, amber=auto, grey=off
+  const memBtn = document.getElementById('btn-save-to-memory');
+  if (memBtn) {
+    const mode = chat.memoryMode || (chat.saveToMemory ? 'on' : 'off');
+    if (mode === 'on') {
+      memBtn.style.color = 'var(--success, #22c55e)';
+      memBtn.title = 'Memory: on (all messages saved) — click to cycle';
+    } else if (mode === 'auto') {
+      const clf = state.mempalaceClassifier || {};
+      const detail = clf.enabled && clf.model
+        ? `LLM classifier: ${modelShortName(clf.model, false)}`
+        : clf.min_turns ? `min ${clf.min_turns} turns` : 'default rules';
+      memBtn.style.color = 'var(--warning, #f59e0b)';
+      memBtn.title = `Memory: auto (${detail}) — click to cycle`;
+    } else {
+      memBtn.style.color = '';
+      memBtn.title = 'Memory: off — click to cycle';
+    }
+  }
+
   // Warmup indicator
   let warmupEl = document.getElementById('status-warmup');
   if (!warmupEl) {
@@ -7456,6 +7517,17 @@ async function switchGeneralTab(tab, btn) {
         return;
       }
 
+      // Classifier config
+      const clf = await API.get('/v1/mempalace/classifier').catch(() => ({}));
+      const modelOpts = (state.models || []).map(m => {
+        const mid = m.id || m.name || m;
+        const sel = mid === (clf.model || '') ? ' selected' : '';
+        return `<option value="${esc(mid)}"${sel}>${esc(modelShortName(mid))}</option>`;
+      }).join('');
+      const allCats = ['fact','preference','decision','reference','generic','refusal','chitchat'];
+      const fileCats = new Set(clf.categories_to_file || ['fact','preference','decision','reference']);
+      const catChecks = allCats.map(c => `<label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;margin-right:10px"><input type="checkbox" class="mp-clf-cat" value="${c}" ${fileCats.has(c)?'checked':''}>${c}</label>`).join('');
+
       const STAT = (val, label, color='var(--accent-brand)') => `<div style="padding:12px 20px;background:var(--bg-200);border-radius:8px;text-align:center;min-width:110px">
         <div style="font-size:22px;font-weight:600;color:${color}">${val}</div>
         <div style="font-size:11px;color:var(--text-400)">${label}</div>
@@ -7614,6 +7686,41 @@ async function switchGeneralTab(tab, btn) {
         ${SEC('Daemons')}
         ${daemonRows}
 
+        ${SEC('Chat Sync Classifier')}
+        <div style="${G('10px')}">
+          <div style="font-size:12px;color:var(--text-400);margin-bottom:8px">LLM gate that classifies messages before filing to MemPalace. Skips refusals, chitchat, and generic content.</div>
+          <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" id="mp-clf-enabled" ${clf.enabled?'checked':''}>Enabled</label>
+            <div style="display:flex;align-items:center;gap:6px">
+              <label style="font-size:11px;color:var(--text-400)">Model:</label>
+              <select id="mp-clf-model" class="form-input" style="font-size:12px;padding:4px 8px;max-width:260px">
+                <option value="">— select model —</option>
+                ${modelOpts}
+              </select>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <label style="font-size:11px;color:var(--text-400)">Min turns:</label>
+              <input type="number" id="mp-clf-min-turns" class="form-input" style="font-size:12px;padding:4px 8px;width:60px" value="${clf.min_turns||0}" min="0" max="100" title="Skip chats shorter than this (0 = no minimum)">
+            </div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <label style="font-size:11px;color:var(--text-400)">Default for new chats:</label>
+              <select id="mp-clf-default-mode" class="form-input" style="font-size:12px;padding:4px 8px">
+                <option value="0" ${(clf.default_mode||0)===0?'selected':''}>Off</option>
+                <option value="2" ${(clf.default_mode||0)===2?'selected':''}>Auto</option>
+                <option value="1" ${(clf.default_mode||0)===1?'selected':''}>On</option>
+              </select>
+            </div>
+          </div>
+          <div style="margin-top:8px;font-size:11px;color:var(--text-400)">
+            Auto mode: ${clf.enabled && clf.model ? 'LLM classifier' : ''}${clf.enabled && clf.model && clf.min_turns ? ' + ' : ''}${clf.min_turns ? 'min ' + clf.min_turns + ' turns' : ''}${!clf.enabled && !clf.min_turns ? 'no filters configured' : ''}
+          </div>
+          <div style="margin-top:8px">
+            <label style="font-size:11px;color:var(--text-400)">File categories:</label>
+            <div style="margin-top:4px">${catChecks}</div>
+          </div>
+          <button class="btn-primary" style="margin-top:10px;font-size:12px;padding:6px 16px" onclick="saveMpClassifier()">Save</button>
+        </div>
+
         ${SEC('Write-Ahead Log')}
         ${walHtml}
 
@@ -7626,6 +7733,7 @@ async function switchGeneralTab(tab, btn) {
         if (wi.user_name) _mpUNames[wi.user_id] = wi.user_name;
       }
       function _mpFriendly(name) {
+        if (name.includes('--')) { const [u,a] = name.split('--',2); return (_mpUNames[u]||u.slice(0,6)) + ' / ' + a; }
         if (name.includes('/')) { const [u,a] = name.split('/',2); return (_mpUNames[u]||u.slice(0,6)) + ' / ' + a; }
         return name;
       }
@@ -7999,6 +8107,22 @@ async function saveToolsConfig() {
     showToast('Tools configuration saved');
     switchGeneralTab('tools');
   } catch(e) { showToast('Failed to save: ' + e.message, true); }
+}
+
+async function saveMpClassifier() {
+  try {
+    const cats = [...document.querySelectorAll('.mp-clf-cat:checked')].map(c => c.value);
+    await API.post('/v1/mempalace/classifier', {
+      enabled: document.getElementById('mp-clf-enabled')?.checked ?? false,
+      model: document.getElementById('mp-clf-model')?.value || '',
+      min_turns: parseInt(document.getElementById('mp-clf-min-turns')?.value) || 0,
+      default_mode: parseInt(document.getElementById('mp-clf-default-mode')?.value) || 0,
+      categories_to_file: cats,
+    });
+    // Refresh cached classifier config
+    state.mempalaceClassifier = await API.get('/v1/mempalace/classifier').catch(() => ({}));
+    showToast('Classifier config saved');
+  } catch(e) { showToast('Save failed: ' + e.message, true); }
 }
 
 async function saveContextConfig() {
@@ -11214,6 +11338,26 @@ function toggleToolDisplay() {
   showToast(state.showToolCalls ? 'Tool calls visible' : 'Tool calls hidden');
 }
 
+async function toggleSaveToMemory() {
+  const chat = state.activeChat;
+  if (!chat || !chat.sessionId) return;
+  // Three states: on → auto → off → on (DB: 1=on, 2=auto, 0=off)
+  const cur = chat.memoryMode || (chat.saveToMemory ? 'on' : 'off');
+  const next = cur === 'on' ? 'auto' : cur === 'auto' ? 'off' : 'on';
+  const modeMap = { on: 1, auto: 2, off: 0 };
+  try {
+    await API.post('/v1/sessions/manage', {
+      action: 'save_to_memory', session_id: chat.sessionId,
+      mode: modeMap[next],
+    });
+    chat.saveToMemory = next === 'on';
+    chat.memoryMode = next;
+    updateStatusBar();
+    const labels = { on: 'Memory: on — all messages saved', auto: 'Memory: auto — LLM classifier decides', off: 'Memory: off' };
+    showToast(labels[next]);
+  } catch(e) { showToast('Failed: ' + e.message, true); }
+}
+
 /* ═══════════════════════════════════════════════════════════
    KEYBOARD SHORTCUTS
    ═══════════════════════════════════════════════════════════ */
@@ -11831,6 +11975,59 @@ function getProjectVisibilityHTML() {
   `;
 }
 
+// ═══ Connection Health Monitor ═══
+const ConnectionMonitor = {
+  _interval: null,
+  _connected: false,
+  _pollMs: 10000,
+  _failCount: 0,
+
+  start() {
+    this._check();
+    this._interval = setInterval(() => this._check(), this._pollMs);
+  },
+
+  stop() {
+    if (this._interval) { clearInterval(this._interval); this._interval = null; }
+  },
+
+  async _check() {
+    const dot = document.getElementById('status-connection-dot');
+    const wrap = document.getElementById('status-connection');
+    if (!dot || !wrap) return;
+    try {
+      const resp = await fetch(`${BASE_URL}/v1/status`, {
+        method: 'GET',
+        headers: API._headers(),
+        signal: AbortSignal.timeout(5000),
+      });
+      if (resp.ok) {
+        this._setConnected(true);
+        this._failCount = 0;
+      } else {
+        this._setConnected(false);
+      }
+    } catch {
+      this._failCount++;
+      if (this._failCount >= 2) this._setConnected(false);
+    }
+  },
+
+  _setConnected(connected) {
+    if (this._connected === connected) return;
+    this._connected = connected;
+    state.connected = connected;
+    const dot = document.getElementById('status-connection-dot');
+    const wrap = document.getElementById('status-connection');
+    if (!dot || !wrap) return;
+    dot.className = 'connection-dot ' + (connected ? 'connected' : 'disconnected');
+    wrap.title = connected ? 'Server: connected' : 'Server: disconnected';
+    renderUserMenu();
+    if (connected && this._failCount === 0) return;
+    if (connected) showToast('Reconnected to server');
+  },
+};
+
 async function init() {
   // Check auth first
   const authOk = await checkAuth();
@@ -11857,7 +12054,7 @@ async function init() {
 
   // Load initial data
   try {
-    const [statusData, agentsData, modelsData, providersData, teamsData, modelsConfigData, servicesData, _] = await Promise.all([
+    const [statusData, agentsData, modelsData, providersData, teamsData, modelsConfigData, servicesData, clfData, _] = await Promise.all([
       API.getStatus().catch(() => null),
       API.getAgents().catch(() => ({agents:[]})),
       API.getModels().catch(() => ({models:[]})),
@@ -11865,6 +12062,7 @@ async function init() {
       API.getTeams().catch(() => ({})),
       API.getModelsConfig().catch(() => ({})),
       API.getServices().catch(() => ({})),
+      API.get('/v1/mempalace/classifier').catch(() => ({})),
       ClientProxy.init(),
     ]);
 
@@ -11876,6 +12074,7 @@ async function init() {
     state.teamStructure = teamsData || {};
     state.modelsConfig = modelsConfigData || {};
     state.maxSessionCostUsd = parseFloat((servicesData.server || {}).max_session_cost_usd || 0) || 0;
+    state.mempalaceClassifier = clfData || {};
 
     // Update user menu / connection indicator
     renderUserMenu();
@@ -11918,6 +12117,14 @@ async function init() {
 
   // Start on welcome view
   navigateTo('welcome');
+
+  // Start connection health monitor
+  ConnectionMonitor._connected = state.connected;
+  const dot = document.getElementById('status-connection-dot');
+  if (dot) dot.className = 'connection-dot ' + (state.connected ? 'connected' : 'disconnected');
+  const cWrap = document.getElementById('status-connection');
+  if (cWrap) cWrap.title = state.connected ? 'Server: connected' : 'Server: disconnected';
+  ConnectionMonitor.start();
 }
 
 function renderSuggestionChips() {

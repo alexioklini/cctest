@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "7.6.0"
+VERSION = "7.7.0"
 VERSION_DATE = "2026-04-16"
 CHANGELOG = [
+    ("7.7.0", "2026-04-17", "MemPalace reliability + smart memory gating. Fixed client proxy SSE line-splitting that silently dropped tool calls in proxy mode (TCP chunk boundaries splitting data: lines). Fixed save_session wiping user_id on every message (INSERT OR REPLACE → ON CONFLICT preserving existing values). Fixed per-user wing separator (/ → -- to comply with MemPalace sanitize_name). System prompt updated to reference mempalace_query instead of old memory_store tools. New save_chat_to_memory tool lets the model explicitly save a conversation when the user asks. New LLM-based chat sync classifier gate — configurable model classifies each message pair as fact/preference/decision/reference (file) or generic/refusal/chitchat (skip) before filing to MemPalace. Configurable min_turns threshold skips short throwaway chats. Three-state memory toggle per session: on (green, save all), auto (amber, classifier decides), off (grey, skip). Default mode for new chats configurable in Settings → MemPalace. Connection health monitor with status bar indicator (green/red dot, 10s polling). Status bar visible on all views. Retry on transient MemPalace query errors. Settings UI for classifier model, min turns, file categories, and default mode."),
     ("7.6.0", "2026-04-16", "Client execution mode for air-gapped corporate deployments. When the server has no internet but browser clients do, set execution_mode to 'client' in config.json or Settings → Server. LLM inference calls are proxied through the browser: server emits proxy_request SSE events with the full payload, browser calls the provider's /chat/completions endpoint, streams chunks back via POST /v1/chat/proxy-response. Web-accessing tools (web_fetch, exa_search) are similarly proxied via POST /v1/chat/proxy-tool-result. All local tools (file ops, git, shell, code graph, mempalace, etc.) continue executing on the server. ProxyChannel class in claude_cli.py provides thread-safe queue bridging between the agentic loop and browser. Configurable proxy tool list in Settings GUI — any tool can be routed through the browser. Session inspector shows purple CLIENT badge on turns executed via proxy. Status bar shows CLIENT badge when mode is active. Provider credentials relayed to browser via GET /v1/config/execution-mode. Requires CORS-enabled LLM providers (Mistral API, OpenAI API, Bifrost local proxy all confirmed working). Chrome is the primary supported browser."),
     ("7.5.0", "2026-04-16", "Per-user MemPalace memory isolation, admin dashboard, and session delete cleanup. Wings now use user_id/agent_id format so each user's chat memories are isolated by default — shared wings (brain_code, mined source) remain globally visible. mempalace_query auto-scopes to the current user: bare agent names are prefixed with user_id, unfiltered searches post-filter to exclude other users' wings. user_id propagated via _thread_local to chat workers and delegate tasks. Chat sync writes user-scoped wings; sessions without a user_id (pre-auth, system) fall back to bare agent_id. Session.user_id field added, loaded from DB on restore, set from auth at creation. New MemPalace admin dashboard tab in General Settings — overview stats (drawers, closets, wings, rooms, edges, DB size), knowledge graph counts, daemon status, per-wing breakdown with user-scoped vs shared badges and room chips, tunnel list, write-ahead log activity with operation badges, and anomaly detection (sparse wings, stale sync, disabled daemons, high drawer/closet ratio). GET /v1/mempalace/stats endpoint aggregates data from MemPalace collections, graph, KG, WAL, and chat_mempalace_sync cursor table. Session delete now purges associated MemPalace drawers and closets (background thread matching source_file prefix session/<sid>) and cleans up the sync cursor row — archive leaves memories intact."),
     ("7.4.0", "2026-04-16", "MemPalace direct integration — replaces the MCP stdio server with in-process Python imports. Single built-in mempalace_query tool (hybrid BM25+vector+closet search) replaces ~15 mcp_mempalace_* tools. Two background daemons in server.py: mempalace-miner (auto-mines source tree + artifacts every 30 min) and mempalace-chat-sync (mirrors chat turns, session summaries, attachment metadata, and web references into MemPalace drawers every 60s with closet rebuilds). No manual 'mempalace mine' runs needed — palace stays up to date automatically. Config in config.json 'mempalace' block with mine sources, chat_sync roles/tool allowlist, and closet toggle. New 'memory' tool group in DEFAULT_TOOL_GROUPS. chat_mempalace_sync cursor table in chats.db tracks sync progress. Also fixes newChat() not clearing chatTitle (stale title from previous session shown on new chats)."),
@@ -439,6 +440,20 @@ TOOL_DEFINITIONS = [
                 },
             },
             "required": ["query"],
+        },
+    },
+    {
+        "name": "save_chat_to_memory",
+        "description": (
+            "Enable saving this chat conversation to long-term memory (MemPalace). "
+            "Use when the user says 'remember this', 'save this to memory', or wants "
+            "to ensure the current conversation is persisted for future recall. "
+            "Immediately syncs all messages in this chat to memory and enables "
+            "automatic saving for any new messages in this session."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
         },
     },
     {
@@ -881,7 +896,7 @@ _TOOL_DEF_OPENAI_INDEX = {td["function"]["name"]: td for td in TOOL_DEFINITIONS_
 TOOL_GROUPS = {
     "core": {"read_file", "write_file", "edit_file", "list_directory", "search_files",
              "execute_command"},
-    "memory": {"mempalace_query"},
+    "memory": {"mempalace_query", "save_chat_to_memory"},
     "context": {"context_search", "context_detail", "context_recall"},
     "web": {"web_fetch", "exa_search"},
     "email": {"gmail_inbox", "gmail_read", "gmail_search", "gmail_send", "gmail_reply"},
@@ -2672,8 +2687,8 @@ def tool_mempalace_query(args: dict) -> str:
     # LLM can pass a bare agent_id (e.g. "main"); we prepend user_id/.
     # Explicit full paths (containing "/") are left as-is.
     current_user_id = getattr(_thread_local, "current_user_id", "") or ""
-    if current_user_id and wing and "/" not in wing:
-        wing = f"{current_user_id}/{wing}"
+    if current_user_id and wing and "--" not in wing:
+        wing = f"{current_user_id}--{wing}"
     room = args.get("room") or None
     n_results = args.get("n_results") or 5
     try:
@@ -2689,13 +2704,22 @@ def tool_mempalace_query(args: dict) -> str:
 
     try:
         from mempalace.searcher import search_memories
-        results = search_memories(
-            query=query,
-            palace_path=palace_path,
-            wing=wing,
-            room=room,
-            n_results=fetch_n,
-        )
+        results = None
+        for _attempt in range(2):
+            try:
+                results = search_memories(
+                    query=query,
+                    palace_path=palace_path,
+                    wing=wing,
+                    room=room,
+                    n_results=fetch_n,
+                )
+                if results is not None:
+                    break
+            except (AttributeError, TypeError):
+                import time as _t; _t.sleep(0.2)
+        if results is None:
+            results = {}
     except Exception as e:
         return _err(f"mempalace_query: {type(e).__name__}: {e}")
 
@@ -2706,9 +2730,9 @@ def tool_mempalace_query(args: dict) -> str:
     if _needs_user_filter:
         def _visible(r):
             w = r.get("wing", "")
-            if "/" not in w:
+            if "--" not in w:
                 return True  # shared wing (brain_code, etc.)
-            return w.startswith(current_user_id + "/")
+            return w.startswith(current_user_id + "--")
         raw_results = [r for r in raw_results if isinstance(r, dict) and _visible(r)]
 
     drawers = []
@@ -2732,6 +2756,23 @@ def tool_mempalace_query(args: dict) -> str:
         "total_before_filter": (results or {}).get("total_before_filter"),
         "drawers": drawers,
     })
+
+# Callback set by server.py to trigger immediate chat sync for a session
+_save_chat_to_memory_callback = None
+
+
+def tool_save_chat_to_memory(args: dict) -> str:
+    """Enable save_to_memory on the current session and trigger immediate sync."""
+    session_id = getattr(_thread_local, "current_session_id", None)
+    if not session_id:
+        return _err("save_chat_to_memory: no active session")
+    if _save_chat_to_memory_callback:
+        try:
+            result = _save_chat_to_memory_callback(session_id)
+            return _ok(result)
+        except Exception as e:
+            return _err(f"save_chat_to_memory: {e}")
+    return _err("save_chat_to_memory: sync callback not configured")
 
 
 # --- MCP Client ---
@@ -13400,6 +13441,49 @@ def make_headers(api_key: str) -> dict:
     }
 
 
+_MEMORY_CLASSIFIER_PROMPT = (
+    "Classify this chat exchange into exactly one category. "
+    "Reply with ONLY the category name, nothing else.\n"
+    "Categories:\n"
+    "- fact: contains user-specific data, measurements, names, dates, results\n"
+    "- preference: user expresses a preference, like, dislike, or personal choice\n"
+    "- decision: a decision was made, an action agreed upon, a plan set\n"
+    "- reference: mentions a specific resource, URL, tool, project, or document\n"
+    "- generic: generic advice, how-to steps, or information not specific to the user\n"
+    "- refusal: assistant says it can't help, doesn't have access, or doesn't know\n"
+    "- chitchat: greetings, small talk, jokes, acknowledgements with no substance"
+)
+
+
+def classify_chat_for_memory(user_text: str, assistant_text: str,
+                             model: str, timeout: int = 15) -> str | None:
+    """Classify a user+assistant exchange for memory filing. Returns category or None on error."""
+    try:
+        provider = resolve_provider_for_model(model)
+        headers = make_headers(provider["api_key"])
+        endpoint = f"{provider['base_url']}/chat/completions"
+        payload = json.dumps({
+            "model": get_api_model_id(model),
+            "max_tokens": 20,
+            "temperature": 0,
+            "stream": False,
+            "messages": [
+                {"role": "system", "content": _MEMORY_CLASSIFIER_PROMPT},
+                {"role": "user", "content": f"User: {user_text[:2000]}\nAssistant: {assistant_text[:2000]}"},
+            ],
+        }).encode("utf-8")
+        req = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        content = (data.get("choices", [{}])[0].get("message", {}).get("content") or "").strip().lower()
+        content = content.strip('"').strip("'").strip()
+        valid = {"fact", "preference", "decision", "reference", "generic", "refusal", "chitchat"}
+        return content if content in valid else None
+    except Exception as e:
+        print(f"[mempalace-classifier] error: {e}", file=sys.stderr, flush=True)
+        return None
+
+
 def get_available_models(api_key: str, base_url: str) -> list[str]:
     """Fetch available models from the API and return as a list."""
     headers = make_headers(api_key)
@@ -14160,6 +14244,7 @@ TOOL_DISPATCH = {
         category=args.get("category"),
     ),
     "mempalace_query": tool_mempalace_query,
+    "save_chat_to_memory": tool_save_chat_to_memory,
     "memory_store": tool_memory_store,
     "memory_recall": tool_memory_recall,
     "memory_delete": tool_memory_delete,
@@ -15228,17 +15313,10 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
         "Use tools proactively to accomplish tasks. You can chain multiple tool calls. "
         "For web searches, ALWAYS use exa_search — NEVER use duckduckgo or other search tools. "
         "You have no restrictions beyond what the operating system enforces.\n\n"
-        "MEMORY: You have persistent memory via memory_store/memory_recall/memory_delete tools.\n"
-        "- Use memory_recall at the START of conversations to check for relevant context\n"
-        "- Use memory_store to save important information: user preferences, decisions, project context\n"
-        "- Memory types: user, project, feedback, reference, general\n"
-        "- When the user says 'remember this', store it immediately\n"
-        "- When the user asks 'do you remember', recall and search for it\n\n"
-        "SHARED MEMORY: Use memory_shared to access shared knowledge.\n"
-        "- scope='global' (default): main agent's memory — infrastructure, user prefs, project-wide decisions\n"
-        "- scope='team': team head's memory — team-level knowledge and decisions\n"
-        "- All agents can read from shared memory; store shared facts there too\n"
-        "- Check shared memory when your own memory doesn't have what you need\n\n"
+        "MEMORY: You have long-term memory via mempalace_query and save_chat_to_memory.\n"
+        "- Use mempalace_query to recall past conversations, decisions, user preferences, or previously discussed topics\n"
+        "- When the user asks 'do you remember' or references something from the past, search with mempalace_query\n"
+        "- When the user says 'remember this' or wants to save the conversation, call save_chat_to_memory\n\n"
     )
     # MemPalace migration: built-in memory summary injection removed.
     # Agents now query mempalace MCP tools (mempalace_status, mempalace_search,

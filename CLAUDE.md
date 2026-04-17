@@ -337,6 +337,8 @@ Brain is now OpenAI-wire only. All providers (Bifrost, Kilo, future additions) m
 - SQLite connections use thread-local pools (`_db_conn`, `_sched_conn`) to prevent handle leaks
 - All ChatDB methods wrapped with `@_db_safe` — SQLite errors don't crash the server
 - SSE keepalive comments sent every 5s to prevent browser timeout during tool execution
+- `ConnectionMonitor` in web UI polls `/v1/status` every 10s, shows green/red dot in status bar
+- Client proxy SSE line buffering: incomplete lines carried across TCP chunks to prevent data loss
 - `AbortController` in web UI ensures proper fetch cleanup between messages
 - Tool call dedup tracker prevents infinite loops (2 identical calls = hard abort)
 - Scheduled tasks have configurable timeout (default 5 min) via watchdog thread
@@ -494,7 +496,7 @@ Code graph: code_graph_build, code_graph_query, code_graph_impact (AST-based, 14
 Shell: execute_command (non-interactive only, see tools.md for banned commands)
 Web: web_fetch, exa_search
 Gmail: gmail_inbox, gmail_read, gmail_search, gmail_send, gmail_reply
-Memory: mempalace_query (direct in-process, no MCP — see MemPalace section below)
+Memory: mempalace_query, save_chat_to_memory (direct in-process, no MCP — see MemPalace section below)
 Agents: delegate_task, task_status, task_cancel
 Skills: use_skill
 Git: git_command (status, diff, log, branch, commit, stash, blame, show, tag, remote)
@@ -562,15 +564,29 @@ palace, and two background daemons keep it up to date automatically.
 - **Hall** — intra-wing room graph edge (read-only, used by MemPalace navigation)
 - **Tunnel** — cross-wing room connection (read-only, future: automatic tunneling for cross-user/team sharing)
 
-**Per-user memory isolation** (v7.5.0):
-- Chat sync writes drawers to `wing=user_id/agent_id` (e.g. `17368b/main`)
+**Per-user memory isolation** (v7.5.0, fixed v7.7.0):
+- Chat sync writes drawers to `wing=user_id--agent_id` (e.g. `17368b--main`)
+  - Note: `--` separator (not `/`) because MemPalace `sanitize_name` rejects `/`
 - Sessions without a user_id (pre-auth, system tasks) use bare `agent_id`
 - `mempalace_query` auto-scopes: bare agent names (e.g. `"main"`) are prefixed with
   `_thread_local.current_user_id`; unfiltered searches post-filter to exclude other
-  users' per-user wings while keeping shared wings (no `/`) visible
+  users' per-user wings while keeping shared wings (no `--`) visible
 - Shared wings like `brain_code` (mined source tree) remain globally accessible
 - `user_id` propagated via `_thread_local.current_user_id` in chat workers and delegate tasks
+- `save_session` uses `ON CONFLICT` to preserve `user_id` when not explicitly provided
 - Future: automatic tunneling for cross-user/team/project memory sharing
+
+**Chat sync classifier gate** (v7.7.0):
+- LLM-based content gate classifies message pairs before filing to MemPalace
+- Categories: `fact`, `preference`, `decision`, `reference` (filed) vs `generic`, `refusal`, `chitchat` (skipped)
+- Configurable classifier model, min_turns threshold, and file categories
+- `classify_chat_for_memory()` in `claude_cli.py`: non-streaming, `max_tokens: 20`, fail-open
+- Three-state per-session memory mode: `0=off`, `1=on` (save all), `2=auto` (classifier decides)
+- `save_chat_to_memory` tool: model can explicitly enable saving when user asks "remember this"
+- Default mode for new sessions from `classifier.default_mode` in config
+- Config: `mempalace.chat_sync.classifier` block with `enabled`, `model`, `min_turns`, `default_mode`, `categories_to_file`
+- API: `GET/POST /v1/mempalace/classifier`
+- UI: Settings → MemPalace → Chat Sync Classifier section; per-chat toggle button in composer toolbar
 
 **Session delete cleanup** (v7.5.0):
 - `delete_session` purges MemPalace drawers + closets whose `source_file` starts with
