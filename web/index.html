@@ -3108,6 +3108,15 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 </script>
 </head>
 <body>
+<!-- Drag & drop overlay -->
+<div id="drop-overlay" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.55);backdrop-filter:blur(4px);pointer-events:none;align-items:center;justify-content:center">
+  <div style="background:var(--bg-100,#252525);border:2px dashed var(--accent-500,#e87949);border-radius:20px;padding:48px 64px;text-align:center;pointer-events:none">
+    <div style="font-size:48px;margin-bottom:12px">&#128206;</div>
+    <div style="font-size:18px;font-weight:600;color:var(--text-100,#e5e5e5)">Drop files to attach</div>
+    <div style="font-size:13px;color:var(--text-400,#888);margin-top:4px">Images, documents, code files</div>
+  </div>
+</div>
+
 <!-- ═══════════════════════════════════════════════════════════
      AUTH OVERLAY (login / register)
      ═══════════════════════════════════════════════════════════ -->
@@ -5240,6 +5249,12 @@ async function sendMessage() {
           scrollToBottom();
           updateStreamingUI(false);
           updateStatusBar();
+        }
+
+        // Desktop notification when window not focused
+        if (!document.hasFocus() && window.electronAPI?.showNotification) {
+          const preview = (d.text || chat.streamingText || '').slice(0, 120).replace(/\n/g, ' ');
+          window.electronAPI.showNotification({ title: `${chat.agent || 'Brain Agent'} responded`, body: preview || 'Response complete' });
         }
 
         // Reload sessions for sidebar
@@ -10129,6 +10144,62 @@ function removePendingFile(idx) {
   updateSendButton();
 }
 
+/* ── Drag & Drop ─────────────────────────────────────────────── */
+(function initDragDrop() {
+  let dragCounter = 0;
+  const overlay = document.getElementById('drop-overlay');
+  if (!overlay) return;
+
+  document.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    if (!e.dataTransfer?.types?.includes('Files')) return;
+    dragCounter++;
+    overlay.style.display = 'flex';
+  });
+  document.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    dragCounter--;
+    if (dragCounter <= 0) { dragCounter = 0; overlay.style.display = 'none'; }
+  });
+  document.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  });
+  document.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    dragCounter = 0;
+    overlay.style.display = 'none';
+    const files = e.dataTransfer?.files;
+    if (!files?.length) return;
+
+    for (const file of files) {
+      if (window.electronAPI?.readDroppedFile && file.path) {
+        const result = await window.electronAPI.readDroppedFile(file.path);
+        if (result && !result.error) {
+          state._pendingFiles.push(result);
+          renderFilePreviews();
+          updateSendButton();
+        }
+      } else {
+        const isImage = file.type.startsWith('image/');
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          state._pendingFiles.push({
+            name: file.name,
+            type: file.type || 'application/octet-stream',
+            data: ev.target.result.split(',')[1],
+            encoding: 'base64',
+            preview: isImage ? ev.target.result : null,
+          });
+          renderFilePreviews();
+          updateSendButton();
+        };
+        reader.readAsDataURL(file);
+      }
+    }
+  });
+})();
+
 function fileTypeIcon(name) {
   const ext = name.split('.').pop()?.toLowerCase();
   const icons = {
@@ -11191,27 +11262,47 @@ document.addEventListener('keydown', function(e) {
       hideSlashPopup();
     }
   });
-  // Paste handler for images
-  el.addEventListener('paste', function(e) {
+  // Paste handler for images (Electron native clipboard + browser fallback)
+  el.addEventListener('paste', async function(e) {
+    let handled = false;
+    // Browser clipboard items (works for Cmd+V of copied images in browser)
     const items = e.clipboardData?.items;
-    if (!items) return;
-    for (const item of items) {
-      if (item.type.startsWith('image/')) {
+    if (items) {
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          e.preventDefault();
+          handled = true;
+          const blob = item.getAsFile();
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            state._pendingFiles.push({
+              name: 'pasted-image',
+              type: item.type,
+              data: ev.target.result.split(',')[1],
+              encoding: 'base64',
+              preview: ev.target.result,
+            });
+            renderFilePreviews();
+            updateSendButton();
+          };
+          reader.readAsDataURL(blob);
+        }
+      }
+    }
+    // Electron native clipboard fallback (catches macOS screenshots etc.)
+    if (!handled && window.electronAPI?.clipboardReadImage) {
+      const img = await window.electronAPI.clipboardReadImage();
+      if (img) {
         e.preventDefault();
-        const blob = item.getAsFile();
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-          state._pendingFiles.push({
-            name: 'pasted-image',
-            type: item.type,
-            data: ev.target.result.split(',')[1],
-            encoding: 'base64',
-            preview: ev.target.result,
-          });
-          renderFilePreviews();
-          updateSendButton();
-        };
-        reader.readAsDataURL(blob);
+        state._pendingFiles.push({
+          name: 'pasted-image',
+          type: 'image/png',
+          data: img.data,
+          encoding: 'base64',
+          preview: `data:image/png;base64,${img.data}`,
+        });
+        renderFilePreviews();
+        updateSendButton();
       }
     }
   });

@@ -26,6 +26,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('proxy-fetch-stream-error');
   },
 
+  // Notifications
+  showNotification: (opts) => ipcRenderer.invoke('show-notification', opts),
+
+  // Auto-launch
+  getAutoLaunch: () => ipcRenderer.invoke('get-auto-launch'),
+  setAutoLaunch: (enabled) => ipcRenderer.invoke('set-auto-launch', enabled),
+
+  // Clipboard image
+  clipboardReadImage: () => ipcRenderer.invoke('clipboard-read-image'),
+
+  // File drag & drop (read native file path)
+  readDroppedFile: (filePath) => ipcRenderer.invoke('read-dropped-file', filePath),
+
+  // Menu events
+  onNewChat: (cb) => ipcRenderer.on('menu-new-chat', () => cb()),
+
   // Platform info
   platform: process.platform,
 });

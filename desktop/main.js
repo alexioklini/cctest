@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, shell, autoUpdater, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, Tray, shell, autoUpdater, dialog, globalShortcut, Notification, nativeImage, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -6,6 +6,7 @@ const https = require('https');
 const { URL } = require('url');
 
 let mainWindow;
+let tray = null;
 
 // ─── Persistent settings ────────────────────────────────────────────
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
@@ -67,6 +68,13 @@ function createWindow() {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
+  });
+
+  mainWindow.on('close', (e) => {
+    if (!app.isQuitting) {
+      e.preventDefault();
+      mainWindow.hide();
+    }
   });
 
   buildMenu();
@@ -472,8 +480,126 @@ function setupAutoUpdater() {
   setInterval(() => autoUpdater.checkForUpdates(), 4 * 60 * 60 * 1000);
 }
 
+// ─── System Tray ────────────────────────────────────────────────────
+function createTray() {
+  const iconPath = path.join(__dirname, 'icons', process.platform === 'win32' ? 'icon.ico' : 'icon.png');
+  let trayIcon;
+  try {
+    trayIcon = nativeImage.createFromPath(iconPath).resize({ width: 22, height: 22 });
+    trayIcon.setTemplateImage(true);
+  } catch {
+    trayIcon = nativeImage.createEmpty();
+  }
+  tray = new Tray(trayIcon);
+  tray.setToolTip('Brain Agent');
+
+  const contextMenu = Menu.buildFromTemplate([
+    { label: 'Show Window', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
+    { label: 'New Chat', click: () => { mainWindow?.show(); mainWindow?.focus(); mainWindow?.webContents.send('menu-new-chat'); } },
+    { type: 'separator' },
+    { label: 'Change Server...', click: () => { mainWindow?.show(); showConnectScreen(); } },
+    { type: 'separator' },
+    { label: 'Quit', click: () => { app.isQuitting = true; app.quit(); } },
+  ]);
+  tray.setContextMenu(contextMenu);
+  tray.on('click', () => {
+    if (mainWindow?.isVisible()) {
+      mainWindow.focus();
+    } else {
+      mainWindow?.show();
+      mainWindow?.focus();
+    }
+  });
+}
+
+// ─── Global Shortcut ────────────────────────────────────────────────
+function registerGlobalShortcut() {
+  const shortcut = process.platform === 'darwin' ? 'CommandOrControl+Shift+B' : 'CommandOrControl+Shift+B';
+  globalShortcut.register(shortcut, () => {
+    if (mainWindow) {
+      if (mainWindow.isVisible() && mainWindow.isFocused()) {
+        mainWindow.hide();
+      } else {
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    }
+  });
+}
+
+// ─── Notifications ──────────────────────────────────────────────────
+ipcMain.handle('show-notification', (_event, { title, body, silent }) => {
+  if (!Notification.isSupported()) return false;
+  const notif = new Notification({
+    title: title || 'Brain Agent',
+    body: body || '',
+    silent: silent ?? false,
+    icon: path.join(__dirname, 'icons', 'icon.png'),
+  });
+  notif.on('click', () => {
+    mainWindow?.show();
+    mainWindow?.focus();
+  });
+  notif.show();
+  return true;
+});
+
+// ─── Auto-Launch on Login ───────────────────────────────────────────
+ipcMain.handle('get-auto-launch', () => {
+  return app.getLoginItemSettings().openAtLogin;
+});
+
+ipcMain.handle('set-auto-launch', (_event, enabled) => {
+  app.setLoginItemSettings({ openAtLogin: enabled });
+  return app.getLoginItemSettings().openAtLogin;
+});
+
+// ─── Clipboard Image Paste (native) ────────────────────────────────
+ipcMain.handle('clipboard-read-image', () => {
+  const img = clipboard.readImage();
+  if (img.isEmpty()) return null;
+  const png = img.toPNG();
+  return { data: png.toString('base64'), type: 'image/png', width: img.getSize().width, height: img.getSize().height };
+});
+
+// ─── File Drag & Drop (resolve native paths) ───────────────────────
+ipcMain.handle('read-dropped-file', async (_event, filePath) => {
+  try {
+    const stat = fs.statSync(filePath);
+    if (stat.size > 50 * 1024 * 1024) return { error: 'File too large (>50MB)' };
+    const data = fs.readFileSync(filePath);
+    const name = path.basename(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeMap = {
+      '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+      '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp',
+      '.pdf': 'application/pdf', '.doc': 'application/msword',
+      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      '.csv': 'text/csv', '.txt': 'text/plain', '.md': 'text/markdown',
+      '.json': 'application/json', '.xml': 'application/xml',
+      '.py': 'text/x-python', '.js': 'text/javascript', '.ts': 'text/typescript',
+      '.html': 'text/html', '.css': 'text/css',
+    };
+    const type = mimeMap[ext] || 'application/octet-stream';
+    const isImage = type.startsWith('image/');
+    return {
+      name,
+      type,
+      data: data.toString('base64'),
+      encoding: 'base64',
+      preview: isImage ? `data:${type};base64,${data.toString('base64')}` : null,
+    };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
 app.whenReady().then(() => {
   createWindow();
+  createTray();
+  registerGlobalShortcut();
   setupAutoUpdater();
 });
 
@@ -481,6 +607,15 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
+app.on('before-quit', () => {
+  app.isQuitting = true;
+});
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+});
+
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  else mainWindow?.show();
 });
