@@ -2393,6 +2393,22 @@ def tool_python_exec(args: dict) -> str:
         output = stdout.decode("utf-8", errors="replace")
         if stderr:
             err_text = stderr.decode("utf-8", errors="replace")
+            # Clean tracebacks: replace script path, remove echoed source lines
+            err_text = err_text.replace(script_path, "<python_exec>")
+            err_lines = err_text.splitlines()
+            cleaned = []
+            skip_next = False
+            for line in err_lines:
+                if '<python_exec>' in line:
+                    cleaned.append(line)
+                    skip_next = True
+                elif skip_next and line.startswith('    ') and not line.strip().startswith('File '):
+                    skip_next = False
+                    continue
+                else:
+                    skip_next = False
+                    cleaned.append(line)
+            err_text = "\n".join(cleaned)
             output += ("\n--- stderr ---\n" + err_text) if output else err_text
         if len(output) > max_output:
             output = output[:max_output] + "\n... (truncated)"
@@ -2425,14 +2441,13 @@ def tool_python_exec(args: dict) -> str:
                     af.write(output)
                 _after_file_write(artifact_path, "created", agent_id)
                 result["artifacts"] = [os.path.basename(artifact_path)]
-                # Replace full output with preview to save tokens
+                # Replace full output with reference only — no data preview
                 lines = output.splitlines()
-                if len(lines) > 20:
-                    result["output"] = (
-                        "\n".join(lines[:10])
-                        + f"\n\n... ({len(lines)} lines total — full output saved as {os.path.basename(artifact_path)}) ...\n\n"
-                        + "\n".join(lines[-5:])
-                    )
+                result["output"] = (
+                    f"Output saved as artifact {os.path.basename(artifact_path)} "
+                    f"({len(lines)} lines, {len(output):,} chars). "
+                    f"The user can view it directly. Summarize what was computed, do NOT repeat the data."
+                )
             except Exception:
                 pass
 
@@ -15404,7 +15419,10 @@ _MICROCOMPACT_TOOLS = {
     "read_file", "execute_command", "search_files", "list_directory",
     "web_fetch", "exa_search", "read_document", "code_graph_query",
     "write_file", "edit_file",  # write results are just confirmations
+    "python_exec",
 }
+# Tool call arguments that should be truncated in old assistant messages (model already knows what it wrote)
+_COMPACT_TOOL_ARGS = {"python_exec": "code", "execute_command": "command"}
 # Tools whose results are context-critical and must never be cleared
 _MICROCOMPACT_EXEMPT = {
     "memory_recall", "memory_shared", "delegate_task", "task_status",
@@ -15466,6 +15484,31 @@ def _microcompact(messages: list[dict], keep_recent: int = 5) -> tuple[list[dict
                         tokens_freed += len(content) // 4
                         block["content"] = marker
         cleared_indices.add(idx)
+
+    # Also truncate large tool call arguments in old assistant messages
+    # (the model already knows what code it wrote — no need to re-send it)
+    for idx in cleared_indices:
+        # Find the assistant message that owns this tool result
+        tool_call_id = messages[idx].get("tool_call_id")
+        if not tool_call_id:
+            continue
+        for i in range(idx - 1, -1, -1):
+            msg = messages[i]
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                for tc in msg["tool_calls"]:
+                    if tc.get("id") == tool_call_id:
+                        fn_name = tc.get("function", {}).get("name", "")
+                        arg_key = _COMPACT_TOOL_ARGS.get(fn_name)
+                        if arg_key:
+                            try:
+                                args = json.loads(tc["function"]["arguments"])
+                                if arg_key in args and len(str(args[arg_key])) > 50:
+                                    tokens_freed += len(str(args[arg_key])) // 4
+                                    args[arg_key] = f"[{len(str(args[arg_key]))} chars cleared]"
+                                    tc["function"]["arguments"] = json.dumps(args)
+                            except (json.JSONDecodeError, KeyError):
+                                pass
+                break
 
     return messages, tokens_freed
 
@@ -16255,6 +16298,21 @@ def _handle_openai_response(response, payload, messages, model, api_key,
         batch_calls.append({"id": tc["id"], "name": tc["function"]["name"], "input": args})
 
     batch_results = _execute_tools_batch(batch_calls, event_callback=event_callback)
+
+    # Immediately compact large tool call arguments (e.g. python_exec code)
+    # The model already knows what it wrote — no need to re-send on the next turn
+    for tc in assistant_msg.get("tool_calls", []):
+        fn_name = tc.get("function", {}).get("name", "")
+        arg_key = _COMPACT_TOOL_ARGS.get(fn_name)
+        if arg_key:
+            try:
+                args = json.loads(tc["function"]["arguments"])
+                val = str(args.get(arg_key, ""))
+                if len(val) > 50:
+                    args[arg_key] = f"[{len(val)} chars — see tool result]"
+                    tc["function"]["arguments"] = json.dumps(args)
+            except (json.JSONDecodeError, KeyError):
+                pass
 
     for br in batch_results:
         sanitized = _sanitize_tool_result(

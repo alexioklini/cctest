@@ -5952,7 +5952,8 @@ function renderToolCall(msg, idx) {
   const icon = hasResult ? `<span class="tool-icon" style="color:var(--success)">&#10003;</span>` : `<span class="tool-icon tool-icon-spin">&#9881;</span>`;
   const timing = duration ? `<span class="tool-timing">${duration}s</span>` : '';
 
-  let bodyHtml = renderToolArgsTable(args);
+  const displayArgs = msg.name === 'python_exec' ? Object.fromEntries(Object.entries(args).filter(([k]) => k !== 'code')) : args;
+  let bodyHtml = renderToolArgsTable(displayArgs);
   if (hasResult) {
     const resultStr = typeof resultMsg.result === 'string' ? resultMsg.result : JSON.stringify(resultMsg.result, null, 2);
     const truncated = resultStr.length > 800 ? resultStr.substring(0, 800) + '...' : resultStr;
