@@ -44,7 +44,8 @@
       "git",
       "scheduler",
       "skills",
-      "nodes"
+      "nodes",
+      "code_exec"
     ],
     "include_tools_guide": true,
     "include_memory_summary": true,

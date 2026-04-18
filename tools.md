@@ -40,5 +40,55 @@ When older messages get summarized, use these to access originals:
 ## write_file — Artifacts
 When creating files for the user, use a relative path (e.g., `report.xlsx`). The system auto-places it in your artifacts folder.
 
+## python_exec — Code Execution
+
+Runs Python in a subprocess. The working directory is your artifacts folder — files you write there become user-visible artifacts.
+
+### When to use instead of multiple tool calls
+Each tool round re-sends the full conversation to the LLM. One `python_exec` replacing 3+ tool calls saves significant tokens.
+
+**Prefer python_exec for:**
+- Multi-file reads: `open()` several files, extract what you need, print a summary
+- Search + aggregate: `os.walk` + regex across files, count/filter/group results
+- Data processing: parse CSV/JSON, compute stats, transform data
+- Bulk file operations: rename, copy, filter files by pattern
+- Document processing (see below)
+
+**Keep using native tools for:**
+- Single file read/write (tool is simpler, no overhead)
+- Git operations (`git_command`)
+- Web/API calls (`web_fetch`, `exa_search`)
+- Memory, delegation, scheduling (Brain-internal)
+
+### Document processing
+These packages are available — use them directly in python_exec instead of chaining read_document/write_document/edit_document:
+
+| Package | Use for |
+|---|---|
+| `docx` (python-docx) | Read/write/edit DOCX — paragraphs, tables, styles, headers |
+| `openpyxl` | Read/write/edit XLSX — cells, sheets, formulas, charts |
+| `pptx` (python-pptx) | Read/write/edit PPTX — slides, shapes, text, images |
+| `reportlab` | Generate PDFs from scratch (layouts, tables, graphics) |
+| `PIL` (Pillow) | Image processing — resize, crop, convert, annotate |
+| `csv` | CSV read/write (stdlib) |
+
+Example — read a DOCX table and create a summary CSV:
+```python
+from docx import Document
+import csv
+doc = Document('/path/to/report.docx')
+with open('summary.csv', 'w', newline='') as f:
+    w = csv.writer(f)
+    for table in doc.tables:
+        for row in table.rows:
+            w.writerow([cell.text for cell in row.cells])
+print(f"Extracted {len(doc.tables)} tables to summary.csv")
+```
+
+### Output rules
+- **Large results**: write to a file (becomes an artifact), print only a short summary
+- **Small results** (<20 lines): print directly to stdout
+- The system auto-saves stdout >1K chars as an artifact, but writing files yourself gives you control over filename and format
+
 ## exa_search
 Always prefer over any server-side search tools (e.g., duckduckgo).

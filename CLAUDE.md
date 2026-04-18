@@ -337,6 +337,33 @@ Global `cost_limits.max_session_cost_usd` in `config.json`, editable via Setting
 - UI **Measure** button in Tokens tab fetches the breakdown on demand
 - Per-tool checkboxes in the MCP rows write `token_config.mcp_tool_filter` directly via **Save selection as filter**
 
+### Python Code Execution (python_exec)
+
+Sandboxed Python execution environment. Agents opt in via `"code_exec"` in `token_config.tool_groups`.
+
+- **Subprocess isolation**: code runs in a child process (`sys.executable`), killed on timeout
+- **Artifact folder as cwd**: working directory is `agents/<name>/artifacts/<session_folder>/` — files written by scripts auto-register as artifacts via `_after_file_write()`
+- **Auto-artifact fallback**: if stdout >1K chars and no files were written, output is auto-saved as `output.txt` artifact with head+tail preview replacing full output in the tool result (token savings)
+- **Session-scoped persistence**: same working dir across calls in a session, so scripts can build on previous results
+- **Config** in `tools_config.json` → `python_exec` block:
+  - `timeout` (default 30): per-execution timeout in seconds
+  - `max_output_chars` (default 50000): stdout truncation limit
+  - `venv_path` (string): path to venv site-packages for additional packages
+- **Available packages**: docx (python-docx), openpyxl, pptx (python-pptx), reportlab, PIL (Pillow), csv (stdlib)
+- **Middleware hint** (`_middleware_pyexec_hint`): when 3+ consolidatable tool calls (read_file, search_files, list_directory, read_document, write_file, edit_file, write_document, edit_document) are detected in a turn, injects a one-shot user-role hint suggesting python_exec consolidation. Only fires if agent has `code_exec` enabled. Resets per chat request.
+- **Tool description**: instructs model to write large results to files (artifacts) and print only summaries to stdout
+- **Web UI**: `toolDescribe` shows "Running Python (N lines)" for python_exec calls
+
+### Parallel Tool Calls
+
+Models can emit multiple tool calls in a single response. Server-side execution handles parallelism.
+
+- **API parameter**: `parallel_tool_calls: true` added to payload when tools are present (per-model config)
+- **Per-model toggle**: `parallel_tool_calls` field in models config, default `true`. Unchecking in Models tab stores `false`
+- **Execution**: `_execute_tools_batch()` partitions tool calls into batches — consecutive concurrent-safe tools run in `ThreadPoolExecutor`, unsafe tools run sequentially
+- **Concurrent-safe tools** (`_CONCURRENT_SAFE_TOOLS`): read_file, list_directory, search_files, read_document, exa_search, web_fetch, code_graph_query, schedule_list, schedule_history, list_nodes, task_status, context_search, context_detail, context_recall, git_command (read-only subcommands only)
+- **Web UI**: "Parallel Tool Calls" checkbox in each model's detail panel (Models tab)
+
 ### OpenAI-Only Wire Format (v7.2.0)
 
 Brain is now OpenAI-wire only. All providers (Bifrost, Kilo, future additions) must be OpenAI-compatible.
@@ -511,6 +538,7 @@ File ops: read_file, write_file, edit_file, list_directory, search_files
 Documents: read_document, write_document, edit_document (PDF/DOCX/XLSX/PPTX/CSV/images)
 Code graph: code_graph_build, code_graph_query, code_graph_impact (AST-based, 14 languages)
 Shell: execute_command (non-interactive only, see tools.md for banned commands)
+Code exec: python_exec (sandboxed subprocess, artifact folder as cwd, auto-artifact for large output)
 Web: web_fetch, exa_search
 Gmail: gmail_inbox, gmail_read, gmail_search, gmail_send, gmail_reply
 Memory: mempalace_query, save_chat_to_memory (direct in-process, no MCP — see MemPalace section below)

@@ -5886,6 +5886,7 @@ function toolDescribe(name, args) {
     list_directory: () => `Listing ${a.path || a.directory || 'directory'}`,
     search_files: () => `Searching files for "${a.query || a.pattern || '...'}"`,
     execute_command: () => `Running \`${(a.command || '').substring(0, 60)}${(a.command || '').length > 60 ? '...' : ''}\``,
+    python_exec: () => `Running Python (${(a.code || '').split('\n').length} lines)`,
     web_fetch: () => { try { return `Fetching ${a.url ? new URL(a.url).hostname : 'web page'}`; } catch(e) { return `Fetching ${a.url || 'web page'}`; } },
     exa_search: () => `Searching the web for "${a.query || '...'}"`,
     gmail_inbox: () => 'Checking inbox',
@@ -7261,6 +7262,7 @@ async function switchGeneralTab(tab, btn) {
               <div style="border-left:1px solid var(--border-100);margin:0 -2px"></div>
               <div style="border-left:1px solid var(--border-100);margin:0 -2px"></div>
               ${mdlInput('mdl-caveman-system','Caveman System',cfg.caveman_system||0,{type:'number',min:0,max:3,ph:'0'})}
+              <div style="display:flex;align-items:center;gap:6px;padding-top:14px"><input type="checkbox" class="mdl-parallel-tools" ${cfg.parallel_tool_calls !== false ? 'checked' : ''} style="margin:0"><label class="form-label" style="font-size:11px;margin:0;cursor:pointer">Parallel Tool Calls</label></div>
               <div style="grid-column:1/-1"><label class="form-label" style="font-size:11px">Raw Formats <span style="color:var(--text-400);font-weight:400">(MIME patterns the model handles natively as multimodal)</span></label><input class="form-input mdl-raw-formats" value="${esc((cfg.raw_formats||[]).join(', '))}" placeholder="e.g. image/*, application/pdf" style="font-size:12px"></div>
             </div>
           </div>
@@ -8215,6 +8217,9 @@ async function saveModelsConfig() {
       // Caveman system level (per-model system prompt compression)
       const cavSys = readNum(row, 'mdl-caveman-system');
       if (cavSys) mc[mid].caveman_system = cavSys; else delete mc[mid].caveman_system;
+      // Parallel tool calls
+      const ptc = row.querySelector('.mdl-parallel-tools')?.checked;
+      if (ptc === false) mc[mid].parallel_tool_calls = false; else delete mc[mid].parallel_tool_calls;
       // Raw formats
       const rawFmt = row.querySelector('.mdl-raw-formats')?.value?.trim();
       if (rawFmt) {

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "7.8.0"
+VERSION = "7.9.0"
 VERSION_DATE = "2026-04-18"
 CHANGELOG = [
+    ("7.9.0", "2026-04-18", "Python code execution environment + parallel tool calls. New python_exec tool runs Python in a sandboxed subprocess with the session's artifact folder as working directory — files written by scripts auto-register as artifacts. Large stdout (>1K chars) auto-saved as artifact with head+tail preview replacing full output in context (token savings). New code_exec tool group — agents opt in via token_config.tool_groups. Configurable timeout, max output, venv path in tools_config.json. Middleware _middleware_pyexec_hint detects 3+ chained file/doc tool calls and injects a one-shot hint to consolidate into python_exec. tools.md updated with python_exec guidance: when to prefer over tool chains, available packages (docx, openpyxl, pptx, reportlab, PIL, csv), document processing examples, output rules. Parallel tool calls: parallel_tool_calls parameter now sent in API payload (default true), per-model toggle in Models tab. Web UI toolDescribe mapping for python_exec."),
     ("7.8.0", "2026-04-18", "Built-in tool group deferral — rarely-used tool groups (email, documents, code_graph, scheduler) are excluded from LLM requests by default and loaded on-demand when the model calls tool_search. Saves ~1,760 tokens per LLM call (~26% of tool definitions). System prompt tells the model which groups are deferred so it knows to discover them when needed. Configurable per-agent via deferred_tool_groups in token_config. Web UI Tokens tab adds per-group 'defer' checkboxes with amber styling, DEFERRED badges in the tool breakdown, and a savings summary banner showing effective token cost. tool_search added to the core tool group to ensure it's always available when group filtering is active. Save Token Config now merges into existing config instead of overwriting (preserves mcp_tool_filter and other fields)."),
     ("7.7.1", "2026-04-17", "Split caveman mode into two independent settings. System-level caveman (per-model in Models tab config, 0-3) compresses the system prompt itself — prepends a compression prefix and applies rule-based text reduction (strip whitespace, remove filler words, collapse markdown, remove examples at higher levels). Chat-level caveman (per-session toggle in composer, 0-3) controls response style as before. User's last chat caveman level is persisted to localStorage and auto-applied to new sessions. Both modes compose independently: system-level sets baseline prompt compression, chat-level appends response style instruction."),
     ("7.7.0", "2026-04-17", "MemPalace reliability + smart memory gating. Fixed client proxy SSE line-splitting that silently dropped tool calls in proxy mode (TCP chunk boundaries splitting data: lines). Fixed save_session wiping user_id on every message (INSERT OR REPLACE → ON CONFLICT preserving existing values). Fixed per-user wing separator (/ → -- to comply with MemPalace sanitize_name). System prompt updated to reference mempalace_query instead of old memory_store tools. New save_chat_to_memory tool lets the model explicitly save a conversation when the user asks. New LLM-based chat sync classifier gate — configurable model classifies each message pair as fact/preference/decision/reference (file) or generic/refusal/chitchat (skip) before filing to MemPalace. Configurable min_turns threshold skips short throwaway chats. Three-state memory toggle per session: on (green, save all), auto (amber, classifier decides), off (grey, skip). Default mode for new chats configurable in Settings → MemPalace. Connection health monitor with status bar indicator (green/red dot, 10s polling). Status bar visible on all views. Retry on transient MemPalace query errors. Settings UI for classifier model, min turns, file categories, and default mode."),
@@ -351,6 +352,27 @@ TOOL_DEFINITIONS = [
                 "node": {"type": "string", "description": "Remote node name or 'tag:NAME' to execute on a remote node instead of locally"},
             },
             "required": ["command"],
+        },
+    },
+    {
+        "name": "python_exec",
+        "description": (
+            "Execute Python code in a sandboxed subprocess. "
+            "Use for computation, data transformation, file processing, math, JSON/CSV parsing, "
+            "or any task that benefits from writing code instead of chaining multiple tool calls. "
+            "Standard library is fully available. Packages from the configured venv are available if set. "
+            "The working directory is the session's artifact folder — any files you write there "
+            "(e.g. open('results.txt','w')) become viewable artifacts for the user. "
+            "For large results, WRITE them to a file instead of printing to stdout. "
+            "Print only a short summary to stdout. Stdout is returned as the tool result."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "Python code to execute. Use print() for output. Write large results to files instead of printing."},
+                "timeout": {"type": "integer", "description": "Timeout in seconds (default: from config, typically 30)"},
+            },
+            "required": ["code"],
         },
     },
     {
@@ -979,6 +1001,7 @@ TOOL_GROUPS = {
     "mcp": {"mcp_connect", "mcp_disconnect", "mcp_servers"},
     "skills": {"use_skill"},
     "nodes": {"list_nodes"},
+    "code_exec": {"python_exec"},
 }
 
 # Default tool groups included for all agents (if no explicit config)
@@ -2308,6 +2331,116 @@ def tool_execute_command(args: dict) -> str:
         return _err(f"execute_command: {e}")
 
 
+def tool_python_exec(args: dict) -> str:
+    """Execute Python code in an isolated subprocess with artifact folder as cwd."""
+    code = args.get("code", "")
+    if not code.strip():
+        return _err("python_exec: no code provided")
+
+    _cfg = get_tool_config().get("python_exec", {})
+    timeout = args.get("timeout", _cfg.get("timeout", 30))
+    max_output = _cfg.get("max_output_chars", 50000)
+    venv_path = _cfg.get("venv_path", "")
+
+    # Working dir = session artifact folder so files written by code become artifacts
+    session_id = getattr(_thread_local, 'current_session_id', None)
+    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    if session_id and agent:
+        folder = _get_artifact_session_folder(session_id)
+        work_dir = os.path.join(AGENTS_DIR, agent.agent_id, "artifacts", folder)
+    else:
+        import tempfile
+        work_dir = os.path.join(tempfile.gettempdir(), "brain-pyexec")
+    os.makedirs(work_dir, exist_ok=True)
+
+    # Snapshot existing files before execution
+    pre_files = set(os.listdir(work_dir))
+
+    # Write code to temp file (avoids shell escaping issues with -c)
+    script_path = os.path.join(work_dir, "_exec.py")
+    with open(script_path, "w") as f:
+        f.write(code)
+
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONUNBUFFERED"] = "1"
+    if venv_path and os.path.isdir(venv_path):
+        env["PYTHONPATH"] = venv_path + ((":" + env.get("PYTHONPATH", "")) if env.get("PYTHONPATH") else "")
+
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, script_path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL, cwd=work_dir, env=env,
+            start_new_session=True,
+        )
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            import signal as sig
+            try:
+                os.killpg(proc.pid, sig.SIGKILL)
+            except OSError:
+                proc.kill()
+            stdout, stderr = proc.communicate(timeout=5)
+            output = stdout.decode("utf-8", errors="replace")
+            if stderr:
+                output += "\n--- stderr ---\n" + stderr.decode("utf-8", errors="replace")
+            if len(output) > max_output:
+                output = output[:max_output] + "\n... (truncated)"
+            return _err(f"python_exec: timed out after {timeout}s\n{output}")
+
+        output = stdout.decode("utf-8", errors="replace")
+        if stderr:
+            err_text = stderr.decode("utf-8", errors="replace")
+            output += ("\n--- stderr ---\n" + err_text) if output else err_text
+        if len(output) > max_output:
+            output = output[:max_output] + "\n... (truncated)"
+
+        result = {"exit_code": proc.returncode, "output": output}
+
+        # Register any new files as artifacts
+        post_files = set(os.listdir(work_dir))
+        new_files = sorted(post_files - pre_files - {"_exec.py"})
+        agent_id = agent.agent_id if agent else "main"
+        if new_files and agent:
+            created = []
+            for fname in new_files:
+                fpath = os.path.join(work_dir, fname)
+                if os.path.isfile(fpath):
+                    _after_file_write(fpath, "created", agent_id)
+                    created.append(fname)
+            if created:
+                result["artifacts"] = created
+
+        # Fallback: if model printed large output instead of writing a file, auto-save as artifact
+        if len(output) > 1000 and proc.returncode == 0 and not new_files and agent:
+            try:
+                artifact_path = os.path.join(work_dir, "output.txt")
+                counter = 1
+                while os.path.exists(artifact_path):
+                    artifact_path = os.path.join(work_dir, f"output_{counter}.txt")
+                    counter += 1
+                with open(artifact_path, "w") as af:
+                    af.write(output)
+                _after_file_write(artifact_path, "created", agent_id)
+                result["artifacts"] = [os.path.basename(artifact_path)]
+                # Replace full output with preview to save tokens
+                lines = output.splitlines()
+                if len(lines) > 20:
+                    result["output"] = (
+                        "\n".join(lines[:10])
+                        + f"\n\n... ({len(lines)} lines total — full output saved as {os.path.basename(artifact_path)}) ...\n\n"
+                        + "\n".join(lines[-5:])
+                    )
+            except Exception:
+                pass
+
+        return _ok(result)
+    except Exception as e:
+        return _err(f"python_exec: {e}")
+
+
 # --- Gmail Tools ---
 
 import imaplib
@@ -3361,6 +3494,12 @@ _TOOLS_CONFIG_DEFAULTS = {
         "enabled": True,
         "exclude_dirs": "node_modules,.git,__pycache__,venv,.venv,dist,build",
         "max_file_size_kb": 500,
+    },
+    "python_exec": {
+        "enabled": True,
+        "timeout": 30,
+        "max_output_chars": 50000,
+        "venv_path": "",
     },
 }
 
@@ -14317,6 +14456,7 @@ TOOL_DISPATCH = {
     "list_directory": tool_list_directory,
     "search_files": tool_search_files,
     "execute_command": tool_execute_command,
+    "python_exec": tool_python_exec,
     "web_fetch": tool_web_fetch,
     "exa_search": lambda args: exa_search(
         query=args.get("query", ""),
@@ -15049,10 +15189,52 @@ def _middleware_compaction(messages, tool_round, event_callback, **ctx):
             event_callback("compacted", {})
     return messages, True
 
+# Tools that python_exec can replace when chained
+_PYEXEC_CONSOLIDATABLE = {
+    "read_file", "list_directory", "search_files",
+    "read_document", "write_document", "edit_document",
+    "write_file", "edit_file",
+}
+
+def _middleware_pyexec_hint(messages, tool_round, event_callback, **ctx):
+    """Suggest python_exec when the model chains 3+ file/doc tool calls."""
+    if tool_round < 1:
+        return messages, True
+    # Only if agent has code_exec enabled
+    allowed = _get_agent_tool_names()
+    if allowed is not None and "python_exec" not in allowed:
+        return messages, True
+    # Don't hint if already using python_exec this session
+    if getattr(_thread_local, '_pyexec_hint_sent', False):
+        return messages, True
+
+    # Count consolidatable tool calls in the current turn (all rounds since last user message)
+    consolidatable_count = 0
+    for msg in reversed(messages):
+        if msg.get("role") == "user" and "tool_call_id" not in msg and "[Efficiency hint" not in msg.get("content", ""):
+            break
+        if msg.get("role") == "assistant" and "tool_calls" in msg:
+            for tc in msg["tool_calls"]:
+                name = tc.get("function", {}).get("name", "")
+                if name in _PYEXEC_CONSOLIDATABLE:
+                    consolidatable_count += 1
+
+    if consolidatable_count >= 3:
+        _thread_local._pyexec_hint_sent = True
+        hint = (
+            "[Efficiency hint: You made multiple file/document tool calls that could be consolidated "
+            "into a single python_exec call. For multi-file reads, data processing, or bulk operations, "
+            "write one Python script instead of chaining tool calls — each tool round re-sends the full "
+            "context to the LLM. Use python_exec for the remaining work if applicable.]"
+        )
+        messages.append({"role": "user", "content": hint})
+    return messages, True
+
 # Ordered middleware pipeline — runs before each tool-loop iteration
 _MIDDLEWARE_PIPELINE = [
     _middleware_cancel_check,
     _middleware_tool_result_budget,
+    _middleware_pyexec_hint,
     _middleware_microcompact,
     _middleware_compress_old,
     _middleware_compaction,
@@ -15555,6 +15737,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     if _tool_round == 0:
         reset_tool_dedup()
         _thread_local._tool_results_tokens = 0
+        _thread_local._pyexec_hint_sent = False
         _thread_local._max_output_recovery_count = 0
         _thread_local._has_attempted_reactive_compact = False
         _thread_local._escape_watcher = escape_watcher
@@ -15672,6 +15855,10 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
             all_tools.extend(mcp_tools)
             all_tools.sort(key=lambda t: t.get("function", {}).get("name", ""))
         payload["tools"] = all_tools
+        # Parallel tool calls: let the model emit multiple tool calls in one response
+        model_cfg = _models_config.get(model, {})
+        if model_cfg.get("parallel_tool_calls", True):
+            payload["parallel_tool_calls"] = True
 
     # Emit request snapshot for inspector
     if event_callback:
