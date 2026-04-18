@@ -2356,10 +2356,16 @@ def tool_python_exec(args: dict) -> str:
     # Snapshot existing files before execution
     pre_files = set(os.listdir(work_dir))
 
-    # Write code to temp file (avoids shell escaping issues with -c)
-    script_path = os.path.join(work_dir, "_exec.py")
+    # Save script as a numbered artifact (persisted for reuse)
+    counter = 1
+    while os.path.exists(os.path.join(work_dir, f"script_{counter}.py")):
+        counter += 1
+    script_name = f"script_{counter}.py"
+    script_path = os.path.join(work_dir, script_name)
     with open(script_path, "w") as f:
         f.write(code)
+    agent_id = (agent.agent_id if agent else "main")
+    _after_file_write(script_path, "created", agent_id)
 
     env = os.environ.copy()
     env["PYTHONDONTWRITEBYTECODE"] = "1"
@@ -2413,12 +2419,11 @@ def tool_python_exec(args: dict) -> str:
         if len(output) > max_output:
             output = output[:max_output] + "\n... (truncated)"
 
-        result = {"exit_code": proc.returncode, "output": output}
+        result = {"exit_code": proc.returncode, "output": output, "script": script_name}
 
-        # Register any new files as artifacts
+        # Register any new files created by the script as artifacts
         post_files = set(os.listdir(work_dir))
-        new_files = sorted(post_files - pre_files - {"_exec.py"})
-        agent_id = agent.agent_id if agent else "main"
+        new_files = sorted(post_files - pre_files - {script_name})
         if new_files and agent:
             created = []
             for fname in new_files:
