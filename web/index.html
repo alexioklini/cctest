@@ -8961,6 +8961,7 @@ async function switchAgentTab(agentId, tab, btn) {
       const tcfg = agentCfg.token_config || {};
       const allGroups = ['core','memory','context','web','email','documents','delegation','code_graph','git','scheduler','mcp','skills','nodes'];
       const activeGroups = tcfg.tool_groups || null; // null = all
+      const deferredGroups = 'deferred_tool_groups' in tcfg ? (tcfg.deferred_tool_groups || []) : ['email','documents','code_graph','scheduler'];
       const mc = state.modelsConfig?.models || {};
       const modelOptions = Object.entries(mc).filter(([,c])=>c.enabled).sort((a,b)=>(b[1].priority||0)-(a[1].priority||0));
 
@@ -8972,21 +8973,28 @@ async function switchAgentTab(agentId, tab, btn) {
           <div style="border:1px solid var(--border);border-radius:8px;padding:14px">
             <div style="font-size:13px;font-weight:600;color:var(--text-100);margin-bottom:8px">Tool Groups</div>
             <div style="font-size:11px;color:var(--text-400);margin-bottom:10px">
-              Select which tool groups are sent to the LLM. Fewer tools = fewer tokens per call. Leave all unchecked to send all tools (default).
+              Select which tool groups are sent to the LLM. <b>Deferred</b> groups are available but only loaded when the model uses tool_search — saves tokens on every request.
             </div>
-            <div id="tok-tool-groups" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px">
-              ${allGroups.map(g => `
-                <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-200);cursor:pointer">
-                  <input type="checkbox" value="${g}" ${activeGroups ? (activeGroups.includes(g) ? 'checked' : '') : 'checked'}
-                    style="accent-color:var(--accent)">
-                  ${g}
-                </label>
-              `).join('')}
+            <div id="tok-tool-groups" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px">
+              ${allGroups.map(g => {
+                const enabled = activeGroups ? activeGroups.includes(g) : true;
+                const deferred = deferredGroups.includes(g);
+                return `
+                <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-200)">
+                  <input type="checkbox" class="tok-group-enabled" value="${g}" ${enabled ? 'checked' : ''}
+                    style="accent-color:var(--accent)" onchange="if(!this.checked){this.closest('div').querySelector('.tok-group-deferred').checked=false}">
+                  <span style="min-width:80px">${g}</span>
+                  <input type="checkbox" class="tok-group-deferred" value="${g}" ${deferred ? 'checked' : ''}
+                    style="accent-color:var(--warning,#d97706)" title="Defer: load on-demand via tool_search"
+                    onchange="if(this.checked){this.closest('div').querySelector('.tok-group-enabled').checked=true}">
+                  <span style="font-size:10px;color:${deferred ? 'var(--warning,#d97706)' : 'var(--text-400)'}">defer</span>
+                </div>`;
+              }).join('')}
             </div>
             <div style="margin-top:6px;font-size:10px;color:var(--text-400)">
               <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
                 <input type="checkbox" id="tok-all-tools" ${!activeGroups ? 'checked' : ''}
-                  onchange="document.querySelectorAll('#tok-tool-groups input').forEach(i=>{i.disabled=this.checked;if(this.checked)i.checked=true})"
+                  onchange="document.querySelectorAll('#tok-tool-groups .tok-group-enabled').forEach(i=>{i.disabled=this.checked;if(this.checked)i.checked=true})"
                   style="accent-color:var(--accent)">
                 Send all tools (no filtering)
               </label>
@@ -9042,7 +9050,7 @@ async function switchAgentTab(agentId, tab, btn) {
 
       // Disable group checkboxes if "all tools" is checked
       if (!activeGroups) {
-        document.querySelectorAll('#tok-tool-groups input').forEach(i => i.disabled = true);
+        document.querySelectorAll('#tok-tool-groups .tok-group-enabled').forEach(i => i.disabled = true);
       }
     } catch(e) {
       container.innerHTML = `<div style="padding:20px;color:var(--error)">${esc(e.message)}</div>`;
@@ -9053,10 +9061,12 @@ async function switchAgentTab(agentId, tab, btn) {
 window._saveTokenConfig = async function(agentId) {
   const allTools = document.getElementById('tok-all-tools')?.checked;
   const groups = allTools ? null :
-    Array.from(document.querySelectorAll('#tok-tool-groups input:checked')).map(i => i.value);
+    Array.from(document.querySelectorAll('#tok-tool-groups .tok-group-enabled:checked')).map(i => i.value);
+  const deferred = Array.from(document.querySelectorAll('#tok-tool-groups .tok-group-deferred:checked')).map(i => i.value);
 
   const tcfg = {
     tool_groups: groups,
+    deferred_tool_groups: deferred.length > 0 ? deferred : null,
     include_tools_guide: document.getElementById('tok-tools-guide')?.checked ?? true,
     scheduled_task_tools: document.getElementById('tok-sched-tools')?.checked ?? true,
   };
@@ -9067,7 +9077,7 @@ window._saveTokenConfig = async function(agentId) {
   try {
     const res = await API.get(`/v1/agents/${agentId}/file?name=agent.json`);
     const cfg = JSON.parse(res.content || '{}');
-    cfg.token_config = tcfg;
+    cfg.token_config = Object.assign(cfg.token_config || {}, tcfg);
     await API.post(`/v1/agents/${encodeURIComponent(agentId)}/file`, {
       name: 'agent.json',
       content: JSON.stringify(cfg, null, 2)
@@ -9133,6 +9143,9 @@ window._loadToolBreakdown = async function(agentId) {
 
     const rows = groups.map(g => {
       const isMcp = g.source === 'mcp';
+      const deferBadge = g.deferred
+        ? '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#fef3c7;color:#d97706">DEFERRED</span>'
+        : '';
       const header = `<div style="display:grid;grid-template-columns:${isMcp?'18px ':''}1fr 90px 50px 50px 50px 60px;gap:8px;padding:2px 0 4px;font-size:9px;color:var(--text-400);text-transform:uppercase;border-bottom:1px solid var(--border-050)">
         ${isMcp?'<span></span>':''}<span>Tool</span><span style="text-align:center">Split</span>
         <span style="text-align:right">Name</span><span style="text-align:right">Desc</span><span style="text-align:right">Schema</span><span style="text-align:right">Total</span>
@@ -9142,10 +9155,11 @@ window._loadToolBreakdown = async function(agentId) {
         <summary style="cursor:pointer;padding:6px 0;display:flex;align-items:center;gap:8px">
           <span style="font-size:10px;padding:1px 6px;border-radius:3px;background:var(--bg-200);color:var(--text-400);text-transform:uppercase">${esc(g.source)}</span>
           <span style="font-size:12px;color:var(--text-200);min-width:100px">${esc(g.name)}</span>
+          ${deferBadge}
           <span style="font-size:11px;color:var(--text-400)">${g.tool_count} tools</span>
           <div style="flex:1;min-width:40px;max-width:150px">${bar(g.tokens, total)}</div>
           ${segBar(g.name_tokens||0, g.desc_tokens||0, g.schema_tokens||0)}
-          <span style="font-size:12px;font-family:var(--font-mono);min-width:60px;text-align:right;color:var(--text-200)">${g.tokens.toLocaleString()}</span>
+          <span style="font-size:12px;font-family:var(--font-mono);min-width:60px;text-align:right;color:${g.deferred?'#d97706':'var(--text-200)'};${g.deferred?'text-decoration:line-through':''}">${g.tokens.toLocaleString()}</span>
         </summary>
         <div style="padding:4px 0 8px 20px">
           ${header}
@@ -9181,9 +9195,19 @@ window._loadToolBreakdown = async function(agentId) {
           ? `<div style="margin-top:10px;padding:8px 10px;border-radius:6px;background:var(--bg-200);font-size:11px;color:var(--text-400)">MCP tools (${mcp.toLocaleString()} tok) are below the 10% auto-defer threshold (${(defer.threshold||0).toLocaleString()} tok) — all MCP schemas are included every request.</div>`
           : '');
 
+    const builtinDeferTokens = b.deferred_builtin_tokens || 0;
+    const builtinDeferNote = builtinDeferTokens > 0
+      ? `<div style="margin-top:8px;padding:8px 10px;border-radius:6px;background:#fef3c7;font-size:11px;color:#92400e">
+          Tool deferral saves ~<b>${builtinDeferTokens.toLocaleString()}</b> tokens/request
+          (${(b.deferred_builtin_groups||[]).join(', ')} deferred until discovered via <code>tool_search</code>).
+          Effective cost: <b>${(total - builtinDeferTokens).toLocaleString()}</b> tokens/request.
+        </div>`
+      : '';
+
     container.innerHTML = `
       <div style="display:flex;gap:16px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border-050)">
         <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase">Total</div><div style="font-size:18px;font-weight:600;color:var(--text-100)">${total.toLocaleString()}</div><div style="font-size:10px;color:var(--text-400)">tokens / request</div></div>
+        ${builtinDeferTokens > 0 ? `<div><div style="font-size:10px;color:#d97706;text-transform:uppercase">Deferred</div><div style="font-size:14px;color:#d97706">-${builtinDeferTokens.toLocaleString()}</div></div>` : ''}
         <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase">Built-in</div><div style="font-size:14px;color:var(--text-200)">${builtin.toLocaleString()}</div></div>
         <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase">MCP</div><div style="font-size:14px;color:var(--text-200)">${mcp.toLocaleString()}</div></div>
         ${b.max_context ? `<div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase">% of ctx</div><div style="font-size:14px;color:var(--text-200)">${(total/b.max_context*100).toFixed(1)}%</div></div>` : ''}
@@ -9192,6 +9216,7 @@ window._loadToolBreakdown = async function(agentId) {
       ${legend}
       ${mcpActions}
       ${deferNote}
+      ${builtinDeferNote}
     `;
   } catch(e) {
     container.innerHTML = `<span style="color:var(--error)">Failed: ${esc(e.message)}</span>`;

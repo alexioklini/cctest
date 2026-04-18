@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "7.7.1"
-VERSION_DATE = "2026-04-17"
+VERSION = "7.8.0"
+VERSION_DATE = "2026-04-18"
 CHANGELOG = [
+    ("7.8.0", "2026-04-18", "Built-in tool group deferral — rarely-used tool groups (email, documents, code_graph, scheduler) are excluded from LLM requests by default and loaded on-demand when the model calls tool_search. Saves ~1,760 tokens per LLM call (~26% of tool definitions). System prompt tells the model which groups are deferred so it knows to discover them when needed. Configurable per-agent via deferred_tool_groups in token_config. Web UI Tokens tab adds per-group 'defer' checkboxes with amber styling, DEFERRED badges in the tool breakdown, and a savings summary banner showing effective token cost. tool_search added to the core tool group to ensure it's always available when group filtering is active. Save Token Config now merges into existing config instead of overwriting (preserves mcp_tool_filter and other fields)."),
     ("7.7.1", "2026-04-17", "Split caveman mode into two independent settings. System-level caveman (per-model in Models tab config, 0-3) compresses the system prompt itself — prepends a compression prefix and applies rule-based text reduction (strip whitespace, remove filler words, collapse markdown, remove examples at higher levels). Chat-level caveman (per-session toggle in composer, 0-3) controls response style as before. User's last chat caveman level is persisted to localStorage and auto-applied to new sessions. Both modes compose independently: system-level sets baseline prompt compression, chat-level appends response style instruction."),
     ("7.7.0", "2026-04-17", "MemPalace reliability + smart memory gating. Fixed client proxy SSE line-splitting that silently dropped tool calls in proxy mode (TCP chunk boundaries splitting data: lines). Fixed save_session wiping user_id on every message (INSERT OR REPLACE → ON CONFLICT preserving existing values). Fixed per-user wing separator (/ → -- to comply with MemPalace sanitize_name). System prompt updated to reference mempalace_query instead of old memory_store tools. New save_chat_to_memory tool lets the model explicitly save a conversation when the user asks. New LLM-based chat sync classifier gate — configurable model classifies each message pair as fact/preference/decision/reference (file) or generic/refusal/chitchat (skip) before filing to MemPalace. Configurable min_turns threshold skips short throwaway chats. Three-state memory toggle per session: on (green, save all), auto (amber, classifier decides), off (grey, skip). Default mode for new chats configurable in Settings → MemPalace. Connection health monitor with status bar indicator (green/red dot, 10s polling). Status bar visible on all views. Retry on transient MemPalace query errors. Settings UI for classifier model, min turns, file categories, and default mode."),
     ("7.6.0", "2026-04-16", "Client execution mode for air-gapped corporate deployments. When the server has no internet but browser clients do, set execution_mode to 'client' in config.json or Settings → Server. LLM inference calls are proxied through the browser: server emits proxy_request SSE events with the full payload, browser calls the provider's /chat/completions endpoint, streams chunks back via POST /v1/chat/proxy-response. Web-accessing tools (web_fetch, exa_search) are similarly proxied via POST /v1/chat/proxy-tool-result. All local tools (file ops, git, shell, code graph, mempalace, etc.) continue executing on the server. ProxyChannel class in claude_cli.py provides thread-safe queue bridging between the agentic loop and browser. Configurable proxy tool list in Settings GUI — any tool can be routed through the browser. Session inspector shows purple CLIENT badge on turns executed via proxy. Status bar shows CLIENT badge when mode is active. Provider credentials relayed to browser via GET /v1/config/execution-mode. Requires CORS-enabled LLM providers (Mistral API, OpenAI API, Bifrost local proxy all confirmed working). Chrome is the primary supported browser."),
@@ -964,7 +965,7 @@ _TOOL_DEF_OPENAI_INDEX = {td["function"]["name"]: td for td in TOOL_DEFINITIONS_
 # Tool groups for per-agent filtering (agents can specify groups or individual tool names)
 TOOL_GROUPS = {
     "core": {"read_file", "write_file", "edit_file", "list_directory", "search_files",
-             "execute_command"},
+             "execute_command", "tool_search"},
     "memory": {"mempalace_query", "save_chat_to_memory"},
     "context": {"context_search", "context_detail", "context_recall"},
     "web": {"web_fetch", "exa_search"},
@@ -995,6 +996,7 @@ TOKEN_CONFIG_DEFAULTS = {
     "scheduled_task_tools": True,  # Include full tool schema in scheduled tasks
     "mcp_tool_filter": None,       # None = all MCP tools; list of patterns (exact or fnmatch glob) to allow
     "mcp_tool_exclude": None,      # None = exclude nothing; list of patterns applied after filter
+    "deferred_tool_groups": ["email", "documents", "code_graph", "scheduler"],  # Groups loaded on-demand via tool_search
 }
 
 
@@ -1211,6 +1213,13 @@ def get_tool_breakdown(agent_id: str | None = None) -> dict:
     total_tokens = sum(g["tokens"] for g in group_list)
     total_count = sum(g["tool_count"] for g in group_list)
 
+    # Built-in tool group deferral status
+    tcfg = _get_token_config()
+    deferred_builtin_set = set(tcfg.get("deferred_tool_groups") or [])
+    for g in group_list:
+        g["deferred"] = g["source"] == "builtin" and g["name"] in deferred_builtin_set
+    deferred_builtin_tokens = sum(g["tokens"] for g in group_list if g.get("deferred"))
+
     # Deferral status: would MCP be auto-deferred for the agent's current model?
     agent = getattr(_thread_local, 'current_agent', None) or _current_agent
     model = (agent.config.get("model") if agent else "") or ""
@@ -1227,6 +1236,8 @@ def get_tool_breakdown(agent_id: str | None = None) -> dict:
         "mcp_tokens": mcp_tokens,
         "model": model,
         "max_context": max_ctx,
+        "deferred_builtin_groups": sorted(deferred_builtin_set),
+        "deferred_builtin_tokens": deferred_builtin_tokens,
         "deferrable_mcp": {
             "deferred": deferred,
             "tokens_saved_if_deferred": mcp_tokens if deferred else 0,
@@ -15486,6 +15497,14 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
             system_instruction += f"  - {srv['name']} ({srv['transport']}): {tools_list}{more}\n"
         system_instruction += "MCP tools are prefixed with mcp_<server>_ — use them like any other tool.\n\n"
 
+    # Note about deferred built-in tool groups
+    _deferred_groups = [g for g in (tcfg.get("deferred_tool_groups") or []) if g in TOOL_GROUPS]
+    if _deferred_groups:
+        system_instruction += "DEFERRED TOOLS: These tool groups are available but not loaded. Use tool_search to discover and activate them when needed:\n"
+        for _dg in _deferred_groups:
+            system_instruction += f"  - {_dg}: {', '.join(sorted(TOOL_GROUPS[_dg]))}\n"
+        system_instruction += "\n"
+
     if tools_guide and tcfg.get("include_tools_guide", True):
         system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
     # Apply system-level caveman compression (from model config)
@@ -15632,6 +15651,17 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         discovered_tools = getattr(_thread_local, '_discovered_tools', set())
 
         all_tools = _filter_tools(TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
+
+        # Defer built-in tool groups: remove tools in deferred groups unless discovered
+        deferred_groups = set(tcfg.get("deferred_tool_groups") or [])
+        if deferred_groups:
+            deferred_tool_names = set()
+            for dg in deferred_groups:
+                deferred_tool_names.update(TOOL_GROUPS.get(dg, set()))
+            all_tools = [t for t in all_tools
+                         if t["function"]["name"] not in deferred_tool_names
+                         or t["function"]["name"] in discovered_tools]
+
         if mcp_mgr:
             mcp_tools = mcp_mgr.get_tool_definitions_openai()
             mcp_tools = _filter_mcp_tools(mcp_tools, is_openai=True)

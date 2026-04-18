@@ -42,15 +42,21 @@
       "documents",
       "delegation",
       "git",
+      "scheduler",
       "skills",
-      "nodes",
-      "scheduler"
+      "nodes"
     ],
     "include_tools_guide": true,
     "include_memory_summary": true,
     "memory_summary_cap": 2000,
     "compact_threshold": 0.7,
-    "scheduled_task_tools": false
+    "scheduled_task_tools": false,
+    "deferred_tool_groups": [
+      "email",
+      "documents",
+      "code_graph",
+      "scheduler"
+    ]
   },
   "paused": false,
   "agent_sdk": {

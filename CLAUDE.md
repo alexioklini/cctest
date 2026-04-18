@@ -267,7 +267,8 @@ Per-agent token config in `agent.json` under `token_config`:
     "compact_threshold": 0.70,
     "scheduled_task_tools": false,
     "mcp_tool_filter": null,
-    "mcp_tool_exclude": null
+    "mcp_tool_exclude": null,
+    "deferred_tool_groups": ["email", "documents", "code_graph", "scheduler"]
   }
 }
 ```
@@ -278,9 +279,10 @@ Per-agent token config in `agent.json` under `token_config`:
 - `scheduled_task_tools`: include full tool schema in scheduled tasks
 - `mcp_tool_filter`: list of exact names or fnmatch globs (e.g. `"mcp_mempalace_*"`); only matching MCP tools are sent. `null` = all allowed
 - `mcp_tool_exclude`: list applied after `mcp_tool_filter`; matching tools are dropped
+- `deferred_tool_groups`: list of group names whose tools are excluded from LLM requests until discovered via `tool_search`. Default: `["email", "documents", "code_graph", "scheduler"]`. System prompt tells the model which groups are deferred. Saves ~1,760 tokens/request for the default set
 - System prompt cached per-session (60s TTL) to avoid disk I/O on tool loops
 - `_filter_tools()` and `_get_agent_tool_names()` handle filtering for both custom loop and SDK paths
-- GUI: Tokens tab in agent config modal with **Tool Definition Cost** card and **Measure** button
+- GUI: Tokens tab in agent config modal with **Tool Definition Cost** card, **Measure** button, and per-group **defer** checkboxes
 
 ### Per-Agent Runtime Limits
 
@@ -324,6 +326,7 @@ Global `cost_limits.max_session_cost_usd` in `config.json`, editable via Setting
               "tools": [{"name", "tokens", "name_tokens", "desc_tokens", "schema_tokens", "param_count"}]}],
   "total_tokens": N, "builtin_tokens": N, "mcp_tokens": N,
   "max_context": N, "model": "…",
+  "deferred_builtin_groups": ["email", "..."], "deferred_builtin_tokens": N,
   "deferrable_mcp": {"deferred": bool, "tokens_saved_if_deferred": N, "threshold": N}
 }
 ```
