@@ -67,8 +67,12 @@ Key patterns:
 - Agent quick-switch buttons below composer on welcome view
 - Streaming uses raw socket SSE for unbuffered token-by-token display
 - `renderStreamingMessage()` updates in-place during streaming; `renderMessages()` for full re-render
-- Artifact panel: resizable right panel (`#artifact-panel`) for viewing generated files with type-aware rendering
-- References panel: resizable right panel (`#references-panel`) for web source cards with screenshot previews
+- Unified right panel (`#right-panel`): tabbed panel with Attachments, References, Files tabs; resizable via drag handle
+- Status bar toggle: "Panel" button (`#toggle-right-panel-btn`) opens/closes the right panel, shows `.active` state when open
+- Auto-open behavior: new web references from `tool_result` auto-open the References tab; `artifact_updated` always switches to the new artifact (even if a different one was selected)
+- Reference highlight: clicking a ref-badge in chat calls `openReferencesPanel(link)` which scrolls to and highlights the matching card (2s outline)
+- `syncRightPanelToggle()` keeps the status bar button state in sync with `state.rightPanelOpen`
+- `toggleRightPanel()` convenience function for the status bar button
 
 ### Chat File Attachments
 

@@ -957,6 +957,13 @@ textarea { resize: none; }
   cursor: pointer; transition: all 0.15s; flex-shrink: 0; margin-right: 4px;
 }
 .right-panel-close-btn:hover { background: var(--bg-200); color: var(--text-200); }
+.right-panel-toggle-btn {
+  display: flex; align-items: center; gap: 3px; background: none; border: 1px solid var(--border-100);
+  border-radius: 5px; padding: 1px 6px; cursor: pointer; color: var(--text-400); font-size: 10px;
+  transition: all 0.15s; height: 20px;
+}
+.right-panel-toggle-btn:hover { background: var(--bg-200); color: var(--text-200); border-color: var(--border-200); }
+.right-panel-toggle-btn.active { color: var(--accent-brand); border-color: var(--accent-brand); background: color-mix(in srgb, var(--accent-brand) 8%, transparent); }
 .right-tab-pane { display: none; flex: 1; flex-direction: column; overflow: hidden; }
 .right-tab-pane.active { display: flex; }
 
@@ -3574,7 +3581,11 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <span class="status-label">$</span>
       <span class="status-value" id="status-cost-label">0.00</span>
     </div>
-    <div class="status-item" style="margin-left:auto">
+    <div class="status-item" style="margin-left:auto;gap:6px">
+      <button class="right-panel-toggle-btn" id="toggle-right-panel-btn" onclick="toggleRightPanel()" title="Toggle side panel (Attachments, References, Files)">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+        Panel
+      </button>
       <span class="status-value" id="status-session"></span>
       <button class="compact-btn" onclick="openInspectModal()" title="Inspect session" style="font-size:13px;padding:1px 6px">&#x1F50D;</button>
     </div>
@@ -5196,8 +5207,13 @@ async function sendMessage() {
         if (refs.length && chat.sessionId) {
           if (!state.chatReferences[chat.sessionId]) state.chatReferences[chat.sessionId] = [];
           const existing = state.chatReferences[chat.sessionId];
+          let newRefAdded = false;
           for (const ref of refs) {
-            if (!existing.some(r => r.link === ref.link)) existing.push(ref);
+            if (!existing.some(r => r.link === ref.link)) { existing.push(ref); newRefAdded = true; }
+          }
+          if (newRefAdded && isActive()) {
+            openRightPanel('references');
+            updateRightPanelBadges();
           }
         }
         if (!state.showToolCalls || !isActive()) return;
@@ -5214,9 +5230,7 @@ async function sendMessage() {
         chat.files.push(d);
         updateArtifactRegistry(chat.sessionId, d);
         if (!isActive()) return;
-        if (!state.artifactPanelOpen) {
-          openArtifactPanel(d.artifact_id, d.artifact_version);
-        } else if (state.activeArtifactId === d.artifact_id) {
+        if (state.activeArtifactId === d.artifact_id) {
           const sel = document.getElementById('artifact-version-select');
           if (sel) {
             const opt = document.createElement('option');
@@ -5226,7 +5240,10 @@ async function sendMessage() {
             sel.value = d.artifact_version;
           }
           loadArtifactVersion(d.artifact_version);
+        } else {
+          openArtifactPanel(d.artifact_id, d.artifact_version);
         }
+        updateRightPanelBadges();
       },
       fallback: (d) => {
         if (d.to) {
@@ -5829,7 +5846,7 @@ function renderAssistantMessage(msg, idx) {
     refsHtml = '<div class="msg-references">';
     for (const ref of msgRefs) {
       refsHtml += `
-        <div class="ref-badge" onclick="openReferencesPanel()" title="${esc(ref.link)}">
+        <div class="ref-badge" onclick="openReferencesPanel('${esc(ref.link)}')" title="${esc(ref.link)}">
           <img src="${esc(ref.favicon)}" onerror="this.style.display='none'" alt="">
           <span class="ref-badge-text">${esc(ref.title || ref.domain)}</span>
         </div>
@@ -10483,6 +10500,17 @@ function openRightPanel(tab) {
   state.rightPanelOpen = true;
   switchRightTab(tab || state.rightPanelTab || 'attachments');
   initRightPanelResize();
+  syncRightPanelToggle();
+}
+
+function toggleRightPanel() {
+  if (state.rightPanelOpen) closeRightPanel();
+  else openRightPanel();
+}
+
+function syncRightPanelToggle() {
+  const btn = document.getElementById('toggle-right-panel-btn');
+  if (btn) btn.classList.toggle('active', state.rightPanelOpen);
 }
 
 function closeRightPanel() {
@@ -10492,6 +10520,7 @@ function closeRightPanel() {
   state.activeArtifactId = null;
   state.activeArtifactVersion = null;
   state.artifactSourceMode = false;
+  syncRightPanelToggle();
 }
 
 function switchRightTab(tabName) {
@@ -10640,7 +10669,7 @@ function renderReferencesPane() {
     const snippetHtml = ref.snippet ? `<div class="ref-card-snippet">${esc(ref.snippet)}</div>` : '';
     const thumbUrl = `https://api.microlink.io/?url=${encodeURIComponent(ref.link)}&screenshot=true&meta=false&embed=screenshot.url`;
     html += `
-      <div class="ref-card" onclick="window.open('${esc(ref.link)}', '_blank')">
+      <div class="ref-card" data-link="${esc(ref.link)}" onclick="window.open('${esc(ref.link)}', '_blank')">
         <div class="ref-card-preview">
           <img class="ref-favicon" src="${esc(ref.favicon)}" onerror="this.style.display='none'" alt="">
           <img class="ref-thumb" src="${esc(thumbUrl)}" onerror="this.parentElement.innerHTML='<div class=\\'ref-thumb-placeholder\\'><svg viewBox=\\'0 0 24 24\\' width=\\'32\\' height=\\'32\\' fill=\\'none\\' stroke=\\'var(--text-400)\\' stroke-width=\\'1\\' opacity=\\'0.3\\'><path d=\\'M12 2a10 10 0 110 20 10 10 0 010-20z\\'/><path d=\\'M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z\\'/></svg></div>'" loading="lazy" alt="">
@@ -10916,10 +10945,24 @@ function getReferencesForMessage(idx) {
   return refs;
 }
 
-function openReferencesPanel() {
+function openReferencesPanel(highlightLink) {
   const refs = collectChatReferences();
   if (!refs.length) { showToast('No web sources in this chat'); return; }
   openRightPanel('references');
+  if (highlightLink) {
+    setTimeout(() => {
+      const cards = document.querySelectorAll('#refs-content .ref-card');
+      for (const card of cards) {
+        if (card.dataset.link === highlightLink) {
+          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          card.style.outline = '2px solid var(--accent-brand)';
+          card.style.outlineOffset = '2px';
+          setTimeout(() => { card.style.outline = ''; card.style.outlineOffset = ''; }, 2000);
+          break;
+        }
+      }
+    }, 50);
+  }
 }
 
 function closeReferencesPanel() {
