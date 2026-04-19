@@ -787,6 +787,10 @@ textarea { resize: none; }
 .msg-edit-dropdown-item:hover { background: var(--bg-200); }
 .msg-edit-dropdown-item.destructive { color: var(--accent-error, #e53935); }
 .msg-edit-dropdown-item.destructive:hover { background: rgba(229,57,53,0.08); }
+.msg-edit-dropdown-item.disabled { color: var(--text-400); cursor: not-allowed; opacity: 0.55; }
+.msg-edit-dropdown-item.disabled:hover { background: transparent; }
+.msg-edit-dropdown-section-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-400); padding: 6px 12px 4px; }
+.msg-edit-dropdown hr { border: none; border-top: 1px solid var(--border-100); margin: 4px 0; }
 .msg-edit-dropdown-item svg { width: 15px; height: 15px; flex-shrink: 0; }
 .msg-actions-bar { position: relative; }
 
@@ -5056,6 +5060,9 @@ async function openSession(sessionId, agentId) {
     if (data.total_tokens) chat.totalTokens = data.total_tokens;
     chat.messages = expanded;
 
+    // Load memorized turn_ids (for the memory menu) in background
+    refreshMemorizedTurns();
+
     // Load artifacts for this session
     try {
       const artResp = await API.getArtifacts(sessionId);
@@ -5756,8 +5763,24 @@ async function openInspectModal() {
       const execBadge = execMode === 'client'
         ? '<span style="font-size:10px;background:#7c3aed;color:#fff;padding:1px 6px;border-radius:4px;margin-left:4px" title="LLM call executed in browser (client proxy mode)">CLIENT</span>'
         : '';
-      html += `<div style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--bg-100);border-bottom:1px solid var(--border-100)">
+      // Per-turn state badges: thinking level + caveman modes
+      const tLvl = a.thinking_level || (a.thinking ? 'on' : '');
+      const thinkingBadge = (tLvl && tLvl !== 'none')
+        ? `<span style="font-size:10px;background:#ede9fe;color:#8b5cf6;padding:1px 6px;border-radius:4px" title="Thinking level used for this turn">thinking: ${esc(tLvl)}</span>`
+        : '';
+      const cavChat = parseInt(a.caveman_chat) || 0;
+      const cavSys = parseInt(a.caveman_system) || 0;
+      const cavName = n => ({1: 'lite', 2: 'full', 3: 'ultra'})[n] || '';
+      const cavParts = [];
+      if (cavSys) cavParts.push(`sys ${cavName(cavSys)}`);
+      if (cavChat) cavParts.push(`chat ${cavName(cavChat)}`);
+      const cavBadge = cavParts.length
+        ? `<span style="font-size:10px;background:#fef3c7;color:#b45309;padding:1px 6px;border-radius:4px" title="Caveman compression level applied for this turn (system prompt / chat response)">caveman: ${cavParts.join(' / ')}</span>`
+        : '';
+      html += `<div style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--bg-100);border-bottom:1px solid var(--border-100);flex-wrap:wrap">
         <span style="font-weight:600;color:var(--text-000)">Turn ${ix.turn}</span>${execBadge}
+        ${thinkingBadge}
+        ${cavBadge}
         <span style="margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--text-400)">
           ${a.model ? esc(a.model) : ''}
           ${a.duration ? ' &middot; ' + a.duration.toFixed(1) + 's' : ''}
@@ -6223,9 +6246,142 @@ function renderAssistantMessage(msg, idx) {
             Remove all before this
           </div>
         </div>
+        <button class="msg-action-btn" onclick="toggleMsgMemoryMenu(event, ${idx})" title="Memory">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10l9-6 9 6v1H3z" fill="currentColor" fill-opacity="0.15"/><line x1="3" y1="11" x2="21" y2="11"/><line x1="3" y1="21" x2="21" y2="21"/><line x1="5" y1="11" x2="5" y2="21"/><line x1="11" y1="11" x2="11" y2="21"/><line x1="17" y1="11" x2="17" y2="21"/><line x1="19" y1="11" x2="19" y2="21"/></svg>
+        </button>
+        <div class="msg-edit-dropdown" id="msg-memory-menu-${idx}">
+          ${renderMemoryMenuItems(idx)}
+        </div>
       </div>
     </div>
   `;
+}
+
+// --- Memory menu helpers ---
+
+// Find the user message id that opens the turn containing messages[idx].
+function getTurnIdForMessage(idx) {
+  const chat = state.activeChat;
+  if (!chat) return 0;
+  const msgs = chat.messages || [];
+  for (let i = Math.min(idx, msgs.length - 1); i >= 0; i--) {
+    if (msgs[i].role === 'user' && msgs[i].id) return msgs[i].id;
+  }
+  return 0;
+}
+
+function renderMemoryMenuItems(idx) {
+  const chat = state.activeChat;
+  const memOff = !chat || (chat.memoryMode || (chat.saveToMemory ? 'on' : 'off')) === 'off';
+  const turnId = getTurnIdForMessage(idx);
+  const memorized = (state.memorizedTurns || {})[chat?.sessionId] || new Set();
+  const hasAny = memorized.size > 0;
+  const thisMemorized = turnId && memorized.has(turnId);
+
+  // Collect turn ids from messages for above/below checks
+  const msgs = chat?.messages || [];
+  let turnsAbove = 0, turnsBelow = 0, totalTurns = 0;
+  for (const m of msgs) {
+    if (m.role !== 'user' || !m.id) continue;
+    totalTurns++;
+    if (m.id < turnId) turnsAbove++;
+    else if (m.id > turnId) turnsBelow++;
+  }
+  const hasAbove = turnsAbove > 0;
+  const hasBelow = turnsBelow > 0;
+
+  // Each item: {label, scope, mode ('memorize'|'purge'), enabled}
+  const items = [
+    { label: 'Memorize complete chat',             scope: 'all',   mode: 'memorize', enabled: memOff && totalTurns > 0 },
+    { label: 'Memorize this response',             scope: 'this',  mode: 'memorize', enabled: memOff && !!turnId && !thisMemorized },
+    { label: 'Memorize all above this',            scope: 'above', mode: 'memorize', enabled: memOff && hasAbove },
+    { label: 'Memorize all below this',            scope: 'below', mode: 'memorize', enabled: memOff && hasBelow },
+    { sep: true },
+    { label: 'Remove all memory from this chat',   scope: 'all',   mode: 'purge',    enabled: memOff && hasAny, destructive: true },
+    { label: 'Remove memory from this response',   scope: 'this',  mode: 'purge',    enabled: memOff && !!thisMemorized, destructive: true },
+    { label: 'Remove memory from responses above', scope: 'above', mode: 'purge',    enabled: memOff && hasAbove, destructive: true },
+    { label: 'Remove memory from responses below', scope: 'below', mode: 'purge',    enabled: memOff && hasBelow, destructive: true },
+  ];
+
+  const svgMem = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 10l9-6 9 6v1H3z" fill="currentColor" fill-opacity="0.15"/><line x1="3" y1="11" x2="21" y2="11"/><line x1="3" y1="21" x2="21" y2="21"/></svg>';
+  const svgDel = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>';
+
+  let html = '';
+  if (!memOff) {
+    html += `<div class="msg-edit-dropdown-section-label" title="Set chat memory to off to use these actions">Memory mode: ${chat.memoryMode || 'on'} — actions disabled</div>`;
+  }
+  for (const it of items) {
+    if (it.sep) { html += '<hr>'; continue; }
+    const cls = [
+      'msg-edit-dropdown-item',
+      it.destructive ? 'destructive' : '',
+      it.enabled ? '' : 'disabled',
+    ].filter(Boolean).join(' ');
+    const handler = it.enabled ? `onclick="runTurnMemoryAction('${it.mode}','${it.scope}',${idx})"` : '';
+    html += `<div class="${cls}" ${handler}>${it.mode === 'purge' ? svgDel : svgMem}${it.label}</div>`;
+  }
+  return html;
+}
+
+function toggleMsgMemoryMenu(event, idx) {
+  event.stopPropagation();
+  document.querySelectorAll('.msg-edit-dropdown.open').forEach(el => el.classList.remove('open'));
+  const menu = document.getElementById(`msg-memory-menu-${idx}`);
+  if (!menu) return;
+  // Re-render items fresh (memorizedTurns may have changed)
+  menu.innerHTML = renderMemoryMenuItems(idx);
+  menu.classList.toggle('open');
+  const close = (e) => {
+    if (!menu.contains(e.target)) {
+      menu.classList.remove('open');
+      document.removeEventListener('click', close);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', close), 0);
+  // Refresh memorized state in the background; re-render on update
+  refreshMemorizedTurns().then(() => {
+    if (menu.classList.contains('open')) menu.innerHTML = renderMemoryMenuItems(idx);
+  });
+}
+
+async function refreshMemorizedTurns() {
+  const chat = state.activeChat;
+  if (!chat?.sessionId) return;
+  try {
+    const data = await API.get(`/v1/mempalace/session-turns?session_id=${encodeURIComponent(chat.sessionId)}`);
+    if (!state.memorizedTurns) state.memorizedTurns = {};
+    state.memorizedTurns[chat.sessionId] = new Set((data.turn_ids || []).map(n => parseInt(n) || 0));
+  } catch (e) {}
+}
+
+async function runTurnMemoryAction(mode, scope, idx) {
+  const chat = state.activeChat;
+  if (!chat?.sessionId) return;
+  document.querySelectorAll('.msg-edit-dropdown.open').forEach(el => el.classList.remove('open'));
+  const turnId = getTurnIdForMessage(idx);
+  const action = mode === 'purge' ? 'purge_turns' : 'memorize_turns';
+  const payload = { action, session_id: chat.sessionId, scope };
+  if (scope !== 'all') payload.anchor_turn_id = turnId;
+
+  if (mode === 'purge') {
+    const label = { all: 'all memory for this chat', this: "this response's memory",
+                    above: 'memory for responses above', below: 'memory for responses below' }[scope] || scope;
+    if (!confirm(`Delete ${label}?\n\nThis permanently removes the matching MemPalace drawers and cannot be undone.`)) return;
+  }
+
+  try {
+    const resp = await API.post('/v1/sessions/manage', payload);
+    if (mode === 'purge') {
+      showToast(`Deleted ${resp.purged || 0} turn(s) from memory`);
+    } else {
+      showToast(`Memorizing ${resp.memorizing || 0} turn(s)…`);
+    }
+    // Poll twice for updated state (memorize is async)
+    setTimeout(refreshMemorizedTurns, 500);
+    setTimeout(refreshMemorizedTurns, 2500);
+  } catch (e) {
+    showToast('Failed: ' + e.message, true);
+  }
 }
 
 function toolDescribe(name, args) {
@@ -7743,7 +7899,11 @@ async function switchGeneralTab(tab, btn) {
               ${mdlInput('mdl-cost-output','Cost Out ($/M)',cfg.cost_output,{step:'0.01',min:0,ph:'0'})}
               <div style="border-left:1px solid var(--border-100);margin:0 -2px"></div>
               <div style="border-left:1px solid var(--border-100);margin:0 -2px"></div>
-              ${mdlInput('mdl-caveman-system','Caveman System',cfg.caveman_system||0,{type:'number',min:0,max:3,ph:'0'})}
+              <div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px">Caveman System</label>
+                <select class="mdl-caveman-system" style="width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)">
+                  ${[[0,'off'],[1,'lite'],[2,'full'],[3,'ultra']].map(([v,l]) => `<option value="${v}"${(cfg.caveman_system||0)===v?' selected':''}>${l}</option>`).join('')}
+                </select>
+              </div>
               <div style="display:flex;align-items:center;gap:6px;padding-top:14px"><input type="checkbox" class="mdl-parallel-tools" ${cfg.parallel_tool_calls !== false ? 'checked' : ''} style="margin:0"><label class="form-label" style="font-size:11px;margin:0;cursor:pointer">Parallel Tool Calls</label></div>
               <div style="grid-column:1/-1"><label class="form-label" style="font-size:11px">Raw Formats <span style="color:var(--text-400);font-weight:400">(MIME patterns the model handles natively as multimodal)</span></label><input class="form-input mdl-raw-formats" value="${esc((cfg.raw_formats||[]).join(', '))}" placeholder="e.g. image/*, application/pdf" style="font-size:12px"></div>
             </div>
@@ -11922,6 +12082,20 @@ async function toggleSaveToMemory() {
   const cur = chat.memoryMode || (chat.saveToMemory ? 'on' : 'off');
   const next = cur === 'on' ? 'auto' : cur === 'auto' ? 'off' : 'on';
   const modeMap = { on: 1, auto: 2, off: 0 };
+
+  // When turning off after the chat was being memorised, ask whether to purge
+  // previously filed drawers from MemPalace or just stop filing new turns.
+  let purge = false;
+  if (next === 'off' && (cur === 'on' || cur === 'auto')) {
+    const choice = confirm(
+      'Memory turned off for this chat.\n\n' +
+      'Also delete previously stored memories of this chat from MemPalace?\n\n' +
+      'OK  — delete stored memories (cannot be undone)\n' +
+      'Cancel — just stop memorising new turns (existing memories stay)'
+    );
+    purge = !!choice;
+  }
+
   try {
     await API.post('/v1/sessions/manage', {
       action: 'save_to_memory', session_id: chat.sessionId,
@@ -11930,6 +12104,18 @@ async function toggleSaveToMemory() {
     chat.saveToMemory = next === 'on';
     chat.memoryMode = next;
     updateStatusBar();
+
+    if (purge) {
+      try {
+        await API.post('/v1/sessions/manage', {
+          action: 'purge_memory', session_id: chat.sessionId,
+        });
+        showToast('Memory: off — stored memories deleted');
+      } catch(e) {
+        showToast('Toggled off, but purge failed: ' + e.message, true);
+      }
+      return;
+    }
     const labels = { on: 'Memory: on — all messages saved', auto: 'Memory: auto — LLM classifier decides', off: 'Memory: off' };
     showToast(labels[next]);
   } catch(e) { showToast('Failed: ' + e.message, true); }

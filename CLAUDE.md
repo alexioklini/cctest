@@ -599,6 +599,7 @@ Server runs on port 8420 (configurable). Key endpoints:
 - `GET /v1/costs/daily` — daily cost breakdown (agent, days params)
 - `GET /v1/mempalace/stats` — palace overview: drawers, closets, wings, rooms, graph, KG, WAL, sync status, anomalies
 - `GET /v1/mempalace/activity` — live store/retrieve activity snapshot used to animate the palace icon in the web UI (polled every 2s; 1.5s TTL pulse after last event)
+- `GET /v1/mempalace/session-turns?session_id=X` — returns the set of turn ids currently memorised for a session (parsed from drawer `source_file` prefixes). Drives UI greying of per-turn Memory menu items.
 - `GET /v1/sessions?project=X` — list sessions filtered by project
 - `GET /v1/agents/<id>/projects` — list projects with instructions, doc_count, status
 - `POST /v1/agents/<id>/projects` — create project (name, description)
@@ -660,6 +661,8 @@ palace, and two background daemons keep it up to date automatically.
 - `save_chat_to_memory` tool: model can explicitly enable saving when user asks "remember this"
 - Default mode for new sessions from `classifier.default_mode` in config
 - Per-session memory mode is restored on reopen: `/v1/sessions/<id>/messages` returns `save_to_memory`; `openSession()` in the web UI rehydrates `chat.memoryMode` so the composer toggle reflects the stored state (previously only the current default was applied)
+- Per-turn memory control: each assistant message carries a palace-icon menu with 8 actions — memorise (complete chat / this response / all above / all below) and remove (same four scopes). Dispatches to session-manage actions `memorize_turns` and `purge_turns`, which accept either `turn_ids: [user_msg_id, ...]` or `{scope: all|this|above|below, anchor_turn_id}`. Items auto-grey when inapplicable (already memorised / nothing stored / chat memory mode ≠ off). Helper fns: `_memorize_mempalace_turns()` and `_purge_mempalace_turns()` in `server.py`. Web-side memorised-set cache: `state.memorizedTurns[sessionId]` (Set), refreshed by `refreshMemorizedTurns()` on session open and after each action
+- Disable-with-purge prompt: toggling chat memory from on/auto → off when the chat already has stored drawers asks the user whether to also delete them (session-manage action `purge_memory`). Cancel keeps existing drawers, just stops filing new turns
 - Config: `mempalace.chat_sync.classifier` block with `enabled`, `model`, `min_turns`, `default_mode`, `categories_to_file`
 - API: `GET/POST /v1/mempalace/classifier`
 - UI: Settings → MemPalace → Chat Sync Classifier section; per-chat toggle button in composer toolbar (palace icon pulses blue on retrieve, green on store; driven by `/v1/mempalace/activity` + `MempalaceActivityMonitor` in `web/index.html`. The underlying tracker is `engine.mempalace_activity` — `store_begin/end` wraps `tool_add_drawer` calls in the chat-sync loop and immediate-sync; `retrieve_begin/end` wraps `search_memories` in `tool_mempalace_query`.)
@@ -693,10 +696,10 @@ palace, and two background daemons keep it up to date automatically.
 - Runs every `mempalace.chat_sync.interval_seconds` (default 60s)
 - Polls `chats.db` via `ChatDB.mempalace_sessions_needing_sync()` (joins `sessions` →
   `chat_mempalace_sync` cursor table) and mirrors new content into MemPalace drawers:
-  - **Chat turns** (user/assistant) → `wing=<user_id>/<agent_id>`, `room=chat`, `source_file=session/<sid>`
+  - **Chat turns** (user/assistant) → `wing=<user_id>/<agent_id>`, `room=chat`, `source_file=session/<sid>#turn/<user_msg_id>`. The turn anchor is the DB id of the user message that opened the turn; all drawers from that turn (user text, assistant reply, attachments, tool results) share the same `#turn/<id>` prefix so per-turn purge/memorise can target one turn. Legacy drawers without the suffix still resolve through the session-wide purge.
   - **Session summaries** → `room=chat_summary`, `source_file=session/<sid>#summary`, content-hashed to avoid re-ingest
-  - **Attachment metadata** (filename/mime/size, not bytes) → `room=chat_attachment`
-  - **Allowlisted tool_result references** (default: `exa_search`, `web_fetch`, `read_document`) → `room=reference`, one drawer per result
+  - **Attachment metadata** (filename/mime/size, not bytes) → `room=chat_attachment`, `source_file=session/<sid>#turn/<id>#attach/<mid>/<filename>`
+  - **Allowlisted tool_result references** (default: `exa_search`, `web_fetch`, `read_document`) → `room=reference`, `source_file=session/<sid>#turn/<id>#tool/<tname>/<mid>/<idx>`
 - Uses `mempalace.mcp_server.tool_add_drawer` (the function, not the server) for direct
   in-process Chroma upserts. Reads `MEMPALACE_PALACE_PATH` env var, which the daemon
   sets from `mempalace.palace_path` before importing

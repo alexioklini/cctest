@@ -230,6 +230,131 @@ def _purge_mempalace_session(session_id: str):
     threading.Thread(target=_do_purge, daemon=True, name=f"mp-purge-{session_id[:8]}").start()
 
 
+def _purge_mempalace_turns(session_id: str, turn_ids: list[int]):
+    """Remove drawers/closets filed for specific turns of a session (background).
+    A turn_id is the DB id of the user message that opens the turn; drawers for
+    that turn carry source_file starting with 'session/<sid>#turn/<tid>'.
+    """
+    if not turn_ids:
+        return
+    turn_prefixes = [f"session/{session_id}#turn/{int(t)}" for t in turn_ids]
+
+    def _do_purge():
+        try:
+            mcfg = engine._load_mempalace_config()
+            if not mcfg.get("enabled", True):
+                return
+            palace_path = mcfg.get("palace_path", "")
+            if not palace_path or not os.path.isdir(palace_path):
+                return
+            ok, _ = engine._ensure_mempalace_importable()
+            if not ok:
+                return
+            from mempalace.palace import get_collection, get_closets_collection
+
+            def _matches(sf: str) -> bool:
+                for p in turn_prefixes:
+                    if sf == p or sf.startswith(p + "#"):
+                        return True
+                return False
+
+            col = get_collection(palace_path, create=False)
+            if col:
+                result = col.get(include=["metadatas"])
+                ids_to_delete = [
+                    did for did, m in zip(result["ids"], result["metadatas"])
+                    if _matches((m.get("source_file") or ""))
+                ]
+                if ids_to_delete:
+                    col.delete(ids=ids_to_delete)
+                    print(f"[mempalace-purge] deleted {len(ids_to_delete)} drawer(s) "
+                          f"for {len(turn_ids)} turn(s) in session {session_id[:8]}")
+
+            ccol = get_closets_collection(palace_path, create=False)
+            if ccol:
+                result = ccol.get(include=["metadatas"])
+                cids = [
+                    cid for cid, m in zip(result["ids"], result["metadatas"])
+                    if _matches((m.get("source_file") or ""))
+                ]
+                if cids:
+                    ccol.delete(ids=cids)
+        except Exception as e:
+            print(f"[mempalace-purge-turns] error for {session_id[:8]}: "
+                  f"{type(e).__name__}: {e}")
+
+    threading.Thread(target=_do_purge, daemon=True,
+                     name=f"mp-purge-turns-{session_id[:8]}").start()
+
+
+def _memorize_mempalace_turns(session_id: str, turn_ids: list[int]):
+    """Force-file specific turns to MemPalace, ignoring the session's memory_mode
+    and classifier. Reuses the chat-sync loop's schema so the result is identical
+    to what the background daemon would produce.
+    """
+    if not turn_ids:
+        return 0
+    turn_id_set = set(int(t) for t in turn_ids)
+    filed = 0
+    try:
+        mcfg = engine._load_mempalace_config()
+        if not mcfg.get("enabled", True):
+            return 0
+        palace_path = mcfg.get("palace_path", "")
+        if not palace_path:
+            return 0
+        ok, _ = engine._ensure_mempalace_importable()
+        if not ok:
+            return 0
+        from mempalace.mcp_server import tool_add_drawer
+
+        info = ChatDB.get_session_info(session_id)
+        if not info:
+            return 0
+        agent_id = info.get("agent_id", "main")
+        user_id = info.get("user_id", "")
+        wing = f"{user_id}--{agent_id}" if user_id else agent_id
+
+        sync_cfg = mcfg.get("chat_sync", {}) or {}
+        default_room = sync_cfg.get("room", "chat")
+        include_roles = set(sync_cfg.get("include_roles", ["user", "assistant"]))
+        max_chars = int(sync_cfg.get("max_chars_per_message", 8000))
+
+        msgs = ChatDB.mempalace_load_new_messages(session_id, 0) or []
+        current_turn_id = 0
+        for msg in msgs:
+            mid = int(msg.get("id") or 0)
+            role = (msg.get("role") or "").strip()
+            if role == "user":
+                current_turn_id = mid
+            if current_turn_id not in turn_id_set:
+                continue
+            if role not in include_roles:
+                continue
+            content = msg.get("content")
+            text = content if isinstance(content, str) else str(content)
+            body = f"[{role}] {text}"[:max_chars].strip()
+            if not body:
+                continue
+            engine.mempalace_activity.store_begin()
+            try:
+                res = tool_add_drawer(
+                    wing=wing, room=default_room, content=body,
+                    source_file=f"session/{session_id}#turn/{current_turn_id}",
+                    added_by="brain-chat-manual")
+                if isinstance(res, dict) and res.get("success") and \
+                        res.get("reason") != "already_exists":
+                    filed += 1
+            except Exception:
+                pass
+            finally:
+                engine.mempalace_activity.store_end()
+    except Exception as e:
+        print(f"[mempalace-memorize-turns] error for {session_id[:8]}: "
+              f"{type(e).__name__}: {e}")
+    return filed
+
+
 class ChatDB:
     """SQLite persistence for chat sessions and messages."""
 
@@ -634,6 +759,20 @@ class ChatDB:
                         meta = None
                 out.append({"id": mid, "role": role, "content": parsed, "metadata": meta})
             return out
+
+    @staticmethod
+    @_db_safe(default=0)
+    def mempalace_last_user_id_before(session_id, before_id):
+        """Return the id of the most recent user message in this session with id <= before_id.
+        Used by the chat-sync loop to attach orphan assistant/tool rows to the turn
+        they belong to when the sync cursor advances past a user message boundary."""
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT id FROM messages WHERE session_id = ? AND role = 'user' AND id <= ? "
+                "ORDER BY id DESC LIMIT 1",
+                (session_id, before_id)
+            ).fetchone()
+            return int(row[0]) if row else 0
 
     @staticmethod
     @_db_safe(default=None)
@@ -1847,6 +1986,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_mempalace_classifier_get()
         elif path == "/v1/mempalace/activity":
             self._send_json(engine.mempalace_activity.snapshot())
+        elif path.startswith("/v1/mempalace/session-turns"):
+            # GET /v1/mempalace/session-turns?session_id=X — list memorized turn_ids
+            # for the session so the UI can grey out non-applicable menu items.
+            self._handle_mempalace_session_turns()
         elif path.startswith("/v1/mempalace/drawers"):
             self._handle_mempalace_drawers()
         # --- MCP GET routes ---
@@ -2471,6 +2614,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         "cost": meta.get("cost", 0),
                         "tools": meta.get("tools", []),
                         "thinking": bool(meta.get("thinking")),
+                        "thinking_level": meta.get("thinking_level") or ("none" if meta.get("thinking") is None else None),
+                        "caveman_chat": int(meta.get("caveman_chat") or 0),
+                        "caveman_system": int(meta.get("caveman_system") or 0),
                         "sdk": meta.get("sdk", False),
                         "request_payloads": payloads,
                     } if assistant_msg else None,
@@ -2792,6 +2938,62 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             if s:
                 s.save_to_memory = mode
             self._send_json({"status": "ok", "save_to_memory": mode, "session_id": sid})
+        elif action == "purge_memory":
+            # Remove every MemPalace drawer/closet filed from this session and
+            # reset the sync cursor so re-enabling memory re-ingests from scratch.
+            _purge_mempalace_session(sid)
+            try:
+                with _db_conn() as conn:
+                    conn.execute("DELETE FROM chat_mempalace_sync WHERE session_id = ?", (sid,))
+                    conn.commit()
+            except Exception:
+                pass
+            self._send_json({"status": "ok", "purged": True, "session_id": sid})
+        elif action in ("memorize_turns", "purge_turns"):
+            # Body: {turn_ids: [mid, ...]} OR {scope, anchor_turn_id} where
+            # scope ∈ {"all","this","above","below"}. turn_ids wins if provided.
+            turn_ids = body.get("turn_ids")
+            scope = (body.get("scope") or "").strip().lower()
+            anchor = int(body.get("anchor_turn_id") or 0)
+            resolved: list[int] = []
+            if isinstance(turn_ids, list) and turn_ids:
+                resolved = [int(t) for t in turn_ids if str(t).isdigit() or isinstance(t, int)]
+            elif scope:
+                try:
+                    with _db_conn() as conn:
+                        rows = conn.execute(
+                            "SELECT id FROM messages WHERE session_id = ? AND role = 'user' "
+                            "ORDER BY id", (sid,)
+                        ).fetchall()
+                    all_turns = [int(r[0]) for r in rows]
+                except Exception:
+                    all_turns = []
+                if scope == "all":
+                    resolved = all_turns
+                elif scope == "this":
+                    resolved = [anchor] if anchor else []
+                elif scope == "above":
+                    resolved = [t for t in all_turns if t < anchor]
+                elif scope == "below":
+                    resolved = [t for t in all_turns if t > anchor]
+            if not resolved:
+                self._send_json({"status": "ok", "count": 0, "session_id": sid})
+                return
+            if action == "purge_turns":
+                _purge_mempalace_turns(sid, resolved)
+                self._send_json({"status": "ok", "purged": len(resolved),
+                                 "turn_ids": resolved, "session_id": sid})
+            else:
+                # memorize — run in background since add_drawer can take a moment
+                def _do_mem():
+                    try:
+                        _memorize_mempalace_turns(sid, resolved)
+                    except Exception as e:
+                        print(f"[mempalace-memorize-turns] bg error: {e}")
+                threading.Thread(target=_do_mem, daemon=True,
+                                 name=f"mp-mem-turns-{sid[:8]}").start()
+                self._send_json({"status": "ok", "memorizing": len(resolved),
+                                 "turn_ids": resolved, "session_id": sid})
         elif action == "caveman_mode":
             mode = max(0, min(3, int(body.get("mode", 0))))
             ChatDB.update_session_caveman_mode(sid, mode)
@@ -3449,6 +3651,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     thinking_text = "".join(_partial_thinking).strip()
                     if thinking_text:
                         msg_metadata["thinking"] = thinking_text
+                    # Per-turn state snapshot: thinking level requested + caveman modes applied
+                    if thinking_level:
+                        msg_metadata["thinking_level"] = thinking_level
+                    _cav_chat = int(getattr(engine._thread_local, "caveman_chat", 0) or 0)
+                    _cav_sys = int(getattr(engine._thread_local, "caveman_system", 0) or 0)
+                    if _cav_chat:
+                        msg_metadata["caveman_chat"] = _cav_chat
+                    if _cav_sys:
+                        msg_metadata["caveman_system"] = _cav_sys
                     session.add_message("assistant", reply, metadata=msg_metadata or None)
                     done_data = {
                         "text": reply,
@@ -6056,6 +6267,59 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     # --- MemPalace handlers ---
 
+    def _handle_mempalace_session_turns(self):
+        """GET /v1/mempalace/session-turns?session_id=X — return the set of
+        turn_ids currently memorized for this session, parsed from drawer
+        source_file prefixes. The UI uses this to grey out menu items that
+        would be a no-op (e.g. 'memorize this response' when it's already
+        memorized, or 'remove' when nothing was stored)."""
+        from urllib.parse import parse_qs, urlparse
+        qs = parse_qs(urlparse(self.path).query)
+        sid = (qs.get("session_id") or [""])[0]
+        if not sid:
+            self._send_json({"error": "session_id required"}, 400)
+            return
+        turn_ids: set[int] = set()
+        legacy_count = 0  # drawers without #turn/<id> suffix
+        try:
+            mcfg = engine._load_mempalace_config()
+            palace_path = mcfg.get("palace_path", "")
+            if not palace_path or not os.path.isdir(palace_path):
+                self._send_json({"session_id": sid, "turn_ids": [], "legacy_count": 0})
+                return
+            ok, _ = engine._ensure_mempalace_importable()
+            if not ok:
+                self._send_json({"session_id": sid, "turn_ids": [], "legacy_count": 0})
+                return
+            from mempalace.palace import get_collection
+            col = get_collection(palace_path, create=False)
+            if not col:
+                self._send_json({"session_id": sid, "turn_ids": [], "legacy_count": 0})
+                return
+            result = col.get(include=["metadatas"])
+            prefix = f"session/{sid}"
+            for m in result.get("metadatas", []):
+                sf = (m.get("source_file") or "")
+                if not sf.startswith(prefix):
+                    continue
+                # Shape: session/<sid> or session/<sid>#turn/<id>[...] or legacy session/<sid>#...
+                rest = sf[len(prefix):]
+                if rest.startswith("#turn/"):
+                    after = rest[len("#turn/"):]
+                    tok = after.split("#", 1)[0].split("/", 1)[0]
+                    if tok.isdigit():
+                        turn_ids.add(int(tok))
+                        continue
+                legacy_count += 1
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+            return
+        self._send_json({
+            "session_id": sid,
+            "turn_ids": sorted(turn_ids),
+            "legacy_count": legacy_count,
+        })
+
     def _handle_mempalace_classifier_get(self):
         """GET /v1/mempalace/classifier — return classifier config."""
         mcfg = engine._load_mempalace_config()
@@ -8500,12 +8764,32 @@ def main():
                                     continue
                             i += 1
 
+                    # Track the current turn's anchor user-message id. Every drawer
+                    # filed from this turn (user, assistant, attachment, tool result)
+                    # inherits this id in its source_file so per-turn purge/memorise
+                    # can target one turn without touching neighbours.
+                    current_turn_id = 0
+                    # Seed with the last user id already in chats.db up to after_id so
+                    # orphan assistant messages (e.g. when the sync cursor advanced
+                    # mid-turn) still attach to their originating turn.
+                    try:
+                        prior_last_user_id = ChatDB.mempalace_last_user_id_before(sid, after_id)
+                    except Exception:
+                        prior_last_user_id = 0
+                    current_turn_id = int(prior_last_user_id or 0)
+
                     for msg in new_messages:
                         mid = int(msg.get("id") or 0)
                         new_last_id = max(new_last_id, mid)
                         role = (msg.get("role") or "").strip()
                         content = msg.get("content")
                         meta = msg.get("metadata") or {}
+
+                        # New user message opens a new turn.
+                        if role == "user":
+                            current_turn_id = mid
+
+                        turn_suffix = f"#turn/{current_turn_id}" if current_turn_id else ""
 
                         # Normal chat turns.
                         if role in include_roles:
@@ -8520,7 +8804,7 @@ def main():
                                     text = str(content)
                             body = f"[{role}] {text}".strip()
                             if body:
-                                source_file = f"session/{sid}"
+                                source_file = f"session/{sid}{turn_suffix}"
                                 if _file_drawer(wing, default_room, body, source_file):
                                     total_new += 1
 
@@ -8541,7 +8825,7 @@ def main():
                                         f"mime: {fmime}\n"
                                         f"size: {fsize} bytes"
                                     )
-                                    source_file = f"session/{sid}#attach/{mid}/{fname}"
+                                    source_file = f"session/{sid}{turn_suffix}#attach/{mid}/{fname}"
                                     if _file_drawer(wing, "chat_attachment", body, source_file):
                                         total_new += 1
 
@@ -8575,7 +8859,7 @@ def main():
                                         f"url: {ref.get('url','')}\n\n"
                                         f"{ref.get('snippet','')}"
                                     )
-                                    source_file = f"session/{sid}#tool/{tname}/{mid}/{idx}"
+                                    source_file = f"session/{sid}{turn_suffix}#tool/{tname}/{mid}/{idx}"
                                     if _file_drawer(wing, "reference", ref_body, source_file):
                                         total_new += 1
 
@@ -8673,8 +8957,13 @@ def main():
                 wing = f"{user_id}--{agent_id}" if user_id else agent_id
                 msgs = ChatDB.mempalace_load_new_messages(session_id, 0) or []
                 filed = 0
+                current_turn_id = 0
                 for msg in msgs:
+                    mid = int(msg.get("id") or 0)
                     role = (msg.get("role") or "").strip()
+                    if role == "user":
+                        current_turn_id = mid
+                    turn_suffix = f"#turn/{current_turn_id}" if current_turn_id else ""
                     if role not in include_roles:
                         continue
                     content = msg.get("content")
@@ -8684,7 +8973,7 @@ def main():
                         engine.mempalace_activity.store_begin()
                         try:
                             res = tool_add_drawer(wing=wing, room=default_room,
-                                                  content=body, source_file=f"session/{session_id}",
+                                                  content=body, source_file=f"session/{session_id}{turn_suffix}",
                                                   added_by="brain-chat-sync")
                             if res.get("success") and res.get("reason") != "already_exists":
                                 filed += 1
