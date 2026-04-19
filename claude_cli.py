@@ -2554,8 +2554,8 @@ def tool_python_exec(args: dict) -> str:
             if created:
                 result["artifacts"] = created
 
-        # Fallback: if model printed large output instead of writing a file, auto-save as artifact
-        if len(output) > 1000 and proc.returncode == 0 and not new_files and agent:
+        # Always save stdout as an artifact when the script didn't write any files
+        if output and proc.returncode == 0 and not new_files and agent:
             try:
                 artifact_path = os.path.join(work_dir, "output.txt")
                 counter = 1
@@ -2566,13 +2566,16 @@ def tool_python_exec(args: dict) -> str:
                     af.write(output)
                 _after_file_write(artifact_path, "created", agent_id)
                 result["artifacts"] = [os.path.basename(artifact_path)]
-                # Replace full output with reference only — no data preview
-                lines = output.splitlines()
-                result["output"] = (
-                    f"Output saved as artifact {os.path.basename(artifact_path)} "
-                    f"({len(lines)} lines, {len(output):,} chars). "
-                    f"The user can view it directly. Summarize what was computed, do NOT repeat the data."
-                )
+                # For large outputs, replace inline data with a reference so the
+                # summariser doesn't ingest a megabyte of stdout. Small outputs
+                # stay inline so the summariser can describe them meaningfully.
+                if len(output) > 1000:
+                    lines = output.splitlines()
+                    result["output"] = (
+                        f"Output saved as artifact {os.path.basename(artifact_path)} "
+                        f"({len(lines)} lines, {len(output):,} chars). "
+                        f"The user can view it directly. Summarize what was computed, do NOT repeat the data."
+                    )
             except Exception:
                 pass
 
