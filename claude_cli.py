@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.2.0"
-VERSION_DATE = "2026-04-18"
+VERSION = "8.3.0"
+VERSION_DATE = "2026-04-19"
 CHANGELOG = [
+    ("8.3.0", "2026-04-19", "Chat memory state + MemPalace activity feedback. Reopening a chat now correctly restores its memory mode (off/on/auto) from the session record — previously only the current default was applied, so chats saved to memory appeared as 'off' after reopening. /v1/sessions/<id>/messages now returns save_to_memory alongside caveman_mode. Composer icons refreshed: caveman toggle is now a campfire (flame + crossed logs), save-to-memory is a classical palace (columns + pediment) — both clearer metaphors than prior abstract shapes. New live activity animation: the palace icon pulses blue when MemPalace is retrieving (mempalace_query tool call) and green when storing (background chat-sync loop or immediate-sync on toggle). Backed by a thread-safe activity tracker in claude_cli.py (mempalace_activity) exposed via GET /v1/mempalace/activity; web UI polls every 2s. Worker badge now reliably appears on chat tool blocks via permissive substring detection (previously missed some envelopes due to JSON.parse failures on truncated results) — matches session inspector behavior. Right panel toggle moved from the bottom status bar to the page header (top-right), so opening/closing the panel no longer requires a cross-screen mouse travel."),
     ("7.9.1", "2026-04-18", "Right panel toggle and auto-open. Status bar 'Panel' button opens/closes the unified right panel (Attachments, References, Files) without clicking an item in chat. Auto-open: new web references from tool results open the References tab automatically, new/updated artifacts always switch to the artifact (even when a different one was selected). Clicking a reference badge in chat history opens the References tab and scrolls to + highlights that specific source card. Panel toggle button shows active state when open. Badge counts update in real-time during streaming."),
     ("7.9.0", "2026-04-18", "Python code execution environment + parallel tool calls. New python_exec tool runs Python in a sandboxed subprocess with the session's artifact folder as working directory — files written by scripts auto-register as artifacts. Large stdout (>1K chars) auto-saved as artifact with head+tail preview replacing full output in context (token savings). New code_exec tool group — agents opt in via token_config.tool_groups. Configurable timeout, max output, venv path in tools_config.json. Middleware _middleware_pyexec_hint detects 3+ chained file/doc tool calls and injects a one-shot hint to consolidate into python_exec. tools.md updated with python_exec guidance: when to prefer over tool chains, available packages (docx, openpyxl, pptx, reportlab, PIL, csv), document processing examples, output rules. Parallel tool calls: parallel_tool_calls parameter now sent in API payload (default true), per-model toggle in Models tab. Web UI toolDescribe mapping for python_exec."),
     ("7.8.0", "2026-04-18", "Built-in tool group deferral — rarely-used tool groups (email, documents, code_graph, scheduler) are excluded from LLM requests by default and loaded on-demand when the model calls tool_search. Saves ~1,760 tokens per LLM call (~26% of tool definitions). System prompt tells the model which groups are deferred so it knows to discover them when needed. Configurable per-agent via deferred_tool_groups in token_config. Web UI Tokens tab adds per-group 'defer' checkboxes with amber styling, DEFERRED badges in the tool breakdown, and a savings summary banner showing effective token cost. tool_search added to the core tool group to ensure it's always available when group filtering is active. Save Token Config now merges into existing config instead of overwriting (preserves mcp_tool_filter and other fields)."),
@@ -3052,26 +3053,30 @@ def tool_mempalace_query(args: dict) -> str:
     _needs_user_filter = bool(current_user_id and not wing)
     fetch_n = n_results * 3 if _needs_user_filter else n_results
 
+    mempalace_activity.retrieve_begin()
     try:
-        from mempalace.searcher import search_memories
-        results = None
-        for _attempt in range(2):
-            try:
-                results = search_memories(
-                    query=query,
-                    palace_path=palace_path,
-                    wing=wing,
-                    room=room,
-                    n_results=fetch_n,
-                )
-                if results is not None:
-                    break
-            except (AttributeError, TypeError):
-                import time as _t; _t.sleep(0.2)
-        if results is None:
-            results = {}
-    except Exception as e:
-        return _err(f"mempalace_query: {type(e).__name__}: {e}")
+        try:
+            from mempalace.searcher import search_memories
+            results = None
+            for _attempt in range(2):
+                try:
+                    results = search_memories(
+                        query=query,
+                        palace_path=palace_path,
+                        wing=wing,
+                        room=room,
+                        n_results=fetch_n,
+                    )
+                    if results is not None:
+                        break
+                except (AttributeError, TypeError):
+                    import time as _t; _t.sleep(0.2)
+            if results is None:
+                results = {}
+        except Exception as e:
+            return _err(f"mempalace_query: {type(e).__name__}: {e}")
+    finally:
+        mempalace_activity.retrieve_end()
 
     if isinstance(results, dict) and results.get("error"):
         return _err(f"mempalace_query: {results.get('error')}")
@@ -8766,6 +8771,56 @@ def get_graph_stats(agent_id: str) -> dict:
 
 
 _thread_local = threading.local()
+
+
+class _MempalaceActivity:
+    """Thread-safe tracker of in-flight MemPalace store/retrieve operations.
+    Animates the palace icon in the web UI. TTL-based so a stalled pulse
+    doesn't stick forever."""
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._store_inflight = 0
+        self._retrieve_inflight = 0
+        self._last_store_ts = 0.0
+        self._last_retrieve_ts = 0.0
+        self._pulse_ttl = 1.5  # seconds; keeps icon lit briefly after a fast op
+
+    def store_begin(self):
+        with self._lock:
+            self._store_inflight += 1
+            self._last_store_ts = time.time()
+
+    def store_end(self):
+        with self._lock:
+            if self._store_inflight > 0:
+                self._store_inflight -= 1
+            self._last_store_ts = time.time()
+
+    def retrieve_begin(self):
+        with self._lock:
+            self._retrieve_inflight += 1
+            self._last_retrieve_ts = time.time()
+
+    def retrieve_end(self):
+        with self._lock:
+            if self._retrieve_inflight > 0:
+                self._retrieve_inflight -= 1
+            self._last_retrieve_ts = time.time()
+
+    def snapshot(self):
+        with self._lock:
+            now = time.time()
+            return {
+                "store_active": self._store_inflight > 0 or (now - self._last_store_ts) < self._pulse_ttl,
+                "retrieve_active": self._retrieve_inflight > 0 or (now - self._last_retrieve_ts) < self._pulse_ttl,
+                "last_store_ts": self._last_store_ts,
+                "last_retrieve_ts": self._last_retrieve_ts,
+                "store_inflight": self._store_inflight,
+                "retrieve_inflight": self._retrieve_inflight,
+            }
+
+
+mempalace_activity = _MempalaceActivity()
 
 
 MAX_DELEGATE_TOOL_ROUNDS = 10  # Limit for delegated/scheduled tasks (timeout is the real safety net)

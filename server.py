@@ -1845,6 +1845,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_mempalace_stats()
         elif path == "/v1/mempalace/classifier":
             self._handle_mempalace_classifier_get()
+        elif path == "/v1/mempalace/activity":
+            self._send_json(engine.mempalace_activity.snapshot())
         elif path.startswith("/v1/mempalace/drawers"):
             self._handle_mempalace_drawers()
         # --- MCP GET routes ---
@@ -2359,12 +2361,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             resp["summary"] = session.summary or ""
             resp["title"] = session.title or ""
             resp["caveman_mode"] = session.caveman_mode
+            resp["save_to_memory"] = int(getattr(session, "save_to_memory", 0) or 0)
         else:
             info = ChatDB.get_session_info(sid)
             if info:
                 resp["summary"] = info.get("summary", "")
                 resp["title"] = info.get("title", "")
                 resp["caveman_mode"] = int(info.get("caveman_mode", 0) or 0)
+                resp["save_to_memory"] = int(info.get("save_to_memory", 0) or 0)
         self._send_json(resp)
 
     def _handle_next_prompt_suggestion(self, path):
@@ -8427,17 +8431,21 @@ def main():
                         if not content:
                             return False
                         content = content[:max_chars]
+                        engine.mempalace_activity.store_begin()
                         try:
-                            res = tool_add_drawer(
-                                wing=w,
-                                room=r,
-                                content=content,
-                                source_file=source_file,
-                                added_by="brain-chat-sync",
-                            )
-                        except Exception as ex:
-                            print(f"[mempalace-chat-sync] add_drawer failed: {ex}")
-                            return False
+                            try:
+                                res = tool_add_drawer(
+                                    wing=w,
+                                    room=r,
+                                    content=content,
+                                    source_file=source_file,
+                                    added_by="brain-chat-sync",
+                                )
+                            except Exception as ex:
+                                print(f"[mempalace-chat-sync] add_drawer failed: {ex}")
+                                return False
+                        finally:
+                            engine.mempalace_activity.store_end()
                         if not isinstance(res, dict) or not res.get("success"):
                             return False
                         if res.get("reason") == "already_exists":
@@ -8673,6 +8681,7 @@ def main():
                     text = content if isinstance(content, str) else str(content)
                     body = f"[{role}] {text}"[:max_chars]
                     if body.strip():
+                        engine.mempalace_activity.store_begin()
                         try:
                             res = tool_add_drawer(wing=wing, room=default_room,
                                                   content=body, source_file=f"session/{session_id}",
@@ -8681,6 +8690,8 @@ def main():
                                 filed += 1
                         except Exception:
                             pass
+                        finally:
+                            engine.mempalace_activity.store_end()
                 max_id = max((int(m.get("id") or 0) for m in msgs), default=0)
                 if max_id:
                     ChatDB.mempalace_update_cursor(session_id, max_id)

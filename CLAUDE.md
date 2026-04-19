@@ -68,11 +68,11 @@ Key patterns:
 - Streaming uses raw socket SSE for unbuffered token-by-token display
 - `renderStreamingMessage()` updates in-place during streaming; `renderMessages()` for full re-render
 - Unified right panel (`#right-panel`): tabbed panel with Attachments, References, Files tabs; resizable via drag handle
-- Status bar toggle: "Panel" button (`#toggle-right-panel-btn`) opens/closes the right panel, shows `.active` state when open
+- Page-header toggle: "Panel" button (`#toggle-right-panel-btn`) lives in `#page-header-right` (top-right), adjacent to the panel it controls; shows `.active` state when open
 - Auto-open behavior: new web references from `tool_result` auto-open the References tab; `artifact_updated` always switches to the new artifact (even if a different one was selected)
 - Reference highlight: clicking a ref-badge in chat calls `openReferencesPanel(link)` which scrolls to and highlights the matching card (2s outline)
-- `syncRightPanelToggle()` keeps the status bar button state in sync with `state.rightPanelOpen`
-- `toggleRightPanel()` convenience function for the status bar button
+- `syncRightPanelToggle()` keeps the header button state in sync with `state.rightPanelOpen`
+- `toggleRightPanel()` convenience function for the header button
 
 ### Chat File Attachments
 
@@ -598,6 +598,7 @@ Server runs on port 8420 (configurable). Key endpoints:
 - `GET /v1/costs` — cost stats (agent, hours params)
 - `GET /v1/costs/daily` — daily cost breakdown (agent, days params)
 - `GET /v1/mempalace/stats` — palace overview: drawers, closets, wings, rooms, graph, KG, WAL, sync status, anomalies
+- `GET /v1/mempalace/activity` — live store/retrieve activity snapshot used to animate the palace icon in the web UI (polled every 2s; 1.5s TTL pulse after last event)
 - `GET /v1/sessions?project=X` — list sessions filtered by project
 - `GET /v1/agents/<id>/projects` — list projects with instructions, doc_count, status
 - `POST /v1/agents/<id>/projects` — create project (name, description)
@@ -658,9 +659,10 @@ palace, and two background daemons keep it up to date automatically.
 - Three-state per-session memory mode: `0=off`, `1=on` (save all), `2=auto` (classifier decides)
 - `save_chat_to_memory` tool: model can explicitly enable saving when user asks "remember this"
 - Default mode for new sessions from `classifier.default_mode` in config
+- Per-session memory mode is restored on reopen: `/v1/sessions/<id>/messages` returns `save_to_memory`; `openSession()` in the web UI rehydrates `chat.memoryMode` so the composer toggle reflects the stored state (previously only the current default was applied)
 - Config: `mempalace.chat_sync.classifier` block with `enabled`, `model`, `min_turns`, `default_mode`, `categories_to_file`
 - API: `GET/POST /v1/mempalace/classifier`
-- UI: Settings → MemPalace → Chat Sync Classifier section; per-chat toggle button in composer toolbar
+- UI: Settings → MemPalace → Chat Sync Classifier section; per-chat toggle button in composer toolbar (palace icon pulses blue on retrieve, green on store; driven by `/v1/mempalace/activity` + `MempalaceActivityMonitor` in `web/index.html`. The underlying tracker is `engine.mempalace_activity` — `store_begin/end` wraps `tool_add_drawer` calls in the chat-sync loop and immediate-sync; `retrieve_begin/end` wraps `search_memories` in `tool_mempalace_query`.)
 
 **Session delete cleanup** (v7.5.0):
 - `delete_session` purges MemPalace drawers + closets whose `source_file` starts with
