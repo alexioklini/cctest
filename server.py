@@ -1590,6 +1590,236 @@ def _trigger_warmup(session):
     threading.Thread(target=_do_warmup, daemon=True, name=f"warmup_{session.id[:8]}").start()
 
 
+# --- Warm Session Pool ---
+#
+# Keeps at most one pre-built Session per warmup-flagged model, bound to the
+# "main" agent and primed with a KV prefix. When the user creates a new chat
+# on that model (with agent=main, no project), we hand them the pre-baked
+# session instead of cold-starting one, then refill the pool in the background.
+#
+# Pooled sessions live in chats.db with status="warm_pool" so list_sessions
+# naturally hides them from the sidebar (it only surfaces active/archived).
+
+class WarmSessionPool:
+    """Thread-safe, model-keyed pool of warm sessions bound to the main agent.
+
+    Depth is configurable (warmup.pool_depth, default 3). All slots for a given
+    model share the same KV prefix on the GPU (oMLX deduplicates by prompt
+    content), so depth > 1 costs only a handful of KB of server RAM and a few
+    extra rows in chats.db — zero GPU cost. The depth exists to absorb
+    concurrent claims from multiple users hitting "new chat" at the same time.
+
+    Slot state: a slot is 'ready' as soon as its Session wrapper is created
+    (no per-slot prefill — the keeper's initial run_model_warmup already
+    primed the KV prefix that every slot will reuse).
+    """
+
+    POOL_AGENT = "main"
+    POOL_STATUS = "warm_pool"
+    DEFAULT_DEPTH = 3
+
+    def __init__(self):
+        # model_id -> list[dict(session_id, built_at)]
+        self._slots: dict[str, list[dict]] = {}
+        # model_id -> int (how many build threads are currently in flight)
+        self._building: dict[str, int] = {}
+        self._lock = threading.Lock()
+
+    @classmethod
+    def target_depth(cls) -> int:
+        """Read the configured pool depth, clamped to [1, 10]."""
+        try:
+            wcfg = server_config.get("warmup", {}) or {}
+            d = int(wcfg.get("pool_depth", cls.DEFAULT_DEPTH))
+            return max(1, min(10, d))
+        except Exception:
+            return cls.DEFAULT_DEPTH
+
+    def _prune_dead(self, model: str):
+        """Drop slots whose underlying Session no longer exists. Assumes lock held."""
+        slots = self._slots.get(model) or []
+        alive = [s for s in slots if s.get("session_id") and sessions.peek(s["session_id"])]
+        if alive:
+            self._slots[model] = alive
+        elif model in self._slots:
+            self._slots.pop(model, None)
+
+    def ready_count(self, model: str) -> int:
+        with self._lock:
+            self._prune_dead(model)
+            return len(self._slots.get(model, []))
+
+    def building_count(self, model: str) -> int:
+        with self._lock:
+            return self._building.get(model, 0)
+
+    def get_state(self, model: str) -> str:
+        """Return 'empty' | 'building' | 'ready' | 'full'.
+
+        'full' means the pool has reached target_depth; 'ready' means at least
+        one slot is available; 'building' means zero ready but at least one
+        build is in flight.
+        """
+        depth = self.target_depth()
+        with self._lock:
+            self._prune_dead(model)
+            ready = len(self._slots.get(model, []))
+            building = self._building.get(model, 0)
+        if ready >= depth:
+            return "full"
+        if ready > 0:
+            return "ready"
+        if building > 0:
+            return "building"
+        return "empty"
+
+    def all_states(self) -> dict[str, dict]:
+        """Snapshot of all pool states for UI."""
+        out = {}
+        depth = self.target_depth()
+        with self._lock:
+            models = set(self._slots.keys()) | set(self._building.keys())
+            for m in models:
+                self._prune_dead(m)
+                slots = self._slots.get(m, [])
+                ready = len(slots)
+                building = self._building.get(m, 0)
+                if ready >= depth:
+                    state = "full"
+                elif ready > 0:
+                    state = "ready"
+                elif building > 0:
+                    state = "building"
+                else:
+                    state = "empty"
+                # Oldest build time = freshest slot the UI could hand out
+                built_at = max((s.get("built_at", 0) for s in slots), default=0)
+                out[m] = {
+                    "state": state,
+                    "ready": ready,
+                    "building": building,
+                    "target": depth,
+                    "built_at": built_at,
+                }
+        return out
+
+    def claim(self, model: str) -> "Session | None":
+        """Pop and return one warm session for a model, if available. None otherwise.
+
+        The caller is responsible for rebinding the session (user_id, status,
+        project, etc.) and for triggering a pool refill.
+        """
+        with self._lock:
+            self._prune_dead(model)
+            slots = self._slots.get(model) or []
+            if not slots:
+                return None
+            slot = slots.pop(0)  # FIFO: hand out oldest (likely warmest) first
+            if not slots:
+                self._slots.pop(model, None)
+        sid = slot.get("session_id", "")
+        if not sid:
+            return None
+        s = sessions.peek(sid)
+        if s is None:
+            s = sessions.get(sid)
+        return s
+
+    def invalidate_all(self, reason: str = ""):
+        """Discard every pooled session (system prompt/agent config changed)."""
+        with self._lock:
+            victims: list[str] = []
+            for slots in self._slots.values():
+                for slot in slots:
+                    sid = slot.get("session_id")
+                    if sid:
+                        victims.append(sid)
+            self._slots.clear()
+        for sid in victims:
+            try:
+                sessions.delete(sid)
+            except Exception:
+                pass
+        if victims and reason:
+            print(f"[warm-pool] invalidated {len(victims)} entries ({reason})")
+
+    def invalidate_model(self, model: str, reason: str = ""):
+        """Discard every pooled session for one model."""
+        with self._lock:
+            slots = self._slots.pop(model, None) or []
+        if not slots:
+            return
+        for slot in slots:
+            sid = slot.get("session_id")
+            if sid:
+                try:
+                    sessions.delete(sid)
+                except Exception:
+                    pass
+        if reason:
+            print(f"[warm-pool] dropped {model} x{len(slots)} ({reason})")
+
+    def try_build(self, model: str):
+        """Top up the pool toward target_depth with background build threads.
+
+        Each call fires one build thread per missing slot (cap at target_depth
+        minus currently-building count). Safe to call repeatedly — races are
+        guarded by the per-model building counter.
+        """
+        depth = self.target_depth()
+        with self._lock:
+            self._prune_dead(model)
+            ready = len(self._slots.get(model, []))
+            building = self._building.get(model, 0)
+            needed = depth - ready - building
+            if needed <= 0:
+                return
+            self._building[model] = building + needed
+
+        def _build_one():
+            try:
+                provider = BrainAgentHandler._resolve_provider_static(model)
+                session = sessions.create(
+                    agent_id=self.POOL_AGENT,
+                    model=model,
+                    api_key=provider["api_key"],
+                    base_url=provider["base_url"],
+                    max_context=engine.get_model_max_context(model),
+                )
+                session.status = self.POOL_STATUS
+                ChatDB.save_session(
+                    session.id, session.agent_id, session.model,
+                    session.title, session.status,
+                    session.created_at, session.last_active,
+                    session.project or "",
+                )
+                with self._lock:
+                    self._slots.setdefault(model, []).append({
+                        "session_id": session.id,
+                        "built_at": time.time(),
+                    })
+                    ready_now = len(self._slots[model])
+                print(f"[warm-pool] {model}: +1 ready ({session.id[:8]}, total {ready_now}/{depth})")
+            except Exception as e:
+                print(f"[warm-pool] {model}: build failed — {type(e).__name__}: {e}")
+            finally:
+                with self._lock:
+                    remaining = self._building.get(model, 1) - 1
+                    if remaining <= 0:
+                        self._building.pop(model, None)
+                    else:
+                        self._building[model] = remaining
+
+        for _ in range(needed):
+            threading.Thread(
+                target=_build_one, daemon=True,
+                name=f"warm-pool-build-{model[:20]}",
+            ).start()
+
+
+warm_pool = WarmSessionPool()
+
+
 class BrainAgentHandler(BaseHTTPRequestHandler):
     """HTTP request handler for Brain Agent API."""
     # NOTE: Deliberately using HTTP/1.0 — SSE streaming works because we write
@@ -1915,16 +2145,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             if not s:
                 self._send_json({"warmup": False, "warming_up": False})
             else:
-                provider_name = getattr(s, '_provider_name', '')
-                if not provider_name:
-                    # Resolve provider name from model
-                    try:
-                        prov = self._resolve_provider(s.model)
-                        provider_name = prov.get("provider_name", "")
-                    except Exception:
-                        provider_name = ""
-                providers_cfg = server_config.get("providers", {})
-                warmup_enabled = providers_cfg.get(provider_name, {}).get("prefill_warmup", False)
+                mcfg = engine._models_config.get(s.model, {})
+                warmup_enabled = bool(mcfg.get("warmup", False))
                 self._send_json({"warmup": warmup_enabled, "warming_up": s._warmup_active})
         elif path == "/v1/loops":
             self._handle_loops_get()
@@ -1960,6 +2182,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_costs_daily()
         elif path == "/v1/cache/stats":
             self._send_json(engine._web_cache.stats())
+        elif path == "/v1/warmup/status":
+            self._handle_warmup_status()
         elif path == "/v1/config/execution-mode":
             self._handle_execution_mode_get()
         # --- Traces & Audit GET routes ---
@@ -2122,6 +2346,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_test_provider()
         elif path == "/v1/models/config":
             self._handle_models_config_save()
+        elif path == "/v1/warmup/trigger":
+            self._handle_warmup_trigger()
         elif path == "/v1/skills/browse":
             self._handle_browse_skills()
         elif path == "/v1/skills/install":
@@ -2182,15 +2408,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     s.base_url = prov["base_url"]
                 except Exception:
                     pass
-            # Resolve provider for warmup check
-            provider_name = ""
-            try:
-                prov = self._resolve_provider(s.model)
-                provider_name = prov.get("provider_name", "")
-            except Exception:
-                pass
-            providers_cfg = server_config.get("providers", {})
-            warmup_enabled = providers_cfg.get(provider_name, {}).get("prefill_warmup", False)
+            # Per-model warmup check
+            mcfg = engine._models_config.get(s.model, {})
+            warmup_enabled = bool(mcfg.get("warmup", False))
             if warmup_enabled and not s._warmup_active:
                 _trigger_warmup(s)
             self._send_json({"warmup": warmup_enabled, "warming_up": s._warmup_active})
@@ -3027,13 +3247,45 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         body = self._read_json()
         model = body.get("model", server_config["default_model"])
         provider = self._resolve_provider(model)
-        session = sessions.create(
-            agent_id=body.get("agent", "main"),
-            model=model,
-            api_key=provider["api_key"],
-            base_url=provider["base_url"],
-            max_context=body.get("max_context") or engine.get_model_max_context(model),
-        )
+        agent_req = body.get("agent", "main")
+        project_req = body.get("project", "")
+        custom_status_req = body.get("status", "")
+        note_req = body.get("note_context", "")
+
+        # Warm session pool claim — only when the incoming request matches
+        # the pooled shape exactly: agent=main, no project, no custom status,
+        # no note context. Any of those change the system prompt / behavior
+        # and would make a pre-primed KV prefix invalid.
+        model_cfg_claim = engine._models_config.get(model, {})
+        pooled = None
+        if (model_cfg_claim.get("warmup")
+                and agent_req == WarmSessionPool.POOL_AGENT
+                and not project_req and not custom_status_req and not note_req):
+            pooled = warm_pool.claim(model)
+        if pooled is not None:
+            session = pooled
+            # Promote from warm_pool status to active (visible in sidebar)
+            session.status = "active"
+            ChatDB.save_session(
+                session.id, session.agent_id, session.model,
+                session.title, session.status,
+                session.created_at, session.last_active,
+                session.project or "",
+            )
+            # Immediately kick off a replacement build
+            threading.Thread(
+                target=lambda m=model: warm_pool.try_build(m),
+                daemon=True, name=f"warm-pool-refill-{model[:16]}",
+            ).start()
+            print(f"[warm-pool] claimed {model} ({session.id[:8]})")
+        else:
+            session = sessions.create(
+                agent_id=agent_req,
+                model=model,
+                api_key=provider["api_key"],
+                base_url=provider["base_url"],
+                max_context=body.get("max_context") or engine.get_model_max_context(model),
+            )
         # Stamp user ownership (for MemPalace wing scoping)
         auth_user = getattr(self, '_auth_user', None)
         uid = ""
@@ -3074,13 +3326,17 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             ChatDB.save_session(session.id, session.agent_id, session.model,
                                session.title, session.status, session.created_at,
                                session.last_active, session.project or "")
-        # Check if provider has prefill_warmup enabled
-        provider_name = provider.get("provider_name", "")
-        providers_cfg = server_config.get("providers", {})
-        warmup_enabled = providers_cfg.get(provider_name, {}).get("prefill_warmup", False)
+        # Per-model warmup flag
+        mcfg = engine._models_config.get(model, {})
+        warmup_enabled = bool(mcfg.get("warmup", False))
+
+        # Claimed pool sessions are already warm — skip the "warmup" status
+        # marker (that's for fresh sessions still prefilling) and skip the
+        # redundant _trigger_warmup call.
+        claimed = pooled is not None
 
         # Mark warmup sessions so they don't appear in sidebar until first message
-        if warmup_enabled and not custom_status:
+        if warmup_enabled and not custom_status and not claimed:
             session.status = "warmup"
             ChatDB.save_session(session.id, session.agent_id, session.model,
                                session.title, session.status, session.created_at,
@@ -3093,10 +3349,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             "max_context": session.max_context,
             "project": session.project or "",
             "warmup": warmup_enabled,
+            "pre_warmed": claimed,
         })
 
-        # Trigger warmup in background
-        if warmup_enabled:
+        # Trigger warmup in background (skip if session was claimed from pool)
+        if warmup_enabled and not claimed:
             _trigger_warmup(session)
 
     def _handle_switch_agent(self):
@@ -3114,9 +3371,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             provider = self._resolve_provider(model)
             session.api_key = provider["api_key"]
             session.base_url = provider["base_url"]
-            provider_name = provider.get("provider_name", "")
-            providers_cfg = server_config.get("providers", {})
-            warmup_enabled = providers_cfg.get(provider_name, {}).get("prefill_warmup", False)
+            mcfg = engine._models_config.get(model, {})
+            warmup_enabled = bool(mcfg.get("warmup", False))
         self._send_json({
             "session_id": session.id,
             "agent": session.agent_id,
@@ -4050,6 +4306,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 with open(config_path) as f:
                     config = json.load(f)
 
+            # Snapshot pre-save warmup flags so we can invalidate pool entries
+            # for models whose warmup was turned off (or config otherwise
+            # changed enough that the pooled KV prefix is suspect).
+            prev_warmup_flags = {
+                mid: bool(cfg.get("warmup", False))
+                for mid, cfg in (engine._models_config or {}).items()
+            }
+
             if action == "save":
                 models = body.get("models", {})
                 config["models"] = models
@@ -4102,9 +4366,97 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             # Clear provider cache since model config changed
             engine.clear_provider_cache()
 
+            # Drop warm-pool slots whose warmup flag just turned off
+            for mid, was_on in prev_warmup_flags.items():
+                now_on = bool(engine._models_config.get(mid, {}).get("warmup", False))
+                if was_on and not now_on:
+                    warm_pool.invalidate_model(mid, reason="warmup flag off")
+
             self._send_json({"status": "saved", "models": dict(engine._models_config)})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
+
+    def _handle_warmup_status(self):
+        """GET /v1/warmup/status — per-model warmup state snapshot for UI indicators.
+
+        Hold-forever semantics: a model is 'warm' from the moment it's primed
+        (or first used) and stays warm until something external evicts it.
+        We don't age warm states back to cold on a TTL timer.
+        """
+        states = engine.all_warmup_states()
+        pool_states = warm_pool.all_states()
+        wcfg = server_config.get("warmup", {}) or {}
+        now = time.time()
+        out = {}
+        any_warming = False
+        any_pool_building = False
+        for mid, cfg in engine._models_config.items():
+            if not cfg.get("warmup"):
+                continue
+            st = states.get(mid, {
+                "state": "idle", "last_warmup_ts": 0, "last_used_ts": 0,
+                "last_error": "", "next_due_ts": 0,
+            })
+            last = max(st.get("last_warmup_ts", 0), st.get("last_used_ts", 0))
+            age = (now - last) if last else None
+            effective = st.get("state", "idle")
+            if effective == "warming":
+                any_warming = True
+            pool = pool_states.get(mid, {
+                "state": "empty", "ready": 0, "building": 0,
+                "target": WarmSessionPool.target_depth(), "built_at": 0,
+            })
+            if pool.get("state") == "building":
+                any_pool_building = True
+            out[mid] = {
+                "state": effective,
+                "last_warmup_ts": st.get("last_warmup_ts", 0),
+                "last_used_ts": st.get("last_used_ts", 0),
+                "last_error": st.get("last_error", ""),
+                "age_seconds": age,
+                "enabled": True,
+                "display_name": cfg.get("display_name", mid),
+                "provider": cfg.get("provider", ""),
+                "pool_state": pool.get("state", "empty"),
+                "pool_built_at": pool.get("built_at", 0),
+                "ready": pool.get("ready", 0),
+                "building": pool.get("building", 0),
+                "target": pool.get("target", WarmSessionPool.target_depth()),
+            }
+        self._send_json({
+            "models": out,
+            "any_warming": any_warming,
+            "any_pool_building": any_pool_building,
+            "enabled": wcfg.get("enabled", True),
+            "interval_seconds": int(wcfg.get("interval_seconds", 30)),
+        })
+
+    def _handle_warmup_trigger(self):
+        """POST /v1/warmup/trigger — manually warm a specific model. Body: {model}."""
+        body = self._read_json()
+        mid = body.get("model", "")
+        if not mid:
+            self._send_json({"error": "model required"}, 400)
+            return
+        cfg = engine._models_config.get(mid, {})
+        if not cfg:
+            self._send_json({"error": "unknown model"}, 404)
+            return
+        wcfg = server_config.get("warmup", {}) or {}
+        allow_cloud = bool(cfg.get("warmup_allow_cloud",
+                                   wcfg.get("allow_cloud", False)))
+
+        def _run():
+            try:
+                engine.run_model_warmup(
+                    mid, allow_cloud=allow_cloud, agent_id="main",
+                    timeout=int(wcfg.get("timeout_seconds", 30)),
+                )
+            except Exception as e:
+                print(f"[warmup-trigger] {mid}: {e}")
+
+        threading.Thread(target=_run, daemon=True, name=f"warmup-trigger-{mid[:12]}").start()
+        self._send_json({"status": "triggered", "model": mid})
 
     def _handle_running_tasks(self):
         """GET /v1/schedule/running — list currently executing scheduled tasks."""
@@ -4933,6 +5285,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     engine.ensure_memory_summary_schedules()
                 except Exception:
                     pass
+            # Invalidate warm pool if the main agent's system-prompt inputs
+            # changed — the pooled KV prefix would no longer match the real
+            # first-turn payload.
+            if (agent_id == WarmSessionPool.POOL_AGENT
+                    and filename in ("soul.md", "agent.json", "tools.md")):
+                warm_pool.invalidate_all(f"{agent_id}/{filename} edited")
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
@@ -8922,6 +9280,92 @@ def main():
             time.sleep(max(15, next_interval))
 
     threading.Thread(target=_mempalace_chat_sync_loop, daemon=True, name="mempalace-chat-sync").start()
+
+    # Warmup keeper — fires minimal prefill requests at models flagged with
+    # warmup=true so their first real turn lands on a warm KV cache. Runs
+    # sequentially (max_concurrent default 1) to avoid saturating the local
+    # gateway; respects per-model warmup_ttl_seconds (default 60s).
+    def _warmup_keeper_loop():
+        # Small startup delay so we don't race provider probes on boot
+        time.sleep(5)
+        while True:
+            try:
+                wcfg = server_config.get("warmup", {}) or {}
+                if not wcfg.get("enabled", True):
+                    time.sleep(30)
+                    continue
+                interval = int(wcfg.get("interval_seconds", 30))
+                allow_cloud_global = bool(wcfg.get("allow_cloud", False))
+                max_concurrent = int(wcfg.get("max_concurrent", 1))
+
+                # Snapshot models with warmup=true. Only prime models that are
+                # not already warm — a warm KV prefix stays valid indefinitely
+                # on oMLX (no TTL eviction), so re-firing every TTL seconds
+                # would just waste GPU cycles re-prefilling an identical prefix.
+                # Re-warm only when state is idle/cold/failed, or after a real
+                # turn has invalidated the prefix by extending the history.
+                now = time.time()
+                candidates = []
+                for mid, cfg in list(engine._models_config.items()):
+                    if not cfg.get("warmup"):
+                        continue
+                    if not cfg.get("enabled", True):
+                        continue
+                    st = engine.get_warmup_state(mid)
+                    state_name = st.get("state", "idle")
+                    if state_name in ("warming", "skipped_cloud"):
+                        continue
+                    if state_name == "warm":
+                        # Already primed — leave it alone. last_warmup_ts stays
+                        # as "age of prime" for the UI; next_due is meaningless
+                        # in hold-forever mode, so just clear it.
+                        engine.set_warmup_state(mid, next_due_ts=0)
+                        continue
+                    # idle / cold / failed → needs priming
+                    last = max(st.get("last_warmup_ts", 0), st.get("last_used_ts", 0))
+                    age = now - last if last else 10 ** 9
+                    candidates.append((age, mid, cfg))
+
+                # Oldest first; cap to max_concurrent per cycle
+                candidates.sort(key=lambda t: t[0], reverse=True)
+                for _, mid, cfg in candidates[:max_concurrent]:
+                    allow_cloud = bool(cfg.get("warmup_allow_cloud", allow_cloud_global))
+                    t0 = time.time()
+                    result = engine.run_model_warmup(
+                        mid,
+                        allow_cloud=allow_cloud,
+                        agent_id="main",
+                        timeout=int(wcfg.get("timeout_seconds", 30)),
+                    )
+                    dur = int((time.time() - t0) * 1000)
+                    st_name = result.get("state", "?")
+                    if result.get("ok"):
+                        print(f"[warmup-keeper] {mid}: warm ({dur}ms)")
+                    elif st_name == "skipped_cloud":
+                        # Only log once per state change to avoid spam
+                        pass
+                    else:
+                        err = result.get("error", "?")
+                        print(f"[warmup-keeper] {mid}: failed — {err}")
+
+                # Second pass — top up the warm session pool toward target
+                # depth. Only build for models that are fully warm (weights +
+                # KV prefix primed). try_build is a no-op when the pool is
+                # already full.
+                for mid, cfg in list(engine._models_config.items()):
+                    if not cfg.get("warmup") or not cfg.get("enabled", True):
+                        continue
+                    st = engine.get_warmup_state(mid)
+                    if st.get("state") != "warm":
+                        continue
+                    warm_pool.try_build(mid)
+
+                time.sleep(max(5, interval))
+            except Exception as e:
+                print(f"[warmup-keeper] loop error: {type(e).__name__}: {e}")
+                time.sleep(30)
+
+    threading.Thread(target=_warmup_keeper_loop, daemon=True, name="warmup-keeper").start()
 
     def _save_chat_to_memory_callback(session_id: str) -> dict:
         """Enable save_to_memory on a session and trigger immediate sync."""

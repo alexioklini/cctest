@@ -2950,6 +2950,19 @@ textarea { resize: none; }
 .connection-dot.connecting { background: var(--warning, #f59e0b); box-shadow: 0 0 4px var(--warning, #f59e0b); }
 @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
+/* Warmup state dot: green=warm, amber-pulsing=warming, grey=cold/idle, red=failed */
+.warmup-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block;
+  background: var(--text-500);
+  transition: background 0.25s ease, box-shadow 0.25s ease;
+}
+.warmup-dot.warm { background: var(--success, #22c55e); box-shadow: 0 0 4px var(--success, #22c55e); }
+.warmup-dot.warming { background: var(--warning, #f59e0b); box-shadow: 0 0 6px var(--warning, #f59e0b); animation: pulse-dot 0.9s infinite; }
+.warmup-dot.cold { background: var(--text-500); }
+.warmup-dot.failed { background: var(--error, #ef4444); box-shadow: 0 0 4px var(--error, #ef4444); }
+.warmup-dot.skipped_cloud { background: var(--text-500); opacity: 0.5; }
+.warmup-dot.idle { background: var(--text-500); opacity: 0.6; }
+
 /* Context progress bar */
 .context-bar {
   width: 60px;
@@ -3386,6 +3399,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           </div>
           <div class="composer-footer-right">
             <button class="model-selector-btn" id="model-selector-btn" onclick="toggleModelDropdown(event)">
+              <span class="warmup-dot" id="welcome-warmup-dot" style="display:none;margin-right:4px"></span>
               <span class="model-name" id="model-selector-name">Sonnet 4.6</span>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
@@ -3438,6 +3452,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
             </div>
             <div class="composer-footer-right">
               <span class="model-selector-btn" id="chat-model-selector" onclick="toggleModelDropdown(event)">
+                <span class="warmup-dot" id="chat-warmup-dot" style="display:none;margin-right:4px"></span>
                 <span class="model-name" id="chat-model-name">Sonnet 4.6</span>
                 <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
               </span>
@@ -7870,6 +7885,7 @@ async function switchGeneralTab(tab, btn) {
             <input type="checkbox" class="mdl-enabled" ${cfg.enabled?'checked':''} onchange="this.closest('.mdl-header-row').style.opacity=this.checked?1:0.5">
             <input class="mdl-display-name" value="${esc(cfg.display_name || modelShortName(mid, false))}" style="width:140px;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:12px;background:var(--bg-000);color:var(--text-100)" placeholder="Display name" title="Display name">
             <span style="${MONO};flex:1;overflow:hidden;text-overflow:ellipsis" title="${esc(mid)}">${esc(mid)}</span>
+            <span class="mdl-warmup-dot" data-model-dot="${esc(mid)}" style="display:${cfg.warmup?'inline-block':'none'};width:8px;height:8px;border-radius:50%;background:var(--text-500);flex:none" title="Warmup state"></span>
             <label style="font-size:11px;color:var(--text-400)">P</label><input type="number" class="mdl-priority" value="${cfg.priority||0}" style="width:50px;padding:2px 4px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;text-align:center;background:var(--bg-000);color:var(--text-200)">
             <button class="btn-secondary" style="padding:2px 6px;font-size:12px" onclick="const d=document.getElementById('${detId}');d.style.display=d.style.display==='none'?'block':'none'" title="Model settings">&#9881;</button>
             <button class="btn-secondary" style="padding:2px 6px;font-size:10px;color:var(--error)" onclick="if(confirm('Remove model ${esc(mid)}?'))removeModel('${esc(mid)}')">&#10005;</button>
@@ -7900,6 +7916,8 @@ async function switchGeneralTab(tab, btn) {
                 </select>
               </div>
               <div style="display:flex;align-items:center;gap:6px;padding-top:14px"><input type="checkbox" class="mdl-parallel-tools" ${cfg.parallel_tool_calls !== false ? 'checked' : ''} style="margin:0"><label class="form-label" style="font-size:11px;margin:0;cursor:pointer">Parallel Tool Calls</label></div>
+              <div style="display:flex;align-items:center;gap:6px;padding-top:14px"><input type="checkbox" class="mdl-warmup" ${cfg.warmup ? 'checked' : ''} style="margin:0"><label class="form-label" style="font-size:11px;margin:0;cursor:pointer" title="Prime this model's KV cache once so first-token latency is minimal. The warm state is held until the model is evicted — no periodic re-priming.">Warmup</label></div>
+              <div style="display:flex;align-items:center;gap:6px;padding-top:14px"><input type="checkbox" class="mdl-warmup-allow-cloud" ${cfg.warmup_allow_cloud ? 'checked' : ''} style="margin:0"><label class="form-label" style="font-size:11px;margin:0;cursor:pointer" title="Permit warmup against cloud providers (costs tokens)">Allow cloud</label></div>
               <div style="grid-column:1/-1"><label class="form-label" style="font-size:11px">Raw Formats <span style="color:var(--text-400);font-weight:400">(MIME patterns the model handles natively as multimodal)</span></label><input class="form-input mdl-raw-formats" value="${esc((cfg.raw_formats||[]).join(', '))}" placeholder="e.g. image/*, application/pdf" style="font-size:12px"></div>
             </div>
           </div>
@@ -8857,6 +8875,13 @@ async function saveModelsConfig() {
       // Parallel tool calls
       const ptc = row.querySelector('.mdl-parallel-tools')?.checked;
       if (ptc === false) mc[mid].parallel_tool_calls = false; else delete mc[mid].parallel_tool_calls;
+      // Warmup
+      const warm = row.querySelector('.mdl-warmup')?.checked;
+      if (warm) mc[mid].warmup = true; else delete mc[mid].warmup;
+      // warmup_ttl_seconds retired: hold-forever semantics (no periodic reprime)
+      delete mc[mid].warmup_ttl_seconds;
+      const warmCloud = row.querySelector('.mdl-warmup-allow-cloud')?.checked;
+      if (warmCloud) mc[mid].warmup_allow_cloud = true; else delete mc[mid].warmup_allow_cloud;
       // Raw formats
       const rawFmt = row.querySelector('.mdl-raw-formats')?.value?.trim();
       if (rawFmt) {
@@ -9169,6 +9194,18 @@ async function switchAgentTab(agentId, tab, btn) {
       const modelOptions = enabledModels.map(([mid]) =>
         `<option value="${esc(mid)}" ${mid===cfg.model?'selected':''}>${esc(modelShortName(mid))}</option>`
       ).join('');
+      // Next-prompt suggestion config — override model drives where the
+      // ghost-text completion is generated. Empty = reuse session model
+      // (best cache reuse, but slow on thinking local models like Qwen3.6).
+      const nps = (cfg.next_prompt_suggestions && typeof cfg.next_prompt_suggestions === 'object')
+        ? cfg.next_prompt_suggestions : {};
+      const npsEnabled = nps.enabled !== false;
+      const npsModel = nps.model || '';
+      const npsMaxWords = nps.max_words != null ? nps.max_words : 15;
+      const npsModelOptions = `<option value="" ${npsModel===''?'selected':''}>(session model — best cache reuse)</option>`
+        + enabledModels.map(([mid]) =>
+            `<option value="${esc(mid)}" ${mid===npsModel?'selected':''}>${esc(modelShortName(mid))}</option>`
+          ).join('');
 
       container.innerHTML = `
         <div style="padding:16px;display:grid;gap:16px">
@@ -9187,6 +9224,22 @@ async function switchAgentTab(agentId, tab, btn) {
           <div style="display:flex;align-items:center;gap:8px">
             <input type="checkbox" id="cfg-paused" ${cfg.paused?'checked':''}>
             <label for="cfg-paused" style="font-size:14px;color:var(--text-200)">Paused</label>
+          </div>
+          <div style="border-top:1px solid var(--border-100);padding-top:12px;display:grid;gap:10px">
+            <div style="font-size:12px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Next-Prompt Suggestions</div>
+            <div style="font-size:11px;color:var(--text-400)">Ghost-text prediction shown in the composer after each assistant response. Override model when the session model is a slow thinking model (e.g. Qwen3.6) — pick a fast model like Haiku for sub-second suggestions.</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <input type="checkbox" id="cfg-nps-enabled" ${npsEnabled?'checked':''}>
+              <label for="cfg-nps-enabled" style="font-size:14px;color:var(--text-200)">Enabled</label>
+            </div>
+            <div>
+              <label class="form-label">Model Override</label>
+              <select class="form-select" id="cfg-nps-model" style="width:100%">${npsModelOptions}</select>
+            </div>
+            <div>
+              <label class="form-label">Max Words</label>
+              <input class="form-input" type="number" id="cfg-nps-max-words" value="${npsMaxWords}" min="3" max="40" style="width:120px">
+            </div>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:8px">
             <button class="btn-primary" onclick="saveAgentJson('${esc(agentId)}')">Save</button>
@@ -10827,6 +10880,19 @@ async function saveAgentJson(agentId) {
     cfg.description = document.getElementById('cfg-description')?.value || '';
     cfg.model = document.getElementById('cfg-model')?.value || cfg.model;
     cfg.paused = document.getElementById('cfg-paused')?.checked || false;
+
+    // Next-prompt suggestions (only write the block when fields exist, so
+    // we don't erase advanced keys the user added by hand)
+    const npsEnabledEl = document.getElementById('cfg-nps-enabled');
+    if (npsEnabledEl) {
+      const nps = (cfg.next_prompt_suggestions && typeof cfg.next_prompt_suggestions === 'object')
+        ? cfg.next_prompt_suggestions : {};
+      nps.enabled = !!npsEnabledEl.checked;
+      nps.model = document.getElementById('cfg-nps-model')?.value || '';
+      const mw = parseInt(document.getElementById('cfg-nps-max-words')?.value, 10);
+      if (!Number.isNaN(mw)) nps.max_words = Math.max(3, Math.min(40, mw));
+      cfg.next_prompt_suggestions = nps;
+    }
 
     await API.post(`/v1/agents/${agentId}/file`, { name: 'agent.json', content: JSON.stringify(cfg, null, 2) });
     showToast('Agent config saved');
@@ -12869,6 +12935,104 @@ const MempalaceActivityMonitor = {
   },
 };
 
+// Formats a pool-state tooltip fragment like " · pool 2/3 ready" for reuse
+// across the Models tab and composer dots.
+function poolTooltip(st) {
+  if (!st) return '';
+  const ready = st.ready ?? 0;
+  const target = st.target ?? 0;
+  const building = st.building ?? 0;
+  if (target <= 0) return '';
+  if (ready >= target) return ` · pool ${ready}/${target} ready ✓`;
+  if (ready > 0) return ` · pool ${ready}/${target} ready (building ${building})`;
+  if (building > 0) return ` · pre-baking ${building} session${building>1?'s':''}…`;
+  return '';
+}
+
+// Polls /v1/warmup/status and pushes state into DOM dots (status bar, composer,
+// Models tab rows). Poll faster (1s) when anything is actively warming so the
+// user sees the amber → green flip promptly; slow to 5s otherwise.
+const WarmupMonitor = {
+  _interval: null,
+  _fastMs: 1000,
+  _slowMs: 5000,
+  _mode: 'slow',
+  states: {},        // model_id -> state dict from server
+  anyWarming: false,
+
+  start() {
+    if (this._interval) return;
+    this._tick();
+    this._schedule();
+  },
+  stop() {
+    if (this._interval) { clearTimeout(this._interval); this._interval = null; }
+  },
+  _schedule() {
+    const ms = this._mode === 'fast' ? this._fastMs : this._slowMs;
+    this._interval = setTimeout(() => this._tick(), ms);
+  },
+  async _tick() {
+    if (!state.connected) { this._schedule(); return; }
+    try {
+      const resp = await fetch(`${BASE_URL}/v1/warmup/status`, {
+        method: 'GET', headers: API._headers(),
+        signal: AbortSignal.timeout(3000),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        this.states = data.models || {};
+        this.anyWarming = !!data.any_warming;
+        this._mode = this.anyWarming ? 'fast' : 'slow';
+        this._render();
+      }
+    } catch {}
+    this._schedule();
+  },
+  _render() {
+    // Composer dots — reflect the active session's model
+    const activeModel = state.activeChat?.model
+      || document.getElementById('model-selector-name')?.dataset?.modelId
+      || '';
+    this._applyComposerDot('welcome-warmup-dot', activeModel);
+    this._applyComposerDot('chat-warmup-dot', activeModel);
+    // Models tab row dots
+    document.querySelectorAll('[data-model-dot]').forEach(el => {
+      const mid = el.dataset.modelDot;
+      const st = this.states[mid];
+      if (!st) { el.style.display = 'none'; el.className = 'mdl-warmup-dot'; return; }
+      el.style.display = 'inline-block';
+      el.className = 'mdl-warmup-dot warmup-dot ' + st.state;
+      const age = st.age_seconds != null ? Math.round(st.age_seconds) + 's ago' : 'never';
+      el.title = `Warmup: ${st.state}` + (st.state === 'warm' ? ` · ${age}` : '')
+              + poolTooltip(st) + (st.last_error ? ` · ${st.last_error}` : '');
+    });
+  },
+  _applyComposerDot(id, model) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const st = this.states[model];
+    if (!st) { el.style.display = 'none'; return; }
+    el.style.display = 'inline-block';
+    el.className = 'warmup-dot ' + st.state;
+    const age = st.age_seconds != null ? Math.round(st.age_seconds) + 's ago' : 'never';
+    el.title = `Model warmup: ${st.state}`
+            + (st.state === 'warm' ? ` · prefilled ${age}` : '')
+            + poolTooltip(st);
+  },
+  // Called by the Models tab "Warm now" button (if added later)
+  async triggerManual(modelId) {
+    try {
+      await fetch(`${BASE_URL}/v1/warmup/trigger`, {
+        method: 'POST', headers: {'Content-Type':'application/json', ...API._headers()},
+        body: JSON.stringify({model: modelId}),
+      });
+      this._mode = 'fast';
+      this._tick();
+    } catch {}
+  },
+};
+
 async function init() {
   // Check auth first
   const authOk = await checkAuth();
@@ -12967,6 +13131,7 @@ async function init() {
   if (cWrap) cWrap.title = state.connected ? 'Server: connected' : 'Server: disconnected';
   ConnectionMonitor.start();
   MempalaceActivityMonitor.start();
+  WarmupMonitor.start();
 }
 
 function renderSuggestionChips() {

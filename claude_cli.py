@@ -7470,12 +7470,26 @@ def generate_next_prompt_suggestion(session) -> str | None:
             tools=False,
             event_callback=None,
             provider_resolver=resolve_provider_for_model,
-            inference_params={"max_tokens": 80, "temperature": 0.7},
+            inference_params={"max_tokens": 200, "temperature": 0.7},
             purpose="next_prompt_suggestion",
             session_id=None,
         )
+        try:
+            sys.stderr.write(f"[next_prompt] model={model} raw={text!r}\n")
+        except Exception:
+            pass
         if not text:
             return None
+        # Strip <think>...</think> blocks that reasoning models (Qwen3, DeepSeek-R1,
+        # etc.) emit before their answer. These aren't filtered at the wire level
+        # for oMLX so we need to peel them off here or the "suggestion" becomes
+        # a chain-of-thought paragraph.
+        import re as _re
+        text = _re.sub(r"<think>.*?</think>", "", text, flags=_re.DOTALL).strip()
+        # Also drop a dangling unclosed <think> — some models stream thinking but
+        # never close the tag within max_tokens.
+        if "<think>" in text:
+            text = text.split("<think>", 1)[0].strip()
         text = text.strip().strip('"').strip("'")
         if not text or text.upper().startswith("NONE"):
             return None
@@ -8958,6 +8972,205 @@ def clear_provider_cache():
     with _provider_cache_lock:
         _provider_cache.clear()
         _provider_cache_time = 0
+
+
+# --- Warmup Registry ---
+#
+# Per-model warmup state tracker. A background keeper daemon (in server.py)
+# fires minimal prefill requests against local model endpoints so the first
+# real user turn hits a warm KV cache and time-to-first-token is minimised.
+# Each model's warmup is opt-in via models_config[id].warmup + warmup_ttl_seconds.
+#
+# State values: "idle" (never warmed), "warming", "warm", "failed", "skipped_cloud"
+
+_warmup_state: dict[str, dict] = {}
+_warmup_state_lock = threading.Lock()
+
+
+def _is_local_base_url(base_url: str) -> bool:
+    """Return True if base_url looks like a local gateway (localhost/LAN IP)."""
+    if not base_url:
+        return False
+    u = base_url.lower()
+    if "localhost" in u or "127.0.0.1" in u or "0.0.0.0" in u:
+        return True
+    # RFC1918 private IPv4 ranges
+    import re as _re
+    m = _re.search(r"//([^/:]+)", u)
+    if not m:
+        return False
+    host = m.group(1)
+    if host.startswith("192.168.") or host.startswith("10."):
+        return True
+    if host.startswith("172."):
+        try:
+            second = int(host.split(".")[1])
+            if 16 <= second <= 31:
+                return True
+        except (ValueError, IndexError):
+            pass
+    return False
+
+
+def get_warmup_state(model: str) -> dict:
+    """Get a copy of the current warmup state for a model."""
+    with _warmup_state_lock:
+        return dict(_warmup_state.get(model, {
+            "state": "idle",
+            "last_warmup_ts": 0,
+            "last_used_ts": 0,
+            "last_error": "",
+            "next_due_ts": 0,
+        }))
+
+
+def set_warmup_state(model: str, **fields):
+    """Update warmup state fields for a model."""
+    with _warmup_state_lock:
+        cur = _warmup_state.setdefault(model, {
+            "state": "idle",
+            "last_warmup_ts": 0,
+            "last_used_ts": 0,
+            "last_error": "",
+            "next_due_ts": 0,
+        })
+        cur.update(fields)
+
+
+def mark_model_used(model: str):
+    """Call when a real request hits a model.
+
+    A real turn keeps the model loaded in GPU memory and leaves a valid KV
+    prefix cached — effectively, using the model is itself the best warmup.
+    So we bump both last_used_ts and (if currently cold/idle) flip the state
+    to warm so the UI reflects reality without triggering a redundant prime.
+    """
+    now = time.time()
+    with _warmup_state_lock:
+        cur = _warmup_state.setdefault(model, {
+            "state": "idle",
+            "last_warmup_ts": 0,
+            "last_used_ts": 0,
+            "last_error": "",
+            "next_due_ts": 0,
+        })
+        cur["last_used_ts"] = now
+        if cur.get("state") in ("idle", "cold", "failed"):
+            cur["state"] = "warm"
+            cur["last_warmup_ts"] = now
+            cur["last_error"] = ""
+
+
+def all_warmup_states() -> dict:
+    """Return snapshot of all tracked warmup states."""
+    with _warmup_state_lock:
+        return {k: dict(v) for k, v in _warmup_state.items()}
+
+
+def run_model_warmup(model: str, allow_cloud: bool = False,
+                     agent_id: str = "main", timeout: int = 30) -> dict:
+    """Fire a single minimal prefill request against a model's provider.
+
+    Returns a result dict: {ok, state, duration_ms, error}. Updates _warmup_state.
+    This is the standalone, session-less variant used by the keeper daemon. The
+    payload is a system-prompt + tools request with max_tokens=1 so the provider
+    loads the model into GPU memory and (for providers that support it) caches
+    the KV prefix without producing any real output.
+    """
+    t0 = time.time()
+    prov = resolve_provider_for_model(model)
+    base_url = prov.get("base_url", "")
+    api_key = prov.get("api_key", "")
+
+    if not base_url:
+        err = "no base_url"
+        set_warmup_state(model, state="failed", last_error=err)
+        return {"ok": False, "state": "failed", "error": err, "duration_ms": 0}
+
+    if not allow_cloud and not _is_local_base_url(base_url):
+        set_warmup_state(model, state="skipped_cloud",
+                         last_error="cloud provider (warmup.allow_cloud=false)")
+        return {"ok": False, "state": "skipped_cloud",
+                "error": "cloud skipped", "duration_ms": 0}
+
+    set_warmup_state(model, state="warming", last_error="")
+
+    try:
+        agent_config = AgentConfig(agent_id)
+        _thread_local.current_agent = agent_config
+        _thread_local.mcp_manager = None
+        _thread_local.memory_store = MemoryStore(agent_id, base_dir=agent_config.memory_dir)
+        # Mirror the real first-turn payload byte-for-byte so the KV prefix
+        # we prime here is reused by the user's first actual message. Anything
+        # different (system prompt content, tool list, ordering, parallel flag)
+        # invalidates the prefix and defeats the point of warming up.
+        system_prompt = _build_system_prompt(include_memory_summary=True)
+        allowed = _get_agent_tool_names()
+        all_tools = _filter_tools(TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
+        # Replicate send_message's deferred-tool-group filter
+        tcfg = _get_token_config()
+        deferred_groups = set(tcfg.get("deferred_tool_groups") or [])
+        if deferred_groups:
+            deferred_tool_names = set()
+            for dg in deferred_groups:
+                deferred_tool_names.update(TOOL_GROUPS.get(dg, set()))
+            all_tools = [t for t in all_tools
+                         if t["function"]["name"] not in deferred_tool_names]
+        all_tools.sort(key=lambda t: t.get("function", {}).get("name", ""))
+        # Some chat templates (Qwen3, etc.) reject system-only payloads with
+        # "No user query found in messages". Append a minimal user turn — the
+        # system+tools KV prefix still gets prefilled and cached, which is the
+        # expensive part. The user turn itself is 1 token.
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": "."},
+        ]
+        endpoint = f"{base_url}/chat/completions"
+        # max_tokens=8 forces the backend to actually commit to prefill instead
+        # of short-circuiting on max_tokens=1 (which some runtimes treat as
+        # "emit one token without populating the KV cache"). Still effectively
+        # free against a local model.
+        payload = {
+            "model": get_api_model_id(model),
+            "max_tokens": 8,
+            "messages": messages,
+            "stream": False,
+            "tools": all_tools,
+        }
+        model_cfg = _models_config.get(model, {})
+        if model_cfg.get("parallel_tool_calls", True):
+            payload["parallel_tool_calls"] = True
+        headers = make_headers(api_key)
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            resp.read()
+        dur_ms = int((time.time() - t0) * 1000)
+        now = time.time()
+        set_warmup_state(model, state="warm", last_warmup_ts=now, last_error="")
+        return {"ok": True, "state": "warm", "duration_ms": dur_ms, "error": ""}
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read().decode("utf-8", errors="replace")[:500]
+        except Exception:
+            body = ""
+        err = f"HTTP {e.code}: {body or e.reason}"
+        set_warmup_state(model, state="failed", last_error=err)
+        return {"ok": False, "state": "failed", "error": err,
+                "duration_ms": int((time.time() - t0) * 1000)}
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"
+        set_warmup_state(model, state="failed", last_error=err)
+        return {"ok": False, "state": "failed", "error": err,
+                "duration_ms": int((time.time() - t0) * 1000)}
+    finally:
+        # Clear thread-local agent context so we don't leak into other threads
+        for attr in ("current_agent", "mcp_manager", "memory_store"):
+            if hasattr(_thread_local, attr):
+                try:
+                    delattr(_thread_local, attr)
+                except AttributeError:
+                    pass
 
 
 # --- Background Task Runner ---
@@ -16200,6 +16413,11 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     if _tool_round == 0:
         reset_tool_dedup()
         _thread_local._tool_results_tokens = 0
+        # Mark model as freshly used so the warmup keeper won't re-prefill it
+        try:
+            mark_model_used(model)
+        except Exception:
+            pass
         _thread_local._pyexec_hint_sent = False
         _thread_local._max_output_recovery_count = 0
         _thread_local._has_attempted_reactive_compact = False

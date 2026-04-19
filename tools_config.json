@@ -1,0 +1,54 @@
+{
+  "exa_search": {
+    "enabled": true,
+    "api_key": "",
+    "default_num_results": 5
+  },
+  "gmail": {
+    "enabled": true,
+    "email": "klinskybrain@gmail.com",
+    "app_password": ""
+  },
+  "execute_command": {
+    "enabled": true,
+    "timeout": 120,
+    "banned_commands": [
+      "rm -rf /",
+      "mkfs",
+      "dd if="
+    ],
+    "login_shell": true,
+    "shell_path": ""
+  },
+  "web_fetch": {
+    "enabled": true,
+    "timeout": 30,
+    "max_size_mb": 10
+  },
+  "refinement": {
+    "enabled": true,
+    "model": "cliproxyapi/gemini-2.5-flash"
+  },
+  "read_document": {
+    "enabled": true,
+    "max_file_size_mb": 50,
+    "vision_model": ""
+  },
+  "write_document": {
+    "enabled": true
+  },
+  "edit_document": {
+    "enabled": true
+  },
+  "code_graph": {
+    "enabled": true,
+    "exclude_dirs": "node_modules,.git,__pycache__,venv,.venv,dist,build",
+    "max_file_size_kb": 500
+  },
+  "python_exec": {
+    "enabled": true,
+    "timeout": 30,
+    "max_output_chars": 50000,
+    "venv_path": ""
+  }
+}

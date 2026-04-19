@@ -1,6 +1,6 @@
 {
   "description": "General-purpose main agent",
-  "model": "mistralai/mistral-small-2603",
+  "model": "OMLX/gemma-4-26b-a4b-it-4bit",
   "avatar": "captain",
   "display_name": "Steve Rogers",
   "memory_summary": {
@@ -66,5 +66,10 @@
   "auto_memory": {
     "model": "mistral-vibe-cli-latest",
     "model_fallback": "devstral-small-latest"
+  },
+  "next_prompt_suggestions": {
+    "enabled": true,
+    "model": "OMLX/gemma-4-e2b-it-4bit",
+    "max_words": 15
   }
 }
