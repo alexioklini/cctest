@@ -882,6 +882,40 @@ textarea { resize: none; }
 @keyframes tool-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .tool-block-header .tool-name { font-weight: 500; font-size: 13px; }
 .tool-block-header .tool-timing { font-family: var(--font-mono); font-size: 11px; color: var(--text-400); margin-left: auto; }
+.tool-block-header .tool-badge-worker { font-size: 9px; font-weight: 600; background: #0891b2; color: #fff; padding: 1px 5px; border-radius: 3px; letter-spacing: 0.5px; }
+.worker-question-card {
+  margin: 12px 0; border-radius: 10px; border: 2px solid #0891b2;
+  background: var(--bg-100); overflow: hidden;
+}
+.worker-question-card .wq-header {
+  display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+  background: #0891b215; border-bottom: 1px solid #0891b233;
+  font-size: 12px; color: var(--text-300);
+}
+.worker-question-card .wq-header .wq-badge {
+  font-size: 9px; font-weight: 600; background: #0891b2; color: #fff;
+  padding: 1px 6px; border-radius: 3px; letter-spacing: 0.5px;
+}
+.worker-question-card .wq-body { padding: 12px 14px; }
+.worker-question-card .wq-context { font-size: 12px; color: var(--text-400); margin-bottom: 8px; }
+.worker-question-card .wq-question { font-size: 14px; font-weight: 500; color: var(--text-100); margin-bottom: 10px; }
+.worker-question-card .wq-options { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.worker-question-card .wq-option {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  border: 1px solid var(--border-100); border-radius: 6px; cursor: pointer;
+  font-size: 13px; color: var(--text-200); transition: border-color 0.15s;
+}
+.worker-question-card .wq-option:hover { border-color: #0891b2; }
+.worker-question-card .wq-option.selected { border-color: #0891b2; background: #0891b210; }
+.worker-question-card .wq-option input[type="radio"] { margin: 0; accent-color: #0891b2; }
+.worker-question-card .wq-actions { display: flex; gap: 8px; }
+.worker-question-card .wq-actions button { font-size: 12px; padding: 5px 12px; border-radius: 6px; cursor: pointer; border: 1px solid var(--border-100); background: var(--bg-200); color: var(--text-200); transition: all 0.15s; }
+.worker-question-card .wq-actions button:hover { background: var(--bg-300); }
+.worker-question-card .wq-actions .wq-btn-answer { background: #0891b2; color: #fff; border-color: #0891b2; }
+.worker-question-card .wq-actions .wq-btn-answer:hover { background: #0e7490; }
+.worker-question-card .wq-actions .wq-btn-abort { color: var(--error); border-color: var(--error); }
+.worker-question-card.wq-answered { opacity: 0.7; border-color: var(--border-100); }
+.worker-question-card.wq-answered .wq-actions { display: none; }
 .tool-block-header .tool-chevron { transition: transform 0.15s; font-size: 10px; margin-left: 4px; }
 .tool-block-header .tool-timing + .tool-chevron { margin-left: 0; }
 .tool-block.open .tool-chevron { transform: rotate(90deg); }
@@ -905,6 +939,29 @@ textarea { resize: none; }
 .tool-result-section { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-100); }
 .tool-result-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-400); margin-bottom: 4px; }
 .tool-result-pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: 12px; color: var(--text-200); max-height: 250px; overflow-y: auto; }
+
+/* Worker flow */
+.worker-flow { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-100); }
+.worker-flow-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-400); }
+.worker-flow-state { font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 3px; letter-spacing: 0.5px; }
+.worker-flow-state.running { background: #fef3c7; color: #92400e; }
+.worker-flow-state.completed { background: #d1fae5; color: #065f46; }
+.worker-flow-state.failed, .worker-flow-state.aborted, .worker-flow-state.timed_out { background: #fee2e2; color: #991b1b; }
+.worker-flow-state.paused, .worker-flow-state.waiting_for_user { background: #e0e7ff; color: #3730a3; }
+.worker-flow-id { font-family: var(--font-mono); color: var(--text-400); font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; }
+.worker-flow-duration { margin-left: auto; font-family: var(--font-mono); font-size: 10px; color: var(--text-400); font-weight: 400; text-transform: none; letter-spacing: 0; }
+.worker-flow-timeline { margin: 0; padding: 0; list-style: none; border-left: 2px solid var(--border-100); padding-left: 10px; }
+.worker-flow-step { position: relative; padding: 3px 0; font-size: 12px; color: var(--text-200); }
+.worker-flow-step::before { content: ''; position: absolute; left: -15px; top: 9px; width: 8px; height: 8px; border-radius: 50%; background: var(--text-400); }
+.worker-flow-step.active::before { background: var(--accent-brand); box-shadow: 0 0 0 3px rgba(var(--accent-brand-rgb, 200, 100, 50), 0.15); }
+.worker-flow-step.error::before { background: #dc2626; }
+.worker-flow-step.question::before { background: #6366f1; }
+.worker-flow-step.answer::before { background: #10b981; }
+.worker-flow-step-label { font-weight: 500; }
+.worker-flow-step-meta { color: var(--text-400); font-size: 11px; margin-left: 6px; font-family: var(--font-mono); }
+.worker-flow-step-detail { margin-top: 2px; color: var(--text-300); font-size: 11px; padding-left: 2px; }
+.worker-flow-artifacts { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+.worker-flow-artifact { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; background: var(--bg-100); border: 1px solid var(--border-100); border-radius: 4px; font-size: 11px; font-family: var(--font-mono); color: var(--text-300); }
 
 /* ═══ Unified Right Panel ═══ */
 #right-panel {
@@ -4177,6 +4234,10 @@ const state = {
   _pendingImages: [],
   _pendingFiles: [],
 
+  // Workers
+  activeWorkers: {},  // worker_id -> {tool_name, state, started_at, ...}
+  workerFlows: {},    // tool_call_id (or worker_id) -> {worker_id, tool_name, state, duration, flow:[...], question?}
+
   // Activity
   agentActivity: {},
   teamStructure: {},
@@ -4944,6 +5005,22 @@ async function openSession(sessionId, agentId) {
             expanded.push({ role: 'tool_call', name: t.name, args: t.args || {} });
             if (t.result !== undefined) {
               expanded.push({ role: 'tool_result', name: t.name, result: t.result });
+              // Re-hydrate worker flow from envelope, keyed by worker_id
+              try {
+                const rj = JSON.parse(typeof t.result === 'string' ? t.result : JSON.stringify(t.result));
+                if (rj && rj.worker && rj.worker_id) {
+                  state.workerFlows[rj.worker_id] = {
+                    worker_id: rj.worker_id,
+                    tool_name: t.name,
+                    state: rj.state || 'COMPLETED',
+                    duration: rj.duration_seconds || null,
+                    flow: Array.isArray(rj.flow) ? rj.flow : [],
+                    artifacts: rj.artifacts || [],
+                    question: null,
+                    summariser_usage: rj.summariser_usage || null,
+                  };
+                }
+              } catch (e) {}
             }
           }
         }
@@ -5245,6 +5322,170 @@ async function sendMessage() {
         }
         updateRightPanelBadges();
       },
+      'worker.started': (d) => {
+        console.log('[SSE] worker.started:', d.tool_name, d.worker_id);
+        if (!d.worker_id) return;
+        state.activeWorkers[d.worker_id] = { tool_name: d.tool_name, state: 'RUNNING', started_at: Date.now() };
+        state.workerFlows[d.worker_id] = {
+          worker_id: d.worker_id,
+          tool_call_id: d.tool_call_id || '',
+          tool_name: d.tool_name,
+          state: 'RUNNING',
+          started_at: Date.now() / 1000,
+          duration: null,
+          flow: [],
+          question: null,
+        };
+        if (isActive() && state.showToolCalls) renderMessages();
+      },
+      'worker.progress': (d) => {
+        if (!d.worker_id) return;
+        const wf = state.workerFlows[d.worker_id] || (state.workerFlows[d.worker_id] = {
+          worker_id: d.worker_id, tool_name: d.tool_name, state: 'RUNNING',
+          started_at: Date.now() / 1000, flow: [], question: null,
+        });
+        if (d.entry) {
+          wf.flow.push(d.entry);
+          if (d.entry.kind === 'state' && d.entry.state) wf.state = d.entry.state;
+          if (d.entry.kind === 'question') wf.question = { question: d.entry.question, options: d.entry.options };
+          if (d.entry.kind === 'answer') wf.question = null;
+        }
+        if (isActive() && state.showToolCalls) renderMessages();
+      },
+      'worker.finished': (d) => {
+        console.log('[SSE] worker.finished:', d.tool_name, d.duration_seconds + 's');
+        if (!d.worker_id) return;
+        const w = state.activeWorkers[d.worker_id]; if (w) w.state = d.state || 'COMPLETED';
+        const wf = state.workerFlows[d.worker_id];
+        if (wf) { wf.state = d.state || 'COMPLETED'; wf.duration = d.duration_seconds; }
+        if (isActive() && state.showToolCalls) renderMessages();
+      },
+      'worker.paused': (d) => {
+        if (!d.worker_id) return;
+        const w = state.activeWorkers[d.worker_id]; if (w) w.state = 'PAUSED';
+        const wf = state.workerFlows[d.worker_id]; if (wf) wf.state = 'PAUSED';
+        if (isActive() && state.showToolCalls) renderMessages();
+      },
+      'worker.resumed': (d) => {
+        if (!d.worker_id) return;
+        const w = state.activeWorkers[d.worker_id]; if (w) w.state = 'RUNNING';
+        const wf = state.workerFlows[d.worker_id]; if (wf) wf.state = 'RUNNING';
+        if (isActive() && state.showToolCalls) renderMessages();
+      },
+      'worker.aborted': (d) => {
+        if (!d.worker_id) return;
+        const w = state.activeWorkers[d.worker_id]; if (w) w.state = 'ABORTED';
+        const wf = state.workerFlows[d.worker_id]; if (wf) wf.state = 'ABORTED';
+        if (isActive() && state.showToolCalls) renderMessages();
+      },
+      worker_usage: (d) => {
+        if (!d.worker_id) return;
+        const wf = state.workerFlows[d.worker_id];
+        if (wf) {
+          wf.summariser_usage = {
+            tokens_in: d.tokens_in || 0,
+            tokens_out: d.tokens_out || 0,
+            model: d.model || '',
+          };
+        }
+        if (isActive() && state.showToolCalls) renderMessages();
+      },
+      'worker.question': (d) => {
+        console.log('[SSE] worker.question:', d.worker_id, d.question);
+        if (d.worker_id) {
+          const wf = state.workerFlows[d.worker_id] || (state.workerFlows[d.worker_id] = {
+            worker_id: d.worker_id, state: 'WAITING_FOR_USER',
+            started_at: Date.now() / 1000, flow: [], question: null,
+          });
+          wf.state = 'WAITING_FOR_USER';
+          wf.question = { question: d.question, options: d.options };
+          if (isActive() && state.showToolCalls) renderMessages();
+        }
+        if (!isActive()) return;
+        const container = document.getElementById('messages-container');
+        if (!container) return;
+        const card = document.createElement('div');
+        card.className = 'worker-question-card';
+        card.id = `wq-${d.worker_id}`;
+        const optionsHtml = (d.options || []).map((o, i) =>
+          `<label class="wq-option" onclick="this.parentElement.querySelectorAll('.wq-option').forEach(e=>e.classList.remove('selected'));this.classList.add('selected')">
+            <input type="radio" name="wq-opt-${d.worker_id}" value="${esc(o)}">${esc(o)}
+          </label>`
+        ).join('');
+        card.innerHTML = `
+          <div class="wq-header">
+            <span class="wq-badge">WORKER</span>
+            <span>Worker <code>${esc(d.worker_id)}</code> needs your input</span>
+          </div>
+          <div class="wq-body">
+            ${d.context_summary ? `<div class="wq-context">${esc(d.context_summary)}</div>` : ''}
+            <div class="wq-question">${esc(d.question)}</div>
+            ${optionsHtml ? `<div class="wq-options">${optionsHtml}</div>` : ''}
+            <textarea class="wq-freeform" placeholder="Type your answer..." style="width:100%;min-height:40px;margin-bottom:8px;border:1px solid var(--border-100);border-radius:6px;padding:6px 8px;font-size:13px;background:var(--bg-000);color:var(--text-200);resize:vertical;display:${d.options ? 'none' : 'block'}"></textarea>
+            <div class="wq-actions">
+              <button class="wq-btn-answer" onclick="answerWorkerQuestion('${esc(d.worker_id)}')">Answer</button>
+              <button onclick="answerWorkerQuestion('${esc(d.worker_id)}', '__delegate__')">Let agent decide</button>
+              <button class="wq-btn-abort" onclick="abortWorkerFromQuestion('${esc(d.worker_id)}')">Abort worker</button>
+            </div>
+          </div>
+        `;
+        container.appendChild(card);
+        scrollToBottom();
+      },
+      'worker.answered': (d) => {
+        if (d.worker_id) {
+          const wf = state.workerFlows[d.worker_id];
+          if (wf) { wf.question = null; wf.state = 'RUNNING'; }
+          if (isActive() && state.showToolCalls) renderMessages();
+        }
+        const card = document.getElementById(`wq-${d.worker_id}`);
+        if (card) {
+          card.classList.add('wq-answered');
+          const body = card.querySelector('.wq-body');
+          if (body) body.innerHTML += `<div style="margin-top:8px;font-size:12px;color:var(--text-400)">Answered: ${esc(d.answer)}</div>`;
+        }
+      },
+      user_input_needed: (d) => {
+        console.log('[SSE] user_input_needed:', d.session_id, d.question);
+        if (!isActive()) return;
+        const container = document.getElementById('messages-container');
+        if (!container) return;
+        const existing = document.getElementById(`aq-${d.session_id}`);
+        if (existing) existing.remove();
+        const card = document.createElement('div');
+        card.className = 'worker-question-card';
+        card.id = `aq-${d.session_id}`;
+        const optionsHtml = (d.options || []).map((o) =>
+          `<label class="wq-option" onclick="this.parentElement.querySelectorAll('.wq-option').forEach(e=>e.classList.remove('selected'));this.classList.add('selected')">
+            <input type="radio" name="aq-opt-${d.session_id}" value="${esc(o)}">${esc(o)}
+          </label>`
+        ).join('');
+        card.innerHTML = `
+          <div class="wq-header">
+            <span class="wq-badge">QUESTION</span>
+            <span>The agent needs your input</span>
+          </div>
+          <div class="wq-body">
+            ${d.context_summary ? `<div class="wq-context">${esc(d.context_summary)}</div>` : ''}
+            <div class="wq-question">${esc(d.question)}</div>
+            ${optionsHtml ? `<div class="wq-options">${optionsHtml}</div>` : ''}
+            <textarea class="wq-freeform" placeholder="Type your answer..." style="width:100%;min-height:40px;margin-bottom:8px;border:1px solid var(--border-100);border-radius:6px;padding:6px 8px;font-size:13px;background:var(--bg-000);color:var(--text-200);resize:vertical;display:${d.options ? 'none' : 'block'}"></textarea>
+            <div class="wq-actions">
+              <button class="wq-btn-answer" onclick="answerChatQuestion('${esc(d.session_id)}')">Answer</button>
+            </div>
+          </div>
+        `;
+        container.appendChild(card);
+        scrollToBottom();
+      },
+      user_input_received: (d) => {
+        const card = document.getElementById(`aq-${d.session_id}`);
+        if (card) {
+          card.classList.add('wq-answered');
+          const body = card.querySelector('.wq-body');
+          if (body) body.innerHTML += `<div style="margin-top:8px;font-size:12px;color:var(--text-400)">Answered: ${esc(d.answer)}</div>`;
+        }
+      },
       fallback: (d) => {
         if (d.to) {
           chat.model = d.to;
@@ -5516,12 +5757,27 @@ async function openInspectModal() {
       const PRE = 'margin:0;padding:10px 16px;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:250px;overflow-y:auto;background:var(--bg-000);color:var(--text-200);font-family:var(--font-mono)';
 
       if (payloads.length) {
-        for (const p of payloads) {
+        for (let pi = 0; pi < payloads.length; pi++) {
+          const p = payloads[pi];
+          const prev = pi > 0 ? payloads[pi - 1] : null;
           const round = p.tool_round || 0;
-          html += `<details style="border-bottom:1px solid var(--border-050)">
+          const _hasApi = typeof p.tokens_in === 'number' && p.tokens_in > 0;
+          const _hasOut = typeof p.tokens_out === 'number' && p.tokens_out > 0;
+          const _tokLabel = _hasApi
+            ? `${p.tokens_in.toLocaleString()} in${_hasOut ? ' / ' + p.tokens_out.toLocaleString() + ' out' : ''} tok (API)`
+            : `~${(p.total_payload_tokens||0).toLocaleString()} tok est`;
+          const histLen = (p.history || []).length;
+          const prevHistLen = prev ? (prev.history || []).length : 0;
+          const histDelta = histLen - prevHistLen;
+          const deltaBadge = prev && histDelta > 0
+            ? `<span style="${MONO11};background:var(--bg-200);padding:1px 6px;border-radius:4px">+${histDelta} msg${histDelta>1?'s':''}</span>`
+            : '';
+          html += `<details style="border-bottom:1px solid var(--border-050)"${pi === 0 ? ' open' : ''}>
             <summary style="padding:10px 16px;cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               <span style="color:var(--accent-brand);font-weight:500;font-size:13px">API Request${payloads.length > 1 ? ' (Round ' + round + ')' : ''}</span>
-              <span style="${MONO11}">${a.tokens_in ? a.tokens_in.toLocaleString() + ' tok (API)' : '~' + (p.total_payload_tokens||0).toLocaleString() + ' tok est'}</span>
+              <span style="${MONO11}">${_tokLabel}</span>
+              ${deltaBadge}
+              ${histLen ? `<span style="${MONO11}">&middot; history ${histLen}</span>` : ''}
             </summary>
             <div style="padding:8px 16px 12px">
               <!-- Token breakdown bar -->
@@ -5534,26 +5790,30 @@ async function openInspectModal() {
               <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:11px;margin-bottom:8px">
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:#8b5cf6"></span>System ~${(p.system_tokens||0).toLocaleString()}</span>
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:var(--accent-brand)"></span>Tools (${p.tools_count||0}) ~${(p.tools_tokens||0).toLocaleString()}</span>
-                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:var(--text-400)"></span>History (${(p.history||[]).length} msgs) ~${(p.history_tokens||0).toLocaleString()}</span>
+                <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:var(--text-400)"></span>History (${histLen} msgs) ~${(p.history_tokens||0).toLocaleString()}</span>
                 <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:2px;background:var(--success)"></span>User ~${(p.user_tokens||0).toLocaleString()}</span>
               </div>
 
-              <!-- History (expandable if present) -->
-              ${(p.history||[]).length ? `<details style="margin-bottom:4px">
-                <summary style="cursor:pointer;${MONO11}">History (${(p.history||[]).length} messages)</summary>
+              <!-- History (auto-open when it's what differs from the previous round) -->
+              ${histLen ? `<details style="margin-bottom:4px"${histDelta > 0 ? ' open' : ''}>
+                <summary style="cursor:pointer;${MONO11}">History (${histLen} messages)${histDelta > 0 ? ` &middot; ${histDelta} new this round` : ''}</summary>
                 <div style="max-height:250px;overflow-y:auto;border:1px solid var(--border-050);border-radius:6px;margin-top:4px">
-                  ${(p.history||[]).map(h => `<div style="padding:4px 12px;border-bottom:1px solid var(--border-050)">
-                    <span style="font-size:10px;font-weight:600;color:${h.role==='user'?'var(--accent-brand)':'var(--success)'};text-transform:uppercase">${esc(h.role)}</span>
-                    <pre style="margin:2px 0 0;font-size:11px;white-space:pre-wrap;word-break:break-word;color:var(--text-300);font-family:var(--font-mono)">${esc(String(h.content||'').substring(0, 2000))}${String(h.content||'').length > 2000 ? '\\n... (truncated)' : ''}</pre>
-                  </div>`).join('')}
+                  ${(p.history||[]).map((h, hi) => {
+                    const isNew = pi > 0 && hi >= prevHistLen;
+                    const bg = isNew ? 'background:var(--bg-100);' : '';
+                    return `<div style="padding:4px 12px;border-bottom:1px solid var(--border-050);${bg}">
+                      <span style="font-size:10px;font-weight:600;color:${h.role==='user'?'var(--accent-brand)':h.role==='tool'?'#0891b2':'var(--success)'};text-transform:uppercase">${esc(h.role)}${isNew?' · NEW':''}</span>
+                      <pre style="margin:2px 0 0;font-size:11px;white-space:pre-wrap;word-break:break-word;color:var(--text-300);font-family:var(--font-mono)">${esc(String(h.content||'').substring(0, 2000))}${String(h.content||'').length > 2000 ? '\\n... (truncated)' : ''}</pre>
+                    </div>`;
+                  }).join('')}
                 </div>
               </details>` : ''}
 
-              <!-- User Message (always open) -->
-              <details open>
+              <!-- User Message (only when present — absent on continuation rounds) -->
+              ${p.user_message ? `<details open>
                 <summary style="cursor:pointer;${MONO11}">User Message (~${(p.user_tokens||0).toLocaleString()} tok)</summary>
-                <pre style="${PRE};margin-top:4px;border-radius:6px">${esc(p.user_message || ix.user.content || '')}</pre>
-              </details>
+                <pre style="${PRE};margin-top:4px;border-radius:6px">${esc(p.user_message)}</pre>
+              </details>` : ''}
             </div>
           </details>`;
         }
@@ -5573,6 +5833,7 @@ async function openInspectModal() {
       if (ix.assistant) {
         const tools = a.tools || [];
         const toolBadges = tools.length ? tools.map(t => BADGE(esc(t.name), 'var(--bg-300)', 'var(--text-300)')).join(' ') : '';
+        const hasWorkerTool = tools.some(t => { const rs = typeof t.result === 'string' ? t.result : JSON.stringify(t.result || ''); return rs.includes('"worker": true') || rs.includes('"worker":true'); });
 
         html += `<details>
           <summary style="padding:10px 16px;cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -5581,6 +5842,7 @@ async function openInspectModal() {
             ${a.tokens_out ? `<span style="${MONO11}">&middot; ${a.tokens_out.toLocaleString()} tok out (API)</span>` : ''}
             ${a.thinking ? BADGE('thinking', '#ede9fe', '#8b5cf6') : ''}
             ${a.sdk ? BADGE('SDK', 'var(--bg-300)', 'var(--text-400)') : ''}
+            ${hasWorkerTool ? BADGE('WORKER', '#0891b2', '#fff') : ''}
             ${toolBadges}
           </summary>
           <div style="max-height:400px;overflow-y:auto">`;
@@ -5588,11 +5850,18 @@ async function openInspectModal() {
         if (tools.length) {
           html += `<div style="padding:8px 16px;background:var(--bg-100);border-bottom:1px solid var(--border-050)">`;
           for (const t of tools) {
+            let tIsWorker = false;
+            const rs = typeof t.result === 'string' ? t.result : JSON.stringify(t.result || '');
+            if (rs.includes('"worker": true') || rs.includes('"worker":true')) tIsWorker = true;
+            const wBadge = tIsWorker ? ' <span style="font-size:9px;font-weight:600;background:#0891b2;color:#fff;padding:1px 5px;border-radius:3px;letter-spacing:0.5px" title="Executed via worker subagent">WORKER</span>' : '';
+            const wf = tIsWorker ? findWorkerFlow(t.name, rs) : null;
+            const flowHtml = wf ? renderWorkerFlow(wf) : '';
             html += `<details style="margin-bottom:4px">
-              <summary style="cursor:pointer;font-size:12px;font-family:var(--font-mono);color:var(--text-300)">${esc(t.name)}</summary>
+              <summary style="cursor:pointer;font-size:12px;font-family:var(--font-mono);color:var(--text-300)">${esc(t.name)}${wBadge}</summary>
               <div style="padding:4px 12px;font-size:11px;font-family:var(--font-mono);color:var(--text-400)">
                 ${t.args ? '<div style="margin-bottom:2px"><strong>args:</strong> ' + esc(JSON.stringify(t.args).substring(0, 500)) + '</div>' : ''}
                 ${t.result ? '<div><strong>result:</strong> ' + esc(String(t.result).substring(0, 500)) + '</div>' : ''}
+                ${flowHtml}
               </div>
             </details>`;
           }
@@ -5613,6 +5882,55 @@ async function openInspectModal() {
   } catch(e) {
     document.getElementById('inspect-body').innerHTML = `<div style="color:var(--error);padding:24px">${esc(e.message)}</div>`;
   }
+}
+
+async function answerWorkerQuestion(workerId, delegateValue) {
+  let answer = delegateValue || '';
+  if (!answer) {
+    const card = document.getElementById(`wq-${workerId}`);
+    if (!card) return;
+    const selected = card.querySelector('.wq-option.selected input');
+    if (selected) { answer = selected.value; }
+    else {
+      const ta = card.querySelector('.wq-freeform');
+      answer = ta ? ta.value.trim() : '';
+    }
+  }
+  if (!answer) { showToast('Please select an option or type an answer', true); return; }
+  try {
+    await API.post(`/v1/workers/${encodeURIComponent(workerId)}/answer`, { answer });
+    const card = document.getElementById(`wq-${workerId}`);
+    if (card) { card.classList.add('wq-answered'); }
+  } catch (e) { showToast('Failed to send answer: ' + e.message, true); }
+}
+
+async function answerChatQuestion(sessionId) {
+  const card = document.getElementById(`aq-${sessionId}`);
+  if (!card) return;
+  let answer = '';
+  const selected = card.querySelector('.wq-option.selected input');
+  if (selected) { answer = selected.value; }
+  else {
+    const ta = card.querySelector('.wq-freeform');
+    answer = ta ? ta.value.trim() : '';
+  }
+  if (!answer) { showToast('Please select an option or type an answer', true); return; }
+  try {
+    await API.post('/v1/chat/answer', { session_id: sessionId, answer });
+    card.classList.add('wq-answered');
+  } catch (e) { showToast('Failed to send answer: ' + e.message, true); }
+}
+
+async function abortWorkerFromQuestion(workerId) {
+  try {
+    await API.post(`/v1/workers/${encodeURIComponent(workerId)}/answer`, { answer: '__abort__' });
+  } catch(e) {}
+  const chat = state.activeChat;
+  if (chat?.sessionId) {
+    try { await API.post('/v1/chat', { session_id: chat.sessionId, message: `[abort worker ${workerId}]` }); } catch(e) {}
+  }
+  const card = document.getElementById(`wq-${workerId}`);
+  if (card) { card.classList.add('wq-answered'); card.querySelector('.wq-body').innerHTML += '<div style="margin-top:8px;font-size:12px;color:var(--error)">Worker aborted</div>'; }
 }
 
 async function stopGeneration() {
@@ -5933,6 +6251,13 @@ function toolDescribe(name, args) {
     write_document: () => `Writing document ${a.path || a.file_path || ''}`,
     edit_document: () => `Editing document ${a.path || a.file_path || ''}`,
     list_nodes: () => 'Listing remote nodes',
+    get_artifact_detail: () => `Inspecting artifact ${a.artifact_id || ''}`,
+    worker_status: () => a.worker_id ? `Checking worker ${a.worker_id}` : 'Checking workers',
+    worker_abort: () => `Aborting worker ${a.worker_id || ''}`,
+    worker_pause: () => `Pausing worker ${a.worker_id || ''}`,
+    worker_resume: () => `Resuming worker ${a.worker_id || ''}`,
+    worker_send: () => `Sending to worker ${a.worker_id || ''}`,
+    worker_ask_user: () => `Worker asking: ${(a.question || '').substring(0, 50)}`,
   };
   const fn = descs[name];
   return fn ? fn() : name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -5948,6 +6273,107 @@ function renderToolArgsTable(args) {
   }
   html += '</table>';
   return html;
+}
+
+// Find the worker flow associated with a tool_call msg.
+// Prefers a worker_id parsed from the result envelope (completed); falls back
+// to the most-recent still-running worker with the same tool_name.
+function findWorkerFlow(toolName, resultStr) {
+  if (resultStr) {
+    try {
+      const rj = JSON.parse(resultStr);
+      if (rj && rj.worker_id && state.workerFlows[rj.worker_id]) {
+        return state.workerFlows[rj.worker_id];
+      }
+      if (rj && rj.worker_id) {
+        // Envelope has the flow even when state wasn't seeded yet
+        return {
+          worker_id: rj.worker_id,
+          tool_name: toolName,
+          state: rj.state || 'COMPLETED',
+          duration: rj.duration_seconds || null,
+          flow: Array.isArray(rj.flow) ? rj.flow : [],
+          artifacts: rj.artifacts || [],
+          question: null,
+          summariser_usage: rj.summariser_usage || null,
+        };
+      }
+    } catch (e) {}
+  }
+  // Live fallback: most-recent running worker matching tool name
+  const candidates = Object.values(state.workerFlows).filter(w =>
+    w.tool_name === toolName &&
+    !['COMPLETED', 'FAILED', 'ABORTED', 'TIMED_OUT'].includes(w.state)
+  );
+  if (candidates.length) {
+    candidates.sort((a, b) => (b.started_at || 0) - (a.started_at || 0));
+    return candidates[0];
+  }
+  return null;
+}
+
+function renderWorkerFlow(wf) {
+  if (!wf) return '';
+  const stateCls = (wf.state || 'running').toLowerCase();
+  const dur = wf.duration != null ? `${Number(wf.duration).toFixed(1)}s` :
+              (wf.started_at ? `${((Date.now()/1000) - wf.started_at).toFixed(0)}s` : '');
+  const su = wf.summariser_usage || {};
+  const suTotal = (su.tokens_in || 0) + (su.tokens_out || 0);
+  const suLabel = suTotal > 0
+    ? `<span class="worker-flow-id" title="Summariser LLM: ${(su.tokens_in||0).toLocaleString()} in / ${(su.tokens_out||0).toLocaleString()} out${su.model ? ' · ' + esc(su.model) : ''}">LLM ${suTotal.toLocaleString()} tok</span>`
+    : '';
+  const header = `
+    <div class="worker-flow-header">
+      <span>Worker flow</span>
+      <span class="worker-flow-state ${stateCls}">${esc(wf.state || 'RUNNING')}</span>
+      <span class="worker-flow-id">${esc(wf.worker_id || '')}</span>
+      ${suLabel}
+      ${dur ? `<span class="worker-flow-duration">${esc(dur)}</span>` : ''}
+    </div>`;
+  const flow = wf.flow || [];
+  const activeIdx = flow.length - 1;
+  const steps = flow.map((e, i) => {
+    const isActive = (i === activeIdx) && !['COMPLETED', 'FAILED', 'ABORTED', 'TIMED_OUT'].includes(wf.state || '');
+    let label = '', meta = '', detail = '', cls = '';
+    if (e.kind === 'phase') { label = esc(e.phase || 'step'); cls = isActive ? 'active' : ''; }
+    else if (e.kind === 'artifact') {
+      label = 'Artifact stored';
+      meta = e.size_bytes != null ? `${e.size_bytes.toLocaleString()} bytes` : '';
+      detail = esc(e.artifact_id || e.name || '');
+    }
+    else if (e.kind === 'question') {
+      label = 'Asked user';
+      cls = 'question';
+      detail = esc(e.question || '');
+    }
+    else if (e.kind === 'answer') { label = 'Answer received'; cls = 'answer'; detail = esc(e.answer || ''); }
+    else if (e.kind === 'state') { label = esc(e.state || 'state'); meta = e.reason ? esc(e.reason) : ''; cls = 'state'; }
+    else if (e.kind === 'error') { label = 'Error'; cls = 'error'; detail = esc(e.message || ''); }
+    else if (e.kind === 'summariser') {
+      label = 'Summariser LLM';
+      const ti = e.tokens_in || 0, to = e.tokens_out || 0;
+      meta = `${ti.toLocaleString()} in / ${to.toLocaleString()} out`;
+      detail = e.model ? esc(e.model) : '';
+    }
+    else { label = esc(e.kind || ''); }
+    const nextTs = i + 1 < flow.length ? flow[i + 1].ts : (wf.state === 'RUNNING' ? Date.now() / 1000 : e.ts);
+    const stepDur = (nextTs && e.ts) ? (nextTs - e.ts) : 0;
+    const stepDurStr = stepDur > 0.1 ? `${stepDur.toFixed(1)}s` : '';
+    return `<li class="worker-flow-step ${cls}">
+      <span class="worker-flow-step-label">${label}</span>
+      ${meta ? `<span class="worker-flow-step-meta">${meta}</span>` : ''}
+      ${stepDurStr ? `<span class="worker-flow-step-meta">${stepDurStr}</span>` : ''}
+      ${detail ? `<div class="worker-flow-step-detail">${detail}</div>` : ''}
+    </li>`;
+  }).join('');
+  const artifacts = (wf.artifacts || []).map(a =>
+    `<span class="worker-flow-artifact" title="${esc(a.path || '')}">${esc(a.artifact_id || a.name || 'artifact')}${a.size_bytes ? ' · ' + a.size_bytes.toLocaleString() + 'b' : ''}</span>`
+  ).join('');
+  return `<div class="worker-flow">
+    ${header}
+    ${steps ? `<ul class="worker-flow-timeline">${steps}</ul>` : '<div style="font-size:11px;color:var(--text-400)">No steps yet.</div>'}
+    ${artifacts ? `<div class="worker-flow-artifacts">${artifacts}</div>` : ''}
+  </div>`;
 }
 
 function renderToolCall(msg, idx) {
@@ -5966,22 +6392,38 @@ function renderToolCall(msg, idx) {
   const args = typeof msg.args === 'string' ? {} : (msg.args || {});
   const hasResult = resultMsg !== null;
   const duration = (hasResult && msg._ts && resultMsg._ts) ? ((resultMsg._ts - msg._ts) / 1000).toFixed(1) : null;
+  // Check if this tool is running through a worker (live or completed)
+  const isRunningWorker = !hasResult && msg._ts && Object.values(state.activeWorkers).some(
+    w => w.tool_name === msg.name && w.state === 'RUNNING'
+  );
+  const liveElapsed = isRunningWorker ? ((Date.now() - msg._ts) / 1000).toFixed(0) : null;
   const icon = hasResult ? `<span class="tool-icon" style="color:var(--success)">&#10003;</span>` : `<span class="tool-icon tool-icon-spin">&#9881;</span>`;
-  const timing = duration ? `<span class="tool-timing">${duration}s</span>` : '';
+  const timing = duration ? `<span class="tool-timing">${duration}s</span>` : (liveElapsed ? `<span class="tool-timing">${liveElapsed}s</span>` : '');
 
   const displayArgs = msg.name === 'python_exec' ? Object.fromEntries(Object.entries(args).filter(([k]) => k !== 'code')) : args;
   let bodyHtml = renderToolArgsTable(displayArgs);
+  let isWorker = false;
+  let resultStrForFlow = null;
   if (hasResult) {
     const resultStr = typeof resultMsg.result === 'string' ? resultMsg.result : JSON.stringify(resultMsg.result, null, 2);
+    resultStrForFlow = resultStr;
+    try { const rj = JSON.parse(resultStr); if (rj && rj.worker) isWorker = true; } catch(e) {}
     const truncated = resultStr.length > 800 ? resultStr.substring(0, 800) + '...' : resultStr;
     bodyHtml += `<div class="tool-result-section"><div class="tool-result-label">Response</div><pre class="tool-result-pre">${esc(truncated)}</pre></div>`;
   }
+  // Worker flow: shown when the tool ran (or is running) via a worker
+  if (isWorker || isRunningWorker) {
+    const wf = findWorkerFlow(msg.name, resultStrForFlow);
+    if (wf) bodyHtml = renderWorkerFlow(wf) + bodyHtml;
+  }
+  const workerBadge = (isWorker || isRunningWorker) ? '<span class="tool-badge-worker" title="Executed via worker subagent">WORKER</span>' : '';
 
   return `
     <div class="tool-block${hasResult ? ' has-result' : ''}" onclick="this.classList.toggle('open')">
       <div class="tool-block-header">
         ${icon}
         <span class="tool-name">${desc}</span>
+        ${workerBadge}
         ${timing}
         <span class="tool-chevron">&#9656;</span>
       </div>

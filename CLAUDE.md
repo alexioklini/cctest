@@ -358,6 +358,31 @@ Sandboxed Python execution environment. Agents opt in via `"code_exec"` in `toke
 - **Tool description**: instructs model to write large results to files (artifacts) and print only summaries to stdout
 - **Web UI**: `toolDescribe` shows "Running Python (N lines)" for python_exec calls
 
+### Worker Subagents (`execution.py`)
+
+Heavy tool calls are routed through a **worker subagent** wrapper that writes raw tool output to the artifact store and returns a compact envelope with an LLM-generated summary — so the main conversation's context window stays small even when the underlying tool produces megabytes of data.
+
+- **Routing**: `_execute_tool` → `route_tool_execution` → `run_worker_subagent` for tools whose profile has `"heavy": true` (default heavies: `exa_search`, `web_fetch`, `gmail_search/inbox/read`, `search_files`, `python_exec`, `execute_command`). Light tools bypass the wrapper and run inline.
+- **Per-run phases** (appended to `Worker.flow`): `executing tool` → `storing artifact` → `summarising` → `done`. Each phase transition emits a `worker.progress` SSE event with the full flow entry.
+- **Envelope shape**: `{worker: true, worker_id, summary, sections, artifacts: [...], duration_seconds, state, flow: [...], summariser_usage: {tokens_in, tokens_out, model}}`. The raw tool output is NOT in the envelope — it's in the artifact JSON at `agents/<id>/artifacts/<session_folder>/worker_<tool>_<uuid8>.json`.
+- **Summariser LLM pass**: after artifact write, `_summarise_tool_result` calls a cheap LLM (session's current model, or `agent.json.summariser_model` override) to compress the raw output to a short summary + `SECTIONS: [...]` drill-in hints. Uses a local event callback to capture its own `usage`; tokens are surfaced via a `worker_usage` SSE event so the turn-level total in the status bar includes summariser cost (but the main `messages[]` history only ever gets the compact envelope — the expensive bytes never re-enter the LLM context on subsequent rounds).
+- **Flow log entries** (`{kind, ts, ...}` each): `phase`, `artifact` (id + size_bytes + artifact_kind), `question` (worker_ask_user), `answer`, `state` (PAUSED/RESUMED/ABORTED + reason), `error`, `summariser` (tokens_in + tokens_out + model). Flow is included in the envelope so it rehydrates losslessly on chat reload.
+- **Controls** (`WorkerRegistry` methods + matching SSE events): `pause`, `resume`, `cancel`, `ask_user`/`answer`, `send` (push input_queue). State machine: `QUEUED → RUNNING → {PAUSED, WAITING_FOR_USER, COMPLETED, FAILED, TIMED_OUT, ABORTED}` with validated transitions.
+- **Idempotency**: per `(session_id, tool_use_id)` dedup — if the same tool_use_id arrives concurrently (agentic retry), only one worker runs and the others wait on its event.
+- **Concurrency cap**: `execution.max_concurrent_workers_per_session` (default 3). Exceeding returns an error envelope instructing the model to wait or abort a running worker.
+- **Config** (`config.json` → `execution`): `workers_enabled`, `auto_threshold_bytes` (for tools marked `"heavy": "auto"` that only wrap when output exceeds the threshold), `worker_timeout_seconds`, `summariser_max_input_chars`, per-tool `profiles` overrides.
+- **API**: `GET /v1/workers` (live status snapshot with flow), `GET /v1/workers/recent`, `POST /v1/workers/{id}/answer` (deliver answer to `worker_ask_user`), `POST /v1/workers/{id}/abort|pause|resume|send` (see `server.py` for full list).
+- **Web UI**: `renderWorkerFlow(wf)` is shared by chat tool blocks and the session inspector — shows state pill, worker_id, elapsed/total duration, LLM-token badge (summariser), timeline of flow entries with per-step durations, artifact chips. On session reload, flow is re-hydrated from the envelope stored in `metadata.tools[i].result`. Live updates driven by `state.workerFlows[worker_id]` populated from `worker.started/progress/finished/paused/resumed/aborted/question/answered/worker_usage` SSE handlers. `worker.question` also renders a standalone interactive card that remains visible regardless of the "show tool calls" toggle, so the user can always answer blocking questions.
+
+### Session Inspector — Per-Round API Requests
+
+The inspector's "API Request" panels decompose each tool-loop round of an assistant turn. `request_payloads[]` in the assistant message metadata carries one entry per `_tool_round`, populated by the `request_payload` SSE event emitted inside `send_message` before each LLM call.
+
+- Per-round fields: `tool_round`, `system_prompt` + `system_tokens`, `tools_count` + `tools_tokens` + `tool_names`, `history` (all non-system non-final-user messages in the payload) + `history_tokens`, `user_message` + `user_tokens`, `total_payload_tokens` (estimate).
+- **Actual API tokens per round**: the `usage` SSE event now carries its `tool_round`; the chat worker callback attaches `tokens_in` / `tokens_out` to the matching `request_payloads[i]` so each round shows the real API-reported counts (not the turn-cumulative `_usage_totals`).
+- **UI**: round 0 auto-opens; continuation rounds show a `+N msgs` delta badge reflecting new history entries since the previous round, and their History section auto-opens with `NEW` highlighting on the new entries. Empty `user_message` sections (standard on continuation rounds) are hidden.
+- **Turn-level totals**: `_usage_totals` accumulates both main-round `usage` events and worker-side `worker_usage` events so the status bar's "N tok" reflects the full LLM spend for the turn — while the main context window only contains what's in the main rounds' payloads.
+
 ### Parallel Tool Calls
 
 Models can emit multiple tool calls in a single response. Server-side execution handles parallelism.

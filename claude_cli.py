@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "7.9.1"
+VERSION = "8.2.0"
 VERSION_DATE = "2026-04-18"
 CHANGELOG = [
     ("7.9.1", "2026-04-18", "Right panel toggle and auto-open. Status bar 'Panel' button opens/closes the unified right panel (Attachments, References, Files) without clicking an item in chat. Auto-open: new web references from tool results open the References tab automatically, new/updated artifacts always switch to the artifact (even when a different one was selected). Clicking a reference badge in chat history opens the References tab and scrolls to + highlights that specific source card. Panel toggle button shows active state when open. Badge counts update in real-time during streaming."),
@@ -963,6 +963,119 @@ TOOL_DEFINITIONS = [
             "required": ["query"],
         },
     },
+    # --- Worker Subagent Tools (v8.0.0) ---
+    {
+        "name": "get_artifact_detail",
+        "description": (
+            "Retrieve the raw content of a worker artifact. Use this to inspect "
+            "the full output of a tool that was executed by a worker subagent. "
+            "Optionally filter by a search query to extract only relevant sections."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "artifact_id": {"type": "string", "description": "The artifact filename (from the worker envelope's artifacts[].artifact_id)"},
+                "query": {"type": "string", "description": "Optional search term to extract only matching lines with context"},
+                "offset": {"type": "integer", "description": "Character offset to start reading from (default: 0)"},
+                "limit": {"type": "integer", "description": "Maximum characters to return (default: 16384)"},
+            },
+            "required": ["artifact_id"],
+        },
+    },
+    {
+        "name": "worker_status",
+        "description": "Get current state of running or completed worker subagents. Use this to inform the user what a background task is doing.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "worker_id": {"type": "string", "description": "Specific worker ID. Omit for all workers in this session."},
+            },
+        },
+    },
+    {
+        "name": "worker_abort",
+        "description": "Abort a running worker subagent. Idempotent — aborting an already-aborted worker returns success.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "worker_id": {"type": "string", "description": "Worker ID to abort"},
+                "reason": {"type": "string", "description": "Reason for aborting (logged and shown to user)"},
+            },
+            "required": ["worker_id"],
+        },
+    },
+    {
+        "name": "worker_pause",
+        "description": "Pause a running worker at its next safepoint without terminating it.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "worker_id": {"type": "string", "description": "Worker ID to pause"},
+                "reason": {"type": "string", "description": "Reason for pausing"},
+            },
+            "required": ["worker_id"],
+        },
+    },
+    {
+        "name": "worker_resume",
+        "description": "Resume a paused worker without adding input.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "worker_id": {"type": "string", "description": "Worker ID to resume"},
+            },
+            "required": ["worker_id"],
+        },
+    },
+    {
+        "name": "worker_send",
+        "description": "Send additional context or instructions to a running or paused worker. If paused, also resumes the worker.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "worker_id": {"type": "string", "description": "Worker ID to send to"},
+                "message": {"type": "string", "description": "Message content to inject into the worker's context"},
+                "role": {"type": "string", "enum": ["user", "system"], "description": "Message role (default: user)"},
+            },
+            "required": ["worker_id", "message"],
+        },
+    },
+    {
+        "name": "worker_ask_user",
+        "description": (
+            "Ask the user a question that cannot be decided from available context. "
+            "The worker will pause until answered. Only available inside a worker subagent. "
+            "Use sparingly — prefer making reasonable decisions autonomously."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "The question to ask"},
+                "options": {"type": "array", "items": {"type": "string"}, "description": "Optional multiple-choice options"},
+                "context_summary": {"type": "string", "description": "Brief context so the user understands why this question is being asked"},
+                "timeout_seconds": {"type": "integer", "description": "Seconds to wait for an answer before aborting (default: 300)"},
+            },
+            "required": ["question"],
+        },
+    },
+    {
+        "name": "ask_user",
+        "description": (
+            "Ask the user a clarifying question when the task cannot be decided from available context. "
+            "The chat pauses until the user answers. Use sparingly — prefer making reasonable decisions autonomously. "
+            "Returns {\"answer\": str} on success, or an error on timeout."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "The question to ask the user"},
+                "options": {"type": "array", "items": {"type": "string"}, "description": "Optional multiple-choice options"},
+                "context_summary": {"type": "string", "description": "Brief context so the user understands why this question is being asked"},
+                "timeout_seconds": {"type": "integer", "description": "Seconds to wait for an answer before aborting (default: 300)"},
+            },
+            "required": ["question"],
+        },
+    },
 ]
 
 # Build OpenAI-compatible format automatically
@@ -988,7 +1101,7 @@ _TOOL_DEF_OPENAI_INDEX = {td["function"]["name"]: td for td in TOOL_DEFINITIONS_
 # Tool groups for per-agent filtering (agents can specify groups or individual tool names)
 TOOL_GROUPS = {
     "core": {"read_file", "write_file", "edit_file", "list_directory", "search_files",
-             "execute_command", "tool_search"},
+             "execute_command", "tool_search", "ask_user"},
     "memory": {"mempalace_query", "save_chat_to_memory"},
     "context": {"context_search", "context_detail", "context_recall"},
     "web": {"web_fetch", "exa_search"},
@@ -1003,11 +1116,14 @@ TOOL_GROUPS = {
     "skills": {"use_skill"},
     "nodes": {"list_nodes"},
     "code_exec": {"python_exec"},
+    "workers": {"get_artifact_detail", "worker_status", "worker_abort",
+                "worker_pause", "worker_resume", "worker_send",
+                "worker_ask_user"},
 }
 
 # Default tool groups included for all agents (if no explicit config)
 DEFAULT_TOOL_GROUPS = {"core", "memory", "context", "web", "delegation", "git", "skills",
-                       "nodes", "scheduler", "mcp"}
+                       "nodes", "scheduler", "mcp", "workers"}
 
 
 TOKEN_CONFIG_DEFAULTS = {
@@ -3468,6 +3584,7 @@ _mcp_manager: MCPManager | None = None
 # --- Agent System ---
 
 AGENTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agents")
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 
 # --- Tool Configuration ---
 
@@ -14470,6 +14587,227 @@ def _display_tool_result(name: str, result_str: str) -> None:
         _update_tool_counter()
 
 
+# --- Worker Subagent Tool Handlers (v8.0.0) ---
+
+def tool_get_artifact_detail(args: dict) -> str:
+    """Retrieve raw content from a worker artifact."""
+    artifact_id = args.get("artifact_id", "")
+    query = args.get("query", "")
+    offset = args.get("offset", 0)
+    limit = args.get("limit", 16384)
+    if not artifact_id:
+        return _err("artifact_id is required")
+
+    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    agent_id = agent.agent_id if agent else "main"
+    artifacts_root = os.path.join(AGENTS_DIR, agent_id, "artifacts")
+
+    # Search for the artifact file
+    artifact_path = None
+    if os.path.exists(artifacts_root):
+        for root, dirs, files in os.walk(artifacts_root):
+            if artifact_id in files:
+                artifact_path = os.path.join(root, artifact_id)
+                break
+    if not artifact_path or not os.path.exists(artifact_path):
+        return _err(f"Artifact '{artifact_id}' not found")
+
+    try:
+        with open(artifact_path) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        return _err(f"Failed to read artifact: {e}")
+
+    raw = data.get("raw_result", "")
+
+    if query:
+        lines = raw.splitlines()
+        matches = []
+        for i, line in enumerate(lines):
+            if query.lower() in line.lower():
+                start = max(0, i - 2)
+                end = min(len(lines), i + 3)
+                for j in range(start, end):
+                    if j not in [m[0] for m in matches]:
+                        matches.append((j, lines[j]))
+        if matches:
+            raw = "\n".join(f"{m[0]+1}: {m[1]}" for m in matches)
+        else:
+            raw = f"(no matches for '{query}' in {len(lines)} lines)"
+
+    if offset:
+        raw = raw[offset:]
+    if len(raw) > limit:
+        raw = raw[:limit] + f"\n\n[... truncated at {limit} chars, {len(data.get('raw_result',''))} total]"
+
+    return _ok({
+        "artifact_id": artifact_id,
+        "tool": data.get("tool", ""),
+        "content": raw,
+        "total_size": data.get("size_bytes", len(raw)),
+    })
+
+
+def tool_worker_status(args: dict) -> str:
+    """Get current state of worker subagents."""
+    from execution import get_worker_registry
+    registry = get_worker_registry()
+    worker_id = args.get("worker_id")
+    if worker_id:
+        w = registry.get(worker_id)
+        if not w:
+            return _err(f"Worker '{worker_id}' not found")
+        return _ok({"workers": [registry.to_status_dict(w)]})
+    session_id = getattr(_thread_local, 'current_session_id', None) or ""
+    workers = registry.list_session(session_id)
+    return _ok({"workers": [registry.to_status_dict(w) for w in workers]})
+
+
+def tool_worker_abort(args: dict) -> str:
+    """Abort a running worker."""
+    from execution import get_worker_registry
+    worker_id = args.get("worker_id", "")
+    reason = args.get("reason", "user requested abort")
+    if not worker_id:
+        return _err("worker_id is required")
+    ok = get_worker_registry().cancel(worker_id, reason)
+    return _ok({"aborted": ok, "worker_id": worker_id})
+
+
+def tool_worker_pause(args: dict) -> str:
+    """Pause a running worker."""
+    from execution import get_worker_registry
+    worker_id = args.get("worker_id", "")
+    reason = args.get("reason", "")
+    if not worker_id:
+        return _err("worker_id is required")
+    ok = get_worker_registry().pause(worker_id, reason)
+    if not ok:
+        return _err(f"Cannot pause worker '{worker_id}' (not running or not found)")
+    return _ok({"paused": True, "worker_id": worker_id})
+
+
+def tool_worker_resume(args: dict) -> str:
+    """Resume a paused worker."""
+    from execution import get_worker_registry
+    worker_id = args.get("worker_id", "")
+    if not worker_id:
+        return _err("worker_id is required")
+    ok = get_worker_registry().resume(worker_id)
+    if not ok:
+        return _err(f"Cannot resume worker '{worker_id}' (not paused or not found)")
+    return _ok({"resumed": True, "worker_id": worker_id})
+
+
+def tool_worker_send(args: dict) -> str:
+    """Send input to a running or paused worker."""
+    from execution import get_worker_registry
+    worker_id = args.get("worker_id", "")
+    message = args.get("message", "")
+    role = args.get("role", "user")
+    if not worker_id or not message:
+        return _err("worker_id and message are required")
+    ok = get_worker_registry().send(worker_id, message, role)
+    if not ok:
+        return _err(f"Cannot send to worker '{worker_id}' (terminal state or not found)")
+    return _ok({"sent": True, "worker_id": worker_id})
+
+
+def tool_worker_ask_user(args: dict) -> str:
+    """Ask the user a question from within a worker subagent."""
+    from execution import get_worker_registry
+    worker_id = getattr(_thread_local, 'current_worker_id', None)
+    if not worker_id:
+        return _err("worker_ask_user can only be called from within a worker subagent")
+    question = args.get("question", "")
+    if not question:
+        return _err("question is required")
+    options = args.get("options")
+    context_summary = args.get("context_summary", "")
+    timeout = args.get("timeout_seconds", 300)
+    answer = get_worker_registry().ask_user(
+        worker_id, question, options, context_summary, timeout
+    )
+    if answer is None:
+        return _err("No answer received (timed out or worker was aborted)")
+    return _ok({"answer": answer})
+
+
+# --- Native-loop ask_user: session-scoped pending-answer registry ---
+
+_ask_user_pending: dict[str, dict] = {}
+_ask_user_lock = threading.Lock()
+
+
+def _ask_user_register(session_id: str) -> threading.Event:
+    """Create a pending-answer slot for a session. Returns the Event to wait on."""
+    event = threading.Event()
+    with _ask_user_lock:
+        _ask_user_pending[session_id] = {"event": event, "answer": None}
+    return event
+
+
+def _ask_user_clear(session_id: str) -> None:
+    with _ask_user_lock:
+        _ask_user_pending.pop(session_id, None)
+
+
+def deliver_ask_user_answer(session_id: str, answer: str) -> bool:
+    """Called by POST /v1/chat/answer. Returns True if a pending question was matched."""
+    with _ask_user_lock:
+        slot = _ask_user_pending.get(session_id)
+        if not slot:
+            return False
+        slot["answer"] = answer
+        slot["event"].set()
+    return True
+
+
+def tool_ask_user(args: dict) -> str:
+    """Ask the user a question from the main chat loop (not inside a worker)."""
+    session_id = getattr(_thread_local, 'current_session_id', None)
+    if not session_id:
+        return _err("ask_user requires an active session")
+    question = args.get("question", "")
+    if not question:
+        return _err("question is required")
+    options = args.get("options")
+    context_summary = args.get("context_summary", "")
+    timeout = int(args.get("timeout_seconds", 300))
+
+    cb = getattr(_thread_local, 'event_callback', None)
+    if cb:
+        try:
+            cb("user_input_needed", {
+                "session_id": session_id,
+                "question": question,
+                "options": options,
+                "context_summary": context_summary,
+                "timeout_seconds": timeout,
+            })
+        except Exception:
+            pass
+
+    event = _ask_user_register(session_id)
+    try:
+        got = event.wait(timeout=timeout)
+        if not got:
+            return _err("No answer received (timed out)")
+        with _ask_user_lock:
+            slot = _ask_user_pending.get(session_id) or {}
+            answer = slot.get("answer")
+        if answer is None:
+            return _err("No answer received")
+        if cb:
+            try:
+                cb("user_input_received", {"session_id": session_id, "answer": answer})
+            except Exception:
+                pass
+        return _ok({"answer": answer})
+    finally:
+        _ask_user_clear(session_id)
+
+
 TOOL_DISPATCH = {
     "read_file": tool_read_file,
     "write_file": tool_write_file,
@@ -14518,6 +14856,14 @@ TOOL_DISPATCH = {
     "git_command": tool_git_command,
     "github_command": tool_github_command,
     "tool_search": lambda args: _tool_search(args),
+    "get_artifact_detail": tool_get_artifact_detail,
+    "worker_status": tool_worker_status,
+    "worker_abort": tool_worker_abort,
+    "worker_pause": tool_worker_pause,
+    "worker_resume": tool_worker_resume,
+    "worker_send": tool_worker_send,
+    "worker_ask_user": tool_worker_ask_user,
+    "ask_user": tool_ask_user,
 }
 
 
@@ -15026,7 +15372,15 @@ def _execute_tool_in_thread(name: str, args: dict, tool_id: str, event_callback)
 
 
 def _execute_tool(name: str, args: dict) -> str:
-    """Execute a tool by name with the given arguments."""
+    """Tool dispatch entry point. Routes through the worker subagent wrapper
+    for heavy tools, direct execution for light tools. (v8.0.0+)"""
+    from execution import route_tool_execution
+    return route_tool_execution(name, args, _execute_tool_inner)
+
+
+def _execute_tool_inner(name: str, args: dict) -> str:
+    """Execute a tool directly — no worker routing. Called by the router
+    and by workers themselves."""
     # --- Built-in pre-hooks ---
     # Plan mode: block non-readonly tools
     if getattr(_thread_local, 'plan_mode', False):
@@ -16192,7 +16546,11 @@ def _handle_openai_response(response, payload, messages, model, api_key,
 
     # Emit usage event so callers can capture token counts
     if event_callback:
-        event_callback("usage", {"tokens_in": _usage_in, "tokens_out": _usage_out})
+        event_callback("usage", {
+            "tokens_in": _usage_in,
+            "tokens_out": _usage_out,
+            "tool_round": _tool_round,
+        })
 
     # End LLM trace span (OpenAI handler)
     _llm_span_oai = getattr(_thread_local, 'current_trace_span', None)

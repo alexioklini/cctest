@@ -867,6 +867,11 @@ class ChatDB:
                 conn.commit()
             for sid in sids:
                 _purge_mempalace_session(sid)
+                try:
+                    from execution import get_worker_registry
+                    get_worker_registry().abort_session(sid, "session_deleted")
+                except Exception:
+                    pass
             return sids
 
 
@@ -1050,6 +1055,12 @@ class SessionManager:
             return s
 
     def delete(self, session_id: str) -> bool:
+        # Abort all running workers in this session
+        try:
+            from execution import get_worker_registry
+            get_worker_registry().abort_session(session_id, "session_deleted")
+        except Exception:
+            pass
         with self._lock:
             self._sessions.pop(session_id, None)
         ChatDB.delete_session(session_id)
@@ -1860,6 +1871,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_notifications_unread()
         elif path == "/v1/backup/info":
             self._handle_backup_info()
+        # --- Workers GET routes ---
+        elif path == "/v1/workers":
+            self._handle_workers_list()
+        elif path == "/v1/workers/recent":
+            self._handle_workers_recent()
         # --- Nodes GET routes ---
         elif path == "/v1/nodes":
             self._handle_nodes_list()
@@ -2090,6 +2106,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_channel_lifecycle(path, "stop")
         elif path.startswith("/v1/channels/") and path.endswith("/restart"):
             self._handle_channel_lifecycle(path, "restart")
+        elif path.startswith("/v1/workers/") and path.endswith("/answer"):
+            self._handle_worker_answer(path)
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -3273,7 +3291,22 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 _usage_totals["tokens_in"] += data.get("tokens_in", 0)
                 _usage_totals["tokens_out"] += data.get("tokens_out", 0)
                 _usage_totals["last_tokens_in"] = data.get("tokens_in", 0)
+                # Attach per-round actual tokens to the matching request_payload
+                _ur = data.get("tool_round")
+                if _ur is not None:
+                    for _p in _request_payloads:
+                        if _p.get("tool_round") == _ur:
+                            _p["tokens_in"] = data.get("tokens_in", 0)
+                            _p["tokens_out"] = data.get("tokens_out", 0)
+                            break
                 return  # internal only, don't send to client
+            elif event_type == "worker_usage":
+                # Worker-side LLM call (e.g. summariser) tokens. Add to turn totals
+                # so the status bar reflects the real cost. Forward to client for
+                # the worker-flow panel.
+                _usage_totals["tokens_in"] += data.get("tokens_in", 0)
+                _usage_totals["tokens_out"] += data.get("tokens_out", 0)
+                # (fall through so the event reaches the SSE queue)
             elif event_type == "request_payload":
                 _request_payloads.append(data)
                 return  # internal only, don't send to client
@@ -3340,8 +3373,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             model_cfg = engine._models_config.get(session.model, {}) if engine._models_config else {}
             engine._thread_local.caveman_system = int(model_cfg.get("caveman_system", 0) or 0)
 
+            # Set worker subagent execution overrides from agent config
+            engine._thread_local.execution_overrides = agent_config.config.get("execution_overrides") or {}
+
             # Set attachment image model for read_attachment vision support
             engine._thread_local.attachment_image_model = server_config.get("attachment_image_model", "")
+
+            # Set current model for worker summariser (cache reuse)
+            engine._thread_local._current_model = session.model
 
             # Snapshot message count for rollback on failure
             _msg_count_before = len(session.messages)
@@ -3533,6 +3572,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 engine._thread_local.plan_mode = False
                 engine._thread_local.caveman_chat = 0
                 engine._thread_local.caveman_system = 0
+                engine._thread_local.execution_overrides = {}
+                engine._thread_local._current_model = None
                 engine.cleanup_proxy_channel(sid)
                 event_queue.put(None)  # sentinel
 
@@ -6443,8 +6484,24 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
     # --- Chat answer handler (interactive AskUserQuestion) ---
 
     def _handle_chat_answer(self):
-        """POST /v1/chat/answer — deprecated; sidecar path removed."""
-        self._send_json({"error": "chat/answer endpoint removed; native loop handles interactive prompts"}, 410)
+        """POST /v1/chat/answer — deliver a user answer to a pending ask_user tool call."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except Exception:
+            self._send_json({"error": "invalid JSON body"}, 400)
+            return
+        session_id = (body.get("session_id") or "").strip()
+        answer = body.get("answer")
+        if not session_id or answer is None:
+            self._send_json({"error": "session_id and answer are required"}, 400)
+            return
+        from claude_cli import deliver_ask_user_answer
+        ok = deliver_ask_user_answer(session_id, str(answer))
+        if not ok:
+            self._send_json({"error": "no pending question for this session"}, 404)
+            return
+        self._send_json({"delivered": True, "session_id": session_id})
 
     # --- Notification handlers ---
 
@@ -6730,6 +6787,56 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"error": str(e)}, 500)
 
     # --- Nodes API handlers ---
+
+    def _handle_workers_list(self):
+        """GET /v1/workers — list workers, optionally filtered by session_id."""
+        from execution import get_worker_registry
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        session_id = qs.get("session_id", [None])[0]
+        registry = get_worker_registry()
+        if session_id:
+            workers = registry.list_session(session_id)
+        else:
+            workers = list(registry._workers.values())
+        self._send_json({"workers": [registry.to_status_dict(w) for w in workers]})
+
+    def _handle_workers_recent(self):
+        """GET /v1/workers/recent — all workers across sessions (admin view)."""
+        from execution import get_worker_registry
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        limit = int(qs.get("limit", [50])[0])
+        registry = get_worker_registry()
+        with registry._lock:
+            all_workers = list(registry._workers.values())
+        all_workers.sort(key=lambda w: w.started_at or 0, reverse=True)
+        all_workers = all_workers[:limit]
+        result = []
+        for w in all_workers:
+            d = registry.to_status_dict(w)
+            d["session_id"] = w.session_id
+            d["agent_id"] = w.agent_id
+            d["duration"] = w.duration
+            result.append(d)
+        self._send_json({"workers": result, "total": len(registry._workers)})
+
+    def _handle_worker_answer(self, path):
+        """POST /v1/workers/{id}/answer — deliver answer to a worker question."""
+        from execution import get_worker_registry
+        parts = path.split("/")
+        worker_id = parts[3] if len(parts) >= 5 else ""
+        body = self._read_json_body()
+        if not body:
+            self._send_json({"error": "Missing body"}, 400)
+            return
+        answer = body.get("answer", "")
+        if not answer:
+            self._send_json({"error": "Missing 'answer' field"}, 400)
+            return
+        ok = get_worker_registry().answer(worker_id, answer)
+        if not ok:
+            self._send_json({"error": f"Worker '{worker_id}' not waiting for answer"}, 400)
+            return
+        self._send_json({"ok": True, "worker_id": worker_id})
 
     def _handle_nodes_list(self):
         """GET /v1/nodes — list all nodes with status."""
