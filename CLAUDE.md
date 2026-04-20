@@ -411,6 +411,82 @@ Models can emit multiple tool calls in a single response. Server-side execution 
 - **Concurrent-safe tools** (`_CONCURRENT_SAFE_TOOLS`): read_file, list_directory, search_files, read_document, exa_search, web_fetch, code_graph_query, schedule_list, schedule_history, list_nodes, task_status, context_search, context_detail, context_recall, git_command (read-only subcommands only)
 - **Web UI**: "Parallel Tool Calls" checkbox in each model's detail panel (Models tab)
 
+### Warmup & Warm Session Pool
+
+Brain pre-primes local models so first-token latency drops from ~15s (cold
+prefill of system+tools) to 2-3s. Opt in per model via `warmup: true` in
+`_models_config`. Requires prompt-cache-capable providers (oMLX tested; any
+runtime that deduplicates KV prefix by exact token match works).
+
+- **Engine**: `run_model_warmup(model, mode="full"|"minimal")` in `claude_cli.py`
+  is the single source of truth. Used by the keeper daemon AND by session-level
+  `_trigger_warmup` (server.py) — one payload shape, one update path into
+  `_warmup_state`. UI dot reads from that registry.
+- **Modes** (per-model `warmup_mode` in models config, default `"full"`):
+  - `"full"` — system prompt + all tools + "." user. Primes KV prefix →
+    first real turn reuses cached tokens → ~2-3s first response.
+  - `"minimal"` — 1-token user, no system, no tools. Only loads model weights
+    into GPU. First response ~10-15s. Use when GPU memory is tight and the
+    model's KV prefix would get evicted anyway.
+- **KV-prefix stability rule**: the warmup payload MUST match the real
+  first-turn payload byte-for-byte or the cache misses silently. Four
+  previously-drifting fields are now aligned: system prompt timestamp
+  rounded to hour precision (`_build_system_prompt` line ~16419); MCP tools
+  attached via `_thread_local.mcp_manager = _mcp_manager`; tools merged,
+  deduped and sorted by name; `stream=True` + `stream_options` passed.
+- **Warmup keeper** (`_warmup_keeper_loop` in server.py): runs every
+  `warmup.interval_seconds` (default 30). Picks candidates whose state is
+  `idle|cold|failed` or whose configured mode flipped since last prime.
+  `max_concurrent` primes per cycle (default 1). `_warmup_wakeup: Event` lets
+  callers (model config save, per-session warmup trigger) kick the loop
+  immediately instead of waiting up to the interval.
+- **Starvation fix**: failed primes bump `last_warmup_ts` so the oldest-first
+  sort doesn't rerun the same OOM-failing model every cycle and ignore
+  healthy ones.
+- **Warm session pool** (`WarmSessionPool` in server.py): keeps N pre-built
+  Session objects per warmup-flagged model (configurable via
+  `warmup.pool_depth`, default 3, clamped 1-10). Bound to agent=main,
+  status=`warm_pool` (hidden from sidebar). Pool fill is gated on
+  `_warmup_state[model]["state"] == "warm"` — empty session rows without the
+  KV prefix primed would be useless. `claim()` pops one slot (FIFO, oldest =
+  warmest) and kicks `try_build()` to refill; only fires when the incoming
+  `POST /v1/sessions` matches `{agent:"main", project:"", status:"",
+  note_context:""}` (anything else changes the system prompt and invalidates
+  the primed prefix). `invalidate_model()` / `invalidate_all()` drop slots on
+  config changes.
+- **Pool invalidation on config save**: `/v1/models/config` tracks
+  `_prefix_fields = (warmup, warmup_mode, enabled, max_context,
+  warmup_allow_cloud, parallel_tool_calls, caveman_system, provider,
+  base_model_id)`. Any change drops the model's pool slots, resets its
+  `_warmup_state` to idle, and wakes the keeper.
+- **Multi-model tradeoff**: on oMLX with tight GPU RAM, two full-primed
+  models fight for KV space — each prime evicts the other's prefix. Either
+  size the host (24GB+ for gemma-26b + e2b together) or drop one to
+  `minimal`. Brain doesn't auto-select the mode; user picks per model in
+  Models tab.
+- **UI**:
+  - Composer dots (welcome + chat views) reflect the active model's warmup
+    state: green=warm, amber=warming, red=failed, grey=idle/skipped_cloud.
+  - Status bar **Pool** indicator (`#status-warmpool`) shows aggregate
+    `ready/target` + color-coded dot; click opens modal.
+  - **Warm pool modal** (`openWarmPoolModal()`): per-model row with state
+    badge, progress bar, desired-mode chip + actual-mode chip (with ⟲ marker
+    if re-prime pending), `last_warmup_ts` age, `last_error` box, and
+    per-model "Warm now" button (`POST /v1/warmup/trigger`).
+  - Models tab detail panel: **Warmup** checkbox + **Warmup Mode** dropdown
+    (full / minimal) + **Allow cloud** checkbox.
+- **API**:
+  - `GET /v1/warmup/status` — per-model registry snapshot with pool state
+    merged in; fields: `state`, `mode` (actual), `desired_mode`,
+    `last_warmup_ts`, `age_seconds`, `last_error`, `ready`, `building`,
+    `target`, `pool_state`, `pool_built_at`. Poll: 1s fast mode when
+    `any_warming`, 5s slow otherwise.
+  - `POST /v1/warmup/trigger` — body `{model}` fires a manual prime.
+  - `POST /v1/sessions/{id}/warmup` — per-session prime (used by welcome
+    screen on model switch). Always runs in `"full"` mode.
+- **Log format**: `[warmup-keeper] <model>: warm (<mode>, <ms>ms)` on
+  success, `[warm-pool] <model>: +1 ready (<sid8>, total N/depth)` on refill.
+
 ### OpenAI-Only Wire Format (v7.2.0)
 
 Brain is now OpenAI-wire only. All providers (Bifrost, Kilo, future additions) must be OpenAI-compatible.

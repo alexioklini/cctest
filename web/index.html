@@ -3674,6 +3674,11 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <span class="status-label">$</span>
       <span class="status-value" id="status-cost-label">0.00</span>
     </div>
+    <div class="status-item" id="status-warmpool" style="display:none;cursor:pointer;gap:4px" title="Warm pool — click for details" onclick="openWarmPoolModal()">
+      <span class="warmup-dot" id="status-warmpool-dot"></span>
+      <span class="status-label">Pool</span>
+      <span class="status-value" id="status-warmpool-label">0/0</span>
+    </div>
     <div class="status-item" style="margin-left:auto;gap:6px">
       <span class="status-value" id="status-session"></span>
       <button class="compact-btn" onclick="openInspectModal()" title="Inspect session" style="font-size:13px;padding:1px 6px">&#x1F50D;</button>
@@ -8034,6 +8039,12 @@ async function switchGeneralTab(tab, btn) {
               </div>
               <div style="display:flex;align-items:center;gap:6px;padding-top:14px"><input type="checkbox" class="mdl-parallel-tools" ${cfg.parallel_tool_calls !== false ? 'checked' : ''} style="margin:0"><label class="form-label" style="font-size:11px;margin:0;cursor:pointer">Parallel Tool Calls</label></div>
               <div style="display:flex;align-items:center;gap:6px;padding-top:14px"><input type="checkbox" class="mdl-warmup" ${cfg.warmup ? 'checked' : ''} style="margin:0"><label class="form-label" style="font-size:11px;margin:0;cursor:pointer" title="Prime this model's KV cache once so first-token latency is minimal. The warm state is held until the model is evicted — no periodic re-priming.">Warmup</label></div>
+              <div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px" title="Full: prefill system+tools into KV cache (~5-6s first response, costs GPU memory). Minimal: load weights only (~10-15s first response, tiny memory footprint). Full-primed models may evict each other if GPU memory is tight.">Warmup Mode</label>
+                <select class="mdl-warmup-mode" style="width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)">
+                  <option value="full" ${(cfg.warmup_mode||'full')==='full'?'selected':''}>full (KV prefix)</option>
+                  <option value="minimal" ${cfg.warmup_mode==='minimal'?'selected':''}>minimal (weights only)</option>
+                </select>
+              </div>
               <div style="display:flex;align-items:center;gap:6px;padding-top:14px"><input type="checkbox" class="mdl-warmup-allow-cloud" ${cfg.warmup_allow_cloud ? 'checked' : ''} style="margin:0"><label class="form-label" style="font-size:11px;margin:0;cursor:pointer" title="Permit warmup against cloud providers (costs tokens)">Allow cloud</label></div>
               <div style="grid-column:1/-1"><label class="form-label" style="font-size:11px">Raw Formats <span style="color:var(--text-400);font-weight:400">(MIME patterns the model handles natively as multimodal)</span></label><input class="form-input mdl-raw-formats" value="${esc((cfg.raw_formats||[]).join(', '))}" placeholder="e.g. image/*, application/pdf" style="font-size:12px"></div>
             </div>
@@ -8997,6 +9008,9 @@ async function saveModelsConfig() {
       if (warm) mc[mid].warmup = true; else delete mc[mid].warmup;
       // warmup_ttl_seconds retired: hold-forever semantics (no periodic reprime)
       delete mc[mid].warmup_ttl_seconds;
+      const warmMode = row.querySelector('.mdl-warmup-mode')?.value;
+      if (warmMode && warmMode !== 'full') mc[mid].warmup_mode = warmMode;
+      else delete mc[mid].warmup_mode;
       const warmCloud = row.querySelector('.mdl-warmup-allow-cloud')?.checked;
       if (warmCloud) mc[mid].warmup_allow_cloud = true; else delete mc[mid].warmup_allow_cloud;
       // Raw formats
@@ -13112,6 +13126,119 @@ function poolTooltip(st) {
   return '';
 }
 
+// Warm-pool status modal — opened from the status bar "Pool" indicator. Live
+// updated by WarmupMonitor._render() (polls /v1/warmup/status).
+function openWarmPoolModal() {
+  if (document.getElementById('warmpool-modal')) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'warmpool-modal';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div class="modal-content" style="max-width:680px;max-height:80vh;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;padding:20px 24px 0;gap:12px">
+      <h2 style="margin:0;font-size:18px;font-weight:600;color:var(--text-000)">Warm Session Pool</h2>
+      <span id="warmpool-modal-hint" style="font-size:12px;color:var(--text-400)"></span>
+      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()" style="margin-left:auto">&times;</button>
+    </div>
+    <div id="warmpool-body" style="flex:1;overflow-y:auto;padding:12px 24px 24px">
+      <div style="color:var(--text-400);padding:24px;text-align:center">Loading...</div>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  renderWarmPoolModalBody();
+}
+
+function renderWarmPoolModalBody() {
+  const body = document.getElementById('warmpool-body');
+  if (!body) return;
+  const states = WarmupMonitor.states || {};
+  const entries = Object.entries(states).filter(([_, st]) => st.enabled);
+  const hint = document.getElementById('warmpool-modal-hint');
+  if (hint) hint.textContent = entries.length
+    ? `${entries.length} model${entries.length>1?'s':''} with warmup enabled`
+    : 'No models have warmup enabled';
+  if (!entries.length) {
+    body.innerHTML = `<div style="color:var(--text-400);padding:24px;text-align:center">
+      Enable <strong>Warmup</strong> on a model in the Models tab to pre-bake sessions for faster first-token latency.
+    </div>`;
+    return;
+  }
+  // Short explainer — mode is now per-model (set in Models tab)
+  const banner = `<div style="background:var(--bg-200);border-radius:10px;padding:8px 14px;margin-bottom:12px;font-size:11px;color:var(--text-400);line-height:1.5">
+    <span style="color:#22c55e;font-weight:500">full</span>: prefills system+tools into KV cache (~5-6s first response).
+    <span style="color:#8b5cf6;font-weight:500;margin-left:8px">minimal</span>: weights only (~10-15s first response).
+    Configure per model in the Models tab. Full-primed models share GPU memory — if it's tight, they evict each other.
+  </div>`;
+  entries.sort((a, b) => (a[1].display_name || a[0]).localeCompare(b[1].display_name || b[0]));
+  const now = Date.now() / 1000;
+  const rows = entries.map(([mid, st]) => {
+    const dn = esc(st.display_name || mid);
+    const prov = esc(st.provider || '');
+    const ready = st.ready ?? 0;
+    const target = st.target ?? 0;
+    const building = st.building ?? 0;
+    const pct = target > 0 ? Math.min(100, Math.round(ready / target * 100)) : 0;
+    let stateBadge;
+    if (st.state === 'warm') stateBadge = '<span style="color:#22c55e">● warm</span>';
+    else if (st.state === 'warming') stateBadge = '<span style="color:#f59e0b">● warming…</span>';
+    else if (st.state === 'failed') stateBadge = '<span style="color:#ef4444">● failed</span>';
+    else if (st.state === 'skipped_cloud') stateBadge = '<span style="color:var(--text-400)">○ skipped (cloud)</span>';
+    else stateBadge = '<span style="color:var(--text-400)">○ idle</span>';
+    const age = (() => {
+      const t = st.last_warmup_ts || st.last_used_ts || 0;
+      if (!t) return 'never warmed';
+      const secs = Math.max(0, Math.round(now - t));
+      if (secs < 60) return `${secs}s ago`;
+      if (secs < 3600) return `${Math.round(secs/60)}m ago`;
+      return `${Math.round(secs/3600)}h ago`;
+    })();
+    const err = st.last_error ? `<div style="margin-top:6px;color:#ef4444;font-family:var(--font-mono);font-size:11px;background:#ef444411;padding:6px 8px;border-radius:6px;white-space:pre-wrap;word-break:break-word">${esc(st.last_error)}</div>` : '';
+    const barColor = st.state === 'failed' ? '#ef4444'
+                    : (building > 0 ? '#f59e0b'
+                    : (ready >= target && target > 0 ? '#22c55e' : 'var(--text-500)'));
+    const desired = st.desired_mode || 'full';
+    const actual = st.mode || '';
+    const chipColor = (m) => m === 'full' ? {bg:'#22c55e22', fg:'#22c55e'} : {bg:'#8b5cf622', fg:'#8b5cf6'};
+    const desCol = chipColor(desired);
+    let modeChip = `<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:${desCol.bg};color:${desCol.fg};font-weight:500">${esc(desired)}</span>`;
+    if (actual && actual !== desired) {
+      const actCol = chipColor(actual);
+      modeChip += `<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:${actCol.bg};color:${actCol.fg};font-weight:500" title="Currently primed in ${esc(actual)} mode — keeper will re-prime to ${esc(desired)} on next cycle">${esc(actual)} ⟲</span>`;
+    }
+    return `<div style="background:var(--bg-200);border-radius:10px;padding:12px 14px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span style="font-weight:600;color:var(--text-000)">${dn}</span>
+        ${prov ? `<span style="font-size:11px;color:var(--text-400)">${prov}</span>` : ''}
+        ${modeChip}
+        <span style="margin-left:auto;font-size:11px">${stateBadge}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text-400)">
+        <div style="flex:1;height:6px;background:var(--bg-300);border-radius:3px;overflow:hidden">
+          <div style="width:${pct}%;height:100%;background:${barColor};transition:width 0.3s"></div>
+        </div>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-300)">${ready}/${target}${building ? ` (+${building} building)` : ''}</span>
+        <span style="font-size:11px">${age}</span>
+        <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="triggerPoolWarmup('${esc(mid)}')">Warm now</button>
+      </div>
+      ${err}
+    </div>`;
+  }).join('');
+  body.innerHTML = banner + rows;
+}
+
+async function triggerPoolWarmup(modelId) {
+  try {
+    await fetch(`${BASE_URL}/v1/warmup/trigger`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json', ...API._headers()},
+      body: JSON.stringify({model: modelId}),
+    });
+    showToast(`Warming ${modelId}…`);
+    WarmupMonitor._mode = 'fast';
+    WarmupMonitor._tick();
+  } catch (e) { showToast(`Warmup failed: ${e}`, true); }
+}
+
 // Polls /v1/warmup/status and pushes state into DOM dots (status bar, composer,
 // Models tab rows). Poll faster (1s) when anything is actively warming so the
 // user sees the amber → green flip promptly; slow to 5s otherwise.
@@ -13170,6 +13297,38 @@ const WarmupMonitor = {
       el.title = `Warmup: ${st.state}` + (st.state === 'warm' ? ` · ${age}` : '')
               + poolTooltip(st) + (st.last_error ? ` · ${st.last_error}` : '');
     });
+    // Status-bar pool indicator + modal body live-refresh
+    this._renderPoolIndicator();
+    if (document.getElementById('warmpool-modal')) {
+      renderWarmPoolModalBody();
+    }
+  },
+  _renderPoolIndicator() {
+    const wrap = document.getElementById('status-warmpool');
+    if (!wrap) return;
+    const entries = Object.entries(this.states);
+    const warmupModels = entries.filter(([_, st]) => st.enabled);
+    if (!warmupModels.length) { wrap.style.display = 'none'; return; }
+    let ready = 0, target = 0, building = 0, failed = 0, anyWarm = false;
+    for (const [_, st] of warmupModels) {
+      ready += st.ready ?? 0;
+      target += st.target ?? 0;
+      building += st.building ?? 0;
+      if (st.state === 'failed') failed++;
+      if (st.state === 'warm') anyWarm = true;
+    }
+    wrap.style.display = 'flex';
+    const dot = document.getElementById('status-warmpool-dot');
+    let dotCls = 'idle';
+    if (failed && !anyWarm) dotCls = 'failed';
+    else if (building > 0 || this.anyWarming) dotCls = 'warming';
+    else if (ready > 0) dotCls = 'warm';
+    dot.className = 'warmup-dot ' + dotCls;
+    document.getElementById('status-warmpool-label').textContent = `${ready}/${target}`;
+    wrap.title = `Warm pool: ${ready}/${target} ready`
+               + (building ? ` · ${building} building` : '')
+               + (failed ? ` · ${failed} failed` : '')
+               + ' — click for details';
   },
   _applyComposerDot(id, model) {
     const el = document.getElementById(id);

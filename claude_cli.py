@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.5.0"
+VERSION = "8.6.0"
 VERSION_DATE = "2026-04-20"
 CHANGELOG = [
+    ("8.6.0", "2026-04-20", "Warmup overhaul — first-response latency drops from 15s to 2-3s on local models. Root cause was a silent KV-cache miss: the warmup prime payload didn't match the real first-turn payload byte-for-byte, so oMLX's prompt cache never hit. Four drift sources fixed: (1) system prompt contained minute-precision timestamp that differed between warmup and real request — rounded to the hour in _build_system_prompt so prefixes stay byte-stable across request boundaries; (2) warmup payload omitted MCP tools that the real payload includes — warmup now attaches the process-global MCPManager and merges mcp tools into the sorted tool list; (3) warmup used stream=False vs the real request's stream=True+stream_options — now identical; (4) per-session _trigger_warmup in server.py was a divergent copy of the warmup payload — deleted, replaced with a thin delegation to engine.run_model_warmup so both paths share one code path. Also fixed: run_model_warmup now bumps last_warmup_ts on failure so a perpetually failing model (OOM Qwen 35B) doesn't monopolize the max_concurrent=1 keeper slot via oldest-first sort. New per-model warmup_mode config (\"full\" default | \"minimal\"): full primes the KV prefix (system+tools), minimal loads weights only — trade-off is user's call, no auto-selection. Keeper re-primes when mode flips, won't evict warm models otherwise. Config changes now wake the keeper via a threading.Event so new warmup flags take effect immediately instead of waiting up to 30s. Pool invalidation extended to any KV-prefix-relevant field change (warmup, warmup_mode, enabled, max_context, warmup_allow_cloud, parallel_tool_calls, caveman_system, provider, base_model_id). New UI: status-bar Pool indicator with aggregate ready/target + failed count; click opens a modal listing each warmup-enabled model with state badge, progress bar, mode chip (full/minimal), last-warmed age, last_error, and per-model 'Warm now' button. Modal body live-refreshes via WarmupMonitor._render(). Models tab detail panel adds a Warmup Mode dropdown. Log format: [warmup-keeper] <model>: warm (<mode>, <ms>ms)."),
     ("8.5.0", "2026-04-20", "Thinking blocks, direct providers, fixes. Thinking feature fully wired: per-model thinking_format field (none/inline_tags/reasoning_field/mistral_blocks/openai_opaque) auto-detected from model id; engine parses all four non-opaque formats from the stream and emits thinking_start/delta/done events; each round of reasoning becomes its own role='thinking' message row so the transcript preserves chronological order (user → thinking → tool calls → next round thinking → ... → final answer). UI toggle disables itself when the selected model has thinking_format='none' so the button stops lying. Opaque reasoning (OpenAI o-series, Mistral Small 4 via Bifrost) renders a 'Thought for N tokens' badge from usage.completion_tokens_details.reasoning_tokens. _InlineThinkingSplitter handles <think>…</think> tags that span SSE chunk boundaries (14/14 boundary unit tests pass). Bifrost rip-and-replace: removed Bifrost from Brain's provider list; added four direct providers (omlx → http://localhost:8000, cliproxyapi → http://localhost:8317, mistral-experimental and mistral-vibe → https://api.mistral.ai). Motivation: Bifrost's ChatContentBlock Go struct silently drops reasoning_content (oMLX) and nested thinking arrays (Mistral) during re-serialization, so thinking text was never reaching the client. Routing preserves scoped model ids (OMLX/*, Bifrost/mistral/*, mistral/*) via base_model_id so 125 existing sessions keep working unchanged. Tool-loop fixes: diminishing-returns guard stops the loop when the last 2 rounds each added <500 completion tokens from round ≥3 (prevents plateau-spin); tool-call dedup is now session-scoped (keyed by session_id with 1h TTL) instead of thread-local, so worker subagents and ThreadPoolExecutor batches can no longer miss duplicate calls; parent thread-local context (session_id, agent, mcp_manager, user_id) is now propagated into worker threads. UI fixes: streaming DOM flicker resolved — tool_call/tool_result and all worker.* handlers now call renderStreamingMessage(chat) after renderMessages() so the in-flight thinking panel + partial text aren't wiped when tools fire; thinking panel renders live during streaming (previously only a wave-bars placeholder showed, the actual reasoning appeared only at end-of-turn); tool-round badges removed from thinking headers (matched Claude.ai / ChatGPT / Le Chat norm). Worker tool references: _extract_web_references in execution.py pulls title/link/domain out of raw exa_search/web_fetch output before the artifact is written, and attaches them as envelope.references so the References panel populates again for worker-wrapped web tools. Reload interleave: tool_round stamped on every tool_call / tool_result SSE event and persisted into metadata.tools[i].tool_round; reload path buckets tools by round and interleaves with thinking rows so session restore shows thinking → tools → thinking → tools → assistant in correct chronological order."),
     ("8.4.1", "2026-04-19", "Caveman mode icon set. The composer caveman toggle now shows a distinct icon per level instead of color-coding a single icon: off = spaceship, lite = car, full = horse, ultra = campfire. Makes the primitive↔modern axis obvious at a glance. Implementation is cavemanIconFor(mode) in web/index.html, wired through updateStatusBar(). Tooltip and toast reflect the new metaphor."),
     ("8.4.0", "2026-04-19", "Per-turn MemPalace control. Chat drawers are now addressed per turn (source_file=session/<sid>#turn/<user_msg_id>) so individual Q&A pairs can be memorised or purged independently. New per-assistant-message Memory menu with 8 actions: memorise complete chat / this response / all above / all below, and the matching four removes. Items auto-grey when inapplicable (already memorised, nothing to remove, chat memory mode ≠ off). New session-manage actions memorize_turns and purge_turns (both accept turn_ids[] or {scope, anchor_turn_id}). New GET /v1/mempalace/session-turns returns the set of memorised turn ids for UI greying. Session-inspector turn header now carries two extra badges — thinking level (none/low/medium/high) and caveman mode (sys+chat with clear names: off/lite/full/ultra) — per turn, reflecting state at the time the turn ran (new turns only; historical turns stay honest and omit them). Models tab Caveman System input is now a dropdown with clear names instead of 0–3. Disabling chat memory after content was stored prompts the user: OK hard-purges the session's drawers from MemPalace, Cancel just stops filing new turns."),
@@ -9069,14 +9070,22 @@ def all_warmup_states() -> dict:
 
 
 def run_model_warmup(model: str, allow_cloud: bool = False,
-                     agent_id: str = "main", timeout: int = 30) -> dict:
-    """Fire a single minimal prefill request against a model's provider.
+                     agent_id: str = "main", timeout: int = 30,
+                     mode: str = "full") -> dict:
+    """Fire a single prefill request against a model's provider.
 
-    Returns a result dict: {ok, state, duration_ms, error}. Updates _warmup_state.
-    This is the standalone, session-less variant used by the keeper daemon. The
-    payload is a system-prompt + tools request with max_tokens=1 so the provider
-    loads the model into GPU memory and (for providers that support it) caches
-    the KV prefix without producing any real output.
+    Returns a result dict: {ok, state, duration_ms, error, mode}. Updates
+    _warmup_state.
+
+    `mode` controls the payload shape:
+      - "full":    system prompt + tools + "." user. Primes the KV cache so
+                   the user's first real turn reuses the prefix. Best when
+                   exactly one warmup model is active (its KV stays resident).
+      - "minimal": 1-token user ("."), no system, no tools. Only loads the
+                   model's weights into GPU memory — no KV prefix primed.
+                   Used when multiple warmup models are active, because they'd
+                   evict each other's KV cache anyway, so paying the prefill
+                   cost is wasted work.
     """
     t0 = time.time()
     prov = resolve_provider_for_model(model)
@@ -9086,60 +9095,77 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
     if not base_url:
         err = "no base_url"
         set_warmup_state(model, state="failed", last_error=err)
-        return {"ok": False, "state": "failed", "error": err, "duration_ms": 0}
+        return {"ok": False, "state": "failed", "error": err, "duration_ms": 0, "mode": mode}
 
     if not allow_cloud and not _is_local_base_url(base_url):
         set_warmup_state(model, state="skipped_cloud",
                          last_error="cloud provider (warmup.allow_cloud=false)")
         return {"ok": False, "state": "skipped_cloud",
-                "error": "cloud skipped", "duration_ms": 0}
+                "error": "cloud skipped", "duration_ms": 0, "mode": mode}
 
-    set_warmup_state(model, state="warming", last_error="")
+    set_warmup_state(model, state="warming", last_error="", mode=mode)
 
     try:
         agent_config = AgentConfig(agent_id)
         _thread_local.current_agent = agent_config
-        _thread_local.mcp_manager = None
         _thread_local.memory_store = MemoryStore(agent_id, base_dir=agent_config.memory_dir)
-        # Mirror the real first-turn payload byte-for-byte so the KV prefix
-        # we prime here is reused by the user's first actual message. Anything
-        # different (system prompt content, tool list, ordering, parallel flag)
-        # invalidates the prefix and defeats the point of warming up.
-        system_prompt = _build_system_prompt(include_memory_summary=True)
-        allowed = _get_agent_tool_names()
-        all_tools = _filter_tools(TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
-        # Replicate send_message's deferred-tool-group filter
-        tcfg = _get_token_config()
-        deferred_groups = set(tcfg.get("deferred_tool_groups") or [])
-        if deferred_groups:
-            deferred_tool_names = set()
-            for dg in deferred_groups:
-                deferred_tool_names.update(TOOL_GROUPS.get(dg, set()))
-            all_tools = [t for t in all_tools
-                         if t["function"]["name"] not in deferred_tool_names]
-        all_tools.sort(key=lambda t: t.get("function", {}).get("name", ""))
-        # Some chat templates (Qwen3, etc.) reject system-only payloads with
-        # "No user query found in messages". Append a minimal user turn — the
-        # system+tools KV prefix still gets prefilled and cached, which is the
-        # expensive part. The user turn itself is 1 token.
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": "."},
-        ]
+
+        all_tools: list = []
+        # Reuse the process-global MCP manager so warmup's tool list matches
+        # the real chat payload. Without this, the KV prefix differs (MCP
+        # tools are in the real request but not the warmup) and oMLX's
+        # prompt cache misses on the first turn — defeating warmup entirely.
+        mcp_mgr = _mcp_manager if mode == "full" else None
+        _thread_local.mcp_manager = mcp_mgr
+
+        if mode == "full":
+            # Mirror send_message's first-turn payload byte-for-byte.
+            system_prompt = _build_system_prompt(include_memory_summary=True)
+            allowed = _get_agent_tool_names()
+            all_tools = _filter_tools(TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
+            tcfg = _get_token_config()
+            deferred_groups = set(tcfg.get("deferred_tool_groups") or [])
+            if deferred_groups:
+                deferred_tool_names = set()
+                for dg in deferred_groups:
+                    deferred_tool_names.update(TOOL_GROUPS.get(dg, set()))
+                all_tools = [t for t in all_tools
+                             if t["function"]["name"] not in deferred_tool_names]
+            # Merge in MCP tools exactly like send_message does. Discovered
+            # tools are empty on turn 0 (no tool_search has run yet), so any
+            # deferred MCP tools stay deferred — matches real first-turn.
+            if mcp_mgr:
+                mcp_tools = mcp_mgr.get_tool_definitions_openai()
+                mcp_tools = _filter_mcp_tools(mcp_tools, is_openai=True)
+                defer_mcp = tcfg.get("defer_mcp_tools", "auto")
+                should_defer = _should_defer_mcp(defer_mcp, mcp_tools, model, is_openai=True)
+                if should_defer:
+                    mcp_tools = []  # discovered_tools is empty on turn 0
+                all_tools.extend(mcp_tools)
+            all_tools.sort(key=lambda t: t.get("function", {}).get("name", ""))
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "."},
+            ]
+        else:  # "minimal"
+            messages = [{"role": "user", "content": "."}]
+
         endpoint = f"{base_url}/chat/completions"
-        # max_tokens=8 forces the backend to actually commit to prefill instead
-        # of short-circuiting on max_tokens=1 (which some runtimes treat as
-        # "emit one token without populating the KV cache"). Still effectively
-        # free against a local model.
+        # Match send_message: stream=True + stream_options so the tokenised
+        # request shape is identical to what the real first turn sends.
+        # max_tokens=8 is fine — the KV prefix covers system+tools+user and
+        # doesn't depend on the output-length budget.
         payload = {
             "model": get_api_model_id(model),
             "max_tokens": 8,
             "messages": messages,
-            "stream": False,
-            "tools": all_tools,
+            "stream": True,
+            "stream_options": {"include_usage": True},
         }
+        if all_tools:
+            payload["tools"] = all_tools
         model_cfg = _models_config.get(model, {})
-        if model_cfg.get("parallel_tool_calls", True):
+        if all_tools and model_cfg.get("parallel_tool_calls", True):
             payload["parallel_tool_calls"] = True
         headers = make_headers(api_key)
         data = json.dumps(payload).encode("utf-8")
@@ -9148,22 +9174,26 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
             resp.read()
         dur_ms = int((time.time() - t0) * 1000)
         now = time.time()
-        set_warmup_state(model, state="warm", last_warmup_ts=now, last_error="")
-        return {"ok": True, "state": "warm", "duration_ms": dur_ms, "error": ""}
+        set_warmup_state(model, state="warm", last_warmup_ts=now,
+                         last_error="", mode=mode)
+        return {"ok": True, "state": "warm", "duration_ms": dur_ms,
+                "error": "", "mode": mode}
     except urllib.error.HTTPError as e:
         try:
             body = e.read().decode("utf-8", errors="replace")[:500]
         except Exception:
             body = ""
         err = f"HTTP {e.code}: {body or e.reason}"
-        set_warmup_state(model, state="failed", last_error=err)
+        set_warmup_state(model, state="failed", last_error=err,
+                         last_warmup_ts=time.time(), mode=mode)
         return {"ok": False, "state": "failed", "error": err,
-                "duration_ms": int((time.time() - t0) * 1000)}
+                "duration_ms": int((time.time() - t0) * 1000), "mode": mode}
     except Exception as e:
         err = f"{type(e).__name__}: {e}"
-        set_warmup_state(model, state="failed", last_error=err)
+        set_warmup_state(model, state="failed", last_error=err,
+                         last_warmup_ts=time.time(), mode=mode)
         return {"ok": False, "state": "failed", "error": err,
-                "duration_ms": int((time.time() - t0) * 1000)}
+                "duration_ms": int((time.time() - t0) * 1000), "mode": mode}
     finally:
         # Clear thread-local agent context so we don't leak into other threads
         for attr in ("current_agent", "mcp_manager", "memory_store"):
@@ -16385,9 +16415,12 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
     system_instruction = ""
     if soul:
         system_instruction += f"{soul}\n\n"
+    # Round timestamp to the hour so the KV-prefix stays stable across
+    # warmup → real-request boundaries. Minute-level precision broke prompt
+    # cache reuse on every request (~15s extra first-token latency).
     system_instruction += (
         f"You are agent '{agent_id}' in the Brain Agent system. "
-        f"Current date and time: {_dt.now().strftime('%Y-%m-%d %H:%M %Z').strip()}\n"
+        f"Current date and time: {_dt.now().strftime('%Y-%m-%d %H:00 %Z').strip()}\n"
         f"Current working directory: {cwd}\n"
         f"Operating system: {os_name}\n\n"
         "Use tools proactively to accomplish tasks. You can chain multiple tool calls. "

@@ -1524,10 +1524,24 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     allow_reuse_address = True
 
 
+# Keeper wake-up: set by callers that change the set of models the keeper should
+# consider (model config save, warmup toggle) so the loop re-evaluates
+# immediately instead of waiting up to interval_seconds.
+_warmup_wakeup = threading.Event()
+
+
+def _wake_warmup_keeper():
+    _warmup_wakeup.set()
+
+
 def _trigger_warmup(session):
-    """Send a minimal request to warm up the KV cache for a session's model."""
+    """Prime the KV cache for a session's model.
+
+    Delegates to engine.run_model_warmup so there's a single payload shape
+    (matches the keeper daemon's prime exactly) and the global _warmup_state
+    registry gets updated — the UI's green/gray dot reads from that registry.
+    """
     with session._warmup_lock:
-        # Cancel any running warmup first
         if session._warmup_active:
             session._warmup_cancel.set()
             session._warmup_done.wait(timeout=5)
@@ -1540,52 +1554,34 @@ def _trigger_warmup(session):
         try:
             if session._warmup_cancel.is_set():
                 return
-
-            # Build system prompt + tools (same as real request)
-            agent_config = engine.AgentConfig(session.agent_id)
-            engine._thread_local.current_agent = agent_config
-            engine._thread_local.project = getattr(session, 'project', None)
-            engine._thread_local.note_context = getattr(session, 'note_context', None)
-            engine._thread_local.memory_store = session.memory
-            system_prompt = engine._build_system_prompt(include_memory_summary=True)
-
-            if session._warmup_cancel.is_set():
-                return
-
-            # Build minimal payload — system prompt + tools only, no dummy user message
-            # so the KV cache prefix matches any real first request exactly.
-            allowed = engine._get_agent_tool_names()
-            tools = engine._filter_tools(engine.TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
-            messages = [{"role": "system", "content": system_prompt}]
-            endpoint = f"{session.base_url}/chat/completions"
-
-            payload = {
-                "model": engine.get_api_model_id(session.model),
-                "max_tokens": 1,
-                "messages": messages,
-                "stream": False,
-                "tools": tools,
-            }
-
-            if session._warmup_cancel.is_set():
-                return
-
-            headers = engine.make_headers(session.api_key)
-            data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                resp.read()  # consume response
-
+            mcfg = engine._models_config.get(session.model, {}) or {}
+            wcfg = server_config.get("warmup", {}) or {}
+            allow_cloud = bool(mcfg.get("warmup_allow_cloud",
+                                        wcfg.get("allow_cloud", False)))
+            # Session-level warmup is always "full": the user is about to
+            # chat with this specific model, so priming its KV prefix is
+            # exactly right even if it evicts other warmup models' caches.
+            result = engine.run_model_warmup(
+                session.model,
+                allow_cloud=allow_cloud,
+                agent_id=session.agent_id,
+                timeout=int(wcfg.get("timeout_seconds", 30)),
+                mode="full",
+            )
             if session._warmup_cancel.is_set():
                 print(f"  [warmup] {session.model} cancelled ({session.id[:8]})")
+            elif result.get("ok"):
+                print(f"  [warmup] {session.model} prefill done ({session.id[:8]}, {result.get('duration_ms')}ms)")
             else:
-                print(f"  [warmup] {session.model} prefill done ({session.id[:8]})")
-        except Exception as e:
-            if not session._warmup_cancel.is_set():
-                print(f"  [warmup] {session.model} failed: {e}")
+                print(f"  [warmup] {session.model} {result.get('state')}: {result.get('error','')}")
         finally:
             session._warmup_active = False
             session._warmup_done.set()
+            # Kick the keeper so it can refill the pool now that this model is warm
+            try:
+                _wake_warmup_keeper()
+            except Exception:
+                pass
 
     threading.Thread(target=_do_warmup, daemon=True, name=f"warmup_{session.id[:8]}").start()
 
@@ -4349,11 +4345,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 with open(config_path) as f:
                     config = json.load(f)
 
-            # Snapshot pre-save warmup flags so we can invalidate pool entries
-            # for models whose warmup was turned off (or config otherwise
-            # changed enough that the pooled KV prefix is suspect).
-            prev_warmup_flags = {
-                mid: bool(cfg.get("warmup", False))
+            # Snapshot pre-save warmup flags + KV-prefix-relevant fields so we
+            # can invalidate pool entries for models whose warmup was turned
+            # off, or whose system-prompt-shaping config changed enough that
+            # the pooled KV prefix is suspect.
+            _prefix_fields = ("warmup", "warmup_mode", "enabled", "max_context",
+                              "warmup_allow_cloud", "parallel_tool_calls",
+                              "caveman_system", "provider", "base_model_id")
+            prev_model_snapshot = {
+                mid: {k: cfg.get(k) for k in _prefix_fields}
                 for mid, cfg in (engine._models_config or {}).items()
             }
 
@@ -4409,11 +4409,32 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             # Clear provider cache since model config changed
             engine.clear_provider_cache()
 
-            # Drop warm-pool slots whose warmup flag just turned off
-            for mid, was_on in prev_warmup_flags.items():
-                now_on = bool(engine._models_config.get(mid, {}).get("warmup", False))
+            # Invalidate warm-pool slots for models whose warmup flag flipped
+            # off OR whose KV-prefix-relevant config changed (system prompt,
+            # tool set, context size, provider all invalidate the primed prefix).
+            # Also drop the cached _warmup_state so the keeper re-primes.
+            new_warmup_models: set[str] = set()
+            for mid, prev in prev_model_snapshot.items():
+                now_cfg = engine._models_config.get(mid, {}) or {}
+                now = {k: now_cfg.get(k) for k in _prefix_fields}
+                was_on = bool(prev.get("warmup"))
+                now_on = bool(now.get("warmup"))
                 if was_on and not now_on:
                     warm_pool.invalidate_model(mid, reason="warmup flag off")
+                    engine.set_warmup_state(mid, state="idle", last_error="")
+                elif now_on and prev != now:
+                    warm_pool.invalidate_model(mid, reason="config changed")
+                    engine.set_warmup_state(mid, state="idle",
+                                             last_warmup_ts=0, last_error="")
+            # Newly-enabled warmup models (weren't in prev snapshot)
+            for mid, cfg in (engine._models_config or {}).items():
+                if cfg.get("warmup") and mid not in prev_model_snapshot:
+                    new_warmup_models.add(mid)
+
+            # Poke keeper so it re-evaluates immediately instead of waiting up
+            # to interval_seconds (default 30s) — the set of models to prime
+            # may have just changed.
+            _wake_warmup_keeper()
 
             self._send_json({"status": "saved", "models": dict(engine._models_config)})
         except Exception as e:
@@ -4451,6 +4472,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             })
             if pool.get("state") == "building":
                 any_pool_building = True
+            desired_mode = (cfg.get("warmup_mode") or "full").lower()
+            if desired_mode not in ("full", "minimal"):
+                desired_mode = "full"
             out[mid] = {
                 "state": effective,
                 "last_warmup_ts": st.get("last_warmup_ts", 0),
@@ -4460,6 +4484,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "enabled": True,
                 "display_name": cfg.get("display_name", mid),
                 "provider": cfg.get("provider", ""),
+                "mode": st.get("mode", ""),
+                "desired_mode": desired_mode,
                 "pool_state": pool.get("state", "empty"),
                 "pool_built_at": pool.get("built_at", 0),
                 "ready": pool.get("ready", 0),
@@ -9341,12 +9367,15 @@ def main():
                 allow_cloud_global = bool(wcfg.get("allow_cloud", False))
                 max_concurrent = int(wcfg.get("max_concurrent", 1))
 
-                # Snapshot models with warmup=true. Only prime models that are
-                # not already warm — a warm KV prefix stays valid indefinitely
-                # on oMLX (no TTL eviction), so re-firing every TTL seconds
-                # would just waste GPU cycles re-prefilling an identical prefix.
-                # Re-warm only when state is idle/cold/failed, or after a real
-                # turn has invalidated the prefix by extending the history.
+                # Snapshot models with warmup=true. Each model picks its own
+                # warmup_mode ("full" default | "minimal"). Full primes the
+                # KV prefix so first-token latency is ~5-6s; minimal only
+                # loads weights. If multiple full-prime models together
+                # exceed GPU memory, oMLX will evict as needed — that's a
+                # user-managed tradeoff, we don't second-guess it here.
+                #
+                # Only re-prime models whose state is idle/cold/failed or
+                # whose configured mode changed since last prime.
                 now = time.time()
                 candidates = []
                 for mid, cfg in list(engine._models_config.items()):
@@ -9354,24 +9383,26 @@ def main():
                         continue
                     if not cfg.get("enabled", True):
                         continue
+                    desired_mode = (cfg.get("warmup_mode") or "full").lower()
+                    if desired_mode not in ("full", "minimal"):
+                        desired_mode = "full"
                     st = engine.get_warmup_state(mid)
                     state_name = st.get("state", "idle")
                     if state_name in ("warming", "skipped_cloud"):
                         continue
                     if state_name == "warm":
-                        # Already primed — leave it alone. last_warmup_ts stays
-                        # as "age of prime" for the UI; next_due is meaningless
-                        # in hold-forever mode, so just clear it.
-                        engine.set_warmup_state(mid, next_due_ts=0)
-                        continue
-                    # idle / cold / failed → needs priming
+                        prev_mode = st.get("mode", "full")
+                        if prev_mode == desired_mode:
+                            engine.set_warmup_state(mid, next_due_ts=0)
+                            continue
+                        # Mode flipped — fall through to re-prime.
                     last = max(st.get("last_warmup_ts", 0), st.get("last_used_ts", 0))
                     age = now - last if last else 10 ** 9
-                    candidates.append((age, mid, cfg))
+                    candidates.append((age, mid, cfg, desired_mode))
 
                 # Oldest first; cap to max_concurrent per cycle
                 candidates.sort(key=lambda t: t[0], reverse=True)
-                for _, mid, cfg in candidates[:max_concurrent]:
+                for _, mid, cfg, desired_mode in candidates[:max_concurrent]:
                     allow_cloud = bool(cfg.get("warmup_allow_cloud", allow_cloud_global))
                     t0 = time.time()
                     result = engine.run_model_warmup(
@@ -9379,13 +9410,13 @@ def main():
                         allow_cloud=allow_cloud,
                         agent_id="main",
                         timeout=int(wcfg.get("timeout_seconds", 30)),
+                        mode=desired_mode,
                     )
                     dur = int((time.time() - t0) * 1000)
                     st_name = result.get("state", "?")
                     if result.get("ok"):
-                        print(f"[warmup-keeper] {mid}: warm ({dur}ms)")
+                        print(f"[warmup-keeper] {mid}: warm ({desired_mode}, {dur}ms)")
                     elif st_name == "skipped_cloud":
-                        # Only log once per state change to avoid spam
                         pass
                     else:
                         err = result.get("error", "?")
@@ -9403,7 +9434,12 @@ def main():
                         continue
                     warm_pool.try_build(mid)
 
-                time.sleep(max(5, interval))
+                # Wait for either the interval or an explicit wake-up (model
+                # config change, manual warmup trigger, etc.). wait() returns
+                # True when the event was set — we consume it and re-run.
+                woke = _warmup_wakeup.wait(timeout=max(5, interval))
+                if woke:
+                    _warmup_wakeup.clear()
             except Exception as e:
                 print(f"[warmup-keeper] loop error: {type(e).__name__}: {e}")
                 time.sleep(30)
