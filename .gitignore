@@ -15,3 +15,18 @@ pi_sidecar/node_modules/
 desktop/node_modules/
 desktop/dist/
 desktop/icons/icon.iconset/
+
+# Runtime/ephemeral state
+config.json.bak-*
+*.bak-*
+agents/*/artifacts/
+agents/*/chats-indexed/
+agents/test-*/
+
+# Downloaded docs / scratch files
+*MemPalace.html
+fibonacci.py
+
+# Agent-generated test files (top-level scratch in main agent dir)
+agents/main/avengers_*.md
+agents/main/brussels_*.md
