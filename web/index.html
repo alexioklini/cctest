@@ -4618,6 +4618,7 @@ function updateModelSelectorDisplay(modelId) {
   document.getElementById('model-selector-name').textContent = name;
   document.getElementById('chat-model-name').textContent = name;
   document.getElementById('status-model').textContent = name;
+  refreshThinkingButton();
 }
 
 function toggleModelDropdown(event) {
@@ -5029,18 +5030,34 @@ async function openSession(sessionId, agentId) {
     chat.saveToMemory = memVal === 1;
     chat.memoryMode = memVal === 1 ? 'on' : memVal === 2 ? 'auto' : 'off';
 
-    // Reconstruct tool blocks from metadata and extract per-message fields
+    // Reconstruct tool blocks from metadata and extract per-message fields.
+    // Order requirement: thinking(round N) → tools_of_round(N) → thinking(N+1) → ... → assistant.
+    // Tool rows aren't persisted as their own DB rows — they come from the assistant's
+    // metadata.tools. Each tool carries tool_round so we can interleave them with thinking.
     const expanded = [];
+    let pendingThinking = [];  // thinking rows accumulated since the last assistant flush
     for (const msg of rawMessages) {
       const meta = msg.metadata;
+      if (msg.role === 'thinking') {
+        // Hold thinking rows until we see the assistant so we can interleave by round.
+        pendingThinking.push(msg);
+        continue;
+      }
       if (meta && msg.role === 'assistant') {
-        // Insert tool_call/tool_result messages before the assistant message
-        if (meta.tools?.length) {
-          for (const t of meta.tools) {
-            expanded.push({ role: 'tool_call', name: t.name, args: t.args || {} });
+        // Bucket tools by round. Tools without tool_round (legacy, or unrecoverable)
+        // bucket under -1 and render after any interleaved section.
+        const toolsByRound = new Map();
+        for (const t of (meta.tools || [])) {
+          const r = (t.tool_round !== null && t.tool_round !== undefined) ? t.tool_round : -1;
+          if (!toolsByRound.has(r)) toolsByRound.set(r, []);
+          toolsByRound.get(r).push(t);
+        }
+        const emittedRounds = new Set();
+        const emitTools = (tools) => {
+          for (const t of tools) {
+            expanded.push({ role: 'tool_call', name: t.name, args: t.args || {}, tool_round: t.tool_round });
             if (t.result !== undefined) {
-              expanded.push({ role: 'tool_result', name: t.name, result: t.result });
-              // Re-hydrate worker flow from envelope, keyed by worker_id
+              expanded.push({ role: 'tool_result', name: t.name, result: t.result, tool_round: t.tool_round });
               try {
                 const rj = JSON.parse(typeof t.result === 'string' ? t.result : JSON.stringify(t.result));
                 if (rj && rj.worker && rj.worker_id) {
@@ -5058,8 +5075,26 @@ async function openSession(sessionId, agentId) {
               } catch (e) {}
             }
           }
+        };
+        // Interleave: for each pending thinking row, emit it, then emit any tools
+        // whose tool_round matches (or is <= the thinking row's round — catches
+        // legacy data where tools had no round number stamped yet).
+        for (const tm of pendingThinking) {
+          expanded.push(tm);
+          const tr = tm.metadata?.tool_round;
+          if (tr !== null && tr !== undefined && toolsByRound.has(tr)) {
+            emitTools(toolsByRound.get(tr));
+            emittedRounds.add(tr);
+          }
+        }
+        pendingThinking = [];
+        // Any tool bucket not yet emitted (rounds without a matching thinking row,
+        // or tools tagged with unknown/legacy tool_round = -1) — append after.
+        for (const [r, tools] of toolsByRound) {
+          if (!emittedRounds.has(r)) emitTools(tools);
         }
         if (meta.thinking) msg._thinking = meta.thinking;
+        if (meta.thinking_summary) msg._thinkingSummary = meta.thinking_summary;
         if (meta.cost) msg._cost = meta.cost;
         if (meta.files) msg._files = meta.files;
         if (meta.model && !data.model) chat.model = meta.model;
@@ -5068,9 +5103,18 @@ async function openSession(sessionId, agentId) {
         if (meta.tokens_in) chat._tokensIn = (chat._tokensIn || 0) + meta.tokens_in;
         if (meta.tokens_out) chat._tokensOut = (chat._tokensOut || 0) + meta.tokens_out;
         if (meta.duration > 0 && meta.tokens_out > 0) chat._lastSpeed = Math.round(meta.tokens_out / meta.duration);
+      } else {
+        // Any non-thinking, non-assistant row (user, system, etc.) — flush any
+        // pending thinking rows verbatim first, then the row itself. Normally
+        // there are no pending thinking rows here because the model always
+        // follows thinking with an assistant turn, but be defensive.
+        for (const tm of pendingThinking) expanded.push(tm);
+        pendingThinking = [];
       }
       expanded.push(msg);
     }
+    // Flush any trailing pending thinking (session ended before final assistant — rare).
+    for (const tm of pendingThinking) expanded.push(tm);
     // Server-side live estimate takes priority over stale per-message metadata
     if (data.total_tokens) chat.totalTokens = data.total_tokens;
     chat.messages = expanded;
@@ -5264,6 +5308,7 @@ async function sendMessage() {
   chat.streaming = true;
   chat.streamingText = '';
   chat.thinkingText = '';
+  chat.thinkingSummary = null;
   chat.files = [];
   const streamGen = (chat._streamGen = (chat._streamGen || 0) + 1);
   updateStreamingUI(true, chat);
@@ -5287,6 +5332,8 @@ async function sendMessage() {
 
     await API.streamChat(chat.sessionId, text, {
       thinking_start: () => {
+        // Each round's thinking becomes its own message row at thinking_done,
+        // so the live buffer is per-round. Fresh start on every thinking_start.
         chat.thinkingText = '';
         if (isActive()) renderStreamingMessage(chat);
       },
@@ -5295,7 +5342,25 @@ async function sendMessage() {
         if (isActive()) renderStreamingMessage(chat);
       },
       thinking_done: (d) => {
-        chat.thinkingText = d.text || chat.thinkingText;
+        // Persist this round's thinking as its own message entry so it appears
+        // inline in the transcript (before the tool calls that come next). Server
+        // mirrors this into the DB; on reload the thinking row is restored in place.
+        const roundText = (d && d.text) || chat.thinkingText || '';
+        const trimmed = roundText.trim();
+        if (trimmed) {
+          chat.messages.push({
+            role: 'thinking',
+            content: trimmed,
+            tool_round: d?.tool_round ?? null,
+          });
+          if (isActive()) { renderMessages(); renderStreamingMessage(chat); }
+        }
+        // Reset the streaming buffer so the next round's thinking starts fresh
+        // (avoids concatenating multi-round thinking into a single live block).
+        chat.thinkingText = '';
+      },
+      thinking_summary: (d) => {
+        chat.thinkingSummary = { format: d.format, reasoning_tokens: d.reasoning_tokens || 0 };
       },
       text_delta: (d) => {
         chat.streamingText += d.text || '';
@@ -5311,7 +5376,10 @@ async function sendMessage() {
         } else {
           chat.messages.push({ role: 'tool_call', name: d.name, args: d.args || {}, _ts: Date.now() });
         }
-        if (isActive()) { renderMessages(); scrollToBottom(); }
+        // renderMessages() wipes the container including the in-flight .msg-streaming div,
+        // so re-render the streaming bubble right after. Without this, any partial assistant
+        // text/thinking captured so far vanishes until the next text_delta arrives.
+        if (isActive()) { renderMessages(); renderStreamingMessage(chat); scrollToBottom(); }
       },
       tool_result: (d) => {
         console.log('[SSE] tool_result:', d.name, 'hasResult:', !!d.result);
@@ -5333,6 +5401,7 @@ async function sendMessage() {
         }
         if (!state.showToolCalls || !isActive()) return;
         renderMessages();
+        renderStreamingMessage(chat);
         scrollToBottom();
       },
       tool_output: (d) => {
@@ -5374,7 +5443,9 @@ async function sendMessage() {
           flow: [],
           question: null,
         };
-        if (isActive() && state.showToolCalls) renderMessages();
+        // renderMessages() wipes the .msg-streaming div. Re-append it so the thinking
+        // panel and partial text stay visible during the worker's lifetime.
+        if (isActive() && state.showToolCalls) { renderMessages(); renderStreamingMessage(chat); }
       },
       'worker.progress': (d) => {
         if (!d.worker_id) return;
@@ -5388,7 +5459,7 @@ async function sendMessage() {
           if (d.entry.kind === 'question') wf.question = { question: d.entry.question, options: d.entry.options };
           if (d.entry.kind === 'answer') wf.question = null;
         }
-        if (isActive() && state.showToolCalls) renderMessages();
+        if (isActive() && state.showToolCalls) { renderMessages(); renderStreamingMessage(chat); }
       },
       'worker.finished': (d) => {
         console.log('[SSE] worker.finished:', d.tool_name, d.duration_seconds + 's');
@@ -5396,25 +5467,25 @@ async function sendMessage() {
         const w = state.activeWorkers[d.worker_id]; if (w) w.state = d.state || 'COMPLETED';
         const wf = state.workerFlows[d.worker_id];
         if (wf) { wf.state = d.state || 'COMPLETED'; wf.duration = d.duration_seconds; }
-        if (isActive() && state.showToolCalls) renderMessages();
+        if (isActive() && state.showToolCalls) { renderMessages(); renderStreamingMessage(chat); }
       },
       'worker.paused': (d) => {
         if (!d.worker_id) return;
         const w = state.activeWorkers[d.worker_id]; if (w) w.state = 'PAUSED';
         const wf = state.workerFlows[d.worker_id]; if (wf) wf.state = 'PAUSED';
-        if (isActive() && state.showToolCalls) renderMessages();
+        if (isActive() && state.showToolCalls) { renderMessages(); renderStreamingMessage(chat); }
       },
       'worker.resumed': (d) => {
         if (!d.worker_id) return;
         const w = state.activeWorkers[d.worker_id]; if (w) w.state = 'RUNNING';
         const wf = state.workerFlows[d.worker_id]; if (wf) wf.state = 'RUNNING';
-        if (isActive() && state.showToolCalls) renderMessages();
+        if (isActive() && state.showToolCalls) { renderMessages(); renderStreamingMessage(chat); }
       },
       'worker.aborted': (d) => {
         if (!d.worker_id) return;
         const w = state.activeWorkers[d.worker_id]; if (w) w.state = 'ABORTED';
         const wf = state.workerFlows[d.worker_id]; if (wf) wf.state = 'ABORTED';
-        if (isActive() && state.showToolCalls) renderMessages();
+        if (isActive() && state.showToolCalls) { renderMessages(); renderStreamingMessage(chat); }
       },
       worker_usage: (d) => {
         if (!d.worker_id) return;
@@ -5426,7 +5497,7 @@ async function sendMessage() {
             model: d.model || '',
           };
         }
-        if (isActive() && state.showToolCalls) renderMessages();
+        if (isActive() && state.showToolCalls) { renderMessages(); renderStreamingMessage(chat); }
       },
       'worker.question': (d) => {
         console.log('[SSE] worker.question:', d.worker_id, d.question);
@@ -5437,7 +5508,7 @@ async function sendMessage() {
           });
           wf.state = 'WAITING_FOR_USER';
           wf.question = { question: d.question, options: d.options };
-          if (isActive() && state.showToolCalls) renderMessages();
+          if (isActive() && state.showToolCalls) { renderMessages(); renderStreamingMessage(chat); }
         }
         if (!isActive()) return;
         const container = document.getElementById('messages-container');
@@ -5474,7 +5545,7 @@ async function sendMessage() {
         if (d.worker_id) {
           const wf = state.workerFlows[d.worker_id];
           if (wf) { wf.question = null; wf.state = 'RUNNING'; }
-          if (isActive() && state.showToolCalls) renderMessages();
+          if (isActive() && state.showToolCalls) { renderMessages(); renderStreamingMessage(chat); }
         }
         const card = document.getElementById(`wq-${d.worker_id}`);
         if (card) {
@@ -5589,11 +5660,13 @@ async function sendMessage() {
         if (d.files?.length) assistantMsg._files = d.files;
         else if (chat.files.length) assistantMsg._files = chat.files;
         if (chat.thinkingText) assistantMsg._thinking = chat.thinkingText;
+        if (chat.thinkingSummary) assistantMsg._thinkingSummary = chat.thinkingSummary;
 
         chat.messages.push(assistantMsg);
         chat.streaming = false;
         chat.streamingText = '';
         chat.thinkingText = '';
+        chat.thinkingSummary = null;
         chat.files = [];
         clearInterval(chat._streamTimerInterval);
 
@@ -6068,6 +6141,9 @@ function renderMessage(msg, idx) {
   if (msg.role === 'assistant') {
     return renderAssistantMessage(msg, idx);
   }
+  if (msg.role === 'thinking') {
+    return renderThinkingMessage(msg, idx);
+  }
   if (msg.role === 'tool_call') {
     return renderToolCall(msg, idx);
   }
@@ -6082,6 +6158,22 @@ function renderMessage(msg, idx) {
     return renderAssistantMessage(msg, idx);
   }
   return '';
+}
+
+function renderThinkingMessage(msg, idx) {
+  const text = typeof msg.content === 'string' ? msg.content : '';
+  if (!text) return '';
+  return `
+    <div class="msg-turn msg-turn-assistant">
+      <div class="thinking-block" onclick="this.classList.toggle('open')">
+        <div class="thinking-block-header">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/></svg>
+          Thinking
+        </div>
+        <div class="thinking-block-body msg-content">${renderMarkdown(text)}</div>
+      </div>
+    </div>
+  `;
 }
 
 function renderUserMessage(msg, idx) {
@@ -6172,13 +6264,28 @@ function renderAssistantMessage(msg, idx) {
 
   let thinkingHtml = '';
   if (msg._thinking) {
+    const summaryNote = msg._thinkingSummary?.reasoning_tokens
+      ? `<span style="margin-left:8px;opacity:0.7;font-size:11px;">${msg._thinkingSummary.reasoning_tokens.toLocaleString()} tok</span>`
+      : '';
     thinkingHtml = `
       <div class="thinking-block" onclick="this.classList.toggle('open')">
         <div class="thinking-block-header">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/></svg>
-          Thinking
+          Thinking${summaryNote}
         </div>
         <div class="thinking-block-body msg-content">${renderMarkdown(msg._thinking)}</div>
+      </div>
+    `;
+  } else if (msg._thinkingSummary?.reasoning_tokens) {
+    // Opaque reasoning: provider burned tokens on thinking but didn't return the text.
+    // Render a non-expandable badge so the user knows it happened.
+    const n = msg._thinkingSummary.reasoning_tokens.toLocaleString();
+    thinkingHtml = `
+      <div class="thinking-block" style="cursor:default;opacity:0.75;" title="Provider returned reasoning token count but not the text (opaque thinking).">
+        <div class="thinking-block-header">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/></svg>
+          Thought for ${n} tokens
+        </div>
       </div>
     `;
   }
@@ -6659,13 +6766,23 @@ function renderStreamingMessage(chat) {
   const existing = container.querySelector('.msg-streaming');
   if (existing) existing.remove();
 
+  // Nothing to show yet — don't emit an empty wrapper.
+  if (!chat.thinkingText && !chat.streamingText) return;
+
   let html = '<div class="msg-turn msg-turn-assistant msg-streaming">';
 
-  if (chat.thinkingText && !chat.streamingText) {
+  // Show the thinking panel during streaming so the user can read the reasoning
+  // as it arrives. Auto-expands when text hasn't started yet; collapses once the
+  // answer begins streaming (same visual as the finalized panel).
+  if (chat.thinkingText) {
+    const openClass = chat.streamingText ? '' : ' open';
     html += `
-      <div class="streaming-indicator">
-        <div class="wave-bars"><span></span><span></span><span></span><span></span><span></span></div>
-        <span>Thinking...</span>
+      <div class="thinking-block${openClass}" onclick="this.classList.toggle('open')">
+        <div class="thinking-block-header">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/></svg>
+          ${chat.streamingText ? 'Thinking' : 'Thinking...'}
+        </div>
+        <div class="thinking-block-body msg-content">${renderMarkdown(chat.thinkingText)}</div>
       </div>
     `;
   }
@@ -11518,7 +11635,27 @@ function extractReferencesFromToolResult(msg) {
   const refs = [];
   const resultStr = typeof msg.result === 'string' ? msg.result : JSON.stringify(msg.result);
 
-  // Try full JSON parse first
+  // Worker-subagent envelope: the raw result is stored as an artifact and only
+  // a summary + pre-extracted `references` array reach the client. Prefer that
+  // explicit list over re-parsing the summary text.
+  try {
+    const data = JSON.parse(resultStr);
+    if (data && data.worker && Array.isArray(data.references)) {
+      for (const r of data.references) {
+        if (!r || !r.link) continue;
+        refs.push({
+          title: r.title || r.domain || r.link,
+          link: r.link,
+          snippet: r.snippet || '',
+          domain: r.domain || '',
+          favicon: r.domain ? `https://www.google.com/s2/favicons?domain=${r.domain}&sz=32` : '',
+        });
+      }
+      if (refs.length) return refs;
+    }
+  } catch(e) { /* fall through to legacy parsing */ }
+
+  // Try full JSON parse first (legacy direct-tool path — small results that fit inline)
   try {
     const data = JSON.parse(resultStr);
     if (data.results && Array.isArray(data.results)) {
@@ -12076,18 +12213,44 @@ function toggleTheme() {
 /* ═══════════════════════════════════════════════════════════
    THINKING LEVEL
    ═══════════════════════════════════════════════════════════ */
+function getActiveThinkingFormat() {
+  const mid = state.activeChat?.model || '';
+  if (!mid) return 'none';
+  const cfg = state.modelsConfig?.models?.[mid];
+  return (cfg && cfg.thinking_format) || 'none';
+}
+
 function cycleThinkingLevel() {
+  if (getActiveThinkingFormat() === 'none') {
+    showToast("Selected model doesn't support thinking", true);
+    return;
+  }
   const levels = ['none', 'low', 'medium', 'high'];
   const idx = levels.indexOf(state.thinkingLevel);
   state.thinkingLevel = levels[(idx + 1) % levels.length];
   localStorage.setItem('thinking-level', state.thinkingLevel);
-
-  const btn = document.getElementById('btn-thinking');
-  if (btn) {
-    btn.style.color = state.thinkingLevel !== 'none' ? 'var(--accent-brand)' : '';
-    btn.title = `Thinking: ${state.thinkingLevel}`;
-  }
+  refreshThinkingButton();
   showToast(`Thinking: ${state.thinkingLevel}`);
+}
+
+function refreshThinkingButton() {
+  const btn = document.getElementById('btn-thinking');
+  if (!btn) return;
+  const fmt = getActiveThinkingFormat();
+  const supported = fmt !== 'none';
+  if (!supported) {
+    btn.classList.add('disabled');
+    btn.style.color = '';
+    btn.style.opacity = '0.35';
+    btn.style.cursor = 'not-allowed';
+    btn.title = "Model doesn't support thinking";
+  } else {
+    btn.classList.remove('disabled');
+    btn.style.opacity = '';
+    btn.style.cursor = '';
+    btn.style.color = state.thinkingLevel !== 'none' ? 'var(--accent-brand)' : '';
+    btn.title = `Thinking: ${state.thinkingLevel} (${fmt})`;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -13114,11 +13277,7 @@ async function init() {
     toolBtn.style.color = state.showToolCalls ? 'var(--accent-brand)' : '';
     toolBtn.title = state.showToolCalls ? 'Tool calls: visible' : 'Tool calls: hidden';
   }
-  const thinkBtn = document.getElementById('btn-thinking');
-  if (thinkBtn) {
-    thinkBtn.style.color = state.thinkingLevel !== 'none' ? 'var(--accent-brand)' : '';
-    thinkBtn.title = `Thinking: ${state.thinkingLevel}`;
-  }
+  refreshThinkingButton();
 
   // Start on welcome view
   navigateTo('welcome');

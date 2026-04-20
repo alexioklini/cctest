@@ -3723,6 +3723,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         _partial_reply = []  # accumulate text deltas for partial response recovery
         _partial_tools = []  # accumulate tool calls
         _partial_thinking = []  # accumulate thinking blocks
+        _thinking_summary = {}  # opaque-reasoning summary (format + reasoning_tokens)
         _usage_totals = {"tokens_in": 0, "tokens_out": 0, "last_tokens_in": 0}  # cumulative across tool rounds; last_tokens_in = most recent round only
         _request_payloads = []  # capture request snapshots per tool round
         def event_callback(event_type, data):
@@ -3732,14 +3733,39 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 created_files.append(data)
             elif event_type == "thinking_delta":
                 _partial_thinking.append(data.get("text", ""))
+            elif event_type == "thinking_done":
+                # Persist this round's thinking as its own message row so the
+                # transcript preserves chronological order: thinking → tool calls →
+                # next round's thinking → final assistant text. The engine fires this
+                # per tool-round, so multi-round reasoning ends up as multiple rows
+                # interleaved with tool_call/tool_result. Skip if no text (opaque path).
+                _round_text = data.get("text") or "".join(_partial_thinking)
+                _round_text = _round_text.strip()
+                if _round_text:
+                    _tr = data.get("tool_round")
+                    _meta = {"tool_round": _tr} if _tr is not None else None
+                    try:
+                        session.add_message("thinking", _round_text, metadata=_meta)
+                    except Exception as _e:
+                        print(f"[thinking-persist] failed: {_e}", flush=True)
+                # Reset the accumulator so the next round starts fresh.
+                _partial_thinking.clear()
+            elif event_type == "thinking_summary":
+                _thinking_summary.update(data)
             elif event_type == "tool_call":
                 name = data.get("name", "")
                 args = data.get("args", {})
+                tr = data.get("tool_round")
                 # Update existing entry if re-emitted with full args, else append
                 if args and _partial_tools and _partial_tools[-1].get("name") == name and not _partial_tools[-1].get("args"):
                     _partial_tools[-1]["args"] = args
+                    if tr is not None:
+                        _partial_tools[-1]["tool_round"] = tr
                 else:
-                    _partial_tools.append({"name": name, "args": args})
+                    entry = {"name": name, "args": args}
+                    if tr is not None:
+                        entry["tool_round"] = tr
+                    _partial_tools.append(entry)
             elif event_type == "tool_result":
                 # Attach result to the last matching tool
                 # Web tools get higher cap to preserve reference URLs
@@ -3855,14 +3881,21 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 if not purpose and session.agent.config.get("model") == "auto":
                     purpose = engine.classify_task_purpose(message)
                 inf_params = engine.get_inference_params(session.model, purpose)
-                # Apply thinking level from request
-                if thinking_level and thinking_level != "none":
+                # Apply thinking level from request — only when the model supports thinking.
+                _model_cfg = engine._models_config.get(session.model, {}) or {}
+                _tfmt = _model_cfg.get("thinking_format", "none")
+                if thinking_level and thinking_level != "none" and _tfmt != "none":
                     _THINKING_BUDGETS = {"low": 2048, "medium": 8192, "high": 32768}
                     inf_params["thinking"] = True
                     inf_params["thinking_budget"] = _THINKING_BUDGETS.get(thinking_level, 8192)
-                elif thinking_level == "none":
+                    # Provider-facing reasoning toggle. Engine's _apply_inference_to_payload maps this
+                    # per thinking_format: reasoning_effort for mistral_blocks/reasoning_field/openai_opaque,
+                    # chat_template_kwargs.enable_thinking for oMLX inline_tags variants, etc.
+                    inf_params["thinking_level"] = thinking_level
+                else:
                     inf_params.pop("thinking", None)
                     inf_params.pop("thinking_budget", None)
+                    inf_params.pop("thinking_level", None)
                 reply = engine.send_message_with_fallback(
                     session.messages, session.model, session.api_key,
                     session.base_url,
@@ -3904,9 +3937,19 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         msg_metadata["files"] = created_files
                     if _partial_tools:
                         msg_metadata["tools"] = _partial_tools
-                    thinking_text = "".join(_partial_thinking).strip()
-                    if thinking_text:
-                        msg_metadata["thinking"] = thinking_text
+                    # Leftover thinking deltas that never got a thinking_done (truncated
+                    # stream / error before flush). Persist as a fallback thinking row
+                    # rather than losing the content.
+                    thinking_leftover = "".join(_partial_thinking).strip()
+                    if thinking_leftover:
+                        try:
+                            session.add_message("thinking", thinking_leftover,
+                                                 metadata={"tool_round": None, "fallback": True})
+                        except Exception:
+                            msg_metadata["thinking"] = thinking_leftover  # legacy fallback
+                        _partial_thinking.clear()
+                    if _thinking_summary:
+                        msg_metadata["thinking_summary"] = _thinking_summary
                     # Per-turn state snapshot: thinking level requested + caveman modes applied
                     if thinking_level:
                         msg_metadata["thinking_level"] = thinking_level

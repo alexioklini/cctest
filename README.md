@@ -270,13 +270,28 @@ Each task runs with a specified agent and model in its own context. Results stor
 {
   "server": {"host": "0.0.0.0", "port": 8420},
   "providers": {
-    "bifrost": {
-      "base_url": "http://127.0.0.1:7777/v1",
-      "api_key": "",
-      "type": "openai"
-    },
     "kilo": {
       "base_url": "https://api.kilo.ai/api/gateway/v1",
+      "api_key": "...",
+      "type": "openai"
+    },
+    "omlx": {
+      "base_url": "http://localhost:8000/v1",
+      "api_key": "brain",
+      "type": "openai"
+    },
+    "cliproxyapi": {
+      "base_url": "http://localhost:8317/v1",
+      "api_key": "brain-agent",
+      "type": "openai"
+    },
+    "mistral-experimental": {
+      "base_url": "https://api.mistral.ai/v1",
+      "api_key": "...",
+      "type": "openai"
+    },
+    "mistral-vibe": {
+      "base_url": "https://api.mistral.ai/v1",
       "api_key": "...",
       "type": "openai"
     }
@@ -288,9 +303,15 @@ Each task runs with a specified agent and model in its own context. Results stor
 
 **Multi-provider routing:** `resolve_provider_for_model(model)` in `claude_cli.py` is the single source of truth for mapping a model ID to provider credentials. All paths (chat, delegate, scheduler, warmup) use it.
 
-All providers are OpenAI-compatible (`/v1/chat/completions`). Current first-party gateways:
-- **Bifrost** — local gateway on `http://localhost:7777/v1`
-- **Kilo** — cloud gateway on `https://api.kilo.ai/api/gateway/v1`
+All providers are OpenAI-compatible (`/v1/chat/completions`). Brain connects to each upstream directly so reasoning payloads (nested Mistral `thinking[]`, oMLX `reasoning_content`) survive the wire:
+
+- **oMLX** — local Apple-Silicon inference (`http://localhost:8000/v1`), for Gemma/Qwen/Crow etc. with reasoning via `chat_template_kwargs.enable_thinking`.
+- **cliproxyapi** — local Gemini proxy (`http://localhost:8317/v1`) for Gemini 2.5 with `reasoning_effort`.
+- **mistral-experimental** — Mistral API with the free experimental key (all models, rate limited).
+- **mistral-vibe** — Mistral API with the paid Le Chat Vibe key (coding models, higher token limits).
+- **kilo** — OpenAI-compatible cloud gateway for general use.
+
+> Earlier releases (through 8.4.x) routed everything through a Bifrost gateway. Bifrost's response transformer silently drops unknown fields, so `reasoning_content` and nested `thinking[]` arrays never reached Brain. 8.5.0 splits Bifrost apart into the four upstreams above so reasoning text is preserved end-to-end.
 
 ### `agent.json`
 
@@ -359,7 +380,7 @@ All providers are OpenAI-compatible (`/v1/chat/completions`). Current first-part
 
 | Version | Date | Changes |
 |---|---|---|
-| 8.2.0 | 2026-04-19 | **Worker subagent flow + inspector improvements**: worker execution now records a persistent flow log (phase timeline, artifacts, Q&A, state transitions) attached to the tool envelope; live `worker.progress` SSE streams each transition. Web UI renders a collapsible "Worker flow" timeline with a LLM-token badge inside the tool block and in the session inspector, reused from a single `renderWorkerFlow` helper. Summariser LLM usage is captured and forwarded via `worker_usage` so the turn-level token total includes worker-side calls while the main-context window stays small. Session inspector per-round panels now show actual API tokens per round (not turn-cumulative), auto-open the first round, highlight "NEW" history entries added since the previous round, and hide empty user-message sections on continuation rounds |
+| 8.5.0 | 2026-04-20 | **Thinking blocks + direct providers + loop/UI fixes**: per-model `thinking_format` (none / inline_tags / reasoning_field / mistral_blocks / openai_opaque) auto-detected from the model id; engine parses every non-opaque format from the stream and emits `thinking_start`/`delta`/`done`; each round of reasoning becomes its own `role='thinking'` message row so the transcript keeps chronological order (thinking → tool → thinking → tool → final answer) and `tool_round` is stamped onto every tool event so reload interleaves correctly. Opaque reasoning renders a "Thought for N tokens" badge from `usage.completion_tokens_details.reasoning_tokens`. Bifrost rip-and-replace: 4 direct providers (oMLX, cliproxyapi, mistral-experimental, mistral-vibe) so reasoning payloads aren't stripped by the gateway; 125 existing sessions keep working via scoped model ids + `base_model_id`. Loop safety: diminishing-returns guard stops plateauing models (last 2 rounds < 500 completion tokens each from round ≥ 3). Tool dedup is session-scoped (keyed by `session_id`, 1h TTL) so worker subagents and threadpool batches can no longer miss duplicate calls; parent thread-local context propagated into worker threads. UI fixes: tool_call/tool_result and every worker.* handler now re-append the `.msg-streaming` div so the thinking panel + partial text don't flicker out when tools fire; thinking panel renders live during streaming; tool-round badges removed from the thinking header. Worker-wrapped web tools (exa_search, web_fetch) attach extracted `references[]` to the envelope so the References panel repopulates |
 | 8.1.0 | 2026-04-16 | **Desktop app (Electron)**: macOS + Windows builds wrapping the web UI. CORS-free `web_fetch`, `exa_search`, and LLM proxy streaming via Node.js IPC — fixes client execution mode for fully air-gapped servers where browser `fetch()` is CORS-blocked. `window.electronAPI` bridge with graceful fallback (web UI unchanged in regular browsers). Build: `cd desktop && npm run build:all` |
 | 8.0.0 | 2026-04-15 | **MemPalace migration (C1–C10)**: memory moved fully to an external MCP server. Removed all built-in memory code paths: `memory_store`/`recall`/`shared`/`delete` tools, QMD hybrid search daemon and indexer, knowledge graph view + auto-discovery + relationship discovery, autodream consolidation, auto memory extraction, memory summary injection, continuous summarization, entity index, and all `/v1/agents/{id}/memories`, `/memory-health`, `/memory-summary`, `/graph*`, `/v1/services/qmd*` HTTP endpoints. Web UI Memory tab and Knowledge Graph view stripped. Old per-agent `*.md` memory files deleted from disk (soul.md preserved). Memory is now entirely agent-driven via MemPalace `mcp_*` tool calls |
 | 7.1.0 | 2026-04-08 | Next-Prompt Suggestions (Claude Code-style composer ghost text) |

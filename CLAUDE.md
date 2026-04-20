@@ -119,8 +119,10 @@ Tab or → accepts into the textarea, Enter on empty input accepts + sends, Esca
 
 - **Endpoint**: `GET /v1/sessions/<id>/next-prompt` — synchronous; runs a small LLM call reusing
   the session's messages with a meta-instruction to predict the next user message under N words
-- **Cache reuse**: by default uses the session's current model so the call hits the same prompt
-  cache as the main chat (near-free). An override model can be set, at the cost of breaking cache reuse
+- **Cost**: small direct LLM call (`tools=False`, no system prompt injected, max ~200 tokens out).
+  Historical note: prior versions claimed "near-free" via prompt-cache reuse with the session model,
+  but that was tied to Anthropic `cache_control` markers which v7.2.0 removed. Current OpenAI-wire
+  providers (Bifrost, Kilo) do not provide a caching path we rely on
 - **Config** in `agent.json` → `next_prompt_suggestions`:
   - `enabled` (bool, default true) — feature toggle
   - `model` (string, default empty) — override model ID; empty = reuse session model
@@ -306,6 +308,22 @@ Optional `limits` block in `agent.json` overrides global defaults for a specific
 - `tool_results_total_tokens`: accumulated tool-result budget per turn before `_compress_old_tool_results` kicks in
 - `context_safety_ratio`: pre-flight check in `send_message` raises `RuntimeError` if estimated prompt tokens exceed `max_context * ratio` (default 0.95), avoiding provider 400s
 - Resolved via `_get_agent_limits()` with defaults from `AGENT_LIMITS_DEFAULTS`
+
+**Diminishing-returns guard** (claude_cli.py `DIMINISHING_*` constants): after
+round 3, if the last 2 completion-token deltas are each below 500, the loop stops
+by setting `tools=False` and emitting a `tool_loop_stop` SSE event. Catches models
+plateauing on the same reasoning without adding progress.
+
+**Tool-call dedup** is session-scoped (keyed by `_dedup_sid()` = current
+session_id, 1h TTL, 100-entry cap per session) — not thread-local, so worker
+subagents and `ThreadPoolExecutor` batches share one dedup set. Identical
+consecutive calls return a `Duplicate tool call detected` error; two consecutive
+duplicates raise `TaskCancelled` to halt the loop. `reset_tool_dedup()` runs at
+the start of each turn. Exempt tools (legitimate re-queries): `memory_recall`,
+`memory_shared`, `delegate_task`, `task_status`, `schedule_list`,
+`schedule_history`. `_execute_tool_in_thread` propagates `current_session_id`,
+`session_id`, `current_agent`, `mcp_manager`, `current_user_id` into worker
+threads so the dedup scope (and MCP routing, agent context) stays correct.
 
 ### Session Cost Soft Warnings
 
@@ -618,13 +636,82 @@ Server runs on port 8420 (configurable). Key endpoints:
 
 ### Providers
 
-All providers are OpenAI-compatible. Current providers:
+All providers are OpenAI-compatible. 8.5.0 retired the Bifrost gateway in favor of
+direct connections per upstream so reasoning payloads (nested Mistral `thinking[]`
+arrays, oMLX `reasoning_content` field) survive the wire — Bifrost's ChatContentBlock
+struct silently dropped those fields during re-serialization.
 
-- **Bifrost** — local gateway on `http://localhost:7777/v1`
-- **Kilo** — cloud gateway on `https://api.kilo.ai/api/gateway/v1`
+- **omlx** — local Apple-Silicon MLX server on `http://localhost:8000/v1`
+  (API key `brain`). Serves Gemma/Qwen/Crow etc. Reasoning enabled via
+  `chat_template_kwargs.enable_thinking` → returns `message.reasoning_content`.
+- **cliproxyapi** — local Gemini proxy on `http://localhost:8317/v1`
+  (API key `brain-agent`). Gemini 2.5 with `reasoning_effort` returns reasoning in
+  `reasoning_content`; older Gemini just surfaces `usage.completion_tokens_details.reasoning_tokens`.
+- **mistral-experimental** — `https://api.mistral.ai/v1` with the free experimental
+  key. All models, rate-limited. Magistral + Mistral Small 4 (`mistral-small-2603`)
+  emit thinking as content-block arrays with nested `{type: "thinking", thinking: [...]}`
+  when `reasoning_effort` is set.
+- **mistral-vibe** — same endpoint with the paid Le Chat Vibe key (devstral-small +
+  coding models with better token limits).
+- **kilo** — OpenAI-compatible cloud gateway (`https://api.kilo.ai/api/gateway/v1`)
+  for general-purpose models.
 
 Provider configs live in `config.json` under `providers`. Each entry has `api_key`
-and `base_url`; `type` defaults to `openai` if omitted.
+and `base_url`; `type` defaults to `openai` if omitted. Model entries route via
+`provider/model_id` scoped keys + `base_model_id` so historical scoped ids
+(`OMLX/*`, `Bifrost/mistral/*`, `mistral/*`) keep working after the Bifrost split.
+
+### Thinking / Reasoning Models
+
+Brain exposes reasoning (aka "thinking") blocks in chat when the model supports it.
+Because reasoning output format is not standardized across providers, each model in
+`_models_config` carries a `thinking_format` string that tells the engine how to
+parse the stream:
+
+- `none` — no reasoning phase (default). UI toggle is disabled for the model.
+- `inline_tags` — reasoning embedded as `<think>...</think>` inside the content
+  string. Engine runs `_InlineThinkingSplitter` — a boundary-safe streaming state
+  machine that handles tags spanning SSE chunk boundaries (`"<thi"` + `"nk>"`).
+  Used by: DeepSeek-R1 distills, GLM-Zero (third-party), any `*-thinking` variant.
+- `reasoning_field` — reasoning in a sibling `delta.reasoning_content` field.
+  Used by: oMLX (all models when `enable_thinking` is set), cliproxyapi Gemini 2.5
+  with `reasoning_effort`, DeepSeek-R1 direct.
+- `mistral_blocks` — Mistral's content-block array shape
+  `[{type:"thinking", thinking:[{type:"text", text:"..."}]}, {type:"text", text:"..."}]`.
+  Both streaming (delta chunks carry partial `thinking[].text`) and non-streaming
+  supported. Used by: `magistral-*`, `mistral-small-2603`, `mistral-small-latest`
+  when `reasoning_effort` is set.
+- `openai_opaque` — reasoning happens but the text is hidden; only
+  `usage.completion_tokens_details.reasoning_tokens` is exposed. Used by: OpenAI
+  `o1-*`, `o3-*`, `o4-mini`. UI renders a grey "Thought for N tokens" badge.
+
+Detection: `_detect_thinking_format(model_id)` in `claude_cli.py` picks a format
+from model-id patterns. Run during `_match_known_model()` on discovery and
+backfilled into `_models_config` at `init_models_config` time.
+
+Persistence: each round of reasoning is written to `chats.db` as its own
+`role='thinking'` message row with `metadata.tool_round`. The API payload filter
+(`_ALLOWED_MSG_KEYS` / `_INTERNAL_ROLES`) drops `role="thinking"` rows before
+sending to a provider so they stay UI-only.
+
+Events: engine emits `thinking_start` / `thinking_delta` / `thinking_done` /
+`thinking_summary` (opaque). Server callback persists a thinking row on
+`thinking_done` (or as a fallback at turn-end if the stream was truncated).
+Client pushes a `{role:"thinking", content, tool_round}` entry into
+`chat.messages` and renders inline via `renderThinkingMessage`.
+
+Reload interleave: tools aren't persisted as DB rows — they live in
+`metadata.tools[]` on the assistant message. Each entry carries `tool_round`,
+so the client reload path buckets tools by round and interleaves them with the
+thinking rows loaded from DB, reconstructing the original thinking → tool → ...
+chronological order.
+
+Request param: when the user enables thinking in the UI, server.py sets
+`inf_params["thinking_level"]` (low/medium/high) in addition to the legacy
+`thinking=true, thinking_budget=N`. `_apply_inference_to_payload` maps
+`thinking_level` to `reasoning_effort` on the wire for `mistral_blocks` (always
+"high" — Mistral only accepts none/high), `reasoning_field`, and `openai_opaque`
+models. oMLX's `enable_thinking` in `chat_template_kwargs` stays.
 
 ### MemPalace (Direct Integration)
 

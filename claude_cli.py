@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.4.1"
-VERSION_DATE = "2026-04-19"
+VERSION = "8.5.0"
+VERSION_DATE = "2026-04-20"
 CHANGELOG = [
+    ("8.5.0", "2026-04-20", "Thinking blocks, direct providers, fixes. Thinking feature fully wired: per-model thinking_format field (none/inline_tags/reasoning_field/mistral_blocks/openai_opaque) auto-detected from model id; engine parses all four non-opaque formats from the stream and emits thinking_start/delta/done events; each round of reasoning becomes its own role='thinking' message row so the transcript preserves chronological order (user → thinking → tool calls → next round thinking → ... → final answer). UI toggle disables itself when the selected model has thinking_format='none' so the button stops lying. Opaque reasoning (OpenAI o-series, Mistral Small 4 via Bifrost) renders a 'Thought for N tokens' badge from usage.completion_tokens_details.reasoning_tokens. _InlineThinkingSplitter handles <think>…</think> tags that span SSE chunk boundaries (14/14 boundary unit tests pass). Bifrost rip-and-replace: removed Bifrost from Brain's provider list; added four direct providers (omlx → http://localhost:8000, cliproxyapi → http://localhost:8317, mistral-experimental and mistral-vibe → https://api.mistral.ai). Motivation: Bifrost's ChatContentBlock Go struct silently drops reasoning_content (oMLX) and nested thinking arrays (Mistral) during re-serialization, so thinking text was never reaching the client. Routing preserves scoped model ids (OMLX/*, Bifrost/mistral/*, mistral/*) via base_model_id so 125 existing sessions keep working unchanged. Tool-loop fixes: diminishing-returns guard stops the loop when the last 2 rounds each added <500 completion tokens from round ≥3 (prevents plateau-spin); tool-call dedup is now session-scoped (keyed by session_id with 1h TTL) instead of thread-local, so worker subagents and ThreadPoolExecutor batches can no longer miss duplicate calls; parent thread-local context (session_id, agent, mcp_manager, user_id) is now propagated into worker threads. UI fixes: streaming DOM flicker resolved — tool_call/tool_result and all worker.* handlers now call renderStreamingMessage(chat) after renderMessages() so the in-flight thinking panel + partial text aren't wiped when tools fire; thinking panel renders live during streaming (previously only a wave-bars placeholder showed, the actual reasoning appeared only at end-of-turn); tool-round badges removed from thinking headers (matched Claude.ai / ChatGPT / Le Chat norm). Worker tool references: _extract_web_references in execution.py pulls title/link/domain out of raw exa_search/web_fetch output before the artifact is written, and attaches them as envelope.references so the References panel populates again for worker-wrapped web tools. Reload interleave: tool_round stamped on every tool_call / tool_result SSE event and persisted into metadata.tools[i].tool_round; reload path buckets tools by round and interleaves with thinking rows so session restore shows thinking → tools → thinking → tools → assistant in correct chronological order."),
     ("8.4.1", "2026-04-19", "Caveman mode icon set. The composer caveman toggle now shows a distinct icon per level instead of color-coding a single icon: off = spaceship, lite = car, full = horse, ultra = campfire. Makes the primitive↔modern axis obvious at a glance. Implementation is cavemanIconFor(mode) in web/index.html, wired through updateStatusBar(). Tooltip and toast reflect the new metaphor."),
     ("8.4.0", "2026-04-19", "Per-turn MemPalace control. Chat drawers are now addressed per turn (source_file=session/<sid>#turn/<user_msg_id>) so individual Q&A pairs can be memorised or purged independently. New per-assistant-message Memory menu with 8 actions: memorise complete chat / this response / all above / all below, and the matching four removes. Items auto-grey when inapplicable (already memorised, nothing to remove, chat memory mode ≠ off). New session-manage actions memorize_turns and purge_turns (both accept turn_ids[] or {scope, anchor_turn_id}). New GET /v1/mempalace/session-turns returns the set of memorised turn ids for UI greying. Session-inspector turn header now carries two extra badges — thinking level (none/low/medium/high) and caveman mode (sys+chat with clear names: off/lite/full/ultra) — per turn, reflecting state at the time the turn ran (new turns only; historical turns stay honest and omit them). Models tab Caveman System input is now a dropdown with clear names instead of 0–3. Disabling chat memory after content was stored prompts the user: OK hard-purges the session's drawers from MemPalace, Cancel just stops filing new turns."),
     ("8.3.0", "2026-04-19", "Chat memory state + MemPalace activity feedback. Reopening a chat now correctly restores its memory mode (off/on/auto) from the session record — previously only the current default was applied, so chats saved to memory appeared as 'off' after reopening. /v1/sessions/<id>/messages now returns save_to_memory alongside caveman_mode. Composer icons refreshed: caveman toggle is now a campfire (flame + crossed logs), save-to-memory is a classical palace (columns + pediment) — both clearer metaphors than prior abstract shapes. New live activity animation: the palace icon pulses blue when MemPalace is retrieving (mempalace_query tool call) and green when storing (background chat-sync loop or immediate-sync on toggle). Backed by a thread-safe activity tracker in claude_cli.py (mempalace_activity) exposed via GET /v1/mempalace/activity; web UI polls every 2s. Worker badge now reliably appears on chat tool blocks via permissive substring detection (previously missed some envelopes due to JSON.parse failures on truncated results) — matches session inspector behavior. Right panel toggle moved from the bottom status bar to the page header (top-right), so opening/closing the panel no longer requires a cross-screen mouse travel."),
@@ -8893,7 +8894,7 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
     }
     if inference_params:
         provider = _models_config.get(model, {}).get("provider", "")
-        _apply_inference_to_payload(payload, inference_params, provider)
+        _apply_inference_to_payload(payload, inference_params, provider, scoped_model=model)
 
     try:
         _thread_local.max_tool_rounds = MAX_DELEGATE_TOOL_ROUNDS
@@ -14152,6 +14153,56 @@ CAPABILITY_VALUES = ["coding", "analysis", "agentic", "fast", "creative", "local
 _models_config: dict = {}
 
 
+def _detect_thinking_format(model_id: str) -> str:
+    """Infer thinking_format from model id. Returns one of:
+    "none" — model has no reasoning phase (default).
+    "inline_tags" — emits <think>...</think> in content string (Qwen3, DeepSeek-R1 distills, GLM-Zero served via third parties).
+    "reasoning_field" — emits separate message.reasoning_content / delta.reasoning_content (oMLX for all its models, cliproxyapi Gemini with reasoning_effort, DeepSeek-R1 direct).
+    "mistral_blocks" — emits content as a list with {type: "thinking", thinking: [{type: "text", text: ...}]} blocks (Mistral API for magistral-* and mistral-small-2603+ when reasoning_effort is set).
+    "openai_opaque" — reasoning tokens hidden server-side, only usage.completion_tokens_details.reasoning_tokens exposed (OpenAI o-series).
+
+    Routing note: these choices assume DIRECT provider connections. Proxies that re-serialize via typed
+    structs (e.g. Bifrost) may silently drop reasoning_content and the nested Mistral thinking array.
+    Brain routes thinking-capable models direct to their provider for exactly this reason.
+    """
+    m = model_id.lower()
+    # OpenAI o-series — opaque reasoning
+    for p in ("o1-", "o1/", "/o1", "o3-", "o3/", "/o3", "o4-mini"):
+        if p in m:
+            return "openai_opaque"
+    # Mistral reasoning models — content-block array with nested thinking[]
+    # (magistral-* and mistral-small 2603+ with reasoning_effort set). Checked
+    # before the generic "magistral" branch in the inline_tags section so Mistral wins.
+    if (
+        "magistral" in m
+        or "mistral-small-2603" in m
+        or "mistral-small-latest" in m  # alias commonly resolves to the newest small
+    ):
+        return "mistral_blocks"
+    # oMLX serves every reasoning-capable model via a unified API that exposes
+    # reasoning_content as a sibling field on the message (even for gemma, when
+    # enable_thinking is set). Catch the OMLX/ prefix here so we don't miss any.
+    if m.startswith("omlx/") or "/omlx/" in m:
+        return "reasoning_field"
+    # cliproxyapi routes Gemini. 2.5-series has reasoning, returned in reasoning_content
+    # when reasoning_effort is set on the request.
+    if m.startswith("cliproxyapi/gemini-2.5") or "/gemini-2.5-" in m:
+        return "reasoning_field"
+    # DeepSeek-R1 official API uses reasoning_content field; distills via third-party often use inline tags.
+    if "deepseek-r1" in m or "deepseek/r1" in m:
+        return "reasoning_field" if "deepseek.com" in m or m.startswith("deepseek/") else "inline_tags"
+    # Inline <think> tag emitters — Qwen3 / GLM-Zero when served by a provider that
+    # does NOT strip reasoning_content. Kept as the fallback because oMLX's OMLX/qwen3
+    # would have matched the reasoning_field branch above.
+    if (
+        "qwen3" in m or "qwen-3" in m
+        or "glm-zero" in m or "glm4-zero" in m
+        or "thinking" in m  # e.g. claude-*-thinking variants, custom builds
+    ):
+        return "inline_tags"
+    return "none"
+
+
 def _match_known_model(model_id: str) -> dict:
     """Match a model ID against KNOWN_MODELS patterns. Returns default config."""
     m = model_id.lower()
@@ -14169,6 +14220,7 @@ def _match_known_model(model_id: str) -> dict:
                 "icon": defaults["icon"],
                 "priority": defaults["priority"],
                 "capabilities": list(defaults["capabilities"]),
+                "thinking_format": _detect_thinking_format(model_id),
             }
             if "max_context" in defaults:
                 result["max_context"] = defaults["max_context"]
@@ -14189,6 +14241,7 @@ def _match_known_model(model_id: str) -> dict:
         "priority": 10,
         "capabilities": [],
         "raw_formats": [],
+        "thinking_format": _detect_thinking_format(model_id),
     }
 
 
@@ -14257,6 +14310,8 @@ def init_models_config(providers: dict, existing_models: dict | None = None,
             cfg["max_context"] = known["max_context"]
         if "raw_formats" not in cfg and "raw_formats" in known:
             cfg["raw_formats"] = known["raw_formats"]
+        if "thinking_format" not in cfg:
+            cfg["thinking_format"] = known.get("thinking_format", "none")
 
     return _models_config
 
@@ -14473,7 +14528,7 @@ _INFERENCE_OPENAI_KEYS = {"frequency_penalty", "presence_penalty"}
 _INFERENCE_OMLX_KEYS = {"min_p", "repetition_penalty"}
 
 
-def _apply_inference_to_payload(payload: dict, params: dict, provider: str = "") -> None:
+def _apply_inference_to_payload(payload: dict, params: dict, provider: str = "", scoped_model: str = "") -> None:
     """Apply resolved inference params to an OpenAI-compatible payload."""
     if not params:
         return
@@ -14496,7 +14551,21 @@ def _apply_inference_to_payload(payload: dict, params: dict, provider: str = "")
     if "reasoning_effort" in params:
         payload["reasoning_effort"] = params["reasoning_effort"]
 
-    # Thinking: OpenAI-wire equivalent is enable_thinking in chat_template_kwargs (oMLX extension)
+    # Thinking routing: translate the UI's thinking_level string (low/medium/high)
+    # into whatever the model's provider expects, based on the per-model thinking_format.
+    _thinking_level = params.get("thinking_level")
+    if _thinking_level and _thinking_level != "none":
+        _scoped_id = scoped_model or payload.get("model", "")
+        _fmt = _models_config.get(_scoped_id, {}).get("thinking_format", "none")
+        if _fmt == "mistral_blocks":
+            # Mistral accepts only "none" and "high" on reasoning_effort; any non-none
+            # UI level maps to "high".
+            payload["reasoning_effort"] = "high"
+        elif _fmt in ("reasoning_field", "openai_opaque"):
+            # OpenAI / Gemini via cliproxy / DeepSeek all accept low|medium|high.
+            payload["reasoning_effort"] = _thinking_level
+
+    # Legacy/oMLX chat template kwarg (kept for models that use it instead of reasoning_effort).
     if params.get("thinking") and is_omlx:
         payload.setdefault("chat_template_kwargs", {})["enable_thinking"] = True
 
@@ -15213,48 +15282,87 @@ def _tool_search(args: dict) -> str:
 
 
 # Per-thread tool call dedup tracking
-_tool_call_history = threading.local()
+# Session-scoped tool-call dedup state. Replaces the prior threading.local() impl,
+# which silently leaked dupes whenever tool execution crossed a thread boundary
+# (worker-subagent wrappers, ThreadPoolExecutor in _execute_tools_batch, etc.).
+# Keyed by session_id (falls back to a sentinel when no session is available,
+# e.g. CLI one-shot invocations).
+_tool_dedup_lock = threading.Lock()
+_tool_dedup: dict[str, dict] = {}  # sid -> {"calls": set[str], "consecutive_dupes": int, "last_touch": float}
+_TOOL_DEDUP_TTL = 3600  # seconds; drop state for sessions untouched this long
+
+
+def _dedup_sid() -> str:
+    """Resolve the current dedup scope key. Session id when known, else a per-thread
+    sentinel so unrelated CLI invocations don't contaminate each other."""
+    sid = getattr(_thread_local, 'current_session_id', None)
+    if sid:
+        return sid
+    # No session context (CLI one-shots, warmup, etc.) — fall back to thread id.
+    return f"_thread:{threading.get_ident()}"
+
+
+def _dedup_state(sid: str) -> dict:
+    """Get-or-create the per-session dedup bucket. Caller must hold the lock."""
+    st = _tool_dedup.get(sid)
+    if st is None:
+        st = {"calls": set(), "consecutive_dupes": 0, "last_touch": time.time()}
+        _tool_dedup[sid] = st
+    else:
+        st["last_touch"] = time.time()
+    return st
+
+
+def _dedup_gc_locked() -> None:
+    """Drop buckets we haven't touched in a while. Caller holds the lock."""
+    now = time.time()
+    stale = [k for k, v in _tool_dedup.items() if now - v.get("last_touch", 0) > _TOOL_DEDUP_TTL]
+    for k in stale:
+        _tool_dedup.pop(k, None)
 
 
 def _check_tool_dedup(name: str, args: dict) -> str | None:
-    """Check if this exact tool call was already made. Raises TaskCancelled after 2 dupes.
+    """Check if this exact tool call was already made in the current session.
+    Raises TaskCancelled after 2 dupes so the agentic loop stops banging on the
+    same tool. Exempt tools that legitimately repeat with identical args.
 
-    Exempt tools: memory_recall (legitimate re-queries with same terms),
-    delegate_task (different execution context each time).
+    Session-scoped (not thread-scoped) so the check survives worker-subagent
+    threads and ThreadPoolExecutor batches that would otherwise each get a
+    fresh, empty dedup set and miss every duplicate.
     """
-    # Exempt tools that legitimately repeat with same args
     _DEDUP_EXEMPT = {"memory_recall", "memory_shared", "delegate_task", "task_status",
                      "schedule_list", "schedule_history"}
     if name in _DEDUP_EXEMPT:
         return None
 
-    if not hasattr(_tool_call_history, 'calls'):
-        _tool_call_history.calls = set()
-        _tool_call_history.dupe_count = 0
-        _tool_call_history.consecutive_dupes = 0
+    sid = _dedup_sid()
     key = f"{name}:{json.dumps(args, sort_keys=True)}"
-    if key in _tool_call_history.calls:
-        _tool_call_history.dupe_count += 1
-        _tool_call_history.consecutive_dupes += 1
-        if _tool_call_history.consecutive_dupes >= 2:
-            # Hard abort — model is stuck in a loop
-            raise TaskCancelled()
-        return _err(
-            f"Duplicate tool call detected. You already called {name} with these exact arguments. "
-            "Use the previous result or try a different approach."
-        )
-    _tool_call_history.calls.add(key)
-    _tool_call_history.consecutive_dupes = 0  # Reset consecutive counter on new unique call
-    if len(_tool_call_history.calls) > 100:
-        _tool_call_history.calls = set(list(_tool_call_history.calls)[-50:])
+    with _tool_dedup_lock:
+        st = _dedup_state(sid)
+        if key in st["calls"]:
+            st["consecutive_dupes"] += 1
+            if st["consecutive_dupes"] >= 2:
+                # Hard abort — model is stuck in a loop
+                raise TaskCancelled()
+            return _err(
+                f"Duplicate tool call detected. You already called {name} with these exact arguments. "
+                "Use the previous result or try a different approach."
+            )
+        st["calls"].add(key)
+        st["consecutive_dupes"] = 0
+        # Keep bucket bounded so long sessions don't grow unbounded.
+        if len(st["calls"]) > 100:
+            st["calls"] = set(list(st["calls"])[-50:])
     return None
 
 
 def reset_tool_dedup():
-    """Reset the dedup tracker."""
-    _tool_call_history.calls = set()
-    _tool_call_history.dupe_count = 0
-    _tool_call_history.consecutive_dupes = 0
+    """Reset the dedup tracker for the current session. Called at turn start so a
+    user sending a new question after a tool-heavy prior turn gets a clean slate."""
+    sid = _dedup_sid()
+    with _tool_dedup_lock:
+        _tool_dedup.pop(sid, None)
+        _dedup_gc_locked()
 
 
 # --- Hook Runner ---
@@ -15541,7 +15649,7 @@ _CONCURRENT_SAFE_TOOLS = {
 }
 
 
-def _execute_tools_batch(tool_calls: list[dict], event_callback=None) -> list[dict]:
+def _execute_tools_batch(tool_calls: list[dict], event_callback=None, tool_round: int = 0) -> list[dict]:
     """Execute a batch of tool calls with concurrent-safe parallelism.
 
     Partitions tool calls into batches:
@@ -15585,14 +15693,24 @@ def _execute_tools_batch(tool_calls: list[dict], event_callback=None) -> list[di
         if is_concurrent and len(batch) > 1:
             # Parallel execution
             from concurrent.futures import ThreadPoolExecutor, as_completed
+            # Snapshot parent thread-local context so worker threads inherit it.
+            # Without this, session-scoped dedup and MCP routing silently start
+            # fresh per thread and miss duplicate calls / agent context.
+            _parent_ctx = {
+                "current_session_id": getattr(_thread_local, 'current_session_id', None),
+                "session_id": getattr(_thread_local, 'session_id', None),
+                "current_agent": getattr(_thread_local, 'current_agent', None),
+                "mcp_manager": getattr(_thread_local, 'mcp_manager', None),
+                "current_user_id": getattr(_thread_local, 'current_user_id', None),
+            }
             futures = {}
             with ThreadPoolExecutor(max_workers=min(5, len(batch))) as executor:
                 for tc in batch:
                     if event_callback:
-                        event_callback("tool_call", {"name": tc["name"], "args": tc["input"]})
+                        event_callback("tool_call", {"name": tc["name"], "args": tc["input"], "tool_round": tool_round})
                     _display_tool_call(tc["name"], tc["input"])
                     future = executor.submit(_execute_tool_in_thread, tc["name"], tc["input"],
-                                             tc["id"], event_callback)
+                                             tc["id"], event_callback, _parent_ctx)
                     futures[future] = tc
 
                 # Collect results preserving order
@@ -15606,7 +15724,7 @@ def _execute_tools_batch(tool_calls: list[dict], event_callback=None) -> list[di
                     result_map[tc["id"]] = result
                     _display_tool_result(tc["name"], result)
                     if event_callback:
-                        event_callback("tool_result", {"name": tc["name"], "result": result})
+                        event_callback("tool_result", {"name": tc["name"], "result": result, "tool_round": tool_round})
 
             # Append in original order
             for tc in batch:
@@ -15616,7 +15734,7 @@ def _execute_tools_batch(tool_calls: list[dict], event_callback=None) -> list[di
             for tc in batch:
                 _display_tool_call(tc["name"], tc["input"])
                 if event_callback:
-                    event_callback("tool_call", {"name": tc["name"], "args": tc["input"]})
+                    event_callback("tool_call", {"name": tc["name"], "args": tc["input"], "tool_round": tool_round})
                 _thread_local.event_callback = event_callback
                 _thread_local.tool_use_id = tc["id"]
                 try:
@@ -15626,22 +15744,39 @@ def _execute_tools_batch(tool_calls: list[dict], event_callback=None) -> list[di
                     _thread_local.tool_use_id = None
                 _display_tool_result(tc["name"], result)
                 if event_callback:
-                    event_callback("tool_result", {"name": tc["name"], "result": result})
+                    event_callback("tool_result", {"name": tc["name"], "result": result, "tool_round": tool_round})
                 results.append({"tool_use_id": tc["id"], "result": result})
     return results
 
 
-def _execute_tool_in_thread(name: str, args: dict, tool_id: str, event_callback) -> str:
-    """Execute a single tool in a worker thread with proper thread-local setup."""
-    # Copy thread-local context from parent (set by the chat handler)
-    # The worker thread inherits the main thread's context
+def _execute_tool_in_thread(name: str, args: dict, tool_id: str, event_callback,
+                             parent_ctx: dict | None = None) -> str:
+    """Execute a single tool in a worker thread with proper thread-local setup.
+
+    parent_ctx carries thread-local state that must travel into the worker thread
+    so downstream code (session-scoped dedup, worker idempotency keys, MCP routing,
+    agent context) sees the same environment as the calling agentic-loop thread.
+    """
+    ctx = parent_ctx or {}
     _thread_local.event_callback = event_callback
     _thread_local.tool_use_id = tool_id
+    # Propagate parent session/agent/mcp context so session-scoped state
+    # (dedup, worker keys) isn't silently duplicated per thread.
+    _thread_local.current_session_id = ctx.get("current_session_id")
+    _thread_local.session_id = ctx.get("session_id")
+    _thread_local.current_agent = ctx.get("current_agent")
+    _thread_local.mcp_manager = ctx.get("mcp_manager")
+    _thread_local.current_user_id = ctx.get("current_user_id")
     try:
         return _execute_tool(name, args)
     finally:
         _thread_local.event_callback = None
         _thread_local.tool_use_id = None
+        _thread_local.current_session_id = None
+        _thread_local.session_id = None
+        _thread_local.current_agent = None
+        _thread_local.mcp_manager = None
+        _thread_local.current_user_id = None
 
 
 def _execute_tool(name: str, args: dict) -> str:
@@ -15775,6 +15910,11 @@ def _execute_tool_inner(name: str, args: dict) -> str:
 MAX_TOOL_ROUNDS = 15  # Maximum number of tool-use round trips before forcing a text response
 MAX_TOOL_ROUNDS_PROXY = 8  # Tighter limit for CLIProxyAPI (shares personal OAuth quota)
 MAX_OUTPUT_RECOVERY_LIMIT = 3  # Max resume attempts when model hits output token limit
+# Diminishing-returns guard: after MIN_ROUND rounds, if the last WINDOW completion-token deltas
+# are all below THRESHOLD, stop — the model is plateauing in the tool loop.
+DIMINISHING_MIN_ROUND = 3
+DIMINISHING_WINDOW = 2
+DIMINISHING_THRESHOLD_TOKENS = 500
 _MAX_OUTPUT_RESUME_MSG = (
     "Output token limit hit. Resume directly — no apology, no recap of what you were doing. "
     "Pick up mid-thought, mid-sentence, mid-code exactly where you stopped."
@@ -16422,6 +16562,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         _thread_local._max_output_recovery_count = 0
         _thread_local._has_attempted_reactive_compact = False
         _thread_local._escape_watcher = escape_watcher
+        _thread_local._round_deltas = []
         # Start a request-level trace span for the full conversation turn
         if _trace_manager:
             agent = getattr(_thread_local, 'current_agent', None) or _current_agent
@@ -16475,14 +16616,34 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     # Hard stop: terminate the loop entirely at 1.5x the soft cap to prevent runaway recursion
     if _tool_round >= int(effective_max_rounds * 1.5):
         return "[Tool round limit reached — stopping to prevent runaway loop. Check chat for partial progress.]"
+    # Diminishing-returns guard: if recent rounds added very little, the model is plateauing.
+    _deltas = getattr(_thread_local, '_round_deltas', None) or []
+    if (tools
+            and _tool_round >= DIMINISHING_MIN_ROUND
+            and len(_deltas) >= DIMINISHING_WINDOW
+            and all(d < DIMINISHING_THRESHOLD_TOKENS for d in _deltas[-DIMINISHING_WINDOW:])):
+        if event_callback:
+            event_callback("tool_loop_stop", {
+                "reason": "diminishing_returns",
+                "tool_round": _tool_round,
+                "recent_deltas": _deltas[-DIMINISHING_WINDOW:],
+            })
+        print(f"[diminishing returns: last {DIMINISHING_WINDOW} rounds added "
+              f"{_deltas[-DIMINISHING_WINDOW:]} tokens — stopping tool loop]", flush=True)
+        tools = False
     headers = make_headers(api_key)
     endpoint = f"{base_url}/chat/completions"
 
     # Strip metadata from messages — API providers don't accept extra fields
-    # Keep fields required by OpenAI tool call protocol
+    # Keep fields required by OpenAI tool call protocol.
+    # Also drop internal roles: "thinking" is a transcript artifact we store for UI
+    # display, but providers reject the role string.
     _ALLOWED_MSG_KEYS = {"role", "content", "tool_calls", "tool_call_id", "name"}
+    _INTERNAL_ROLES = {"thinking"}
     augmented_messages = []
     for msg in messages:
+        if msg.get("role") in _INTERNAL_ROLES:
+            continue
         clean = {k: v for k, v in msg.items() if k in _ALLOWED_MSG_KEYS}
         augmented_messages.append(clean)
     tcfg = _get_token_config()
@@ -16503,7 +16664,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     # Apply inference parameters (temperature, top_p, thinking, etc.)
     if inference_params:
         provider = _models_config.get(model, {}).get("provider", "")
-        _apply_inference_to_payload(payload, inference_params, provider)
+        _apply_inference_to_payload(payload, inference_params, provider, scoped_model=model)
 
     if tools:
         mcp_mgr = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
@@ -16738,6 +16899,85 @@ def _parse_gemma_tool_calls(text: str) -> tuple[list[dict], str]:
 
 
 
+class _InlineThinkingSplitter:
+    """Streaming splitter for reasoning models that emit <think>...</think> in content.
+
+    Feed raw content chunks via feed(chunk) -> returns a list of (kind, text)
+    tuples where kind is 'text' or 'thinking' or 'enter' (enters thinking block,
+    no text) or 'exit' (exits thinking block). Text outside tags is 'text';
+    inside tags is 'thinking'. 'enter'/'exit' are edge markers so callers can
+    emit thinking_start / thinking_done events exactly once per block.
+
+    Handles split-at-boundary cases: if a chunk ends with a partial tag like
+    '<thi', the partial is held until the next chunk completes it.
+    """
+
+    _OPEN = "<think>"
+    _CLOSE = "</think>"
+
+    def __init__(self):
+        self._in_thinking = False
+        self._pending = ""  # carry-over for partial tag matches
+        self._ever_opened = False
+
+    def _starts_partial(self, s: str, tag: str) -> bool:
+        # True iff s is a non-empty proper prefix of tag (len(s) < len(tag) and s == tag[:len(s)])
+        return 0 < len(s) < len(tag) and tag.startswith(s)
+
+    def feed(self, chunk: str) -> list[tuple[str, str]]:
+        if not chunk:
+            return []
+        buf = self._pending + chunk
+        self._pending = ""
+        out: list[tuple[str, str]] = []
+        while buf:
+            tag = self._CLOSE if self._in_thinking else self._OPEN
+            idx = buf.find(tag)
+            if idx >= 0:
+                # Emit everything before the tag in current mode
+                pre = buf[:idx]
+                if pre:
+                    out.append(("thinking" if self._in_thinking else "text", pre))
+                # Flip mode
+                if self._in_thinking:
+                    out.append(("exit", ""))
+                    self._in_thinking = False
+                else:
+                    out.append(("enter", ""))
+                    self._in_thinking = True
+                    self._ever_opened = True
+                buf = buf[idx + len(tag):]
+                continue
+            # No complete tag in buf. Check whether the tail is a partial tag.
+            hold_len = 0
+            for k in range(1, min(len(tag), len(buf)) + 1):
+                if self._starts_partial(buf[-k:], tag):
+                    hold_len = k  # keep the longest partial match
+            if hold_len:
+                emit = buf[:-hold_len]
+                self._pending = buf[-hold_len:]
+                if emit:
+                    out.append(("thinking" if self._in_thinking else "text", emit))
+                buf = ""
+            else:
+                out.append(("thinking" if self._in_thinking else "text", buf))
+                buf = ""
+        return out
+
+    def flush(self) -> list[tuple[str, str]]:
+        """At end-of-stream, any held pending text has no closing tag — flush it
+        in the current mode so we don't lose characters."""
+        out: list[tuple[str, str]] = []
+        if self._pending:
+            out.append(("thinking" if self._in_thinking else "text", self._pending))
+            self._pending = ""
+        if self._in_thinking:
+            # Unclosed thinking block — force-close so UI state is sane.
+            out.append(("exit", ""))
+            self._in_thinking = False
+        return out
+
+
 def _handle_openai_response(response, payload, messages, model, api_key,
                              base_url, silent, tools,
                              headers, endpoint,
@@ -16748,10 +16988,46 @@ def _handle_openai_response(response, payload, messages, model, api_key,
                              session_id: str | None = None) -> str | None:
     """Handle OpenAI SSE response, including tool-use agentic loop."""
     collected_text = []
+    collected_thinking = []
     tool_calls_map = {}  # index -> {id, name, arguments_str}
     _usage_in = 0
     _usage_out = 0
+    _reasoning_tokens = 0  # openai_opaque: reported in usage.completion_tokens_details.reasoning_tokens
     finish_reason = None
+    # Thinking format drives how we parse reasoning content out of the stream.
+    _tfmt = _models_config.get(model, {}).get("thinking_format", "none")
+    _think_splitter = _InlineThinkingSplitter() if _tfmt == "inline_tags" else None
+    _thinking_started = False
+    # For mistral_blocks: track whether we've opened a thinking block (first non-empty thinking delta).
+    _mistral_thinking_open = False
+
+    def _emit_thinking_delta(t: str):
+        """Helper: emit thinking_start (first time) + thinking_delta."""
+        nonlocal _thinking_started
+        if not _thinking_started:
+            _thinking_started = True
+            if event_callback:
+                event_callback("thinking_start", {"tool_round": _tool_round})
+        collected_thinking.append(t)
+        if event_callback:
+            event_callback("thinking_delta", {"text": t, "tool_round": _tool_round})
+
+    def _emit_thinking_done():
+        """Helper: emit thinking_done with current round's text + round number.
+        Server uses this as the signal to persist a 'thinking' message row so
+        reasoning appears inline in its correct chronological position."""
+        if event_callback:
+            event_callback("thinking_done", {
+                "text": "".join(collected_thinking),
+                "tool_round": _tool_round,
+            })
+
+    def _emit_text_delta(t: str):
+        if not silent:
+            print(t, end="", flush=True)
+        if event_callback:
+            event_callback("text_delta", {"text": t})
+        collected_text.append(t)
 
     for line in response:
         if escape_watcher and escape_watcher.cancelled:
@@ -16769,6 +17045,8 @@ def _handle_openai_response(response, payload, messages, model, api_key,
             if usage:
                 _usage_in = usage.get("prompt_tokens", 0)
                 _usage_out = usage.get("completion_tokens", 0)
+                ctd = usage.get("completion_tokens_details") or {}
+                _reasoning_tokens = int(ctd.get("reasoning_tokens") or 0)
             choices = event.get("choices", [])
             if not choices:
                 continue
@@ -16777,14 +17055,67 @@ def _handle_openai_response(response, payload, messages, model, api_key,
             if fr:
                 finish_reason = fr
             delta = choices[0].get("delta") or {}
+
+            # reasoning_field path: reasoning_content is a sibling field on the delta.
+            # (oMLX, cliproxyapi Gemini 2.5, DeepSeek-R1 direct). Emits thinking deltas
+            # independently of content; caller emits thinking_done on first non-reasoning
+            # content delta.
+            if _tfmt == "reasoning_field":
+                rc = delta.get("reasoning_content")
+                if rc:
+                    _emit_thinking_delta(_unescape(rc))
+
             content = delta.get("content")
             if content:
-                content = _unescape(content)
-                if not silent:
-                    print(content, end="", flush=True)
-                if event_callback:
-                    event_callback("text_delta", {"text": content})
-                collected_text.append(content)
+                # mistral_blocks path: content is a list of blocks like
+                # [{type: "thinking", thinking: [{type: "text", text: "partial"}]}]
+                # or [{type: "text", text: "partial"}].
+                if _tfmt == "mistral_blocks" and isinstance(content, list):
+                    for block in content:
+                        if not isinstance(block, dict):
+                            continue
+                        btype = block.get("type")
+                        if btype == "thinking":
+                            _mistral_thinking_open = True
+                            for sub in (block.get("thinking") or []):
+                                if isinstance(sub, dict):
+                                    t = sub.get("text")
+                                    if t:
+                                        _emit_thinking_delta(_unescape(t))
+                        elif btype == "text":
+                            if _mistral_thinking_open:
+                                _mistral_thinking_open = False
+                                if event_callback:
+                                    _emit_thinking_done()
+                            t = block.get("text")
+                            if t:
+                                _emit_text_delta(_unescape(t))
+                elif isinstance(content, str):
+                    content = _unescape(content)
+                    if _tfmt == "reasoning_field" and _thinking_started:
+                        # First non-empty text chunk closes the reasoning phase.
+                        if event_callback:
+                            _emit_thinking_done()
+                        _thinking_started = False  # don't emit thinking_done twice
+                        _emit_text_delta(content)
+                    elif _think_splitter is None:
+                        _emit_text_delta(content)
+                    else:
+                        for kind, text in _think_splitter.feed(content):
+                            if kind == "enter":
+                                if not _thinking_started:
+                                    _thinking_started = True
+                                    if event_callback:
+                                        event_callback("thinking_start", {"tool_round": _tool_round})
+                            elif kind == "exit":
+                                _emit_thinking_done()
+                                _thinking_started = False
+                            elif kind == "thinking":
+                                collected_thinking.append(text)
+                                if event_callback:
+                                    event_callback("thinking_delta", {"text": text, "tool_round": _tool_round})
+                            elif kind == "text":
+                                _emit_text_delta(text)
 
             # Accumulate tool calls (guard against null — Gemini returns tool_calls: null)
             for tc in (delta.get("tool_calls") or []):
@@ -16803,6 +17134,50 @@ def _handle_openai_response(response, payload, messages, model, api_key,
 
         except json.JSONDecodeError:
             pass
+
+    # End-of-stream flush for the thinking splitter: drain any held partial-tag
+    # characters and auto-close an unclosed <think> block so UI state stays sane.
+    if _think_splitter is not None:
+        for kind, text in _think_splitter.flush():
+            if kind == "exit":
+                _emit_thinking_done()
+                _thinking_started = False
+            elif kind == "thinking":
+                collected_thinking.append(text)
+                if event_callback:
+                    event_callback("thinking_delta", {"text": text, "tool_round": _tool_round})
+            elif kind == "text":
+                _emit_text_delta(text)
+
+    # mistral_blocks: close an unclosed thinking block (rare — usually we see a text block that triggers closure).
+    if _mistral_thinking_open:
+        _mistral_thinking_open = False
+        if event_callback:
+            _emit_thinking_done()
+        _thinking_started = False
+
+    # reasoning_field: if thinking was opened but no non-empty text followed
+    # (rare, e.g. model emitted only reasoning and hit max tokens), close it on EOS.
+    if _tfmt == "reasoning_field" and _thinking_started:
+        if event_callback:
+            _emit_thinking_done()
+        _thinking_started = False
+
+    # openai_opaque: no thinking text available from the provider, but we know
+    # how many tokens were burned on reasoning. Surface as a summary event so the
+    # UI can render a "Thought for N tokens" badge.
+    if _tfmt == "openai_opaque" and _reasoning_tokens > 0 and event_callback:
+        event_callback("thinking_summary", {
+            "format": "openai_opaque",
+            "reasoning_tokens": _reasoning_tokens,
+        })
+        # If we saw any thinking content but never emitted the done event
+        # (stream truncated mid-block was handled by flush; this covers
+        # the case where open fired and close is the natural EOS — already
+        # handled by flush's exit event). Defensive.
+        if _thinking_started and collected_thinking and event_callback:
+            # Ensure UI gets a final done with the full text, idempotent if dup.
+            pass  # flush already handled it
 
     full_text = "".join(collected_text)
 
@@ -16829,6 +17204,11 @@ def _handle_openai_response(response, payload, messages, model, api_key,
             "tokens_out": _usage_out,
             "tool_round": _tool_round,
         })
+
+    # Track per-round completion-token deltas for the diminishing-returns guard (checked at top of next round)
+    _deltas_list = getattr(_thread_local, '_round_deltas', None)
+    if _deltas_list is not None:
+        _deltas_list.append(_usage_out)
 
     # End LLM trace span (OpenAI handler)
     _llm_span_oai = getattr(_thread_local, 'current_trace_span', None)
@@ -16939,7 +17319,7 @@ def _handle_openai_response(response, payload, messages, model, api_key,
             args = {}
         batch_calls.append({"id": tc["id"], "name": tc["function"]["name"], "input": args})
 
-    batch_results = _execute_tools_batch(batch_calls, event_callback=event_callback)
+    batch_results = _execute_tools_batch(batch_calls, event_callback=event_callback, tool_round=_tool_round)
 
     # Immediately compact large tool call arguments (e.g. python_exec code)
     # The model already knows what it wrote — no need to re-send on the next turn

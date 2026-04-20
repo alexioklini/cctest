@@ -567,6 +567,57 @@ def _static_summary(tool_name: str, artifact_meta: dict) -> str:
     )
 
 
+def _extract_web_references(tool_name: str, raw_result: str) -> list[dict]:
+    """Pull lightweight reference metadata out of a web tool's raw result so the
+    UI can render the References panel even though the full body only lives in
+    the artifact. Returns [] for non-web tools or on parse failure.
+
+    Shape matches the client's expectation in extractReferencesFromToolResult:
+    each entry has title, link, domain, and (optional) snippet.
+    """
+    if tool_name not in ("exa_search", "web_fetch") or not raw_result:
+        return []
+    try:
+        data = json.loads(raw_result)
+    except Exception:
+        return []
+    from urllib.parse import urlparse
+    def _domain(url: str) -> str:
+        try:
+            h = urlparse(url).hostname or ""
+            return h[4:] if h.startswith("www.") else h
+        except Exception:
+            return ""
+    refs: list[dict] = []
+    if isinstance(data, dict) and isinstance(data.get("results"), list):
+        for r in data["results"]:
+            if not isinstance(r, dict):
+                continue
+            url = r.get("link") or r.get("url")
+            if not url:
+                continue
+            d = _domain(url)
+            refs.append({
+                "title": r.get("title") or d or url,
+                "link": url,
+                "snippet": (r.get("snippet") or "")[:200],
+                "domain": d,
+            })
+    elif isinstance(data, dict) and data.get("url"):
+        url = data["url"]
+        d = _domain(url)
+        title = d
+        # web_fetch often returns the page content with a <title>; quick scan.
+        body = data.get("content") or ""
+        if isinstance(body, str):
+            import re as _re
+            m = _re.search(r"<title[^>]*>([^<]+)</title>", body, _re.I)
+            if m:
+                title = m.group(1).strip()
+        refs.append({"title": title, "link": url, "snippet": "", "domain": d})
+    return refs
+
+
 def _parse_summariser_output(text: str) -> tuple[str, list[dict]]:
     """Parse summary text + SECTIONS: [...] from summariser output."""
     sections = []
@@ -720,7 +771,7 @@ def run_worker_subagent(tool_name: str, args: dict, inner_fn: Callable[[str, dic
                                        phase="done", message=summary[:100])
         _append_flow(worker, "phase", phase="done")
 
-    envelope = _ok({
+    envelope_body = {
         "worker": True,
         "worker_id": worker_id,
         "worker_phase": 2,
@@ -731,7 +782,13 @@ def run_worker_subagent(tool_name: str, args: dict, inner_fn: Callable[[str, dic
         "state": worker.state.value,
         "flow": list(worker.flow),
         "summariser_usage": summariser_usage,
-    })
+    }
+    # Surface lightweight reference metadata for web tools so the client can
+    # populate the References panel without fetching the full artifact.
+    web_refs = _extract_web_references(tool_name, raw_result)
+    if web_refs:
+        envelope_body["references"] = web_refs
+    envelope = _ok(envelope_body)
 
     _emit_worker_event("worker.finished", {
         "worker_id": worker_id,
