@@ -5560,32 +5560,55 @@ async function sendMessage() {
         }
       },
       user_input_needed: (d) => {
-        console.log('[SSE] user_input_needed:', d.session_id, d.question);
+        console.log('[SSE] user_input_needed:', d.session_id, d.questions || d.question);
         if (!isActive()) return;
         const container = document.getElementById('messages-container');
         if (!container) return;
         const existing = document.getElementById(`aq-${d.session_id}`);
         if (existing) existing.remove();
+
+        // Normalize: always work with a `questions` array.
+        let questions = Array.isArray(d.questions) && d.questions.length
+          ? d.questions
+          : (d.question ? [{question: d.question, options: d.options}] : []);
+        if (!questions.length) return;
+        const isBatch = questions.length > 1;
+
         const card = document.createElement('div');
         card.className = 'worker-question-card';
         card.id = `aq-${d.session_id}`;
-        const optionsHtml = (d.options || []).map((o) =>
-          `<label class="wq-option" onclick="this.parentElement.querySelectorAll('.wq-option').forEach(e=>e.classList.remove('selected'));this.classList.add('selected')">
-            <input type="radio" name="aq-opt-${d.session_id}" value="${esc(o)}">${esc(o)}
-          </label>`
-        ).join('');
+
+        const questionsHtml = questions.map((q, idx) => {
+          const qid = `${d.session_id}-${idx}`;
+          const opts = Array.isArray(q.options) ? q.options : null;
+          const optionsHtml = (opts || []).map((o) =>
+            `<label class="wq-option" onclick="this.parentElement.querySelectorAll('.wq-option').forEach(e=>e.classList.remove('selected'));this.classList.add('selected')">
+              <input type="radio" name="aq-opt-${esc(qid)}" value="${esc(o)}">${esc(o)}
+            </label>`
+          ).join('');
+          const header = isBatch
+            ? `<div class="wq-question" style="display:flex;gap:8px;align-items:baseline"><span style="color:var(--text-400);font-weight:500;min-width:24px">${idx + 1}.</span><span>${esc(q.question)}</span></div>`
+            : `<div class="wq-question">${esc(q.question)}</div>`;
+          return `
+            <div class="wq-item" data-qid="${esc(qid)}" data-question="${esc(q.question)}" style="${idx > 0 ? 'margin-top:14px;padding-top:14px;border-top:1px solid var(--border-100)' : ''}">
+              ${header}
+              ${optionsHtml ? `<div class="wq-options">${optionsHtml}</div>` : ''}
+              <textarea class="wq-freeform" placeholder="Type your answer..." style="width:100%;min-height:40px;margin-top:6px;margin-bottom:0;border:1px solid var(--border-100);border-radius:6px;padding:6px 8px;font-size:13px;background:var(--bg-000);color:var(--text-200);resize:vertical;display:${opts ? 'none' : 'block'}"></textarea>
+            </div>
+          `;
+        }).join('');
+
+        const headerLabel = isBatch ? `${questions.length} questions` : 'The agent needs your input';
         card.innerHTML = `
           <div class="wq-header">
-            <span class="wq-badge">QUESTION</span>
-            <span>The agent needs your input</span>
+            <span class="wq-badge">QUESTION${isBatch ? 'S' : ''}</span>
+            <span>${esc(headerLabel)}</span>
           </div>
           <div class="wq-body">
             ${d.context_summary ? `<div class="wq-context">${esc(d.context_summary)}</div>` : ''}
-            <div class="wq-question">${esc(d.question)}</div>
-            ${optionsHtml ? `<div class="wq-options">${optionsHtml}</div>` : ''}
-            <textarea class="wq-freeform" placeholder="Type your answer..." style="width:100%;min-height:40px;margin-bottom:8px;border:1px solid var(--border-100);border-radius:6px;padding:6px 8px;font-size:13px;background:var(--bg-000);color:var(--text-200);resize:vertical;display:${d.options ? 'none' : 'block'}"></textarea>
-            <div class="wq-actions">
-              <button class="wq-btn-answer" onclick="answerChatQuestion('${esc(d.session_id)}')">Answer</button>
+            ${questionsHtml}
+            <div class="wq-actions" style="margin-top:12px">
+              <button class="wq-btn-answer" onclick="answerChatQuestion('${esc(d.session_id)}')">${isBatch ? 'Submit answers' : 'Answer'}</button>
             </div>
           </div>
         `;
@@ -5594,10 +5617,17 @@ async function sendMessage() {
       },
       user_input_received: (d) => {
         const card = document.getElementById(`aq-${d.session_id}`);
-        if (card) {
-          card.classList.add('wq-answered');
-          const body = card.querySelector('.wq-body');
-          if (body) body.innerHTML += `<div style="margin-top:8px;font-size:12px;color:var(--text-400)">Answered: ${esc(d.answer)}</div>`;
+        if (!card) return;
+        card.classList.add('wq-answered');
+        const body = card.querySelector('.wq-body');
+        if (!body) return;
+        if (d.answers && typeof d.answers === 'object') {
+          const lines = Object.entries(d.answers).map(([q, a]) =>
+            `<div>· ${esc(q)} → ${esc(a)}</div>`
+          ).join('');
+          body.innerHTML += `<div style="margin-top:8px;font-size:12px;color:var(--text-400)">Answers:${lines}</div>`;
+        } else if (d.answer != null) {
+          body.innerHTML += `<div style="margin-top:8px;font-size:12px;color:var(--text-400)">Answered: ${esc(d.answer)}</div>`;
         }
       },
       fallback: (d) => {
@@ -6039,16 +6069,35 @@ async function answerWorkerQuestion(workerId, delegateValue) {
 async function answerChatQuestion(sessionId) {
   const card = document.getElementById(`aq-${sessionId}`);
   if (!card) return;
-  let answer = '';
-  const selected = card.querySelector('.wq-option.selected input');
-  if (selected) { answer = selected.value; }
-  else {
-    const ta = card.querySelector('.wq-freeform');
-    answer = ta ? ta.value.trim() : '';
+  const items = card.querySelectorAll('.wq-item');
+  // Collect one answer per question item (radio selection wins over freeform).
+  const answers = {};
+  const missing = [];
+  items.forEach((item) => {
+    const question = item.getAttribute('data-question') || '';
+    let val = '';
+    const selected = item.querySelector('.wq-option.selected input');
+    if (selected) { val = selected.value; }
+    else {
+      const ta = item.querySelector('.wq-freeform');
+      val = ta ? ta.value.trim() : '';
+    }
+    if (!val) { missing.push(question); return; }
+    answers[question] = val;
+  });
+  if (!items.length || missing.length) {
+    showToast(items.length ? `Please answer all ${items.length} questions` : 'No question to answer', true);
+    return;
   }
-  if (!answer) { showToast('Please select an option or type an answer', true); return; }
+  const body = { session_id: sessionId };
+  if (items.length === 1) {
+    // Preserve legacy single-question wire shape for backward compat.
+    body.answer = Object.values(answers)[0];
+  } else {
+    body.answers = answers;
+  }
   try {
-    await API.post('/v1/chat/answer', { session_id: sessionId, answer });
+    await API.post('/v1/chat/answer', body);
     card.classList.add('wq-answered');
   } catch (e) { showToast('Failed to send answer: ' + e.message, true); }
 }
@@ -8044,6 +8093,11 @@ async function switchGeneralTab(tab, btn) {
                   ${[[0,'off'],[1,'lite'],[2,'full'],[3,'ultra']].map(([v,l]) => `<option value="${v}"${(cfg.caveman_system||0)===v?' selected':''}>${l}</option>`).join('')}
                 </select>
               </div>
+              <div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px" title="How this model emits reasoning. none = disabled. inline_tags = <think>...</think> in content (DeepSeek-R1, GLM-Zero). reasoning_field = sibling reasoning_content (oMLX with enable_thinking, Gemini 2.5, DeepSeek-R1 direct). mistral_blocks = nested thinking blocks (magistral, mistral-small-2603+). openai_opaque = hidden, only token count exposed (o1/o3/o4-mini).">Thinking Format</label>
+                <select class="mdl-thinking-format" style="width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)">
+                  ${['none','inline_tags','reasoning_field','mistral_blocks','openai_opaque'].map(v => `<option value="${v}"${(cfg.thinking_format||'none')===v?' selected':''}>${v}</option>`).join('')}
+                </select>
+              </div>
               <div style="display:flex;align-items:center;gap:6px;padding-top:14px"><input type="checkbox" class="mdl-parallel-tools" ${cfg.parallel_tool_calls !== false ? 'checked' : ''} style="margin:0"><label class="form-label" style="font-size:11px;margin:0;cursor:pointer">Parallel Tool Calls</label></div>
               <div style="display:flex;align-items:center;gap:6px;padding-top:14px"><input type="checkbox" class="mdl-warmup" ${cfg.warmup ? 'checked' : ''} style="margin:0"><label class="form-label" style="font-size:11px;margin:0;cursor:pointer" title="Prime this model's KV cache once so first-token latency is minimal. The warm state is held until the model is evicted — no periodic re-priming.">Warmup</label></div>
               <div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px" title="Full: prefill system+tools into KV cache (~5-6s first response, costs GPU memory). Minimal: load weights only (~10-15s first response, tiny memory footprint). Full-primed models may evict each other if GPU memory is tight.">Warmup Mode</label>
@@ -9032,6 +9086,10 @@ async function saveModelsConfig() {
       } else {
         mc[mid].raw_formats = [];
       }
+      // Thinking format
+      const tfmt = row.querySelector('.mdl-thinking-format')?.value;
+      if (tfmt && tfmt !== 'none') mc[mid].thinking_format = tfmt;
+      else mc[mid].thinking_format = 'none';
     });
     await API.post('/v1/models/config', { action: 'save', models: mc });
     state.modelsConfig.models = mc;

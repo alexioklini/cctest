@@ -157,9 +157,19 @@ class BrainAgentClient:
             sock.close()
 
     def answer(self, answer_data):
-        """Send an answer to a pending AskUserQuestion prompt."""
-        if self.session_id:
-            self._post("/v1/chat/answer", {"session_id": self.session_id, "answer": answer_data})
+        """Send an answer to a pending ask_user prompt.
+
+        Pass a string for single-question answers, or a {question: answer} dict
+        for batch answers.
+        """
+        if not self.session_id:
+            return
+        body = {"session_id": self.session_id}
+        if isinstance(answer_data, dict):
+            body["answers"] = answer_data
+        else:
+            body["answer"] = answer_data
+        self._post("/v1/chat/answer", body)
 
     def cancel(self):
         if self.session_id:

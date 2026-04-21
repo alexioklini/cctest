@@ -2693,29 +2693,40 @@ def run_interactive(args):
                         elif event_type == "tool_output":
                             tool_output_lines += 1
                         elif event_type == "user_input_needed":
-                            # Agent is asking the user a question via AskUserQuestion
-                            tool_input = data.get("tool_input", {})
-                            questions = tool_input.get("questions", [])
+                            # Agent is asking the user one or more questions via ask_user.
+                            # Payload: data.questions = [{question: str, options?: [str]}, ...]
+                            # (legacy single-question fallback: data.question + data.options)
+                            questions = data.get("questions") or []
+                            if not questions and data.get("question"):
+                                questions = [{"question": data.get("question", ""), "options": data.get("options")}]
+                            if data.get("context_summary"):
+                                console.print(f"\n  [dim]{data['context_summary']}[/]")
                             answers = {}
                             for q in questions:
-                                console.print(f"\n  [bold purple]Question:[/] {q.get('question', '')}")
-                                for i, opt in enumerate(q.get("options", [])):
-                                    desc = f" — {opt['description']}" if opt.get("description") else ""
-                                    console.print(f"    [dim]{i+1}.[/] {opt.get('label', '')}{desc}")
-                                if q.get("multiSelect"):
-                                    console.print("    [dim](Enter numbers separated by commas, or type your own)[/]")
-                                else:
-                                    console.print("    [dim](Enter a number, or type your own)[/]")
+                                qtext = q.get("question", "")
+                                opts = q.get("options") if isinstance(q.get("options"), list) else []
+                                console.print(f"\n  [bold purple]Question:[/] {qtext}")
+                                for i, opt in enumerate(opts):
+                                    # Options are flat strings in our wire format.
+                                    label = opt if isinstance(opt, str) else (opt.get("label") if isinstance(opt, dict) else str(opt))
+                                    console.print(f"    [dim]{i+1}.[/] {label}")
+                                if opts:
+                                    console.print("    [dim](Enter a number, or type your own answer)[/]")
                                 resp = console.input("  [bold]> [/]").strip()
-                                # Parse as number(s) or free text
-                                options = q.get("options", [])
-                                try:
-                                    indices = [int(s.strip()) - 1 for s in resp.split(",")]
-                                    labels = [options[i]["label"] for i in indices if 0 <= i < len(options)]
-                                    answers[q["question"]] = ", ".join(labels) if labels else resp
-                                except (ValueError, IndexError):
-                                    answers[q["question"]] = resp
-                            client.answer(answers)
+                                picked = resp
+                                if opts:
+                                    try:
+                                        idx = int(resp) - 1
+                                        if 0 <= idx < len(opts):
+                                            picked = opts[idx] if isinstance(opts[idx], str) else (opts[idx].get("label") if isinstance(opts[idx], dict) else str(opts[idx]))
+                                    except ValueError:
+                                        pass
+                                answers[qtext] = picked
+                            # Single-question → send as bare string for legacy compat; batch → dict
+                            if len(answers) == 1:
+                                client.answer(next(iter(answers.values())))
+                            else:
+                                client.answer(answers)
                         elif event_type == "fallback":
                             if data.get("status") == "switch":
                                 fallback_notice = f"Fallback: {data.get('from','')} -> {data.get('to','')} ({data.get('reason','unavailable')})"

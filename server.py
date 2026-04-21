@@ -3898,6 +3898,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     inf_params.pop("thinking", None)
                     inf_params.pop("thinking_budget", None)
                     inf_params.pop("thinking_level", None)
+                # If thinking-mode flipped vs what the warmup keeper primed,
+                # kick off a background re-prime so the *next* turn's KV
+                # prefix matches. Current turn still pays the cold cost.
+                # No-op when model isn't warmup-flagged or has thinking_format=none.
+                _wants_thinking = bool(inf_params.get("thinking"))
+                engine.maybe_reprime_for_thinking(session.model, _wants_thinking,
+                                                  agent_id=session.agent_id)
                 reply = engine.send_message_with_fallback(
                     session.messages, session.model, session.api_key,
                     session.base_url,
@@ -7263,7 +7270,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
     # --- Chat answer handler (interactive AskUserQuestion) ---
 
     def _handle_chat_answer(self):
-        """POST /v1/chat/answer — deliver a user answer to a pending ask_user tool call."""
+        """POST /v1/chat/answer — deliver a user answer to a pending ask_user tool call.
+
+        Body shapes:
+          {session_id, answer: "..."}                             # single question
+          {session_id, answers: {"<question>": "<answer>", ...}}  # batch
+        """
         try:
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
@@ -7272,11 +7284,19 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             return
         session_id = (body.get("session_id") or "").strip()
         answer = body.get("answer")
-        if not session_id or answer is None:
-            self._send_json({"error": "session_id and answer are required"}, 400)
+        answers = body.get("answers")
+        if not session_id or (answer is None and not isinstance(answers, dict)):
+            self._send_json({"error": "session_id and answer/answers are required"}, 400)
             return
+        # Normalize answers dict values to strings
+        if isinstance(answers, dict):
+            answers = {str(k): str(v) for k, v in answers.items() if v is not None}
         from claude_cli import deliver_ask_user_answer
-        ok = deliver_ask_user_answer(session_id, str(answer))
+        ok = deliver_ask_user_answer(
+            session_id,
+            answer=str(answer) if answer is not None else None,
+            answers=answers if isinstance(answers, dict) and answers else None,
+        )
         if not ok:
             self._send_json({"error": "no pending question for this session"}, 404)
             return

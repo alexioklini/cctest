@@ -1048,37 +1048,71 @@ TOOL_DEFINITIONS = [
     {
         "name": "worker_ask_user",
         "description": (
-            "Ask the user a question that cannot be decided from available context. "
+            "Ask the user one or more questions that cannot be decided from available context. "
             "The worker will pause until answered. Only available inside a worker subagent. "
-            "Use sparingly — prefer making reasonable decisions autonomously."
+            "Use sparingly — prefer making reasonable decisions autonomously. "
+            "When the user explicitly asks you to pose questions to them (e.g. \"ask me 5 questions\", "
+            "\"interview me\", \"quiz me\"), pass them all in the `questions` array in a single call — "
+            "this renders one interactive answer card in the UI with all questions at once. "
+            "For a single clarifying question, either pass `question` (string) or a 1-item `questions` array."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "question": {"type": "string", "description": "The question to ask"},
-                "options": {"type": "array", "items": {"type": "string"}, "description": "Optional multiple-choice options"},
-                "context_summary": {"type": "string", "description": "Brief context so the user understands why this question is being asked"},
+                "questions": {
+                    "type": "array",
+                    "description": "Batch of 1-8 questions to ask the user. Each item: {question: str, options?: [str]}. Use this to ask multiple questions in one UI card.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "question": {"type": "string", "description": "The question text"},
+                            "options": {"type": "array", "items": {"type": "string"}, "description": "Optional multiple-choice options for this question"},
+                        },
+                        "required": ["question"],
+                    },
+                    "minItems": 1,
+                    "maxItems": 8,
+                },
+                "question": {"type": "string", "description": "Single question text (alternative to `questions`). Use `questions` for multi-question batches."},
+                "options": {"type": "array", "items": {"type": "string"}, "description": "Optional multiple-choice options (only used with single `question`)"},
+                "context_summary": {"type": "string", "description": "Brief context so the user understands why these questions are being asked"},
                 "timeout_seconds": {"type": "integer", "description": "Seconds to wait for an answer before aborting (default: 300)"},
             },
-            "required": ["question"],
         },
     },
     {
         "name": "ask_user",
         "description": (
-            "Ask the user a clarifying question when the task cannot be decided from available context. "
+            "Ask the user one or more clarifying questions that cannot be decided from available context. "
             "The chat pauses until the user answers. Use sparingly — prefer making reasonable decisions autonomously. "
-            "Returns {\"answer\": str} on success, or an error on timeout."
+            "When the user explicitly asks you to pose questions to them (e.g. \"ask me 5 questions about X\", "
+            "\"interview me\", \"quiz me\"), pass them all in the `questions` array in a single call — "
+            "this renders one interactive answer card in the UI with all questions at once. "
+            "For a single clarifying question, either pass `question` (string) or a 1-item `questions` array. "
+            "Returns {\"answers\": {<question>: <answer>, ...}} for a batch, or {\"answer\": str} for a single question."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "question": {"type": "string", "description": "The question to ask the user"},
-                "options": {"type": "array", "items": {"type": "string"}, "description": "Optional multiple-choice options"},
-                "context_summary": {"type": "string", "description": "Brief context so the user understands why this question is being asked"},
+                "questions": {
+                    "type": "array",
+                    "description": "Batch of 1-8 questions to ask the user. Each item: {question: str, options?: [str]}. Use this to ask multiple questions in one UI card.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "question": {"type": "string", "description": "The question text"},
+                            "options": {"type": "array", "items": {"type": "string"}, "description": "Optional multiple-choice options for this question"},
+                        },
+                        "required": ["question"],
+                    },
+                    "minItems": 1,
+                    "maxItems": 8,
+                },
+                "question": {"type": "string", "description": "Single question text (alternative to `questions`). Use `questions` for multi-question batches."},
+                "options": {"type": "array", "items": {"type": "string"}, "description": "Optional multiple-choice options (only used with single `question`)"},
+                "context_summary": {"type": "string", "description": "Brief context so the user understands why these questions are being asked"},
                 "timeout_seconds": {"type": "integer", "description": "Seconds to wait for an answer before aborting (default: 300)"},
             },
-            "required": ["question"],
         },
     },
 ]
@@ -9213,9 +9247,56 @@ def all_warmup_states() -> dict:
         return {k: dict(v) for k, v in _warmup_state.items()}
 
 
+# Inflight tracker for thinking-mode re-primes — prevents stacking concurrent
+# warmups against the same model when a chat toggles thinking rapidly.
+_reprime_inflight: set = set()
+_reprime_inflight_lock = threading.Lock()
+
+
+def maybe_reprime_for_thinking(model: str, thinking: bool, agent_id: str = "main") -> bool:
+    """Trigger a background re-prime if the requested thinking mode differs
+    from what's currently primed. No-op when:
+      - the model has no warmup configured
+      - the model has thinking_format=none (toggle is a no-op anyway)
+      - a re-prime for this model is already in flight
+      - the cached state already matches the requested mode
+
+    Returns True if a re-prime thread was kicked off.
+    """
+    cfg = _models_config.get(model, {}) or {}
+    if not cfg.get("warmup"):
+        return False
+    if cfg.get("thinking_format", "none") == "none":
+        return False
+    state = get_warmup_state(model)
+    # If we've never primed yet, the first real turn does the work — skip.
+    if state.get("state") not in ("warm", "warming"):
+        return False
+    if bool(state.get("thinking_primed")) == bool(thinking):
+        return False
+    with _reprime_inflight_lock:
+        if model in _reprime_inflight:
+            return False
+        _reprime_inflight.add(model)
+
+    def _bg():
+        try:
+            allow_cloud = bool(cfg.get("warmup_allow_cloud"))
+            mode = (cfg.get("warmup_mode") or "full").lower()
+            run_model_warmup(model, allow_cloud=allow_cloud,
+                             agent_id=agent_id, mode=mode, thinking=thinking)
+        finally:
+            with _reprime_inflight_lock:
+                _reprime_inflight.discard(model)
+
+    threading.Thread(target=_bg, daemon=True,
+                     name=f"reprime-{model[:20]}-think{int(thinking)}").start()
+    return True
+
+
 def run_model_warmup(model: str, allow_cloud: bool = False,
                      agent_id: str = "main", timeout: int = 30,
-                     mode: str = "full") -> dict:
+                     mode: str = "full", thinking: bool = False) -> dict:
     """Fire a single prefill request against a model's provider.
 
     Returns a result dict: {ok, state, duration_ms, error, mode}. Updates
@@ -9230,6 +9311,11 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
                    Used when multiple warmup models are active, because they'd
                    evict each other's KV cache anyway, so paying the prefill
                    cost is wasted work.
+
+    `thinking` (oMLX thinking-capable models only): when True, the warmup
+    payload sets chat_template_kwargs.enable_thinking=true so the primed KV
+    prefix matches a chat that has thinking enabled. Without this match, the
+    first thinking-on turn cache-misses and pays full prefill cost.
     """
     t0 = time.time()
     prov = resolve_provider_for_model(model)
@@ -9247,7 +9333,8 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
         return {"ok": False, "state": "skipped_cloud",
                 "error": "cloud skipped", "duration_ms": 0, "mode": mode}
 
-    set_warmup_state(model, state="warming", last_error="", mode=mode)
+    set_warmup_state(model, state="warming", last_error="", mode=mode,
+                     thinking_primed=bool(thinking))
 
     try:
         agent_config = AgentConfig(agent_id)
@@ -9315,10 +9402,15 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
         # _apply_inference_to_payload, which forces enable_thinking on/off for
         # oMLX thinking-capable models. The warmup payload must mirror that
         # exactly or the prefix won't match and prompt cache will miss.
-        # We mirror the "no thinking" branch since the first real turn defaults
-        # to off until the user opts in.
+        # When `thinking=True` we inject the same legacy flag the chat path
+        # uses so the helper renders enable_thinking=true into the payload.
         provider_name = prov.get("provider_name", "")
-        _apply_inference_to_payload(payload, get_inference_params(model), provider_name, scoped_model=model)
+        _inf = get_inference_params(model)
+        if thinking:
+            _inf = dict(_inf)
+            _inf["thinking"] = True
+            _inf["thinking_level"] = "high"
+        _apply_inference_to_payload(payload, _inf, provider_name, scoped_model=model)
         headers = make_headers(api_key)
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
@@ -9327,9 +9419,10 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
         dur_ms = int((time.time() - t0) * 1000)
         now = time.time()
         set_warmup_state(model, state="warm", last_warmup_ts=now,
-                         last_error="", mode=mode)
+                         last_error="", mode=mode,
+                         thinking_primed=bool(thinking))
         return {"ok": True, "state": "warm", "duration_ms": dur_ms,
-                "error": "", "mode": mode}
+                "error": "", "mode": mode, "thinking": bool(thinking)}
     except urllib.error.HTTPError as e:
         try:
             body = e.read().decode("utf-8", errors="replace")[:500]
@@ -15251,19 +15344,25 @@ def tool_worker_send(args: dict) -> str:
 
 
 def tool_worker_ask_user(args: dict) -> str:
-    """Ask the user a question from within a worker subagent."""
+    """Ask the user a question from within a worker subagent.
+
+    Accepts single-question (`question` str) or a 1-item `questions` array.
+    Multi-question batches are not supported inside workers — call once per question.
+    """
     from execution import get_worker_registry
     worker_id = getattr(_thread_local, 'current_worker_id', None)
     if not worker_id:
         return _err("worker_ask_user can only be called from within a worker subagent")
-    question = args.get("question", "")
-    if not question:
-        return _err("question is required")
-    options = args.get("options")
+    questions, _ = _normalize_ask_questions(args)
+    if not questions:
+        return _err("question or questions is required")
+    if len(questions) > 1:
+        return _err("worker_ask_user does not support question batches yet — call once per question")
+    q0 = questions[0]
     context_summary = args.get("context_summary", "")
     timeout = args.get("timeout_seconds", 300)
     answer = get_worker_registry().ask_user(
-        worker_id, question, options, context_summary, timeout
+        worker_id, q0["question"], q0.get("options"), context_summary, timeout
     )
     if answer is None:
         return _err("No answer received (timed out or worker was aborted)")
@@ -15289,39 +15388,71 @@ def _ask_user_clear(session_id: str) -> None:
         _ask_user_pending.pop(session_id, None)
 
 
-def deliver_ask_user_answer(session_id: str, answer: str) -> bool:
-    """Called by POST /v1/chat/answer. Returns True if a pending question was matched."""
+def deliver_ask_user_answer(session_id: str, answer=None, answers=None) -> bool:
+    """Called by POST /v1/chat/answer. Returns True if a pending question was matched.
+
+    Accepts either `answer` (string, single-question) or `answers` (dict keyed by question, batch).
+    """
     with _ask_user_lock:
         slot = _ask_user_pending.get(session_id)
         if not slot:
             return False
-        slot["answer"] = answer
+        if answers is not None:
+            slot["answers"] = answers
+        if answer is not None:
+            slot["answer"] = answer
         slot["event"].set()
     return True
 
 
+def _normalize_ask_questions(args: dict):
+    """Return (questions_list, is_batch) from args.
+
+    - `questions: [{question, options?}, ...]` → batch
+    - `question: "..."` (+ optional `options`) → single, wrapped
+    Returns ([], False) on invalid input.
+    """
+    qs = args.get("questions")
+    if isinstance(qs, list) and qs:
+        out = []
+        for q in qs:
+            if isinstance(q, dict) and q.get("question"):
+                out.append({
+                    "question": str(q["question"]),
+                    "options": q.get("options") if isinstance(q.get("options"), list) else None,
+                })
+        return out, True
+    q = args.get("question")
+    if isinstance(q, str) and q:
+        return [{"question": q, "options": args.get("options") if isinstance(args.get("options"), list) else None}], False
+    return [], False
+
+
 def tool_ask_user(args: dict) -> str:
-    """Ask the user a question from the main chat loop (not inside a worker)."""
+    """Ask the user one or more questions from the main chat loop (not inside a worker)."""
     session_id = getattr(_thread_local, 'current_session_id', None)
     if not session_id:
         return _err("ask_user requires an active session")
-    question = args.get("question", "")
-    if not question:
-        return _err("question is required")
-    options = args.get("options")
+    questions, is_batch = _normalize_ask_questions(args)
+    if not questions:
+        return _err("question or questions is required")
     context_summary = args.get("context_summary", "")
     timeout = int(args.get("timeout_seconds", 300))
 
     cb = getattr(_thread_local, 'event_callback', None)
     if cb:
         try:
-            cb("user_input_needed", {
+            payload = {
                 "session_id": session_id,
-                "question": question,
-                "options": options,
+                "questions": questions,
                 "context_summary": context_summary,
                 "timeout_seconds": timeout,
-            })
+            }
+            if not is_batch:
+                # Keep legacy fields for single-question consumers
+                payload["question"] = questions[0]["question"]
+                payload["options"] = questions[0]["options"]
+            cb("user_input_needed", payload)
         except Exception:
             pass
 
@@ -15332,15 +15463,28 @@ def tool_ask_user(args: dict) -> str:
             return _err("No answer received (timed out)")
         with _ask_user_lock:
             slot = _ask_user_pending.get(session_id) or {}
-            answer = slot.get("answer")
-        if answer is None:
+            answers_map = slot.get("answers")
+            answer_str = slot.get("answer")
+        if is_batch:
+            if not isinstance(answers_map, dict) or not answers_map:
+                return _err("No answers received")
+            if cb:
+                try:
+                    cb("user_input_received", {"session_id": session_id, "answers": answers_map})
+                except Exception:
+                    pass
+            return _ok({"answers": answers_map})
+        # Single-question path. Prefer explicit answer, fall back to first value in answers map.
+        if answer_str is None and isinstance(answers_map, dict) and answers_map:
+            answer_str = next(iter(answers_map.values()))
+        if answer_str is None:
             return _err("No answer received")
         if cb:
             try:
-                cb("user_input_received", {"session_id": session_id, "answer": answer})
+                cb("user_input_received", {"session_id": session_id, "answer": answer_str})
             except Exception:
                 pass
-        return _ok({"answer": answer})
+        return _ok({"answer": answer_str})
     finally:
         _ask_user_clear(session_id)
 
