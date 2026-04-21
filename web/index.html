@@ -8013,6 +8013,13 @@ async function switchGeneralTab(tab, btn) {
             <button class="btn-secondary" style="padding:2px 6px;font-size:10px;color:var(--error)" onclick="if(confirm('Remove model ${esc(mid)}?'))removeModel('${esc(mid)}')">&#10005;</button>
           </div>
           <div id="${detId}" style="display:none;padding:8px 12px;margin:0 0 6px 0;border:1px solid var(--border-100);border-top:none;border-radius:0 0 8px 8px;background:var(--bg-100)">
+            <div style="display:flex;align-items:center;gap:10px;padding:6px 8px;margin-bottom:8px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-000)">
+              <label style="font-size:11px;font-weight:600;color:var(--text-100);margin:0">Profile</label>
+              <select class="mdl-profile" style="padding:3px 8px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-100);color:var(--text-100)" title="Speed: warmup + stable KV prefix, no token savings (local). Balanced: current defaults. Frugal: aggressive token savings, caveman system prompt (cloud). Custom: no overlay.">
+                ${[['custom','Custom (no overlay)'],['speed','Speed (local, warm cache)'],['balanced','Balanced (default)'],['frugal','Frugal (cloud, save tokens)']].map(([v,l]) => `<option value="${v}"${(cfg.profile||'custom')===v?' selected':''}>${l}</option>`).join('')}
+              </select>
+              <span style="font-size:10px;color:var(--text-400);margin-left:auto">Profile sets defaults — explicit fields below override them</span>
+            </div>
             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px">
               ${mdlInput('mdl-max-context','Context Window',cfg.max_context,{ph:'131072'})}
               ${mdlInput('mdl-max-output','Max Output',cfg.max_output,{ph:'16384'})}
@@ -8085,7 +8092,8 @@ async function switchGeneralTab(tab, btn) {
             ${DOT(ok)}
             <span style="font-size:14px;font-weight:500;color:var(--text-000)">${esc(p.name)}</span>
             <span style="${MONO};margin-left:auto">${mc} models</span>
-            <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="syncProvider(this,'${esc(p.name)}')">Sync</button>
+            <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="syncProvider(this,'${esc(p.name)}')" title="Add newly-available models from this provider. Honors deletions.">Sync</button>
+            <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="resyncProvider(this,'${esc(p.name)}')" title="Drop all models for this provider AND clear deletion tombstones, then re-discover. Manual only.">Full Resync</button>
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="testProvider('${esc(p.name)}')">Test</button>
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="document.getElementById('${pid}').style.display=document.getElementById('${pid}').style.display==='none'?'grid':'none'">Edit</button>
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px;color:var(--error)" onclick="if(confirm('Delete provider ${esc(p.name)}?'))deleteProvider('${esc(p.name)}')">Delete</button>
@@ -8975,6 +8983,10 @@ async function saveModelsConfig() {
       if (pVal !== undefined) mc[mid].priority = parseInt(pVal) || 0;
       const dName = row.querySelector('.mdl-display-name')?.value?.trim();
       if (dName) mc[mid].display_name = dName;
+      // Profile (speed/balanced/frugal/custom)
+      const profile = row.querySelector('.mdl-profile')?.value;
+      if (profile && profile !== 'custom') mc[mid].profile = profile;
+      else delete mc[mid].profile;
       // Context & output
       const maxCtx = readNum(row, 'mdl-max-context');
       if (maxCtx !== undefined) mc[mid].max_context = maxCtx; else delete mc[mid].max_context;
@@ -9045,14 +9057,32 @@ async function addManualModel() {
 }
 
 async function removeModel(mid) {
+  // Tombstoned delete — server records the id in config.deleted_models so
+  // it isn't re-added by startup discovery or sync. Re-add via manual add
+  // (or resync_provider on the owning provider) clears the tombstone.
   const mc = {...(state.modelsConfig?.models || {})};
   delete mc[mid];
   state.modelsConfig.models = mc;
   try {
-    await API.post('/v1/models/config', { action: 'save', models: mc });
+    await API.post('/v1/models/config', { action: 'delete', model_id: mid });
     showToast('Model removed');
     switchGeneralTab('models');
   } catch(e) { showToast('Failed: ' + e.message, true); }
+}
+
+async function resyncProvider(btn, name) {
+  if (!confirm(`Full resync of "${name}"? This deletes ALL its models AND their deletion tombstones, then re-discovers from the provider's /models endpoint.`)) return;
+  btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Resyncing...';
+  try {
+    await API.post('/v1/models/config', { action: 'resync_provider', provider: name });
+    const d = await API.getModelsConfig();
+    state.modelsConfig = d;
+    switchGeneralTab('providers');
+    showToast(`${name} fully resynced`);
+  } catch(e) {
+    showToast('Resync failed: ' + e.message, true);
+    btn.disabled = false; btn.textContent = orig;
+  }
 }
 
 async function syncProvider(btn, name) {

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.6.0"
+VERSION = "8.7.0"
 VERSION_DATE = "2026-04-20"
 CHANGELOG = [
     ("8.6.0", "2026-04-20", "Warmup overhaul — first-response latency drops from 15s to 2-3s on local models. Root cause was a silent KV-cache miss: the warmup prime payload didn't match the real first-turn payload byte-for-byte, so oMLX's prompt cache never hit. Four drift sources fixed: (1) system prompt contained minute-precision timestamp that differed between warmup and real request — rounded to the hour in _build_system_prompt so prefixes stay byte-stable across request boundaries; (2) warmup payload omitted MCP tools that the real payload includes — warmup now attaches the process-global MCPManager and merges mcp tools into the sorted tool list; (3) warmup used stream=False vs the real request's stream=True+stream_options — now identical; (4) per-session _trigger_warmup in server.py was a divergent copy of the warmup payload — deleted, replaced with a thin delegation to engine.run_model_warmup so both paths share one code path. Also fixed: run_model_warmup now bumps last_warmup_ts on failure so a perpetually failing model (OOM Qwen 35B) doesn't monopolize the max_concurrent=1 keeper slot via oldest-first sort. New per-model warmup_mode config (\"full\" default | \"minimal\"): full primes the KV prefix (system+tools), minimal loads weights only — trade-off is user's call, no auto-selection. Keeper re-primes when mode flips, won't evict warm models otherwise. Config changes now wake the keeper via a threading.Event so new warmup flags take effect immediately instead of waiting up to 30s. Pool invalidation extended to any KV-prefix-relevant field change (warmup, warmup_mode, enabled, max_context, warmup_allow_cloud, parallel_tool_calls, caveman_system, provider, base_model_id). New UI: status-bar Pool indicator with aggregate ready/target + failed count; click opens a modal listing each warmup-enabled model with state badge, progress bar, mode chip (full/minimal), last-warmed age, last_error, and per-model 'Warm now' button. Modal body live-refreshes via WarmupMonitor._render(). Models tab detail panel adds a Warmup Mode dropdown. Log format: [warmup-keeper] <model>: warm (<mode>, <ms>ms)."),
@@ -1145,6 +1145,135 @@ TOKEN_CONFIG_DEFAULTS = {
 }
 
 
+# ─── Model optimization profiles ────────────────────────────────────────────
+#
+# A profile is a sparse overlay on a model's config. Fields only appear when
+# the profile has an opinion — everything else falls through to the raw model
+# config / defaults. Profile name lives on the model as `profile`; resolved
+# lazily via resolve_model_settings(mid) so editing a profile definition
+# updates every model using it without touching config.json.
+#
+# Precedence (lowest → highest):
+#   defaults < model profile overlay < raw model fields < agent config < per-request
+#
+# Why these specific knobs:
+#   - speed: optimises for KV-prefix stability + instant first token on local
+#     models. Fat-but-stable prompt beats lean-but-shifting — deferred tool
+#     groups change between requests as the model calls tool_search, which
+#     invalidates the primed prefix. Local compute is "free" so we don't care
+#     about extra tokens.
+#   - balanced: current default behaviour. What everything shipped with.
+#   - frugal: cloud-money-saver. Aggressive deferral, caveman system prompt,
+#     tighter limits. Only safe on capable cloud models — smaller locals get
+#     dumber under caveman.
+#   - custom: no overlay applied. Backward compat for hand-tuned models.
+MODEL_PROFILES = {
+    "speed": {
+        "model": {
+            "warmup": True,
+            "warmup_mode": "full",
+            "parallel_tool_calls": True,
+            "caveman_system": 0,
+        },
+        "token_config": {
+            "include_tools_guide": True,
+            "deferred_tool_groups": [],      # no deferral → stable KV prefix
+            "compact_threshold": 0.85,       # delay compaction → keep cache warm
+        },
+        "limits": {
+            "max_tool_rounds": 15,
+            "tool_result_char_limit": 60000,
+            "tool_results_total_tokens": 80000,
+            "context_safety_ratio": 0.95,
+        },
+    },
+    "balanced": {
+        "model": {
+            "parallel_tool_calls": True,
+            "caveman_system": 0,
+        },
+        "token_config": {
+            "include_tools_guide": True,
+            "deferred_tool_groups": ["email", "documents", "code_graph", "scheduler"],
+            "compact_threshold": 0.70,
+        },
+        "limits": {
+            "max_tool_rounds": 15,
+            "tool_result_char_limit": 30000,
+            "tool_results_total_tokens": 50000,
+            "context_safety_ratio": 0.95,
+        },
+    },
+    "frugal": {
+        "model": {
+            "warmup": False,
+            "warmup_allow_cloud": False,
+            "parallel_tool_calls": True,
+            "caveman_system": 2,
+        },
+        "token_config": {
+            "include_tools_guide": False,
+            "deferred_tool_groups": ["email", "documents", "code_graph",
+                                     "scheduler", "nodes", "git"],
+            "compact_threshold": 0.50,
+        },
+        "limits": {
+            "max_tool_rounds": 8,
+            "tool_result_char_limit": 15000,
+            "tool_results_total_tokens": 25000,
+            "context_safety_ratio": 0.90,
+        },
+    },
+}
+
+
+def get_model_profile(mid: str) -> str:
+    """Return the profile name for a model ('speed', 'balanced', 'frugal', 'custom').
+
+    Models without an explicit `profile` field default to 'custom' (no overlay)
+    for backward compat with hand-tuned configs.
+    """
+    cfg = (_models_config or {}).get(mid, {}) or {}
+    p = cfg.get("profile")
+    if p in MODEL_PROFILES or p == "custom":
+        return p
+    return "custom"
+
+
+def resolve_model_settings(mid: str) -> dict:
+    """Return the model config with profile overlay applied.
+
+    Profile overlay sets *defaults* — explicit per-model fields win. This lets
+    users flip a model onto a profile and still override individual knobs.
+    Returns a fresh dict; safe to mutate.
+    """
+    raw = dict((_models_config or {}).get(mid, {}) or {})
+    profile = raw.get("profile")
+    if profile not in MODEL_PROFILES:
+        return raw
+    overlay = MODEL_PROFILES[profile].get("model", {})
+    for k, v in overlay.items():
+        if k not in raw or raw[k] is None:
+            raw[k] = v
+    return raw
+
+
+def resolve_profile_token_config(mid: str) -> dict:
+    """Return the profile's token_config fragment, or empty dict."""
+    profile = get_model_profile(mid)
+    if profile not in MODEL_PROFILES:
+        return {}
+    return dict(MODEL_PROFILES[profile].get("token_config", {}))
+
+
+def resolve_profile_limits(mid: str) -> dict:
+    """Return the profile's limits fragment, or empty dict."""
+    profile = get_model_profile(mid)
+    if profile not in MODEL_PROFILES:
+        return {}
+    return dict(MODEL_PROFILES[profile].get("limits", {}))
+
+
 def _filter_mcp_tools(mcp_tools: list[dict], is_openai: bool = False) -> list[dict]:
     """Apply per-agent MCP tool allow/deny patterns from token_config.
 
@@ -1187,12 +1316,28 @@ def _filter_mcp_tools(mcp_tools: list[dict], is_openai: bool = False) -> list[di
 
 
 def _get_token_config(agent_id: str | None = None) -> dict:
-    """Get token optimization config for an agent, merged with defaults."""
+    """Get token optimization config for an agent, merged with defaults.
+
+    Precedence (lowest → highest):
+      TOKEN_CONFIG_DEFAULTS < model profile overlay < agent token_config
+
+    Model comes from _thread_local._current_model (set per request). Profile
+    contributes deferred_tool_groups, compact_threshold, include_tools_guide.
+    """
     agent = getattr(_thread_local, 'current_agent', None) or _current_agent
-    if not agent:
-        return dict(TOKEN_CONFIG_DEFAULTS)
-    cfg = agent.config.get("token_config", {})
     result = dict(TOKEN_CONFIG_DEFAULTS)
+
+    # Overlay model profile's token_config fragment if a model is bound
+    mid = getattr(_thread_local, '_current_model', None)
+    if mid:
+        prof = resolve_profile_token_config(mid)
+        for k, v in prof.items():
+            if k in result:
+                result[k] = v
+
+    if not agent:
+        return result
+    cfg = agent.config.get("token_config", {})
     if isinstance(cfg, dict):
         for k in TOKEN_CONFIG_DEFAULTS:
             if k in cfg:
@@ -8893,9 +9038,8 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
         "stream_options": {"include_usage": True},
         "tools": _resolve_delegate_tools(tools),
     }
-    if inference_params:
-        provider = _models_config.get(model, {}).get("provider", "")
-        _apply_inference_to_payload(payload, inference_params, provider, scoped_model=model)
+    provider = _models_config.get(model, {}).get("provider", "")
+    _apply_inference_to_payload(payload, inference_params or {}, provider, scoped_model=model)
 
     try:
         _thread_local.max_tool_rounds = MAX_DELEGATE_TOOL_ROUNDS
@@ -9164,9 +9308,17 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
         }
         if all_tools:
             payload["tools"] = all_tools
-        model_cfg = _models_config.get(model, {})
+        model_cfg = resolve_model_settings(model)
         if all_tools and model_cfg.get("parallel_tool_calls", True):
             payload["parallel_tool_calls"] = True
+        # KV-prefix stability: real chat requests now go through
+        # _apply_inference_to_payload, which forces enable_thinking on/off for
+        # oMLX thinking-capable models. The warmup payload must mirror that
+        # exactly or the prefix won't match and prompt cache will miss.
+        # We mirror the "no thinking" branch since the first real turn defaults
+        # to off until the user opts in.
+        provider_name = prov.get("provider_name", "")
+        _apply_inference_to_payload(payload, get_inference_params(model), provider_name, scoped_model=model)
         headers = make_headers(api_key)
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
@@ -9845,20 +9997,21 @@ import sqlite3
 
 SCHEDULER_DB = os.path.join(AGENTS_DIR, "main", "scheduler.db")
 
-_sched_db_lock = threading.Lock()
-_sched_db_pool: dict[int, sqlite3.Connection] = {}
+_sched_db_pool = threading.local()
 
 
 def _sched_conn():
-    """Get a thread-safe reusable SQLite connection for the scheduler DB."""
-    tid = threading.current_thread().ident
-    with _sched_db_lock:
-        conn = _sched_db_pool.get(tid)
-        if conn is None:
-            conn = sqlite3.connect(SCHEDULER_DB, timeout=10, check_same_thread=False)
-            conn.execute("PRAGMA busy_timeout = 5000")
-            conn.execute("PRAGMA journal_mode = WAL")
-            _sched_db_pool[tid] = conn
+    """Thread-local SQLite connection for the scheduler DB.
+
+    Using threading.local() ensures the connection is released when the
+    thread exits — otherwise short-lived HTTP handler threads leak FDs.
+    """
+    conn = getattr(_sched_db_pool, "conn", None)
+    if conn is None:
+        conn = sqlite3.connect(SCHEDULER_DB, timeout=10, check_same_thread=False)
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA journal_mode = WAL")
+        _sched_db_pool.conn = conn
     return conn
 
 
@@ -10345,20 +10498,17 @@ _notification_hook = None
 
 COST_DB = os.path.join(AGENTS_DIR, "main", "costs.db")
 
-_cost_db_lock = threading.Lock()
-_cost_db_pool: dict[int, sqlite3.Connection] = {}
+_cost_db_pool = threading.local()
 
 
 def _cost_conn():
-    """Get a thread-safe reusable SQLite connection for the cost DB."""
-    tid = threading.current_thread().ident
-    with _cost_db_lock:
-        conn = _cost_db_pool.get(tid)
-        if conn is None:
-            conn = sqlite3.connect(COST_DB, timeout=10, check_same_thread=False)
-            conn.execute("PRAGMA busy_timeout = 5000")
-            conn.execute("PRAGMA journal_mode = WAL")
-            _cost_db_pool[tid] = conn
+    """Thread-local SQLite connection for the cost DB."""
+    conn = getattr(_cost_db_pool, "conn", None)
+    if conn is None:
+        conn = sqlite3.connect(COST_DB, timeout=10, check_same_thread=False)
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA journal_mode = WAL")
+        _cost_db_pool.conn = conn
     return conn
 
 
@@ -10617,20 +10767,17 @@ _cost_tracker: CostTracker | None = None
 
 TRACES_DB = os.path.join(AGENTS_DIR, "main", "traces.db")
 
-_traces_db_lock = threading.Lock()
-_traces_db_pool: dict[int, sqlite3.Connection] = {}
+_traces_db_pool = threading.local()
 
 
 def _traces_conn():
-    """Get a thread-safe reusable SQLite connection for the traces DB."""
-    tid = threading.current_thread().ident
-    with _traces_db_lock:
-        conn = _traces_db_pool.get(tid)
-        if conn is None:
-            conn = sqlite3.connect(TRACES_DB, timeout=10, check_same_thread=False)
-            conn.execute("PRAGMA busy_timeout = 5000")
-            conn.execute("PRAGMA journal_mode = WAL")
-            _traces_db_pool[tid] = conn
+    """Thread-local SQLite connection for the traces DB."""
+    conn = getattr(_traces_db_pool, "conn", None)
+    if conn is None:
+        conn = sqlite3.connect(TRACES_DB, timeout=10, check_same_thread=False)
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA journal_mode = WAL")
+        _traces_db_pool.conn = conn
     return conn
 
 
@@ -10787,20 +10934,17 @@ _trace_manager: TraceManager | None = None
 
 AUDIT_DB = os.path.join(AGENTS_DIR, "main", "audit.db")
 
-_audit_db_lock = threading.Lock()
-_audit_db_pool: dict[int, sqlite3.Connection] = {}
+_audit_db_pool = threading.local()
 
 
 def _audit_conn():
-    """Get a thread-safe reusable SQLite connection for the audit DB."""
-    tid = threading.current_thread().ident
-    with _audit_db_lock:
-        conn = _audit_db_pool.get(tid)
-        if conn is None:
-            conn = sqlite3.connect(AUDIT_DB, timeout=10, check_same_thread=False)
-            conn.execute("PRAGMA busy_timeout = 5000")
-            conn.execute("PRAGMA journal_mode = WAL")
-            _audit_db_pool[tid] = conn
+    """Thread-local SQLite connection for the audit DB."""
+    conn = getattr(_audit_db_pool, "conn", None)
+    if conn is None:
+        conn = sqlite3.connect(AUDIT_DB, timeout=10, check_same_thread=False)
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA journal_mode = WAL")
+        _audit_db_pool.conn = conn
     return conn
 
 
@@ -11278,8 +11422,7 @@ def tool_mcp_servers(args: dict) -> str:
 
 CODE_GRAPH_DB = os.path.join(AGENTS_DIR, "main", "code-graph.db")
 
-_code_graph_db_lock = threading.Lock()
-_code_graph_db_pool: dict[int, sqlite3.Connection] = {}
+_code_graph_db_pool = threading.local()
 
 _EXT_TO_LANG = {
     ".py": "python", ".js": "javascript", ".ts": "typescript", ".tsx": "tsx",
@@ -11362,15 +11505,13 @@ _CALL_TYPES = {
 
 def _code_graph_conn():
     """Thread-local SQLite connection for code graph DB."""
-    tid = threading.current_thread().ident
-    with _code_graph_db_lock:
-        conn = _code_graph_db_pool.get(tid)
-        if conn is None:
-            os.makedirs(os.path.dirname(CODE_GRAPH_DB), exist_ok=True)
-            conn = sqlite3.connect(CODE_GRAPH_DB, timeout=10, check_same_thread=False)
-            conn.execute("PRAGMA busy_timeout = 5000")
-            conn.execute("PRAGMA journal_mode = WAL")
-            _code_graph_db_pool[tid] = conn
+    conn = getattr(_code_graph_db_pool, "conn", None)
+    if conn is None:
+        os.makedirs(os.path.dirname(CODE_GRAPH_DB), exist_ok=True)
+        conn = sqlite3.connect(CODE_GRAPH_DB, timeout=10, check_same_thread=False)
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA journal_mode = WAL")
+        _code_graph_db_pool.conn = conn
     return conn
 
 
@@ -12869,20 +13010,18 @@ _CONTEXT_CONFIG_DEFAULTS = {
     "messages_per_summary": 10,
 }
 
-_context_db_lock = threading.Lock()
-_context_db_pool: dict[int, sqlite3.Connection] = {}
+_context_db_pool = threading.local()
 
 
 def _context_conn():
-    tid = threading.current_thread().ident
-    with _context_db_lock:
-        conn = _context_db_pool.get(tid)
-        if conn is None:
-            os.makedirs(os.path.dirname(CONTEXT_DB), exist_ok=True)
-            conn = sqlite3.connect(CONTEXT_DB, timeout=10, check_same_thread=False)
-            conn.execute("PRAGMA busy_timeout = 5000")
-            conn.execute("PRAGMA journal_mode = WAL")
-            _context_db_pool[tid] = conn
+    """Thread-local SQLite connection for the context DB."""
+    conn = getattr(_context_db_pool, "conn", None)
+    if conn is None:
+        os.makedirs(os.path.dirname(CONTEXT_DB), exist_ok=True)
+        conn = sqlite3.connect(CONTEXT_DB, timeout=10, check_same_thread=False)
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA journal_mode = WAL")
+        _context_db_pool.conn = conn
     return conn
 
 
@@ -14276,15 +14415,21 @@ def _match_known_model(model_id: str) -> dict:
 
 
 def init_models_config(providers: dict, existing_models: dict | None = None,
-                       all_providers: dict | None = None) -> dict:
+                       all_providers: dict | None = None,
+                       deleted_models: set | list | None = None) -> dict:
     """Auto-populate models config from provider model lists.
 
     Merges with existing config (preserves user edits). Returns the models dict.
     all_providers: when syncing a subset, pass full provider dict for orphan cleanup.
+    deleted_models: tombstone set — model ids (and provider/scoped variants) that
+        the user explicitly deleted. We never auto-rediscover these. Cleared per
+        provider only by the resync_provider action.
     """
     global _models_config
     if existing_models:
         _models_config = dict(existing_models)
+
+    tombstones = set(deleted_models or ())
 
     # Discover models from all providers
     for name, p in providers.items():
@@ -14294,18 +14439,27 @@ def init_models_config(providers: dict, existing_models: dict | None = None,
         except Exception:
             models = []
         discovered = set(models)
+        # Auto-pick profile based on endpoint: local → "speed", cloud → "balanced".
+        # Explicit per-model overrides survive because this only fires for new entries.
+        default_profile = "speed" if _is_local_base_url(p.get("base_url", "")) else "balanced"
         for model_id in models:
+            scoped_key = f"{name}/{model_id}"
+            # Honor user deletions: if either the bare id or the provider-scoped
+            # id is tombstoned, skip discovery entirely.
+            if model_id in tombstones or scoped_key in tombstones:
+                continue
             if model_id not in _models_config:
                 entry = _match_known_model(model_id)
                 entry["provider"] = name
+                entry["profile"] = default_profile
                 _models_config[model_id] = entry
             elif _models_config[model_id].get("provider") != name:
                 # Same model ID exists under a different provider — add with provider-scoped key
-                scoped_key = f"{name}/{model_id}"
                 if scoped_key not in _models_config:
                     entry = _match_known_model(model_id)
                     entry["provider"] = name
                     entry["base_model_id"] = model_id
+                    entry["profile"] = default_profile
                     _models_config[scoped_key] = entry
                 discovered.add(scoped_key)
             else:
@@ -14560,8 +14714,10 @@ _INFERENCE_OMLX_KEYS = {"min_p", "repetition_penalty"}
 
 def _apply_inference_to_payload(payload: dict, params: dict, provider: str = "", scoped_model: str = "") -> None:
     """Apply resolved inference params to an OpenAI-compatible payload."""
-    if not params:
-        return
+    # Note: don't early-return when params is empty. We may still need to set
+    # chat_template_kwargs.enable_thinking=false on oMLX thinking-capable models,
+    # since their chat templates default thinking to ON when the kwarg is absent.
+    params = params or {}
 
     is_omlx = provider == "omlx"
 
@@ -14596,8 +14752,17 @@ def _apply_inference_to_payload(payload: dict, params: dict, provider: str = "",
             payload["reasoning_effort"] = _thinking_level
 
     # Legacy/oMLX chat template kwarg (kept for models that use it instead of reasoning_effort).
-    if params.get("thinking") and is_omlx:
-        payload.setdefault("chat_template_kwargs", {})["enable_thinking"] = True
+    # Qwen3 chat templates default enable_thinking=True when the kwarg is absent —
+    # so we must send it EXPLICITLY in both directions, not only when turning on.
+    # Otherwise the off toggle in the UI is silently ignored.
+    if is_omlx:
+        _scoped_id = scoped_model or payload.get("model", "")
+        _fmt = _models_config.get(_scoped_id, {}).get("thinking_format", "none")
+        if _fmt != "none":
+            want_thinking = bool(params.get("thinking")) or (
+                params.get("thinking_level") not in (None, "", "none")
+            )
+            payload.setdefault("chat_template_kwargs", {})["enable_thinking"] = want_thinking
 
 
 def list_models(api_key: str, base_url: str) -> None:
@@ -16078,9 +16243,22 @@ AGENT_LIMITS_DEFAULTS = {
 
 
 def _get_agent_limits(agent_id: str | None = None) -> dict:
-    """Get runtime limits for an agent, merged with defaults."""
+    """Get runtime limits for an agent, merged with defaults.
+
+    Precedence (lowest → highest):
+      AGENT_LIMITS_DEFAULTS < model profile overlay < agent limits
+    """
     agent = getattr(_thread_local, 'current_agent', None) or _current_agent
     result = dict(AGENT_LIMITS_DEFAULTS)
+
+    # Overlay model profile's limits fragment if a model is bound
+    mid = getattr(_thread_local, '_current_model', None)
+    if mid:
+        prof = resolve_profile_limits(mid)
+        for k, v in prof.items():
+            if k in result:
+                result[k] = v
+
     if not agent:
         return result
     cfg = agent.config.get("limits", {})
@@ -16694,10 +16872,11 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         "stream_options": {"include_usage": True},
     }
 
-    # Apply inference parameters (temperature, top_p, thinking, etc.)
-    if inference_params:
-        provider = _models_config.get(model, {}).get("provider", "")
-        _apply_inference_to_payload(payload, inference_params, provider, scoped_model=model)
+    # Apply inference parameters (temperature, top_p, thinking, etc.).
+    # Always invoke — even with empty params, oMLX thinking-capable models
+    # need an explicit enable_thinking=false to suppress the template default.
+    provider = _models_config.get(model, {}).get("provider", "")
+    _apply_inference_to_payload(payload, inference_params or {}, provider, scoped_model=model)
 
     if tools:
         mcp_mgr = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
@@ -16731,7 +16910,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
             all_tools.sort(key=lambda t: t.get("function", {}).get("name", ""))
         payload["tools"] = all_tools
         # Parallel tool calls: let the model emit multiple tool calls in one response
-        model_cfg = _models_config.get(model, {})
+        model_cfg = resolve_model_settings(model)
         if model_cfg.get("parallel_tool_calls", True):
             payload["parallel_tool_calls"] = True
 

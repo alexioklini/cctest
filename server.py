@@ -152,21 +152,27 @@ import sqlite3
 CHAT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agents", "main", "chats.db")
 
 
-_db_pool_lock = threading.Lock()
-_db_pool: dict[str, sqlite3.Connection] = {}
+_db_pool = threading.local()
 
 
 def _db_conn(db_path=None):
-    """Get a thread-safe SQLite connection (reused per database path)."""
+    """Get a thread-safe SQLite connection (reused per database path).
+
+    Connections are kept in thread-local storage so they're automatically
+    released when the thread exits — critical under ThreadingMixIn, where
+    every HTTP request spawns (and discards) its own thread.
+    """
     path = db_path or CHAT_DB
-    tid = f"{path}:{threading.current_thread().ident}"
-    with _db_pool_lock:
-        conn = _db_pool.get(tid)
-        if conn is None:
-            conn = sqlite3.connect(path, timeout=10, check_same_thread=False)
-            conn.execute("PRAGMA busy_timeout = 5000")
-            conn.execute("PRAGMA journal_mode = WAL")
-            _db_pool[tid] = conn
+    conns = getattr(_db_pool, "conns", None)
+    if conns is None:
+        conns = {}
+        _db_pool.conns = conns
+    conn = conns.get(path)
+    if conn is None:
+        conn = sqlite3.connect(path, timeout=10, check_same_thread=False)
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conns[path] = conn
     return conn
 
 
@@ -1554,7 +1560,7 @@ def _trigger_warmup(session):
         try:
             if session._warmup_cancel.is_set():
                 return
-            mcfg = engine._models_config.get(session.model, {}) or {}
+            mcfg = engine.resolve_model_settings(session.model) or {}
             wcfg = server_config.get("warmup", {}) or {}
             allow_cloud = bool(mcfg.get("warmup_allow_cloud",
                                         wcfg.get("allow_cloud", False)))
@@ -2141,7 +2147,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             if not s:
                 self._send_json({"warmup": False, "warming_up": False})
             else:
-                mcfg = engine._models_config.get(s.model, {})
+                mcfg = engine.resolve_model_settings(s.model)
                 warmup_enabled = bool(mcfg.get("warmup", False))
                 self._send_json({"warmup": warmup_enabled, "warming_up": s._warmup_active})
         elif path == "/v1/loops":
@@ -2405,7 +2411,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             # Per-model warmup check
-            mcfg = engine._models_config.get(s.model, {})
+            mcfg = engine.resolve_model_settings(s.model)
             warmup_enabled = bool(mcfg.get("warmup", False))
             if warmup_enabled and not s._warmup_active:
                 _trigger_warmup(s)
@@ -3323,7 +3329,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                                session.title, session.status, session.created_at,
                                session.last_active, session.project or "")
         # Per-model warmup flag
-        mcfg = engine._models_config.get(model, {})
+        mcfg = engine.resolve_model_settings(model)
         warmup_enabled = bool(mcfg.get("warmup", False))
 
         # Claimed pool sessions are already warm — skip the "warmup" status
@@ -3367,7 +3373,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             provider = self._resolve_provider(model)
             session.api_key = provider["api_key"]
             session.base_url = provider["base_url"]
-            mcfg = engine._models_config.get(model, {})
+            mcfg = engine.resolve_model_settings(model)
             warmup_enabled = bool(mcfg.get("warmup", False))
         self._send_json({
             "session_id": session.id,
@@ -3854,7 +3860,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
             # Set caveman modes: chat-level (session toggle) + system-level (model config)
             engine._thread_local.caveman_chat = session.caveman_mode
-            model_cfg = engine._models_config.get(session.model, {}) if engine._models_config else {}
+            model_cfg = engine.resolve_model_settings(session.model) if engine._models_config else {}
             engine._thread_local.caveman_system = int(model_cfg.get("caveman_system", 0) or 0)
 
             # Set worker subagent execution overrides from agent config
@@ -4351,16 +4357,24 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             # the pooled KV prefix is suspect.
             _prefix_fields = ("warmup", "warmup_mode", "enabled", "max_context",
                               "warmup_allow_cloud", "parallel_tool_calls",
-                              "caveman_system", "provider", "base_model_id")
+                              "caveman_system", "provider", "base_model_id",
+                              "profile")
             prev_model_snapshot = {
                 mid: {k: cfg.get(k) for k in _prefix_fields}
                 for mid, cfg in (engine._models_config or {}).items()
             }
 
+            tombstones = list(config.get("deleted_models", []) or [])
+
             if action == "save":
                 models = body.get("models", {})
                 config["models"] = models
                 engine._models_config = dict(models)
+                # Any model id present in the new dict is, by definition, no
+                # longer deleted — strip from tombstones (handles manual re-add).
+                if tombstones:
+                    tombstones = [mid for mid in tombstones if mid not in models]
+                    config["deleted_models"] = tombstones
 
             elif action == "update":
                 model_id = body.get("model_id", "")
@@ -4371,6 +4385,70 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 config.setdefault("models", {})
                 config["models"][model_id] = model_cfg
                 engine._models_config[model_id] = model_cfg
+                # Re-adding/updating an id revives it from the tombstone list.
+                if model_id in tombstones:
+                    tombstones.remove(model_id)
+                    config["deleted_models"] = tombstones
+
+            elif action == "delete":
+                # User-initiated single-model delete. Removes from active config
+                # AND tombstones the id so init_models_config doesn't auto-rediscover
+                # it on next startup or sync.
+                model_id = body.get("model_id", "")
+                if not model_id:
+                    self._send_json({"error": "model_id required"}, 400)
+                    return
+                config.setdefault("models", {}).pop(model_id, None)
+                engine._models_config.pop(model_id, None)
+                if model_id not in tombstones:
+                    tombstones.append(model_id)
+                config["deleted_models"] = tombstones
+
+            elif action == "resync_provider":
+                # Full user-initiated resync of one provider:
+                #   1) drop ALL models attributed to that provider
+                #   2) clear tombstones for those ids (incl. provider-scoped form)
+                #   3) re-discover from /models endpoint
+                # Never runs automatically — UI button only.
+                prov_name = body.get("provider", "")
+                if not prov_name:
+                    self._send_json({"error": "provider required"}, 400)
+                    return
+                all_providers = server_config.get("providers", {})
+                if prov_name not in all_providers:
+                    self._send_json({"error": f"unknown provider: {prov_name}"}, 400)
+                    return
+                models_dict = config.setdefault("models", {})
+                # Identify everything tied to this provider, in either bare or
+                # provider-scoped form.
+                cleared_ids: set[str] = set()
+                for mid, mcfg in list(models_dict.items()):
+                    if (mcfg or {}).get("provider") == prov_name:
+                        cleared_ids.add(mid)
+                        # Also collect the bare id behind a scoped key, since
+                        # tombstones can appear in either form.
+                        base = (mcfg or {}).get("base_model_id")
+                        if base:
+                            cleared_ids.add(base)
+                        del models_dict[mid]
+                        engine._models_config.pop(mid, None)
+                # Clear tombstones for those ids + any "<provider>/..." scoped tombstones.
+                tombstones = [
+                    mid for mid in tombstones
+                    if mid not in cleared_ids and not mid.startswith(f"{prov_name}/")
+                ]
+                config["deleted_models"] = tombstones
+                # Re-discover this provider's models (synchronously — user clicked
+                # a button and is waiting). Persist + clear caches.
+                providers_subset = {prov_name: all_providers[prov_name]}
+                synced = engine.init_models_config(
+                    providers_subset, models_dict,
+                    all_providers=all_providers,
+                    deleted_models=tombstones,
+                )
+                config["models"] = synced
+                engine._models_config = dict(synced)
+                engine.clear_provider_cache()
 
             elif action == "sync":
                 # Run sync in background thread — return immediately
@@ -4386,7 +4464,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         with open(cfg_path) as f:
                             cfg = json.load(f)
                         existing = cfg.get("models", {})
-                        synced = engine.init_models_config(providers, existing, all_providers=all_providers)
+                        deleted = cfg.get("deleted_models", [])
+                        synced = engine.init_models_config(
+                            providers, existing,
+                            all_providers=all_providers,
+                            deleted_models=deleted,
+                        )
                         cfg["models"] = synced
                         with open(cfg_path, "w") as f:
                             json.dump(cfg, f, indent=2)
@@ -4454,7 +4537,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         out = {}
         any_warming = False
         any_pool_building = False
-        for mid, cfg in engine._models_config.items():
+        for mid, _raw_cfg in engine._models_config.items():
+            cfg = engine.resolve_model_settings(mid)
             if not cfg.get("warmup"):
                 continue
             st = states.get(mid, {
@@ -4507,10 +4591,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         if not mid:
             self._send_json({"error": "model required"}, 400)
             return
-        cfg = engine._models_config.get(mid, {})
-        if not cfg:
+        if not engine._models_config.get(mid):
             self._send_json({"error": "unknown model"}, 404)
             return
+        cfg = engine.resolve_model_settings(mid)
         wcfg = server_config.get("warmup", {}) or {}
         allow_cloud = bool(cfg.get("warmup_allow_cloud",
                                    wcfg.get("allow_cloud", False)))
@@ -8434,8 +8518,10 @@ def main():
 
     # Initialize models config
     existing_models = file_config.get("models")
+    deleted_models = file_config.get("deleted_models", [])
     if providers:
-        synced = engine.init_models_config(providers, existing_models)
+        synced = engine.init_models_config(providers, existing_models,
+                                           deleted_models=deleted_models)
         if not existing_models and synced:
             # First run: persist auto-discovered models to config.json
             try:
@@ -9378,7 +9464,8 @@ def main():
                 # whose configured mode changed since last prime.
                 now = time.time()
                 candidates = []
-                for mid, cfg in list(engine._models_config.items()):
+                for mid, _raw_cfg in list(engine._models_config.items()):
+                    cfg = engine.resolve_model_settings(mid)
                     if not cfg.get("warmup"):
                         continue
                     if not cfg.get("enabled", True):
@@ -9426,7 +9513,8 @@ def main():
                 # depth. Only build for models that are fully warm (weights +
                 # KV prefix primed). try_build is a no-op when the pool is
                 # already full.
-                for mid, cfg in list(engine._models_config.items()):
+                for mid, _raw_cfg in list(engine._models_config.items()):
+                    cfg = engine.resolve_model_settings(mid)
                     if not cfg.get("warmup") or not cfg.get("enabled", True):
                         continue
                     st = engine.get_warmup_state(mid)
