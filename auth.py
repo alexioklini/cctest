@@ -21,21 +21,19 @@ import jwt as pyjwt
 
 AUTH_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agents", "main", "auth.db")
 
-_auth_db_lock = threading.Lock()
-_auth_db_pool: dict[int, sqlite3.Connection] = {}
+_auth_db_pool = threading.local()
 
 
 def _auth_conn() -> sqlite3.Connection:
-    tid = threading.current_thread().ident
-    with _auth_db_lock:
-        conn = _auth_db_pool.get(tid)
-        if conn is None:
-            os.makedirs(os.path.dirname(AUTH_DB), exist_ok=True)
-            conn = sqlite3.connect(AUTH_DB, timeout=10, check_same_thread=False)
-            conn.execute("PRAGMA busy_timeout = 5000")
-            conn.execute("PRAGMA journal_mode = WAL")
-            conn.row_factory = sqlite3.Row
-            _auth_db_pool[tid] = conn
+    """Thread-local SQLite connection for the auth DB."""
+    conn = getattr(_auth_db_pool, "conn", None)
+    if conn is None:
+        os.makedirs(os.path.dirname(AUTH_DB), exist_ok=True)
+        conn = sqlite3.connect(AUTH_DB, timeout=10, check_same_thread=False)
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.row_factory = sqlite3.Row
+        _auth_db_pool.conn = conn
     return conn
 
 
