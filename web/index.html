@@ -120,6 +120,14 @@
   --sidebar-text: #3d3d3a;
   --sidebar-text-muted: #73726c;
 
+  /* Compat aliases for admin RBAC modals and older components */
+  --text-primary: var(--text-000);
+  --text-secondary: var(--text-400);
+  --border-light: var(--border-200);
+  --bg-surface: var(--modal-bg);
+  --bg-base: var(--bg-100);
+  --bg-hover: var(--bg-200);
+
   --success: #16a34a;
   --error: #dc2626;
   --warning: #d97706;
@@ -185,6 +193,14 @@
   --sidebar-active: rgba(255,255,255,0.1);
   --sidebar-text: #b4b3ad;
   --sidebar-text-muted: #8c8b85;
+
+  /* Compat aliases for admin RBAC modals and older components */
+  --text-primary: var(--text-000);
+  --text-secondary: var(--text-400);
+  --border-light: var(--border-200);
+  --bg-surface: var(--modal-bg);
+  --bg-base: var(--bg-100);
+  --bg-hover: var(--bg-200);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -2643,6 +2659,13 @@ textarea { resize: none; }
   border-bottom: 1px solid var(--border-100);
 }
 .modal-title { font-size: 18px; font-weight: 600; color: var(--text-000); }
+.modal-header h2 { font-size: 18px; font-weight: 600; color: var(--text-000); margin: 0; }
+.modal-body h3 { color: var(--text-000); }
+/* Ensure inline-styled inputs/selects inside modals use theme colors. */
+.modal-body input, .modal-body select, .modal-body textarea {
+  background: var(--bg-100); color: var(--text-100);
+}
+.modal-body input:disabled, .modal-body select:disabled { opacity: 0.6; }
 .modal-close {
   width: 32px;
   height: 32px;
@@ -3165,16 +3188,16 @@ textarea { resize: none; }
 /* User dropdown in sidebar */
 .sb-user-dropdown {
   position: absolute; bottom: 100%; left: 8px; right: 8px;
-  background: var(--bg-surface, #fff); border: 1px solid var(--border-light, #d4cfc7);
-  border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  background: var(--modal-bg); border: 1px solid var(--border-200);
+  border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.18);
   display: none; z-index: 100; overflow: hidden;
 }
 .sb-user-dropdown.open { display: block; }
 .sb-user-dropdown-item {
   padding: 10px 16px; font-size: 13px; cursor: pointer;
-  color: var(--text-primary); display: flex; align-items: center; gap: 8px;
+  color: var(--text-100); display: flex; align-items: center; gap: 8px;
 }
-.sb-user-dropdown-item:hover { background: var(--bg-hover, #f0ebe3); }
+.sb-user-dropdown-item:hover { background: var(--bg-200); }
 .sb-user-dropdown-item.danger { color: #dc2626; }
 
 /* Role badges */
@@ -7065,7 +7088,7 @@ function maybeShowCostModal(chat, cost, maxCost) {
   const pct = Math.round((cost / maxCost) * 100);
   const html = `
     <div class="modal-overlay" id="cost-warning-modal" style="display:flex">
-      <div class="modal" style="max-width:480px">
+      <div class="modal-content" style="max-width:480px">
         <div class="modal-header">
           <div class="modal-title" style="color:var(--error)">&#9888; Session cost warning</div>
         </div>
@@ -12881,7 +12904,7 @@ async function openUserManagement() {
     const roleBadge = (r) => `<span class="role-badge ${esc(r)}">${esc(r)}</span>`;
     const statusDot = (disabled) => `<span title="${disabled?'disabled':'active'}" style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle;background:${disabled?'#dc2626':'#16a34a'}"></span>`;
     modal.innerHTML = `
-      <div class="modal" style="max-width:920px">
+      <div class="modal-content" style="max-width:920px">
         <div class="modal-header"><h2>User Management</h2><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button></div>
         <div class="modal-body" style="max-height:75vh;overflow-y:auto">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
@@ -13048,7 +13071,7 @@ async function openUserPermissions(userId, username) {
       ${viaTeam && viaTeam.length ? `<span style="font-size:10px;padding:2px 6px;background:var(--bg-base);border-radius:10px;color:var(--text-secondary)">via team: ${esc(viaTeam.join(', '))}</span>` : ''}
     </div>`;
     modal.innerHTML = `
-      <div class="modal" style="max-width:780px">
+      <div class="modal-content" style="max-width:780px">
         <div class="modal-header">
           <h2>Permissions: ${esc(username)}${isAdmin?' (admin — full access)':''}</h2>
           <button class="modal-close" onclick="document.querySelector('.modal-overlay').remove();openUserManagement()">&times;</button>
@@ -13150,7 +13173,7 @@ async function openUserTeams() {
       </div>`;
     };
     modal.innerHTML = `
-      <div class="modal" style="max-width:720px">
+      <div class="modal-content" style="max-width:720px">
         <div class="modal-header"><h2>User Teams</h2><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button></div>
         <div class="modal-body" style="max-height:75vh;overflow-y:auto">
           ${isAdmin ? `<div style="display:flex;justify-content:flex-end;margin-bottom:12px">
@@ -13232,7 +13255,7 @@ function openChangePassword() {
   modal.className = 'modal-overlay';
   modal.onclick = e => { if (e.target === modal) modal.remove(); };
   modal.innerHTML = `
-    <div class="modal" style="max-width:400px">
+    <div class="modal-content" style="max-width:400px">
       <div class="modal-header"><h2>Change Password</h2><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button></div>
       <div class="modal-body">
         <input id="cp-old" type="password" placeholder="Current password" style="display:block;width:100%;box-sizing:border-box;padding:10px;margin-bottom:10px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
