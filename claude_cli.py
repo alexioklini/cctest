@@ -3221,9 +3221,10 @@ def tool_mempalace_query(args: dict) -> str:
         return _err("mempalace_query: 'query' is required")
     wing = args.get("wing") or None
     # Auto-scope to current user's wing for per-user memory isolation.
-    # LLM can pass a bare agent_id (e.g. "main"); we prepend user_id/.
-    # Explicit full paths (containing "/") are left as-is.
+    # LLM can pass a bare agent_id (e.g. "main"); we prepend user_id--.
+    # Explicit full wing names (containing "--") are left as-is.
     current_user_id = getattr(_thread_local, "current_user_id", "") or ""
+    current_team_ids = list(getattr(_thread_local, "current_team_ids", []) or [])
     if current_user_id and wing and "--" not in wing:
         wing = f"{current_user_id}--{wing}"
     room = args.get("room") or None
@@ -3233,11 +3234,13 @@ def tool_mempalace_query(args: dict) -> str:
     except (TypeError, ValueError):
         n_results = 5
 
-    # When no wing filter and user is known, over-fetch then post-filter to
-    # exclude other users' per-user wings (those with "/" where prefix != user_id).
-    # Shared wings (no "/", e.g. "brain_code") remain visible to all users.
+    # When no wing filter and user is known, over-fetch then post-filter.
+    # Visible wings:
+    #   - shared (no "--" in name, e.g. "brain_code")
+    #   - own user wings: "{user_id}--..."
+    #   - team wings for teams the user is in: "{team_id}--..."
     _needs_user_filter = bool(current_user_id and not wing)
-    fetch_n = n_results * 3 if _needs_user_filter else n_results
+    fetch_n = n_results * 4 if _needs_user_filter else n_results
 
     mempalace_activity.retrieve_begin()
     try:
@@ -3269,11 +3272,16 @@ def tool_mempalace_query(args: dict) -> str:
 
     raw_results = (results or {}).get("results", [])
     if _needs_user_filter:
+        team_prefixes = tuple(f"{tid}--" for tid in current_team_ids)
         def _visible(r):
             w = r.get("wing", "")
             if "--" not in w:
                 return True  # shared wing (brain_code, etc.)
-            return w.startswith(current_user_id + "--")
+            if w.startswith(current_user_id + "--"):
+                return True  # own per-user wing
+            if team_prefixes and w.startswith(team_prefixes):
+                return True  # team wing for a team this user belongs to
+            return False
         raw_results = [r for r in raw_results if isinstance(r, dict) and _visible(r)]
 
     drawers = []
@@ -5568,7 +5576,9 @@ class ProjectManager:
         try:
             with open(cfg_path, "r") as f:
                 cfg = json.load(f)
-            for k in ("description", "watch_folders", "tags", "model", "name", "icon", "status", "instructions"):
+            for k in ("description", "watch_folders", "tags", "model", "name", "icon",
+                       "status", "instructions",
+                       "visibility", "owner_user_id", "owner_team_id"):
                 if k in updates:
                     cfg[k] = updates[k]
             with open(cfg_path, "w") as f:
@@ -9467,8 +9477,9 @@ class TaskRunner:
         """Submit a task to run in a background thread. Returns task_id."""
         task_id = _uuid.uuid4().hex[:8]
         cancel_flag = threading.Event()
-        # Capture caller's user_id for MemPalace wing scoping in the child thread
+        # Capture caller's user_id and team ids for MemPalace wing scoping in the child thread
         caller_user_id = getattr(_thread_local, "current_user_id", "") or ""
+        caller_team_ids = list(getattr(_thread_local, "current_team_ids", []) or [])
 
         with self._lock:
             self._tasks[task_id] = {
@@ -9582,6 +9593,7 @@ class TaskRunner:
             _thread_local.current_agent = target
             _thread_local.memory_store = target_memory
             _thread_local.current_user_id = caller_user_id
+            _thread_local.current_team_ids = caller_team_ids
             if cancel_flag.is_set():
                 status = "cancelled"
             else:
@@ -9599,6 +9611,8 @@ class TaskRunner:
             _thread_local.delegate_agent_id = None
             _thread_local.current_agent = None
             _thread_local.memory_store = None
+            _thread_local.current_user_id = ""
+            _thread_local.current_team_ids = []
 
         with self._lock:
             self._tasks[task_id]["status"] = status

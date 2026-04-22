@@ -3230,24 +3230,13 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
   <div class="auth-container">
     <div class="auth-logo">Brain Agent</div>
     <div id="auth-error" class="auth-error" style="display:none"></div>
-    <!-- Login Form -->
+    <!-- Login Form (self-registration disabled — users are provisioned by admin) -->
     <div id="auth-login-form">
       <h2>Sign in</h2>
       <input id="auth-username" type="text" placeholder="Username" autocomplete="username" onkeydown="if(event.key==='Enter')authLogin()" />
       <input id="auth-password" type="password" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter')authLogin()" />
       <button class="auth-btn" onclick="authLogin()">Sign in</button>
-      <p class="auth-toggle">Don't have an account? <a onclick="showAuthRegister()">Register</a></p>
-    </div>
-    <!-- Register Form -->
-    <div id="auth-register-form" style="display:none">
-      <h2>Create account</h2>
-      <input id="reg-username" type="text" placeholder="Username" autocomplete="username" />
-      <input id="reg-display-name" type="text" placeholder="Display name" />
-      <input id="reg-email" type="email" placeholder="Email (optional)" />
-      <input id="reg-password" type="password" placeholder="Password (min 6 chars)" autocomplete="new-password" />
-      <input id="reg-password2" type="password" placeholder="Confirm password" autocomplete="new-password" />
-      <button class="auth-btn" onclick="authRegister()">Create account</button>
-      <p class="auth-toggle">Already have an account? <a onclick="showAuthLogin()">Sign in</a></p>
+      <p class="auth-toggle" style="color:var(--text-400);font-size:12px">Contact your administrator to request an account.</p>
     </div>
   </div>
 </div>
@@ -7586,6 +7575,23 @@ function showCreateProjectModal() {
           }).join('')}
         </select>
       </div>
+      ${(state.authUser && state.authEnabled) ? `
+      <div class="project-modal-field">
+        <label class="project-modal-label">Visibility</label>
+        <select class="project-modal-input" id="create-project-visibility" onchange="document.getElementById('create-project-team-wrap').style.display=(this.value==='team'?'block':'none')">
+          <option value="user" ${state.authUser.role==='user'?'selected':''}>Private (only me)</option>
+          <option value="team">Team</option>
+          ${state.authUser.role === 'admin' ? '<option value="global" selected>Global (everyone)</option>' : ''}
+        </select>
+      </div>
+      <div class="project-modal-field" id="create-project-team-wrap" style="display:none">
+        <label class="project-modal-label">Team</label>
+        <select class="project-modal-input" id="create-project-team">
+          <option value="">Select team...</option>
+          ${(state.userTeams || []).map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}
+        </select>
+      </div>
+      ` : ''}
     </div>
     <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--border-100)">
       <button class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
@@ -7606,10 +7612,13 @@ async function createProject() {
   const name = document.getElementById('create-project-name')?.value?.trim();
   const desc = document.getElementById('create-project-desc')?.value?.trim();
   const agentId = document.getElementById('create-project-agent')?.value || 'main';
+  const visibility = document.getElementById('create-project-visibility')?.value;
+  const teamId = document.getElementById('create-project-team')?.value;
   if (!name) { showToast('Project name is required'); return; }
+  if (visibility === 'team' && !teamId) { showToast('Select a team for team-scoped project'); return; }
 
   try {
-    const result = await API.createProject(agentId, name, desc || '');
+    const result = await API.createProject(agentId, name, desc || '', visibility, teamId);
     if (result.error) {
       showToast(result.error);
       return;
@@ -12723,6 +12732,7 @@ function toggleChatTitleMenu(event) {
 // ═══════════════════════════════════════════════════════════
 state.authUser = null;  // current user object
 state.authEnabled = false;  // whether server has auth enabled
+state.userTeams = [];  // user's teams (for project-visibility picker)
 
 function showAuthOverlay() {
   document.getElementById('auth-overlay').style.display = 'flex';
@@ -12731,16 +12741,6 @@ function showAuthOverlay() {
 function hideAuthOverlay() {
   document.getElementById('auth-overlay').style.display = 'none';
   document.getElementById('app-root').style.display = '';
-}
-function showAuthLogin() {
-  document.getElementById('auth-login-form').style.display = '';
-  document.getElementById('auth-register-form').style.display = 'none';
-  document.getElementById('auth-error').style.display = 'none';
-}
-function showAuthRegister() {
-  document.getElementById('auth-login-form').style.display = 'none';
-  document.getElementById('auth-register-form').style.display = '';
-  document.getElementById('auth-error').style.display = 'none';
 }
 function showAuthError(msg) {
   const el = document.getElementById('auth-error');
@@ -12762,31 +12762,11 @@ async function authLogin() {
     localStorage.setItem('auth-token', data.token);
     localStorage.setItem('auth-user', JSON.stringify(data.user));
     state.authUser = data.user;
-    hideAuthOverlay();
-    renderUserMenu();
-    init();
-  } catch(e) { showAuthError('Connection failed'); }
-}
-
-async function authRegister() {
-  const username = document.getElementById('reg-username').value.trim();
-  const displayName = document.getElementById('reg-display-name').value.trim();
-  const email = document.getElementById('reg-email').value.trim();
-  const password = document.getElementById('reg-password').value;
-  const password2 = document.getElementById('reg-password2').value;
-  if (!username || !password) { showAuthError('Username and password required'); return; }
-  if (password !== password2) { showAuthError('Passwords do not match'); return; }
-  if (password.length < 6) { showAuthError('Password must be at least 6 characters'); return; }
-  try {
-    const r = await fetch(`${BASE_URL}/v1/auth/register`, {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({username, password, display_name: displayName || username, email})
-    });
-    const data = await r.json();
-    if (data.error) { showAuthError(data.error); return; }
-    localStorage.setItem('auth-token', data.token);
-    localStorage.setItem('auth-user', JSON.stringify(data.user));
-    state.authUser = data.user;
+    // Fetch user's teams for project visibility picker
+    try {
+      const me = await fetch(`${BASE_URL}/v1/auth/me`, {headers:{'Authorization':`Bearer ${data.token}`}}).then(r=>r.json());
+      state.userTeams = me.teams || [];
+    } catch(e) { state.userTeams = []; }
     hideAuthOverlay();
     renderUserMenu();
     init();
@@ -12835,6 +12815,7 @@ async function checkAuth() {
     }
     const data = await r.json();
     state.authUser = data.user;
+    state.userTeams = data.teams || [];
     state.authEnabled = true;
     localStorage.setItem('auth-user', JSON.stringify(data.user));
     renderUserMenu();
@@ -12893,76 +12874,238 @@ async function openUserManagement() {
   try {
     const data = await API.get('/v1/auth/users');
     const users = data.users || [];
+    const meId = state.authUser?.id || '';
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
     modal.onclick = e => { if (e.target === modal) modal.remove(); };
+    const roleBadge = (r) => `<span class="role-badge ${esc(r)}">${esc(r)}</span>`;
+    const statusDot = (disabled) => `<span title="${disabled?'disabled':'active'}" style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle;background:${disabled?'#dc2626':'#16a34a'}"></span>`;
     modal.innerHTML = `
-      <div class="modal" style="max-width:700px">
+      <div class="modal" style="max-width:920px">
         <div class="modal-header"><h2>User Management</h2><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button></div>
-        <div class="modal-body" style="max-height:70vh;overflow-y:auto">
+        <div class="modal-body" style="max-height:75vh;overflow-y:auto">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+            <div style="font-size:12px;color:var(--text-secondary);flex:1">Self-registration is disabled. Users must be provisioned here.</div>
+            <button class="um-btn" onclick="document.querySelector('.modal-overlay').remove();openUserTeams()">Teams &rsaquo;</button>
+          </div>
           <table style="width:100%;border-collapse:collapse;font-size:13px">
-            <thead><tr style="text-align:left;border-bottom:2px solid var(--border-light)">
-              <th style="padding:8px">Username</th><th style="padding:8px">Display Name</th>
-              <th style="padding:8px">Role</th><th style="padding:8px">Last Login</th>
-              <th style="padding:8px">Actions</th>
+            <thead><tr style="text-align:left;border-bottom:2px solid var(--border-light);color:var(--text-secondary);font-size:11px;text-transform:uppercase;letter-spacing:0.04em">
+              <th style="padding:8px">Status</th>
+              <th style="padding:8px">Username</th>
+              <th style="padding:8px">Display Name</th>
+              <th style="padding:8px">Role</th>
+              <th style="padding:8px">Last Login</th>
+              <th style="padding:8px;text-align:right">Actions</th>
             </tr></thead>
             <tbody>
-              ${users.map(u => `<tr style="border-bottom:1px solid var(--border-light)">
-                <td style="padding:8px"><code>${u.username}</code></td>
-                <td style="padding:8px">${u.display_name || ''}</td>
-                <td style="padding:8px"><span class="role-badge ${u.role}">${u.role}</span></td>
-                <td style="padding:8px">${u.last_login ? new Date(u.last_login*1000).toLocaleDateString() : 'Never'}</td>
+              ${users.map(u => {
+                const isSelf = u.id === meId;
+                const isDefaultAdmin = u.username === 'admin';
+                return `<tr style="border-bottom:1px solid var(--border-light)">
+                <td style="padding:8px">${statusDot(u.disabled)}${u.disabled?'<span style="font-size:11px;color:#dc2626">disabled</span>':'<span style="font-size:11px;color:#16a34a">active</span>'}</td>
+                <td style="padding:8px"><code>${esc(u.username)}</code>${isSelf?' <span style="font-size:10px;color:var(--text-secondary)">(you)</span>':''}</td>
+                <td style="padding:8px">${esc(u.display_name || '')}</td>
                 <td style="padding:8px">
-                  <select onchange="changeUserRole('${u.id}', this.value)" style="font-size:12px;padding:2px 6px;border-radius:4px;border:1px solid var(--border-light)">
+                  <select onchange="changeUserRole('${esc(u.id)}', this.value)" ${isSelf?'disabled title="Cannot change your own role"':''} style="font-size:12px;padding:2px 6px;border-radius:4px;border:1px solid var(--border-light)">
                     ${['admin','poweruser','user'].map(r => `<option value="${r}" ${u.role===r?'selected':''}>${r}</option>`).join('')}
                   </select>
-                  ${u.username !== 'admin' ? `<button onclick="deleteUser('${u.id}','${u.username}')" style="margin-left:4px;color:#dc2626;background:none;border:none;cursor:pointer;font-size:12px">Delete</button>` : ''}
                 </td>
-              </tr>`).join('')}
+                <td style="padding:8px;color:var(--text-secondary);font-size:12px">${u.last_login ? new Date(u.last_login*1000).toLocaleString() : 'Never'}</td>
+                <td style="padding:8px;text-align:right;white-space:nowrap">
+                  <button class="um-btn" onclick="openUserPermissions('${esc(u.id)}','${esc(u.username)}')" title="Permissions">&#9881;</button>
+                  <button class="um-btn" onclick="adminResetPassword('${esc(u.id)}','${esc(u.username)}')" title="Reset password">&#128273;</button>
+                  ${isSelf ? '' : (u.disabled
+                    ? `<button class="um-btn" onclick="setUserDisabled('${esc(u.id)}', false)" title="Enable user" style="color:#16a34a">&#9654;</button>`
+                    : `<button class="um-btn" onclick="setUserDisabled('${esc(u.id)}', true)" title="Disable user" style="color:#b45309">&#9209;</button>`)}
+                  ${(!isSelf && !isDefaultAdmin) ? `<button class="um-btn" onclick="deleteUser('${esc(u.id)}','${esc(u.username)}')" title="Delete user" style="color:#dc2626">&#128465;</button>` : ''}
+                </td>
+              </tr>`;
+              }).join('')}
             </tbody>
           </table>
-          <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border-light)">
+          <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--border-light)">
             <h3 style="font-size:14px;margin:0 0 12px">Add User</h3>
-            <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
               <input id="new-user-name" placeholder="Username" style="flex:1;min-width:120px;padding:8px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
-              <input id="new-user-pass" type="password" placeholder="Password" style="flex:1;min-width:120px;padding:8px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
+              <input id="new-user-display" placeholder="Display name (optional)" style="flex:1;min-width:120px;padding:8px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
+              <input id="new-user-pass" type="password" placeholder="Password (min 6)" style="flex:1;min-width:120px;padding:8px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
               <select id="new-user-role" style="padding:8px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
-                <option value="user">user</option><option value="poweruser">poweruser</option><option value="admin">admin</option>
+                <option value="user">user</option><option value="poweruser">poweruser (team lead)</option><option value="admin">admin</option>
               </select>
               <button onclick="addUser()" class="auth-btn" style="width:auto;padding:8px 20px">Add</button>
+            </div>
+            <div style="font-size:11px;color:var(--text-secondary);margin-top:8px">
+              <b>user</b> — chat-only within granted agents/models.
+              <b>poweruser</b> — team lead, can create/manage their own teams.
+              <b>admin</b> — full config access.
             </div>
           </div>
         </div>
       </div>
     `;
+    if (!document.getElementById('um-btn-style')) {
+      const st = document.createElement('style');
+      st.id = 'um-btn-style';
+      st.textContent = `.um-btn{background:none;border:1px solid var(--border-light);border-radius:6px;padding:3px 8px;margin-left:4px;cursor:pointer;font-size:13px;line-height:1}.um-btn:hover{background:var(--bg-200)}`;
+      document.head.appendChild(st);
+    }
     document.body.appendChild(modal);
-  } catch(e) { console.error('Failed to load users:', e); }
+  } catch(e) { console.error('Failed to load users:', e); alert('Failed to load users: ' + e.message); }
 }
 
 async function changeUserRole(userId, role) {
   try {
-    await API.post('/v1/auth/users', {action:'update', user_id: userId, updates:{role}});
+    const r = await API.post('/v1/auth/users', {action:'update', user_id: userId, updates:{role}});
+    if (r && r.error) { alert(r.error); return; }
+    showToast?.('Role updated');
   } catch(e) { alert('Failed to update role: ' + e.message); }
 }
 
 async function deleteUser(userId, username) {
   if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
   try {
-    await API.post('/v1/auth/users', {action:'delete', user_id: userId});
-    openUserManagement(); // refresh
+    const r = await API.post('/v1/auth/users', {action:'delete', user_id: userId});
+    if (r && r.error) { alert(r.error); return; }
+    document.querySelector('.modal-overlay')?.remove();
+    openUserManagement();
   } catch(e) { alert('Failed to delete user: ' + e.message); }
+}
+
+async function adminResetPassword(userId, username) {
+  const pw = prompt(`Reset password for "${username}"?\n\nEnter new password (min 6 characters):`);
+  if (pw === null) return;
+  if (pw.length < 6) { alert('Password must be at least 6 characters'); return; }
+  try {
+    const r = await API.post('/v1/auth/users', {action:'reset_password', user_id: userId, new_password: pw});
+    if (r && r.error) { alert(r.error); return; }
+    alert(`Password reset for "${username}". Share the new password with them securely.`);
+  } catch(e) { alert('Failed to reset password: ' + e.message); }
+}
+
+async function setUserDisabled(userId, disabled) {
+  try {
+    const r = await API.post('/v1/auth/users', {action: disabled ? 'disable' : 'enable', user_id: userId});
+    if (r && r.error) { alert(r.error); return; }
+    document.querySelector('.modal-overlay')?.remove();
+    openUserManagement();
+  } catch(e) { alert('Failed: ' + e.message); }
 }
 
 async function addUser() {
   const username = document.getElementById('new-user-name')?.value.trim();
   const password = document.getElementById('new-user-pass')?.value;
+  const display_name = document.getElementById('new-user-display')?.value.trim();
   const role = document.getElementById('new-user-role')?.value;
   if (!username || !password) { alert('Username and password required'); return; }
+  if (password.length < 6) { alert('Password must be at least 6 characters'); return; }
   try {
-    const r = await API.post('/v1/auth/users', {action:'create', username, password, role});
+    const r = await API.post('/v1/auth/users', {action:'create', username, password, role, display_name});
     if (r.error) { alert(r.error); return; }
-    openUserManagement(); // refresh
+    document.querySelector('.modal-overlay')?.remove();
+    openUserManagement();
   } catch(e) { alert('Failed to add user: ' + e.message); }
+}
+
+// ── Per-user Permissions Modal (admin only) ──
+async function openUserPermissions(userId, username) {
+  try {
+    const [permData, agentsData, modelsData, userData] = await Promise.all([
+      API.get('/v1/auth/permissions?user_id=' + encodeURIComponent(userId)),
+      API.get('/v1/agents'),
+      API.get('/v1/models'),
+      API.get('/v1/auth/users').catch(() => ({users: []})),
+    ]);
+    const allAgents = (() => {
+      const a = agentsData.agents;
+      if (Array.isArray(a)) return a.map(x => x.id || x.name).filter(Boolean);
+      if (a && typeof a === 'object') return Object.keys(a);
+      return [];
+    })().sort();
+    const allModels = (() => {
+      const m = modelsData.models;
+      if (Array.isArray(m)) return m.map(x => typeof x === 'string' ? x : (x.id || x.name || x.model)).filter(Boolean);
+      if (m && typeof m === 'object') return Object.keys(m);
+      return [];
+    })().sort();
+    const target = (userData.users || []).find(u => u.id === userId) || {username, role: 'user'};
+    const isAdmin = target.role === 'admin';
+    const grants = permData.grants || {agents_direct: [], models_direct: [], agents_via_team: [], models_via_team: []};
+    const directAgents = new Set(grants.agents_direct || []);
+    const directModels = new Set(grants.models_direct || []);
+    const teamAgents = {}; for (const g of (grants.agents_via_team || [])) teamAgents[g.agent_id] = (teamAgents[g.agent_id]||[]).concat(g.team_name);
+    const teamModels = {}; for (const g of (grants.models_via_team || [])) teamModels[g.model_id] = (teamModels[g.model_id]||[]).concat(g.team_name);
+
+    // Close the current user-management modal first
+    document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.onclick = e => { if (e.target === modal) { modal.remove(); openUserManagement(); } };
+    const row = (id, checked, kind, viaTeam) => `<div style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--border-light);font-size:13px">
+      <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:${isAdmin?'not-allowed':'pointer'};${isAdmin?'opacity:0.5':''}">
+        <input type="checkbox" ${checked?'checked':''} ${isAdmin?'disabled':''} onchange="_togglePermission('${esc(userId)}', this.dataset.kind, this.dataset.id, this.checked, this)" data-kind="${esc(kind)}" data-id="${esc(id)}">
+        <code style="font-size:12px">${esc(id)}</code>
+      </label>
+      ${viaTeam && viaTeam.length ? `<span style="font-size:10px;padding:2px 6px;background:var(--bg-base);border-radius:10px;color:var(--text-secondary)">via team: ${esc(viaTeam.join(', '))}</span>` : ''}
+    </div>`;
+    modal.innerHTML = `
+      <div class="modal" style="max-width:780px">
+        <div class="modal-header">
+          <h2>Permissions: ${esc(username)}${isAdmin?' (admin — full access)':''}</h2>
+          <button class="modal-close" onclick="document.querySelector('.modal-overlay').remove();openUserManagement()">&times;</button>
+        </div>
+        <div class="modal-body" style="max-height:75vh;overflow-y:auto">
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:16px">
+            ${isAdmin
+              ? 'Admins always have access to all agents, models, and features. Settings below are stored but not enforced for admins.'
+              : 'Grants control which agents/models this user can chat with. Team memberships add to direct grants. Capabilities toggle feature access.'}
+          </div>
+          <h3 style="font-size:13px;margin:0 0 8px;font-weight:600">Capabilities</h3>
+          <div id="user-caps-row" style="display:flex;flex-wrap:wrap;gap:12px;padding:10px 12px;border:1px solid var(--border-light);border-radius:8px;margin-bottom:16px">
+            ${(() => {
+              const caps = (target.capabilities || {});
+              const keys = ['allow_projects','allow_artifacts','allow_workflows','allow_skills_install'];
+              const labels = {allow_projects:'Projects', allow_artifacts:'Artifacts', allow_workflows:'Workflows', allow_skills_install:'Install skills'};
+              return keys.map(k => `<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:${isAdmin?'not-allowed':'pointer'};${isAdmin?'opacity:0.5':''}">
+                <input type="checkbox" ${caps[k]?'checked':''} ${isAdmin?'disabled':''} data-cap="${k}" onchange="_toggleCapability('${esc(userId)}', this)">
+                <span>${labels[k]}</span>
+              </label>`).join('');
+            })()}
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+            <div>
+              <h3 style="font-size:13px;margin:0 0 8px;font-weight:600">Agents (${allAgents.length})</h3>
+              ${allAgents.map(a => row(a, directAgents.has(a), 'agent', teamAgents[a])).join('') || '<div style="color:var(--text-secondary);font-size:12px">No agents available.</div>'}
+            </div>
+            <div>
+              <h3 style="font-size:13px;margin:0 0 8px;font-weight:600">Models (${allModels.length})</h3>
+              ${allModels.map(m => row(m, directModels.has(m), 'model', teamModels[m])).join('') || '<div style="color:var(--text-secondary);font-size:12px">No models enabled.</div>'}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  } catch(e) { alert('Failed to load permissions: ' + e.message); }
+}
+
+async function _togglePermission(userId, kind, id, checked, el) {
+  try {
+    const payload = {action: checked ? 'grant' : 'revoke', kind, user_id: userId};
+    if (kind === 'agent') payload.agent_id = id; else payload.model_id = id;
+    const r = await API.post('/v1/auth/permissions', payload);
+    if (r && r.error) { el.checked = !checked; alert(r.error); return; }
+  } catch(e) { el.checked = !checked; alert('Failed: ' + e.message); }
+}
+
+async function _toggleCapability(userId, el) {
+  // Read all capability checkboxes in the row, send a full update
+  const checkboxes = document.querySelectorAll('#user-caps-row input[type=checkbox][data-cap]');
+  const caps = {};
+  for (const cb of checkboxes) caps[cb.dataset.cap] = cb.checked;
+  try {
+    const r = await API.post('/v1/auth/users', {action:'update', user_id: userId, updates:{capabilities: caps}});
+    if (r && r.error) { el.checked = !el.checked; alert(r.error); return; }
+  } catch(e) { el.checked = !el.checked; alert('Failed: ' + e.message); }
 }
 
 // ── User Teams Modal ──
@@ -12971,62 +13114,89 @@ async function openUserTeams() {
   try {
     const teamsData = await API.get('/v1/user-teams');
     const teams = teamsData.teams || [];
-    const usersData = state.authUser?.role === 'admin' ? await API.get('/v1/auth/users').catch(() => ({users:[]})) : {users:[]};
+    const isAdmin = state.authUser?.role === 'admin';
+    const usersData = isAdmin ? await API.get('/v1/auth/users').catch(() => ({users:[]})) : {users:[]};
     const allUsers = usersData.users || [];
+    // Team heads: those with poweruser or admin role (users already have the role listed)
+    const headCandidates = allUsers.filter(u => u.role === 'poweruser' || u.role === 'admin');
 
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
     modal.onclick = e => { if (e.target === modal) modal.remove(); };
+    const teamCard = (t) => {
+      const memberIds = new Set((t.members||[]).map(m => m.id));
+      const addableUsers = allUsers.filter(u => !memberIds.has(u.id) && !u.disabled);
+      return `<div style="border:1px solid var(--border-light);border-radius:10px;padding:16px;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <div style="flex:1"><strong>${esc(t.name)}</strong> ${t.description ? `<span style="font-size:12px;color:var(--text-secondary);margin-left:8px">${esc(t.description)}</span>` : ''}</div>
+          <button onclick="dissolveUserTeam('${esc(t.id)}')" class="um-btn" style="color:#dc2626" title="Dissolve team">Dissolve</button>
+        </div>
+        <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:4px">
+          ${(t.members||[]).map(m => `
+            <span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:var(--bg-base);border:1px solid var(--border-light);border-radius:12px;font-size:12px">
+              ${esc(m.display_name || m.username)}
+              ${m.id === t.head_user_id ? '<span class="role-badge poweruser" style="font-size:10px;margin-left:2px">head</span>'
+                : `<button onclick="removeUserTeamMember('${esc(t.id)}','${esc(m.id)}')" style="background:none;border:none;cursor:pointer;color:#999;font-size:14px;padding:0;line-height:1" title="Remove">&times;</button>`}
+            </span>
+          `).join('')}
+        </div>
+        ${addableUsers.length ? `<div style="display:flex;gap:6px;margin-top:10px;align-items:center">
+          <select id="ut-add-${esc(t.id)}" style="flex:1;font-size:12px;padding:6px;border:1px solid var(--border-light);border-radius:6px">
+            <option value="">Add member...</option>
+            ${addableUsers.map(u => `<option value="${esc(u.id)}">${esc(u.display_name || u.username)} (${esc(u.role)})</option>`).join('')}
+          </select>
+          <button class="um-btn" onclick="addUserTeamMember('${esc(t.id)}')">Add</button>
+        </div>` : ''}
+      </div>`;
+    };
     modal.innerHTML = `
-      <div class="modal" style="max-width:600px">
+      <div class="modal" style="max-width:720px">
         <div class="modal-header"><h2>User Teams</h2><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button></div>
-        <div class="modal-body" style="max-height:70vh;overflow-y:auto">
-          ${teams.length ? teams.map(t => `
-            <div style="border:1px solid var(--border-light);border-radius:10px;padding:16px;margin-bottom:12px">
-              <div style="display:flex;justify-content:space-between;align-items:center">
-                <div><strong>${t.name}</strong> <span style="font-size:12px;color:var(--text-secondary)">${t.description || ''}</span></div>
-                <button onclick="dissolveUserTeam('${t.id}')" style="font-size:12px;color:#dc2626;background:none;border:none;cursor:pointer">Dissolve</button>
-              </div>
-              <div style="margin-top:8px;font-size:13px">
-                ${(t.members||[]).map(m => `
-                  <span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;margin:2px;background:var(--bg-base);border-radius:12px;font-size:12px">
-                    ${m.display_name || m.username}
-                    ${m.id === t.head_user_id ? '<span class="role-badge poweruser" style="font-size:10px">head</span>' : `<button onclick="removeTeamMember('${t.id}','${m.id}')" style="background:none;border:none;cursor:pointer;color:#999;font-size:14px">&times;</button>`}
-                  </span>
-                `).join('')}
-              </div>
-            </div>
-          `).join('') : '<p style="color:var(--text-secondary);text-align:center">No user teams yet</p>'}
+        <div class="modal-body" style="max-height:75vh;overflow-y:auto">
+          ${isAdmin ? `<div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+            <button class="um-btn" onclick="document.querySelector('.modal-overlay').remove();openUserManagement()">&lsaquo; Users</button>
+          </div>` : ''}
+          ${teams.length
+            ? teams.map(teamCard).join('')
+            : '<p style="color:var(--text-secondary);text-align:center;padding:16px">No user teams yet</p>'}
           <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border-light)">
             <h3 style="font-size:14px;margin:0 0 12px">Create Team</h3>
             <div style="display:flex;flex-direction:column;gap:8px">
-              <input id="new-team-name" placeholder="Team name" style="padding:8px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
-              <input id="new-team-desc" placeholder="Description (optional)" style="padding:8px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
+              <input id="new-user-team-name" placeholder="Team name" style="padding:8px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
+              <input id="new-user-team-desc" placeholder="Description (optional)" style="padding:8px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
+              ${isAdmin && headCandidates.length ? `
+                <select id="new-user-team-head" style="padding:8px;border:1px solid var(--border-light);border-radius:6px;font-size:13px">
+                  <option value="">Team head... (defaults to you)</option>
+                  ${headCandidates.map(u => `<option value="${esc(u.id)}">${esc(u.display_name || u.username)} (${esc(u.role)})</option>`).join('')}
+                </select>` : ''}
               <button onclick="createUserTeam()" class="auth-btn" style="width:auto;padding:8px 20px">Create Team</button>
+              <div style="font-size:11px;color:var(--text-secondary)">Team head must be a poweruser or admin.</div>
             </div>
           </div>
         </div>
       </div>
     `;
     document.body.appendChild(modal);
-  } catch(e) { console.error('Failed to load teams:', e); }
+  } catch(e) { console.error('Failed to load teams:', e); alert('Failed to load teams: ' + e.message); }
 }
 
 async function createUserTeam() {
-  const name = document.getElementById('new-team-name')?.value.trim();
-  const desc = document.getElementById('new-team-desc')?.value.trim();
+  const name = document.getElementById('new-user-team-name')?.value.trim();
+  const desc = document.getElementById('new-user-team-desc')?.value.trim();
+  const head = document.getElementById('new-user-team-head')?.value;
   if (!name) { alert('Team name required'); return; }
   try {
-    const r = await API.post('/v1/user-teams', {action:'create', name, description: desc});
+    const body = {action:'create', name, description: desc};
+    if (head) body.head_user_id = head;
+    const r = await API.post('/v1/user-teams', body);
     if (r.error) { alert(r.error); return; }
-    // Close and reopen to refresh
     document.querySelector('.modal-overlay')?.remove();
     openUserTeams();
   } catch(e) { alert('Failed to create team: ' + e.message); }
 }
 
 async function dissolveUserTeam(teamId) {
-  if (!confirm('Dissolve this team? Members will become standalone.')) return;
+  if (!confirm('Dissolve this team? Members will be detached.')) return;
   try {
     await API.post('/v1/user-teams', {action:'dissolve', team_id: teamId});
     document.querySelector('.modal-overlay')?.remove();
@@ -13034,12 +13204,25 @@ async function dissolveUserTeam(teamId) {
   } catch(e) { alert('Failed to dissolve team: ' + e.message); }
 }
 
-async function removeTeamMember(teamId, userId) {
+async function removeUserTeamMember(teamId, userId) {
   try {
-    await API.post('/v1/user-teams', {action:'remove_member', team_id: teamId, user_id: userId});
+    const r = await API.post('/v1/user-teams', {action:'remove_member', team_id: teamId, user_id: userId});
+    if (r && r.error) { alert(r.error); return; }
     document.querySelector('.modal-overlay')?.remove();
     openUserTeams();
   } catch(e) { alert('Failed to remove member: ' + e.message); }
+}
+
+async function addUserTeamMember(teamId) {
+  const sel = document.getElementById('ut-add-' + teamId);
+  const uid = sel?.value;
+  if (!uid) { alert('Select a user to add'); return; }
+  try {
+    const r = await API.post('/v1/user-teams', {action:'add_member', team_id: teamId, user_id: uid});
+    if (r && r.error) { alert(r.error); return; }
+    document.querySelector('.modal-overlay')?.remove();
+    openUserTeams();
+  } catch(e) { alert('Failed to add member: ' + e.message); }
 }
 
 // ── Change Password Modal ──

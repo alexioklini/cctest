@@ -44,6 +44,15 @@ _jwt_secret: str = ""
 
 ROLES = ("admin", "poweruser", "user")
 
+# Default capability flags by role. Admins bypass in all checks regardless,
+# so this is mainly the starting point when an admin edits a user's caps.
+CAPABILITY_DEFAULTS = {
+    "admin":     {"allow_projects": True,  "allow_artifacts": True, "allow_workflows": True,  "allow_skills_install": True},
+    "poweruser": {"allow_projects": True,  "allow_artifacts": True, "allow_workflows": False, "allow_skills_install": False},
+    "user":      {"allow_projects": False, "allow_artifacts": True, "allow_workflows": False, "allow_skills_install": False},
+}
+CAPABILITY_KEYS = tuple(CAPABILITY_DEFAULTS["admin"].keys())
+
 
 def init_auth(config: dict):
     """Initialize auth module from server config. Call once at startup."""
@@ -72,7 +81,9 @@ def auth_enabled() -> bool:
 
 
 def registration_enabled() -> bool:
-    return _auth_config.get("registration_enabled", True)
+    # Default-off: public self-registration is disabled unless explicitly enabled
+    # in config. Users are provisioned via admin through /v1/auth/users.
+    return _auth_config.get("registration_enabled", False)
 
 
 def default_role() -> str:
@@ -101,7 +112,9 @@ class AuthDB:
                 role TEXT NOT NULL DEFAULT 'user',
                 created_at REAL,
                 last_login REAL,
-                disabled INTEGER DEFAULT 0
+                disabled INTEGER DEFAULT 0,
+                -- capabilities: JSON object of feature flags (null = role defaults)
+                capabilities TEXT DEFAULT NULL
             );
 
             CREATE TABLE IF NOT EXISTS user_teams (
@@ -124,6 +137,55 @@ class AuthDB:
 
             CREATE INDEX IF NOT EXISTS idx_utm_user ON user_team_members(user_id);
             CREATE INDEX IF NOT EXISTS idx_utm_team ON user_team_members(team_id);
+
+            -- Agent/model grants: row present => allowed. Admin always bypasses.
+            -- Agents are global singletons; ACL is user→agent or team→agent.
+            CREATE TABLE IF NOT EXISTS user_agent_permissions (
+                user_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                granted_at REAL DEFAULT (strftime('%s','now')),
+                PRIMARY KEY (user_id, agent_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_uap_user ON user_agent_permissions(user_id);
+
+            CREATE TABLE IF NOT EXISTS team_agent_permissions (
+                team_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                granted_at REAL DEFAULT (strftime('%s','now')),
+                PRIMARY KEY (team_id, agent_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_tap_team ON team_agent_permissions(team_id);
+
+            CREATE TABLE IF NOT EXISTS user_model_permissions (
+                user_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                granted_at REAL DEFAULT (strftime('%s','now')),
+                PRIMARY KEY (user_id, model_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_ump_user ON user_model_permissions(user_id);
+
+            CREATE TABLE IF NOT EXISTS team_model_permissions (
+                team_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                granted_at REAL DEFAULT (strftime('%s','now')),
+                PRIMARY KEY (team_id, model_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_tmp_team ON team_model_permissions(team_id);
+
+            -- Append-only audit log for admin-scope events.
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts REAL NOT NULL DEFAULT (strftime('%s','now')),
+                actor_user_id TEXT DEFAULT '',
+                actor_username TEXT DEFAULT '',
+                action TEXT NOT NULL,
+                target TEXT DEFAULT '',
+                details TEXT DEFAULT '',
+                ip TEXT DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
+            CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_user_id);
+            CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
         """)
 
         # Create default admin if no users exist
@@ -138,6 +200,26 @@ class AuthDB:
             )
             conn.commit()
             print(f"  ⚠  Default admin user created (username: admin, password: admin) — change immediately!")
+
+        # Migrate: add capabilities column to existing DBs
+        try:
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+            if "capabilities" not in cols:
+                conn.execute("ALTER TABLE users ADD COLUMN capabilities TEXT DEFAULT NULL")
+                conn.commit()
+        except Exception:
+            pass
+
+        # Backfill default agent grants for non-admin users that predate the ACL.
+        # Admins always bypass the ACL check, so they don't need rows. This keeps
+        # pre-existing users functional after Step 5 rolls out.
+        for agent_id in _default_allowed_agents():
+            conn.execute(
+                "INSERT OR IGNORE INTO user_agent_permissions (user_id, agent_id) "
+                "SELECT id, ? FROM users WHERE role != 'admin'",
+                (agent_id,),
+            )
+        conn.commit()
 
     # ── User CRUD ────────────────────────────────────────────────────
 
@@ -162,6 +244,13 @@ class AuthDB:
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (uid, username, pw_hash, display_name or username, email, role, time.time()),
             )
+            # Default-allow: new users get access to the configured default
+            # agent (typically "main"). Admins see everything regardless.
+            for agent_id in _default_allowed_agents():
+                conn.execute(
+                    "INSERT OR IGNORE INTO user_agent_permissions (user_id, agent_id) VALUES (?, ?)",
+                    (uid, agent_id),
+                )
             conn.commit()
             return _user_dict(conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone())
         except sqlite3.IntegrityError:
@@ -200,6 +289,10 @@ class AuthDB:
         fields = {k: v for k, v in updates.items() if k in allowed}
         if "role" in fields and fields["role"] not in ROLES:
             return {"error": f"Invalid role: {fields['role']}"}
+        # Capabilities: only persist known keys, serialize as JSON
+        if "capabilities" in updates and isinstance(updates["capabilities"], dict):
+            override = {k: bool(v) for k, v in updates["capabilities"].items() if k in CAPABILITY_KEYS}
+            fields["capabilities"] = json.dumps(override) if override else None
         if not fields:
             return {"error": "No valid fields to update"}
         conn = _auth_conn()
@@ -218,7 +311,12 @@ class AuthDB:
         head_teams = conn.execute("SELECT id FROM user_teams WHERE head_user_id = ?", (user_id,)).fetchall()
         for t in head_teams:
             conn.execute("DELETE FROM user_team_members WHERE team_id = ?", (t["id"],))
+            conn.execute("DELETE FROM team_agent_permissions WHERE team_id = ?", (t["id"],))
+            conn.execute("DELETE FROM team_model_permissions WHERE team_id = ?", (t["id"],))
             conn.execute("DELETE FROM user_teams WHERE id = ?", (t["id"],))
+        # Purge the user's own grants
+        conn.execute("DELETE FROM user_agent_permissions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM user_model_permissions WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         conn.commit()
         return True
@@ -239,9 +337,27 @@ class AuthDB:
         return {"ok": True}
 
     @staticmethod
+    def admin_reset_password(user_id: str, new_password: str) -> dict:
+        """Admin-initiated password reset — no old_password required.
+
+        Caller must already be authorized as admin (enforced at the endpoint).
+        """
+        if len(new_password) < 6:
+            return {"error": "Password must be at least 6 characters"}
+        conn = _auth_conn()
+        row = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            return {"error": "User not found"}
+        new_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+        conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, user_id))
+        conn.commit()
+        return {"ok": True}
+
+    @staticmethod
     def update_last_login(user_id: str):
-        _auth_conn().execute("UPDATE users SET last_login = ? WHERE id = ?", (time.time(), user_id))
-        _auth_conn().commit()
+        conn = _auth_conn()
+        conn.execute("UPDATE users SET last_login = ? WHERE id = ?", (time.time(), user_id))
+        conn.commit()
 
     # ── User Team CRUD ───────────────────────────────────────────────
 
@@ -338,6 +454,8 @@ class AuthDB:
     def delete_team(team_id: str) -> bool:
         conn = _auth_conn()
         conn.execute("DELETE FROM user_team_members WHERE team_id = ?", (team_id,))
+        conn.execute("DELETE FROM team_agent_permissions WHERE team_id = ?", (team_id,))
+        conn.execute("DELETE FROM team_model_permissions WHERE team_id = ?", (team_id,))
         conn.execute("DELETE FROM user_teams WHERE id = ?", (team_id,))
         conn.commit()
         return True
@@ -389,6 +507,180 @@ class AuthDB:
                 "members": [dict(m) for m in members],
             })
         return result
+
+    # ── Agent / Model ACL ────────────────────────────────────────────
+
+    @staticmethod
+    def grant_agent(user_id: str = "", team_id: str = "", agent_id: str = "") -> dict:
+        if not agent_id or (not user_id and not team_id):
+            return {"error": "agent_id + (user_id or team_id) required"}
+        conn = _auth_conn()
+        if user_id:
+            conn.execute("INSERT OR IGNORE INTO user_agent_permissions (user_id, agent_id) VALUES (?, ?)",
+                         (user_id, agent_id))
+        if team_id:
+            conn.execute("INSERT OR IGNORE INTO team_agent_permissions (team_id, agent_id) VALUES (?, ?)",
+                         (team_id, agent_id))
+        conn.commit()
+        return {"ok": True}
+
+    @staticmethod
+    def revoke_agent(user_id: str = "", team_id: str = "", agent_id: str = "") -> dict:
+        if not agent_id or (not user_id and not team_id):
+            return {"error": "agent_id + (user_id or team_id) required"}
+        conn = _auth_conn()
+        if user_id:
+            conn.execute("DELETE FROM user_agent_permissions WHERE user_id = ? AND agent_id = ?",
+                         (user_id, agent_id))
+        if team_id:
+            conn.execute("DELETE FROM team_agent_permissions WHERE team_id = ? AND agent_id = ?",
+                         (team_id, agent_id))
+        conn.commit()
+        return {"ok": True}
+
+    @staticmethod
+    def grant_model(user_id: str = "", team_id: str = "", model_id: str = "") -> dict:
+        if not model_id or (not user_id and not team_id):
+            return {"error": "model_id + (user_id or team_id) required"}
+        conn = _auth_conn()
+        if user_id:
+            conn.execute("INSERT OR IGNORE INTO user_model_permissions (user_id, model_id) VALUES (?, ?)",
+                         (user_id, model_id))
+        if team_id:
+            conn.execute("INSERT OR IGNORE INTO team_model_permissions (team_id, model_id) VALUES (?, ?)",
+                         (team_id, model_id))
+        conn.commit()
+        return {"ok": True}
+
+    @staticmethod
+    def revoke_model(user_id: str = "", team_id: str = "", model_id: str = "") -> dict:
+        if not model_id or (not user_id and not team_id):
+            return {"error": "model_id + (user_id or team_id) required"}
+        conn = _auth_conn()
+        if user_id:
+            conn.execute("DELETE FROM user_model_permissions WHERE user_id = ? AND model_id = ?",
+                         (user_id, model_id))
+        if team_id:
+            conn.execute("DELETE FROM team_model_permissions WHERE team_id = ? AND model_id = ?",
+                         (team_id, model_id))
+        conn.commit()
+        return {"ok": True}
+
+    @staticmethod
+    def get_user_allowed_agents(user_id: str) -> set[str]:
+        conn = _auth_conn()
+        direct = {r[0] for r in conn.execute(
+            "SELECT agent_id FROM user_agent_permissions WHERE user_id = ?", (user_id,)).fetchall()}
+        via_team = {r[0] for r in conn.execute(
+            "SELECT tap.agent_id FROM team_agent_permissions tap "
+            "JOIN user_team_members m ON m.team_id = tap.team_id WHERE m.user_id = ?",
+            (user_id,)).fetchall()}
+        return direct | via_team
+
+    @staticmethod
+    def get_user_allowed_models(user_id: str) -> set[str]:
+        conn = _auth_conn()
+        direct = {r[0] for r in conn.execute(
+            "SELECT model_id FROM user_model_permissions WHERE user_id = ?", (user_id,)).fetchall()}
+        via_team = {r[0] for r in conn.execute(
+            "SELECT tmp.model_id FROM team_model_permissions tmp "
+            "JOIN user_team_members m ON m.team_id = tmp.team_id WHERE m.user_id = ?",
+            (user_id,)).fetchall()}
+        return direct | via_team
+
+    @staticmethod
+    def list_user_grants(user_id: str) -> dict:
+        """Return {agents: [...], models: [...], teams_granting_agents: {...}, teams_granting_models: {...}}
+        split into direct and via-team for admin UI display.
+        """
+        conn = _auth_conn()
+        direct_agents = [r[0] for r in conn.execute(
+            "SELECT agent_id FROM user_agent_permissions WHERE user_id = ? ORDER BY agent_id",
+            (user_id,)).fetchall()]
+        direct_models = [r[0] for r in conn.execute(
+            "SELECT model_id FROM user_model_permissions WHERE user_id = ? ORDER BY model_id",
+            (user_id,)).fetchall()]
+        team_agents = [dict(r) for r in conn.execute(
+            "SELECT t.id as team_id, t.name as team_name, tap.agent_id "
+            "FROM team_agent_permissions tap "
+            "JOIN user_team_members m ON m.team_id = tap.team_id "
+            "JOIN user_teams t ON t.id = tap.team_id "
+            "WHERE m.user_id = ? ORDER BY t.name, tap.agent_id",
+            (user_id,)).fetchall()]
+        team_models = [dict(r) for r in conn.execute(
+            "SELECT t.id as team_id, t.name as team_name, tmp.model_id "
+            "FROM team_model_permissions tmp "
+            "JOIN user_team_members m ON m.team_id = tmp.team_id "
+            "JOIN user_teams t ON t.id = tmp.team_id "
+            "WHERE m.user_id = ? ORDER BY t.name, tmp.model_id",
+            (user_id,)).fetchall()]
+        return {
+            "agents_direct": direct_agents,
+            "models_direct": direct_models,
+            "agents_via_team": team_agents,
+            "models_via_team": team_models,
+        }
+
+    @staticmethod
+    def list_team_grants(team_id: str) -> dict:
+        conn = _auth_conn()
+        agents = [r[0] for r in conn.execute(
+            "SELECT agent_id FROM team_agent_permissions WHERE team_id = ? ORDER BY agent_id",
+            (team_id,)).fetchall()]
+        models = [r[0] for r in conn.execute(
+            "SELECT model_id FROM team_model_permissions WHERE team_id = ? ORDER BY model_id",
+            (team_id,)).fetchall()]
+        return {"agents": agents, "models": models}
+
+    # ── Audit Log ────────────────────────────────────────────────────
+
+    @staticmethod
+    def audit_write(actor: dict | None, action: str, target: str = "",
+                    details: dict | None = None, ip: str = "") -> None:
+        """Append a row to the audit log. Fail-silently — audit must never
+        block the primary action."""
+        try:
+            actor_uid = (actor or {}).get("id", "") if actor else ""
+            actor_uname = (actor or {}).get("username", "") if actor else ""
+            details_str = json.dumps(details, default=str) if details else ""
+            conn = _auth_conn()
+            conn.execute(
+                "INSERT INTO audit_log (actor_user_id, actor_username, action, target, details, ip) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (actor_uid, actor_uname, action, target or "", details_str, ip or ""),
+            )
+            conn.commit()
+        except Exception:
+            pass
+
+    @staticmethod
+    def audit_read(limit: int = 100, actor: str = "", action: str = "",
+                   since_ts: float = 0.0) -> list[dict]:
+        conn = _auth_conn()
+        q = "SELECT * FROM audit_log WHERE 1=1"
+        params: list = []
+        if actor:
+            q += " AND (actor_user_id = ? OR actor_username = ?)"
+            params += [actor, actor]
+        if action:
+            q += " AND action LIKE ?"
+            params.append(f"%{action}%")
+        if since_ts:
+            q += " AND ts >= ?"
+            params.append(float(since_ts))
+        q += " ORDER BY id DESC LIMIT ?"
+        params.append(int(limit))
+        rows = conn.execute(q, params).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            if d.get("details"):
+                try:
+                    d["details"] = json.loads(d["details"])
+                except Exception:
+                    pass
+            out.append(d)
+        return out
 
 
 # ── JWT ──────────────────────────────────────────────────────────────
@@ -502,19 +794,76 @@ def can_manage_team(user: dict, team_id: str) -> bool:
     return team["head_user_id"] == user["id"]
 
 
+def _default_allowed_agents() -> list[str]:
+    """Agents every new user is auto-granted. Configurable via
+    config.auth.default_allowed_agents (defaults to ["main"])."""
+    cfg = _auth_config.get("default_allowed_agents", ["main"])
+    if not isinstance(cfg, list):
+        return ["main"]
+    return [str(a) for a in cfg if a]
+
+
+def can_access_agent(user: dict, agent_id: str) -> bool:
+    """Admin + system bypass. Regular users need a direct or via-team grant.
+    When auth is disabled the SYNTHETIC_ADMIN is used, so this returns True."""
+    if not user:
+        return False
+    if user["role"] == "admin" or user["id"] == "__system__":
+        return True
+    allowed = AuthDB.get_user_allowed_agents(user["id"])
+    return agent_id in allowed
+
+
+def can_access_model(user: dict, model_id: str) -> bool:
+    if not user:
+        return False
+    if user["role"] == "admin" or user["id"] == "__system__":
+        return True
+    allowed = AuthDB.get_user_allowed_models(user["id"])
+    return model_id in allowed
+
+
 # ── Internal ─────────────────────────────────────────────────────────
 
 def _user_dict(row) -> dict:
     """Convert a DB row to a user dict (excludes password_hash)."""
     if row is None:
         return {}
+    # Merge per-user capability overrides with role defaults
+    role = row["role"]
+    caps = dict(CAPABILITY_DEFAULTS.get(role, CAPABILITY_DEFAULTS["user"]))
+    raw = None
+    try:
+        raw = row["capabilities"]
+    except (IndexError, KeyError):
+        raw = None
+    if raw:
+        try:
+            override = json.loads(raw)
+            if isinstance(override, dict):
+                for k in CAPABILITY_KEYS:
+                    if k in override:
+                        caps[k] = bool(override[k])
+        except Exception:
+            pass
     return {
         "id": row["id"],
         "username": row["username"],
         "display_name": row["display_name"],
         "email": row["email"],
-        "role": row["role"],
+        "role": role,
         "created_at": row["created_at"],
         "last_login": row["last_login"],
         "disabled": bool(row["disabled"]),
+        "capabilities": caps,
     }
+
+
+def has_capability(user: dict, cap: str) -> bool:
+    """Check a capability flag. Admins always pass."""
+    if not user:
+        return False
+    if user.get("role") == "admin" or user.get("id") == "__system__":
+        return True
+    caps = user.get("capabilities") or {}
+    return bool(caps.get(cap, False))

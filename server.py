@@ -293,6 +293,25 @@ def _purge_mempalace_turns(session_id: str, turn_ids: list[int]):
                      name=f"mp-purge-turns-{session_id[:8]}").start()
 
 
+def _resolve_session_wing(info: dict) -> str:
+    """Pick the MemPalace wing for a given session row.
+
+    Priority:
+      1. Team-scoped session (visibility='team' + team_id) → `{team_id}--{agent_id}`
+      2. User-owned session (user_id)                    → `{user_id}--{agent_id}`
+      3. Legacy anonymous                                → bare `{agent_id}`
+    """
+    agent_id = info.get("agent_id", "main")
+    visibility = info.get("visibility", "user")
+    team_id = info.get("team_id", "")
+    if visibility == "team" and team_id:
+        return f"{team_id}--{agent_id}"
+    user_id = info.get("user_id", "")
+    if user_id:
+        return f"{user_id}--{agent_id}"
+    return agent_id
+
+
 def _memorize_mempalace_turns(session_id: str, turn_ids: list[int]):
     """Force-file specific turns to MemPalace, ignoring the session's memory_mode
     and classifier. Reuses the chat-sync loop's schema so the result is identical
@@ -318,8 +337,7 @@ def _memorize_mempalace_turns(session_id: str, turn_ids: list[int]):
         if not info:
             return 0
         agent_id = info.get("agent_id", "main")
-        user_id = info.get("user_id", "")
-        wing = f"{user_id}--{agent_id}" if user_id else agent_id
+        wing = _resolve_session_wing(info)
 
         sync_cfg = mcfg.get("chat_sync", {}) or {}
         default_room = sync_cfg.get("room", "chat")
@@ -467,6 +485,17 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN caveman_mode INTEGER DEFAULT 0")
             except sqlite3.OperationalError:
                 pass
+            # Add team_id + visibility for session team-scoping
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN team_id TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                # visibility: 'user' (default - private to owner + admin) or 'team' (team members + admin)
+                conn.execute("ALTER TABLE sessions ADD COLUMN visibility TEXT DEFAULT 'user'")
+            except sqlite3.OperationalError:
+                pass
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_session_team ON sessions(team_id)")
             # ── MemPalace chat-sync cursor ──
             # Tracks which messages have already been mirrored into MemPalace,
             # per session. `last_message_id` is the highest messages.id filed so far.
@@ -720,6 +749,8 @@ class ChatDB:
                 SELECT s.id as session_id,
                        s.agent_id as agent_id,
                        COALESCE(s.user_id, '') as user_id,
+                       COALESCE(s.team_id, '') as team_id,
+                       COALESCE(s.visibility, 'user') as visibility,
                        COALESCE(s.summary, '') as summary,
                        COALESCE(s.save_to_memory, 0) as save_to_memory,
                        COALESCE(c.last_message_id, 0) as last_message_id_filed,
@@ -805,7 +836,7 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=list)
-    def list_sessions(agent_id=None, status=None, project=None, visible_user_ids=None):
+    def list_sessions(agent_id=None, status=None, project=None, visible_user_ids=None, visible_team_ids=None):
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
             q = ("SELECT s.*, "
@@ -813,11 +844,23 @@ class ChatDB:
                  "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.metadata LIKE '%\"files\"%') as has_attachments "
                  "FROM sessions s WHERE 1=1")
             params = []
-            # Multi-user: filter by visible user IDs (None = admin sees all)
+            # Multi-user: filter by visible user IDs (None = admin sees all).
+            # Visibility matrix:
+            #  - user_id IN visible → always visible
+            #  - visibility='team' AND team_id IN visible_team_ids → visible
+            #  - no user_id (legacy) → visible (legacy anonymous sessions)
             if visible_user_ids is not None:
-                placeholders = ",".join("?" * len(visible_user_ids))
-                q += f" AND (s.user_id IN ({placeholders}) OR s.user_id = '' OR s.user_id IS NULL)"
+                placeholders = ",".join("?" * len(visible_user_ids)) or "''"
+                team_clause = ""
+                if visible_team_ids:
+                    tplaceholders = ",".join("?" * len(visible_team_ids))
+                    team_clause = f" OR (s.visibility = 'team' AND s.team_id IN ({tplaceholders}))"
+                q += (f" AND (s.user_id IN ({placeholders})"
+                      f" OR s.user_id = '' OR s.user_id IS NULL"
+                      f"{team_clause})")
                 params.extend(visible_user_ids)
+                if visible_team_ids:
+                    params.extend(visible_team_ids)
             if agent_id:
                 q += " AND s.agent_id = ?"
                 params.append(agent_id)
@@ -1894,6 +1937,33 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             return None
         return user
 
+    def _require_capability(self, cap: str) -> dict | None:
+        """Require auth + a capability flag. Admin always passes.
+        Sends 403 on miss and returns None."""
+        user = self._require_auth()
+        if not user:
+            return None
+        if not _auth_mod.has_capability(user, cap):
+            self._send_json({"error": f"Capability '{cap}' not granted"}, 403)
+            return None
+        return user
+
+    # Path patterns that require specific capability flags. Checked by
+    # _capability_gate() after _auth_gate() admits the request.
+    # Each entry: (method, predicate_fn) → capability name.
+    @staticmethod
+    def _path_requires_capability(method: str, path: str) -> str | None:
+        """Return required capability name for this (method, path), or None."""
+        # Projects — any read/write under /v1/agents/<id>/projects* requires allow_projects
+        if path.startswith("/v1/agents/"):
+            rest = path[len("/v1/agents/"):]
+            parts = rest.split("/", 1)
+            if len(parts) == 2:
+                sub = parts[1]
+                if sub.startswith("projects") or sub == "ingest" or sub.startswith("ingested"):
+                    return "allow_projects"
+        return None
+
     # --- Auth Endpoint Handlers ---
 
     def _handle_auth_register(self):
@@ -1919,11 +1989,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     def _handle_auth_login(self):
         body = self._read_json()
-        user = _auth_mod.AuthDB.authenticate(body.get("username", ""), body.get("password", ""))
+        uname = body.get("username", "")
+        user = _auth_mod.AuthDB.authenticate(uname, body.get("password", ""))
+        ip = self.client_address[0] if self.client_address else ""
         if not user:
+            _auth_mod.AuthDB.audit_write(None, "auth.login_failed", target=uname, ip=ip)
             self._send_json({"error": "Invalid credentials"}, 401)
             return
         _auth_mod.AuthDB.update_last_login(user["id"])
+        _auth_mod.AuthDB.audit_write(user, "auth.login", target=user["id"], ip=ip)
         token = _auth_mod.generate_token(user)
         self._send_json({"user": user, "token": token})
 
@@ -1968,6 +2042,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             return
         body = self._read_json()
         action = body.get("action", "create")
+        ip = self.client_address[0] if self.client_address else ""
         if action == "create":
             result = _auth_mod.AuthDB.create_user(
                 username=body.get("username", ""),
@@ -1976,17 +2051,53 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 display_name=body.get("display_name", ""),
                 email=body.get("email", ""),
             )
+            if "error" not in result:
+                _auth_mod.AuthDB.audit_write(user, "user.create", target=result.get("id",""),
+                                             details={"username": result.get("username"), "role": result.get("role")}, ip=ip)
             status = 409 if "error" in result else 201
             self._send_json(result, status)
         elif action == "update":
             uid = body.get("user_id", "")
-            result = _auth_mod.AuthDB.update_user(uid, body.get("updates", {}))
+            updates = body.get("updates", {})
+            result = _auth_mod.AuthDB.update_user(uid, updates)
+            if "error" not in result:
+                _auth_mod.AuthDB.audit_write(user, "user.update", target=uid,
+                                             details={"updates": updates}, ip=ip)
             status = 400 if "error" in result else 200
             self._send_json(result, status)
         elif action == "delete":
             uid = body.get("user_id", "")
+            if uid == user["id"]:
+                self._send_json({"error": "Cannot delete your own account"}, 400)
+                return
             _auth_mod.AuthDB.delete_user(uid)
+            _auth_mod.AuthDB.audit_write(user, "user.delete", target=uid, ip=ip)
             self._send_json({"ok": True})
+        elif action == "reset_password":
+            uid = body.get("user_id", "")
+            new_pw = body.get("new_password", "")
+            result = _auth_mod.AuthDB.admin_reset_password(uid, new_pw)
+            if "error" not in result:
+                _auth_mod.AuthDB.audit_write(user, "user.reset_password", target=uid, ip=ip)
+            status = 400 if "error" in result else 200
+            self._send_json(result, status)
+        elif action == "disable":
+            uid = body.get("user_id", "")
+            if uid == user["id"]:
+                self._send_json({"error": "Cannot disable your own account"}, 400)
+                return
+            result = _auth_mod.AuthDB.update_user(uid, {"disabled": 1})
+            if "error" not in result:
+                _auth_mod.AuthDB.audit_write(user, "user.disable", target=uid, ip=ip)
+            status = 400 if "error" in result else 200
+            self._send_json(result, status)
+        elif action == "enable":
+            uid = body.get("user_id", "")
+            result = _auth_mod.AuthDB.update_user(uid, {"disabled": 0})
+            if "error" not in result:
+                _auth_mod.AuthDB.audit_write(user, "user.enable", target=uid, ip=ip)
+            status = 400 if "error" in result else 200
+            self._send_json(result, status)
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)
 
@@ -2006,6 +2117,102 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             conn.commit()
             self._send_json({"sessions_updated": c1.rowcount, "artifacts_updated": c2.rowcount})
 
+    def _handle_auth_audit_list(self):
+        """GET /v1/auth/audit?limit=200&actor=X&action=Y&since=TS — admin-only."""
+        user = self._require_role("admin")
+        if not user:
+            return
+        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+        from urllib.parse import unquote
+        try:
+            limit = int(params.get("limit", "200"))
+        except ValueError:
+            limit = 200
+        try:
+            since = float(params.get("since", "0"))
+        except ValueError:
+            since = 0.0
+        rows = _auth_mod.AuthDB.audit_read(
+            limit=min(max(limit, 1), 2000),
+            actor=unquote(params.get("actor", "")),
+            action=unquote(params.get("action", "")),
+            since_ts=since,
+        )
+        self._send_json({"events": rows, "count": len(rows)})
+
+    # --- Agent / Model ACL Handlers ---
+
+    def _handle_auth_permissions_get(self):
+        """GET /v1/auth/permissions?user_id=X — list a user's grants (admin only).
+        Without ?user_id returns the caller's own effective grants."""
+        user = self._require_auth()
+        if not user:
+            return
+        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+        params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+        from urllib.parse import unquote
+        target_uid = unquote(params.get("user_id", "")) or user["id"]
+        team_id = unquote(params.get("team_id", ""))
+        if team_id:
+            # Only admin or team head
+            if user["role"] != "admin" and user["id"] != "__system__" \
+                    and not _auth_mod.can_manage_team(user, team_id):
+                self._send_json({"error": "Not authorized"}, 403)
+                return
+            self._send_json({"team_id": team_id, "grants": _auth_mod.AuthDB.list_team_grants(team_id)})
+            return
+        if target_uid != user["id"] and user["role"] != "admin" and user["id"] != "__system__":
+            self._send_json({"error": "Admin access required"}, 403)
+            return
+        grants = _auth_mod.AuthDB.list_user_grants(target_uid)
+        # Also expose the merged effective set for convenience
+        effective_agents = sorted(_auth_mod.AuthDB.get_user_allowed_agents(target_uid))
+        effective_models = sorted(_auth_mod.AuthDB.get_user_allowed_models(target_uid))
+        self._send_json({
+            "user_id": target_uid,
+            "grants": grants,
+            "effective": {"agents": effective_agents, "models": effective_models},
+        })
+
+    def _handle_auth_permissions_manage(self):
+        """POST /v1/auth/permissions — admin-only grant/revoke.
+        Body: {action: grant|revoke, kind: agent|model, user_id?|team_id?, agent_id?|model_id?}"""
+        user = self._require_role("admin")
+        if not user:
+            return
+        body = self._read_json()
+        action = body.get("action", "")
+        kind = body.get("kind", "")
+        user_id = body.get("user_id", "")
+        team_id = body.get("team_id", "")
+        aid = body.get("agent_id", "")
+        mid = body.get("model_id", "")
+        if kind == "agent":
+            if action == "grant":
+                result = _auth_mod.AuthDB.grant_agent(user_id=user_id, team_id=team_id, agent_id=aid)
+            elif action == "revoke":
+                result = _auth_mod.AuthDB.revoke_agent(user_id=user_id, team_id=team_id, agent_id=aid)
+            else:
+                self._send_json({"error": f"Unknown action: {action}"}, 400); return
+        elif kind == "model":
+            if action == "grant":
+                result = _auth_mod.AuthDB.grant_model(user_id=user_id, team_id=team_id, model_id=mid)
+            elif action == "revoke":
+                result = _auth_mod.AuthDB.revoke_model(user_id=user_id, team_id=team_id, model_id=mid)
+            else:
+                self._send_json({"error": f"Unknown action: {action}"}, 400); return
+        else:
+            self._send_json({"error": f"Unknown kind: {kind} (expected 'agent' or 'model')"}, 400); return
+        status = 400 if "error" in result else 200
+        if "error" not in result:
+            ip = self.client_address[0] if self.client_address else ""
+            target = user_id or team_id
+            _auth_mod.AuthDB.audit_write(user, f"permission.{action}.{kind}", target=target,
+                                          details={"subject": {"user_id": user_id, "team_id": team_id},
+                                                   "object": aid if kind == "agent" else mid}, ip=ip)
+        self._send_json(result, status)
+
     # --- User Team Endpoint Handlers ---
 
     def _handle_user_teams_list(self):
@@ -2024,12 +2231,17 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             return
         body = self._read_json()
         action = body.get("action", "")
+        ip = self.client_address[0] if self.client_address else ""
         if action == "create":
             result = _auth_mod.AuthDB.create_team(
                 name=body.get("name", ""),
                 head_user_id=body.get("head_user_id", user["id"]),
                 description=body.get("description", ""),
             )
+            if "error" not in result:
+                _auth_mod.AuthDB.audit_write(user, "team.create", target=result.get("id",""),
+                                             details={"name": result.get("name"),
+                                                      "head_user_id": result.get("head_user_id")}, ip=ip)
             status = 400 if "error" in result else 201
             self._send_json(result, status)
         elif action == "update":
@@ -2037,23 +2249,32 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             if not _auth_mod.can_manage_team(user, tid):
                 self._send_json({"error": "Not authorized to manage this team"}, 403)
                 return
-            result = _auth_mod.AuthDB.update_team(tid, body.get("updates", {}))
+            updates = body.get("updates", {})
+            result = _auth_mod.AuthDB.update_team(tid, updates)
+            if "error" not in result:
+                _auth_mod.AuthDB.audit_write(user, "team.update", target=tid, details={"updates": updates}, ip=ip)
             status = 400 if "error" in result else 200
             self._send_json(result, status)
         elif action == "add_member":
             tid = body.get("team_id", "")
+            muid = body.get("user_id", "")
             if not _auth_mod.can_manage_team(user, tid):
                 self._send_json({"error": "Not authorized to manage this team"}, 403)
                 return
-            result = _auth_mod.AuthDB.add_team_member(tid, body.get("user_id", ""))
+            result = _auth_mod.AuthDB.add_team_member(tid, muid)
+            if "error" not in result:
+                _auth_mod.AuthDB.audit_write(user, "team.add_member", target=tid, details={"member": muid}, ip=ip)
             status = 400 if "error" in result else 200
             self._send_json(result, status)
         elif action == "remove_member":
             tid = body.get("team_id", "")
+            muid = body.get("user_id", "")
             if not _auth_mod.can_manage_team(user, tid):
                 self._send_json({"error": "Not authorized to manage this team"}, 403)
                 return
-            result = _auth_mod.AuthDB.remove_team_member(tid, body.get("user_id", ""))
+            result = _auth_mod.AuthDB.remove_team_member(tid, muid)
+            if "error" not in result:
+                _auth_mod.AuthDB.audit_write(user, "team.remove_member", target=tid, details={"member": muid}, ip=ip)
             status = 400 if "error" in result else 200
             self._send_json(result, status)
         elif action == "dissolve":
@@ -2062,6 +2283,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "Not authorized to manage this team"}, 403)
                 return
             _auth_mod.AuthDB.delete_team(tid)
+            _auth_mod.AuthDB.audit_write(user, "team.dissolve", target=tid, ip=ip)
             self._send_json({"ok": True})
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)
@@ -2070,20 +2292,192 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     # Paths that don't require auth
     _PUBLIC_GET_PATHS = {"/v1/status", "/v1/auth/me"}
-    _PUBLIC_POST_PATHS = {"/v1/auth/login", "/v1/auth/register", "/v1/auth/refresh"}
-    # Paths that require admin role
-    _ADMIN_GET_PATHS = {"/v1/auth/users"}
-    _ADMIN_POST_PATHS = {"/v1/auth/users", "/v1/auth/migrate", "/v1/restart"}
+    _PUBLIC_POST_PATHS = {"/v1/auth/login", "/v1/auth/refresh"}
 
-    def _auth_gate(self, path: str, public_paths: set, admin_paths: set) -> dict | None:
-        """Check auth for API paths. Returns user dict or None (response already sent)."""
+    # Admin-only paths. Entries ending in "/" match as prefix (any subpath is
+    # admin-only). Exact paths match exactly. These gate config mutations —
+    # only admin can edit server/agent configuration. Per-user resources
+    # (sessions, messages, projects, notes, artifacts) are gated separately
+    # by ownership/ACL helpers, not by this whitelist.
+    _ADMIN_GET_PATHS = {
+        "/v1/auth/users",
+        # Server & agent config reads that can leak secrets or resource counts
+        "/v1/providers",
+        "/v1/models/config",
+        "/v1/mempalace/classifier",
+        "/v1/mempalace/stats",
+        "/v1/mempalace/drawers",
+        "/v1/tools/config",
+        "/v1/context/config",
+        "/v1/traces",
+        "/v1/audit",
+        "/v1/audit/export",
+        "/v1/backup/info",
+        "/v1/services",
+        "/v1/channels",
+        "/v1/mcp/connections",
+        "/v1/mcp/registry",
+        # Prefixes (trailing slash)
+        "/v1/services/log",
+        "/v1/traces/",
+        "/v1/agents/",  # HOOKS / commands detail — read covered below; see GET filter
+    }
+    # Actual enforced GET admin prefixes — narrower than above; handled by
+    # _is_admin_path() below to keep non-config agent reads (projects, files,
+    # activity) open to non-admins. Kept tight.
+    _ADMIN_GET_PREFIXES = (
+        "/v1/traces/",
+    )
+    _ADMIN_GET_EXACT = {
+        "/v1/auth/users",
+        "/v1/auth/audit",
+        # Note: /v1/auth/permissions is NOT admin-only at the gate —
+        # the handler itself allows non-admins to read their own grants
+        # but rejects cross-user lookups. See _handle_auth_permissions_get.
+        "/v1/providers",
+        "/v1/models/config",
+        "/v1/mempalace/classifier",
+        "/v1/mempalace/drawers",
+        "/v1/tools/config",
+        "/v1/context/config",
+        "/v1/traces",
+        "/v1/audit",
+        "/v1/audit/export",
+        "/v1/backup/info",
+        "/v1/mcp/connections",
+        "/v1/mcp/registry",
+        "/v1/services",
+    }
+
+    _ADMIN_POST_EXACT = {
+        # Auth admin surface (already had these)
+        "/v1/auth/users",
+        "/v1/auth/migrate",
+        "/v1/auth/permissions",
+        "/v1/restart",
+        # Server-level config
+        "/v1/providers",
+        "/v1/providers/test",
+        "/v1/models/config",
+        "/v1/services/server",
+        "/v1/services/telegram",
+        "/v1/settings/commands",
+        "/v1/mempalace/classifier",
+        "/v1/warmup/trigger",
+        "/v1/backup",
+        "/v1/restore",
+        "/v1/mcp/connect",
+        "/v1/mcp/disconnect",
+        "/v1/tools/config",
+        "/v1/context/config",
+        "/v1/cache/clear",
+        "/v1/channels",
+        # Agent-level config
+        "/v1/agents/create",
+        "/v1/agents/delete",
+        "/v1/agents/rename",
+        # Skills install/remove
+        "/v1/skills/install",
+        "/v1/skills/install-zip",
+        "/v1/skills/remove",
+        "/v1/skills/claude-code",
+        "/v1/skills/claude-code/install",
+        # Command/refine tooling that writes to agent config
+        "/v1/commands/expand",
+        "/v1/refine",
+        # Nodes management (remote workers config)
+        "/v1/nodes",
+    }
+    _ADMIN_POST_PATHS = _ADMIN_POST_EXACT  # backwards compat
+    _ADMIN_POST_PREFIXES = (
+        # Agent config: file writes, hooks, commands, workflows, soul-chat
+        # Matches /v1/agents/<name>/{file,hooks,commands,workflows,...}
+        # NOTE: project subpaths and /v1/agents/switch are excluded below.
+        # We enforce via _is_admin_path() for fine-grained control.
+        "/v1/channels/",
+    )
+
+    # Agent-level POST subpaths that are admin-only. Checked against the
+    # portion after /v1/agents/<name>/.
+    _ADMIN_AGENT_POST_SUBPATHS = (
+        "file", "files", "hooks", "commands", "workflows", "soul-chat",
+    )
+
+    # Admin-only DELETE (agent workflow/ingest mutations). Regular users
+    # can still delete their OWN sessions/projects/notes — those are
+    # ownership-checked by their handlers.
+    _ADMIN_DELETE_AGENT_SUBPATHS = (
+        "workflows/", "ingested/",
+    )
+
+    def _is_admin_get(self, path: str) -> bool:
+        if path in self._ADMIN_GET_EXACT:
+            return True
+        for p in self._ADMIN_GET_PREFIXES:
+            if path.startswith(p):
+                return True
+        return False
+
+    def _is_admin_post(self, path: str) -> bool:
+        if path in self._ADMIN_POST_EXACT:
+            return True
+        for p in self._ADMIN_POST_PREFIXES:
+            if path.startswith(p):
+                return True
+        # Agent subpath config mutations: /v1/agents/<name>/{hooks,file,...}
+        if path.startswith("/v1/agents/"):
+            rest = path[len("/v1/agents/"):]
+            parts = rest.split("/", 1)
+            if len(parts) == 2 and parts[0] not in ("create", "delete", "rename", "switch", "activity"):
+                sub = parts[1]
+                # Allow project/ingest/notes/docs subpaths (user-facing, ACL-gated elsewhere)
+                if sub.startswith("projects") or sub == "ingest" or sub.startswith("ingested"):
+                    return False
+                for allowed in self._ADMIN_AGENT_POST_SUBPATHS:
+                    if sub == allowed or sub.startswith(allowed + "/"):
+                        return True
+        return False
+
+    def _is_admin_delete(self, path: str) -> bool:
+        if path.startswith("/v1/agents/"):
+            rest = path[len("/v1/agents/"):]
+            parts = rest.split("/", 1)
+            if len(parts) == 2:
+                sub = parts[1]
+                for prefix in self._ADMIN_DELETE_AGENT_SUBPATHS:
+                    if sub.startswith(prefix):
+                        return True
+        return False
+
+    def _auth_gate(self, path: str, public_paths: set, admin_paths: set, method: str = "GET") -> dict | None:
+        """Check auth for API paths. Returns user dict or None (response already sent).
+
+        `admin_paths` is kept for backwards-compat with exact-match checks;
+        prefix and subpath checks are delegated to _is_admin_{get,post,delete}.
+        """
         if path in public_paths:
             return _auth_mod.SYNTHETIC_ADMIN if not _auth_mod.auth_enabled() else (self._get_auth_user() or _auth_mod.SYNTHETIC_ADMIN)
         user = self._require_auth()
         if not user:
             return None
-        if path in admin_paths and user["role"] != "admin" and user["id"] != "__system__":
+        # Method-specific admin check
+        is_admin_required = False
+        if method == "GET":
+            is_admin_required = self._is_admin_get(path)
+        elif method == "POST":
+            is_admin_required = self._is_admin_post(path)
+        elif method == "DELETE":
+            is_admin_required = self._is_admin_delete(path)
+        # Legacy exact-match fallthrough
+        if not is_admin_required and path in admin_paths:
+            is_admin_required = True
+        if is_admin_required and user["role"] != "admin" and user["id"] != "__system__":
             self._send_json({"error": "Admin access required"}, 403)
+            return None
+        # Capability gate (projects, etc.) — admin bypasses via has_capability
+        needed_cap = self._path_requires_capability(method, path)
+        if needed_cap and not _auth_mod.has_capability(user, needed_cap):
+            self._send_json({"error": f"Capability '{needed_cap}' not granted"}, 403)
             return None
         return user
 
@@ -2101,13 +2495,19 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         elif path == "/v1/auth/users":
             self._handle_auth_users_list()
             return
+        elif path == "/v1/auth/permissions":
+            self._handle_auth_permissions_get()
+            return
+        elif path == "/v1/auth/audit":
+            self._handle_auth_audit_list()
+            return
         elif path == "/v1/user-teams":
             self._handle_user_teams_list()
             return
 
         # Auth gate for all /v1/* paths
         if path.startswith("/v1/"):
-            user = self._auth_gate(path, self._PUBLIC_GET_PATHS, self._ADMIN_GET_PATHS)
+            user = self._auth_gate(path, self._PUBLIC_GET_PATHS, self._ADMIN_GET_PATHS, method="GET")
             if not user:
                 return
             self._auth_user = user
@@ -2303,13 +2703,16 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         elif path == "/v1/auth/migrate":
             self._handle_auth_migrate()
             return
+        elif path == "/v1/auth/permissions":
+            self._handle_auth_permissions_manage()
+            return
         elif path == "/v1/user-teams":
             self._handle_user_teams_manage()
             return
 
         # Auth gate for all /v1/* paths
         if path.startswith("/v1/") or path == "/mcp":
-            user = self._auth_gate(path, self._PUBLIC_POST_PATHS, self._ADMIN_POST_PATHS)
+            user = self._auth_gate(path, self._PUBLIC_POST_PATHS, self._ADMIN_POST_PATHS, method="POST")
             if not user:
                 return
             self._auth_user = user
@@ -2482,7 +2885,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         # Auth gate
         if path.startswith("/v1/"):
-            user = self._auth_gate(path, set(), set())
+            user = self._auth_gate(path, set(), set(), method="PUT")
             if not user:
                 return
             self._auth_user = user
@@ -2497,12 +2900,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         # Auth gate
         if path.startswith("/v1/"):
-            user = self._auth_gate(path, set(), set())
+            user = self._auth_gate(path, set(), set(), method="DELETE")
             if not user:
                 return
             self._auth_user = user
         if path.startswith("/v1/sessions/"):
             sid = path.split("/")[-1]
+            if self._session_access_check(sid, require_manage=True) is None:
+                return
             info = ChatDB.get_session_info(sid)
             if sessions.delete(sid):
                 self._send_json({"status": "deleted"})
@@ -2678,7 +3083,27 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
     def _handle_list_agents(self):
         agents = engine.get_agent_summaries()
-        self._send_json({"agents": agents, "team_structure": engine.get_team_structure()})
+        team_structure = engine.get_team_structure()
+        # Scope to caller's granted agents. Admins see everything.
+        user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+        if user and user["role"] != "admin" and user["id"] != "__system__":
+            allowed = _auth_mod.AuthDB.get_user_allowed_agents(user["id"])
+            if isinstance(agents, dict):
+                agents = {aid: info for aid, info in agents.items() if aid in allowed}
+            elif isinstance(agents, list):
+                agents = [a for a in agents if (a.get("id") or a.get("name") or "") in allowed]
+            # Filter team_structure to only teams whose members the user can still see
+            if isinstance(team_structure, dict) and "teams" in team_structure:
+                filtered_teams = {}
+                for tid, team in (team_structure.get("teams") or {}).items():
+                    visible_members = [m for m in (team.get("members") or [])
+                                       if (m.get("id") or m.get("name")) in allowed]
+                    if visible_members:
+                        filtered_teams[tid] = {**team, "members": visible_members}
+                team_structure = {**team_structure, "teams": filtered_teams,
+                                  "standalone": [a for a in (team_structure.get("standalone") or [])
+                                                 if (a.get("id") or a.get("name")) in allowed]}
+        self._send_json({"agents": agents, "team_structure": team_structure})
 
     def _handle_list_models(self):
         qs = self.path.split("?", 1)[1] if "?" in self.path else ""
@@ -2691,6 +3116,19 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         else:
             models = engine.get_available_models(
                 server_config["api_key"], server_config["base_url"])
+        # Scope to caller's granted models. Admins see everything.
+        user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+        if user and user["role"] != "admin" and user["id"] != "__system__":
+            allowed = _auth_mod.AuthDB.get_user_allowed_models(user["id"])
+            if isinstance(models, dict):
+                models = {mid: info for mid, info in models.items() if mid in allowed}
+            elif isinstance(models, list):
+                # Entries can be strings or dicts with id/name
+                def _mid(m):
+                    if isinstance(m, str):
+                        return m
+                    return m.get("id") or m.get("name") or m.get("model") or ""
+                models = [m for m in models if _mid(m) in allowed]
         self._send_json({"models": models})
 
     def _handle_list_sessions(self):
@@ -2701,22 +3139,30 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         agent = unquote(params.get("agent", ""))
         status = unquote(params.get("status", ""))
         project = unquote(params.get("project", ""))
-        # Multi-user: scope to visible user IDs
-        visible = _auth_mod.get_visible_user_ids(getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN))
+        # Multi-user: scope to visible user IDs + team-visible sessions
+        auth_user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+        visible = _auth_mod.get_visible_user_ids(auth_user)
+        vteam = None
+        if visible is not None:
+            vteam = [t["id"] for t in _auth_mod.AuthDB.get_user_teams(auth_user["id"])]
         if agent or project:
             if project:
-                all_sessions = ChatDB.list_sessions(agent_id=agent or None, status=status or None, project=project, visible_user_ids=visible)
+                all_sessions = ChatDB.list_sessions(agent_id=agent or None, status=status or None, project=project,
+                                                   visible_user_ids=visible, visible_team_ids=vteam)
                 self._send_json({"sessions": all_sessions})
             else:
-                all_sessions = ChatDB.list_sessions(agent_id=agent, status=status or None, visible_user_ids=visible)
+                all_sessions = ChatDB.list_sessions(agent_id=agent, status=status or None,
+                                                   visible_user_ids=visible, visible_team_ids=vteam)
                 self._send_json({"sessions": all_sessions})
         else:
-            self._send_json({"sessions": ChatDB.list_sessions(visible_user_ids=visible)})
+            self._send_json({"sessions": ChatDB.list_sessions(visible_user_ids=visible, visible_team_ids=vteam)})
 
     def _handle_get_messages(self, path):
         """GET /v1/sessions/<id>/messages"""
         parts = path.split("/")
         sid = parts[3]
+        if self._session_access_check(sid) is None:
+            return
         msgs = ChatDB.load_messages(sid)
         resp = {"session_id": sid, "messages": msgs}
         session = sessions.get(sid)
@@ -2744,6 +3190,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         """
         parts = path.split("/")
         sid = parts[3]
+        if self._session_access_check(sid) is None:
+            return
         session = sessions.get(sid)
         if not session:
             self._send_json({"suggestion": None, "error": "session_not_found"}, 404)
@@ -2771,6 +3219,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         """GET /v1/sessions/<id>/inspect — full session debug view."""
         parts = path.split("/")
         sid = parts[3]
+        if self._session_access_check(sid) is None:
+            return
         session = sessions.get(sid)
         msgs = ChatDB.load_messages(sid, include_compacted=True)
 
@@ -2875,6 +3325,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         """GET /v1/sessions/<id>/files — returns all files from all messages (including compacted)"""
         parts = path.split("/")
         sid = parts[3]
+        if self._session_access_check(sid) is None:
+            return
         msgs = ChatDB.load_messages(sid, include_compacted=True)
         files = []
         seen = set()
@@ -3002,6 +3454,21 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
 
         # Sort by score (QMD results) then recency
         results.sort(key=lambda x: (x.get("score", 0), x.get("last_active", 0)), reverse=True)
+        # Multi-user: filter search results to sessions the caller can see
+        user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+        if user and user["role"] != "admin" and user["id"] != "__system__":
+            visible_uids = set(_auth_mod.get_visible_user_ids(user) or [])
+            my_team_ids = {t["id"] for t in _auth_mod.AuthDB.get_user_teams(user["id"])}
+            def _accessible(r):
+                owner = r.get("user_id") or ""
+                if not owner:
+                    return True  # legacy anonymous
+                if owner in visible_uids:
+                    return True
+                if r.get("visibility") == "team" and r.get("team_id") in my_team_ids:
+                    return True
+                return False
+            results = [r for r in results if _accessible(r)]
         self._send_json({"results": results[:limit], "query": query})
 
     def _handle_manage_session(self):
@@ -3009,6 +3476,29 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         body = self._read_json()
         action = body.get("action", "")
         sid = body.get("session_id", "")
+        if sid and self._session_access_check(sid, require_manage=True) is None:
+            return
+
+        if action == "set_visibility":
+            vis = body.get("visibility", "user")
+            team_id = body.get("team_id", "")
+            if vis not in ("user", "team"):
+                self._send_json({"error": "visibility must be 'user' or 'team'"}, 400); return
+            if vis == "team" and not team_id:
+                self._send_json({"error": "team_id required for team visibility"}, 400); return
+            if vis == "team":
+                # Caller must be a member of the target team (admin bypass handled above)
+                user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+                if user["role"] != "admin" and user["id"] != "__system__":
+                    my_teams = {t["id"] for t in _auth_mod.AuthDB.get_user_teams(user["id"])}
+                    if team_id not in my_teams:
+                        self._send_json({"error": "You are not a member of that team"}, 403); return
+            with _db_conn() as conn:
+                conn.execute("UPDATE sessions SET visibility = ?, team_id = ? WHERE id = ?",
+                             (vis, team_id if vis == "team" else "", sid))
+                conn.commit()
+            self._send_json({"status": "updated", "session_id": sid, "visibility": vis, "team_id": team_id if vis == "team" else ""})
+            return
 
         if action == "archive":
             ChatDB.archive_session(sid)
@@ -3248,8 +3738,16 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
     def _handle_create_session(self):
         body = self._read_json()
         model = body.get("model", server_config["default_model"])
-        provider = self._resolve_provider(model)
         agent_req = body.get("agent", "main")
+        # ACL gate: caller must have access to both the agent and the model
+        user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+        if not _auth_mod.can_access_agent(user, agent_req):
+            self._send_json({"error": f"Access to agent '{agent_req}' not permitted"}, 403)
+            return
+        if not _auth_mod.can_access_model(user, model):
+            self._send_json({"error": f"Access to model '{model}' not permitted"}, 403)
+            return
+        provider = self._resolve_provider(model)
         project_req = body.get("project", "")
         custom_status_req = body.get("status", "")
         note_req = body.get("note_context", "")
@@ -3367,6 +3865,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             return
         agent_id = body.get("agent", "main")
         model = body.get("model")
+        # ACL gate for agent + (optional) model change
+        user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+        if not _auth_mod.can_access_agent(user, agent_id):
+            self._send_json({"error": f"Access to agent '{agent_id}' not permitted"}, 403)
+            return
+        if model and not _auth_mod.can_access_model(user, model):
+            self._send_json({"error": f"Access to model '{model}' not permitted"}, 403)
+            return
         session.switch_agent(agent_id, model)
         warmup_enabled = False
         if model:
@@ -3387,6 +3893,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
     def _handle_cancel(self):
         body = self._read_json()
         sid = body.get("session_id", "")
+        if self._session_access_check(sid) is None:
+            return
         session = sessions.get(sid)
         if not session:
             self._send_json({"error": "Session not found"}, 404)
@@ -3459,6 +3967,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         chat_mode = body.get("mode", "")
         project_name = body.get("project")  # Optional project scope
         thinking_level = body.get("thinking")  # none, low, medium, high
+        # ACL: only owner/team-member/admin can post to the session
+        if sid and self._session_access_check(sid) is None:
+            return
+        # ACL: model override must be permitted
+        if model_override:
+            user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+            if not _auth_mod.can_access_model(user, model_override):
+                self._send_json({"error": f"Access to model '{model_override}' not permitted"}, 403)
+                return
         session = sessions.get(sid)
 
         if not session:
@@ -3835,6 +4352,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             engine._thread_local.current_agent = agent_config
             engine._thread_local.current_session_id = sid
             engine._thread_local.current_user_id = session.user_id or ""
+            # Team IDs the user belongs to — used for team-scoped MemPalace wing filtering
+            try:
+                engine._thread_local.current_team_ids = [
+                    t["id"] for t in _auth_mod.AuthDB.get_user_teams(session.user_id)
+                ] if session.user_id else []
+            except Exception:
+                engine._thread_local.current_team_ids = []
 
             # Reset per-request state (prevents cross-session leaks in pooled threads)
             engine.reset_tool_dedup()
@@ -4712,6 +5236,59 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         else:
             self._send_json(result, 201)
 
+    def _session_access_check(self, sid: str, *, require_manage: bool = False) -> dict | None:
+        """Load session metadata and verify the caller can access it.
+        Returns the session info dict on success; sends 403/404 and returns None on fail.
+        `require_manage` gates mutations: only owner, team head (for team sessions), or admin."""
+        info = ChatDB.get_session_info(sid)
+        if not info:
+            self._send_json({"error": "Session not found"}, 404)
+            return None
+        user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+        owner_uid = info.get("user_id") or ""
+        team_id = info.get("team_id") or ""
+        visibility = info.get("visibility") or "user"
+        # Admin bypass
+        if user["role"] == "admin" or user["id"] == "__system__":
+            return info
+        # Owner
+        if owner_uid and owner_uid == user["id"]:
+            return info
+        # Legacy anonymous sessions (no owner): allow read by anyone authenticated
+        if not owner_uid:
+            return info
+        # Team-scoped: members can read, only team head can manage
+        if visibility == "team" and team_id:
+            my_teams = {t["id"]: t for t in _auth_mod.AuthDB.get_user_teams(user["id"])}
+            if team_id in my_teams:
+                if require_manage and my_teams[team_id]["head_user_id"] != user["id"]:
+                    self._send_json({"error": "Only team head or session owner can modify"}, 403)
+                    return None
+                return info
+        self._send_json({"error": "Access to this session is not permitted"}, 403)
+        return None
+
+    def _project_access_check(self, agent_id: str, proj_name: str, *, require_manage: bool = False) -> dict | None:
+        """Load project.json, enforce visibility/ownership. Returns project dict on success,
+        None after sending 403/404. If require_manage is True, only admin or owner (user or
+        team head) can pass — used for PUT/DELETE/ingest/notes-write."""
+        project = engine.ProjectManager.get_project(agent_id, proj_name)
+        if not project:
+            self._send_json({"error": f"Project '{proj_name}' not found"}, 404)
+            return None
+        user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+        if not _auth_mod.can_access_project(user, project):
+            self._send_json({"error": "Access to this project is not permitted"}, 403)
+            return None
+        if require_manage:
+            if user["role"] != "admin" and user["id"] != "__system__":
+                owner_uid = project.get("owner_user_id", "")
+                owner_tid = project.get("owner_team_id", "")
+                if not _auth_mod.can_delete_resource(user, owner_uid, owner_tid):
+                    self._send_json({"error": "Only project owner (or admin) can modify this project"}, 403)
+                    return None
+        return project
+
     def _handle_project_get(self, path: str):
         """GET /v1/agents/{id}/projects/{name}"""
         agent_id = self._parse_agent_from_path(path)
@@ -4719,9 +5296,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         if not agent_id or not proj_name:
             self._send_json({"error": "Missing agent or project"}, 400)
             return
-        project = engine.ProjectManager.get_project(agent_id, proj_name)
-        if not project:
-            self._send_json({"error": f"Project '{proj_name}' not found"}, 404)
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
             return
         self._send_json(project)
 
@@ -4732,7 +5308,15 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         if not agent_id or not proj_name:
             self._send_json({"error": "Missing agent or project"}, 400)
             return
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return
         body = self._read_json()
+        # Non-admins cannot change visibility/ownership — only admins can reassign
+        user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+        if user["role"] != "admin" and user["id"] != "__system__":
+            for locked in ("visibility", "owner_user_id", "owner_team_id"):
+                body.pop(locked, None)
         result = engine.ProjectManager.update_project(agent_id, proj_name, body)
         if "error" in result:
             self._send_json(result, 400)
@@ -4745,6 +5329,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         proj_name = self._parse_project_from_path(path)
         if not agent_id or not proj_name:
             self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
             return
         result = engine.ProjectManager.delete_project(agent_id, proj_name)
         if "error" in result:
@@ -4759,6 +5346,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         proj_name = self._parse_project_from_path(path)
         if not agent_id or not proj_name:
             self._send_json({"error": "Missing agent or project"}, 400)
+            return
+
+        # ACL: GET requires read access; writes require manage access
+        require_manage = method in ("POST", "PUT", "DELETE")
+        if self._project_access_check(agent_id, proj_name, require_manage=require_manage) is None:
             return
 
         # Extract note path: everything after /notes/ (or empty for list)
@@ -4888,6 +5480,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         proj_name = self._parse_project_from_path(path)
         if not agent_id or not proj_name:
             self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        if self._project_access_check(agent_id, proj_name, require_manage=True) is None:
             return
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" in content_type:
@@ -5033,6 +5627,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         if not agent_id or not proj_name:
             self._send_json({"error": "Missing agent or project"}, 400)
             return
+        if self._project_access_check(agent_id, proj_name) is None:
+            return
         docs = engine.IngestManager.list_ingested(agent_id, project_name=proj_name)
         self._send_json({"agent": agent_id, "project": proj_name, "documents": docs})
 
@@ -5058,6 +5654,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         source_hash = parts[-1] if len(parts) >= 8 else ""
         if not agent_id or not proj_name or not source_hash:
             self._send_json({"error": "Missing parameters"}, 400)
+            return
+        if self._project_access_check(agent_id, proj_name, require_manage=True) is None:
             return
         result = engine.IngestManager.delete_ingested(agent_id, source_hash, project_name=proj_name)
         if "error" in result:
@@ -7142,6 +7740,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         if not session_id:
             self._send_json({"error": "Missing session_id"}, 400)
             return
+        if self._session_access_check(session_id, require_manage=True) is None:
+            return
         session = sessions.get(session_id)
         if not session:
             self._send_json({"error": "Session not found"}, 404)
@@ -7287,6 +7887,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         answers = body.get("answers")
         if not session_id or (answer is None and not isinstance(answers, dict)):
             self._send_json({"error": "session_id and answer/answers are required"}, 400)
+            return
+        if self._session_access_check(session_id) is None:
             return
         # Normalize answers dict values to strings
         if isinstance(answers, dict):
@@ -9215,10 +9817,11 @@ def main():
                         ChatDB.mempalace_update_cursor(sid, max_msg_id)
                         continue
 
-                    # Wing = user_id--agent_id for per-user isolation (-- separator;
-                    # MemPalace sanitize_name rejects /).
-                    # Sessions without a user_id (pre-auth or system) use bare agent_id.
-                    wing = f"{session_user_id}--{agent_id}" if session_user_id else agent_id
+                    # Wing resolution:
+                    #   team-scoped session → team_id--agent_id (shared across team members)
+                    #   user-owned          → user_id--agent_id (private to user)
+                    #   legacy anonymous    → bare agent_id
+                    wing = _resolve_session_wing(session_row)
 
                     new_messages = ChatDB.mempalace_load_new_messages(sid, after_id) or []
                     # Per (wing, room, source_file) → list[(drawer_id, text)] for closet rebuild.
@@ -9583,9 +10186,7 @@ def main():
                 info = ChatDB.get_session_info(session_id)
                 if not info:
                     return
-                agent_id = info.get("agent_id", "main")
-                user_id = info.get("user_id", "")
-                wing = f"{user_id}--{agent_id}" if user_id else agent_id
+                wing = _resolve_session_wing(info)
                 msgs = ChatDB.mempalace_load_new_messages(session_id, 0) or []
                 filed = 0
                 current_turn_id = 0
