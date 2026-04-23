@@ -69,7 +69,7 @@
   },
   "next_prompt_suggestions": {
     "enabled": true,
-    "model": "",
+    "model": "gemini-2.5-flash",
     "max_words": 15
   }
 }
