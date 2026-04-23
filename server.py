@@ -4868,9 +4868,22 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             })
 
     def _handle_models_config_get(self):
-        """GET /v1/models/config — return models configuration."""
+        """GET /v1/models/config — return models configuration.
+
+        Each model entry is annotated with `is_local` (derived from the resolved
+        provider's base_url) so the web UI can filter without re-implementing
+        the local-URL matcher.
+        """
+        models = {}
+        for mid, cfg in (engine._models_config or {}).items():
+            entry = dict(cfg)
+            try:
+                entry["is_local"] = engine.is_model_local(mid)
+            except Exception:
+                entry["is_local"] = False
+            models[mid] = entry
         self._send_json({
-            "models": dict(engine._models_config),
+            "models": models,
             "capabilities": list(engine.CAPABILITY_VALUES),
         })
 
@@ -7144,6 +7157,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     "enabled": bool(server_config.get("gdpr_scanner", {}).get("enabled", True)),
                     "server_log": bool(server_config.get("gdpr_scanner", {}).get("server_log", True)),
                     "server_block": bool(server_config.get("gdpr_scanner", {}).get("server_block", False)),
+                    "default_local_fallback_model": str(server_config.get("gdpr_scanner", {}).get("default_local_fallback_model") or ""),
                 },
                 "available_tools": sorted(engine.TOOL_DISPATCH.keys()),
             },
@@ -7356,6 +7370,18 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             for key in ("enabled", "server_log", "server_block"):
                 if key in gs_in:
                     gs[key] = bool(gs_in[key])
+            if "default_local_fallback_model" in gs_in:
+                mid = str(gs_in["default_local_fallback_model"] or "")
+                # Validate: must be a known, enabled, local model (empty = disabled)
+                if mid:
+                    mcfg = (engine._models_config or {}).get(mid) or {}
+                    if not mcfg.get("enabled"):
+                        self._send_json({"error": f"default_local_fallback_model: unknown or disabled model '{mid}'"}, 400)
+                        return
+                    if not engine.is_model_local(mid):
+                        self._send_json({"error": f"default_local_fallback_model: '{mid}' is not local"}, 400)
+                        return
+                gs["default_local_fallback_model"] = mid
             engine._invalidate_gdpr_cache()
             try:
                 config = {}
@@ -9197,6 +9223,18 @@ def _generate_chat_summary(session):
                         break
         if not model:
             return
+
+        # GDPR auto-fallback: chat content may contain PII and the summariser
+        # model is usually a cheap cloud Haiku. Reroute to the local fallback
+        # when findings exist. In hard-block mode without a local route, skip
+        # the summary — the session just keeps its existing/derived title.
+        try:
+            model = engine.gdpr_pick_model_for_background(
+                model, sample, purpose="chat_summary")
+        except engine.GDPRBlockedError:
+            return
+        except Exception:
+            pass
 
         result = engine._run_delegate(
             messages=[{"role": "user", "content": prompt}],

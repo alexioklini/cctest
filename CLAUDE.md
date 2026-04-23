@@ -203,8 +203,8 @@ Global `cost_limits.max_session_cost_usd` in `config.json` (Settings → Server 
 71 regex-based detectors that scan every outgoing chat message + text attachment for personal data **before** it leaves the client, and again server-side before it hits the LLM. Zero external APIs, offline, free.
 
 - **Two mirrored implementations**, must stay in sync:
-  - `PIIScanner` in `web/index.html` — runs on composer input (live badge) + on submit (blocking modal)
-  - `_pii_rules()` + `_pii_scan_text()` + `_pii_scan_bare_identifiers()` in `claude_cli.py` — runs in `send_message` on `_tool_round == 0` only (subsequent rounds replay the same user content)
+  - `PIIScanner` in `web/index.html` — runs on composer input (live badge), on loaded chat history (`piiHistoryText`/`piiHistoryHasFindings` with a per-chat cache keyed by message count; invalidated on `openSession` / user-message push / stream done / `newChat`), and on submit (blocking modal when not already on local)
+  - `_pii_rules()` + `_pii_scan_text()` + `_pii_scan_bare_identifiers()` in `claude_cli.py` — runs in `send_message` on `_tool_round == 0` only (subsequent rounds replay the same user content), and via `gdpr_pick_model_for_background()` on every non-interactive LLM call site (see below)
 - **Three rule tiers, evaluated in order** (first-match-wins via overlap suppression):
   1. **Cloud secrets / API keys** (distinct prefixes, highest signal): AWS, GitHub, Slack, Google, Stripe, OpenAI, Anthropic, Twilio, SendGrid, Mailgun, JWT, Azure Storage / account keys, PEM private keys, basic-auth-in-URL, entropy-gated generic `api_key = "..."` assignments
   2. **National IDs with real checksums**: UK NINO + NHS (mod-11), NL BSN (11-proef), BE national number (mod-97), PL PESEL, PT NIF, SE personnummer (Luhn), DK CPR, NO fødselsnummer (dual mod-11), CH AHV (EAN-13), CZ rodné číslo, RO CNP, HU TAJ, GR AMKA, BG EGN, IE PPS, ES DNI/NIE, IT Codice Fiscale, DE Steuer-ID (context-gated), FR INSEE, AT SVNR, US SSN, BR CPF + CNPJ, CA SIN (Luhn), MX CURP, AR DNI, IN Aadhaar (Verhoeff, context-gated), JP My Number, KR RRN, SG NRIC, TW national ID
@@ -220,18 +220,28 @@ Global `cost_limits.max_session_cost_usd` in `config.json` (Settings → Server 
 
 - **Modal**: 640px amber-gradient banner with pop-in shield, hero count, per-source pill badges, redacted monospace samples (first 2 + last 2 chars visible, rest `•`-masked), session-scoped "Don't warn again" checkbox, keyboard shortcuts (Esc cancels, Cmd/Ctrl+Enter sends), click-outside dismiss. Inline composer badge is an amber pill with shield SVG and formatted count
 
-- **Server-side behavior**: when findings present, print `[gdpr] session=... findings=N (...)` and (if `server_log` enabled) append a `pii_detected` row to `audit.db` via `_audit_log.log_action(action_type="pii_detected", tool_name="gdpr_scanner", source="llm_request")`. Hard-block mode (`server_block: true`) raises a `RuntimeError` with a user-visible message pre-LLM
+- **Server-side main-chat behavior**: when findings present, print `[gdpr] session=... findings=N (...)` and (if `server_log` enabled) append a `pii_detected` row to `audit.db` via `_audit_log.log_action(action_type="pii_detected", tool_name="gdpr_scanner", source="llm_request")`. Hard-block mode (`server_block: true`) raises a `RuntimeError` with a user-visible message pre-LLM, **but only when `is_model_local(model)` is false** — selecting a local model from the UI bypasses the block because the data stays on-prem. Message text nudges the user toward the dropdown
+
+- **Local-model routing for background/worker calls** (v8.10.0): `gdpr_pick_model_for_background(model, texts, purpose)` in `claude_cli.py` is the single decision point for every non-interactive LLM call. Called by `generate_next_prompt_suggestion`, `classify_chat_for_memory`, `_summarise_tool_result` (worker subagents), `_run_delegate` (delegate_task tool + scheduler tasks + agent-to-agent delegation), `_generate_chat_summary`. Flow: scan `texts` → emit `pii_detected` audit row (always, independent of swap) → if model is already local, return unchanged → if `default_local_fallback_model` is configured, enabled, and local, swap and emit `pii_auto_fallback` → else if `server_block=true`, emit `pii_blocked` and raise `GDPRBlockedError` (`RuntimeError` subclass) so the caller refuses cleanly (next-prompt returns None, classifier returns None, summariser returns static summary, delegate returns `"Delegation error: [GDPR block]..."`, chat summary skips) → else warn-only: proceed on the original cloud model
+- **Client-side local interlock**: `piiBlockActive(chat)` is true when `server_block=true` AND scanner is enabled AND (draft has PII OR loaded history has PII). Under that state `toggleModelDropdown` filters to `cfg.is_local` only with an amber header, `piiEnsureLocalModel()` auto-swaps the chat to `state.piiLocalFallback` (or the first enabled local), and `sendMessage` refuses-with-toast if the current model still isn't local. Badge has three states: red (no local available), green (routing via local, "auto-selected" on first swap), amber (warn-only). Label distinguishes "Personal data in your message" vs "Personal data earlier in this chat"
+- **`is_local` derivation**: `is_model_local(model_id)` in `claude_cli.py` resolves the provider and calls `_is_local_base_url()` (matches `localhost`, `127.0.0.1`, `0.0.0.0`, RFC1918). `GET /v1/models/config` annotates every model entry with `is_local` so the client doesn't duplicate URL parsing; fallback heuristic in `isModelLocal()` for older server builds
 
 - **Config** (`config.json` → `gdpr_scanner`, 30s cache, invalidated on save via `engine._invalidate_gdpr_cache()`):
   ```json
-  {"enabled": true, "server_log": true, "server_block": false}
+  {
+    "enabled": true,
+    "server_log": true,
+    "server_block": false,
+    "default_local_fallback_model": ""
+  }
   ```
+  `default_local_fallback_model` must be an enabled local model id; `POST /v1/services/server` validates this and returns 400 otherwise. Empty string disables auto-routing
 
 - **Suppression state lives in `sessionStorage`**: key `pii-suppress:<session_id_or_"_new">` — cleared on page reload, not on server restart. Intentional: protection resets every browser session
 
 - **What's deliberately not detected** (keep in mind if expanding): personal names (needs NLP, too noisy for regex), physical addresses (format varies per country, needs dictionaries), medical terms / ICD codes (dictionary-based, not regex), passport numbers for all 50+ countries without context (too generic — only context-gated passport rule exists), driver's license per country without context. The Microsoft Purview SIT catalog lists ~300 detectors; we ship the ~70 that can be implemented faithfully from public specs without copying Purview's own patterns
 
-- **Future**: `backlog_gdpr_local_routing.md` — auto-route PII-containing requests to local-only models. Blocked on needing a multi-user inference queue first (concurrent requests to one oMLX model fight for KV cache)
+- **Audit trail** covers three events: `pii_detected` (every finding, main chat or background), `pii_auto_fallback` (swap happened, with `args_summary="<cloud_model> -> <local_model>"`), `pii_blocked` (refusal fired, with `source="background"`). Filter in the Audit tab to reconstruct any request's PII decision trail
 
 ## Tool Definition Cost Measurement
 

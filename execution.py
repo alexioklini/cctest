@@ -490,7 +490,8 @@ def _summarise_tool_result(
     """
     from claude_cli import (
         _thread_local, send_message_with_fallback,
-        resolve_provider_for_model,
+        resolve_provider_for_model, gdpr_pick_model_for_background,
+        GDPRBlockedError,
     )
 
     cfg = _load_config()
@@ -508,11 +509,6 @@ def _summarise_tool_result(
     if not model:
         return _static_summary(tool_name, artifact_meta), [], _zero_usage
 
-    try:
-        prov = resolve_provider_for_model(model)
-    except Exception:
-        return _static_summary(tool_name, artifact_meta), [], _zero_usage
-
     truncated = raw_result[:max_chars]
     if len(raw_result) > max_chars:
         truncated += f"\n\n[... truncated from {len(raw_result):,} to {max_chars:,} chars]"
@@ -520,6 +516,25 @@ def _summarise_tool_result(
     args_brief = json.dumps(args, ensure_ascii=False, default=str)
     if len(args_brief) > 500:
         args_brief = args_brief[:500] + "..."
+
+    # GDPR auto-fallback: tool results may contain personal data from the
+    # user's request or the tool's response. Reroute to the local fallback
+    # before summarising if PII is present and the current model is cloud.
+    # Hard-block with no local route → fall back to the static summary so
+    # the worker envelope still gets a description without leaking to cloud.
+    try:
+        model = gdpr_pick_model_for_background(
+            model, [args_brief, truncated], purpose=f"tool_summariser:{tool_name}")
+    except GDPRBlockedError:
+        return _static_summary(tool_name, artifact_meta), [], _zero_usage
+    except Exception:
+        pass
+    _zero_usage["model"] = model
+
+    try:
+        prov = resolve_provider_for_model(model)
+    except Exception:
+        return _static_summary(tool_name, artifact_meta), [], _zero_usage
 
     messages = [
         {"role": "system", "content": _SUMMARISER_SYSTEM},
@@ -531,6 +546,7 @@ def _summarise_tool_result(
     ]
 
     usage_capture = {"tokens_in": 0, "tokens_out": 0, "model": model}
+
     def _capture_cb(event_type, data):
         if event_type == "usage":
             usage_capture["tokens_in"] = data.get("tokens_in", 0)

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.9.0"
+VERSION = "8.10.0"
 VERSION_DATE = "2026-04-23"
 CHANGELOG = [
+    ("8.10.0", "2026-04-23", "GDPR local-model routing — the long-standing follow-up to v8.8.0's scanner. When the outgoing payload contains personal data the chat is automatically routed to a local model instead of being blocked at the door. Three layers: (1) config.json → gdpr_scanner.default_local_fallback_model — a model id used by every non-interactive LLM call to transparently swap cloud → local when PII is detected. Configurable in Settings → Server → GDPR card (dropdown is populated only with enabled local models; selection is validated server-side against is_local + enabled). (2) Server-side hook gdpr_pick_model_for_background(model, texts, purpose) in claude_cli.py — single decision point called by generate_next_prompt_suggestion, classify_chat_for_memory, _summarise_tool_result (worker subagents), _run_delegate (delegate_task tool + scheduler tasks + agent-to-agent delegation), _generate_chat_summary. Every detection at the background layer emits a pii_detected audit row; every swap emits an additional pii_auto_fallback row; a new pii_blocked row fires when server_block=true and no local fallback is usable. New GDPRBlockedError sentinel (inherits RuntimeError) propagates refusal cleanly: next-prompt/classifier return None, summariser returns the static fallback summary, delegate returns a 'Delegation error: [GDPR block]...' string, chat summary skips. (3) Client-side interlock in web/index.html — piiBlockActive(chat) is true when the composer draft OR the loaded chat history contains PII (new piiHistoryText/piiHistoryHasFindings walk the messages array with a cache keyed by message count, invalidated on openSession / user-message push / stream done / newChat). When active, toggleModelDropdown reduces the model list to is_local-only with an amber 'Personal data detected' header; piiEnsureLocalModel auto-swaps the chat to the configured fallback (or first enabled local) the instant PII is seen; sendMessage refuses-with-toast if server_block is on and no local model is selectable. Badge shows three distinct states: red when no local available, green when routing via local (with 'auto-selected' marker on first swap), amber warn-only when block is off. New badge scope label 'Personal data earlier in this chat' distinguishes history-derived findings from fresh draft input. Server-side send_message block gate now checks is_model_local(model) before raising the user-facing RuntimeError — previously the gate fired unconditionally and would refuse even when the user had already picked a local model, so manual recovery from the dropdown was broken (session b2703917 regression). GET /v1/models/config now annotates every model entry with is_local (derived from _is_local_base_url on the resolved provider) so the web UI doesn't duplicate URL parsing. New is_model_local(model) helper in claude_cli.py is the single authoritative resolver. All call sites verified: scanner runs on both main chat (round 0, warn-or-block) and every background path (detect + swap + optional refuse); audit trail covers detect, swap, and block independently."),
     ("8.9.0", "2026-04-23", "Per-provider concurrency queue for local LLM gateways. Local runtimes (oMLX on port 8000, CLIProxyAPI on 8317) can't actually process two /chat/completions in parallel even when multiple models are loaded — the GPU serializes internally and a second request stalls the first. Without coordination, two concurrent chats + scheduler delegates + warmup primes fought for the same wire and occasionally got 500s. New LocalProviderQueue (claude_cli.py) with per-provider semaphore + strict-FIFO waitlist, opt-in via config.json providers.<name>.max_concurrent (0 = unlimited = no queue). Seeded: omlx=1, cliproxyapi=2, cloud providers stay 0. Wrapped every HTTP call site that hits a /chat/completions endpoint: send_message main chat, _run_delegate, run_model_warmup, classify_chat_for_memory; generate_next_prompt_suggestion and _summarise_tool_result are covered transitively via send_message_with_fallback. Warmup goes through the queue too (label=warmup), so the keeper can't cut in front of a live chat. Slot is held only during the HTTP wire time — _handle_openai_response calls release_slot() the instant the SSE stream drains, before any tool execution or recursive send_message, so local tool work (exa_search, python_exec, worker summariser) doesn't block other chats from the gateway. Worker subagents that fire a nested summariser LLM call now just queue normally — no re-entrancy, no deadlock. Cancellation during wait removes the ticket from the deque cleanly; cancellation mid-HTTP fires via existing cancel_token path. New GET /v1/queue/status exposes per-provider active + waiting tickets (label, model, session, agent, age). New POST /v1/queue/cancel (admin-only, audit-logged as queue_cancel): waiting tickets raise TaskCancelled(\"Queue cancel by admin: <reason>\") on their next 200ms poll tick; running tickets have their cancel_token fired (same signal as the per-chat Stop button). SSE events queue_wait / queue_acquired / queue_released stream to the UI per turn. Web UI adds a status-bar Queue pill next to Pool — always visible when any provider has max_concurrent > 0, label shows N/M (active/capacity) or N+W/M when queued. Click opens a modal listing active + waiting tickets per provider with live updates; admins see a red Cancel button per row. Per-turn inline banner in the chat streaming bubble: 'Waiting in queue on <provider> — position N of M · Xs' until queue_acquired fires. QueueMonitor polls /v1/queue/status (1s fast when tickets exist, 10s slow when idle)."),
     ("8.8.0", "2026-04-23", "GDPR / PII pre-submit scanner. Every chat message and text attachment is scanned locally in the browser before it leaves the client, and again server-side before hitting the LLM. Zero external APIs, free, offline. 71 regex-based detectors across three tiers: (1) Tier 1 national IDs with real checksums — UK NINO + NHS (mod-11), NL BSN (11-proef), BE national number (mod-97), PL PESEL, PT NIF, SE personnummer (Luhn), DK CPR, NO fødselsnummer (dual mod-11), CH AHV (EAN-13), CZ rodné číslo, RO CNP, HU TAJ, GR AMKA, BG EGN, IE PPS, ES DNI/NIE, IT Codice Fiscale, DE Steuer-ID, FR INSEE, AT SVNR, US SSN, BR CPF + CNPJ, CA SIN (Luhn), MX CURP, AR DNI, IN Aadhaar (Verhoeff), JP My Number, KR RRN, SG NRIC, TW national ID. (2) Tier 2 cloud secrets — AWS access key + secret, GitHub PAT + app tokens, Slack tokens + webhooks, Google API key + OAuth client, Stripe live/test, OpenAI, Anthropic, Twilio, SendGrid, Mailgun, JWT, Azure Storage connection strings, Azure account keys, PEM private keys, basic-auth in URL, entropy-gated generic `api_key = \"...\"` assignments. (3) Tier 3 context-fallback — fire on keyword + number-shape even when checksum fails, so `SVNR: 3030201077` and `svr-nummer: ...` trigger regardless of validity. Plus a bare-identifier heuristic for messages dominated by ID-shaped number lines (the classic 'what is this number?' paste). Strict checksum rules win first via overlap suppression; context-fallback and bare-identifier rules catch what checksum-strict would miss. Single source of truth in two mirrored implementations: PIIScanner in web/index.html (JS) and _pii_rules/_pii_scan_text/_pii_scan_bare_identifiers in claude_cli.py (Python) — 58/58 parity on handcrafted positive fixtures, 0 false positives on prose / non-Luhn card-shaped numbers. Redesigned warning modal: 640px amber-gradient banner with animated shield icon, hero-style count, per-source cards with pill badges and redacted monospace samples (first 2 + last 2 chars visible, rest masked), keyboard shortcuts (Esc cancels, Cmd/Ctrl+Enter sends), click-outside dismiss, session suppression checkbox. Composer inline badge redesigned as an amber gradient pill with shield SVG and formatted count. Server-side mirror runs in send_message on _tool_round == 0 only (subsequent rounds replay the same user content); findings logged to audit.db as pii_detected rows when gdpr_scanner.server_log is enabled; optional hard-block mode raises pre-LLM when gdpr_scanner.server_block is true. New Settings → Server → GDPR / PII Scanner card with three checkboxes (enabled / server_log / server_block) and Save. Config at config.json → gdpr_scanner, cached 30s, invalidated on save via engine._invalidate_gdpr_cache(). Future: auto-route PII-containing requests to local-only models (blocked on multi-user inference queue)."),
     ("8.6.0", "2026-04-20", "Warmup overhaul — first-response latency drops from 15s to 2-3s on local models. Root cause was a silent KV-cache miss: the warmup prime payload didn't match the real first-turn payload byte-for-byte, so oMLX's prompt cache never hit. Four drift sources fixed: (1) system prompt contained minute-precision timestamp that differed between warmup and real request — rounded to the hour in _build_system_prompt so prefixes stay byte-stable across request boundaries; (2) warmup payload omitted MCP tools that the real payload includes — warmup now attaches the process-global MCPManager and merges mcp tools into the sorted tool list; (3) warmup used stream=False vs the real request's stream=True+stream_options — now identical; (4) per-session _trigger_warmup in server.py was a divergent copy of the warmup payload — deleted, replaced with a thin delegation to engine.run_model_warmup so both paths share one code path. Also fixed: run_model_warmup now bumps last_warmup_ts on failure so a perpetually failing model (OOM Qwen 35B) doesn't monopolize the max_concurrent=1 keeper slot via oldest-first sort. New per-model warmup_mode config (\"full\" default | \"minimal\"): full primes the KV prefix (system+tools), minimal loads weights only — trade-off is user's call, no auto-selection. Keeper re-primes when mode flips, won't evict warm models otherwise. Config changes now wake the keeper via a threading.Event so new warmup flags take effect immediately instead of waiting up to 30s. Pool invalidation extended to any KV-prefix-relevant field change (warmup, warmup_mode, enabled, max_context, warmup_allow_cloud, parallel_tool_calls, caveman_system, provider, base_model_id). New UI: status-bar Pool indicator with aggregate ready/target + failed count; click opens a modal listing each warmup-enabled model with state badge, progress bar, mode chip (full/minimal), last-warmed age, last_error, and per-model 'Warm now' button. Modal body live-refreshes via WarmupMonitor._render(). Models tab detail panel adds a Warmup Mode dropdown. Log format: [warmup-keeper] <model>: warm (<mode>, <ms>ms)."),
@@ -7742,6 +7743,23 @@ def generate_next_prompt_suggestion(session) -> str | None:
         if not model:
             return None
 
+        # GDPR auto-fallback: if the history contains PII and the chosen model
+        # is cloud, swap to the configured local fallback. In hard-block mode
+        # with no local fallback available, skip the suggestion entirely —
+        # this call is ornamental and must not leak to cloud.
+        try:
+            _history_blobs = []
+            for _m in clean_msgs:
+                _c = _m.get("content")
+                if isinstance(_c, str):
+                    _history_blobs.append(_c)
+            model = gdpr_pick_model_for_background(model, _history_blobs,
+                                                   purpose="next_prompt_suggestion")
+        except GDPRBlockedError:
+            return None
+        except Exception:
+            pass
+
         prov = resolve_provider_for_model(model)
 
         text = send_message_with_fallback(
@@ -9153,6 +9171,35 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
 
     tools: True=all tools, False=no tools, "memory_only"=only memory tools
     """
+    # GDPR auto-fallback: scheduled tasks, agent-to-agent delegation, and
+    # delegate_task tool calls run without user interaction. Reroute to the
+    # local fallback when `messages` contain PII and the chosen model is
+    # cloud. In hard-block mode with no local route available the delegate
+    # is refused (returns the usual error-string shape callers already
+    # recognise).
+    try:
+        _delegate_blobs = []
+        if system_prompt:
+            _delegate_blobs.append(system_prompt)
+        for _m in (messages or []):
+            _c = _m.get("content") if isinstance(_m, dict) else None
+            if isinstance(_c, str):
+                _delegate_blobs.append(_c)
+            elif isinstance(_c, list):
+                for _b in _c:
+                    if isinstance(_b, dict) and _b.get("type") == "text":
+                        _t = _b.get("text")
+                        if isinstance(_t, str):
+                            _delegate_blobs.append(_t)
+        try:
+            model = gdpr_pick_model_for_background(model, _delegate_blobs, purpose="delegate")
+        except GDPRBlockedError as _ge:
+            return f"Delegation error: {_ge}"
+    except GDPRBlockedError:
+        raise  # never swallow a block
+    except Exception:
+        pass
+
     _prov = resolve_provider_for_model(model)
 
     # Store memory in thread-local so tool_memory_* can find it
@@ -15012,20 +15059,27 @@ def _get_gdpr_scanner_config() -> dict:
     Shape:
       {"enabled": bool,            # whole feature on/off (default True)
        "server_log": bool,         # write audit.db entries on findings (default True)
-       "server_block": bool}       # raise RuntimeError on findings (default False — warn only)
+       "server_block": bool,       # raise RuntimeError on findings (default False — warn only)
+       "default_local_fallback_model": str}  # model id used to transparently reroute
+                                             # background/worker LLM calls when PII is
+                                             # detected and the current model is cloud
+                                             # (empty string = no fallback)
     """
     global _gdpr_scanner_cache, _gdpr_scanner_cache_time
     now = time.time()
     if _gdpr_scanner_cache is not None and (now - _gdpr_scanner_cache_time) < 30:
         return _gdpr_scanner_cache
-    cfg = {"enabled": True, "server_log": True, "server_block": False}
+    cfg = {"enabled": True, "server_log": True, "server_block": False,
+           "default_local_fallback_model": ""}
     cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
     try:
         with open(cfg_path) as f:
             loaded = json.load(f).get("gdpr_scanner") or {}
-        for k in cfg:
+        for k in ("enabled", "server_log", "server_block"):
             if k in loaded:
                 cfg[k] = bool(loaded[k])
+        if "default_local_fallback_model" in loaded:
+            cfg["default_local_fallback_model"] = str(loaded["default_local_fallback_model"] or "")
     except (OSError, json.JSONDecodeError):
         pass
     _gdpr_scanner_cache = cfg
@@ -15033,11 +15087,190 @@ def _get_gdpr_scanner_config() -> dict:
     return cfg
 
 
+def is_model_local(model_id: str) -> bool:
+    """Return True if `model_id` resolves to a local-gateway provider."""
+    if not model_id:
+        return False
+    try:
+        prov = resolve_provider_for_model(model_id)
+    except Exception:
+        return False
+    return _is_local_base_url(prov.get("base_url", "") if prov else "")
+
+
 def _invalidate_gdpr_cache():
     """Called from server.py when gdpr_scanner config changes."""
     global _gdpr_scanner_cache, _gdpr_scanner_cache_time
     _gdpr_scanner_cache = None
     _gdpr_scanner_cache_time = 0.0
+
+
+class GDPRBlockedError(RuntimeError):
+    """Raised by gdpr_pick_model_for_background when PII is detected, the
+    server is configured in hard-block mode, and no safe local route exists.
+
+    Callers catch this and decide what to skip (e.g. drop the background call,
+    return a static summary, emit a delegate error). Not raised for the main
+    chat path — that surface has its own RuntimeError branch with a different
+    message aimed at the end user.
+    """
+
+
+def gdpr_pick_model_for_background(model: str, texts, purpose: str = "") -> str:
+    """Decide which model to use for a background/worker LLM call.
+
+    Behavior when the scanner is enabled AND `texts` contain PII:
+      - current model is local           → return model unchanged
+      - local fallback configured + OK   → swap to fallback (logged as pii_auto_fallback)
+      - no usable fallback, block off    → return model unchanged (warn-only)
+      - no usable fallback, block on     → raise GDPRBlockedError
+
+    Every PII detection at this layer emits a `pii_detected` audit row with
+    `source=background`, independent of whether the model is swapped.
+
+    `texts` accepts str or iterable-of-str. Unexpected errors in scanning or
+    config access fall open (return model) — never block a background call on
+    scanner bugs.
+
+    Used by: next-prompt suggestions, chat summary, memory classifier, worker
+    tool-result summariser, _run_delegate (delegate tool + scheduler + agent
+    tasks).
+    """
+    try:
+        cfg = _get_gdpr_scanner_config()
+    except Exception:
+        return model
+    if not cfg.get("enabled", True):
+        return model
+
+    # Normalise texts up-front so we can scan regardless of fallback state.
+    if isinstance(texts, str):
+        samples = [texts]
+    else:
+        try:
+            samples = [t for t in texts if isinstance(t, str)]
+        except TypeError:
+            return model
+    if not samples:
+        return model
+
+    # Scan. Fail open on scanner errors.
+    try:
+        findings = []
+        for s in samples:
+            if not s:
+                continue
+            findings.extend(_pii_scan_text(s, max_findings=5))
+            if findings:
+                break
+    except Exception:
+        return model
+    if not findings:
+        return model
+
+    _agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    _agent_id = _agent.agent_id if _agent else "main"
+    _sid = getattr(_thread_local, 'current_session_id', None) or ""
+    _n = len(findings)
+    _log_audit = bool(cfg.get("server_log", True) and _audit_log)
+    _server_block = bool(cfg.get("server_block", False))
+
+    # Always record the detection at the background layer, independent of any
+    # swap decision. Best-effort.
+    try:
+        print(f"[gdpr] session={_sid} agent={_agent_id} purpose={purpose} "
+              f"findings={_n} (background)", flush=True)
+    except Exception:
+        pass
+    if _log_audit:
+        try:
+            _audit_log.log_action(
+                agent=_agent_id,
+                action_type="pii_detected",
+                tool_name="gdpr_scanner",
+                args_summary=f"{_n} findings",
+                result_summary=f"purpose={purpose or '-'} model={model}",
+                result_status="warning",
+                session_id=_sid or None,
+                source="background",
+            )
+        except Exception:
+            pass
+
+    # Already on a local model — nothing to reroute, nothing to block.
+    try:
+        model_is_local = is_model_local(model)
+    except Exception:
+        model_is_local = False
+    if model_is_local:
+        return model
+
+    # Attempt the swap. fallback == model is treated as no-swap.
+    fallback = (cfg.get("default_local_fallback_model") or "").strip()
+    swap_ok = False
+    if fallback and fallback != model:
+        try:
+            fcfg = (_models_config or {}).get(fallback) or {}
+            if fcfg.get("enabled") and is_model_local(fallback):
+                swap_ok = True
+        except Exception:
+            swap_ok = False
+
+    if swap_ok:
+        try:
+            print(f"[gdpr] auto-fallback session={_sid} agent={_agent_id} "
+                  f"purpose={purpose} {model} -> {fallback} ({_n} findings)", flush=True)
+        except Exception:
+            pass
+        if _log_audit:
+            try:
+                _audit_log.log_action(
+                    agent=_agent_id,
+                    action_type="pii_auto_fallback",
+                    tool_name="gdpr_scanner",
+                    args_summary=f"{model} -> {fallback}",
+                    result_summary=f"purpose={purpose or '-'} findings={_n}",
+                    result_status="ok",
+                    session_id=_sid or None,
+                    source="background",
+                )
+            except Exception:
+                pass
+        return fallback
+
+    # No swap possible and model is cloud.
+    if _server_block:
+        try:
+            print(f"[gdpr] BLOCK session={_sid} agent={_agent_id} purpose={purpose} "
+                  f"model={model} findings={_n} (no local fallback available)",
+                  flush=True)
+        except Exception:
+            pass
+        if _log_audit:
+            try:
+                _audit_log.log_action(
+                    agent=_agent_id,
+                    action_type="pii_blocked",
+                    tool_name="gdpr_scanner",
+                    args_summary=f"model={model}",
+                    result_summary=f"purpose={purpose or '-'} findings={_n} "
+                                   f"fallback={fallback or '-'}",
+                    result_status="blocked",
+                    session_id=_sid or None,
+                    source="background",
+                )
+            except Exception:
+                pass
+        raise GDPRBlockedError(
+            f"[GDPR block] Background call refused (purpose={purpose or '-'}): "
+            f"{_n} personal-data finding(s) in payload and no usable local "
+            f"fallback model is configured. Set "
+            f"gdpr_scanner.default_local_fallback_model in Settings, or "
+            f"disable server_block."
+        )
+
+    # Warn-only mode: leave the caller to use the cloud model.
+    return model
 
 
 def _get_execution_mode() -> str:
@@ -15525,6 +15758,13 @@ def classify_chat_for_memory(user_text: str, assistant_text: str,
                              model: str, timeout: int = 15) -> str | None:
     """Classify a user+assistant exchange for memory filing. Returns category or None on error."""
     try:
+        # GDPR auto-fallback before any cloud HTTP call. Hard-block without
+        # a local fallback skips classification; the chat pair stays unfiled.
+        try:
+            model = gdpr_pick_model_for_background(
+                model, [user_text, assistant_text], purpose="memory_classifier")
+        except GDPRBlockedError:
+            return None
         provider = resolve_provider_for_model(model)
         headers = make_headers(provider["api_key"])
         endpoint = f"{provider['base_url']}/chat/completions"
@@ -18130,12 +18370,21 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                     except Exception:
                         pass
                 if _gdpr_cfg.get("server_block", False):
-                    raise RuntimeError(
-                        f"[GDPR block] Outgoing message contains detected personal data: "
-                        f"{_pii_summary}. Server is configured to block such requests "
-                        f"(gdpr_scanner.server_block=true). Revise the message or disable "
-                        f"server_block in Settings."
-                    )
+                    # Only block when the outgoing request targets a cloud
+                    # provider. If the user has already picked a local model,
+                    # the data stays on-prem — matching the composer UI which
+                    # reduces the dropdown to local models on PII detection.
+                    try:
+                        _model_is_local = is_model_local(model)
+                    except Exception:
+                        _model_is_local = False
+                    if not _model_is_local:
+                        raise RuntimeError(
+                            f"[GDPR block] Outgoing message contains detected personal data: "
+                            f"{_pii_summary}. Server is configured to block such requests "
+                            f"(gdpr_scanner.server_block=true). Select a local model or "
+                            f"disable server_block in Settings."
+                        )
         # Start a request-level trace span for the full conversation turn
         if _trace_manager:
             agent = getattr(_thread_local, 'current_agent', None) or _current_agent

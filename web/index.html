@@ -5309,6 +5309,133 @@ function updateModelSelectorDisplay(modelId) {
   refreshThinkingButton();
 }
 
+// Model locality helper — prefers the server-derived is_local flag exposed via
+// /v1/models/config, falls back to a base_url sniff for older server builds.
+function isModelLocal(mid) {
+  const cfg = state.modelsConfig?.models?.[mid] || {};
+  if (typeof cfg.is_local === 'boolean') return cfg.is_local;
+  const u = (cfg.base_url || '').toLowerCase();
+  if (!u) return false;
+  if (u.includes('localhost') || u.includes('127.0.0.1') || u.includes('0.0.0.0')) return true;
+  const host = (u.match(/\/\/([^\/:]+)/) || [])[1] || '';
+  if (host.startsWith('192.168.') || host.startsWith('10.')) return true;
+  if (host.startsWith('172.')) {
+    const n = parseInt(host.split('.')[1], 10);
+    if (n >= 16 && n <= 31) return true;
+  }
+  return false;
+}
+
+// Extract all user + assistant text (and attachment metadata) from a chat's
+// in-memory history into a single string so PIIScanner can sweep it in one
+// pass. Tool calls/results are excluded — they're downstream of the user's
+// intent and would create noise (URLs, search snippets, etc.).
+function piiHistoryText(chat) {
+  if (!chat || !Array.isArray(chat.messages) || !chat.messages.length) return '';
+  const parts = [];
+  for (const m of chat.messages) {
+    if (!m) continue;
+    const role = m.role;
+    if (role !== 'human' && role !== 'user' && role !== 'assistant') continue;
+    const c = m.content;
+    if (typeof c === 'string') {
+      if (c) parts.push(c);
+    } else if (Array.isArray(c)) {
+      for (const b of c) {
+        if (b && typeof b === 'object' && b.type === 'text' && typeof b.text === 'string') {
+          parts.push(b.text);
+        }
+      }
+    }
+    if (Array.isArray(m.files)) {
+      for (const f of m.files) {
+        if (f && typeof f === 'object') {
+          const bits = [f.name, f.filename, f.path, f.mime, f.type].filter(Boolean);
+          if (bits.length) parts.push(bits.join(' '));
+        }
+      }
+    }
+  }
+  return parts.join('\n');
+}
+
+// Scan the chat's loaded history for PII and cache the boolean result.
+// Cache key is the message count so it refreshes on every new turn; callers
+// can force a re-scan by setting `chat._piiHistoryScanLen = -1`.
+function piiHistoryHasFindings(chat) {
+  if (!chat || !Array.isArray(chat.messages)) return false;
+  const len = chat.messages.length;
+  if (!len) return false;
+  if (chat._piiHistoryScanLen === len) return !!chat._piiHistoryHas;
+  const text = piiHistoryText(chat);
+  let has = false;
+  try {
+    const scan = PIIScanner.scanPayload(text, []);
+    has = scan.findings.length > 0;
+    chat._piiHistoryCounts = scan.counts || {};
+  } catch (e) { has = false; }
+  chat._piiHistoryHas = has;
+  chat._piiHistoryScanLen = len;
+  return has;
+}
+
+// True when the active chat's draft OR its loaded history contains PII, AND
+// the server is configured to hard-block cloud requests. In that state the
+// composer disables cloud-model selection and auto-picks a local model, even
+// if the current draft is empty.
+function piiBlockActive(chat) {
+  if (!state.piiServerBlock || state.piiScannerEnabled === false) return false;
+  chat = chat || state.activeChat;
+  if (!chat) return false;
+  if (sessionStorage.getItem('pii-suppress:' + (chat.sessionId || '_new'))) return false;
+  const input = state.currentView === 'welcome'
+    ? document.getElementById('welcome-input')
+    : document.getElementById('chat-input');
+  const text = input?.value || '';
+  const draftScan = PIIScanner.scanPayload(text, state._pendingFiles || []);
+  if (draftScan.findings.length > 0) return true;
+  return piiHistoryHasFindings(chat);
+}
+
+// If PII is present + block is on + the current model is cloud, swap to the
+// configured local fallback (or first local model). Returns true if a swap
+// happened. Safe to call idempotently.
+function piiEnsureLocalModel() {
+  const chat = state.activeChat;
+  if (!chat) return false;
+  if (!piiBlockActive(chat)) return false;
+  const cur = chat.model || '';
+  if (cur && isModelLocal(cur)) return false;
+  const mc = state.modelsConfig?.models || {};
+  const fallback = state.piiLocalFallback;
+  let target = '';
+  if (fallback && mc[fallback]?.enabled && isModelLocal(fallback)) {
+    target = fallback;
+  } else {
+    const locals = Object.entries(mc)
+      .filter(([id, cfg]) => cfg.enabled && isModelLocal(id))
+      .sort((a, b) => (b[1].priority || 0) - (a[1].priority || 0));
+    if (locals.length) target = locals[0][0];
+  }
+  if (!target) return false;
+  const oldModel = cur;
+  chat.model = target;
+  updateModelSelectorDisplay(target);
+  if (oldModel !== target) {
+    try { stopWarmupPoll(chat); } catch(e) {}
+    updateStatusBar();
+    if (chat.messages.length === 0) {
+      chat.sessionId = null;
+      ensureSession(chat).catch(() => {});
+    } else if (chat.sessionId) {
+      API.post(`/v1/sessions/${chat.sessionId}/warmup`, {model: target}).then(d => {
+        if (d.warmup) startWarmupPoll(chat);
+      }).catch(() => {});
+    }
+  }
+  return true;
+}
+
 function toggleModelDropdown(event) {
   event.stopPropagation();
   closeAllDropdowns();
@@ -5328,12 +5455,21 @@ function toggleModelDropdown(event) {
   dd.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
 
   const currentModel = state.activeChat?.model || '';
+  const localOnly = piiBlockActive(state.activeChat);
 
-  // Build list from modelsConfig (enabled only, sorted by priority)
+  // Build list from modelsConfig (enabled only, sorted by priority).
+  // When PII+block is active, restrict to local models.
   const mcModels = state.modelsConfig?.models || {};
   const enabledModels = Object.entries(mcModels)
-    .filter(([id, cfg]) => cfg.enabled)
+    .filter(([id, cfg]) => cfg.enabled && (!localOnly || isModelLocal(id)))
     .sort((a, b) => (b[1].priority || 0) - (a[1].priority || 0));
+
+  if (localOnly) {
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'padding:8px 12px;font-size:11px;color:#92400e;background:#fef3c7;border-bottom:1px solid #fde68a;line-height:1.35';
+    hdr.innerHTML = '<b>Personal data detected</b><br>Only local models are selectable while the GDPR block is active.';
+    dd.appendChild(hdr);
+  }
 
   for (const [mid, cfg] of enabledModels) {
     const item = document.createElement('div');
@@ -5824,6 +5960,12 @@ async function openSession(sessionId, agentId) {
   // Close artifact and references panels when switching sessions
   closeRightPanel();
 
+  // Invalidate the history PII cache — new session = new content to scan.
+  // updatePIIBadge() below will populate it and show the banner if needed.
+  chat._piiHistoryScanLen = -1;
+  chat._piiHistoryHas = false;
+  chat._piiHistoryCounts = {};
+
   // Trigger warmup for the restored session's model if provider supports it
   stopWarmupPoll(chat);
   if (chat.sessionId) {
@@ -5835,6 +5977,9 @@ async function openSession(sessionId, agentId) {
   }
 
   navigateTo('chat');
+  // Force a scan of loaded history so the badge appears immediately if the
+  // chat already contains PII, and auto-swap to a local model under block.
+  schedulePIIBadgeUpdate();
 }
 
 function newChat() {
@@ -5863,9 +6008,13 @@ function newChat() {
   chat._tokensOut = 0;
   chat._lastSpeed = null;
   chat._lastApiIn = 0;
+  chat._piiHistoryScanLen = -1;
+  chat._piiHistoryHas = false;
+  chat._piiHistoryCounts = {};
   stopWarmupPoll(chat);
   closeRightPanel();
   navigateTo('welcome');
+  schedulePIIBadgeUpdate();
   // Pre-create session to trigger warmup for local models
   ensureSession(chat).catch(() => {});
 }
@@ -5976,8 +6125,20 @@ async function sendMessage() {
   if (state.piiScannerEnabled !== false && !sessionStorage.getItem('pii-suppress:' + (chat.sessionId || '_new'))) {
     const scan = PIIScanner.scanPayload(text, state._pendingFiles);
     if (scan.findings.length) {
-      const go = await confirmPIIBeforeSend(scan, chat);
-      if (!go) return;
+      // Hard-block mode: only local models may receive PII. Try once to
+      // auto-swap; if still cloud, refuse the send with an explanation.
+      if (state.piiServerBlock) {
+        piiEnsureLocalModel();
+        const curModel = chat.model || '';
+        if (!curModel || !isModelLocal(curModel)) {
+          showToast('GDPR block: personal data detected. Select a local model before sending.', true);
+          return;
+        }
+        // Local model already selected → no confirmation modal needed.
+      } else {
+        const go = await confirmPIIBeforeSend(scan, chat);
+        if (!go) return;
+      }
     }
   }
 
@@ -5990,6 +6151,9 @@ async function sendMessage() {
     userMsg.files = filesToSend;
   }
   chat.messages.push(userMsg);
+  // The just-pushed user message may contain PII that the history cache
+  // should see on the *next* badge tick even if the stream never completes.
+  chat._piiHistoryScanLen = -1;
   state._pendingFiles = [];
   renderFilePreviews();
 
@@ -6422,6 +6586,11 @@ async function sendMessage() {
         chat.files = [];
         clearInterval(chat._streamTimerInterval);
 
+        // New turn landed — invalidate the history PII cache so the badge /
+        // model-dropdown filter picks up any PII the assistant may have
+        // surfaced or the user just sent.
+        chat._piiHistoryScanLen = -1;
+
         // Only update DOM if this chat is still visible
         if (isActive()) {
           if (d.model) updateModelSelectorDisplay(d.model);
@@ -6429,6 +6598,7 @@ async function sendMessage() {
           scrollToBottom();
           updateStreamingUI(false);
           updateStatusBar();
+          schedulePIIBadgeUpdate();
         }
 
         // Desktop notification when window not focused
@@ -8050,8 +8220,9 @@ function confirmPIIBeforeSend(scan, chat) {
   });
 }
 
-// Live inline badge — runs on composer input, shows a small pill above the
-// composer if PII is present in the current draft or attachments.
+// Live inline badge — runs on composer input + history load. Shows a pill
+// above the composer if PII is present in the current draft, attachments,
+// or the loaded conversation history.
 function updatePIIBadge() {
   const host = state.currentView === 'welcome' ? 'welcome-composer' : 'chat-composer';
   const composer = document.getElementById(host);
@@ -8065,8 +8236,11 @@ function updatePIIBadge() {
     ? document.getElementById('welcome-input')
     : document.getElementById('chat-input');
   const text = input?.value || '';
-  const scan = PIIScanner.scanPayload(text, state._pendingFiles);
-  if (!scan.findings.length) { badge?.remove(); return; }
+  const draftScan = PIIScanner.scanPayload(text, state._pendingFiles);
+  const chat = state.activeChat;
+  const historyHas = !!(chat && piiHistoryHasFindings(chat));
+  const draftHas = draftScan.findings.length > 0;
+  if (!draftHas && !historyHas) { badge?.remove(); return; }
   if (!badge) {
     badge = document.createElement('div');
     badge.id = 'pii-inline-badge';
@@ -8095,9 +8269,52 @@ function updatePIIBadge() {
   }
   // Shield-icon SVG + formatted counts
   const icon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z"/><path d="M12 8v4"/><circle cx="12" cy="16" r="0.6" fill="currentColor"/></svg>';
-  badge.innerHTML = icon +
-    '<span>Personal data detected · <b>' + esc(PIIScanner.formatCounts(scan.counts)) + '</b></span>';
-  badge.title = 'A warning will appear before sending. Values are scanned locally in your browser.';
+  // If server is configured to block PII requests, auto-swap to a local model
+  // and surface that in the badge. Otherwise fall back to the original warn
+  // phrasing so we don't regress existing behavior.
+  const swapped = piiEnsureLocalModel();
+  const blockOn = piiBlockActive(chat);
+  const curLocal = chat && chat.model && isModelLocal(chat.model);
+
+  // Merge draft + history count labels for display. Draft is the source when
+  // it has findings (fresh input); otherwise show the history-derived counts.
+  let countsLabel = '';
+  if (draftHas) {
+    countsLabel = PIIScanner.formatCounts(draftScan.counts);
+  } else if (historyHas && chat._piiHistoryCounts) {
+    countsLabel = PIIScanner.formatCounts(chat._piiHistoryCounts);
+  }
+  const scopeLabel = draftHas
+    ? 'Personal data in your message'
+    : 'Personal data earlier in this chat';
+
+  if (blockOn && !curLocal) {
+    badge.innerHTML = icon +
+      '<span><b>' + esc(scopeLabel) + '</b> — select a local model to continue (no local model is available).</span>';
+    badge.style.background = 'linear-gradient(90deg,#fee2e2,#fecaca)';
+    badge.style.borderColor = '#f87171';
+    badge.style.color = '#7f1d1d';
+    badge.title = 'Cloud send is blocked by GDPR scanner. Install or enable a local model, or turn off "Block requests with PII" in Settings → Server.';
+  } else if (blockOn && curLocal) {
+    const localName = modelShortName(chat.model);
+    const countsFrag = countsLabel ? ('<b>' + esc(countsLabel) + '</b> · ') : '';
+    badge.innerHTML = icon +
+      '<span>' + countsFrag + esc(scopeLabel) + ' · routing via local model <b>' + esc(localName) + '</b>' +
+      (swapped ? ' (auto-selected)' : '') + '</span>';
+    badge.style.background = 'linear-gradient(90deg,#ecfccb,#d9f99d)';
+    badge.style.borderColor = '#a3e635';
+    badge.style.color = '#3f6212';
+    badge.title = 'Data will not leave the local network. GDPR block is enabled; the model dropdown is filtered to local models for this chat.';
+  } else {
+    const countsFrag = countsLabel ? (' · <b>' + esc(countsLabel) + '</b>') : '';
+    badge.innerHTML = icon + '<span>' + esc(scopeLabel) + countsFrag + '</span>';
+    badge.style.background = 'linear-gradient(90deg,#fef3c7,#fde68a)';
+    badge.style.borderColor = '#fcd34d';
+    badge.style.color = '#78350f';
+    badge.title = draftHas
+      ? 'A warning will appear before sending. Values are scanned locally in your browser.'
+      : 'This chat history already contains personal data. New messages will be scanned again before sending.';
+  }
 }
 
 // Debounced hook — called from composer oninput + after file previews change.
@@ -8943,7 +9160,12 @@ async function switchGeneralTab(tab, btn) {
       const svc = await API.getServices();
       const srv = svc.server || {};
       state.maxSessionCostUsd = parseFloat(srv.max_session_cost_usd || 0) || 0;
-      state.piiScannerEnabled = (srv.gdpr_scanner || {}).enabled !== false;
+      {
+        const _gs = srv.gdpr_scanner || {};
+        state.piiScannerEnabled = _gs.enabled !== false;
+        state.piiServerBlock = !!_gs.server_block;
+        state.piiLocalFallback = _gs.default_local_fallback_model || '';
+      }
       let svcRows = '';
       for (const [name, info] of Object.entries(svc)) {
         if (typeof info !== 'object') continue;
@@ -8997,7 +9219,14 @@ async function switchGeneralTab(tab, btn) {
         <div style="font-size:11px;color:var(--text-400);margin-top:2px">Soft limit (no abort). Warning triangle at 70%, modal at 90%. Set 0 to disable.</div>
         ${SEC('GDPR / PII Scanner')}
         ${(() => {
-          const gs = srv.gdpr_scanner || {enabled:true, server_log:true, server_block:false};
+          const gs = srv.gdpr_scanner || {enabled:true, server_log:true, server_block:false, default_local_fallback_model:''};
+          const mcAll = state.modelsConfig?.models || {};
+          const localOpts = Object.entries(mcAll)
+            .filter(([id, cfg]) => cfg.enabled && (cfg.is_local === true))
+            .sort((a, b) => (b[1].priority || 0) - (a[1].priority || 0))
+            .map(([mid]) => `<option value="${esc(mid)}" ${mid===(gs.default_local_fallback_model||'')?'selected':''}>${esc(modelShortName(mid))}</option>`)
+            .join('');
+          const hasLocals = localOpts.length > 0;
           return `
           <div style="display:flex;flex-direction:column;gap:6px">
             <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-200);cursor:pointer">
@@ -9012,14 +9241,25 @@ async function switchGeneralTab(tab, btn) {
               <input type="checkbox" id="srv-gdpr-block" ${gs.server_block?'checked':''}>
               <span><b>Block requests with PII</b> (hard block; default is warn-only)</span>
             </label>
-            <button class="btn-secondary" style="align-self:flex-start" onclick="
+            <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+              <span style="font-size:12px;color:var(--text-300);min-width:180px">Default local fallback model</span>
+              <select class="form-select" id="srv-gdpr-fallback" style="flex:1" ${hasLocals?'':'disabled'}>
+                <option value="">None (disabled)</option>
+                ${localOpts}
+              </select>
+            </div>
+            <div style="font-size:11px;color:var(--text-400);margin-top:2px">Used for background LLM calls (next-prompt, chat summary, memory classifier, worker summariser, scheduled tasks) when the selected cloud model would otherwise receive personal data. ${hasLocals?'':'<span style="color:var(--warning,#b45309)">No local models are configured — add one under Models first.</span>'}</div>
+            <button class="btn-secondary" style="align-self:flex-start;margin-top:4px" onclick="
               const body = {gdpr_scanner: {
                 enabled: document.getElementById('srv-gdpr-enabled').checked,
                 server_log: document.getElementById('srv-gdpr-serverlog').checked,
                 server_block: document.getElementById('srv-gdpr-block').checked,
+                default_local_fallback_model: document.getElementById('srv-gdpr-fallback').value || '',
               }};
               API.post('/v1/services/server', body).then(r => {
                 state.piiScannerEnabled = r.gdpr_scanner.enabled;
+                state.piiServerBlock = !!r.gdpr_scanner.server_block;
+                state.piiLocalFallback = r.gdpr_scanner.default_local_fallback_model || '';
                 showToast('GDPR scanner settings saved');
               }).catch(e => showToast('Failed: ' + (e.message||''), true));
             ">Save GDPR settings</button>
@@ -14979,7 +15219,12 @@ async function init() {
     state.teamStructure = teamsData || {};
     state.modelsConfig = modelsConfigData || {};
     state.maxSessionCostUsd = parseFloat((servicesData.server || {}).max_session_cost_usd || 0) || 0;
-    state.piiScannerEnabled = ((servicesData.server || {}).gdpr_scanner || {}).enabled !== false;
+    {
+      const _gs = (servicesData.server || {}).gdpr_scanner || {};
+      state.piiScannerEnabled = _gs.enabled !== false;
+      state.piiServerBlock = !!_gs.server_block;
+      state.piiLocalFallback = _gs.default_local_fallback_model || '';
+    }
     state.mempalaceClassifier = clfData || {};
 
     // Update user menu / connection indicator
