@@ -10,46 +10,53 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <style>
 /* ═══════════════════════════════════════════════════════════
-   Anthropic Font Stack
+   Font Stack — self-hosted from /web/fonts/. Sans + Serif are the
+   Anthropic Sans / Serif woff2 bundles from claude.ai's asset proxy
+   (variable weights 300–800, regular + italic). Mono is JetBrains
+   Mono (SIL Open Font License 1.1, license text at fonts/JetBrainsMono-LICENSE)
+   because the Mono asset hashes in claude.ai's bundle rotated and the
+   originals now 404. All six files are served by server.py from
+   web/fonts/ — no external CDN calls, so CSP font-src 'self' works
+   unchanged.
    ═══════════════════════════════════════════════════════════ */
 @font-face {
   font-family: "Anthropic Sans";
-  src: url("https://assets-proxy.anthropic.com/claude-ai/v2/assets/v1/cc27851ad-CFxw3nG7.woff2") format("woff2");
+  src: url("/web/fonts/anthropic-sans-regular.woff2") format("woff2");
   font-weight: 300 800;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Anthropic Sans";
-  src: url("https://assets-proxy.anthropic.com/claude-ai/v2/assets/v1/c9d3a3a49-BI1hrwN4.woff2") format("woff2");
+  src: url("/web/fonts/anthropic-sans-italic.woff2") format("woff2");
   font-weight: 300 800;
   font-style: italic;
   font-display: swap;
 }
 @font-face {
   font-family: "Anthropic Serif";
-  src: url("https://assets-proxy.anthropic.com/claude-ai/v2/assets/v1/c66fc489e-C-BHYa_K.woff2") format("woff2");
+  src: url("/web/fonts/anthropic-serif-regular.woff2") format("woff2");
   font-weight: 300 800;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Anthropic Serif";
-  src: url("https://assets-proxy.anthropic.com/claude-ai/v2/assets/v1/cc410af59-DH94ugQz.woff2") format("woff2");
+  src: url("/web/fonts/anthropic-serif-italic.woff2") format("woff2");
   font-weight: 300 800;
   font-style: italic;
   font-display: swap;
 }
 @font-face {
   font-family: "Anthropic Mono";
-  src: url("https://assets-proxy.anthropic.com/claude-ai/v2/assets/v1/c23a7c5ca-CUOzlMf7.woff2") format("woff2");
+  src: url("/web/fonts/jetbrains-mono-regular.woff2") format("woff2");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "Anthropic Mono";
-  src: url("https://assets-proxy.anthropic.com/claude-ai/v2/assets/v1/cb4f2e3cc-D54BdrKu.woff2") format("woff2");
+  src: url("/web/fonts/jetbrains-mono-semibold.woff2") format("woff2");
   font-weight: 600;
   font-style: normal;
   font-display: swap;

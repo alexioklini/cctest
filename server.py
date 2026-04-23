@@ -2678,7 +2678,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_artifact_content(path)
         elif path.startswith("/v1/artifacts/") and path.endswith("/download"):
             self._handle_artifact_download(path)
-        elif path == "/" or path.startswith("/web/") or path.endswith((".html", ".css", ".js", ".ico")):
+        elif path == "/" or path.startswith("/web/") or path.endswith((".html", ".css", ".js", ".ico", ".woff2", ".woff")):
             self._serve_static(path)
         else:
             self._send_json({"error": "Not found"}, 404)
@@ -8988,6 +8988,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             "html": "text/html", "css": "text/css", "js": "application/javascript",
             "json": "application/json", "png": "image/png", "svg": "image/svg+xml",
             "ico": "image/x-icon",
+            "woff2": "font/woff2", "woff": "font/woff", "ttf": "font/ttf",
         }
         ct = content_types.get(ext, "application/octet-stream")
 
@@ -8998,6 +8999,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", len(data))
         if ext == "html":
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        elif ext in ("woff2", "woff", "ttf"):
+            # Content-addressable file names — safe to cache long.
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
         self.end_headers()
         self.wfile.write(data)
 
