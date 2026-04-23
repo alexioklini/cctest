@@ -11967,26 +11967,75 @@ function showArtifactList() {
 async function copyArtifact() {
   const container = document.getElementById('artifact-content');
   const raw = container._rawContent;
+  const encoding = container._rawEncoding;
+  const type = container._rawType;
   if (!raw) { showToast('Nothing to copy', true); return; }
+  // Iframes (HTML artifacts) can hold focus, breaking navigator.clipboard.
+  try { window.focus(); } catch(_) {}
   try {
+    if (encoding === 'base64' && type === 'image') {
+      const imgExt = (container._rawName || '').split('.').pop().toLowerCase();
+      const mime = imgExt === 'svg' ? 'image/svg+xml' : `image/${imgExt || 'png'}`;
+      const bin = atob(raw);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      await navigator.clipboard.write([new ClipboardItem({ [mime]: new Blob([bytes], { type: mime }) })]);
+      showToast('Image copied');
+      return;
+    }
     await navigator.clipboard.writeText(raw);
     showToast('Copied to clipboard');
   } catch (e) {
-    showToast('Copy failed', true);
+    // Fallback: hidden textarea + execCommand('copy') works even when
+    // navigator.clipboard rejects due to focus stolen by an iframe.
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = raw;
+      ta.style.position = 'fixed';
+      ta.style.top = '-1000px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      if (ok) { showToast('Copied to clipboard'); return; }
+      throw new Error('execCommand returned false');
+    } catch (e2) {
+      console.error('[artifact] copy failed', e, e2);
+      showToast(`Copy failed: ${e.message || e}`, true);
+    }
   }
 }
 
-function downloadArtifact() {
+async function downloadArtifact() {
   const id = state.activeArtifactId;
   const ver = state.activeArtifactVersion;
   if (!id) return;
   const url = API.getArtifactDownloadUrl(id, ver);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = '';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  try {
+    const r = await fetch(url, { headers: API._headers() });
+    if (!r.ok) {
+      const msg = r.status === 401 ? 'Not authorized' : `Download failed (${r.status})`;
+      showToast(msg, true);
+      return;
+    }
+    const blob = await r.blob();
+    const disp = r.headers.get('Content-Disposition') || '';
+    const m = /filename="([^"]+)"/.exec(disp);
+    const filename = m ? m[1] : 'artifact';
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+  } catch (e) {
+    console.error('[artifact] download failed', e);
+    showToast(`Download failed: ${e.message || e}`, true);
+  }
 }
 
 function toggleArtifactSource() {
