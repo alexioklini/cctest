@@ -7055,6 +7055,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "max_session_cost_usd": float(server_config.get("cost_limits", {}).get("max_session_cost_usd", 0) or 0),
                 "execution_mode": server_config.get("execution_mode", "server"),
                 "client_proxy_tools": server_config.get("client_proxy_tools", engine._CLIENT_PROXY_TOOLS_DEFAULT),
+                "gdpr_scanner": {
+                    "enabled": bool(server_config.get("gdpr_scanner", {}).get("enabled", True)),
+                    "server_log": bool(server_config.get("gdpr_scanner", {}).get("server_log", True)),
+                    "server_block": bool(server_config.get("gdpr_scanner", {}).get("server_block", False)),
+                },
                 "available_tools": sorted(engine.TOOL_DISPATCH.keys()),
             },
             "telegram": {
@@ -7255,6 +7260,30 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 500)
                 return
             result["client_proxy_tools"] = tools_list
+
+        # --- GDPR/PII scanner settings ---
+        if "gdpr_scanner" in body:
+            gs_in = body["gdpr_scanner"]
+            if not isinstance(gs_in, dict):
+                self._send_json({"error": "gdpr_scanner must be an object"}, 400)
+                return
+            gs = server_config.setdefault("gdpr_scanner", {})
+            for key in ("enabled", "server_log", "server_block"):
+                if key in gs_in:
+                    gs[key] = bool(gs_in[key])
+            engine._invalidate_gdpr_cache()
+            try:
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                config["gdpr_scanner"] = gs
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+                return
+            result["gdpr_scanner"] = gs
 
         if not result:
             self._send_json({"error": "No valid fields to update"}, 400)

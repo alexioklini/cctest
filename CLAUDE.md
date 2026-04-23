@@ -198,6 +198,41 @@ Optional `limits` block in `agent.json` overrides global defaults:
 
 Global `cost_limits.max_session_cost_usd` in `config.json` (Settings → Server → Cost Limits). Status bar shows `$ X.XX`. 70% = amber triangle, 90% = red triangle + one-time modal per session (localStorage `cost-warning-shown:<session_id>`). **No hard abort.** Missing pricing shows `$0.00` with tooltip.
 
+## GDPR / PII Pre-Submit Scanner
+
+71 regex-based detectors that scan every outgoing chat message + text attachment for personal data **before** it leaves the client, and again server-side before it hits the LLM. Zero external APIs, offline, free.
+
+- **Two mirrored implementations**, must stay in sync:
+  - `PIIScanner` in `web/index.html` — runs on composer input (live badge) + on submit (blocking modal)
+  - `_pii_rules()` + `_pii_scan_text()` + `_pii_scan_bare_identifiers()` in `claude_cli.py` — runs in `send_message` on `_tool_round == 0` only (subsequent rounds replay the same user content)
+- **Three rule tiers, evaluated in order** (first-match-wins via overlap suppression):
+  1. **Cloud secrets / API keys** (distinct prefixes, highest signal): AWS, GitHub, Slack, Google, Stripe, OpenAI, Anthropic, Twilio, SendGrid, Mailgun, JWT, Azure Storage / account keys, PEM private keys, basic-auth-in-URL, entropy-gated generic `api_key = "..."` assignments
+  2. **National IDs with real checksums**: UK NINO + NHS (mod-11), NL BSN (11-proef), BE national number (mod-97), PL PESEL, PT NIF, SE personnummer (Luhn), DK CPR, NO fødselsnummer (dual mod-11), CH AHV (EAN-13), CZ rodné číslo, RO CNP, HU TAJ, GR AMKA, BG EGN, IE PPS, ES DNI/NIE, IT Codice Fiscale, DE Steuer-ID (context-gated), FR INSEE, AT SVNR, US SSN, BR CPF + CNPJ, CA SIN (Luhn), MX CURP, AR DNI, IN Aadhaar (Verhoeff, context-gated), JP My Number, KR RRN, SG NRIC, TW national ID
+  3. **Context-fallback + bare-identifier heuristic**: fire on keyword (`SVNR`, `SSN`, `Steuer-ID`, `Führerschein`, `passport`, `account number`, etc.) + number-shape **regardless of checksum** — catches malformed or made-up identifiers the user is clearly asking about. Plus a whole-text heuristic: when ≥60% of non-empty lines are 9-14-digit ID-shaped, flag remaining lines as "Numeric identifier (unverified)" (the "paste a list of numbers" pattern)
+
+- **Rule-order invariants** (if you touch the list):
+  - Context-gated rules with keywords (DE Steuer-ID, NL BSN, HU TAJ) run **before** generic bare-digit rules of the same length so the wider keyword+digits match wins
+  - `credit_card` runs **after** all national-ID checksum rules — a 13-digit Luhn-passing RO CNP or KR RRN would otherwise be misclassified as a card
+  - `phone` runs **after** national IDs — `XXX-XXX-XXXX`-shaped SIN/NHS/SIN values would otherwise steal phone's slot
+  - `credit_card` regex has `(?<![+\d])` so `+CC...` international phone prefixes don't match
+
+- **Overlap suppression**: each successful match records its span; subsequent matches inside already-claimed spans are dropped. **Failed validations do NOT record the span** — an IBAN that fails mod-97 leaves its text available for weaker rules to re-scan, which is why Aadhaar / PESEL / Steuer-ID are context-gated (otherwise they'd false-positive inside invalid IBANs)
+
+- **Modal**: 640px amber-gradient banner with pop-in shield, hero count, per-source pill badges, redacted monospace samples (first 2 + last 2 chars visible, rest `•`-masked), session-scoped "Don't warn again" checkbox, keyboard shortcuts (Esc cancels, Cmd/Ctrl+Enter sends), click-outside dismiss. Inline composer badge is an amber pill with shield SVG and formatted count
+
+- **Server-side behavior**: when findings present, print `[gdpr] session=... findings=N (...)` and (if `server_log` enabled) append a `pii_detected` row to `audit.db` via `_audit_log.log_action(action_type="pii_detected", tool_name="gdpr_scanner", source="llm_request")`. Hard-block mode (`server_block: true`) raises a `RuntimeError` with a user-visible message pre-LLM
+
+- **Config** (`config.json` → `gdpr_scanner`, 30s cache, invalidated on save via `engine._invalidate_gdpr_cache()`):
+  ```json
+  {"enabled": true, "server_log": true, "server_block": false}
+  ```
+
+- **Suppression state lives in `sessionStorage`**: key `pii-suppress:<session_id_or_"_new">` — cleared on page reload, not on server restart. Intentional: protection resets every browser session
+
+- **What's deliberately not detected** (keep in mind if expanding): personal names (needs NLP, too noisy for regex), physical addresses (format varies per country, needs dictionaries), medical terms / ICD codes (dictionary-based, not regex), passport numbers for all 50+ countries without context (too generic — only context-gated passport rule exists), driver's license per country without context. The Microsoft Purview SIT catalog lists ~300 detectors; we ship the ~70 that can be implemented faithfully from public specs without copying Purview's own patterns
+
+- **Future**: `backlog_gdpr_local_routing.md` — auto-route PII-containing requests to local-only models. Blocked on needing a multi-user inference queue first (concurrent requests to one oMLX model fight for KV cache)
+
 ## Tool Definition Cost Measurement
 
 `GET /v1/tools/breakdown?agent=<id>` returns per-group + per-tool tokens, decomposed into `name_tokens + desc_tokens + schema_tokens + param_count`. `source: "builtin"|"mcp"` (MCP grouped by server via `MCPManager._tool_to_server`). UI flags tools with schema >60% of total as ⚠. Also returns `deferred_builtin_groups`, `deferrable_mcp.tokens_saved_if_deferred`.
