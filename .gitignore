@@ -30,3 +30,10 @@ fibonacci.py
 # Agent-generated test files (top-level scratch in main agent dir)
 agents/main/avengers_*.md
 agents/main/brussels_*.md
+
+# Packaging build artifacts — scripts are tracked, outputs are not
+packaging/downloads/
+packaging/mac/build/
+packaging/mac/dist/
+packaging/win/build/
+packaging/win/dist/
