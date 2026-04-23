@@ -9293,6 +9293,7 @@ def main():
     server_config["cost_limits"] = file_config.get("cost_limits", {}) or {}
     server_config["execution_mode"] = file_config.get("execution_mode", "server")
     server_config["client_proxy_tools"] = file_config.get("client_proxy_tools", engine._CLIENT_PROXY_TOOLS_DEFAULT)
+    server_config["gdpr_scanner"] = file_config.get("gdpr_scanner", {}) or {}
 
     # Initialize models config
     existing_models = file_config.get("models")
