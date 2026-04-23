@@ -591,9 +591,11 @@ TOOL_DEFINITIONS = [
     {
         "name": "read_document",
         "description": (
-            "Format-aware document reader for PDF, DOCX, XLSX, PPTX, CSV/TSV, and image files. "
+            "Format-aware document reader for PDF, DOCX, XLSX, PPTX, CSV/TSV, images, "
+            "EML (email), MSG (Outlook), EPUB (ebook), and ZIP archives. "
             "Returns structured content: PDF pages, DOCX paragraphs/tables, XLSX sheets as markdown tables, "
-            "PPTX slides with notes, CSV as markdown table, image metadata + vision description. "
+            "PPTX slides with notes, CSV as markdown table, image metadata + vision description, "
+            "EML headers+body, EPUB metadata+prose, ZIP recursive file listing with contents. "
             "For unknown extensions, falls back to plain text read."
         ),
         "input_schema": {
@@ -2037,6 +2039,43 @@ def tool_read_document(args: dict) -> str:
         elif ext == ".svg":
             content = DocumentParser.parse_svg(path)
             return _ok({"path": path, "format": "svg", "content": content})
+
+        elif ext == ".eml":
+            import email
+            from email import policy
+            with open(path, "rb") as f:
+                msg = email.message_from_bytes(f.read(), policy=policy.default)
+            headers = {
+                "from": str(msg.get("From", "")),
+                "to": str(msg.get("To", "")),
+                "cc": str(msg.get("Cc", "")),
+                "subject": str(msg.get("Subject", "")),
+                "date": str(msg.get("Date", "")),
+            }
+            body_part = msg.get_body(preferencelist=("plain", "html"))
+            body = body_part.get_content() if body_part else ""
+            if body_part and body_part.get_content_type() == "text/html":
+                body = re.sub(r"<[^>]+>", " ", body)
+                body = re.sub(r"\s+", " ", body).strip()
+            attachments = [p.get_filename() for p in msg.iter_attachments() if p.get_filename()]
+            meta_str = "\n".join(f"**{k}:** {v}" for k, v in headers.items() if v)
+            if attachments:
+                meta_str += f"\n**attachments:** {', '.join(attachments)}"
+            return _ok({"path": path, "format": "eml", "content": f"{meta_str}\n\n{body}"})
+
+        elif ext in (".msg", ".epub", ".zip"):
+            try:
+                from markitdown import MarkItDown
+            except ImportError:
+                return _err(
+                    f"Reading {ext} files requires the markitdown package, which is not "
+                    "included in airgapped installer builds. On dev machines with internet: "
+                    "pip3 install 'markitdown[outlook]'."
+                )
+            md = MarkItDown()
+            result = md.convert(path)
+            fmt = ext.lstrip(".")
+            return _ok({"path": path, "format": fmt, "content": result.text_content})
 
         else:
             # Fallback to plain text read (same as read_file)
