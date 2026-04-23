@@ -277,6 +277,25 @@ Routing: `_execute_tool` → `route_tool_execution` → `run_worker_subagent` fo
 
 `_CONCURRENT_SAFE_TOOLS`: `read_file`, `list_directory`, `search_files`, `read_document`, `exa_search`, `web_fetch`, `code_graph_query`, `schedule_list`, `schedule_history`, `list_nodes`, `task_status`, `context_search`, `context_detail`, `context_recall`, `git_command` (read-only subcommands only).
 
+## Provider Concurrency Queue (v8.9.0)
+
+Local LLM gateways (oMLX, CLIProxyAPI) can't actually process two `/chat/completions` in parallel even when multiple models are loaded — the GPU serializes internally and a second request stalls the first. `LocalProviderQueue` in `claude_cli.py` gates concurrent HTTP calls per provider via a semaphore + strict-FIFO waitlist.
+
+- **Opt-in per provider**: `config.json` → `providers.<name>.max_concurrent` (0 = unlimited = no queue, default). Seeded: `omlx=1`, `cliproxyapi=2`, cloud providers stay 0.
+- **Scope — HTTP-only**: slot is held during `urlopen` + SSE stream drain. `_handle_openai_response` calls `release_slot()` immediately after the `for line in response:` loop completes, **before** any tool dispatch or recursive `send_message`. Tool work (worker subagents, `_summarise_tool_result`, `exa_search`, `python_exec`) runs with the slot freed, so other chats can use the gateway in parallel.
+- **No re-entrancy needed**: because the slot is always released before nested calls, a worker subagent's `send_message_with_fallback` just queues normally. Earlier thread-local re-entrancy design was tried (2026-04-23) and reverted — HTTP-scoped release is simpler and yields better throughput.
+- **Call sites wrapped** (all already use `resolve_provider_for_model`): `send_message` (main chat), `_run_delegate` (scheduler delegates), `run_model_warmup` (so the keeper can't cut in front of a live chat; label=`warmup`), `classify_chat_for_memory`. `generate_next_prompt_suggestion` + `_summarise_tool_result` covered transitively via `send_message_with_fallback`.
+- **SSE events**: `queue_wait` (position changes only, not every tick), `queue_acquired` (fires once), `queue_released` (fires once). Web UI shows per-turn inline banner "Waiting in queue on `<provider>` — position N of M · Xs" in the streaming bubble.
+- **Status bar pill** (`#status-queue`): always visible when any provider has `max_concurrent > 0`. Shows `N/M` (active/capacity) when idle, `N+W/M` when any ticket is waiting. Click opens a modal listing active + waiting tickets per provider (label, model, session, agent, age). `QueueMonitor` polls `/v1/queue/status` (1s fast / 10s slow).
+- **Admin cancel**: `POST /v1/queue/cancel` (admin-only, 403 otherwise; audit-logged as `queue_cancel`). Body: `{ticket_id, reason?}`.
+  - Waiting ticket → `_admin_cancelled` flag set; waiting thread raises `TaskCancelled("Queue cancel by admin: <reason>")` on next 200ms poll tick.
+  - Running ticket → flag set AND ticket's `cancel_token` fired (same signal as the per-chat Stop button). The SSE loop in `_handle_openai_response` bails on the next incoming chunk.
+  - Modal rows render a red Cancel button per ticket only for `state.authUser.role === 'admin'`.
+- **API**: `GET /v1/queue/status` returns `{providers: {name: {max_concurrent, active_count, waiting_count, active[], waiting[]}}, any_waiting, any_active}`. Providers with `max_concurrent=0` are omitted; providers with `>0` are always present (zero counts when idle).
+- **Cancellation during wait**: ticket is removed from the deque cleanly; semaphore is never acquired. Tested.
+- **Timeouts**: chat/delegate default 300s; warmup + classifier use `max(http_timeout*2, 30-60s)` so they don't hold the slot beyond their HTTP deadline.
+- **Key invariant**: the queue key is `provider_name` (not `base_url`). If two providers share a base_url, they'd have independent queues — re-evaluate when that happens.
+
 ## Warmup & Warm Session Pool
 
 Brain pre-primes local models so first-token latency drops from ~15s → 2–3s. Opt in per model via `warmup: true`. Requires prompt-cache-capable providers (oMLX tested; any runtime that deduplicates KV prefix by exact token match).

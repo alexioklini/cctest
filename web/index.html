@@ -3691,6 +3691,11 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <span class="status-label">Pool</span>
       <span class="status-value" id="status-warmpool-label">0/0</span>
     </div>
+    <div class="status-item" id="status-queue" style="display:none;cursor:pointer;gap:4px" title="Provider queue — click for details" onclick="openQueueModal()">
+      <span class="warmup-dot" id="status-queue-dot"></span>
+      <span class="status-label">Queue</span>
+      <span class="status-value" id="status-queue-label">0/0</span>
+    </div>
     <div class="status-item" style="margin-left:auto;gap:6px">
       <span class="status-value" id="status-session"></span>
       <button class="compact-btn" onclick="openInspectModal()" title="Inspect session" style="font-size:13px;padding:1px 6px">&#x1F50D;</button>
@@ -6002,6 +6007,7 @@ async function sendMessage() {
   chat.streamingText = '';
   chat.thinkingText = '';
   chat.thinkingSummary = null;
+  chat.queueStatus = null;
   chat.files = [];
   const streamGen = (chat._streamGen = (chat._streamGen || 0) + 1);
   updateStreamingUI(true, chat);
@@ -6054,6 +6060,29 @@ async function sendMessage() {
       },
       thinking_summary: (d) => {
         chat.thinkingSummary = { format: d.format, reasoning_tokens: d.reasoning_tokens || 0 };
+      },
+      queue_wait: (d) => {
+        // Provider queue serialised this turn — show "waiting in line" hint.
+        chat.queueStatus = {
+          state: 'waiting',
+          provider: d.provider || '',
+          position: d.position || 0,
+          waiting: d.waiting || 0,
+          active: d.active || 0,
+          max_concurrent: d.max_concurrent || 0,
+          label: d.label || '',
+          wait_ms: d.wait_ms || 0,
+        };
+        if (isActive()) renderStreamingMessage(chat);
+        // Nudge the monitor into fast mode; its own timer will re-tick.
+        QueueMonitor._mode = 'fast';
+      },
+      queue_acquired: (d) => {
+        chat.queueStatus = null;
+        if (isActive()) renderStreamingMessage(chat);
+      },
+      queue_released: (d) => {
+        chat.queueStatus = null;
       },
       text_delta: (d) => {
         chat.streamingText += d.text || '';
@@ -7507,6 +7536,27 @@ function renderStreamingMessage(chat) {
   // Remove previous streaming element if any
   const existing = container.querySelector('.msg-streaming');
   if (existing) existing.remove();
+
+  // Queue-wait banner: show before any tokens arrive if the provider queued us.
+  const q = chat.queueStatus;
+  if (q && q.state === 'waiting' && !chat.thinkingText && !chat.streamingText) {
+    const posTxt = q.position > 1
+      ? `position ${q.position} of ${q.waiting}`
+      : 'next up';
+    const provTxt = q.provider ? ` on <code>${esc(q.provider)}</code>` : '';
+    const activeTxt = q.active ? ` · ${q.active}/${q.max_concurrent || '?'} in flight` : '';
+    const waitSec = Math.max(0, Math.round((q.wait_ms || 0) / 1000));
+    const html = `<div class="msg-turn msg-turn-assistant msg-streaming">
+      <div class="msg-assistant msg-content" style="color:var(--text-muted);font-style:italic">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" style="vertical-align:-2px;margin-right:4px">
+          <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
+        </svg>
+        Waiting in queue${provTxt} — ${posTxt}${activeTxt} · ${waitSec}s
+      </div>
+    </div>`;
+    container.insertAdjacentHTML('beforeend', html);
+    return;
+  }
 
   // Nothing to show yet — don't emit an empty wrapper.
   if (!chat.thinkingText && !chat.streamingText) return;
@@ -14682,6 +14732,207 @@ const WarmupMonitor = {
   },
 };
 
+// ────────────────────────────────────────────────────────────────────────────
+// Provider Queue Monitor
+//
+// Polls /v1/queue/status and renders the status-bar pill + modal body. Shows
+// only providers with max_concurrent > 0 (local LLM gateways that can't handle
+// parallel calls). Fast poll (1s) whenever any provider has waiting tickets so
+// position changes appear promptly; slow (4s) otherwise.
+// ────────────────────────────────────────────────────────────────────────────
+const QueueMonitor = {
+  _interval: null,
+  _fastMs: 1000,
+  _slowMs: 10000,
+  _mode: 'slow',
+  providers: {},
+  anyWaiting: false,
+  anyActive: false,
+
+  start() {
+    if (this._interval) return;
+    this._tick();
+    this._schedule();
+  },
+  _schedule() {
+    const ms = this._mode === 'fast' ? this._fastMs : this._slowMs;
+    this._interval = setTimeout(() => this._tick(), ms);
+  },
+  async _tick() {
+    if (!state.connected) { this._schedule(); return; }
+    try {
+      const resp = await fetch(`${BASE_URL}/v1/queue/status`, {
+        method: 'GET', headers: API._headers(),
+        signal: AbortSignal.timeout(3000),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        this.providers = data.providers || {};
+        this.anyWaiting = !!data.any_waiting;
+        this.anyActive = !!data.any_active;
+        this._mode = (this.anyWaiting || this.anyActive) ? 'fast' : 'slow';
+        this._render();
+      }
+    } catch {}
+    this._schedule();
+  },
+  _render() {
+    const wrap = document.getElementById('status-queue');
+    if (!wrap) return;
+    const entries = Object.entries(this.providers);
+    // Hide only when no providers are configured for queueing at all.
+    if (!entries.length) { wrap.style.display = 'none'; return; }
+    let active = 0, waiting = 0, capacity = 0;
+    for (const [_, p] of entries) {
+      active += p.active_count || 0;
+      waiting += p.waiting_count || 0;
+      capacity += p.max_concurrent || 0;
+    }
+    wrap.style.display = 'flex';
+    const dot = document.getElementById('status-queue-dot');
+    let dotCls = 'idle';
+    if (waiting > 0) dotCls = 'warming';
+    else if (active > 0) dotCls = 'warm';
+    dot.className = 'warmup-dot ' + dotCls;
+    const label = document.getElementById('status-queue-label');
+    if (label) label.textContent = waiting > 0 ? `${active}+${waiting}/${capacity}` : `${active}/${capacity}`;
+    wrap.title = waiting > 0 || active > 0
+      ? `Provider queue — ${active} running, ${waiting} waiting (capacity ${capacity}) — click for details`
+      : `Provider queue — idle (capacity ${capacity}) — click for details`;
+
+    if (document.getElementById('queue-modal')) renderQueueModalBody();
+  },
+};
+
+function openQueueModal() {
+  const existing = document.getElementById('queue-modal');
+  if (existing) { existing.remove(); return; }
+  const backdrop = document.createElement('div');
+  backdrop.id = 'queue-modal';
+  backdrop.className = 'modal-overlay';
+  backdrop.style.display = 'flex';
+  backdrop.onclick = (e) => { if (e.target === backdrop) backdrop.remove(); };
+  backdrop.innerHTML = `
+    <div class="modal-content" style="max-width:720px;width:92%;max-height:85vh;display:flex;flex-direction:column">
+      <div class="modal-header">
+        <h2>Local provider queue</h2>
+        <button class="modal-close" onclick="document.getElementById('queue-modal').remove()" style="margin-left:auto">&times;</button>
+      </div>
+      <div class="modal-body" id="queue-modal-body" style="overflow-y:auto"><em style="color:var(--text-muted)">Loading…</em></div>
+      <div class="modal-footer" style="color:var(--text-muted);font-size:12px">
+        Providers with <code>max_concurrent &gt; 0</code> in <code>config.json</code> serialise their calls so
+        multiple chats and background tasks don't fight for the same local LLM gateway. FIFO.
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+  renderQueueModalBody();
+  // Kick the monitor into fast mode while the modal is open
+  QueueMonitor._mode = 'fast';
+  QueueMonitor._tick();
+}
+
+function renderQueueModalBody() {
+  const body = document.getElementById('queue-modal-body');
+  if (!body) return;
+  const entries = Object.entries(QueueMonitor.providers || {});
+  if (!entries.length) {
+    body.innerHTML = `<div style="color:var(--text-muted)">No providers are configured for queueing. Set <code>max_concurrent</code> in <code>config.json</code> → <code>providers.&lt;name&gt;</code> to enable.</div>`;
+    return;
+  }
+  const isAdmin = state.authUser?.role === 'admin';
+  const fmtAge = (ms) => {
+    if (ms < 1000) return `${ms}ms`;
+    if (ms < 60000) return `${Math.round(ms/1000)}s`;
+    return `${Math.round(ms/60000)}m${Math.round((ms%60000)/1000)}s`;
+  };
+  const cancelBtn = (t, state) => {
+    if (!isAdmin) return '';
+    const stateLbl = state === 'running' ? 'running' : 'waiting';
+    return `<button class="queue-cancel-btn"
+              onclick="cancelQueueTicket('${esc(t.id)}', '${stateLbl}')"
+              title="Cancel this ${stateLbl} ticket (admin)"
+              style="background:var(--danger,#c0392b);color:#fff;border:0;padding:2px 8px;
+                     border-radius:6px;font-size:11px;cursor:pointer">
+              Cancel
+            </button>`;
+  };
+  const rows = entries.map(([pname, p]) => {
+    const active = (p.active || []).map(t => `
+      <tr>
+        <td><span class="pill" style="background:var(--accent-brand);color:#fff;padding:1px 8px;border-radius:10px;font-size:11px">running</span></td>
+        <td><code>${esc(t.label || '')}</code></td>
+        <td><code>${esc(t.model || '')}</code></td>
+        <td>${esc((t.session_id || '').slice(0,8)) || '<em style="color:var(--text-muted)">—</em>'}</td>
+        <td>${esc(t.agent_id || '')}</td>
+        <td>${fmtAge(t.age_ms || 0)}</td>
+        <td style="text-align:right">${cancelBtn(t, 'running')}</td>
+      </tr>
+    `).join('');
+    const waiting = (p.waiting || []).map(t => `
+      <tr>
+        <td><span class="pill" style="background:#f5a623;color:#fff;padding:1px 8px;border-radius:10px;font-size:11px">#${t.position}</span></td>
+        <td><code>${esc(t.label || '')}</code></td>
+        <td><code>${esc(t.model || '')}</code></td>
+        <td>${esc((t.session_id || '').slice(0,8)) || '<em style="color:var(--text-muted)">—</em>'}</td>
+        <td>${esc(t.agent_id || '')}</td>
+        <td>${fmtAge(t.age_ms || 0)}</td>
+        <td style="text-align:right">${cancelBtn(t, 'waiting')}</td>
+      </tr>
+    `).join('');
+    const empty = !active && !waiting
+      ? `<tr><td colspan="7" style="color:var(--text-muted);font-style:italic">Idle</td></tr>` : '';
+    return `
+      <div style="margin-bottom:20px">
+        <h4 style="margin:0 0 6px 0;font-size:14px">
+          <code>${esc(pname)}</code>
+          <span style="color:var(--text-muted);font-weight:normal;font-size:12px">
+            · ${p.active_count}/${p.max_concurrent} active${p.waiting_count ? ` · ${p.waiting_count} waiting` : ''}
+          </span>
+        </h4>
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);color:var(--text-muted);text-align:left">
+              <th style="padding:4px">State</th>
+              <th style="padding:4px">Label</th>
+              <th style="padding:4px">Model</th>
+              <th style="padding:4px">Session</th>
+              <th style="padding:4px">Agent</th>
+              <th style="padding:4px">Age</th>
+              <th style="padding:4px;text-align:right">${isAdmin ? 'Action' : ''}</th>
+            </tr>
+          </thead>
+          <tbody>${active}${waiting}${empty}</tbody>
+        </table>
+      </div>`;
+  }).join('');
+  body.innerHTML = rows;
+}
+
+async function cancelQueueTicket(ticketId, stateLabel) {
+  if (!ticketId) return;
+  const confirmMsg = stateLabel === 'running'
+    ? 'Cancel this RUNNING LLM call? The active chat will abort.'
+    : 'Cancel this waiting ticket?';
+  if (!confirm(confirmMsg)) return;
+  try {
+    const resp = await fetch(`${BASE_URL}/v1/queue/cancel`, {
+      method: 'POST', headers: {'Content-Type':'application/json', ...API._headers()},
+      body: JSON.stringify({ticket_id: ticketId, reason: 'cancelled from queue modal'}),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      showToast(`Cancel failed: ${data.error || resp.status}`, true);
+      return;
+    }
+    showToast(`Queue ticket cancelled (${data.state || '?'})`);
+    // Refresh modal + pill
+    QueueMonitor._mode = 'fast';
+    QueueMonitor._tick();
+  } catch (e) {
+    showToast(`Cancel error: ${e}`, true);
+  }
+}
+
 async function init() {
   // Check auth first
   const authOk = await checkAuth();
@@ -14778,6 +15029,7 @@ async function init() {
   ConnectionMonitor.start();
   MempalaceActivityMonitor.start();
   WarmupMonitor.start();
+  QueueMonitor.start();
 }
 
 function renderSuggestionChips() {

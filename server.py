@@ -2586,6 +2586,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json(engine._web_cache.stats())
         elif path == "/v1/warmup/status":
             self._handle_warmup_status()
+        elif path == "/v1/queue/status":
+            self._handle_queue_status()
         elif path == "/v1/config/execution-mode":
             self._handle_execution_mode_get()
         # --- Traces & Audit GET routes ---
@@ -2751,6 +2753,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_test_provider()
         elif path == "/v1/models/config":
             self._handle_models_config_save()
+        elif path == "/v1/queue/cancel":
+            self._handle_queue_cancel()
         elif path == "/v1/warmup/trigger":
             self._handle_warmup_trigger()
         elif path == "/v1/skills/browse":
@@ -5114,6 +5118,87 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             "enabled": wcfg.get("enabled", True),
             "interval_seconds": int(wcfg.get("interval_seconds", 30)),
         })
+
+    def _handle_queue_status(self):
+        """GET /v1/queue/status — snapshot of per-provider concurrency queue.
+
+        Returns active + waiting tickets per provider for the UI modal. Only
+        providers with max_concurrent > 0 in config.json get a queue slot; others
+        are omitted from the output (they don't gate concurrency).
+        """
+        try:
+            snap = engine.get_provider_queue().snapshot_all()
+        except Exception as e:
+            self._send_json({"error": str(e), "providers": {}}, 200)
+            return
+        providers = snap.get("providers", {})
+        # Augment with configured max_concurrent for every provider (even idle)
+        # so the UI can display capacity even when no tickets are in flight.
+        try:
+            cfg_providers = (server_config.get("providers") or {})
+        except Exception:
+            cfg_providers = {}
+        for pname, pcfg in cfg_providers.items():
+            mc = int(pcfg.get("max_concurrent", 0) or 0)
+            if mc <= 0:
+                continue
+            if pname not in providers:
+                providers[pname] = {
+                    "provider": pname,
+                    "max_concurrent": mc,
+                    "active_count": 0,
+                    "waiting_count": 0,
+                    "active": [],
+                    "waiting": [],
+                }
+        any_waiting = any(p.get("waiting_count", 0) > 0 for p in providers.values())
+        any_active = any(p.get("active_count", 0) > 0 for p in providers.values())
+        self._send_json({
+            "providers": providers,
+            "any_waiting": any_waiting,
+            "any_active": any_active,
+        })
+
+    def _handle_queue_cancel(self):
+        """POST /v1/queue/cancel — admin-only. Cancel a queued or running ticket.
+
+        Body: {ticket_id: str, reason?: str}
+        Waiting tickets are dropped from the waitlist (~instant).
+        Running tickets: fires the ticket's cancel_token, which the SSE stream
+        loop in _handle_openai_response checks every incoming chunk — aborts
+        at the next byte or keepalive.
+        """
+        user = self._require_role("admin")
+        if not user:
+            return
+        body = self._read_json() or {}
+        ticket_id = (body.get("ticket_id") or "").strip()
+        reason = (body.get("reason") or "").strip()
+        if not ticket_id:
+            self._send_json({"error": "ticket_id required"}, 400)
+            return
+        result = engine.get_provider_queue().cancel_ticket(
+            ticket_id, reason=reason or f"by admin {user.get('username','?')}"
+        )
+        # Audit log the action for accountability
+        try:
+            if _audit_log:
+                _audit_log.log_action(
+                    agent=None,
+                    action_type="queue_cancel",
+                    tool_name="queue",
+                    args_summary=f"ticket={ticket_id} state={result.get('state','?')}",
+                    result_summary=f"provider={result.get('provider','?')} session={result.get('session_id','')}",
+                    result_status="ok" if result.get("ok") else "error",
+                    session_id=result.get("session_id") or None,
+                    source=f"admin:{user.get('username','?')}",
+                )
+        except Exception:
+            pass
+        if not result.get("ok"):
+            self._send_json(result, 404)
+            return
+        self._send_json(result)
 
     def _handle_warmup_trigger(self):
         """POST /v1/warmup/trigger — manually warm a specific model. Body: {model}."""
