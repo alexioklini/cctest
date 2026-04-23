@@ -10,6 +10,7 @@ python-pptx
 reportlab
 Pillow
 PyMuPDF
+pdfplumber
 networkx
 PyYAML
 mempalace==3.3.0

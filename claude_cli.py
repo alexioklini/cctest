@@ -605,6 +605,7 @@ TOOL_DEFINITIONS = [
                 "sheet": {"type": "string", "description": "Sheet name for XLSX (default: all sheets)"},
                 "pages": {"type": "string", "description": "Page range for PDF, e.g. '1-5' or '1,3,7'"},
                 "slides": {"type": "string", "description": "Slide range for PPTX, e.g. '1-10' or '2,5'"},
+                "include_tables": {"type": "boolean", "description": "PDF only: extract tables via pdfplumber and inline as markdown. Works well on PDFs with ruled cell borders (forms, financial reports, invoices). Turn OFF for academic papers, whitespace-aligned tables, or scanned PDFs — pdfplumber produces noisy output in those cases. Default false; adds ~1-3s per page."},
             },
             "required": ["path"],
         },
@@ -1975,7 +1976,55 @@ def tool_read_document(args: dict) -> str:
                     continue
                 page_texts.append(f"--- Page {i} ---\n{page.get_text()}")
             doc.close()
-            content = "\n\n".join(page_texts)
+
+            include_tables = bool(args.get("include_tables"))
+            tables_by_page: dict[int, list[str]] = {}
+            tables_note = ""
+            if include_tables:
+                try:
+                    import pdfplumber
+                    with pdfplumber.open(path) as plumb:
+                        for i, page in enumerate(plumb.pages, 1):
+                            if page_indices and i not in page_indices:
+                                continue
+                            found = page.extract_tables()
+                            if not found:
+                                continue
+                            rendered = []
+                            for t in found:
+                                rows = [[(c or "").replace("|", "\\|").replace("\n", " ").strip() for c in row] for row in t]
+                                if not rows:
+                                    continue
+                                width = max(len(r) for r in rows)
+                                for r in rows:
+                                    r.extend([""] * (width - len(r)))
+                                header = "| " + " | ".join(rows[0]) + " |"
+                                sep = "| " + " | ".join("---" for _ in range(width)) + " |"
+                                body = "\n".join("| " + " | ".join(r) + " |" for r in rows[1:])
+                                rendered.append(header + "\n" + sep + ("\n" + body if body else ""))
+                            if rendered:
+                                tables_by_page[i] = rendered
+                except ImportError:
+                    tables_note = "\n\n*(pdfplumber not installed — install with: pip3 install pdfplumber)*"
+
+            if tables_by_page:
+                merged = []
+                for block in page_texts:
+                    first = block.split("\n", 1)[0]
+                    page_num = None
+                    if first.startswith("--- Page ") and first.endswith(" ---"):
+                        try:
+                            page_num = int(first[9:-4])
+                        except ValueError:
+                            pass
+                    merged.append(block)
+                    if page_num is not None and page_num in tables_by_page:
+                        for j, md in enumerate(tables_by_page[page_num], 1):
+                            merged.append(f"### Table (page {page_num}, #{j})\n{md}")
+                content = "\n\n".join(merged)
+            else:
+                content = "\n\n".join(page_texts) + tables_note
+
             meta_str = "\n".join(f"**{k}:** {v}" for k, v in meta.items() if v)
             return _ok({"path": path, "format": "pdf", "metadata": meta_str, "content": content})
 
