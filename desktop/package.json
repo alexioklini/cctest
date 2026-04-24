@@ -36,6 +36,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "local-inference.js",
       "icons/**"
     ],
     "publish": {

@@ -368,6 +368,39 @@ For air-gapped servers where the browser has internet: `"execution_mode": "clien
 - `GET /v1/config/execution-mode` returns mode + provider creds for browser
 - Session inspector: purple `CLIENT` badge on proxied turns. Status bar: purple `CLIENT` pill when active
 - Requires CORS-enabled providers (Mistral API, OpenAI API, Bifrost confirmed). Chrome primary
+- **Server-local models skip the proxy** (v8.13.0): when the model resolves to a local-gateway provider (`_is_local_base_url` → true), `send_message` bypasses the `proxy_request` emission and calls the gateway directly. There's no point round-tripping through the browser for a model the server can already reach on localhost. Tool proxying (web_fetch, exa_search) is unaffected — those are about internet access, not inference. Side effect: the purple `CLIENT` badge is now per-turn accurate instead of per-session — it fires only when the turn actually went through the browser.
+
+## Client-Hosted Local Inference (v8.13.0)
+
+Desktop clients can declare they serve a model family locally (Electron spawns `llama-server`), and the server transparently transfers matching interactive requests to the client. Queue-free per-user inference, works in both server and client execution modes, stays local on air-gapped deployments. Independent of `execution_mode`: the routing decision is per-request based on the session's capability handshake, not a global toggle. Scheduler tasks, delegates, and background calls never reach this branch because the chat worker is the only caller that populates the `client_capabilities` thread-local.
+
+**Model identity is by `family`, not id.** Server's oMLX `gemma-3-e4b-mlx-4bit` and client's GGUF `gemma-3-4b-it-Q4_K_M` both declare `family="gemma3-e4b"` and route as the same model. Quant / format differ by design — this is "same model for user intent, different physical backend."
+
+- **Server-side manifest** (`config.json` → `client_models`): `[{id, family, gguf_path, sha256, size_bytes, auto_download}]`. `id` is the server-facing model id clients pull by; `family` is the routing key; `gguf_path` is an absolute path on the server's filesystem (admin drops the file, no upload flow). `sha256` + `size_bytes` are recomputed server-side on every save — never trust what the admin passed in.
+- **Engine manifest** (`config.json` → `client_engines`): `{darwin-arm64, darwin-x64, win32-x64, linux-x64 → {url, sha256}}`. Admin points URLs at an internal mirror; server refuses to invent defaults (misconfigured air-gap would otherwise silently fetch from the public internet). Published via `GET /v1/client/engines`.
+- **API**:
+  - `GET /v1/client/models/manifest` (any auth user) — returns `{id, family, sha256, size_bytes, auto_download, download_path}`; gguf_path stripped.
+  - `GET /v1/client/models/<id>/weights` — HTTP Range streaming with `X-Model-SHA256` response header for self-verification. Audit-logged on `start == 0` (first chunk / full fetch) so range resumes don't flood. Path-traversal guarded.
+  - `POST /v1/client/models` (admin) — CRUD; server computes sha256 + size on save.
+  - `GET /v1/client/engines` — per-platform binary URLs + sha256 (no URL defaults).
+  - `POST /v1/sessions/<id>/capabilities` — `{enabled, families: [...]}`; unknown families are silently dropped (cross-checked against manifest). Session-scoped, never persisted.
+  - `POST /v1/chat/local-inference-usage` — `{session_id, model, tokens_in, tokens_out}`; logged to `costs.db` with `provider="client:<sid8>"` and cost=0 (electricity on the user's laptop is not our problem). Lets dashboards distinguish client- vs server-executed turns without a schema change.
+- **Routing path**: `is_model_client_executable(caps, model_id)` in `claude_cli.py` resolves match — returns `(True, family)` iff `caps.enabled` + manifest entry exists for `model_id` + entry's family appears in `caps.families`. Called from `send_message` before the normal provider dispatch (and before the client-exec proxy branch). On match: emits `local_inference_request` SSE via existing `ProxyChannel`, then uses `wait_for_llm_lines` to stream the response back — reuses the full OpenAI-compatible handler path. Fallback policy: **surface error, no server-side retry** — retrying would double latency on failures and mask real problems.
+- **Audit**: every transfer writes a `client_inference` row with `args_summary="model=X family=Y"`, `source="chat"`. Every download writes a `client_model_download` row.
+- **Desktop (`desktop/local-inference.js`, ~470 LOC)**: fully lazy — no binary bundled, no weights bundled, nothing touched at app launch.
+  - Cache: `userData/brain-local-inference/{engine,models}/` keyed by sha256. `state.json` persists `engine_sha` so repeat launches skip re-download.
+  - Downloader: resumable `http/https` with streaming sha256 verification, `.partial` sibling files, `Range` requests, restart-from-zero fallback when server refuses a range, `AbortController` support.
+  - Engine: fetched once on first use from `/v1/client/engines`; binary `chmod +x` on Unix. **Archive distributions not yet supported** — admin must publish a direct `llama-server` binary URL (or unpack once and host the binary standalone).
+  - Spawn: `llama-server` on random free localhost port (`net.createServer.listen(0)`), `waitForEngineReady` polls `/health` with 30s deadline, 10-min idle `SIGTERM` → 3s → `SIGKILL`. Model swap triggers respawn. Single `startupPromise` guards concurrent spawns.
+  - Inference: POSTs OpenAI `/v1/chat/completions` with `stream=true` to the local server; forwards raw SSE lines to renderer via `local-inference-chunk` IPC events. Cancel via `activeRequests` map + `req.destroy`.
+  - `app.on('before-quit')` kills the child — no orphaned processes.
+- **Renderer (`LocalInference` module in `web/index.html`)**: FIFO queue via `Promise` chain (`max_concurrent=1`, matches llama.cpp single-GPU reality). `ensureEngineAndModel()` gates first use. Capability handshake fires on session open, reopen, and after settings toggle save (so changes take effect without re-creating sessions). `handleRequest()` streams llama-server SSE straight to `/v1/chat/proxy-response`.
+- **UI**: two new General Settings tabs. **Client Models** (admin) manages the manifest with add/delete form + per-row badges (family, size, sha, auto-download) + read-only engine manifest view showing per-platform URLs. **Local Inference** (per-installation preference) has master toggle + per-family checkboxes + "Download now" prefetch button with live progress bar driven by `onLocalInferenceProgress` callback. Composer shows `local` chip (accent colour) next to model selector when the current model will route client-side; updates on every model switch via `refreshLocalInferenceChip()`.
+- **Auth posture**: manifest reads + weight downloads open to any authenticated user (desktop users must be able to pull what the admin blessed). CRUD admin-only. Capabilities + usage scoped to session owner or admin.
+- **Known limitations**:
+  - Engine archives (zip/tar of llama.cpp releases) not supported — direct binary URL only.
+  - Usage reporting lane (`/v1/chat/local-inference-usage`) is currently placeholder since llama-server's streaming protocol doesn't cleanly expose end-of-turn counts. The server's OpenAI response handler ingests the `usage` SSE chunk from the llama-server stream transparently through the proxy channel, so cost tracking already works — the explicit lane is redundant for now. Worth revisiting if we want separate "client-run" cost dashboards.
+  - No renderer-side cancel button; the session's existing Stop button aborts the SSE stream from the server side and propagates cleanly through `proxy-response`.
 
 ## Desktop App (Electron)
 
@@ -379,6 +412,7 @@ Shell loading the web UI from Brain server and providing CORS-free network via N
 - `_proxyLLMElectron` uses `ipcRenderer.send('proxy-fetch-stream', …)` with `onStreamChunk`/`End`/`Error` relaying chunks to `/v1/chat/proxy-response`
 - `nodeFetchWithRedirects()` follows 301/302/303/307/308 up to 5 hops
 - `--server=http://host:port` CLI arg. Build: `npm run build:{mac,win,all}`. Run: `cd desktop && npm start`
+- `desktop/local-inference.js` (v8.13.0): registers `localInference.*` IPC handlers — lazy llama-server download + spawn + streaming. See the Client-Hosted Local Inference section above for the full lifecycle.
 
 ## Agent Teams
 

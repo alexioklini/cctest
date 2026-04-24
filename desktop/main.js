@@ -601,6 +601,13 @@ app.whenReady().then(() => {
   createTray();
   registerGlobalShortcut();
   setupAutoUpdater();
+  // Local inference: register IPC handlers but don't download anything.
+  // Engine + weights are pulled lazily on first use from the renderer.
+  try {
+    require('./local-inference').register();
+  } catch (e) {
+    console.error('[local-inference] Failed to register:', e);
+  }
 });
 
 app.on('window-all-closed', () => {

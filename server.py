@@ -1155,6 +1155,12 @@ class Session:
         self._warmup_cancel = threading.Event()
         self._warmup_lock = threading.Lock()
 
+        # Client-hosted inference capability. Declared by the browser/Electron
+        # client via POST /v1/sessions/<id>/capabilities. In-memory, session-
+        # scoped, never persisted. Shape: {"enabled": bool, "families": [str],
+        # "set_at": float}. Empty/missing means "no client-side inference".
+        self.client_capabilities: dict = {}
+
         self.agent = engine.AgentConfig(agent_id)
         self.memory = engine.MemoryStore(agent_id, base_dir=self.agent.memory_dir)
 
@@ -2443,6 +2449,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         "/v1/refine",
         # Nodes management (remote workers config)
         "/v1/nodes",
+        # Client-hosted local model manifest (admin CRUD). Manifest reads and
+        # weight downloads stay open to any authenticated user so non-admin
+        # desktop clients can still pull models the admin has blessed.
+        "/v1/client/models",
     }
     _ADMIN_POST_PATHS = _ADMIN_POST_EXACT  # backwards compat
     _ADMIN_POST_PREFIXES = (
@@ -2592,6 +2602,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_get_messages(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/next-prompt"):
             self._handle_next_prompt_suggestion(path)
+        elif path.startswith("/v1/sessions/") and path.endswith("/capabilities"):
+            self._handle_session_capabilities(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/warmup"):
             sid = path.split("/")[3]
             s = sessions.get(sid)
@@ -2710,6 +2722,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_nodes_list()
         elif path.startswith("/v1/nodes/poll"):
             self._handle_node_poll()
+        # --- Client-hosted local model manifest ---
+        elif path == "/v1/client/models/manifest":
+            self._handle_client_models_manifest()
+        elif path == "/v1/client/engines":
+            self._handle_client_engines_manifest()
+        elif path.startswith("/v1/client/models/") and path.endswith("/weights"):
+            self._handle_client_model_weights(path)
         # --- Channels GET routes ---
         elif path == "/v1/channels":
             self._handle_channels_list()
@@ -2785,6 +2804,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_cancel()
         elif path == "/v1/chat/proxy-response":
             self._handle_proxy_response()
+        elif path == "/v1/chat/local-inference-usage":
+            self._handle_local_inference_usage()
         elif path == "/v1/chat/proxy-tool-result":
             self._handle_proxy_tool_result()
         elif path == "/v1/sessions/manage":
@@ -2856,6 +2877,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         elif path == "/v1/cache/clear":
             engine._web_cache.clear()
             self._send_json({"status": "cleared"})
+        elif path.startswith("/v1/sessions/") and path.endswith("/capabilities"):
+            self._handle_session_capabilities(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/warmup"):
             sid = path.split("/")[3]
             s = sessions.get(sid)
@@ -2916,6 +2939,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_node_result()
         elif path == "/v1/nodes/execute":
             self._handle_node_execute()
+        # --- Client-hosted local model manifest (admin-only CRUD) ---
+        elif path == "/v1/client/models":
+            self._handle_client_models_admin()
         # --- Tools config POST routes ---
         elif path == "/v1/tools/config":
             self._handle_tools_config_save()
@@ -3274,6 +3300,67 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             })
         except Exception as e:
             self._send_json({"suggestion": None, "error": str(e)}, 500)
+
+    def _handle_session_capabilities(self, path):
+        """GET/POST /v1/sessions/<id>/capabilities — client-declared local
+        inference capability handshake.
+
+        Body (POST): {"enabled": bool, "families": [str, ...]}
+
+        Stored in-memory on the Session. No persistence: on reconnect the
+        client is expected to re-declare. Access gated by the same ownership
+        check as other per-session routes.
+        """
+        parts = path.split("/")
+        if len(parts) < 5:
+            self._send_json({"error": "Invalid session path"}, 400)
+            return
+        sid = parts[3]
+        session = self._session_access_check(sid)
+        if session is None:
+            return  # _session_access_check already sent the error
+
+        if self.command == "GET":
+            self._send_json({
+                "session_id": sid,
+                "capabilities": session.client_capabilities or {},
+            })
+            return
+
+        # POST — update capabilities
+        body = self._read_json() or {}
+        enabled = bool(body.get("enabled", False))
+        families_raw = body.get("families", []) or []
+        if not isinstance(families_raw, list):
+            self._send_json({"error": "families must be a list of strings"}, 400)
+            return
+        families = []
+        for f in families_raw:
+            if not isinstance(f, str):
+                continue
+            fstr = f.strip()
+            if fstr and fstr not in families:
+                families.append(fstr)
+
+        # Cross-check against the server's manifest — silently drop families
+        # the server doesn't publish, so the client can't trick the server
+        # into routing to a family that has no corresponding server model.
+        known_families = {e.get("family") for e in engine._load_client_models() if e.get("family")}
+        accepted = [f for f in families if f in known_families]
+        rejected = [f for f in families if f not in known_families]
+
+        with session.lock:
+            session.client_capabilities = {
+                "enabled": enabled and bool(accepted),
+                "families": accepted,
+                "set_at": time.time(),
+            }
+
+        self._send_json({
+            "session_id": sid,
+            "capabilities": session.client_capabilities,
+            "rejected_families": rejected,
+        })
 
     def _handle_session_inspect(self, path):
         """GET /v1/sessions/<id>/inspect — full session debug view."""
@@ -4005,6 +4092,43 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             return
         self._send_json({"ok": True})
 
+    def _handle_local_inference_usage(self):
+        """POST /v1/chat/local-inference-usage — client reports token usage
+        after a client-hosted inference turn completes.
+
+        Body: {session_id, model, family, tokens_in, tokens_out, duration_ms}
+
+        Logged to costs.db with provider="client:<session_id>" and cost=0 (by
+        virtue of _compute_cost returning 0 for unknown provider/model combos,
+        and client inference genuinely being free from the server's POV —
+        electricity on the user's laptop is not our problem). Keeping the
+        token counts honest lets dashboards distinguish client- vs server-
+        executed turns without a schema change."""
+        body = self._read_json() or {}
+        sid = body.get("session_id", "")
+        model = body.get("model", "")
+        tokens_in = int(body.get("tokens_in", 0) or 0)
+        tokens_out = int(body.get("tokens_out", 0) or 0)
+        if not sid or not model:
+            self._send_json({"error": "session_id and model required"}, 400)
+            return
+        # Authorization: only the session owner (or admin) may report usage.
+        s = self._session_access_check(sid)
+        if s is None:
+            return
+        agent_id = s.agent_id or ""
+        try:
+            if engine._cost_tracker:
+                engine._cost_tracker.log_call(
+                    agent=agent_id, session_id=sid, model=model,
+                    provider=f"client:{sid[:8]}",
+                    tokens_in=tokens_in, tokens_out=tokens_out,
+                )
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+            return
+        self._send_json({"ok": True})
+
     def _handle_proxy_tool_result(self):
         """POST /v1/chat/proxy-tool-result — browser sends proxied web tool results."""
         body = self._read_json()
@@ -4456,6 +4580,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             # Set current model for worker summariser (cache reuse)
             engine._thread_local._current_model = session.model
 
+            # Client-hosted inference capability: if the browser/Electron has
+            # declared it can serve this model's family locally, plumb that
+            # decision into the engine so send_message can route to the client
+            # instead of calling the LLM directly. See phases 2-3 for details.
+            engine._thread_local.client_capabilities = dict(session.client_capabilities or {})
+
             # Snapshot message count for rollback on failure
             _msg_count_before = len(session.messages)
             _req_start = time.time()
@@ -4681,6 +4811,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 engine._thread_local.caveman_system = 0
                 engine._thread_local.execution_overrides = {}
                 engine._thread_local._current_model = None
+                engine._thread_local.client_capabilities = None
                 engine.cleanup_proxy_channel(sid)
                 event_queue.put(None)  # sentinel
 
@@ -5060,6 +5191,273 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 500)
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)
+
+    # --- Client-hosted local model manifest ---
+    # Server declares GGUF weights that Electron clients may download and run
+    # locally. Family string is the routing key (server oMLX + client GGUF with
+    # matching family are treated as one model for session routing).
+
+    def _handle_client_models_manifest(self):
+        """GET /v1/client/models/manifest — return the list of client-eligible
+        models. Any authenticated user can read this. Strips absolute paths;
+        clients never learn where weights live on the server, only that they
+        exist and what their sha256/size are. """
+        entries = engine._load_client_models()
+        out = []
+        for e in entries:
+            out.append({
+                "id": e.get("id"),
+                "family": e.get("family"),
+                "sha256": e.get("sha256", ""),
+                "size_bytes": int(e.get("size_bytes") or 0),
+                "auto_download": bool(e.get("auto_download", False)),
+                "download_path": f"/v1/client/models/{e.get('id')}/weights",
+            })
+        self._send_json({"models": out})
+
+    def _handle_client_engines_manifest(self):
+        """GET /v1/client/engines — per-platform llama.cpp binary URLs.
+
+        Admin publishes entries in config.json → client_engines:
+        {
+          "darwin-arm64": {"url": "...", "sha256": "..."},
+          "win32-x64":    {"url": "...", "sha256": "..."},
+          "linux-x64":    {"url": "...", "sha256": "..."}
+        }
+
+        URL may point to an internal mirror for air-gapped deployments.
+        No server-hardcoded URLs — we refuse to invent defaults so a
+        misconfigured server never silently fetches from the public
+        internet when the admin assumed air-gap."""
+        try:
+            cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+            cfg = {}
+            if os.path.exists(cfg_path):
+                with open(cfg_path) as f:
+                    cfg = json.load(f)
+            engines = cfg.get("client_engines", {}) or {}
+            # Strip any fields beyond what the Electron client needs.
+            out = {}
+            for key, entry in engines.items():
+                if not isinstance(entry, dict):
+                    continue
+                u = entry.get("url", "")
+                sha = entry.get("sha256", "")
+                if u and sha:
+                    out[key] = {"url": u, "sha256": sha}
+            self._send_json({"engines": out})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_client_model_weights(self, path: str):
+        """GET /v1/client/models/<id>/weights — stream GGUF bytes. Supports
+        HTTP Range for resumable downloads. Any authenticated user may pull
+        weights the admin has listed."""
+        # Parse id from path
+        rest = path[len("/v1/client/models/"):]
+        model_id = rest.rsplit("/weights", 1)[0]
+        if not model_id or "/" in model_id or ".." in model_id:
+            self._send_json({"error": "invalid model id"}, 400)
+            return
+        entry = engine.get_client_model(model_id)
+        if not entry:
+            self._send_json({"error": "model not found"}, 404)
+            return
+        gguf_path = entry.get("gguf_path", "")
+        if not gguf_path or not os.path.isfile(gguf_path):
+            self._send_json({"error": "weights file missing on server"}, 404)
+            return
+
+        try:
+            total = os.path.getsize(gguf_path)
+        except OSError as e:
+            self._send_json({"error": f"stat failed: {e}"}, 500)
+            return
+
+        # Parse Range: bytes=start-end
+        range_header = self.headers.get("Range", "") or self.headers.get("range", "")
+        start, end = 0, total - 1
+        is_partial = False
+        if range_header.startswith("bytes="):
+            try:
+                spec = range_header[len("bytes="):].split("-", 1)
+                if spec[0].strip():
+                    start = int(spec[0])
+                if len(spec) > 1 and spec[1].strip():
+                    end = int(spec[1])
+                if start < 0 or end >= total or start > end:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{total}")
+                    self.end_headers()
+                    return
+                is_partial = True
+            except ValueError:
+                self._send_json({"error": "invalid Range header"}, 400)
+                return
+
+        length = end - start + 1
+        status = 206 if is_partial else 200
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(length))
+            self.send_header("Accept-Ranges", "bytes")
+            if is_partial:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{total}")
+            # sha256 header lets the client verify without a separate call
+            if entry.get("sha256"):
+                self.send_header("X-Model-SHA256", entry["sha256"])
+            self.end_headers()
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+        # Audit log the download (once per request, before streaming).
+        # Only log the first chunk of a ranged download so large files don't
+        # flood audit with one row per MiB — 'start == 0' is our "fresh download
+        # or full fetch" heuristic.
+        if start == 0:
+            try:
+                user = getattr(self, "_auth_user", None) or {}
+                engine._audit_log.log_action(
+                    agent=user.get("id", "anonymous"),
+                    action_type="client_model_download",
+                    tool_name="client_models",
+                    source="weight_stream",
+                    args_summary=f"model={model_id} bytes={total}",
+                )
+            except Exception:
+                pass
+
+        # Stream in 1 MiB chunks
+        chunk = 1024 * 1024
+        try:
+            with open(gguf_path, "rb") as f:
+                f.seek(start)
+                remaining = length
+                while remaining > 0:
+                    buf = f.read(min(chunk, remaining))
+                    if not buf:
+                        break
+                    try:
+                        self.wfile.write(buf)
+                    except (BrokenPipeError, ConnectionResetError):
+                        return
+                    remaining -= len(buf)
+        except OSError as e:
+            try:
+                print(f"[client-models] weight stream error: {e}", file=sys.stderr, flush=True)
+            except Exception:
+                pass
+
+    def _handle_client_models_admin(self):
+        """POST /v1/client/models — admin-only CRUD for the manifest.
+
+        Actions:
+          - save: replace full list
+          - add: insert/update one entry by id
+          - delete: remove one entry by id
+        """
+        body = self._read_json()
+        action = body.get("action", "save")
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+
+        def _hash_and_size(p: str) -> tuple[str, int] | None:
+            if not p or not os.path.isfile(p):
+                return None
+            try:
+                h = hashlib.sha256()
+                size = 0
+                with open(p, "rb") as f:
+                    while True:
+                        b = f.read(1024 * 1024)
+                        if not b:
+                            break
+                        h.update(b)
+                        size += len(b)
+                return h.hexdigest(), size
+            except OSError:
+                return None
+
+        def _validate(entry: dict) -> tuple[bool, str]:
+            for k in ("id", "family", "gguf_path"):
+                if not entry.get(k):
+                    return False, f"missing field: {k}"
+            if "/" in entry["id"] or ".." in entry["id"]:
+                return False, "id must be a simple slug (no '/' or '..')"
+            if not os.path.isfile(entry["gguf_path"]):
+                return False, f"gguf_path does not exist: {entry['gguf_path']}"
+            return True, ""
+
+        try:
+            cfg = {}
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    cfg = json.load(f)
+            current = list(cfg.get("client_models", []) or [])
+
+            if action == "save":
+                entries = body.get("client_models", [])
+                if not isinstance(entries, list):
+                    self._send_json({"error": "client_models must be a list"}, 400)
+                    return
+                cleaned = []
+                for e in entries:
+                    ok, msg = _validate(e)
+                    if not ok:
+                        self._send_json({"error": f"invalid entry: {msg}"}, 400)
+                        return
+                    # Recompute hash/size unless the caller supplied them AND
+                    # the file size hasn't changed.
+                    hs = _hash_and_size(e["gguf_path"])
+                    if hs is None:
+                        self._send_json({"error": f"cannot hash {e['gguf_path']}"}, 500)
+                        return
+                    e["sha256"], e["size_bytes"] = hs
+                    e["auto_download"] = bool(e.get("auto_download", False))
+                    cleaned.append(e)
+                cfg["client_models"] = cleaned
+
+            elif action == "add":
+                entry = body.get("model", {}) or {}
+                ok, msg = _validate(entry)
+                if not ok:
+                    self._send_json({"error": msg}, 400)
+                    return
+                hs = _hash_and_size(entry["gguf_path"])
+                if hs is None:
+                    self._send_json({"error": f"cannot hash {entry['gguf_path']}"}, 500)
+                    return
+                entry["sha256"], entry["size_bytes"] = hs
+                entry["auto_download"] = bool(entry.get("auto_download", False))
+                # Replace by id if exists, else append
+                current = [x for x in current if x.get("id") != entry["id"]]
+                current.append(entry)
+                cfg["client_models"] = current
+
+            elif action == "delete":
+                model_id = body.get("id", "")
+                if not model_id:
+                    self._send_json({"error": "id required"}, 400)
+                    return
+                cfg["client_models"] = [x for x in current if x.get("id") != model_id]
+
+            else:
+                self._send_json({"error": f"unknown action: {action}"}, 400)
+                return
+
+            with open(config_path, "w") as f:
+                json.dump(cfg, f, indent=2)
+
+            server_config["client_models"] = cfg.get("client_models", [])
+            engine._invalidate_client_models_cache()
+
+            self._send_json({
+                "status": "ok",
+                "action": action,
+                "client_models": cfg.get("client_models", []),
+            })
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
 
     def _handle_test_provider(self):
         """POST /v1/providers/test — test provider connection."""

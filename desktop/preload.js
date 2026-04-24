@@ -44,4 +44,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Platform info
   platform: process.platform,
+
+  // ─── Local inference (Phase 5) ─────────────────────────────────────
+  // Renderer talks to an Electron-owned llama.cpp instance via these
+  // handlers. Both the engine binary and the GGUF weights are downloaded
+  // lazily — nothing is bundled at install time, nothing is touched at
+  // app launch. See desktop/main.js for the lifecycle + cache layout.
+  localInference: {
+    status: () => ipcRenderer.invoke('local-inference-status'),
+    ensureEngine: (manifest) => ipcRenderer.invoke('local-inference-ensure-engine', manifest),
+    ensureModel: (modelEntry, serverUrl, authToken) =>
+      ipcRenderer.invoke('local-inference-ensure-model', { model: modelEntry, serverUrl, authToken }),
+    run: (requestId, payload, modelEntry) =>
+      ipcRenderer.send('local-inference-run', { requestId, payload, model: modelEntry }),
+    cancel: (requestId) => ipcRenderer.send('local-inference-cancel', { requestId }),
+    onChunk: (cb) => ipcRenderer.on('local-inference-chunk', (_e, d) => cb(d)),
+    onEnd: (cb) => ipcRenderer.on('local-inference-end', (_e, d) => cb(d)),
+    onError: (cb) => ipcRenderer.on('local-inference-error', (_e, d) => cb(d)),
+    onProgress: (cb) => ipcRenderer.on('local-inference-progress', (_e, d) => cb(d)),
+    removeListeners: () => {
+      for (const ch of ['local-inference-chunk', 'local-inference-end',
+                        'local-inference-error', 'local-inference-progress']) {
+        ipcRenderer.removeAllListeners(ch);
+      }
+    },
+  },
 });

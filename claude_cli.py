@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.12.0"
+VERSION = "8.13.0"
 VERSION_DATE = "2026-04-24"
 CHANGELOG = [
+    ("8.13.0", "2026-04-24", "Client-hosted local inference + server-local routing shortcut. Two complementary changes to the execution-mode story. (1) Air-gap-mode optimization: when execution_mode=client, requests to server-local models (oMLX, CLIProxyAPI, any RFC1918-base-URL provider) now skip the browser proxy entirely and run server-side as they would in normal mode — saves a full round-trip per turn on every local-model request. The is_model_local(model) check was added to the existing proxy gate in send_message; tool-call proxying (web_fetch, exa_search) is unchanged since those are about internet access, not inference. (2) New client-hosted local inference path: desktop clients (Electron) can declare they serve a model family locally, and the server transparently transfers matching requests to the client for execution — queue-free per-user inference, works in both server and client execution modes, stays local on air-gapped deployments. Independent of execution_mode: the decision is per-request based on the session's capability handshake, not a global toggle. Scheduler tasks, delegates, and background calls never reach this branch because they don't populate the client_capabilities thread-local. Server side: new config.json → client_models: [{id, family, gguf_path, sha256, size_bytes, auto_download}] declares GGUF weights available to desktop clients. GET /v1/client/models/manifest (any auth user) lists entries with absolute paths stripped. GET /v1/client/models/<id>/weights streams bytes with HTTP Range support for resumable downloads, X-Model-SHA256 response header for self-verification, audit-logged on first chunk (start==0) so range resumes don't flood. POST /v1/client/models (admin-only) CRUD with server-computed sha256 + size_bytes on every save so the manifest stays truthful even if the GGUF file changes. New config.json → client_engines: {darwin-arm64, win32-x64, linux-x64 → {url, sha256}} published via GET /v1/client/engines — admins point URLs at an internal mirror; server refuses to invent defaults so misconfigured air-gap deployments never silently fetch from public internet. Session.client_capabilities in-memory field (dict, never persisted) populated via POST /v1/sessions/<id>/capabilities ({enabled, families: [...]}); unknown families are silently dropped server-side (cross-checked against the manifest). Engine routing in send_message reads client_capabilities from thread-local (plumbed by chat worker before send_message_with_fallback), calls is_model_client_executable(caps, model) resolver to match model-id → manifest-entry → family → capability, and emits a new local_inference_request SSE event that reuses ProxyChannel for SSE response streaming. Fallback policy: on client failure the error is surfaced; no server-side retry (explicit design decision — retrying would double latency on failures). Every transfer writes a client_inference audit row with args_summary='model=X family=Y'. New POST /v1/chat/local-inference-usage endpoint lets the client report token counts back to the server after a client-hosted turn; logged to costs.db with provider='client:<sid>' and cost=0 (electricity on the user's laptop is not our problem) so dashboards can distinguish client- vs server-executed turns without schema changes. Desktop Electron app (desktop/local-inference.js, new ~470 LOC module): fully lazy — no binary bundled, no weights bundled, no auto-downloads on launch. Cache under userData/brain-local-inference/{engine,models}/ keyed by sha256; state.json persists engine_sha. Resumable http/https downloader with streaming sha256 verification, .partial sibling files, Range requests, restart-from-zero fallback when server refuses a range, abort signal support. Engine manifest fetched from Brain server on first use; llama-server binary downloaded once and chmod+x on Unix. llama-server spawned on random free localhost port (pickFreePort via net.createServer listen on 0), waitForEngineReady polls /health, 10-min idle SIGTERM→SIGKILL timer, model swap triggers respawn. runInference POSTs OpenAI /v1/chat/completions with stream=true and forwards raw SSE lines to renderer via local-inference-chunk IPC events. Graceful shutdown on app.before-quit — no orphaned child processes. preload.js exposes electronAPI.localInference.{status, ensureEngine, ensureModel, run, cancel, onChunk, onEnd, onError, onProgress, removeListeners}. Web UI: new LocalInference module in web/index.html replaces the Phase-3 stub — FIFO queue via Promise chain (max_concurrent=1, matches llama.cpp single-GPU reality), ensureEngineAndModel gates first use, handleRequest streams llama-server SSE back to /v1/chat/proxy-response. Capability handshake fires on session open + reopen + after toggle save (so changes take effect without re-creating sessions). Two new General Settings tabs: Client Models (admin-facing, manages the manifest with add/delete form + per-row badges showing family/size/sha + read-only engine-manifest view of /v1/client/engines per platform) and Local Inference (per-installation preference, master toggle + per-family checkboxes + Download now prefetch button with live progress bar driven by onLocalInferenceProgress callback). Composer chip ('local' pill in accent colour next to model selector) shows when the current model will route to client-hosted inference — updates on every model switch via refreshLocalInferenceChip(). Auth posture: manifest reads + weight downloads any authenticated user, CRUD admin-only, capabilities + usage scoped to session owner or admin. Known limitations: engine archives (zip/tar) not yet supported — admin must publish a direct llama-server binary URL per platform; usage reporting lane currently placeholder since llama-server's streaming protocol doesn't cleanly expose end-of-turn token counts beyond the SSE usage chunk the server already ingests through the proxy channel."),
     ("8.12.0", "2026-04-24", "Granular GDPR settings — dedicated Settings → GDPR tab replaces the 4-checkbox card. Scanner rules are now grouped into 8 semantic categories (secrets, national_id, national_id_ctx, financial, contact, network, personal, bare_id) with per-category actions (ignore / warn / block). New PII_RULE_CATEGORIES + PII_DEFAULT_CATEGORY_ACTIONS maps in claude_cli.py are the single source of truth, mirrored as PIIScanner.ruleCategories / defaultCategoryActions in web/index.html. Per-rule overrides (rule_overrides: {rule_id: action}) win over category actions. Every finding carries a category + effective action; _pii_scan_text skips 'ignore' rules entirely (no scan, no log). New _pii_effective_action helper resolves rule_overrides > category > default, and downgrades 'block' to 'warn' when server_block (master switch) is off — keeping back-compat for existing configs. New _pii_worst_action helper returns block > warn > ignore across findings; main-chat send_message and gdpr_pick_model_for_background now refuse only when the scan's worst action is 'block' rather than on any finding, so warn-only categories no longer raise RuntimeError. Email allowlist: every email finding is matched against gdpr_scanner.email_allowlist (list of full addresses or '@domain' patterns, case-insensitive); matches are suppressed entirely — no finding, no audit row, no modal. Server validates on POST /v1/services/server: unknown rule_ids are rejected (typos surface), unknown categories silently dropped, actions must be ignore|warn|block, allowlist entries must contain '@' and no whitespace. Web UI: dedicated GDPR tab in General Settings (alongside Server/Models/…) with three sections — master switches (enabled, server_log, server_block, fallback model), email allowlist textarea (one per line, '@domain' for wildcards), and collapsible category rows showing rule counts + override counts + inline action dropdown per category. Expanding a category reveals per-rule override selects (empty = use category default). Single Save button commits everything; Reset-to-defaults restores category actions without touching master switches or allowlist. Server tab now shows a one-line GDPR status chip (active / disabled / hard-block on) with a Configure → button linking to the new tab. applyGdprConfigToScanner() is the single entry point that syncs PIIScanner.policy + state.pii* from the server response; called from the startup fetch, the Server tab refresh, and after every GDPR save. piiBlockActive / piiHistoryWorstAction now gate on scan.worstAction === 'block' instead of any finding, so composer model-filtering only kicks in for true block-severity findings."),
     ("8.10.0", "2026-04-23", "GDPR local-model routing — the long-standing follow-up to v8.8.0's scanner. When the outgoing payload contains personal data the chat is automatically routed to a local model instead of being blocked at the door. Three layers: (1) config.json → gdpr_scanner.default_local_fallback_model — a model id used by every non-interactive LLM call to transparently swap cloud → local when PII is detected. Configurable in Settings → Server → GDPR card (dropdown is populated only with enabled local models; selection is validated server-side against is_local + enabled). (2) Server-side hook gdpr_pick_model_for_background(model, texts, purpose) in claude_cli.py — single decision point called by generate_next_prompt_suggestion, classify_chat_for_memory, _summarise_tool_result (worker subagents), _run_delegate (delegate_task tool + scheduler tasks + agent-to-agent delegation), _generate_chat_summary. Every detection at the background layer emits a pii_detected audit row; every swap emits an additional pii_auto_fallback row; a new pii_blocked row fires when server_block=true and no local fallback is usable. New GDPRBlockedError sentinel (inherits RuntimeError) propagates refusal cleanly: next-prompt/classifier return None, summariser returns the static fallback summary, delegate returns a 'Delegation error: [GDPR block]...' string, chat summary skips. (3) Client-side interlock in web/index.html — piiBlockActive(chat) is true when the composer draft OR the loaded chat history contains PII (new piiHistoryText/piiHistoryHasFindings walk the messages array with a cache keyed by message count, invalidated on openSession / user-message push / stream done / newChat). When active, toggleModelDropdown reduces the model list to is_local-only with an amber 'Personal data detected' header; piiEnsureLocalModel auto-swaps the chat to the configured fallback (or first enabled local) the instant PII is seen; sendMessage refuses-with-toast if server_block is on and no local model is selectable. Badge shows three distinct states: red when no local available, green when routing via local (with 'auto-selected' marker on first swap), amber warn-only when block is off. New badge scope label 'Personal data earlier in this chat' distinguishes history-derived findings from fresh draft input. Server-side send_message block gate now checks is_model_local(model) before raising the user-facing RuntimeError — previously the gate fired unconditionally and would refuse even when the user had already picked a local model, so manual recovery from the dropdown was broken (session b2703917 regression). GET /v1/models/config now annotates every model entry with is_local (derived from _is_local_base_url on the resolved provider) so the web UI doesn't duplicate URL parsing. New is_model_local(model) helper in claude_cli.py is the single authoritative resolver. All call sites verified: scanner runs on both main chat (round 0, warn-or-block) and every background path (detect + swap + optional refuse); audit trail covers detect, swap, and block independently."),
     ("8.9.0", "2026-04-23", "Per-provider concurrency queue for local LLM gateways. Local runtimes (oMLX on port 8000, CLIProxyAPI on 8317) can't actually process two /chat/completions in parallel even when multiple models are loaded — the GPU serializes internally and a second request stalls the first. Without coordination, two concurrent chats + scheduler delegates + warmup primes fought for the same wire and occasionally got 500s. New LocalProviderQueue (claude_cli.py) with per-provider semaphore + strict-FIFO waitlist, opt-in via config.json providers.<name>.max_concurrent (0 = unlimited = no queue). Seeded: omlx=1, cliproxyapi=2, cloud providers stay 0. Wrapped every HTTP call site that hits a /chat/completions endpoint: send_message main chat, _run_delegate, run_model_warmup, classify_chat_for_memory; generate_next_prompt_suggestion and _summarise_tool_result are covered transitively via send_message_with_fallback. Warmup goes through the queue too (label=warmup), so the keeper can't cut in front of a live chat. Slot is held only during the HTTP wire time — _handle_openai_response calls release_slot() the instant the SSE stream drains, before any tool execution or recursive send_message, so local tool work (exa_search, python_exec, worker summariser) doesn't block other chats from the gateway. Worker subagents that fire a nested summariser LLM call now just queue normally — no re-entrancy, no deadlock. Cancellation during wait removes the ticket from the deque cleanly; cancellation mid-HTTP fires via existing cancel_token path. New GET /v1/queue/status exposes per-provider active + waiting tickets (label, model, session, agent, age). New POST /v1/queue/cancel (admin-only, audit-logged as queue_cancel): waiting tickets raise TaskCancelled(\"Queue cancel by admin: <reason>\") on their next 200ms poll tick; running tickets have their cancel_token fired (same signal as the per-chat Stop button). SSE events queue_wait / queue_acquired / queue_released stream to the UI per turn. Web UI adds a status-bar Queue pill next to Pool — always visible when any provider has max_concurrent > 0, label shows N/M (active/capacity) or N+W/M when queued. Click opens a modal listing active + waiting tickets per provider with live updates; admins see a red Cancel button per row. Per-turn inline banner in the chat streaming bubble: 'Waiting in queue on <provider> — position N of M · Xs' until queue_acquired fires. QueueMonitor polls /v1/queue/status (1s fast when tickets exist, 10s slow when idle)."),
@@ -15718,6 +15719,94 @@ def _invalidate_gdpr_cache():
     _gdpr_scanner_cache_time = 0.0
 
 
+# --- Client-hosted local models manifest ----------------------------------
+# Server declares GGUF model weights that clients (Electron desktop app) may
+# download and run locally. Family string is the compat key — server-side oMLX
+# model and client-side GGUF are "the same model" for routing purposes when
+# their family matches, even if quant/format differ. See CLAUDE.md.
+
+_client_models_cache = None
+_client_models_cache_time = 0.0
+_CLIENT_MODELS_TTL = 10.0
+
+
+def _load_client_models() -> list:
+    """Read config.json → client_models: [{id, family, gguf_path, sha256,
+    size_bytes, auto_download}]. 10s cache. Returns [] on any error."""
+    global _client_models_cache, _client_models_cache_time
+    now = time.time()
+    if _client_models_cache is not None and (now - _client_models_cache_time) < _CLIENT_MODELS_TTL:
+        return _client_models_cache
+    cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+    entries = []
+    try:
+        with open(cfg_path) as f:
+            raw = json.load(f).get("client_models", []) or []
+        if isinstance(raw, list):
+            entries = [e for e in raw if isinstance(e, dict) and e.get("id") and e.get("family")]
+    except (OSError, json.JSONDecodeError):
+        entries = []
+    _client_models_cache = entries
+    _client_models_cache_time = now
+    return entries
+
+
+def _invalidate_client_models_cache():
+    """Called from server.py when client_models config changes."""
+    global _client_models_cache, _client_models_cache_time
+    _client_models_cache = None
+    _client_models_cache_time = 0.0
+
+
+def get_client_model(model_id: str) -> dict | None:
+    """Return the client_models manifest entry matching `model_id` (by id),
+    or None if the model isn't in the client-eligible list."""
+    for entry in _load_client_models():
+        if entry.get("id") == model_id:
+            return entry
+    return None
+
+
+def get_client_model_by_family(family: str) -> dict | None:
+    """Return the first manifest entry with the given family string, or None."""
+    if not family:
+        return None
+    for entry in _load_client_models():
+        if entry.get("family") == family:
+            return entry
+    return None
+
+
+def is_model_client_executable(capabilities: dict | None, model_id: str) -> tuple[bool, str]:
+    """Decide whether a request for `model_id` should be routed to client-
+    hosted inference instead of running on the server, given the client-
+    declared capabilities dict (from Session.client_capabilities).
+
+    Returns (True, family) if:
+      - capabilities.enabled is True
+      - model_id has a manifest entry (i.e. is a client-eligible model)
+      - the manifest entry's family appears in capabilities.families
+
+    Returns (False, "") otherwise. The caller is expected to have verified
+    the request is interactive (has event_callback) — background/scheduled
+    requests never route to clients regardless of capabilities.
+    """
+    if not capabilities or not model_id:
+        return False, ""
+    if not capabilities.get("enabled"):
+        return False, ""
+    families = capabilities.get("families") or []
+    if not families:
+        return False, ""
+    entry = get_client_model(model_id)
+    if not entry:
+        return False, ""
+    family = entry.get("family", "")
+    if family and family in families:
+        return True, family
+    return False, ""
+
+
 class GDPRBlockedError(RuntimeError):
     """Raised by gdpr_pick_model_for_background when PII is detected, the
     server is configured in hard-block mode, and no safe local route exists.
@@ -19223,9 +19312,63 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
 
     data = json.dumps(payload).encode("utf-8")
 
-    # Client execution mode: proxy LLM call through connected browser
+    # Client-hosted local inference: if the session declared it can serve this
+    # model's family on the Electron/browser side, transfer execution to the
+    # client instead of running the LLM on the server. This is independent of
+    # execution_mode — it works in both server mode AND client mode, because
+    # the decision is per-request (based on the session's capability handshake)
+    # rather than a global server toggle. Tasks, scheduler, and background
+    # calls never reach this branch because they don't set
+    # client_capabilities on the thread-local.
+    _client_caps = getattr(_thread_local, "client_capabilities", None)
+    _client_executable, _client_family = is_model_client_executable(_client_caps, model)
+    if _client_executable and event_callback and session_id:
+        channel = get_proxy_channel(session_id)
+        channel.reset()
+        event_callback("local_inference_request", {
+            "type": "llm_local",
+            "model": model,
+            "family": _client_family,
+            "payload": json.loads(data.decode("utf-8")),
+        })
+        # Audit-log the transfer so ops can reconstruct where inference ran.
+        try:
+            _agent_ctx = getattr(_thread_local, "current_agent", None)
+            _agent_id = _agent_ctx.agent_id if _agent_ctx else ""
+            _user_id = getattr(_thread_local, "current_user_id", "") or ""
+            if _audit_log:
+                _audit_log.log_action(
+                    agent=_agent_id or _user_id or "anonymous",
+                    action_type="client_inference",
+                    tool_name="send_message",
+                    args_summary=f"model={model} family={_client_family}",
+                    session_id=session_id,
+                    source="chat",
+                )
+        except Exception:
+            pass
+        try:
+            proxy_iter = channel.wait_for_llm_lines(escape_watcher)
+            return _handle_openai_response(
+                proxy_iter, payload, messages, model, api_key, base_url,
+                silent, tools, headers, endpoint, escape_watcher,
+                _tool_round, event_callback, inference_params, session_id)
+        except RuntimeError as e:
+            # Fallback policy: surface error, do NOT retry server-side. This was
+            # an explicit design decision — retrying would double latency on
+            # failures and mask real problems with the client's local model.
+            error_msg = f"Client local inference failed: {str(e)}"
+            print(f"  [client-inference] {error_msg[:200]}", file=sys.stderr, flush=True)
+            if event_callback:
+                event_callback("error", {"message": error_msg})
+            return None
+
+    # Client execution mode: proxy LLM call through connected browser.
+    # Skip the proxy for server-local models — the server can reach them directly,
+    # so there's no point round-tripping through the client. Saves a hop on every
+    # turn that routes to oMLX/CLIProxyAPI/etc in client mode.
     _exec_mode = _get_execution_mode()
-    if _exec_mode == "client" and event_callback and session_id:
+    if _exec_mode == "client" and event_callback and session_id and not is_model_local(model):
         channel = get_proxy_channel(session_id)
         channel.reset()
         event_callback("proxy_request", {
