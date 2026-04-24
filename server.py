@@ -473,6 +473,13 @@ class ChatDB:
                 conn.execute("ALTER TABLE artifacts ADD COLUMN user_id TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
+            # Add role to artifacts (migration): 'output' = report/deliverable,
+            # 'intermediate' = helper script / working data. Default 'output'
+            # so pre-existing rows stay visible in the default-filtered view.
+            try:
+                conn.execute("ALTER TABLE artifacts ADD COLUMN role TEXT DEFAULT 'output'")
+            except sqlite3.OperationalError:
+                pass
             conn.execute("CREATE INDEX IF NOT EXISTS idx_session_user ON sessions(user_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_artifact_user ON artifacts(user_id)")
             # Add save_to_memory flag (migration)
@@ -513,11 +520,11 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=None)
-    def create_artifact(artifact_id, session_id, agent_id, name, path, artifact_type):
+    def create_artifact(artifact_id, session_id, agent_id, name, path, artifact_type, role="output"):
         with _db_conn() as conn:
             conn.execute(
-                "INSERT INTO artifacts (id, session_id, agent_id, name, path, type) VALUES (?, ?, ?, ?, ?, ?)",
-                (artifact_id, session_id, agent_id, name, path, artifact_type))
+                "INSERT INTO artifacts (id, session_id, agent_id, name, path, type, role) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (artifact_id, session_id, agent_id, name, path, artifact_type, role))
             conn.commit()
 
     @staticmethod
@@ -630,6 +637,55 @@ class ChatDB:
                     LIMIT ?
                 """, (limit,)).fetchall()
             return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=list)
+    def list_artifacts_for_session(session_id):
+        """Artifacts tagged to a specific session_id, with latest-version
+        metadata. Used by the Run detail modal to turn file paths into
+        openable artifact_ids."""
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""
+                SELECT a.*, v.latest_version, v.latest_size, v.latest_created_at
+                FROM artifacts a
+                LEFT JOIN (
+                    SELECT artifact_id,
+                           MAX(version) as latest_version,
+                           MAX(created_at) as latest_created_at,
+                           (SELECT size FROM artifact_versions av2
+                            WHERE av2.artifact_id = av.artifact_id
+                            ORDER BY version DESC LIMIT 1) as latest_size
+                    FROM artifact_versions av GROUP BY artifact_id
+                ) v ON a.id = v.artifact_id
+                WHERE a.session_id = ?
+                ORDER BY COALESCE(v.latest_created_at, a.created_at) DESC
+            """, (session_id,)).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=0)
+    def delete_artifacts_for_session(session_id):
+        """Delete every artifact (rows + version blobs + files on disk) for a
+        given session_id. Returns number of artifact rows removed. Used when
+        purging a scheduled run — the synthetic session_id is `sched-<run_id>`.
+        """
+        count = 0
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, path FROM artifacts WHERE session_id = ?",
+                (session_id,)).fetchall()
+            for aid, fpath in rows:
+                conn.execute("DELETE FROM artifact_versions WHERE artifact_id = ?", (aid,))
+                conn.execute("DELETE FROM artifacts WHERE id = ?", (aid,))
+                count += 1
+                if fpath:
+                    try:
+                        os.remove(fpath)
+                    except OSError:
+                        pass
+            conn.commit()
+        return count
 
     @staticmethod
     @_db_safe(default=None)
@@ -4745,6 +4801,172 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         elif action == "history":
             self._send_json({"history": engine._scheduler.get_history(
                 body.get("name"), body.get("limit", 20))})
+        elif action == "delete_run":
+            # Purge a single historical run (row + its artifacts + files).
+            try:
+                run_id = int(body.get("run_id") or 0)
+            except (TypeError, ValueError):
+                run_id = 0
+            if not run_id:
+                self._send_json({"error": "run_id is required"}, 400)
+                return
+            res = engine._scheduler.delete_run(run_id)
+            if isinstance(res, dict) and res.get("error"):
+                self._send_json(res, 400 if "Cannot delete" in res["error"] else 404)
+            else:
+                self._send_json(res)
+        elif action == "clear_history":
+            # Wipe every historical run for a named schedule (schedule row kept).
+            name = body.get("name", "")
+            if not name:
+                self._send_json({"error": "name is required"}, 400)
+                return
+            self._send_json(engine._scheduler.delete_history(name))
+        elif action == "edit":
+            name = body.get("name", "")
+            if not name:
+                self._send_json({"error": "name is required"}, 400)
+                return
+            fields = {k: body.get(k) for k in
+                      ("task", "schedule", "model", "timeout", "agent", "new_name")
+                      if k in body}
+            res = engine._scheduler.update(name, fields)
+            if isinstance(res, dict) and res.get("error"):
+                self._send_json(res, 400)
+            else:
+                self._send_json(res)
+        elif action == "run_detail":
+            # Full detail for one historical run: the row itself, associated
+            # trace spans (joined via session_id=sched-<run_id>), and any
+            # artifacts the run produced.
+            try:
+                run_id = int(body.get("run_id") or 0)
+            except (TypeError, ValueError):
+                run_id = 0
+            if not run_id:
+                self._send_json({"error": "run_id is required"}, 400)
+                return
+            row = engine._scheduler.get_run(run_id)
+            if not row:
+                self._send_json({"error": f"Run {run_id} not found"}, 404)
+                return
+            session_id = f"sched-{run_id}"
+            spans = []
+            try:
+                tm = engine._trace_manager
+                if tm:
+                    trace_id = row.get("trace_id")
+                    if trace_id:
+                        spans = tm.get_trace(trace_id)
+                    elif hasattr(tm, "get_spans_for_session"):
+                        spans = tm.get_spans_for_session(session_id)
+                    # Pre-migration fallback: old runs have neither trace_id
+                    # nor sched-<id> session tag. Pivot by time window +
+                    # agent instead. schedule_history.started_at/finished_at
+                    # are naive-local; traces.started_at is UTC (Z suffix).
+                    # Convert local -> UTC using the system's current offset,
+                    # pad by 30s on both sides, and drop spans that clearly
+                    # belong to a concurrent interactive chat.
+                    if not spans and row.get("started_at"):
+                        try:
+                            import datetime as _dt
+                            from datetime import timezone as _tz
+                            def _local_to_utc_z(iso: str) -> str:
+                                dt = _dt.datetime.fromisoformat(iso)
+                                if dt.tzinfo is None:
+                                    dt = dt.astimezone()  # attach local tz
+                                return (dt.astimezone(_tz.utc)
+                                          .isoformat(timespec="milliseconds")
+                                          .replace("+00:00", "Z"))
+
+                            start_utc_z = _local_to_utc_z(row["started_at"])
+                            end_iso = row.get("finished_at") or _dt.datetime.now().isoformat()
+                            end_utc_z = _local_to_utc_z(end_iso)
+                            # Pad ±30s to absorb clock jitter / rounding.
+                            s_dt = _dt.datetime.fromisoformat(start_utc_z.replace("Z","+00:00")) - _dt.timedelta(seconds=30)
+                            e_dt = _dt.datetime.fromisoformat(end_utc_z.replace("Z","+00:00")) + _dt.timedelta(seconds=30)
+                            s_bound = s_dt.isoformat(timespec="milliseconds").replace("+00:00","Z")
+                            e_bound = e_dt.isoformat(timespec="milliseconds").replace("+00:00","Z")
+                            with engine._traces_conn() as conn:
+                                import sqlite3 as _sq
+                                conn.row_factory = _sq.Row
+                                sp = conn.execute(
+                                    "SELECT * FROM traces WHERE agent = ? "
+                                    "AND started_at >= ? AND started_at <= ? "
+                                    "ORDER BY started_at",
+                                    (row.get("agent") or "main", s_bound, e_bound),
+                                ).fetchall()
+                                spans = [dict(s) for s in sp]
+                            # Drop spans that belong to a concurrent
+                            # interactive chat (any session_id that's neither
+                            # empty nor a sched-<n> tag).
+                            if spans:
+                                spans = [s for s in spans
+                                         if not s.get("session_id")
+                                         or str(s.get("session_id", "")).startswith("sched-")]
+                        except Exception:
+                            pass
+            except Exception as e:
+                spans = []
+                row["_trace_error"] = str(e)
+            # Prefer the artifacts table (indexed by session_id=sched-<run_id>)
+            # over the folder listing — those rows carry the artifact_id the
+            # client needs to open them via openArtifactFromBrowse. Folder
+            # scanning stays as a fallback for runs that wrote a file but
+            # never went through _after_file_write (shouldn't happen post-fix).
+            artifacts: list = []
+            try:
+                art_rows = ChatDB.list_artifacts_for_session(session_id) \
+                    if hasattr(ChatDB, "list_artifacts_for_session") \
+                    else []
+                if not art_rows:
+                    # Fallback: query by session_id directly
+                    all_a = ChatDB.get_all_artifacts(agent_id=row.get("agent"), limit=500)
+                    art_rows = [a for a in all_a if a.get("session_id") == session_id]
+                for a in art_rows:
+                    try:
+                        size = a.get("latest_size") or (os.path.getsize(a["path"]) if os.path.isfile(a["path"]) else 0)
+                    except OSError:
+                        size = 0
+                    artifacts.append({
+                        "id": a.get("id"),
+                        "name": a.get("name"),
+                        "path": a.get("path"),
+                        "size": size,
+                        "type": a.get("type"),
+                        "role": a.get("role", "output"),
+                        "latest_version": a.get("latest_version", 1),
+                    })
+            except Exception:
+                artifacts = []
+
+            # Fallback to folder scan if nothing was registered.
+            if not artifacts:
+                folder = row.get("artifact_folder")
+                if folder:
+                    agent_id = row.get("agent") or "main"
+                    folder_path = os.path.join(
+                        engine.AGENTS_DIR, agent_id, "artifacts", folder)
+                    if os.path.isdir(folder_path):
+                        for fname in sorted(os.listdir(folder_path)):
+                            fpath = os.path.join(folder_path, fname)
+                            if os.path.isfile(fpath):
+                                try:
+                                    size = os.path.getsize(fpath)
+                                except OSError:
+                                    size = 0
+                                artifacts.append({
+                                    "id": None,  # unregistered file — not openable via panel
+                                    "name": fname,
+                                    "size": size,
+                                    "path": fpath,
+                                })
+            self._send_json({
+                "run": row,
+                "session_id": session_id,
+                "spans": spans,
+                "artifacts": artifacts,
+            })
         else:
             self._send_json({"schedules": engine._scheduler.list_all()})
 
@@ -8851,12 +9073,52 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         self._send_json({"artifacts": artifacts})
 
     def _handle_artifacts_browse(self):
-        """GET /v1/artifacts/browse?agent_id=X&limit=N — browse all artifacts across sessions."""
+        """GET /v1/artifacts/browse?agent_id=X&limit=N&source=chat|scheduled
+        — browse all artifacts across sessions, tagged by source so the UI
+        can split the view. Scheduled-task artifacts are identified by
+        session_id matching `sched-<run_id>` (set by the scheduler's
+        synthetic session context)."""
         from urllib.parse import urlparse, parse_qs
         qs = parse_qs(urlparse(self.path).query)
         agent_id = qs.get("agent_id", [None])[0]
         limit = int(qs.get("limit", ["100"])[0])
+        source_filter = qs.get("source", [None])[0]  # chat | scheduled | None
         artifacts = ChatDB.get_all_artifacts(agent_id=agent_id, limit=limit)
+
+        # Enrich: source tag + schedule-run summary for scheduled artifacts.
+        # Batch-resolve run rows so we don't hit the scheduler DB per-artifact.
+        run_ids_needed = set()
+        for a in artifacts:
+            sid = a.get("session_id") or ""
+            if sid.startswith("sched-"):
+                a["source"] = "scheduled"
+                try:
+                    a["run_id"] = int(sid.split("-", 1)[1])
+                    run_ids_needed.add(a["run_id"])
+                except (ValueError, IndexError):
+                    a["run_id"] = None
+            else:
+                a["source"] = "chat"
+                a["run_id"] = None
+
+        run_map: dict = {}
+        if run_ids_needed and engine._scheduler:
+            for rid in run_ids_needed:
+                row = engine._scheduler.get_run(rid)
+                if row:
+                    run_map[rid] = {
+                        "run_id": rid,
+                        "schedule_name": row.get("schedule_name"),
+                        "status": row.get("status"),
+                        "started_at": row.get("started_at"),
+                    }
+        for a in artifacts:
+            if a.get("run_id") in run_map:
+                a["schedule_run"] = run_map[a["run_id"]]
+
+        if source_filter in ("chat", "scheduled"):
+            artifacts = [a for a in artifacts if a.get("source") == source_filter]
+
         # Fetch text preview for each text-based artifact
         binary_types = {"image", "document"}
         for a in artifacts:

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.10.0"
-VERSION_DATE = "2026-04-23"
+VERSION = "8.11.0"
+VERSION_DATE = "2026-04-24"
 CHANGELOG = [
     ("8.10.0", "2026-04-23", "GDPR local-model routing — the long-standing follow-up to v8.8.0's scanner. When the outgoing payload contains personal data the chat is automatically routed to a local model instead of being blocked at the door. Three layers: (1) config.json → gdpr_scanner.default_local_fallback_model — a model id used by every non-interactive LLM call to transparently swap cloud → local when PII is detected. Configurable in Settings → Server → GDPR card (dropdown is populated only with enabled local models; selection is validated server-side against is_local + enabled). (2) Server-side hook gdpr_pick_model_for_background(model, texts, purpose) in claude_cli.py — single decision point called by generate_next_prompt_suggestion, classify_chat_for_memory, _summarise_tool_result (worker subagents), _run_delegate (delegate_task tool + scheduler tasks + agent-to-agent delegation), _generate_chat_summary. Every detection at the background layer emits a pii_detected audit row; every swap emits an additional pii_auto_fallback row; a new pii_blocked row fires when server_block=true and no local fallback is usable. New GDPRBlockedError sentinel (inherits RuntimeError) propagates refusal cleanly: next-prompt/classifier return None, summariser returns the static fallback summary, delegate returns a 'Delegation error: [GDPR block]...' string, chat summary skips. (3) Client-side interlock in web/index.html — piiBlockActive(chat) is true when the composer draft OR the loaded chat history contains PII (new piiHistoryText/piiHistoryHasFindings walk the messages array with a cache keyed by message count, invalidated on openSession / user-message push / stream done / newChat). When active, toggleModelDropdown reduces the model list to is_local-only with an amber 'Personal data detected' header; piiEnsureLocalModel auto-swaps the chat to the configured fallback (or first enabled local) the instant PII is seen; sendMessage refuses-with-toast if server_block is on and no local model is selectable. Badge shows three distinct states: red when no local available, green when routing via local (with 'auto-selected' marker on first swap), amber warn-only when block is off. New badge scope label 'Personal data earlier in this chat' distinguishes history-derived findings from fresh draft input. Server-side send_message block gate now checks is_model_local(model) before raising the user-facing RuntimeError — previously the gate fired unconditionally and would refuse even when the user had already picked a local model, so manual recovery from the dropdown was broken (session b2703917 regression). GET /v1/models/config now annotates every model entry with is_local (derived from _is_local_base_url on the resolved provider) so the web UI doesn't duplicate URL parsing. New is_model_local(model) helper in claude_cli.py is the single authoritative resolver. All call sites verified: scanner runs on both main chat (round 0, warn-or-block) and every background path (detect + swap + optional refuse); audit trail covers detect, swap, and block independently."),
     ("8.9.0", "2026-04-23", "Per-provider concurrency queue for local LLM gateways. Local runtimes (oMLX on port 8000, CLIProxyAPI on 8317) can't actually process two /chat/completions in parallel even when multiple models are loaded — the GPU serializes internally and a second request stalls the first. Without coordination, two concurrent chats + scheduler delegates + warmup primes fought for the same wire and occasionally got 500s. New LocalProviderQueue (claude_cli.py) with per-provider semaphore + strict-FIFO waitlist, opt-in via config.json providers.<name>.max_concurrent (0 = unlimited = no queue). Seeded: omlx=1, cliproxyapi=2, cloud providers stay 0. Wrapped every HTTP call site that hits a /chat/completions endpoint: send_message main chat, _run_delegate, run_model_warmup, classify_chat_for_memory; generate_next_prompt_suggestion and _summarise_tool_result are covered transitively via send_message_with_fallback. Warmup goes through the queue too (label=warmup), so the keeper can't cut in front of a live chat. Slot is held only during the HTTP wire time — _handle_openai_response calls release_slot() the instant the SSE stream drains, before any tool execution or recursive send_message, so local tool work (exa_search, python_exec, worker summariser) doesn't block other chats from the gateway. Worker subagents that fire a nested summariser LLM call now just queue normally — no re-entrancy, no deadlock. Cancellation during wait removes the ticket from the deque cleanly; cancellation mid-HTTP fires via existing cancel_token path. New GET /v1/queue/status exposes per-provider active + waiting tickets (label, model, session, agent, age). New POST /v1/queue/cancel (admin-only, audit-logged as queue_cancel): waiting tickets raise TaskCancelled(\"Queue cancel by admin: <reason>\") on their next 200ms poll tick; running tickets have their cancel_token fired (same signal as the per-chat Stop button). SSE events queue_wait / queue_acquired / queue_released stream to the UI per turn. Web UI adds a status-bar Queue pill next to Pool — always visible when any provider has max_concurrent > 0, label shows N/M (active/capacity) or N+W/M when queued. Click opens a modal listing active + waiting tickets per provider with live updates; admins see a red Cancel button per row. Per-turn inline banner in the chat streaming bubble: 'Waiting in queue on <provider> — position N of M · Xs' until queue_acquired fires. QueueMonitor polls /v1/queue/status (1s fast when tickets exist, 10s slow when idle)."),
@@ -442,14 +442,19 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "gmail_send",
-        "description": "Send an email via Gmail.",
+        "description": "Send an email via Gmail. Supports optional file attachments — pass relative paths (resolved against the current session's artifact folder, matching write_file) or absolute paths.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "to": {"type": "string", "description": "Recipient email address"},
+                "to": {"type": "string", "description": "Recipient email address. Comma/semicolon-separated or a list for multiple recipients."},
                 "subject": {"type": "string", "description": "Email subject"},
                 "body": {"type": "string", "description": "Email body (plain text)"},
                 "cc": {"type": "string", "description": "CC email address (optional)"},
+                "attachments": {
+                    "type": "array",
+                    "description": "Optional list of file paths to attach. Relative paths resolve against the current session's artifact folder.",
+                    "items": {"type": "string"},
+                },
             },
             "required": ["to", "subject", "body"],
         },
@@ -3041,31 +3046,96 @@ def tool_gmail_search(args: dict) -> str:
 
 
 def tool_gmail_send(args: dict) -> str:
-    """Send an email via Gmail SMTP."""
+    """Send an email via Gmail SMTP. `to` and `cc` accept either a single
+    address string or a list of addresses — LLMs pass both shapes and
+    smtplib's to_addrs=... requires a flat list of strings. `attachments`
+    is an optional list of file paths; relative paths resolve against the
+    current session's artifact folder (same convention as write_file)."""
     cfg = _gmail_config()
     if not cfg:
         return _err("Gmail not configured.")
-    to = args.get("to", "")
+
+    def _norm(v) -> list[str]:
+        if not v:
+            return []
+        if isinstance(v, str):
+            parts = [p.strip() for p in re.split(r"[,;]\s*", v)]
+            return [p for p in parts if p]
+        if isinstance(v, (list, tuple)):
+            return [str(x).strip() for x in v if str(x).strip()]
+        return [str(v)]
+
+    to_list = _norm(args.get("to", ""))
+    cc_list = _norm(args.get("cc", ""))
     subject = args.get("subject", "")
     body = args.get("body", "")
-    cc = args.get("cc", "")
-    if not to or not subject:
+    attachments_arg = args.get("attachments") or []
+    if isinstance(attachments_arg, str):
+        attachments_arg = [attachments_arg]
+    if not to_list or not subject:
         return _err("gmail_send: to and subject are required")
+
+    # Resolve attachment paths + read bytes up-front so we can fail cleanly
+    # before opening the SMTP connection. Match the write_file / python_exec
+    # convention: relative paths resolve against the session artifact folder.
+    import mimetypes
+    from email.message import EmailMessage as _EmailMessage
+    resolved: list[tuple[str, bytes, str, str]] = []  # (name, bytes, maintype, subtype)
+    session_id = getattr(_thread_local, 'current_session_id', None)
+    agent_ctx = getattr(_thread_local, 'current_agent', None) or _current_agent
+    artifact_dir = None
+    if session_id and agent_ctx:
+        artifact_dir = os.path.join(
+            AGENTS_DIR, agent_ctx.agent_id, "artifacts",
+            _get_artifact_session_folder(session_id))
+    MAX_ATTACH_BYTES = 20 * 1024 * 1024  # gmail's practical inline cap is ~25MB (base64-encoded)
+    total = 0
+    for p in attachments_arg:
+        try:
+            path = os.path.expanduser(str(p))
+            if not os.path.isabs(path):
+                if artifact_dir and os.path.exists(os.path.join(artifact_dir, path)):
+                    path = os.path.join(artifact_dir, path)
+                else:
+                    path = os.path.abspath(path)
+            if not os.path.isfile(path):
+                return _err(f"gmail_send: attachment not found: {p}")
+            size = os.path.getsize(path)
+            total += size
+            if total > MAX_ATTACH_BYTES:
+                return _err(f"gmail_send: attachments exceed {MAX_ATTACH_BYTES // (1024*1024)} MB limit")
+            with open(path, "rb") as fh:
+                data = fh.read()
+            mime, _ = mimetypes.guess_type(path)
+            maintype, subtype = (mime.split("/", 1) if mime and "/" in mime
+                                 else ("application", "octet-stream"))
+            resolved.append((os.path.basename(path), data, maintype, subtype))
+        except Exception as e:
+            return _err(f"gmail_send: failed to read attachment {p}: {e}")
+
     try:
-        msg = email.mime.multipart.MIMEMultipart()
+        # EmailMessage handles multipart + attachments cleanly. We also set
+        # the legacy headers the server side expects.
+        msg = _EmailMessage()
         msg["From"] = cfg["email"]
-        msg["To"] = to
+        msg["To"] = ", ".join(to_list)
         msg["Subject"] = subject
-        if cc:
-            msg["Cc"] = cc
-        msg.attach(email.mime.text.MIMEText(body, "plain"))
+        if cc_list:
+            msg["Cc"] = ", ".join(cc_list)
+        msg.set_content(body)
+        for name, data, maintype, subtype in resolved:
+            msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=name)
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
             smtp.login(cfg["email"], cfg["app_password"])
-            recipients = [to] + ([cc] if cc else [])
-            smtp.send_message(msg, to_addrs=recipients)
+            smtp.send_message(msg, to_addrs=to_list + cc_list)
 
-        return _ok({"status": "sent", "to": to, "subject": subject})
+        return _ok({
+            "status": "sent",
+            "to": to_list if len(to_list) > 1 else to_list[0],
+            "subject": subject,
+            "attachments": [name for name, _b, _m, _s in resolved],
+        })
     except Exception as e:
         return _err(f"gmail_send: {e}")
 
@@ -9165,7 +9235,8 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
                   cancel_token: CancelToken | None = None,
                   event_callback=None,
                   inference_params: dict | None = None,
-                  tools: bool | str = True) -> str | None:
+                  tools: bool | str = True,
+                  session_id: str | None = None) -> str | None:
     """Run a delegated task in a fresh context. Returns the final text response.
     Thread-safe: uses thread-local storage for memory instead of swapping globals.
 
@@ -9256,6 +9327,7 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
                         response, payload, messages, model, api_key, base_url,
                         True, True, headers, endpoint,
                         cancel_token, 0, event_callback,
+                        session_id=session_id,
                         release_slot=_release)
             finally:
                 _release()
@@ -10018,7 +10090,8 @@ class TaskRunner:
             self._cancel_flags[task_id] = cancel_flag
 
         thread = threading.Thread(
-            target=self._run_task, args=(task_id, agent_id, task, model, cancel_flag, caller_user_id),
+            target=self._run_task,
+            args=(task_id, agent_id, task, model, cancel_flag, caller_user_id, caller_team_ids),
             daemon=True)
         self._threads[task_id] = thread
         thread.start()
@@ -10053,7 +10126,9 @@ class TaskRunner:
 
     def _run_task(self, task_id: str, agent_id: str, task: str,
                   model: str | None, cancel_flag: threading.Event,
-                  caller_user_id: str = ""):
+                  caller_user_id: str = "",
+                  caller_team_ids: list | None = None):
+        caller_team_ids = caller_team_ids or []
         """Execute a task in a background thread."""
         target = AgentConfig(agent_id)
         target_memory = MemoryStore(agent_id, base_dir=target.memory_dir)
@@ -10690,6 +10765,25 @@ class Scheduler:
                 conn.execute("ALTER TABLE schedules ADD COLUMN timeout INTEGER DEFAULT 300")
             except sqlite3.OperationalError:
                 pass
+            # Migration: richer per-run telemetry. Older DBs only have
+            # status/result/started_at/finished_at; add fields that make the
+            # History view diagnosable (trace pivot, artifact folder pivot,
+            # duration/tool count split out of the result blob).
+            for _ddl in (
+                "ALTER TABLE schedule_history ADD COLUMN duration_ms INTEGER",
+                "ALTER TABLE schedule_history ADD COLUMN tool_calls INTEGER DEFAULT 0",
+                "ALTER TABLE schedule_history ADD COLUMN trace_id TEXT",
+                "ALTER TABLE schedule_history ADD COLUMN artifact_folder TEXT",
+                "ALTER TABLE schedule_history ADD COLUMN model TEXT",
+            ):
+                try:
+                    conn.execute(_ddl)
+                except sqlite3.OperationalError:
+                    pass
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sched_hist_trace ON schedule_history(trace_id)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sched_hist_schedule ON schedule_history(schedule_id, finished_at)")
             conn.commit()
 
     def add(self, name: str, task: str, schedule: str,
@@ -10755,15 +10849,179 @@ class Scheduler:
     def get_history(self, name: str | None = None, limit: int = 20) -> list[dict]:
         with _sched_conn() as conn:
             conn.row_factory = sqlite3.Row
+            # COALESCE(finished_at, started_at) so in-progress rows sort too.
             if name:
                 rows = conn.execute(
-                    "SELECT * FROM schedule_history WHERE schedule_name = ? ORDER BY finished_at DESC LIMIT ?",
+                    "SELECT * FROM schedule_history WHERE schedule_name = ? "
+                    "ORDER BY COALESCE(finished_at, started_at) DESC LIMIT ?",
                     (name, limit)).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM schedule_history ORDER BY finished_at DESC LIMIT ?",
+                    "SELECT * FROM schedule_history "
+                    "ORDER BY COALESCE(finished_at, started_at) DESC LIMIT ?",
                     (limit,)).fetchall()
             return [dict(r) for r in rows]
+
+    def get_run(self, run_id: int) -> dict | None:
+        """Fetch a single history row by its run_id (= schedule_history.id)."""
+        with _sched_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM schedule_history WHERE id = ?", (run_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def delete_run(self, run_id: int) -> dict:
+        """Purge a single historical run: history row + its artifact rows +
+        artifact files + empty artifact folder. Refuses to delete a run that's
+        still in-flight (status='running') since that would orphan the worker.
+        Returns a summary dict for the API."""
+        row = self.get_run(run_id)
+        if not row:
+            return {"error": f"Run {run_id} not found"}
+        if row.get("status") == "running":
+            return {"error": "Cannot delete a running task; cancel it first"}
+        artifacts_removed = 0
+        try:
+            from server import ChatDB
+            artifacts_removed = ChatDB.delete_artifacts_for_session(f"sched-{run_id}") or 0
+        except Exception as e:
+            print(f"  [WARN] delete_run artifact purge: {e}", flush=True)
+        # Remove the artifact folder if it's now empty.
+        folder = row.get("artifact_folder")
+        if folder:
+            agent_id = row.get("agent") or "main"
+            folder_path = os.path.join(AGENTS_DIR, agent_id, "artifacts", folder)
+            try:
+                if os.path.isdir(folder_path) and not os.listdir(folder_path):
+                    os.rmdir(folder_path)
+            except OSError:
+                pass
+        with _sched_conn() as conn:
+            conn.execute("DELETE FROM schedule_history WHERE id = ?", (run_id,))
+            conn.commit()
+        return {"status": "deleted", "run_id": run_id,
+                "artifacts_removed": artifacts_removed}
+
+    def delete_history(self, name: str) -> dict:
+        """Purge the entire run history for a named schedule: every history row
+        (except any still-running one) + all associated artifacts and folders.
+        The schedule definition itself stays; only its past runs are wiped."""
+        with _sched_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, status, agent, artifact_folder "
+                "FROM schedule_history WHERE schedule_name = ?", (name,)
+            ).fetchall()
+            runs = [dict(r) for r in rows]
+        if not runs:
+            return {"status": "ok", "runs_removed": 0, "artifacts_removed": 0}
+        total_artifacts = 0
+        removed_ids: list[int] = []
+        for r in runs:
+            rid = r["id"]
+            if r.get("status") == "running":
+                continue  # leave in-flight alone
+            try:
+                from server import ChatDB
+                n = ChatDB.delete_artifacts_for_session(f"sched-{rid}") or 0
+                total_artifacts += n
+            except Exception:
+                pass
+            folder = r.get("artifact_folder")
+            if folder:
+                agent_id = r.get("agent") or "main"
+                folder_path = os.path.join(AGENTS_DIR, agent_id, "artifacts", folder)
+                try:
+                    if os.path.isdir(folder_path) and not os.listdir(folder_path):
+                        os.rmdir(folder_path)
+                except OSError:
+                    pass
+            removed_ids.append(rid)
+        if removed_ids:
+            placeholders = ",".join("?" * len(removed_ids))
+            with _sched_conn() as conn:
+                conn.execute(
+                    f"DELETE FROM schedule_history WHERE id IN ({placeholders})",
+                    removed_ids)
+                conn.commit()
+        return {"status": "ok", "runs_removed": len(removed_ids),
+                "artifacts_removed": total_artifacts}
+
+    def update(self, name: str, fields: dict) -> dict:
+        """Edit a scheduled task. Allowed fields: task, schedule, model,
+        timeout, agent, new_name. All fields optional; unknown keys ignored.
+
+        Recalculates next_run when `schedule` changes. Renaming is allowed but
+        rejected if the new name collides with an existing task.
+        """
+        allowed = {"task", "schedule", "model", "timeout", "agent"}
+        updates: dict = {}
+        for k in allowed:
+            if k not in fields:
+                continue
+            v = fields[k]
+            # None = don't touch this field. Empty string for `model` means
+            # "clear back to default" — translate to SQL NULL so
+            # preferred_model fallback kicks in at dispatch time.
+            if v is None:
+                continue
+            if k == "model" and v == "":
+                updates[k] = None
+            else:
+                updates[k] = v
+        new_name = fields.get("new_name")
+        if not updates and not new_name:
+            return {"error": "No fields to update"}
+
+        with _sched_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM schedules WHERE name = ?", (name,)).fetchone()
+            if not row:
+                return {"error": f"Schedule '{name}' not found"}
+
+            if new_name and new_name != name:
+                collision = conn.execute(
+                    "SELECT 1 FROM schedules WHERE name = ?", (new_name,)
+                ).fetchone()
+                if collision:
+                    return {"error": f"Name '{new_name}' is already in use"}
+
+            # Validate schedule format early so we don't half-commit.
+            if "schedule" in updates:
+                new_next = self._calc_next_run(updates["schedule"])
+                if new_next is None:
+                    return {"error": f"Invalid schedule format: {updates['schedule']}"}
+                updates["next_run"] = new_next.isoformat()
+
+            if "timeout" in updates:
+                try:
+                    updates["timeout"] = int(updates["timeout"])
+                except (TypeError, ValueError):
+                    return {"error": "timeout must be an integer (seconds)"}
+
+            set_clauses = []
+            values = []
+            for k, v in updates.items():
+                set_clauses.append(f"{k} = ?")
+                values.append(v)
+            if new_name and new_name != name:
+                set_clauses.append("name = ?")
+                values.append(new_name)
+            values.append(name)  # WHERE
+
+            conn.execute(
+                f"UPDATE schedules SET {', '.join(set_clauses)} WHERE name = ?",
+                values,
+            )
+            conn.commit()
+
+            # Return the fresh row so the UI can refresh without a second call.
+            effective_name = new_name or name
+            final = conn.execute(
+                "SELECT * FROM schedules WHERE name = ?", (effective_name,)
+            ).fetchone()
+            return dict(final) if final else {"name": effective_name, "status": "updated"}
 
     def _calc_next_run(self, schedule: str) -> datetime.datetime | None:
         """Calculate next run time from schedule string."""
@@ -10836,41 +11094,114 @@ class Scheduler:
         return self._calc_next_run(schedule)
 
     def get_due_tasks(self) -> list[dict]:
-        """Get tasks that are due for execution."""
-        now = datetime.datetime.now().isoformat()
+        """Atomically claim tasks that are due for execution.
+
+        Two guards against the "task took longer than the poll interval and
+        got fired twice" race:
+          1. UPDATE-bump `next_run` to 1h in the future inside the SELECT
+             transaction, so a second poll tick won't re-claim the same row
+             before complete_execution re-computes the real next_run. The
+             "1h in the future" placeholder is corrected by complete_execution
+             using the actual schedule string, or by the next fire if the
+             task never completes (at which point the task IS overdue again
+             and re-running is correct).
+          2. In-memory: skip any task whose name is in self._running_tasks.
+        """
+        now_dt = datetime.datetime.now()
+        now = now_dt.isoformat()
+        claimed: list[dict] = []
         with _sched_conn() as conn:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute("""
-                SELECT * FROM schedules WHERE enabled = 1 AND next_run <= ?
-            """, (now,)).fetchall()
-            return [dict(r) for r in rows]
+            # Hold the lock between SELECT and UPDATE so two poll threads
+            # can't both claim. SQLite serializes writers, so a single
+            # transaction is enough.
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                rows = conn.execute("""
+                    SELECT * FROM schedules WHERE enabled = 1 AND next_run <= ?
+                """, (now,)).fetchall()
+                # Skip tasks that are already running in-memory (belt + braces).
+                with self._lock:
+                    running_names = set(getattr(self, "_running_tasks", {}).keys())
+                placeholder = (now_dt + datetime.timedelta(hours=1)).isoformat()
+                for r in rows:
+                    name = r["name"]
+                    if name in running_names:
+                        continue
+                    conn.execute(
+                        "UPDATE schedules SET next_run = ? WHERE id = ?",
+                        (placeholder, r["id"]))
+                    claimed.append(dict(r))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return claimed
 
-    def mark_executed(self, schedule_id: int, name: str, agent: str, task: str,
-                      status: str, result: str, started_at: str = None,
-                      tool_calls: int = 0):
-        """Record execution and update next_run."""
+    def begin_execution(self, schedule_id: int, name: str, agent: str, task: str,
+                        model: str | None = None,
+                        started_at: str | None = None) -> int:
+        """Insert a `running` history row up-front and return its id.
+
+        The returned id is the stable `run_id` used for:
+          - synthetic session_id (`sched-<run_id>`) in trace spans
+          - artifact folder suffix (`<date>_sched-<run_id>`)
+          - /v1/scheduler/runs/<run_id> detail endpoint
+        """
+        now = datetime.datetime.now()
+        start = started_at or now.isoformat()
+        with _sched_conn() as conn:
+            cur = conn.execute("""
+                INSERT INTO schedule_history
+                    (schedule_id, schedule_name, agent, task, status, result,
+                     started_at, finished_at, model)
+                VALUES (?, ?, ?, ?, 'running', '', ?, NULL, ?)
+            """, (schedule_id, name, agent, task, start, model or ""))
+            run_id = cur.lastrowid
+            conn.commit()
+            return int(run_id)
+
+    def complete_execution(self, run_id: int, schedule_id: int, status: str,
+                            result: str, started_at: str | None = None,
+                            tool_calls: int = 0,
+                            trace_id: str | None = None,
+                            artifact_folder: str | None = None):
+        """Finalize the running history row and update the schedule's next_run.
+
+        Splits duration/tool_calls/trace/artifact into dedicated columns so the
+        History view can render them without regex-parsing the result blob.
+        The existing "[Duration: Xs | Tools: N]" header is kept inside `result`
+        for backwards compatibility with `_gather_recent_schedule_history` and
+        the tool_schedule_history tool.
+        """
         now = datetime.datetime.now()
         start = started_at or now.isoformat()
         try:
             start_dt = datetime.datetime.fromisoformat(start)
             duration = (now - start_dt).total_seconds()
         except (ValueError, TypeError):
-            duration = 0
+            duration = 0.0
+        duration_ms = int(duration * 1000)
         with _sched_conn() as conn:
-            # Record history with duration and tool_calls
             conn.execute("""
-                INSERT INTO schedule_history (schedule_id, schedule_name, agent, task, status, result, started_at, finished_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (schedule_id, name, agent, task, status,
+                UPDATE schedule_history
+                SET status = ?,
+                    result = ?,
+                    finished_at = ?,
+                    duration_ms = ?,
+                    tool_calls = ?,
+                    trace_id = COALESCE(?, trace_id),
+                    artifact_folder = COALESCE(?, artifact_folder)
+                WHERE id = ?
+            """, (status,
                   f"[Duration: {duration:.0f}s | Tools: {tool_calls}]\n\n{result[:10000]}",
-                  start, now.isoformat()))
+                  now.isoformat(), duration_ms, tool_calls,
+                  trace_id, artifact_folder, run_id))
 
-            # Get schedule to calc next run
             row = conn.execute("SELECT schedule FROM schedules WHERE id = ?", (schedule_id,)).fetchone()
             if row:
                 schedule_str = row[0]
                 if schedule_str.strip().lower().startswith("once"):
-                    # One-shot: disable after execution
                     conn.execute("UPDATE schedules SET enabled = 0, last_run = ? WHERE id = ?",
                                  (now.isoformat(), schedule_id))
                 else:
@@ -10880,6 +11211,22 @@ class Scheduler:
                                   next_run.isoformat() if next_run else None,
                                   schedule_id))
             conn.commit()
+
+    # Backwards-compat shim: some call sites (e.g. manual run endpoint) may
+    # still insert-and-finalize in one shot. Prefer begin_execution +
+    # complete_execution for real scheduled runs so the history row exists
+    # while the run is in progress.
+    def mark_executed(self, schedule_id: int, name: str, agent: str, task: str,
+                      status: str, result: str, started_at: str = None,
+                      tool_calls: int = 0,
+                      trace_id: str | None = None,
+                      artifact_folder: str | None = None,
+                      model: str | None = None):
+        run_id = self.begin_execution(schedule_id, name, agent, task,
+                                      model=model, started_at=started_at)
+        self.complete_execution(run_id, schedule_id, status, result,
+                                started_at=started_at, tool_calls=tool_calls,
+                                trace_id=trace_id, artifact_folder=artifact_folder)
 
     def start(self):
         """Start the background scheduler thread."""
@@ -10943,30 +11290,51 @@ class Scheduler:
             except Exception:
                 pass
 
-        # Track this execution
-        cancel_token = CancelToken()
-        run_info = {
-            "name": name,
-            "agent": agent_id,
-            "task": task[:200],
-            "model": model,
-            "status": "running",
-            "started_at": datetime.datetime.now().isoformat(),
-            "tool_calls": 0,
-            "tool_log": [],
-            "cancel_token": cancel_token,
-        }
-        with self._lock:
-            if not hasattr(self, '_running_tasks'):
-                self._running_tasks = {}
-            self._running_tasks[name] = run_info
-
         # Use delegation infrastructure
         target = AgentConfig(agent_id)
         target_memory = MemoryStore(agent_id, base_dir=target.memory_dir)
 
         if not model:
             model = target.preferred_model or _delegate_fallback_model or "claude-opus-4-5-20251101"
+
+        # Open a history row up front so we have a stable run_id BEFORE the
+        # delegate runs. The run_id seeds the synthetic session_id, which in
+        # turn drives:
+        #   - trace span session_id column (for joining spans back to the run)
+        #   - tool_python_exec / tool_write_file artifact folder (fixes the
+        #     "report lands in TMPDIR" bug on scheduled tasks)
+        started_at_iso = datetime.datetime.now().isoformat()
+        try:
+            run_id = self.begin_execution(
+                schedule_id, name, agent_id, task,
+                model=model, started_at=started_at_iso)
+        except Exception:
+            run_id = 0  # fall through; worst case we lose the run_id and
+                        # the sched-0 folder is reused. Better than crashing
+                        # the whole scheduler thread.
+        sched_session_id = f"sched-{run_id}" if run_id else f"sched-adhoc-{int(time.time())}"
+        artifact_folder_name = f"{datetime.datetime.now().strftime('%Y-%m-%d')}_{sched_session_id[:8]}"
+
+        # Track this execution
+        cancel_token = CancelToken()
+        run_info = {
+            "run_id": run_id,
+            "session_id": sched_session_id,
+            "name": name,
+            "agent": agent_id,
+            "task": task[:200],
+            "model": model,
+            "status": "running",
+            "started_at": started_at_iso,
+            "tool_calls": 0,
+            "tool_log": [],
+            "cancel_token": cancel_token,
+            "trace_id": None,
+        }
+        with self._lock:
+            if not hasattr(self, '_running_tasks'):
+                self._running_tasks = {}
+            self._running_tasks[name] = run_info
 
         # Build system prompt
         import platform
@@ -10982,11 +11350,25 @@ class Scheduler:
             f"Current working directory: {cwd}\n"
             f"Operating system: {os_name}\n\n"
             "IMPORTANT RULES FOR SCHEDULED TASKS:\n"
+            "- This is a NON-INTERACTIVE run. There is no user watching and no one\n"
+            "  will answer clarifying questions. Do NOT ask for confirmation, do NOT\n"
+            "  offer menus of next steps, do NOT end with 'would you like me to...'.\n"
+            "- Execute every step the task describes, end-to-end. If the task says\n"
+            "  'send an email', you MUST call the email-sending tool before finishing\n"
+            "  — writing the file is not enough. If the task says 'post to slack',\n"
+            "  actually post. Follow through on every verb.\n"
+            "- When the task asks you to email a report or document, write the full\n"
+            "  content to a file first (write_file saves into the session artifact\n"
+            "  folder), then call gmail_send with the file path in `attachments` and\n"
+            "  a SHORT summary in `body`. Do not paste the whole report into the\n"
+            "  email body.\n"
             "- Complete the task QUICKLY and CONCISELY. You have a limited number of tool calls.\n"
             "- Do NOT repeat the same tool call. If a search returns results, use them — don't search again.\n"
             "- Do NOT loop. One search per topic is enough. Summarize what you found.\n"
             "- Provide a concise result summary within 3-5 tool calls maximum.\n"
-            "- If you can't find what you need in 2 searches, summarize what you have and stop.\n\n"
+            "- If you can't find what you need in 2 searches, summarize what you have and stop.\n"
+            "- Your final assistant message is a log entry, not a reply to a user.\n"
+            "  Keep it short, state what you did and the outcome.\n\n"
         )
         # MemPalace migration: scheduled-task memory summary injection removed.
         tcfg = target.config.get("token_config", {})
@@ -11020,10 +11402,18 @@ class Scheduler:
         timer.start()
 
         try:
-            # Set thread-local context for tools that need agent/memory
+            # Set thread-local context for tools that need agent/memory.
+            # The synthetic session id anchors tool workdirs (python_exec,
+            # write_file) and trace spans to this specific run.
             _thread_local.current_agent = target
             _thread_local.memory_store = target_memory
             _thread_local.delegate_agent_id = agent_id
+            _thread_local.current_session_id = sched_session_id
+            _thread_local.session_id = sched_session_id
+            # Clear any stale trace id from a previous run on this thread so
+            # _handle_openai_response installs a fresh one that we capture
+            # after the delegate returns.
+            _thread_local.trace_id = None
 
             sched_inf = get_inference_params(model, target.config.get("model_purpose"))
             # Memory summary tasks only need memory tools, not the full 39-tool schema
@@ -11035,7 +11425,11 @@ class Scheduler:
                                         cancel_token=cancel_token,
                                         event_callback=on_event,
                                         inference_params=sched_inf,
-                                        tools=sched_tools) or ""
+                                        tools=sched_tools,
+                                        session_id=sched_session_id) or ""
+            # Capture trace id set by _handle_openai_response so the History
+            # detail view can pivot from schedule_history.run_id → traces.
+            run_info["trace_id"] = getattr(_thread_local, 'trace_id', None)
             # Check if _run_delegate returned an error string instead of raising
             if result_text.startswith("Delegation error:"):
                 status = "error"
@@ -11070,12 +11464,34 @@ class Scheduler:
             _thread_local.current_agent = None
             _thread_local.memory_store = None
             _thread_local.delegate_agent_id = None
+            _thread_local.current_session_id = None
+            _thread_local.session_id = None
+            _thread_local.trace_id = None
             with self._lock:
                 self._running_tasks.pop(name, None)
 
-        self.mark_executed(schedule_id, name, agent_id, task, status, result_text,
-                           started_at=run_info.get("started_at"),
-                           tool_calls=run_info.get("tool_calls", 0))
+        # Only stamp artifact_folder if the folder actually materialised —
+        # tasks that made no file writes shouldn't claim a folder.
+        _artifact_dir = os.path.join(AGENTS_DIR, agent_id, "artifacts", artifact_folder_name)
+        _folder_for_row = artifact_folder_name if os.path.isdir(_artifact_dir) else None
+
+        if run_id:
+            self.complete_execution(
+                run_id, schedule_id, status, result_text,
+                started_at=run_info.get("started_at"),
+                tool_calls=run_info.get("tool_calls", 0),
+                trace_id=run_info.get("trace_id"),
+                artifact_folder=_folder_for_row,
+            )
+        else:
+            # begin_execution failed — fall back to insert-and-finalize in one
+            # shot so we still record something.
+            self.mark_executed(schedule_id, name, agent_id, task, status, result_text,
+                               started_at=run_info.get("started_at"),
+                               tool_calls=run_info.get("tool_calls", 0),
+                               trace_id=run_info.get("trace_id"),
+                               artifact_folder=_folder_for_row,
+                               model=model)
 
         # Chain relationship discovery after memory summary completes
         if name.startswith("_memory_summary_") and status == "success":
@@ -11537,6 +11953,21 @@ class TraceManager:
                 rows = conn.execute(
                     "SELECT * FROM traces WHERE trace_id = ? ORDER BY started_at",
                     (trace_id,)
+                ).fetchall()
+                return [dict(r) for r in rows]
+        except (sqlite3.Error, OSError) as e:
+            logging.warning(f"Trace read error: {e}")
+            return []
+
+    def get_spans_for_session(self, session_id: str) -> list[dict]:
+        """Get all spans tied to a session_id (fallback pivot when trace_id
+        wasn't captured up-front — e.g. old scheduled runs pre-migration)."""
+        try:
+            with _traces_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    "SELECT * FROM traces WHERE session_id = ? ORDER BY started_at",
+                    (session_id,)
                 ).fetchall()
                 return [dict(r) for r in rows]
         except (sqlite3.Error, OSError) as e:
@@ -17282,6 +17713,16 @@ _ARTIFACT_TYPE_MAP = {
     "txt": "text",
 }
 
+# Intermediate = working data or helper scripts the agent uses during a run;
+# the output role (default) is the deliverable the user actually cares about.
+# Keeps the run-detail and browse views decluttered by default. Text/markdown
+# is always "output" since that's typically the final report.
+_ARTIFACT_INTERMEDIATE_EXTS = {
+    "py", "sh", "bash", "zsh", "js", "ts", "rb", "pl",
+    "json", "jsonl", "yaml", "yml", "toml", "ini", "cfg",
+    "csv", "tsv", "log",
+}
+
 def _is_artifact_path(path: str) -> bool:
     """Check if path is under agents/<name>/artifacts/"""
     try:
@@ -17308,6 +17749,7 @@ def _register_artifact_version(path: str, action: str, agent_id: str):
         name = os.path.basename(path)
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
         artifact_type = _ARTIFACT_TYPE_MAP.get(ext, "code")
+        artifact_role = "intermediate" if ext in _ARTIFACT_INTERMEDIATE_EXTS else "output"
 
         # Read content snapshot (cap at 5MB)
         try:
@@ -17327,7 +17769,7 @@ def _register_artifact_version(path: str, action: str, agent_id: str):
             next_version = existing["latest_version"] + 1
         else:
             artifact_id = str(_uuid_mod.uuid4())[:12]
-            ChatDB.create_artifact(artifact_id, session_id, agent_id, name, path, artifact_type)
+            ChatDB.create_artifact(artifact_id, session_id, agent_id, name, path, artifact_type, artifact_role)
             next_version = 1
 
         ChatDB.add_artifact_version(artifact_id, next_version, content, size, None, action)

@@ -70,24 +70,27 @@
   --font-serif: "Anthropic Serif", Georgia, "Times New Roman", serif;
   --font-mono: "Anthropic Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 
-  --bg-page: #faf9f5;
+  /* Cool near-neutral whites matching Claude Code's desktop light theme.
+     Previous palette skewed warm/cream (#faf9f5 — yellow cast); these
+     have a neutral or faintly cool tint instead. */
+  --bg-page: #fafafa;
   --bg-000: #ffffff;
-  --bg-100: #faf9f5;
-  --bg-200: #f5f4ed;
-  --bg-300: #f0eee6;
-  --bg-400: #e8e6dc;
-  --bg-sidebar: #faf9f5;
+  --bg-100: #fafafa;
+  --bg-200: #f2f2f3;
+  --bg-300: #e9e9ea;
+  --bg-400: #dedede;
+  --bg-sidebar: #f6f6f7;
 
-  --text-000: #141413;
-  --text-100: #141413;
-  --text-200: #3d3d3a;
-  --text-300: #3d3d3a;
-  --text-400: #73726c;
-  --text-500: #73726c;
+  --text-000: #141415;
+  --text-100: #141415;
+  --text-200: #3c3c3f;
+  --text-300: #52525a;
+  --text-400: #72727a;
+  --text-500: #8a8a92;
 
-  --border-100: rgba(31,30,29,0.08);
-  --border-200: rgba(31,30,29,0.12);
-  --border-300: rgba(31,30,29,0.15);
+  --border-100: rgba(20,20,21,0.07);
+  --border-200: rgba(20,20,21,0.11);
+  --border-300: rgba(20,20,21,0.14);
 
   --accent-brand: #d97757;
   --accent-brand-hover: #c66140;
@@ -96,27 +99,27 @@
   --accent-blue: #2c84db;
   --accent-blue-bg: #d3e5f8;
 
-  --shadow-input: 0 0.25rem 1.25rem rgba(0,0,0,0.035), 0 0 0 0.5px rgba(31,30,29,0.08);
-  --shadow-input-hover: 0 0.25rem 1.25rem rgba(0,0,0,0.06), 0 0 0 0.5px rgba(31,30,29,0.12);
+  --shadow-input: 0 0.25rem 1.25rem rgba(0,0,0,0.035), 0 0 0 0.5px rgba(20,20,21,0.07);
+  --shadow-input-hover: 0 0.25rem 1.25rem rgba(0,0,0,0.06), 0 0 0 0.5px rgba(20,20,21,0.11);
   --shadow-input-focus: 0 0.25rem 1.25rem rgba(0,0,0,0.06), 0 0 0 1.5px var(--accent-brand);
 
-  --code-bg: #f5f4ed;
-  --code-text: #141413;
-  --code-border: rgba(31,30,29,0.1);
+  --code-bg: #f2f2f3;
+  --code-text: #141415;
+  --code-border: rgba(20,20,21,0.09);
 
   --msg-action-bg: #ffffff;
-  --msg-action-border: rgba(31,30,29,0.12);
+  --msg-action-border: rgba(20,20,21,0.11);
   --msg-action-shadow: 0 1px 4px rgba(0,0,0,0.08);
 
-  --scrollbar-thumb: rgba(31,30,29,0.15);
-  --scrollbar-hover: rgba(31,30,29,0.25);
+  --scrollbar-thumb: rgba(20,20,21,0.15);
+  --scrollbar-hover: rgba(20,20,21,0.25);
 
   --chip-bg: #ffffff;
-  --chip-border: rgba(31,30,29,0.12);
-  --chip-hover-bg: #f5f4ed;
+  --chip-border: rgba(20,20,21,0.11);
+  --chip-hover-bg: #f2f2f3;
 
   --toast-bg: rgba(255,255,255,0.97);
-  --toast-border: rgba(31,30,29,0.12);
+  --toast-border: rgba(20,20,21,0.11);
   --toast-shadow: 0 4px 16px rgba(0,0,0,0.1);
 
   --modal-overlay: rgba(0,0,0,0.3);
@@ -124,8 +127,8 @@
 
   --sidebar-hover: rgba(0,0,0,0.04);
   --sidebar-active: rgba(0,0,0,0.08);
-  --sidebar-text: #3d3d3a;
-  --sidebar-text-muted: #73726c;
+  --sidebar-text: #3c3c3f;
+  --sidebar-text-muted: #72727a;
 
   /* Compat aliases for admin RBAC modals and older components */
   --text-primary: var(--text-000);
@@ -144,20 +147,23 @@
    CSS Custom Properties — Dark Theme
    ═══════════════════════════════════════════════════════════ */
 [data-mode="dark"] {
-  --bg-page: #1f1e1c;
-  --bg-000: #2c2b27;
-  --bg-100: #1f1e1c;
-  --bg-200: #1c1b19;
-  --bg-300: #191816;
-  --bg-400: #141413;
-  --bg-sidebar: #1f1e1c;
+  /* Cool near-neutral greys matching Claude Code's desktop dark theme.
+     Previous palette skewed warm/brown (#1f1e1c, #2c2b27 — yellow cast);
+     these have a faint cool-blue tint instead. */
+  --bg-page: #1a1a1c;
+  --bg-000: #232327;
+  --bg-100: #1a1a1c;
+  --bg-200: #161618;
+  --bg-300: #121214;
+  --bg-400: #0e0e10;
+  --bg-sidebar: #17171a;
 
-  --text-000: #e8e8e3;
-  --text-100: #e8e8e3;
-  --text-200: #b4b3ad;
-  --text-300: #b4b3ad;
-  --text-400: #8c8b85;
-  --text-500: #8c8b85;
+  --text-000: #eaeaec;
+  --text-100: #eaeaec;
+  --text-200: #b4b4b8;
+  --text-300: #9a9aa0;
+  --text-400: #7a7a80;
+  --text-500: #5e5e64;
 
   --border-100: rgba(255,255,255,0.06);
   --border-200: rgba(255,255,255,0.1);
@@ -170,36 +176,36 @@
   --accent-blue: #4a9ef5;
   --accent-blue-bg: #1a3a5c;
 
-  --shadow-input: 0 0.25rem 1.25rem rgba(0,0,0,0.15), 0 0 0 0.5px rgba(255,255,255,0.06);
-  --shadow-input-hover: 0 0.25rem 1.25rem rgba(0,0,0,0.2), 0 0 0 0.5px rgba(255,255,255,0.1);
-  --shadow-input-focus: 0 0.25rem 1.25rem rgba(0,0,0,0.2), 0 0 0 1.5px var(--accent-brand);
+  --shadow-input: 0 0.25rem 1.25rem rgba(0,0,0,0.2), 0 0 0 0.5px rgba(255,255,255,0.06);
+  --shadow-input-hover: 0 0.25rem 1.25rem rgba(0,0,0,0.25), 0 0 0 0.5px rgba(255,255,255,0.1);
+  --shadow-input-focus: 0 0.25rem 1.25rem rgba(0,0,0,0.25), 0 0 0 1.5px var(--accent-brand);
 
-  --code-bg: #2c2b27;
-  --code-text: #e8e8e3;
+  --code-bg: #232327;
+  --code-text: #eaeaec;
   --code-border: rgba(255,255,255,0.08);
 
-  --msg-action-bg: #2c2b27;
+  --msg-action-bg: #232327;
   --msg-action-border: rgba(255,255,255,0.1);
-  --msg-action-shadow: 0 1px 4px rgba(0,0,0,0.2);
+  --msg-action-shadow: 0 1px 4px rgba(0,0,0,0.25);
 
   --scrollbar-thumb: rgba(255,255,255,0.12);
   --scrollbar-hover: rgba(255,255,255,0.2);
 
-  --chip-bg: #2c2b27;
+  --chip-bg: #232327;
   --chip-border: rgba(255,255,255,0.1);
-  --chip-hover-bg: #353430;
+  --chip-hover-bg: #2a2a2e;
 
-  --toast-bg: rgba(44,43,39,0.97);
+  --toast-bg: rgba(35,35,39,0.97);
   --toast-border: rgba(255,255,255,0.1);
-  --toast-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  --toast-shadow: 0 4px 16px rgba(0,0,0,0.35);
 
-  --modal-overlay: rgba(0,0,0,0.6);
-  --modal-bg: #2c2b27;
+  --modal-overlay: rgba(0,0,0,0.65);
+  --modal-bg: #232327;
 
   --sidebar-hover: rgba(255,255,255,0.05);
   --sidebar-active: rgba(255,255,255,0.1);
-  --sidebar-text: #b4b3ad;
-  --sidebar-text-muted: #8c8b85;
+  --sidebar-text: #b4b4b8;
+  --sidebar-text-muted: #7a7a80;
 
   /* Compat aliases for admin RBAC modals and older components */
   --text-primary: var(--text-000);
@@ -2295,6 +2301,55 @@ textarea { resize: none; }
 .sched-card-actions button:hover { background: var(--bg-300); color: var(--text-000); }
 .sched-card-actions button.danger:hover { background: rgba(239,68,68,.15); color: #ef4444; }
 
+/* Inline run-history accordion on each scheduled task card */
+.sched-card details.sched-runs { margin-top: 6px; border-top: 1px solid var(--border-100); padding-top: 10px; }
+.sched-card details.sched-runs > summary {
+  list-style: none; cursor: pointer; padding: 4px 0;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--text-300);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.sched-card details.sched-runs > summary::-webkit-details-marker { display: none; }
+.sched-card details.sched-runs > summary::before {
+  content: '▸'; font-size: 10px; color: var(--text-400);
+  transition: transform 0.15s;
+}
+.sched-card details.sched-runs[open] > summary::before { transform: rotate(90deg); }
+.sched-card details.sched-runs .runs-body {
+  margin-top: 10px; display: flex; flex-direction: column; gap: 2px;
+}
+.sched-run-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 6px; border-radius: 6px;
+  font-size: 12px; color: var(--text-200);
+  transition: background 0.1s;
+}
+.sched-run-row:hover { background: var(--bg-200); }
+.sched-run-row .r-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.sched-run-row .r-time { flex: 1; font-family: var(--font-mono); color: var(--text-300); }
+.sched-run-row .r-dur,
+.sched-run-row .r-tools { width: 64px; text-align: right; font-family: var(--font-mono); color: var(--text-400); font-size: 11px; }
+.sched-run-row .r-status { width: 78px; text-align: right; font-size: 11px; }
+.sched-run-row .r-actions { display: flex; gap: 4px; }
+.sched-run-row .r-actions button {
+  padding: 3px 8px; border-radius: 5px; font-size: 11px;
+  background: transparent; color: var(--text-300);
+  border: 1px solid var(--border-100);
+}
+.sched-run-row .r-actions button:hover { background: var(--bg-300); color: var(--text-000); }
+.sched-run-row .r-actions button.danger:hover { background: rgba(239,68,68,.15); color: #ef4444; border-color: rgba(239,68,68,.25); }
+.sched-run-row.loading { justify-content: center; color: var(--text-400); font-style: italic; }
+.sched-runs-footer {
+  margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border-100);
+  display: flex; justify-content: flex-end; gap: 6px;
+}
+.sched-runs-footer button {
+  padding: 4px 10px; border-radius: 6px; font-size: 11px;
+  background: transparent; color: var(--text-400);
+  border: 1px solid var(--border-100);
+}
+.sched-runs-footer button.danger:hover { background: rgba(239,68,68,.15); color: #ef4444; border-color: rgba(239,68,68,.25); }
+
 /* Create scheduled task modal */
 .sched-modal-overlay {
   position: fixed;
@@ -3617,6 +3672,11 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <div class="artifacts-header">
         <h1 class="artifacts-title">Artifacts</h1>
       </div>
+      <div class="artifacts-source-tabs" id="artifacts-source-tabs" style="display:flex;gap:4px;padding:8px 20px 0;border-bottom:1px solid var(--border-100);margin-bottom:4px">
+        <button class="artifacts-source-tab active" data-source="all" onclick="filterArtifactsSource('all')" style="padding:8px 14px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-300);cursor:pointer;font-size:13px">All</button>
+        <button class="artifacts-source-tab" data-source="chat" onclick="filterArtifactsSource('chat')" style="padding:8px 14px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-300);cursor:pointer;font-size:13px">Chats</button>
+        <button class="artifacts-source-tab" data-source="scheduled" onclick="filterArtifactsSource('scheduled')" style="padding:8px 14px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-300);cursor:pointer;font-size:13px">Scheduled</button>
+      </div>
       <div class="artifacts-tabs" id="artifacts-tabs">
         <button class="artifacts-tab active" onclick="filterArtifactsBrowse('all')">All</button>
         <button class="artifacts-tab" onclick="filterArtifactsBrowse('code')">Code</button>
@@ -3624,6 +3684,11 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <button class="artifacts-tab" onclick="filterArtifactsBrowse('document')">Documents</button>
         <button class="artifacts-tab" onclick="filterArtifactsBrowse('image')">Images</button>
         <button class="artifacts-tab" onclick="filterArtifactsBrowse('markdown')">Markdown</button>
+      </div>
+      <div id="artifacts-role-tabs" style="display:flex;gap:4px;padding:0 16px 8px 16px;align-items:center">
+        <span style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-right:4px">Role</span>
+        <button class="artifacts-role-tab active" data-role="output" onclick="filterArtifactsRole('output')" style="padding:4px 10px;border-radius:5px;font-size:11px;background:var(--bg-300);color:var(--text-000);border:1px solid var(--border-100);cursor:pointer">Outputs only</button>
+        <button class="artifacts-role-tab" data-role="all" onclick="filterArtifactsRole('all')" style="padding:4px 10px;border-radius:5px;font-size:11px;background:transparent;color:var(--text-300);border:1px solid var(--border-100);cursor:pointer">Show working files</button>
       </div>
       <div class="artifacts-agent-filter" id="artifacts-agent-filter">
         <!-- Agent chips populated dynamically -->
@@ -12036,7 +12101,8 @@ async function loadScheduledView() {
       const badgeText = isRunning ? 'Running' : (enabled ? 'Active' : 'Paused');
       const nextRun = s.next_run ? new Date(s.next_run + (s.next_run.includes('Z') ? '' : 'Z')).toLocaleString(undefined, {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
       const lastRun = s.last_run ? new Date(s.last_run + (s.last_run.includes('Z') ? '' : 'Z')).toLocaleString(undefined, {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : 'never';
-      html += `<div class="sched-card">
+      const cardId = 'sched-card-' + btoa(s.name).replace(/[^a-zA-Z0-9]/g,'').slice(0,12);
+      html += `<div class="sched-card" id="${cardId}">
         <div class="sched-card-header">
           <span class="sched-card-name">${esc(s.name)}</span>
           <span class="sched-card-badge ${badgeClass}">${badgeText}</span>
@@ -12053,9 +12119,13 @@ async function loadScheduledView() {
             ? `<button onclick="_schedViewCancel('${esc(s.name)}')">Cancel</button>`
             : `<button onclick="_schedViewRun('${esc(s.name)}')">Run Now</button>`}
           <button onclick="_schedViewToggle('${esc(s.name)}', ${!enabled})">${enabled ? 'Pause' : 'Resume'}</button>
-          <button onclick="_schedViewHistory('${esc(s.name)}')">History</button>
+          <button onclick="_schedViewEdit('${esc(s.name)}')">Edit</button>
           <button class="danger" onclick="_schedViewDelete('${esc(s.name)}')">Delete</button>
         </div>
+        <details class="sched-runs" ontoggle="if(this.open) _schedLoadRuns('${esc(s.name)}', this)">
+          <summary><span>Run history</span></summary>
+          <div class="runs-body"><div class="sched-run-row loading">Click to load…</div></div>
+        </details>
       </div>`;
     }
 
@@ -12151,31 +12221,327 @@ async function _schedViewDelete(name) {
   } catch(e) { showToast('Failed: ' + e.message, true); }
 }
 
-async function _schedViewHistory(name) {
+// Inline accordion body: fetch the last N runs for a schedule and render
+// them as clickable rows with Open (loads the read-only chat view) and
+// Delete. Called on first <details> toggle per card.
+async function _schedLoadRuns(name, detailsEl) {
+  const body = detailsEl.querySelector('.runs-body');
+  if (!body) return;
+  if (detailsEl._loaded) return;
+  body.innerHTML = '<div class="sched-run-row loading">Loading run history…</div>';
   try {
-    const res = await API.manageSchedule({ action: 'history', name, limit: 20 });
+    const res = await API.manageSchedule({ action: 'history', name, limit: 30 });
     const history = res.history || [];
-    let html = `<h3 style="margin:0 0 12px;font-size:16px;color:var(--text-000)">History: ${esc(name)}</h3>`;
-    if (!history.length) {
-      html += '<div style="color:var(--text-400)">No execution history</div>';
-    } else {
-      for (const h of history) {
-        const ok = h.status === 'success' || h.status === 'completed';
-        const started = h.started_at ? new Date(h.started_at+'Z').toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
-        const statusColor = ok ? '#10b981' : (h.status === 'timeout' ? '#f59e0b' : '#ef4444');
-        html += `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border-100)">
-          <span style="width:8px;height:8px;border-radius:50%;background:${statusColor};flex-shrink:0"></span>
-          <span style="font-size:13px;color:var(--text-200);flex:1">${esc(h.status||'unknown')}</span>
-          <span style="font-size:12px;color:var(--text-400);font-family:var(--font-mono)">${started}</span>
+    detailsEl._loaded = true;
+    _schedRenderRuns(body, name, history);
+  } catch(e) {
+    body.innerHTML = `<div class="sched-run-row loading" style="color:var(--error)">Failed: ${esc(e.message)}</div>`;
+  }
+}
+
+function _schedRenderRuns(body, name, history) {
+  if (!history.length) {
+    body.innerHTML = '<div class="sched-run-row loading">No runs yet</div>';
+    return;
+  }
+  let html = '';
+  for (const h of history) {
+    const ok = h.status === 'success' || h.status === 'completed';
+    const running = h.status === 'running';
+    const started = h.started_at ? new Date(h.started_at+'Z').toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+    const statusColor = running ? '#3b82f6' : (ok ? '#10b981' : (h.status === 'timeout' ? '#f59e0b' : '#ef4444'));
+    const durSec = (h.duration_ms != null) ? (h.duration_ms / 1000) : null;
+    const durLabel = durSec == null ? '—' : (durSec < 1 ? `${Math.round(h.duration_ms)}ms` : (durSec < 60 ? `${durSec.toFixed(1)}s` : `${Math.floor(durSec/60)}m${Math.round(durSec%60).toString().padStart(2,'0')}s`));
+    const toolLabel = (h.tool_calls == null) ? '—' : String(h.tool_calls);
+    const agentId = h.agent || 'main';
+    const runId = h.id;
+    const deleteDisabled = running ? 'disabled title="Cannot delete a running task"' : '';
+    html += `<div class="sched-run-row" data-run-id="${runId}">
+      <span class="r-dot" style="background:${statusColor}"></span>
+      <span class="r-time">${started}</span>
+      <span class="r-dur">${durLabel}</span>
+      <span class="r-tools">${toolLabel} tools</span>
+      <span class="r-status" style="color:${statusColor}">${esc(h.status||'?')}</span>
+      <span class="r-actions">
+        <button onclick="openScheduledArtifact(${runId}, 'sched-${runId}', '${esc(agentId)}', null)">Open</button>
+        <button onclick="_schedViewRunDetail(${runId})">Details</button>
+        <button class="danger" ${deleteDisabled} onclick="_schedDeleteRun('${esc(name)}', ${runId}, this)">Delete</button>
+      </span>
+    </div>`;
+  }
+  html += `<div class="sched-runs-footer">
+    <button class="danger" onclick="_schedClearHistory('${esc(name)}', this)">Clear all history</button>
+  </div>`;
+  body.innerHTML = html;
+}
+
+async function _schedDeleteRun(name, runId, btn) {
+  if (!confirm(`Delete run #${runId}?\n\nThis removes the history row and every artifact produced by this run (files included).`)) return;
+  btn.disabled = true;
+  try {
+    const res = await API.manageSchedule({ action: 'delete_run', run_id: runId });
+    if (res && res.error) { showToast(res.error, true); btn.disabled = false; return; }
+    showToast(`Run deleted · ${res.artifacts_removed||0} artifact(s) purged`);
+    // Reload this card's history inline.
+    const detailsEl = btn.closest('details.sched-runs');
+    if (detailsEl) {
+      detailsEl._loaded = false;
+      _schedLoadRuns(name, detailsEl);
+    }
+  } catch(e) {
+    showToast('Failed: ' + e.message, true);
+    btn.disabled = false;
+  }
+}
+
+async function _schedClearHistory(name, btn) {
+  if (!confirm(`Clear ALL run history for "${name}"?\n\nThis removes every past run and all produced artifacts.\nThe schedule itself stays in place.`)) return;
+  btn.disabled = true;
+  try {
+    const res = await API.manageSchedule({ action: 'clear_history', name });
+    showToast(`Cleared · ${res.runs_removed||0} runs · ${res.artifacts_removed||0} artifacts`);
+    const detailsEl = btn.closest('details.sched-runs');
+    if (detailsEl) {
+      detailsEl._loaded = false;
+      _schedLoadRuns(name, detailsEl);
+    }
+  } catch(e) {
+    showToast('Failed: ' + e.message, true);
+    btn.disabled = false;
+  }
+}
+
+async function _schedViewRunDetail(runId) {
+  // Per-run deep view: start/finish times, duration, tools with timings,
+  // artifacts produced, and the agent's result text. Pivots:
+  //   schedule_history.id === run_id === session_id suffix
+  //   trace_id or session_id → traces.db
+  //   artifact_folder → agents/<id>/artifacts/<folder>/
+  const overlay = document.createElement('div');
+  overlay.className = 'sched-modal-overlay';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div class="sched-modal" style="width:720px;max-height:82vh;display:flex;flex-direction:column">
+    <div id="sched-runstate" style="overflow:auto;flex:1">Loading…</div>
+    <div style="margin-top:12px;text-align:right;flex-shrink:0">
+      <button onclick="this.closest('.sched-modal-overlay').remove()" style="padding:6px 16px;border-radius:8px;background:var(--bg-200);color:var(--text-200);font-size:13px">Close</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  try {
+    const res = await API.manageSchedule({ action: 'run_detail', run_id: runId });
+    if (res.error) {
+      document.getElementById('sched-runstate').innerHTML = `<div style="color:var(--error)">${esc(res.error)}</div>`;
+      return;
+    }
+    const run = res.run || {};
+    const spans = res.spans || [];
+    const artifacts = res.artifacts || [];
+    const ok = run.status === 'success' || run.status === 'completed';
+    const running = run.status === 'running';
+    const statusColor = running ? '#3b82f6' : (ok ? '#10b981' : (run.status === 'timeout' ? '#f59e0b' : '#ef4444'));
+    const started = run.started_at ? new Date(run.started_at+'Z').toLocaleString() : '—';
+    const finished = run.finished_at ? new Date(run.finished_at+'Z').toLocaleString() : '—';
+    const durSec = (run.duration_ms != null) ? (run.duration_ms / 1000) : null;
+    const durLabel = durSec == null ? '—' : (durSec < 60 ? `${durSec.toFixed(1)}s` : `${Math.floor(durSec/60)}m${Math.round(durSec%60).toString().padStart(2,'0')}s`);
+
+    // Tool span timeline — just tool_call spans, ordered by start.
+    const toolSpans = spans.filter(s => s.type === 'tool_call').sort((a,b) => (a.started_at||'').localeCompare(b.started_at||''));
+    const llmSpans = spans.filter(s => s.type === 'llm_call').sort((a,b) => (a.started_at||'').localeCompare(b.started_at||''));
+    const tokensIn = spans.reduce((a,s) => a + (s.tokens_in||0), 0);
+    const tokensOut = spans.reduce((a,s) => a + (s.tokens_out||0), 0);
+
+    let html = `<h3 style="margin:0 0 4px;font-size:17px;color:var(--text-000)">Run #${runId} · ${esc(run.schedule_name||'')}</h3>
+    <div style="color:var(--text-400);font-size:12px;margin-bottom:12px"><span style="color:${statusColor};font-weight:500">${esc(run.status||'?')}</span> · ${esc(run.agent||'main')}${run.model ? ` · ${esc(run.model)}` : ''}</div>`;
+
+    // Stats block
+    html += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px;padding:10px;border:1px solid var(--border-100);border-radius:8px;background:var(--bg-100)">
+      <div><div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.05em">Duration</div><div style="font-size:15px;color:var(--text-100);font-family:var(--font-mono)">${durLabel}</div></div>
+      <div><div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.05em">Tools</div><div style="font-size:15px;color:var(--text-100);font-family:var(--font-mono)">${run.tool_calls ?? 0}</div></div>
+      <div><div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.05em">Tokens in</div><div style="font-size:15px;color:var(--text-100);font-family:var(--font-mono)">${tokensIn.toLocaleString()}</div></div>
+      <div><div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.05em">Tokens out</div><div style="font-size:15px;color:var(--text-100);font-family:var(--font-mono)">${tokensOut.toLocaleString()}</div></div>
+    </div>`;
+
+    // Times
+    html += `<div style="font-size:12px;color:var(--text-300);margin-bottom:14px;font-family:var(--font-mono)">Started ${esc(started)} · Finished ${esc(finished)}</div>`;
+
+    // Task prompt
+    if (run.task) {
+      html += `<div style="margin-bottom:14px"><div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Task</div><div style="padding:8px;background:var(--bg-100);border-radius:6px;font-size:13px;color:var(--text-200);white-space:pre-wrap">${esc(run.task)}</div></div>`;
+    }
+
+    // Tool timeline — each row expandable to show the full result summary
+    // (which can expose, e.g., an exa_search returning an HTTP 400 with an
+    // empty query, or a python_exec where the script's stdout reveals the
+    // agent admitting it couldn't read an artifact).
+    if (toolSpans.length) {
+      const t0 = toolSpans[0].started_at ? new Date(toolSpans[0].started_at).getTime() : 0;
+      html += `<div style="margin-bottom:14px"><div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Tool calls (${toolSpans.length})</div>`;
+      for (const s of toolSpans) {
+        const sOk = s.status === 'success' || s.status === 'ok';
+        const dotColor = sOk ? '#10b981' : '#ef4444';
+        const dur = s.duration_ms != null ? `${s.duration_ms}ms` : '—';
+        let meta = {};
+        try { meta = s.metadata ? JSON.parse(s.metadata) : {}; } catch(e) {}
+        const fullSummary = (meta.result_summary || '').toString();
+        const shortSummary = fullSummary.length > 140 ? fullSummary.slice(0,140) + '…' : fullSummary;
+        const tOffset = s.started_at && t0
+          ? `+${((new Date(s.started_at).getTime() - t0)/1000).toFixed(1)}s`
+          : '';
+        const hasFull = fullSummary.length > 0;
+        const sid = 'span-' + (s.id || Math.random().toString(36).slice(2));
+        html += `<details style="border-bottom:1px dashed var(--border-100);padding:6px 0">
+          <summary style="cursor:${hasFull?'pointer':'default'};list-style:none;display:flex;align-items:flex-start;gap:8px">
+            <span style="width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0;margin-top:5px"></span>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;color:var(--text-200);font-family:var(--font-mono);display:flex;gap:8px;align-items:baseline">
+                <span>${esc(s.name||'?')}</span>
+                ${tOffset ? `<span style="font-size:10px;color:var(--text-500)">${esc(tOffset)}</span>` : ''}
+              </div>
+              ${shortSummary ? `<div style="font-size:11px;color:var(--text-400);margin-top:2px;font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(shortSummary)}</div>` : ''}
+            </div>
+            <span style="font-size:11px;color:var(--text-400);font-family:var(--font-mono);flex-shrink:0;margin-top:4px">${dur}</span>
+          </summary>
+          ${hasFull ? `<pre style="margin:6px 0 6px 18px;padding:8px;background:var(--bg-100);border-radius:6px;font-size:11px;color:var(--text-300);white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto">${esc(fullSummary)}</pre>` : ''}
+        </details>`;
+      }
+      html += `</div>`;
+    }
+
+    // LLM rounds
+    if (llmSpans.length) {
+      html += `<div style="margin-bottom:14px"><div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">LLM rounds (${llmSpans.length})</div>`;
+      for (const s of llmSpans) {
+        const dur = s.duration_ms != null ? `${s.duration_ms}ms` : '—';
+        html += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:12px;color:var(--text-300);font-family:var(--font-mono)">
+          <span>${esc(s.name||'?')}</span>
+          <span>${s.tokens_in||0} in / ${s.tokens_out||0} out · ${dur}</span>
         </div>`;
       }
+      html += `</div>`;
     }
-    html += `<div style="margin-top:12px;text-align:right"><button onclick="this.closest('.sched-modal-overlay').remove()" style="padding:6px 16px;border-radius:8px;background:var(--bg-200);color:var(--text-200);font-size:13px">Close</button></div>`;
-    const overlay = document.createElement('div');
-    overlay.className = 'sched-modal-overlay';
-    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
-    overlay.innerHTML = `<div class="sched-modal" style="width:420px">${html}</div>`;
-    document.body.appendChild(overlay);
+
+    // Artifacts — each row opens the file in the artifact panel (plus the
+    // pseudo-chat timeline view) when it has a registered artifact_id.
+    // Unregistered fallback rows (from folder scan) stay non-clickable.
+    if (artifacts.length) {
+      const sessionId = res.session_id || ('sched-' + runId);
+      const agentId = run.agent || 'main';
+      html += `<div style="margin-bottom:14px"><div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Artifacts (${artifacts.length}) · <span style="font-family:var(--font-mono);text-transform:none">${esc(run.artifact_folder||'')}</span></div>`;
+      for (const a of artifacts) {
+        const kb = (a.size/1024).toFixed(1);
+        const clickable = !!a.id;
+        if (clickable) {
+          html += `<div onclick="document.querySelector('.sched-modal-overlay').remove(); openArtifactFromBrowse('${esc(a.id)}', '${esc(sessionId)}', '${esc(agentId)}')" style="display:flex;justify-content:space-between;padding:6px 4px;font-size:12px;color:var(--accent-brand);font-family:var(--font-mono);cursor:pointer;border-radius:4px" onmouseover="this.style.background='var(--bg-200)'" onmouseout="this.style.background=''">
+            <span>${esc(a.name)}</span><span style="color:var(--text-400)">${kb} KB${a.type ? ' · ' + esc(a.type) : ''}</span>
+          </div>`;
+        } else {
+          html += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:12px;color:var(--text-400);font-family:var(--font-mono)" title="Unregistered file — cannot open in viewer">
+            <span>${esc(a.name)}</span><span>${kb} KB</span>
+          </div>`;
+        }
+      }
+      html += `</div>`;
+    }
+
+    // Result text
+    if (run.result) {
+      html += `<details style="margin-bottom:8px"><summary style="cursor:pointer;font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.05em;padding:4px 0">Result (${run.result.length} chars)</summary><pre style="margin-top:6px;padding:10px;background:var(--bg-100);border-radius:6px;font-size:12px;color:var(--text-200);white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto">${esc(run.result)}</pre></details>`;
+    }
+
+    document.getElementById('sched-runstate').innerHTML = html;
+  } catch(e) {
+    document.getElementById('sched-runstate').innerHTML = `<div style="color:var(--error)">Failed: ${esc(e.message)}</div>`;
+  }
+}
+
+async function _schedViewEdit(name) {
+  // Inline edit modal: fetch the current task row, prefill form, PATCH via
+  // action:'edit'. `schedule` is a free-form string (same format as create).
+  let task;
+  try {
+    const data = await API.getSchedule();
+    task = (data.schedules || []).find(s => s.name === name);
+  } catch(e) { showToast('Failed to load: ' + e.message, true); return; }
+  if (!task) { showToast('Task not found', true); return; }
+
+  const agentOpts = (state.agents || []).map(a =>
+    `<option value="${esc(a.id)}" ${a.id === task.agent ? 'selected' : ''}>${esc(a.display_name || a.id)}</option>`
+  ).join('');
+  const modelOpts = (state.models || []).map(m =>
+    `<option value="${esc(m)}" ${m === task.model ? 'selected' : ''}>${esc(m)}</option>`
+  ).join('');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'sched-modal-overlay';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div class="sched-modal">
+    <h2>Edit: ${esc(name)}</h2>
+    <div class="sched-form-group">
+      <label>Name</label>
+      <input id="sched-edit-newname" value="${esc(task.name || '')}">
+    </div>
+    <div class="sched-form-group">
+      <label>Prompt</label>
+      <textarea id="sched-edit-prompt">${esc(task.task || '')}</textarea>
+    </div>
+    <div class="sched-form-row">
+      <div class="sched-form-group">
+        <label>Agent</label>
+        <select id="sched-edit-agent">${agentOpts}</select>
+      </div>
+      <div class="sched-form-group">
+        <label>Model</label>
+        <select id="sched-edit-model"><option value="">Default</option>${modelOpts}</select>
+      </div>
+    </div>
+    <div class="sched-form-group">
+      <label>Schedule <span style="color:var(--text-400);font-weight:normal;font-size:11px">(e.g. "daily 09:00", "every 30m", "weekly mon 14:00", "once 2026-05-01 12:00")</span></label>
+      <input id="sched-edit-schedule" value="${esc(task.schedule || '')}" style="font-family:var(--font-mono)">
+    </div>
+    <div class="sched-form-group">
+      <label>Timeout (seconds)</label>
+      <input id="sched-edit-timeout" type="number" value="${task.timeout || 300}" min="30" max="3600">
+    </div>
+    <div class="sched-modal-actions">
+      <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Cancel</button>
+      <button class="sched-create-btn" onclick="_saveScheduledEdit('${esc(name)}')">Save</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function _saveScheduledEdit(originalName) {
+  const newName = document.getElementById('sched-edit-newname')?.value?.trim();
+  const taskText = document.getElementById('sched-edit-prompt')?.value;
+  const agent = document.getElementById('sched-edit-agent')?.value || 'main';
+  const model = document.getElementById('sched-edit-model')?.value || '';
+  const schedule = document.getElementById('sched-edit-schedule')?.value?.trim();
+  const timeout = parseInt(document.getElementById('sched-edit-timeout')?.value) || 300;
+
+  if (!newName) { showToast('Name is required', true); return; }
+  if (!taskText) { showToast('Prompt is required', true); return; }
+  if (!schedule) { showToast('Schedule is required', true); return; }
+
+  const payload = {
+    action: 'edit',
+    name: originalName,
+    task: taskText,
+    agent,
+    schedule,
+    timeout,
+    // Empty string signals "clear back to Default" so the scheduler falls
+    // back to the target agent's preferred_model at dispatch time. null
+    // would mean "don't touch" in the server-side patch semantics.
+    model: model,
+  };
+  if (newName !== originalName) payload.new_name = newName;
+
+  try {
+    const res = await API.manageSchedule(payload);
+    if (res.error) { showToast(res.error, true); return; }
+    showToast('Saved');
+    document.querySelector('.sched-modal-overlay')?.remove();
+    loadScheduledView();
   } catch(e) { showToast('Failed: ' + e.message, true); }
 }
 
@@ -13208,6 +13574,16 @@ function closeReferencesPanel() {
 
 function initRefsResizeHandle() { /* no-op — merged into initRightPanelResize */ }
 
+// Filter state for the right-panel artifact list. 'output' hides
+// intermediate files (scripts, json data dumps) so the panel surfaces the
+// actual deliverables for scheduled task runs; 'all' shows everything.
+let _artifactListRoleFilter = 'output';
+
+function setArtifactListRoleFilter(role) {
+  _artifactListRoleFilter = role;
+  showArtifactList();
+}
+
 function showArtifactList() {
   const chat = state.activeChat;
   if (!chat) return;
@@ -13225,16 +13601,35 @@ function showArtifactList() {
     return;
   }
 
-  let html = '<div class="artifact-list">';
-  for (const a of artifacts) {
+  // Count intermediates so we can show a hint even when filtered out.
+  const intermediateCount = artifacts.filter(a => (a.role || 'output') === 'intermediate').length;
+  const hasIntermediate = intermediateCount > 0;
+  const filtered = _artifactListRoleFilter === 'output'
+    ? artifacts.filter(a => (a.role || 'output') === 'output')
+    : artifacts;
+
+  let html = '';
+  if (hasIntermediate) {
+    const outActive = _artifactListRoleFilter === 'output';
+    html += `<div style="display:flex;gap:4px;padding:8px 10px;border-bottom:1px solid var(--border-100)">
+      <button onclick="setArtifactListRoleFilter('output')" style="padding:3px 10px;border-radius:5px;font-size:11px;background:${outActive?'var(--bg-300)':'transparent'};color:${outActive?'var(--text-000)':'var(--text-300)'};border:1px solid var(--border-100)">Outputs</button>
+      <button onclick="setArtifactListRoleFilter('all')" style="padding:3px 10px;border-radius:5px;font-size:11px;background:${!outActive?'var(--bg-300)':'transparent'};color:${!outActive?'var(--text-000)':'var(--text-300)'};border:1px solid var(--border-100)">All (+${intermediateCount} working files)</button>
+    </div>`;
+  }
+  html += '<div class="artifact-list">';
+  for (const a of filtered) {
     const verCount = a.versions?.length || 0;
     const latestVer = verCount > 0 ? a.versions[verCount - 1] : null;
     const meta = latestVer ? (latestVer.action === 'created' ? 'Created' : 'Modified') : '';
+    const isInter = (a.role || 'output') === 'intermediate';
+    const roleBadge = isInter
+      ? `<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(120,120,120,0.15);color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-left:4px" title="Helper/working file produced during execution">working</span>`
+      : '';
     html += `
       <div class="artifact-list-card" onclick="openArtifactPanel('${esc(a.id)}')">
         <span class="alc-icon">${artifactTypeIcon(a.type)}</span>
         <div class="alc-info">
-          <div class="alc-name">${esc(a.name)}</div>
+          <div class="alc-name">${esc(a.name)}${roleBadge}</div>
           <div class="alc-meta">${esc(a.type)} ${meta ? '· ' + meta : ''}</div>
         </div>
         <span class="alc-versions">v${verCount}</span>
@@ -13367,6 +13762,10 @@ function updateArtifactRegistry(sessionId, eventData) {
 let _browseArtifactsCache = [];
 let _browseArtifactsFilter = 'all';
 let _browseArtifactsAgent = null;
+let _browseArtifactsSource = 'all';  // 'all' | 'chat' | 'scheduled'
+// Default hides intermediate files (helper scripts / json data dumps) so the
+// grid surfaces deliverables. Flip to 'all' to inspect the raw working set.
+let _browseArtifactsRole = 'output';
 
 async function loadArtifactsBrowse() {
   const grid = document.getElementById('artifacts-grid');
@@ -13401,14 +13800,24 @@ function renderArtifactsBrowse() {
   const grid = document.getElementById('artifacts-grid');
   let filtered = _browseArtifactsCache;
 
+  if (_browseArtifactsSource !== 'all') {
+    filtered = filtered.filter(a => (a.source || 'chat') === _browseArtifactsSource);
+  }
   if (_browseArtifactsFilter !== 'all') {
     filtered = filtered.filter(a => a.type === _browseArtifactsFilter);
   }
+  if (_browseArtifactsRole === 'output') {
+    filtered = filtered.filter(a => (a.role || 'output') === 'output');
+  }
 
   if (filtered.length === 0) {
+    const roleHint = _browseArtifactsRole === 'output'
+      ? '<div style="margin-top:8px;font-size:12px;color:var(--text-400)">Try <a href="#" onclick="event.preventDefault();filterArtifactsRole(\'all\')" style="color:var(--accent-brand)">Show working files</a> to include helper scripts and working data.</div>'
+      : '';
     grid.innerHTML = `<div class="artifacts-empty" style="grid-column:1/-1">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-      No artifacts${_browseArtifactsFilter !== 'all' ? ' of this type' : ''} yet
+      No artifacts${_browseArtifactsFilter !== 'all' ? ' of this type' : ''}${_browseArtifactsSource !== 'all' ? ' in ' + _browseArtifactsSource : ''} yet
+      ${roleHint}
     </div>`;
     return;
   }
@@ -13423,8 +13832,20 @@ function renderArtifactsBrowse() {
     const ts = a.latest_created_at || a.created_at;
     const ago = ts ? timeAgo(ts) : '';
 
+    // Source badge — scheduled-task artifacts carry a pill with the task name
+    // so you can tell at a glance which run produced the file.
+    const isScheduled = a.source === 'scheduled';
+    const schedRun = a.schedule_run;
+    const sourceBadge = isScheduled
+      ? `<span class="abm-source" style="background:rgba(245,158,11,0.12);color:#d97706;padding:1px 6px;border-radius:4px;font-size:10px;text-transform:uppercase;letter-spacing:0.04em" title="${esc(schedRun ? schedRun.schedule_name + ' · run #' + schedRun.run_id : 'Scheduled task')}">sched${schedRun ? ' · ' + esc((schedRun.schedule_name || '').slice(0, 18)) : ''}</span>`
+      : '';
+    const isInter = (a.role || 'output') === 'intermediate';
+    const roleBadge = isInter
+      ? `<span style="background:rgba(120,120,120,0.15);color:var(--text-400);padding:1px 5px;border-radius:3px;font-size:10px;text-transform:uppercase;letter-spacing:0.04em" title="Helper or working file used during execution">working</span>`
+      : '';
+
     html += `
-      <div class="artifact-browse-card" onclick="openArtifactFromBrowse('${esc(a.id)}', '${esc(a.session_id)}', '${esc(a.agent_id)}')">
+      <div class="artifact-browse-card" onclick="openArtifactFromBrowse('${esc(a.id)}', '${esc(a.session_id)}', '${esc(a.agent_id)}')" ${isInter ? 'style="opacity:0.78"' : ''}>
         <div class="artifact-browse-preview${hasPreview ? '' : ' no-preview'}">
           ${hasPreview ? preview : artifactTypeIcon(a.type)}
         </div>
@@ -13434,6 +13855,8 @@ function renderArtifactsBrowse() {
             <span class="abm-type">${esc(a.type)}</span>
             <span>v${a.latest_version || 1}</span>
             ${ago ? `<span>· ${ago}</span>` : ''}
+            ${roleBadge}
+            ${sourceBadge}
           </div>
         </div>
       </div>
@@ -13450,13 +13873,47 @@ function filterArtifactsBrowse(type) {
   renderArtifactsBrowse();
 }
 
+function filterArtifactsSource(source) {
+  _browseArtifactsSource = source;
+  document.querySelectorAll('#artifacts-source-tabs .artifacts-source-tab').forEach(t => {
+    const isActive = t.getAttribute('data-source') === source;
+    t.classList.toggle('active', isActive);
+    t.style.color = isActive ? 'var(--text-000)' : 'var(--text-300)';
+    t.style.borderBottomColor = isActive ? 'var(--text-000)' : 'transparent';
+    t.style.fontWeight = isActive ? '500' : 'normal';
+  });
+  renderArtifactsBrowse();
+}
+
+function filterArtifactsRole(role) {
+  _browseArtifactsRole = role;
+  document.querySelectorAll('#artifacts-role-tabs .artifacts-role-tab').forEach(t => {
+    const isActive = t.getAttribute('data-role') === role;
+    t.classList.toggle('active', isActive);
+    t.style.background = isActive ? 'var(--bg-300)' : 'transparent';
+    t.style.color = isActive ? 'var(--text-000)' : 'var(--text-300)';
+  });
+  renderArtifactsBrowse();
+}
+
 function setArtifactsBrowseAgent(agentId) {
   _browseArtifactsAgent = agentId;
   loadArtifactsBrowse();
 }
 
 async function openArtifactFromBrowse(artifactId, sessionId, agentId) {
-  // Load the session's artifacts into state, then open the session and artifact panel
+  // Scheduled-task artifacts have a synthetic session_id `sched-<run_id>`
+  // that has no row in `sessions`. The normal openSession path would 404.
+  // Route those to a read-only timeline view built from schedule_history
+  // + traces (the same data the Run detail modal uses).
+  if (sessionId && sessionId.startsWith('sched-')) {
+    const runId = parseInt(sessionId.split('-', 2)[1]);
+    if (Number.isFinite(runId)) {
+      await openScheduledArtifact(runId, sessionId, agentId, artifactId);
+      return;
+    }
+  }
+
   try {
     const resp = await API.getArtifacts(sessionId);
     state.artifacts[sessionId] = resp.artifacts || [];
@@ -13464,12 +13921,192 @@ async function openArtifactFromBrowse(artifactId, sessionId, agentId) {
     state.artifacts[sessionId] = [];
   }
 
-  // Open the session chat
   await openSession(sessionId, agentId);
-
-  // Open the artifact panel
   setTimeout(() => openArtifactPanel(artifactId), 300);
 }
+
+// Open a scheduled-task artifact: synthesize a read-only "chat" from the
+// run_detail response (trace spans + task prompt + result text) and show
+// the artifact in the side panel.
+async function openScheduledArtifact(runId, sessionId, agentId, artifactId) {
+  let detail;
+  try {
+    detail = await API.manageSchedule({ action: 'run_detail', run_id: runId });
+    if (detail.error) { showToast(detail.error, true); return; }
+  } catch (e) { showToast('Failed to load run: ' + e.message, true); return; }
+
+  // Artifacts list for this session (so openArtifactPanel's lookup works).
+  try {
+    const resp = await API.getArtifacts(sessionId);
+    state.artifacts[sessionId] = resp.artifacts || [];
+  } catch (e) {
+    state.artifacts[sessionId] = [];
+  }
+
+  selectAgent(agentId);
+  const chat = state.ensureAgentChat(agentId);
+  chat.sessionId = sessionId;
+  chat.messages = [];
+  chat.streamingText = '';
+  chat.thinkingText = '';
+  chat.files = [];
+  chat._tokensIn = 0;
+  chat._tokensOut = 0;
+  chat._readonly = true;
+  chat._scheduledRun = detail.run;  // stash for header badge
+  const runRow = detail.run || {};
+  chat.model = runRow.model || chat.model;
+  chat.chatTitle = `${runRow.schedule_name || 'Scheduled task'} · run #${runId}`;
+
+  // Build pseudo-message stream: user task, thinking+tool_call/result per
+  // round in trace order, then the final assistant result.
+  const spans = detail.spans || [];
+  const toolSpans = spans.filter(s => s.type === 'tool_call')
+    .sort((a, b) => (a.started_at || '').localeCompare(b.started_at || ''));
+
+  chat.messages.push({
+    role: 'user',
+    content: runRow.task || '',
+    _ts: runRow.started_at,
+  });
+
+  for (const s of toolSpans) {
+    let meta = {};
+    try { meta = s.metadata ? JSON.parse(s.metadata) : {}; } catch (e) {}
+    chat.messages.push({
+      role: 'tool_call',
+      name: s.name,
+      args: {},  // args aren't stored in trace metadata; summary lives in tool_result below
+      tool_round: null,
+    });
+    chat.messages.push({
+      role: 'tool_result',
+      name: s.name,
+      result: meta.result_summary || '',
+      tool_round: null,
+      _status: s.status,
+      _duration_ms: s.duration_ms,
+    });
+  }
+
+  // Strip the "[Duration: Xs | Tools: N]\n\n" header that complete_execution
+  // prepends to result so the final assistant bubble shows only the model's
+  // actual closing message.
+  let finalText = runRow.result || '';
+  finalText = finalText.replace(/^\[Duration:[^\]]+\]\s*\n+/, '');
+  if (finalText) {
+    chat.messages.push({
+      role: 'assistant',
+      content: finalText,
+      _ts: runRow.finished_at,
+    });
+  }
+
+  // Navigate first (this clears any prior readonly UI via the hook), then
+  // render + re-apply readonly for THIS run.
+  navigateTo('chat');
+  chat._readonly = true;
+  chat._scheduledRun = detail.run;
+  if (typeof renderMessages === 'function') renderMessages();
+  _applyScheduledReadonlyUI(runRow);
+  if (artifactId) {
+    setTimeout(() => openArtifactPanel(artifactId), 200);
+  } else {
+    // No specific artifact requested — open the right panel and show the
+    // session's artifact list so the user can pick an output or drill into
+    // a technical file.
+    setTimeout(() => {
+      if (typeof openRightPanel === 'function') openRightPanel('artifacts');
+    }, 200);
+  }
+}
+
+function _applyScheduledReadonlyUI(runRow) {
+  // Slap a header badge + disable the composer so the user can't try to
+  // send a follow-up into a non-existent session. Stored on chat._readonly
+  // so a later openSession clears it naturally.
+  const input = document.getElementById('input');
+  const sendBtn = document.getElementById('send-btn');
+  if (input) { input.disabled = true; input.placeholder = 'Read-only — scheduled task log'; }
+  if (sendBtn) sendBtn.disabled = true;
+
+  // Banner above messages.
+  let banner = document.getElementById('scheduled-readonly-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'scheduled-readonly-banner';
+    banner.style.cssText = 'margin:0 20px 8px;padding:10px 14px;border:1px solid rgba(245,158,11,0.35);background:rgba(245,158,11,0.08);border-radius:8px;font-size:13px;color:var(--text-200);display:flex;align-items:center;gap:10px';
+    const msgs = document.getElementById('messages') || document.querySelector('.messages-container');
+    if (msgs && msgs.parentElement) msgs.parentElement.insertBefore(banner, msgs);
+  }
+  const status = runRow.status || '?';
+  const statusColor = (status === 'success' || status === 'completed') ? '#10b981'
+    : (status === 'timeout' ? '#f59e0b' : '#ef4444');
+  const running = status === 'running';
+  // Layout flips: the banner becomes a two-row block so we can tuck the
+  // task prompt into a <details> without squeezing the header line.
+  banner.style.cssText = 'margin:0 20px 8px;padding:10px 14px;border:1px solid rgba(245,158,11,0.35);background:rgba(245,158,11,0.08);border-radius:8px;font-size:13px;color:var(--text-200);display:flex;flex-direction:column;gap:8px';
+  const taskText = runRow.task || '';
+  banner.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="width:8px;height:8px;border-radius:50%;background:${statusColor};flex-shrink:0"></span>
+      <div style="flex:1;min-width:0">
+        <div style="color:var(--text-100);font-weight:500">Scheduled task · ${esc(runRow.schedule_name || '')} · run #${runRow.id}</div>
+        <div style="color:var(--text-400);font-size:11px;margin-top:2px">
+          ${runRow.started_at ? esc(new Date(runRow.started_at+'Z').toLocaleString()) : ''}
+          · <span style="color:${statusColor}">${esc(status)}</span>
+          ${runRow.duration_ms != null ? ` · ${(runRow.duration_ms/1000).toFixed(1)}s` : ''}
+          · ${runRow.tool_calls || 0} tool calls
+          ${runRow.model ? ' · ' + esc(runRow.model) : ''}
+        </div>
+      </div>
+      <button onclick="_schedViewRunDetail(${runRow.id})" style="padding:4px 10px;border-radius:6px;background:var(--bg-200);color:var(--text-200);font-size:12px;border:1px solid var(--border-100);cursor:pointer">Details</button>
+      <button ${running ? 'disabled title="Cannot delete a running task"' : ''} onclick="_schedDeleteRunFromBanner(${runRow.id})" style="padding:4px 10px;border-radius:6px;background:transparent;color:var(--text-300);font-size:12px;border:1px solid var(--border-100);cursor:${running?'not-allowed':'pointer'}">Delete run</button>
+    </div>
+    ${taskText ? `<details style="margin-left:18px">
+      <summary style="cursor:pointer;font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.05em;list-style:none">Task prompt</summary>
+      <div style="margin-top:6px;padding:8px;background:var(--bg-100);border-radius:6px;font-size:12px;color:var(--text-200);white-space:pre-wrap;max-height:160px;overflow:auto">${esc(taskText)}</div>
+    </details>` : ''}
+  `;
+}
+
+async function _schedDeleteRunFromBanner(runId) {
+  if (!confirm(`Delete run #${runId}?\n\nThis removes the history row and every artifact produced by this run (files included).`)) return;
+  try {
+    const res = await API.manageSchedule({ action: 'delete_run', run_id: runId });
+    if (res && res.error) { showToast(res.error, true); return; }
+    showToast(`Run deleted · ${res.artifacts_removed||0} artifact(s) purged`);
+    // Leave the read-only view — no session to return to.
+    navigateTo('scheduled');
+  } catch(e) {
+    showToast('Failed: ' + e.message, true);
+  }
+}
+
+// Hook navigateTo so leaving 'chat' view for a scheduled run clears the
+// readonly banner/composer when the user goes elsewhere.
+(function() {
+  const _origNav = window.navigateTo;
+  if (typeof _origNav !== 'function') return;
+  window.navigateTo = function(view) {
+    const banner = document.getElementById('scheduled-readonly-banner');
+    if (banner) banner.remove();
+    const input = document.getElementById('input');
+    const sendBtn = document.getElementById('send-btn');
+    if (input && input.disabled && state.activeChat?._readonly) {
+      input.disabled = false;
+      input.placeholder = '';
+    }
+    if (sendBtn && sendBtn.disabled && state.activeChat?._readonly) {
+      sendBtn.disabled = false;
+    }
+    if (state.activeChat) {
+      state.activeChat._readonly = false;
+      state.activeChat._scheduledRun = null;
+    }
+    return _origNav.apply(this, arguments);
+  };
+})();
 
 function timeAgo(timestamp) {
   const now = Date.now() / 1000;

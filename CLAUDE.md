@@ -82,10 +82,19 @@ Files written under `agents/<name>/artifacts/<date>_<session_prefix>/` are auto-
 
 - Each write/edit creates a row in `artifact_versions` (content blob, capped at 5MB)
 - SSE: `artifact_updated` (enriched `file_created` with `artifact_id`, `artifact_version`, `artifact_type`)
-- Tables: `artifacts(id, session_id, agent_id, name, path, type)` + `artifact_versions(content, version, size, action)`
+- Tables: `artifacts(id, session_id, agent_id, name, path, type, role)` + `artifact_versions(content, version, size, action)`
 - API: `GET /v1/artifacts?session_id=X`, `GET /v1/artifacts/<id>/content?version=N`, `…/download?version=N`, `GET /v1/artifacts/browse?agent_id=X&limit=N`
 - **Panel**: type-aware rendering (code = highlight.js, html = iframe, svg inline, markdown rendered). Artifact cards in chat open the panel, not a modal
 - **Browse view**: sidebar nav → full-page grid with type/agent filters; clicking a card opens the source session + panel
+- **Role classification (v8.11.0)**: `role` column (`output` default / `intermediate`) set at registration via `_ARTIFACT_INTERMEDIATE_EXTS` — `.py/.sh/.bash/.js/.ts/.rb/.pl/.json/.jsonl/.yaml/.yml/.toml/.ini/.cfg/.csv/.tsv/.log` are classed as working files; everything else (`.md/.html/.pdf/.docx/images/svg`) is an output. Browse grid has an `Outputs only`/`Show working files` filter (outputs-only default); right-side artifact list auto-shows the same toggle when the session has any intermediates. Heuristic only — no agent-level override yet. Back-compat: the migration defaults every pre-existing row to `output` so nothing disappears from the grid silently
+
+## Scheduled Task Runs
+
+Each scheduled task execution gets an immutable `schedule_history` row (`id` = `run_id`) and a synthetic `session_id = sched-<run_id>` that scopes its artifacts + traces.
+
+- **Inline history accordion** on each sched-card (no modal): lazy-loads the last 30 runs via `/v1/scheduler` action `history`; each row has Open (loads `openScheduledArtifact` — read-only pseudo-chat built from traces + run row), Details (`_schedViewRunDetail` stats modal), Delete (`_schedDeleteRun`)
+- **Deletion** (v8.11.0): `POST /v1/scheduler` actions `delete_run` (single run: history row + session artifacts + files + empty folder; refuses on `status='running'`) and `clear_history` (every non-running run for a named schedule; schedule definition kept). Backed by `Scheduler.delete_run()` / `Scheduler.delete_history()` and `ChatDB.delete_artifacts_for_session()`
+- **Read-only chat view banner** shows schedule name, run #, timestamp, status, duration, tool count, model, and a collapsible task prompt block; `Delete run` button on the banner navigates back to Scheduled view after purge
 
 ## Next-Prompt Suggestions (ghost text)
 
