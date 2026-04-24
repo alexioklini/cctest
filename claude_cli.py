@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.11.0"
+VERSION = "8.12.0"
 VERSION_DATE = "2026-04-24"
 CHANGELOG = [
+    ("8.12.0", "2026-04-24", "Granular GDPR settings — dedicated Settings → GDPR tab replaces the 4-checkbox card. Scanner rules are now grouped into 8 semantic categories (secrets, national_id, national_id_ctx, financial, contact, network, personal, bare_id) with per-category actions (ignore / warn / block). New PII_RULE_CATEGORIES + PII_DEFAULT_CATEGORY_ACTIONS maps in claude_cli.py are the single source of truth, mirrored as PIIScanner.ruleCategories / defaultCategoryActions in web/index.html. Per-rule overrides (rule_overrides: {rule_id: action}) win over category actions. Every finding carries a category + effective action; _pii_scan_text skips 'ignore' rules entirely (no scan, no log). New _pii_effective_action helper resolves rule_overrides > category > default, and downgrades 'block' to 'warn' when server_block (master switch) is off — keeping back-compat for existing configs. New _pii_worst_action helper returns block > warn > ignore across findings; main-chat send_message and gdpr_pick_model_for_background now refuse only when the scan's worst action is 'block' rather than on any finding, so warn-only categories no longer raise RuntimeError. Email allowlist: every email finding is matched against gdpr_scanner.email_allowlist (list of full addresses or '@domain' patterns, case-insensitive); matches are suppressed entirely — no finding, no audit row, no modal. Server validates on POST /v1/services/server: unknown rule_ids are rejected (typos surface), unknown categories silently dropped, actions must be ignore|warn|block, allowlist entries must contain '@' and no whitespace. Web UI: dedicated GDPR tab in General Settings (alongside Server/Models/…) with three sections — master switches (enabled, server_log, server_block, fallback model), email allowlist textarea (one per line, '@domain' for wildcards), and collapsible category rows showing rule counts + override counts + inline action dropdown per category. Expanding a category reveals per-rule override selects (empty = use category default). Single Save button commits everything; Reset-to-defaults restores category actions without touching master switches or allowlist. Server tab now shows a one-line GDPR status chip (active / disabled / hard-block on) with a Configure → button linking to the new tab. applyGdprConfigToScanner() is the single entry point that syncs PIIScanner.policy + state.pii* from the server response; called from the startup fetch, the Server tab refresh, and after every GDPR save. piiBlockActive / piiHistoryWorstAction now gate on scan.worstAction === 'block' instead of any finding, so composer model-filtering only kicks in for true block-severity findings."),
     ("8.10.0", "2026-04-23", "GDPR local-model routing — the long-standing follow-up to v8.8.0's scanner. When the outgoing payload contains personal data the chat is automatically routed to a local model instead of being blocked at the door. Three layers: (1) config.json → gdpr_scanner.default_local_fallback_model — a model id used by every non-interactive LLM call to transparently swap cloud → local when PII is detected. Configurable in Settings → Server → GDPR card (dropdown is populated only with enabled local models; selection is validated server-side against is_local + enabled). (2) Server-side hook gdpr_pick_model_for_background(model, texts, purpose) in claude_cli.py — single decision point called by generate_next_prompt_suggestion, classify_chat_for_memory, _summarise_tool_result (worker subagents), _run_delegate (delegate_task tool + scheduler tasks + agent-to-agent delegation), _generate_chat_summary. Every detection at the background layer emits a pii_detected audit row; every swap emits an additional pii_auto_fallback row; a new pii_blocked row fires when server_block=true and no local fallback is usable. New GDPRBlockedError sentinel (inherits RuntimeError) propagates refusal cleanly: next-prompt/classifier return None, summariser returns the static fallback summary, delegate returns a 'Delegation error: [GDPR block]...' string, chat summary skips. (3) Client-side interlock in web/index.html — piiBlockActive(chat) is true when the composer draft OR the loaded chat history contains PII (new piiHistoryText/piiHistoryHasFindings walk the messages array with a cache keyed by message count, invalidated on openSession / user-message push / stream done / newChat). When active, toggleModelDropdown reduces the model list to is_local-only with an amber 'Personal data detected' header; piiEnsureLocalModel auto-swaps the chat to the configured fallback (or first enabled local) the instant PII is seen; sendMessage refuses-with-toast if server_block is on and no local model is selectable. Badge shows three distinct states: red when no local available, green when routing via local (with 'auto-selected' marker on first swap), amber warn-only when block is off. New badge scope label 'Personal data earlier in this chat' distinguishes history-derived findings from fresh draft input. Server-side send_message block gate now checks is_model_local(model) before raising the user-facing RuntimeError — previously the gate fired unconditionally and would refuse even when the user had already picked a local model, so manual recovery from the dropdown was broken (session b2703917 regression). GET /v1/models/config now annotates every model entry with is_local (derived from _is_local_base_url on the resolved provider) so the web UI doesn't duplicate URL parsing. New is_model_local(model) helper in claude_cli.py is the single authoritative resolver. All call sites verified: scanner runs on both main chat (round 0, warn-or-block) and every background path (detect + swap + optional refuse); audit trail covers detect, swap, and block independently."),
     ("8.9.0", "2026-04-23", "Per-provider concurrency queue for local LLM gateways. Local runtimes (oMLX on port 8000, CLIProxyAPI on 8317) can't actually process two /chat/completions in parallel even when multiple models are loaded — the GPU serializes internally and a second request stalls the first. Without coordination, two concurrent chats + scheduler delegates + warmup primes fought for the same wire and occasionally got 500s. New LocalProviderQueue (claude_cli.py) with per-provider semaphore + strict-FIFO waitlist, opt-in via config.json providers.<name>.max_concurrent (0 = unlimited = no queue). Seeded: omlx=1, cliproxyapi=2, cloud providers stay 0. Wrapped every HTTP call site that hits a /chat/completions endpoint: send_message main chat, _run_delegate, run_model_warmup, classify_chat_for_memory; generate_next_prompt_suggestion and _summarise_tool_result are covered transitively via send_message_with_fallback. Warmup goes through the queue too (label=warmup), so the keeper can't cut in front of a live chat. Slot is held only during the HTTP wire time — _handle_openai_response calls release_slot() the instant the SSE stream drains, before any tool execution or recursive send_message, so local tool work (exa_search, python_exec, worker summariser) doesn't block other chats from the gateway. Worker subagents that fire a nested summariser LLM call now just queue normally — no re-entrancy, no deadlock. Cancellation during wait removes the ticket from the deque cleanly; cancellation mid-HTTP fires via existing cancel_token path. New GET /v1/queue/status exposes per-provider active + waiting tickets (label, model, session, agent, age). New POST /v1/queue/cancel (admin-only, audit-logged as queue_cancel): waiting tickets raise TaskCancelled(\"Queue cancel by admin: <reason>\") on their next 200ms poll tick; running tickets have their cancel_token fired (same signal as the per-chat Stop button). SSE events queue_wait / queue_acquired / queue_released stream to the UI per turn. Web UI adds a status-bar Queue pill next to Pool — always visible when any provider has max_concurrent > 0, label shows N/M (active/capacity) or N+W/M when queued. Click opens a modal listing active + waiting tickets per provider with live updates; admins see a red Cancel button per row. Per-turn inline banner in the chat streaming bubble: 'Waiting in queue on <provider> — position N of M · Xs' until queue_acquired fires. QueueMonitor polls /v1/queue/status (1s fast when tickets exist, 10s slow when idle)."),
     ("8.8.0", "2026-04-23", "GDPR / PII pre-submit scanner. Every chat message and text attachment is scanned locally in the browser before it leaves the client, and again server-side before hitting the LLM. Zero external APIs, free, offline. 71 regex-based detectors across three tiers: (1) Tier 1 national IDs with real checksums — UK NINO + NHS (mod-11), NL BSN (11-proef), BE national number (mod-97), PL PESEL, PT NIF, SE personnummer (Luhn), DK CPR, NO fødselsnummer (dual mod-11), CH AHV (EAN-13), CZ rodné číslo, RO CNP, HU TAJ, GR AMKA, BG EGN, IE PPS, ES DNI/NIE, IT Codice Fiscale, DE Steuer-ID, FR INSEE, AT SVNR, US SSN, BR CPF + CNPJ, CA SIN (Luhn), MX CURP, AR DNI, IN Aadhaar (Verhoeff), JP My Number, KR RRN, SG NRIC, TW national ID. (2) Tier 2 cloud secrets — AWS access key + secret, GitHub PAT + app tokens, Slack tokens + webhooks, Google API key + OAuth client, Stripe live/test, OpenAI, Anthropic, Twilio, SendGrid, Mailgun, JWT, Azure Storage connection strings, Azure account keys, PEM private keys, basic-auth in URL, entropy-gated generic `api_key = \"...\"` assignments. (3) Tier 3 context-fallback — fire on keyword + number-shape even when checksum fails, so `SVNR: 3030201077` and `svr-nummer: ...` trigger regardless of validity. Plus a bare-identifier heuristic for messages dominated by ID-shaped number lines (the classic 'what is this number?' paste). Strict checksum rules win first via overlap suppression; context-fallback and bare-identifier rules catch what checksum-strict would miss. Single source of truth in two mirrored implementations: PIIScanner in web/index.html (JS) and _pii_rules/_pii_scan_text/_pii_scan_bare_identifiers in claude_cli.py (Python) — 58/58 parity on handcrafted positive fixtures, 0 false positives on prose / non-Luhn card-shaped numbers. Redesigned warning modal: 640px amber-gradient banner with animated shield icon, hero-style count, per-source cards with pill badges and redacted monospace samples (first 2 + last 2 chars visible, rest masked), keyboard shortcuts (Esc cancels, Cmd/Ctrl+Enter sends), click-outside dismiss, session suppression checkbox. Composer inline badge redesigned as an amber gradient pill with shield SVG and formatted count. Server-side mirror runs in send_message on _tool_round == 0 only (subsequent rounds replay the same user content); findings logged to audit.db as pii_detected rows when gdpr_scanner.server_log is enabled; optional hard-block mode raises pre-LLM when gdpr_scanner.server_block is true. New Settings → Server → GDPR / PII Scanner card with three checkboxes (enabled / server_log / server_block) and Save. Config at config.json → gdpr_scanner, cached 30s, invalidated on save via engine._invalidate_gdpr_cache(). Future: auto-route PII-containing requests to local-only models (blocked on multi-user inference queue)."),
@@ -12787,14 +12788,26 @@ def _pii_scan_bare_identifiers(text: str) -> list[dict]:
     return findings
 
 
-def _pii_scan_text(text: str, max_findings: int = 100) -> list[dict]:
-    """Scan text for PII. Returns list of {rule_id, label, start, end} with
-    overlap-suppression across rules (first match wins)."""
+def _pii_scan_text(text: str, max_findings: int = 100,
+                   cfg: dict | None = None) -> list[dict]:
+    """Scan text for PII. Returns list of {rule_id, label, start, end, category,
+    action} with overlap-suppression across rules (first match wins).
+
+    Applies per-category actions: rules with action='ignore' are skipped entirely;
+    email findings matching `email_allowlist` are suppressed regardless of action.
+    """
     if not text or not isinstance(text, str):
         return []
+    if cfg is None:
+        cfg = _get_gdpr_scanner_config()
+    allowlist = cfg.get("email_allowlist") or []
     findings: list[dict] = []
     spans: list[tuple[int, int]] = []
     for rule in _pii_rules():
+        rid = rule["id"]
+        action = _pii_effective_action(rid, cfg)
+        if action == "ignore":
+            continue
         for m in rule["re"].finditer(text):
             match = m.group(0)
             ok = rule.get("ok")
@@ -12803,26 +12816,44 @@ def _pii_scan_text(text: str, max_findings: int = 100) -> list[dict]:
             s, e = m.start(), m.end()
             if any(s < se and e > ss for ss, se in spans):
                 continue
+            # Email allowlist: if this email matches a trusted address/domain,
+            # skip it silently (don't reserve the span so weaker rules could
+            # theoretically reclaim it — but no other rule matches bare emails
+            # anyway, and consuming the span would incorrectly mask findings).
+            if rid == "email" and _pii_email_allowed(match, allowlist):
+                continue
             spans.append((s, e))
-            findings.append({"rule_id": rule["id"], "label": rule["label"], "start": s, "end": e, "len": e - s})
+            findings.append({
+                "rule_id": rid, "label": rule["label"],
+                "start": s, "end": e, "len": e - s,
+                "category": PII_RULE_CATEGORIES.get(rid, "personal"),
+                "action": action,
+            })
             if len(findings) >= max_findings:
                 return findings
     # Heuristic: bare-identifier fallback when the rule catalog didn't cover a
     # paste of ID-shaped numbers. Checksum-strict rules above still win first.
-    for f in _pii_scan_bare_identifiers(text):
-        if any(f["start"] < se and f["end"] > ss for ss, se in spans):
-            continue
-        spans.append((f["start"], f["end"]))
-        findings.append(f)
-        if len(findings) >= max_findings:
-            break
+    bare_action = _pii_effective_action("bare_identifier", cfg)
+    if bare_action != "ignore":
+        for f in _pii_scan_bare_identifiers(text):
+            if any(f["start"] < se and f["end"] > ss for ss, se in spans):
+                continue
+            spans.append((f["start"], f["end"]))
+            f["category"] = "bare_id"
+            f["action"] = bare_action
+            findings.append(f)
+            if len(findings) >= max_findings:
+                break
     return findings
 
 
-def _pii_scan_messages(messages: list[dict], max_findings: int = 100) -> list[dict]:
+def _pii_scan_messages(messages: list[dict], max_findings: int = 100,
+                       cfg: dict | None = None) -> list[dict]:
     """Scan outgoing LLM messages for PII. Only looks at user + system content
     (assistant content + tool results come from the model and aren't 'leaks'
     from the user's perspective — but we could extend if needed)."""
+    if cfg is None:
+        cfg = _get_gdpr_scanner_config()
     findings: list[dict] = []
     for idx, msg in enumerate(messages or []):
         role = msg.get("role")
@@ -12830,13 +12861,13 @@ def _pii_scan_messages(messages: list[dict], max_findings: int = 100) -> list[di
             continue
         content = msg.get("content", "")
         if isinstance(content, str):
-            for f in _pii_scan_text(content, max_findings=max_findings - len(findings)):
+            for f in _pii_scan_text(content, max_findings=max_findings - len(findings), cfg=cfg):
                 f["msg_index"] = idx
                 findings.append(f)
         elif isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
-                    for f in _pii_scan_text(block.get("text", ""), max_findings=max_findings - len(findings)):
+                    for f in _pii_scan_text(block.get("text", ""), max_findings=max_findings - len(findings), cfg=cfg):
                         f["msg_index"] = idx
                         findings.append(f)
         if len(findings) >= max_findings:
@@ -12849,6 +12880,20 @@ def _pii_summarize(findings: list[dict]) -> dict[str, int]:
     for f in findings:
         counts[f["label"]] = counts.get(f["label"], 0) + 1
     return counts
+
+
+def _pii_worst_action(findings: list[dict]) -> str:
+    """Return the most-severe action present in findings: block > warn > ignore.
+    Assumes findings carry an 'action' field (populated by _pii_scan_text).
+    """
+    worst = "ignore"
+    for f in findings:
+        a = f.get("action") or "warn"
+        if a == "block":
+            return "block"
+        if a == "warn" and worst != "block":
+            worst = "warn"
+    return worst
 
 
 # --- Rate Limiting ---
@@ -15484,24 +15529,104 @@ _gdpr_scanner_cache: dict | None = None
 _gdpr_scanner_cache_time: float = 0.0
 
 
+# Category mapping for PII rules. Each rule_id belongs to exactly one category.
+# Categories drive per-group action config (ignore / warn / block) so the user
+# doesn't have to configure 70+ rules one by one. Mirrored in web/index.html.
+PII_RULE_CATEGORIES: dict[str, str] = {
+    # Tier 2 — cloud secrets / API keys / credentials. Always highest severity.
+    "pem_private_key": "secrets", "aws_access_key": "secrets",
+    "aws_secret_key": "secrets", "github_app_token": "secrets",
+    "github_pat": "secrets", "slack_token": "secrets",
+    "slack_webhook": "secrets", "google_api_key": "secrets",
+    "google_oauth_client": "secrets", "stripe_live": "secrets",
+    "stripe_test": "secrets", "openai_key": "secrets",
+    "anthropic_key": "secrets", "twilio_sid": "secrets",
+    "sendgrid_key": "secrets", "mailgun_key": "secrets",
+    "jwt": "secrets", "azure_storage_conn": "secrets",
+    "azure_account_key": "secrets", "basic_auth_url": "secrets",
+    "generic_secret_assignment": "secrets",
+
+    # Tier 1 — national IDs with checksum validation.
+    "de_steuerid": "national_id", "uk_nino": "national_id",
+    "uk_nhs": "national_id", "nl_bsn": "national_id",
+    "be_national": "national_id", "pl_pesel": "national_id",
+    "pt_nif": "national_id", "se_personnummer": "national_id",
+    "dk_cpr": "national_id", "no_fnr": "national_id",
+    "ch_ahv": "national_id", "cz_rc": "national_id",
+    "ro_cnp": "national_id", "hu_taj": "national_id",
+    "gr_amka": "national_id", "bg_egn": "national_id",
+    "ie_pps": "national_id", "br_cpf": "national_id",
+    "br_cnpj": "national_id", "ca_sin": "national_id",
+    "mx_curp": "national_id", "ar_dni": "national_id",
+    "in_aadhaar": "national_id", "jp_mynumber": "national_id",
+    "kr_rrn": "national_id", "sg_nric": "national_id",
+    "tw_nid": "national_id", "at_svnr": "national_id",
+    "fr_insee": "national_id", "es_dni_nie": "national_id",
+    "it_codicefiscale": "national_id", "us_ssn": "national_id",
+    "us_ssn_ctx": "national_id",
+
+    # Context-fallback — keyword + shape, no checksum. Softer category.
+    "svnr_ctx": "national_id_ctx", "ssn_ctx_loose": "national_id_ctx",
+    "tax_id_ctx": "national_id_ctx", "insurance_number_ctx": "national_id_ctx",
+    "id_card_ctx": "national_id_ctx", "drivers_license_ctx": "national_id_ctx",
+    "passport_ctx_loose": "national_id_ctx", "health_insurance_ctx": "national_id_ctx",
+
+    # Financial
+    "iban": "financial", "credit_card": "financial",
+    "bank_account_ctx": "financial",
+
+    # Contact info (emails + phone) — often intentional, allowlist-aware
+    "email": "contact", "phone": "contact",
+
+    # Network identifiers (often infrastructure, not personal data)
+    "ipv4": "network", "ipv6": "network",
+
+    # Biographical / personal-document identifiers
+    "passport": "personal", "dob": "personal",
+
+    # Heuristic fallback
+    "bare_identifier": "bare_id",
+}
+
+# Default category actions. "block" means refuse (or swap to local) when
+# server_block is true; downgraded to "warn" when server_block is false.
+PII_DEFAULT_CATEGORY_ACTIONS: dict[str, str] = {
+    "secrets":         "block",
+    "national_id":     "warn",
+    "national_id_ctx": "warn",
+    "financial":       "warn",
+    "contact":         "ignore",
+    "network":         "ignore",
+    "personal":        "warn",
+    "bare_id":         "warn",
+}
+
+
 def _get_gdpr_scanner_config() -> dict:
     """Read gdpr_scanner config block from config.json. 30s cache.
 
     Shape:
-      {"enabled": bool,            # whole feature on/off (default True)
-       "server_log": bool,         # write audit.db entries on findings (default True)
-       "server_block": bool,       # raise RuntimeError on findings (default False — warn only)
-       "default_local_fallback_model": str}  # model id used to transparently reroute
-                                             # background/worker LLM calls when PII is
-                                             # detected and the current model is cloud
-                                             # (empty string = no fallback)
+      {"enabled": bool,                  # master on/off (default True)
+       "server_log": bool,               # audit.db entries on findings (default True)
+       "server_block": bool,             # master switch for "block" actions (default False)
+                                         #   false → block actions downgrade to warn (back-compat)
+                                         #   true  → block actions refuse unless model is local
+       "default_local_fallback_model": str,
+       "categories": {<cat>: {"action": "ignore|warn|block"}},
+       "rule_overrides": {<rule_id>: "ignore|warn|block"},
+       "email_allowlist": [str, ...]}    # full addresses or "@domain" patterns
     """
     global _gdpr_scanner_cache, _gdpr_scanner_cache_time
     now = time.time()
     if _gdpr_scanner_cache is not None and (now - _gdpr_scanner_cache_time) < 30:
         return _gdpr_scanner_cache
-    cfg = {"enabled": True, "server_log": True, "server_block": False,
-           "default_local_fallback_model": ""}
+    cfg = {
+        "enabled": True, "server_log": True, "server_block": False,
+        "default_local_fallback_model": "",
+        "categories": {cat: {"action": act} for cat, act in PII_DEFAULT_CATEGORY_ACTIONS.items()},
+        "rule_overrides": {},
+        "email_allowlist": [],
+    }
     cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
     try:
         with open(cfg_path) as f:
@@ -15511,11 +15636,68 @@ def _get_gdpr_scanner_config() -> dict:
                 cfg[k] = bool(loaded[k])
         if "default_local_fallback_model" in loaded:
             cfg["default_local_fallback_model"] = str(loaded["default_local_fallback_model"] or "")
+        cats_in = loaded.get("categories") or {}
+        if isinstance(cats_in, dict):
+            for cat, entry in cats_in.items():
+                if cat not in cfg["categories"]:
+                    continue
+                if isinstance(entry, dict) and entry.get("action") in ("ignore", "warn", "block"):
+                    cfg["categories"][cat]["action"] = entry["action"]
+                elif isinstance(entry, str) and entry in ("ignore", "warn", "block"):
+                    cfg["categories"][cat]["action"] = entry
+        ovr_in = loaded.get("rule_overrides") or {}
+        if isinstance(ovr_in, dict):
+            for rid, act in ovr_in.items():
+                if act in ("ignore", "warn", "block") and rid in PII_RULE_CATEGORIES:
+                    cfg["rule_overrides"][rid] = act
+        al_in = loaded.get("email_allowlist") or []
+        if isinstance(al_in, list):
+            cfg["email_allowlist"] = [str(e).strip().lower() for e in al_in
+                                      if isinstance(e, str) and e.strip()]
     except (OSError, json.JSONDecodeError):
         pass
     _gdpr_scanner_cache = cfg
     _gdpr_scanner_cache_time = now
     return cfg
+
+
+def _pii_effective_action(rule_id: str, cfg: dict | None = None) -> str:
+    """Return effective action for a rule_id — 'ignore', 'warn', or 'block'.
+
+    Precedence: rule_overrides[rule_id] > categories[cat].action > default.
+    When `server_block` is false, any 'block' is downgraded to 'warn' so the
+    master switch stays meaningful.
+    """
+    if cfg is None:
+        cfg = _get_gdpr_scanner_config()
+    ovr = (cfg.get("rule_overrides") or {}).get(rule_id)
+    if ovr in ("ignore", "warn", "block"):
+        action = ovr
+    else:
+        cat = PII_RULE_CATEGORIES.get(rule_id, "personal")
+        cat_cfg = (cfg.get("categories") or {}).get(cat) or {}
+        action = cat_cfg.get("action") or PII_DEFAULT_CATEGORY_ACTIONS.get(cat, "warn")
+    if action == "block" and not cfg.get("server_block", False):
+        action = "warn"
+    return action
+
+
+def _pii_email_allowed(email: str, allowlist: list[str]) -> bool:
+    """True if the email matches the allowlist. Entries starting with '@' are
+    treated as domain patterns (any address at that domain). Case-insensitive."""
+    if not email or not allowlist:
+        return False
+    e = email.strip().lower()
+    for pat in allowlist:
+        p = pat.strip().lower()
+        if not p:
+            continue
+        if p.startswith("@"):
+            if e.endswith(p):
+                return True
+        elif e == p:
+            return True
+    return False
 
 
 def is_model_local(model_id: str) -> bool:
@@ -15591,7 +15773,7 @@ def gdpr_pick_model_for_background(model: str, texts, purpose: str = "") -> str:
         for s in samples:
             if not s:
                 continue
-            findings.extend(_pii_scan_text(s, max_findings=5))
+            findings.extend(_pii_scan_text(s, max_findings=5, cfg=cfg))
             if findings:
                 break
     except Exception:
@@ -15604,7 +15786,11 @@ def gdpr_pick_model_for_background(model: str, texts, purpose: str = "") -> str:
     _sid = getattr(_thread_local, 'current_session_id', None) or ""
     _n = len(findings)
     _log_audit = bool(cfg.get("server_log", True) and _audit_log)
-    _server_block = bool(cfg.get("server_block", False))
+    # server_block is the master switch but the per-finding action is what
+    # decides refusal — a warn-category finding never blocks even if the master
+    # switch is on. _pii_worst_action returns "block" only if both are true.
+    _worst_action = _pii_worst_action(findings)
+    _server_block = (_worst_action == "block")
 
     # Always record the detection at the background layer, independent of any
     # swap decision. Best-effort.
@@ -18786,46 +18972,46 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         _gdpr_cfg = _get_gdpr_scanner_config()
         if _gdpr_cfg.get("enabled", True):
             try:
-                _pii_findings = _pii_scan_messages(messages, max_findings=100)
+                _pii_findings = _pii_scan_messages(messages, max_findings=100, cfg=_gdpr_cfg)
             except Exception:
                 _pii_findings = []
             if _pii_findings:
                 _pii_counts = _pii_summarize(_pii_findings)
                 _pii_summary = ", ".join(f"{n} {lbl.lower()}" + ("" if n == 1 else "s")
                                           for lbl, n in _pii_counts.items())
+                _worst = _pii_worst_action(_pii_findings)
                 _agent = getattr(_thread_local, 'current_agent', None) or _current_agent
                 _agent_id = _agent.agent_id if _agent else "main"
                 print(f"[gdpr] session={session_id} agent={_agent_id} "
-                      f"findings={len(_pii_findings)} ({_pii_summary})", flush=True)
+                      f"findings={len(_pii_findings)} worst={_worst} ({_pii_summary})", flush=True)
                 if _gdpr_cfg.get("server_log", True) and _audit_log:
                     try:
                         _audit_log.log_action(
                             agent=_agent_id,
                             action_type="pii_detected",
                             tool_name="gdpr_scanner",
-                            args_summary=f"{len(_pii_findings)} findings",
+                            args_summary=f"{len(_pii_findings)} findings ({_worst})",
                             result_summary=_pii_summary[:200],
-                            result_status="warning",
+                            result_status="warning" if _worst != "block" else "blocked",
                             session_id=session_id,
                             source="llm_request",
                         )
                     except Exception:
                         pass
-                if _gdpr_cfg.get("server_block", False):
-                    # Only block when the outgoing request targets a cloud
-                    # provider. If the user has already picked a local model,
-                    # the data stays on-prem — matching the composer UI which
-                    # reduces the dropdown to local models on PII detection.
+                # Block only when (a) at least one finding has action='block'
+                # (which already implies server_block=true via _pii_effective_action
+                # downgrade) AND (b) the outgoing request targets a cloud provider.
+                if _worst == "block":
                     try:
                         _model_is_local = is_model_local(model)
                     except Exception:
                         _model_is_local = False
                     if not _model_is_local:
                         raise RuntimeError(
-                            f"[GDPR block] Outgoing message contains detected personal data: "
-                            f"{_pii_summary}. Server is configured to block such requests "
-                            f"(gdpr_scanner.server_block=true). Select a local model or "
-                            f"disable server_block in Settings."
+                            f"[GDPR block] Outgoing message contains high-severity "
+                            f"personal data: {_pii_summary}. Select a local model, "
+                            f"remove the data, or adjust the category action in "
+                            f"Settings → GDPR."
                         )
         # Start a request-level trace span for the full conversation turn
         if _trace_manager:

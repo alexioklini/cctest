@@ -241,10 +241,22 @@ Global `cost_limits.max_session_cost_usd` in `config.json` (Settings → Server 
     "enabled": true,
     "server_log": true,
     "server_block": false,
-    "default_local_fallback_model": ""
+    "default_local_fallback_model": "",
+    "categories": {
+      "secrets":         {"action": "block"},
+      "national_id":     {"action": "warn"},
+      "national_id_ctx": {"action": "warn"},
+      "financial":       {"action": "warn"},
+      "contact":         {"action": "ignore"},
+      "network":         {"action": "ignore"},
+      "personal":        {"action": "warn"},
+      "bare_id":         {"action": "warn"}
+    },
+    "rule_overrides": {"<rule_id>": "ignore|warn|block"},
+    "email_allowlist": ["user@company.com", "@trusted.com"]
   }
   ```
-  `default_local_fallback_model` must be an enabled local model id; `POST /v1/services/server` validates this and returns 400 otherwise. Empty string disables auto-routing
+  `default_local_fallback_model` must be an enabled local model id. **Categories (v8.12.0)** group the ~70 rules into 8 semantic buckets; each has an action: `ignore` (rule never runs — no scan, no log, no audit row), `warn` (shows the confirmation modal), `block` (refuses unless current model is local; composer auto-routes to fallback). `rule_overrides` let a specific `rule_id` override its category's action. `block` is downgraded to `warn` when the `server_block` master switch is off (back-compat for pre-8.12 configs). **Email allowlist**: findings from the `email` rule matching an entry in `email_allowlist` (exact address OR `@domain` pattern, case-insensitive, no whitespace) are suppressed entirely. `PII_RULE_CATEGORIES` + `PII_DEFAULT_CATEGORY_ACTIONS` in `claude_cli.py` are the single source of truth, mirrored as `PIIScanner.ruleCategories` / `defaultCategoryActions` in `web/index.html`. Block decisions (main-chat + background) gate on `_pii_worst_action(findings) == "block"` so warn-only findings never raise — only a block-severity category can refuse. `POST /v1/services/server` validates categories (unknown silently dropped), rule_overrides (unknown `rule_id` → 400), and allowlist entries (missing `@` → 400). UI: dedicated **Settings → GDPR** tab with master switches, email allowlist textarea, and collapsible per-category rows showing rule counts + inline action dropdowns + per-rule override dropdowns. Server tab shows a one-line GDPR status chip with Configure → link. `applyGdprConfigToScanner(gs)` is the single client entry point that syncs `PIIScanner.policy` + `state.pii*` from the server response; called from the startup fetch, the Server/GDPR tab refresh, and after every save
 
 - **Suppression state lives in `sessionStorage`**: key `pii-suppress:<session_id_or_"_new">` — cleared on page reload, not on server restart. Intentional: protection resets every browser session
 

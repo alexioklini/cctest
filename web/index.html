@@ -4503,6 +4503,103 @@ const PIIScanner = {
   _mod11(digits, weights){ let s=0; for(let i=0;i<weights.length;i++) s += (+digits[i]) * weights[i]; return s % 11; },
   _validDate(y,m,d){ if(m<1||m>12) return false; const dim=[31, (y%4===0&&(y%100!==0||y%400===0))?29:28, 31,30,31,30,31,31,30,31,30,31]; return d>=1 && d<=dim[m-1]; },
 
+  // ── Category + action model ─────────────────────────────────────────
+  // Mirrors PII_RULE_CATEGORIES in claude_cli.py. Each rule belongs to exactly
+  // one category; users configure actions per category (ignore/warn/block).
+  ruleCategories: {
+    // Tier 2 — cloud secrets
+    pem_private_key:'secrets', aws_access_key:'secrets', aws_secret_key:'secrets',
+    github_app_token:'secrets', github_pat:'secrets', slack_token:'secrets',
+    slack_webhook:'secrets', google_api_key:'secrets', google_oauth_client:'secrets',
+    stripe_live:'secrets', stripe_test:'secrets', openai_key:'secrets',
+    anthropic_key:'secrets', twilio_sid:'secrets', sendgrid_key:'secrets',
+    mailgun_key:'secrets', jwt:'secrets', azure_storage_conn:'secrets',
+    azure_account_key:'secrets', basic_auth_url:'secrets',
+    generic_secret_assignment:'secrets',
+    // Tier 1 — national IDs with checksum
+    de_steuerid:'national_id', uk_nino:'national_id', uk_nhs:'national_id',
+    nl_bsn:'national_id', be_national:'national_id', pl_pesel:'national_id',
+    pt_nif:'national_id', se_personnummer:'national_id', dk_cpr:'national_id',
+    no_fnr:'national_id', ch_ahv:'national_id', cz_rc:'national_id',
+    ro_cnp:'national_id', hu_taj:'national_id', gr_amka:'national_id',
+    bg_egn:'national_id', ie_pps:'national_id', br_cpf:'national_id',
+    br_cnpj:'national_id', ca_sin:'national_id', mx_curp:'national_id',
+    ar_dni:'national_id', in_aadhaar:'national_id', jp_mynumber:'national_id',
+    kr_rrn:'national_id', sg_nric:'national_id', tw_nid:'national_id',
+    at_svnr:'national_id', fr_insee:'national_id', es_dni_nie:'national_id',
+    it_codicefiscale:'national_id', us_ssn:'national_id', us_ssn_ctx:'national_id',
+    // Context fallback
+    svnr_ctx:'national_id_ctx', ssn_ctx_loose:'national_id_ctx',
+    tax_id_ctx:'national_id_ctx', insurance_number_ctx:'national_id_ctx',
+    id_card_ctx:'national_id_ctx', drivers_license_ctx:'national_id_ctx',
+    passport_ctx_loose:'national_id_ctx', health_insurance_ctx:'national_id_ctx',
+    // Financial
+    iban:'financial', credit_card:'financial', bank_account_ctx:'financial',
+    // Contact
+    email:'contact', phone:'contact',
+    // Network
+    ipv4:'network', ipv6:'network',
+    // Personal / biographical
+    passport:'personal', dob:'personal',
+    // Heuristic
+    bare_identifier:'bare_id',
+  },
+  defaultCategoryActions: {
+    secrets:'block', national_id:'warn', national_id_ctx:'warn',
+    financial:'warn', contact:'ignore', network:'ignore',
+    personal:'warn', bare_id:'warn',
+  },
+  categoryLabels: {
+    secrets:'Secrets & API keys',
+    national_id:'National IDs (checksum-verified)',
+    national_id_ctx:'ID-like values (context-matched)',
+    financial:'Financial (IBAN, cards, accounts)',
+    contact:'Contact info (emails, phone)',
+    network:'Network addresses (IP)',
+    personal:'Biographical (passport, DOB)',
+    bare_id:'Bare numeric identifiers',
+  },
+
+  // Current policy — refreshed from /v1/services/status. Defaults are safe.
+  policy: {
+    enabled: true,
+    serverBlock: false,
+    categories: null,        // {cat: 'ignore'|'warn'|'block'} — null means use defaults
+    ruleOverrides: {},       // {rule_id: 'ignore'|'warn'|'block'}
+    emailAllowlist: [],
+  },
+
+  // Resolve effective action for a rule_id. Mirrors _pii_effective_action.
+  effectiveAction(ruleId) {
+    const ovr = this.policy.ruleOverrides?.[ruleId];
+    if (ovr === 'ignore' || ovr === 'warn' || ovr === 'block') {
+      return this._applyMasterSwitch(ovr);
+    }
+    const cat = this.ruleCategories[ruleId] || 'personal';
+    const catCfg = this.policy.categories?.[cat];
+    const catAct = (catCfg && (catCfg.action || catCfg)) || this.defaultCategoryActions[cat] || 'warn';
+    return this._applyMasterSwitch(catAct);
+  },
+  _applyMasterSwitch(action) {
+    return (action === 'block' && !this.policy.serverBlock) ? 'warn' : action;
+  },
+
+  emailAllowed(email) {
+    const list = this.policy.emailAllowlist || [];
+    if (!email || !list.length) return false;
+    const e = email.trim().toLowerCase();
+    for (const pat of list) {
+      const p = (pat||'').trim().toLowerCase();
+      if (!p) continue;
+      if (p.startsWith('@')) {
+        if (e.endsWith(p)) return true;
+      } else if (e === p) {
+        return true;
+      }
+    }
+    return false;
+  },
+
   // Each rule: {id, label, regex, validate?} — validate() reduces false positives.
   rules: [
     // ── Tier 2: cloud secrets & API keys (distinct prefixes → high priority) ──
@@ -5055,35 +5152,53 @@ const PIIScanner = {
 
   // Cross-field duplicate suppression: if a credit-card match is already
   // covered by Luhn-valid IBAN, drop it (and similar overlaps).
+  // Applies per-category actions: rules with action='ignore' are skipped;
+  // email findings matching the allowlist are dropped silently.
   scan(text) {
     if (!text || typeof text !== 'string') return [];
     const findings = [];
     const seenSpans = []; // [start, end, ruleId]
     for (const rule of this.rules) {
+      const action = this.effectiveAction(rule.id);
+      if (action === 'ignore') continue;
+      const cat = this.ruleCategories[rule.id] || 'personal';
       const re = new RegExp(rule.regex.source, rule.regex.flags);
       let m;
       while ((m = re.exec(text)) !== null) {
         const match = m[0];
         if (rule.validate && !rule.validate(match)) continue;
         const start = m.index, end = m.index + match.length;
-        // Skip if already covered by an earlier (higher-priority) rule
         if (seenSpans.some(([s,e]) => start < e && end > s)) continue;
+        if (rule.id === 'email' && this.emailAllowed(match)) continue;
         seenSpans.push([start, end, rule.id]);
-        findings.push({ ruleId: rule.id, label: rule.label, match, index: start });
-        if (findings.length >= 100) break; // cap
+        findings.push({ ruleId: rule.id, label: rule.label, match, index: start, category: cat, action });
+        if (findings.length >= 100) break;
       }
     }
-    // Heuristic pass: bare numeric identifiers when the rule catalog
-    // didn't already cover the span (e.g. pasted SVNR list that fails
-    // Austrian checksum but is still clearly ID-shaped).
-    for (const f of this._scanBareIdentifiers(text)) {
-      const start = f.index, end = f.index + f.match.length;
-      if (seenSpans.some(([s,e]) => start < e && end > s)) continue;
-      seenSpans.push([start, end, f.ruleId]);
-      findings.push(f);
-      if (findings.length >= 100) break;
+    const bareAction = this.effectiveAction('bare_identifier');
+    if (bareAction !== 'ignore') {
+      for (const f of this._scanBareIdentifiers(text)) {
+        const start = f.index, end = f.index + f.match.length;
+        if (seenSpans.some(([s,e]) => start < e && end > s)) continue;
+        seenSpans.push([start, end, f.ruleId]);
+        f.category = 'bare_id';
+        f.action = bareAction;
+        findings.push(f);
+        if (findings.length >= 100) break;
+      }
     }
     return findings;
+  },
+
+  // Return the most-severe action across findings: block > warn > ignore.
+  worstAction(findings) {
+    let worst = 'ignore';
+    for (const f of findings || []) {
+      const a = f.action || 'warn';
+      if (a === 'block') return 'block';
+      if (a === 'warn' && worst !== 'block') worst = 'warn';
+    }
+    return worst;
   },
 
   // Summarize findings as a count-per-category map.
@@ -5152,7 +5267,8 @@ const PIIScanner = {
         all.push(...fs);
       }
     }
-    return { findings: all, bySource, counts: this.summarize(all) };
+    return { findings: all, bySource, counts: this.summarize(all),
+             worstAction: this.worstAction(all) };
   },
 };
 window.PIIScanner = PIIScanner;
@@ -5431,7 +5547,7 @@ function piiHistoryText(chat) {
   return parts.join('\n');
 }
 
-// Scan the chat's loaded history for PII and cache the boolean result.
+// Scan the chat's loaded history for PII and cache the worst-action result.
 // Cache key is the message count so it refreshes on every new turn; callers
 // can force a re-scan by setting `chat._piiHistoryScanLen = -1`.
 function piiHistoryHasFindings(chat) {
@@ -5440,19 +5556,105 @@ function piiHistoryHasFindings(chat) {
   if (!len) return false;
   if (chat._piiHistoryScanLen === len) return !!chat._piiHistoryHas;
   const text = piiHistoryText(chat);
-  let has = false;
+  let has = false, worst = 'ignore';
   try {
     const scan = PIIScanner.scanPayload(text, []);
     has = scan.findings.length > 0;
+    worst = scan.worstAction || 'ignore';
     chat._piiHistoryCounts = scan.counts || {};
   } catch (e) { has = false; }
   chat._piiHistoryHas = has;
+  chat._piiHistoryWorst = worst;
   chat._piiHistoryScanLen = len;
   return has;
 }
 
-// True when the active chat's draft OR its loaded history contains PII, AND
-// the server is configured to hard-block cloud requests. In that state the
+function piiHistoryWorstAction(chat) {
+  piiHistoryHasFindings(chat);
+  return chat?._piiHistoryWorst || 'ignore';
+}
+
+// Collect the current GDPR tab form state into an outgoing config object.
+// Returns the full gdpr_scanner body so the server can store it atomically.
+function collectGdprFormConfig() {
+  const enabled = document.getElementById('gdpr-enabled')?.checked !== false;
+  const serverLog = document.getElementById('gdpr-serverlog')?.checked !== false;
+  const serverBlock = !!document.getElementById('gdpr-block')?.checked;
+  const fallback = document.getElementById('gdpr-fallback')?.value || '';
+
+  const categories = {};
+  for (const sel of document.querySelectorAll('.gdpr-cat-action')) {
+    const cat = sel.dataset.cat;
+    if (!cat) continue;
+    categories[cat] = { action: sel.value };
+  }
+
+  const rule_overrides = {};
+  for (const sel of document.querySelectorAll('.gdpr-rule-override')) {
+    const rid = sel.dataset.rule;
+    if (rid && sel.value) rule_overrides[rid] = sel.value;
+  }
+
+  const allowlistRaw = document.getElementById('gdpr-email-allowlist')?.value || '';
+  const email_allowlist = allowlistRaw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+
+  return {
+    enabled, server_log: serverLog, server_block: serverBlock,
+    default_local_fallback_model: fallback,
+    categories, rule_overrides, email_allowlist,
+  };
+}
+
+async function saveGdprConfig() {
+  const btn = document.getElementById('gdpr-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+  try {
+    const body = { gdpr_scanner: collectGdprFormConfig() };
+    const r = await API.post('/v1/services/server', body);
+    applyGdprConfigToScanner(r.gdpr_scanner);
+    showToast('GDPR settings saved');
+    schedulePIIBadgeUpdate();
+  } catch (e) {
+    showToast('Failed: ' + (e.message || e), true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save all GDPR settings'; }
+  }
+}
+
+function resetGdprCategories() {
+  for (const sel of document.querySelectorAll('.gdpr-cat-action')) {
+    const cat = sel.dataset.cat;
+    if (cat && PIIScanner.defaultCategoryActions[cat]) {
+      sel.value = PIIScanner.defaultCategoryActions[cat];
+    }
+  }
+  for (const sel of document.querySelectorAll('.gdpr-rule-override')) {
+    sel.value = '';
+  }
+  showToast('Defaults restored — click Save to apply');
+}
+
+// Apply server-side gdpr_scanner config to both state and PIIScanner.policy so
+// the scanner knows which categories are ignored, warned on, or blocked. Call
+// this anywhere state.pii* is updated from the /v1/services/status response.
+function applyGdprConfigToScanner(gs) {
+  gs = gs || {};
+  state.piiScannerEnabled = gs.enabled !== false;
+  state.piiServerBlock = !!gs.server_block;
+  state.piiLocalFallback = gs.default_local_fallback_model || '';
+  PIIScanner.policy.enabled = state.piiScannerEnabled;
+  PIIScanner.policy.serverBlock = state.piiServerBlock;
+  PIIScanner.policy.categories = gs.categories || null;
+  PIIScanner.policy.ruleOverrides = gs.rule_overrides || {};
+  PIIScanner.policy.emailAllowlist = Array.isArray(gs.email_allowlist) ? gs.email_allowlist : [];
+  // Drop any cached per-chat history scans — action changes invalidate them.
+  for (const c of (state.chats || [])) {
+    if (c) c._piiHistoryScanLen = -1;
+  }
+}
+
+// True when the active chat's draft OR its loaded history contains a
+// block-severity finding AND the master block switch is on. In that state the
 // composer disables cloud-model selection and auto-picks a local model, even
 // if the current draft is empty.
 function piiBlockActive(chat) {
@@ -5465,8 +5667,8 @@ function piiBlockActive(chat) {
     : document.getElementById('chat-input');
   const text = input?.value || '';
   const draftScan = PIIScanner.scanPayload(text, state._pendingFiles || []);
-  if (draftScan.findings.length > 0) return true;
-  return piiHistoryHasFindings(chat);
+  if (draftScan.worstAction === 'block') return true;
+  return piiHistoryWorstAction(chat) === 'block';
 }
 
 // If PII is present + block is on + the current model is cloud, swap to the
@@ -6192,22 +6394,22 @@ async function sendMessage() {
     }
   }
 
-  // GDPR/PII pre-submit check. Blocking only when user confirms, or skips
-  // entirely when the feature is disabled or suppressed for this session.
+  // GDPR/PII pre-submit check. Each finding carries its own action (per the
+  // category policy): 'ignore' never reaches us (filtered during scan), 'warn'
+  // triggers the confirmation modal, 'block' refuses unless a local model is
+  // active. Skipped entirely when the feature is disabled or suppressed.
   if (state.piiScannerEnabled !== false && !sessionStorage.getItem('pii-suppress:' + (chat.sessionId || '_new'))) {
     const scan = PIIScanner.scanPayload(text, state._pendingFiles);
     if (scan.findings.length) {
-      // Hard-block mode: only local models may receive PII. Try once to
-      // auto-swap; if still cloud, refuse the send with an explanation.
-      if (state.piiServerBlock) {
+      if (scan.worstAction === 'block') {
         piiEnsureLocalModel();
         const curModel = chat.model || '';
         if (!curModel || !isModelLocal(curModel)) {
-          showToast('GDPR block: personal data detected. Select a local model before sending.', true);
+          showToast('GDPR block: high-severity personal data detected. Select a local model before sending.', true);
           return;
         }
-        // Local model already selected → no confirmation modal needed.
-      } else {
+        // Local model is selected — data stays on-prem, no confirm modal.
+      } else if (scan.worstAction === 'warn') {
         const go = await confirmPIIBeforeSend(scan, chat);
         if (!go) return;
       }
@@ -9099,6 +9301,7 @@ function openGeneralSettings() {
       <button class="modal-tab" onclick="switchGeneralTab('context',this)">Context</button>
       <button class="modal-tab" onclick="switchGeneralTab('costs',this)">Costs</button>
       <button class="modal-tab" onclick="switchGeneralTab('mempalace',this)">MemPalace</button>
+      <button class="modal-tab" onclick="switchGeneralTab('gdpr',this)">GDPR</button>
       <button class="modal-tab" onclick="switchGeneralTab('tools',this)">Tools</button>
     </div>
     <div class="modal-body" id="general-tab-content" style="flex:1;overflow-y:auto;padding:0">
@@ -9232,12 +9435,7 @@ async function switchGeneralTab(tab, btn) {
       const svc = await API.getServices();
       const srv = svc.server || {};
       state.maxSessionCostUsd = parseFloat(srv.max_session_cost_usd || 0) || 0;
-      {
-        const _gs = srv.gdpr_scanner || {};
-        state.piiScannerEnabled = _gs.enabled !== false;
-        state.piiServerBlock = !!_gs.server_block;
-        state.piiLocalFallback = _gs.default_local_fallback_model || '';
-      }
+      applyGdprConfigToScanner(srv.gdpr_scanner);
       let svcRows = '';
       for (const [name, info] of Object.entries(svc)) {
         if (typeof info !== 'object') continue;
@@ -9290,54 +9488,15 @@ async function switchGeneralTab(tab, btn) {
         </div>
         <div style="font-size:11px;color:var(--text-400);margin-top:2px">Soft limit (no abort). Warning triangle at 70%, modal at 90%. Set 0 to disable.</div>
         ${SEC('GDPR / PII Scanner')}
-        ${(() => {
-          const gs = srv.gdpr_scanner || {enabled:true, server_log:true, server_block:false, default_local_fallback_model:''};
-          const mcAll = state.modelsConfig?.models || {};
-          const localOpts = Object.entries(mcAll)
-            .filter(([id, cfg]) => cfg.enabled && (cfg.is_local === true))
-            .sort((a, b) => (b[1].priority || 0) - (a[1].priority || 0))
-            .map(([mid]) => `<option value="${esc(mid)}" ${mid===(gs.default_local_fallback_model||'')?'selected':''}>${esc(modelShortName(mid))}</option>`)
-            .join('');
-          const hasLocals = localOpts.length > 0;
-          return `
-          <div style="display:flex;flex-direction:column;gap:6px">
-            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-200);cursor:pointer">
-              <input type="checkbox" id="srv-gdpr-enabled" ${gs.enabled!==false?'checked':''}>
-              <span><b>Enable scanner</b> — regex check of outgoing messages and attachments</span>
-            </label>
-            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-200);cursor:pointer">
-              <input type="checkbox" id="srv-gdpr-serverlog" ${gs.server_log!==false?'checked':''}>
-              <span><b>Server-side audit log</b> — record detections in audit.db</span>
-            </label>
-            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-200);cursor:pointer">
-              <input type="checkbox" id="srv-gdpr-block" ${gs.server_block?'checked':''}>
-              <span><b>Block requests with PII</b> (hard block; default is warn-only)</span>
-            </label>
-            <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
-              <span style="font-size:12px;color:var(--text-300);min-width:180px">Default local fallback model</span>
-              <select class="form-select" id="srv-gdpr-fallback" style="flex:1" ${hasLocals?'':'disabled'}>
-                <option value="">None (disabled)</option>
-                ${localOpts}
-              </select>
-            </div>
-            <div style="font-size:11px;color:var(--text-400);margin-top:2px">Used for background LLM calls (next-prompt, chat summary, memory classifier, worker summariser, scheduled tasks) when the selected cloud model would otherwise receive personal data. ${hasLocals?'':'<span style="color:var(--warning,#b45309)">No local models are configured — add one under Models first.</span>'}</div>
-            <button class="btn-secondary" style="align-self:flex-start;margin-top:4px" onclick="
-              const body = {gdpr_scanner: {
-                enabled: document.getElementById('srv-gdpr-enabled').checked,
-                server_log: document.getElementById('srv-gdpr-serverlog').checked,
-                server_block: document.getElementById('srv-gdpr-block').checked,
-                default_local_fallback_model: document.getElementById('srv-gdpr-fallback').value || '',
-              }};
-              API.post('/v1/services/server', body).then(r => {
-                state.piiScannerEnabled = r.gdpr_scanner.enabled;
-                state.piiServerBlock = !!r.gdpr_scanner.server_block;
-                state.piiLocalFallback = r.gdpr_scanner.default_local_fallback_model || '';
-                showToast('GDPR scanner settings saved');
-              }).catch(e => showToast('Failed: ' + (e.message||''), true));
-            ">Save GDPR settings</button>
-            <div style="font-size:11px;color:var(--text-400);margin-top:2px">Detects emails, phone numbers, credit cards (Luhn), IBANs (mod-97), IPs, EU national IDs and dates of birth. Runs locally in the browser before submit and on the server before the LLM call. No external API.</div>
-          </div>`;
-        })()}
+        <div style="display:flex;gap:8px;align-items:center;padding:10px 12px;border:1px solid var(--border-100);border-radius:8px;background:var(--bg-100)">
+          ${DOT((srv.gdpr_scanner||{}).enabled !== false)}
+          <span style="font-size:12px;color:var(--text-200);flex:1">
+            ${(srv.gdpr_scanner||{}).enabled !== false ? 'Scanner active' : 'Scanner disabled'}
+            ${(srv.gdpr_scanner||{}).server_block ? ' &middot; <b style="color:var(--warning,#b45309)">hard-block on</b>' : ''}
+          </span>
+          <button class="btn-secondary" style="font-size:11px;padding:4px 10px" onclick="switchGeneralTab('gdpr', document.querySelector('.modal-tab[onclick*=\\'gdpr\\']'))">Configure &rarr;</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-400);margin-top:2px">Granular category actions, email allowlist, and the local fallback model live in the dedicated GDPR tab.</div>
         ${SEC('Execution Mode')}
         <div style="display:flex;gap:8px;align-items:center">
           <select class="form-select" id="srv-execution-mode" style="flex:1" onchange="document.getElementById('srv-proxy-tools-section').style.display=this.value==='client'?'block':'none'">
@@ -10164,6 +10323,143 @@ async function switchGeneralTab(tab, btn) {
       // (treemap code removed — replaced by tree view above)
 
     } catch(e) { C.innerHTML = P(`<div style="color:var(--error)">Failed to load MemPalace stats: ${esc(e.message||e)}</div>`); }
+  }
+
+  /* ─── GDPR ─── */
+  if (tab === 'gdpr') {
+    try {
+      const svc = await API.getServices();
+      const srv = svc.server || {};
+      const gs = srv.gdpr_scanner || {};
+      applyGdprConfigToScanner(gs);
+      const mcAll = state.modelsConfig?.models || {};
+      const localOpts = Object.entries(mcAll)
+        .filter(([id, cfg]) => cfg.enabled && (cfg.is_local === true))
+        .sort((a, b) => (b[1].priority || 0) - (a[1].priority || 0))
+        .map(([mid]) => `<option value="${esc(mid)}" ${mid===(gs.default_local_fallback_model||'')?'selected':''}>${esc(modelShortName(mid))}</option>`)
+        .join('');
+      const hasLocals = localOpts.length > 0;
+
+      // Build category list with rule memberships
+      const catMembers = {};
+      for (const [rid, cat] of Object.entries(PIIScanner.ruleCategories)) {
+        (catMembers[cat] = catMembers[cat] || []).push(rid);
+      }
+      // Sort rules within each category alphabetically for stable layout
+      for (const cat of Object.keys(catMembers)) catMembers[cat].sort();
+
+      const ruleLabel = (rid) => {
+        const r = PIIScanner.rules.find(x => x.id === rid);
+        return r ? r.label : rid;
+      };
+
+      const ACT_DESC = {
+        ignore: 'Do not flag this category.',
+        warn:   'Show the confirmation modal before sending.',
+        block:  'Refuse unless a local model is active (requires master block on).',
+      };
+      const ACT_COLORS = {
+        ignore: 'var(--text-400)',
+        warn:   '#b45309',
+        block:  'var(--error)',
+      };
+
+      const actionSelect = (cat, current) => `
+        <select class="form-select gdpr-cat-action" data-cat="${esc(cat)}" style="width:150px;font-size:12px">
+          <option value="ignore" ${current==='ignore'?'selected':''}>Ignore</option>
+          <option value="warn" ${current==='warn'?'selected':''}>Warn</option>
+          <option value="block" ${current==='block'?'selected':''}>Block</option>
+        </select>`;
+
+      const policyCats = gs.categories || {};
+      const policyOverrides = gs.rule_overrides || {};
+
+      // Build per-category rule expander
+      const catRows = Object.keys(PIIScanner.categoryLabels).map(cat => {
+        const catCfg = policyCats[cat] || {};
+        const catAction = catCfg.action || PIIScanner.defaultCategoryActions[cat] || 'warn';
+        const rules = catMembers[cat] || [];
+        const overrideCount = rules.filter(r => policyOverrides[r]).length;
+        const ruleRows = rules.map(rid => {
+          const ovr = policyOverrides[rid] || '';
+          return `<div style="display:flex;align-items:center;gap:8px;padding:4px 8px;border-bottom:1px solid var(--border-100)">
+            <code style="font-size:10px;color:var(--text-400);min-width:180px">${esc(rid)}</code>
+            <span style="flex:1;font-size:11px;color:var(--text-200)">${esc(ruleLabel(rid))}</span>
+            <select class="form-select gdpr-rule-override" data-rule="${esc(rid)}" style="width:150px;font-size:11px">
+              <option value="">Use category (${catAction})</option>
+              <option value="ignore" ${ovr==='ignore'?'selected':''}>Ignore</option>
+              <option value="warn" ${ovr==='warn'?'selected':''}>Warn</option>
+              <option value="block" ${ovr==='block'?'selected':''}>Block</option>
+            </select>
+          </div>`;
+        }).join('');
+        return `<div style="border:1px solid var(--border-100);border-radius:8px;margin-bottom:6px;background:var(--bg-100)">
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer" onclick="const n=this.nextElementSibling;n.style.display=n.style.display==='none'?'block':'none';this.querySelector('.gdpr-cat-caret').textContent=n.style.display==='none'?'&#9656;':'&#9662;'">
+            <span class="gdpr-cat-caret" style="color:var(--text-400);font-size:11px">&#9656;</span>
+            <span style="font-size:13px;font-weight:500;color:var(--text-100);flex:1">${esc(PIIScanner.categoryLabels[cat])}</span>
+            <span style="font-size:10px;color:var(--text-400)">${rules.length} rule${rules.length===1?'':'s'}${overrideCount?` &middot; <b style="color:#b45309">${overrideCount} override${overrideCount===1?'':'s'}</b>`:''}</span>
+            <span onclick="event.stopPropagation()">${actionSelect(cat, catAction)}</span>
+          </div>
+          <div style="display:none;border-top:1px solid var(--border-100);max-height:280px;overflow-y:auto">${ruleRows}</div>
+        </div>`;
+      }).join('');
+
+      const allowlistText = (gs.email_allowlist || []).join('\n');
+
+      C.innerHTML = P(`<div style="${G('12px')}">
+        <div style="padding:12px 14px;border:1px solid var(--border-100);border-radius:8px;background:var(--bg-100)">
+          <div style="font-size:13px;color:var(--text-100);margin-bottom:6px"><b>How actions work</b></div>
+          <div style="font-size:11px;color:var(--text-300);line-height:1.55">
+            <b style="color:${ACT_COLORS.ignore}">Ignore</b>: rule is skipped entirely — no scan, no log.<br>
+            <b style="color:${ACT_COLORS.warn}">Warn</b>: shows the amber confirmation modal before sending. User may dismiss and proceed.<br>
+            <b style="color:${ACT_COLORS.block}">Block</b>: the send is refused unless the current model is local — the composer auto-routes to the fallback model. Requires the master <i>Block requests with PII</i> switch below; otherwise block actions are downgraded to warn.
+          </div>
+        </div>
+
+        ${SEC('Master switches')}
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-200);cursor:pointer">
+            <input type="checkbox" id="gdpr-enabled" ${gs.enabled!==false?'checked':''}>
+            <span><b>Enable scanner</b> — regex sweep of outgoing messages and text attachments</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-200);cursor:pointer">
+            <input type="checkbox" id="gdpr-serverlog" ${gs.server_log!==false?'checked':''}>
+            <span><b>Server-side audit log</b> — record every detection in <code>audit.db</code></span>
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-200);cursor:pointer">
+            <input type="checkbox" id="gdpr-block" ${gs.server_block?'checked':''}>
+            <span><b>Block requests with PII</b> — honors category <i>block</i> actions. When off, block is downgraded to warn everywhere.</span>
+          </label>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+            <span style="font-size:12px;color:var(--text-300);min-width:200px">Default local fallback model</span>
+            <select class="form-select" id="gdpr-fallback" style="flex:1" ${hasLocals?'':'disabled'}>
+              <option value="">None (disabled)</option>
+              ${localOpts}
+            </select>
+          </div>
+          <div style="font-size:11px;color:var(--text-400);margin-top:2px">Used for background LLM calls (next-prompt, chat summary, memory classifier, worker summariser, scheduled tasks) and for composer auto-routing when a blocking finding lands on a cloud model. ${hasLocals?'':'<span style="color:var(--warning,#b45309)">No local models are configured — add one under Models first.</span>'}</div>
+        </div>
+
+        ${SEC('Email allowlist')}
+        <div style="font-size:11px;color:var(--text-400);margin-bottom:6px">
+          One entry per line. <code>user@example.com</code> matches exactly; <code>@example.com</code> matches any address at that domain. Matching emails are suppressed from findings entirely.
+        </div>
+        <textarea id="gdpr-email-allowlist" rows="5" style="width:100%;font-family:var(--font-mono);font-size:12px;padding:8px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-000);color:var(--text-100);resize:vertical" placeholder="alexander@me.com&#10;@trusted-company.com">${esc(allowlistText)}</textarea>
+
+        ${SEC('Category actions')}
+        <div style="font-size:11px;color:var(--text-400);margin-bottom:6px">
+          Pick one action per category. Expand to override individual rules. Category-level severity is the default; rule overrides win when set.
+        </div>
+        ${catRows}
+
+        <div style="display:flex;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border-100)">
+          <button class="btn-primary" id="gdpr-save-btn" onclick="saveGdprConfig()">Save all GDPR settings</button>
+          <button class="btn-secondary" onclick="if(confirm('Reset all categories and overrides to defaults? (Master switches and allowlist are kept.)')){resetGdprCategories()}">Reset categories to defaults</button>
+        </div>
+      </div>`);
+    } catch(e) {
+      C.innerHTML = P(`<div style="color:var(--error)">Failed to load GDPR settings: ${esc(e.message||e)}</div>`);
+    }
   }
 
   /* ─── TOOLS ─── */
@@ -15863,12 +16159,7 @@ async function init() {
     state.teamStructure = teamsData || {};
     state.modelsConfig = modelsConfigData || {};
     state.maxSessionCostUsd = parseFloat((servicesData.server || {}).max_session_cost_usd || 0) || 0;
-    {
-      const _gs = (servicesData.server || {}).gdpr_scanner || {};
-      state.piiScannerEnabled = _gs.enabled !== false;
-      state.piiServerBlock = !!_gs.server_block;
-      state.piiLocalFallback = _gs.default_local_fallback_model || '';
-    }
+    applyGdprConfigToScanner((servicesData.server || {}).gdpr_scanner);
     state.mempalaceClassifier = clfData || {};
 
     // Update user menu / connection indicator

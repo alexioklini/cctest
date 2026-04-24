@@ -7380,6 +7380,11 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                     "server_log": bool(server_config.get("gdpr_scanner", {}).get("server_log", True)),
                     "server_block": bool(server_config.get("gdpr_scanner", {}).get("server_block", False)),
                     "default_local_fallback_model": str(server_config.get("gdpr_scanner", {}).get("default_local_fallback_model") or ""),
+                    "categories": server_config.get("gdpr_scanner", {}).get("categories") or {
+                        cat: {"action": act} for cat, act in engine.PII_DEFAULT_CATEGORY_ACTIONS.items()
+                    },
+                    "rule_overrides": server_config.get("gdpr_scanner", {}).get("rule_overrides") or {},
+                    "email_allowlist": server_config.get("gdpr_scanner", {}).get("email_allowlist") or [],
                 },
                 "available_tools": sorted(engine.TOOL_DISPATCH.keys()),
             },
@@ -7604,6 +7609,72 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         self._send_json({"error": f"default_local_fallback_model: '{mid}' is not local"}, 400)
                         return
                 gs["default_local_fallback_model"] = mid
+
+            # Category actions — only accept known categories + valid actions.
+            if "categories" in gs_in:
+                cats_in = gs_in["categories"] or {}
+                if not isinstance(cats_in, dict):
+                    self._send_json({"error": "gdpr_scanner.categories must be an object"}, 400)
+                    return
+                valid_cats = set(engine.PII_DEFAULT_CATEGORY_ACTIONS.keys())
+                out_cats = {}
+                for cat, entry in cats_in.items():
+                    if cat not in valid_cats:
+                        continue
+                    action = entry.get("action") if isinstance(entry, dict) else entry
+                    if action not in ("ignore", "warn", "block"):
+                        self._send_json({"error": f"categories.{cat}.action must be ignore|warn|block"}, 400)
+                        return
+                    out_cats[cat] = {"action": action}
+                # Merge with defaults for any unset categories so save is complete
+                for cat, act in engine.PII_DEFAULT_CATEGORY_ACTIONS.items():
+                    out_cats.setdefault(cat, {"action": act})
+                gs["categories"] = out_cats
+
+            # Rule overrides — reject unknown rule_ids so typos surface.
+            if "rule_overrides" in gs_in:
+                ovr_in = gs_in["rule_overrides"] or {}
+                if not isinstance(ovr_in, dict):
+                    self._send_json({"error": "gdpr_scanner.rule_overrides must be an object"}, 400)
+                    return
+                out_ovr = {}
+                valid_rules = set(engine.PII_RULE_CATEGORIES.keys())
+                for rid, act in ovr_in.items():
+                    if not act:
+                        continue
+                    if rid not in valid_rules:
+                        self._send_json({"error": f"rule_overrides: unknown rule_id '{rid}'"}, 400)
+                        return
+                    if act not in ("ignore", "warn", "block"):
+                        self._send_json({"error": f"rule_overrides[{rid}] must be ignore|warn|block"}, 400)
+                        return
+                    out_ovr[rid] = act
+                gs["rule_overrides"] = out_ovr
+
+            # Email allowlist — strip/lowercase/dedupe. Accept "x@y.com" and
+            # "@y.com" patterns; reject anything with internal whitespace.
+            if "email_allowlist" in gs_in:
+                al_in = gs_in["email_allowlist"] or []
+                if not isinstance(al_in, list):
+                    self._send_json({"error": "gdpr_scanner.email_allowlist must be a list"}, 400)
+                    return
+                cleaned: list[str] = []
+                seen = set()
+                for e in al_in:
+                    if not isinstance(e, str):
+                        continue
+                    s = e.strip().lower()
+                    if not s or " " in s or "\t" in s:
+                        continue
+                    if "@" not in s:
+                        self._send_json({"error": f"email_allowlist: '{e}' must contain '@'"}, 400)
+                        return
+                    if s in seen:
+                        continue
+                    seen.add(s)
+                    cleaned.append(s)
+                gs["email_allowlist"] = cleaned
+
             engine._invalidate_gdpr_cache()
             try:
                 config = {}
