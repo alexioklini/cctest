@@ -792,6 +792,35 @@ class ChatDB:
     # ── MemPalace chat-sync cursor helpers ──
 
     @staticmethod
+    @_db_safe(default=dict)
+    def session_memory_modes():
+        """Return {session_id: save_to_memory} for every session. Used by the
+        artifact miner to gate chat-folder ingestion on the per-chat toggle."""
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, COALESCE(save_to_memory, 0) FROM sessions"
+            ).fetchall()
+            return {sid: int(mode or 0) for sid, mode in rows}
+
+    @staticmethod
+    @_db_safe(default=str)
+    def session_id_for_prefix(prefix: str) -> str:
+        """Resolve an 8-char session-id prefix (as used in artifact folder
+        names) to its full session_id. Returns '' if no match (or if prefix
+        already looks like a full id, returns as-is)."""
+        if not prefix:
+            return ""
+        # Sched ids are stored full-form ('sched-<run>') in folder names.
+        if prefix.startswith("sched-") or len(prefix) >= 32:
+            return prefix
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT id FROM sessions WHERE id LIKE ? || '%' LIMIT 1",
+                (prefix,)
+            ).fetchone()
+            return row[0] if row else ""
+
+    @staticmethod
     @_db_safe(default=list)
     def mempalace_sessions_needing_sync():
         """Return sessions whose max(messages.id) > last synced id (or have never been synced).
@@ -10614,71 +10643,272 @@ def main():
 
     threading.Thread(target=_file_change_watcher, daemon=True, name="file-change-watcher").start()
 
-    # MemPalace background miner — keeps the palace up to date without the
-    # user running `mempalace mine` by hand. Idempotent (skips already-filed
-    # content via content hash), so re-running every 30 min is cheap.
+    # MemPalace background miner — fully autonomous artifact ingestion.
+    # Three rules (per user 2026-04-25):
+    #   1. Scheduled-task artifacts: only output-role files (skip intermediate
+    #      scripts/json/etc), regardless of any toggle. Never mines sched chat
+    #      content (no session/messages rows exist for sched-* runs).
+    #   2. Chat-originated artifacts: only when parent session has
+    #      save_to_memory > 0. When ON, mine all files in that folder.
+    #   3. mempalace.yaml is managed automatically per agent — server creates
+    #      and refreshes it; user never touches it.
+    _MEMPALACE_YAML_MARKER = "# managed by brain-agent server.py — do not edit\n"
+
+    def _mempalace_yaml_for_artifacts(wing: str) -> str:
+        # Default-room "general" satisfies miner.detect_room fallback. Rooms
+        # field must be a list per miner spec, even if minimal.
+        return (
+            _MEMPALACE_YAML_MARKER
+            + "wing: " + wing + "\n"
+            + "rooms:\n"
+            + "  - name: artifacts\n"
+            + "    description: Files produced during chats and tasks\n"
+            + "    keywords: [report, output, document]\n"
+            + "  - name: general\n"
+            + "    description: Fallback room\n"
+            + "    keywords: [general]\n"
+        )
+
+    def _ensure_mempalace_yaml(project_dir: str, wing: str) -> bool:
+        """Write a mempalace.yaml if missing or if the brain-managed marker is gone.
+        Returns True if the file is present (existing or freshly written)."""
+        try:
+            yaml_path = os.path.join(project_dir, "mempalace.yaml")
+            existing_ok = False
+            if os.path.isfile(yaml_path):
+                try:
+                    with open(yaml_path, "r", encoding="utf-8", errors="replace") as f:
+                        head = f.read(200)
+                    if head.startswith(_MEMPALACE_YAML_MARKER) or "wing:" in head:
+                        existing_ok = True
+                except Exception:
+                    existing_ok = False
+            if existing_ok:
+                return True
+            os.makedirs(project_dir, exist_ok=True)
+            with open(yaml_path, "w", encoding="utf-8") as f:
+                f.write(_mempalace_yaml_for_artifacts(wing))
+            return True
+        except Exception as e:
+            print(f"[mempalace-miner] failed to write yaml in {project_dir}: {e}", flush=True)
+            return False
+
+    def _purge_orphan_chroma_queue(palace_path: str):
+        """One-shot cleanup: remove embeddings_queue rows whose target segment
+        has no max_seq_id bootstrap (= compactor never saw them, never will).
+        Safe — these have been dead since 2026-04-19 and don't affect new writes."""
+        try:
+            db_path = os.path.join(palace_path, "chroma.sqlite3")
+            if not os.path.isfile(db_path):
+                return
+            con = sqlite3.connect(db_path)
+            cur = con.cursor()
+            # Find segments without a max_seq_id row — those are the orphans
+            orphan_segments = [r[0] for r in cur.execute(
+                "SELECT s.id FROM segments s "
+                "LEFT JOIN max_seq_id m ON m.segment_id = s.id "
+                "WHERE m.seq_id IS NULL"
+            ).fetchall()]
+            if not orphan_segments:
+                con.close()
+                return
+            # Each segment belongs to a collection; queue rows reference the
+            # collection via topic suffix (last 36 chars = collection UUID).
+            collection_uuids = [r[0] for r in cur.execute(
+                "SELECT DISTINCT collection FROM segments WHERE id IN ({})".format(
+                    ",".join("?" * len(orphan_segments))
+                ),
+                orphan_segments,
+            ).fetchall()]
+            total = 0
+            for cuid in collection_uuids:
+                # Only purge rows older than 24h — leave today's writes alone
+                cutoff = time.time() - 86400
+                n = cur.execute(
+                    "DELETE FROM embeddings_queue "
+                    "WHERE topic LIKE ? AND strftime('%s', created_at) < ?",
+                    (f"%{cuid}", str(int(cutoff))),
+                ).rowcount
+                total += n
+            con.commit()
+            con.close()
+            if total:
+                print(f"[mempalace-miner] purged {total} stale queue row(s) "
+                      f"(orphan segments: {len(orphan_segments)})", flush=True)
+        except Exception as e:
+            print(f"[mempalace-miner] queue cleanup failed: {type(e).__name__}: {e}", flush=True)
+
+    def _list_chat_artifact_folders():
+        """Iterate per-agent artifact folders. Yields tuples
+        (agent_id, folder_path, folder_name, kind) where kind is 'sched' or 'chat'."""
+        try:
+            for agent_id in os.listdir(engine.AGENTS_DIR):
+                agent_root = os.path.join(engine.AGENTS_DIR, agent_id)
+                if not os.path.isdir(agent_root):
+                    continue
+                if agent_id.startswith(".") or agent_id == "main" and False:
+                    pass
+                artifacts_root = os.path.join(agent_root, "artifacts")
+                if not os.path.isdir(artifacts_root):
+                    continue
+                for folder_name in os.listdir(artifacts_root):
+                    folder_path = os.path.join(artifacts_root, folder_name)
+                    if not os.path.isdir(folder_path):
+                        continue
+                    # Folder names are <date>_<sid_prefix>. sched-task folders
+                    # use the sched-* prefix as the sid (claude_cli.py L11319).
+                    parts = folder_name.split("_", 1)
+                    sid_part = parts[1] if len(parts) > 1 else parts[0]
+                    kind = "sched" if sid_part.startswith("sched-") else "chat"
+                    yield (agent_id, folder_path, folder_name, kind)
+        except Exception as e:
+            print(f"[mempalace-miner] discovery error: {type(e).__name__}: {e}", flush=True)
+
+    def _file_text_or_none(path: str, max_bytes: int = 2 * 1024 * 1024) -> str | None:
+        """Read a file as text (utf-8, errors=replace). Returns None for
+        binary blobs we can't reasonably treat as text."""
+        try:
+            size = os.path.getsize(path)
+            if size <= 0 or size > max_bytes:
+                return None
+            with open(path, "rb") as f:
+                blob = f.read()
+            # Heuristic: skip if >5% null bytes
+            if blob.count(b"\x00") > max(1, len(blob) // 20):
+                return None
+            return blob.decode("utf-8", errors="replace")
+        except Exception:
+            return None
+
     def _mempalace_miner_loop():
         mcfg = engine._load_mempalace_config()
         if not mcfg.get("enabled", True):
-            print("MemPalace miner: disabled (mempalace.enabled = false)")
+            print("[mempalace-miner] disabled (mempalace.enabled = false)", flush=True)
             return
         mine_cfg = mcfg.get("mine", {}) or {}
         if not mine_cfg.get("enabled", True):
-            print("MemPalace miner: disabled (mempalace.mine.enabled = false)")
+            print("[mempalace-miner] disabled (mempalace.mine.enabled = false)", flush=True)
             return
-        # Ensure the mempalace package is importable (sets up sys.path once).
         ok, err = engine._ensure_mempalace_importable()
         if not ok:
-            print(f"MemPalace miner: {err}")
+            print(f"[mempalace-miner] {err}", flush=True)
             return
         try:
             from mempalace import miner as mp_miner
+            from mempalace.mcp_server import tool_add_drawer
         except Exception as e:
-            print(f"MemPalace miner: import failed: {e}")
+            print(f"[mempalace-miner] import failed: {e}", flush=True)
             return
 
         palace_path = mcfg.get("palace_path", "")
         interval = int(mine_cfg.get("interval_seconds", 1800))
         respect_git = bool(mine_cfg.get("respect_gitignore", True))
 
+        # One-shot: purge orphaned queue rows from earlier runs
+        _purge_orphan_chroma_queue(palace_path)
+
         # Small startup delay so we don't compete with initial provider probes.
         time.sleep(15)
 
+        intermediate_exts = engine._ARTIFACT_INTERMEDIATE_EXTS
+
         while True:
-            # Re-read config each cycle so edits apply without restart.
-            mcfg2 = engine._load_mempalace_config()
-            if not mcfg2.get("enabled", True):
-                return
-            sources = (mcfg2.get("mine") or {}).get("sources", []) or []
-            for src in sources:
-                project_dir = src.get("project_dir", "")
-                if not project_dir or not os.path.isdir(project_dir):
-                    continue
-                wing_override = src.get("wing")
-                src_respect_git = bool(src.get("respect_gitignore", respect_git))
-                # Capture miner stdout — it prints a human-readable summary.
-                buf = io.StringIO()
-                try:
-                    with contextlib.redirect_stdout(buf):
-                        mp_miner.mine(
-                            project_dir=project_dir,
-                            palace_path=palace_path,
-                            wing_override=wing_override,
-                            agent="brain-auto",
-                            respect_gitignore=src_respect_git,
-                        )
-                    out = buf.getvalue().strip()
-                    # Extract just the "Drawers filed: N" summary line if present.
-                    summary_line = ""
-                    for line in out.splitlines():
-                        s = line.strip()
-                        if s.startswith("Drawers filed"):
-                            summary_line = s
-                            break
-                    print(f"[mempalace-miner] {project_dir}: {summary_line or 'done'}")
-                except Exception as e:
-                    print(f"[mempalace-miner] {project_dir}: {type(e).__name__}: {e}")
-            # Re-read interval so edits take effect on the next cycle.
+            try:
+                mcfg2 = engine._load_mempalace_config()
+                if not mcfg2.get("enabled", True):
+                    return
+                mine2 = mcfg2.get("mine") or {}
+                # Build a session_id → save_to_memory map once per cycle
+                memory_modes = ChatDB.session_memory_modes() or {}
+
+                drawers_filed = 0
+                folders_seen = 0
+                folders_skipped_chat = 0
+                folders_sched = 0
+
+                for agent_id, folder_path, folder_name, kind in _list_chat_artifact_folders():
+                    folders_seen += 1
+                    # Reconstruct session_id from folder name. For chat folders
+                    # we only have the first 8 chars of the session_id; do a
+                    # prefix lookup. For sched-* folders the prefix already is
+                    # the full sched-<run_id> form.
+                    parts = folder_name.split("_", 1)
+                    sid_prefix = parts[1] if len(parts) > 1 else parts[0]
+
+                    if kind == "sched":
+                        folders_sched += 1
+                        # Sched: file only output-role files (extension-based)
+                        for fname in os.listdir(folder_path):
+                            fpath = os.path.join(folder_path, fname)
+                            if not os.path.isfile(fpath):
+                                continue
+                            ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+                            if ext in intermediate_exts:
+                                continue
+                            text = _file_text_or_none(fpath)
+                            if not text:
+                                continue
+                            wing = f"{agent_id}_artifacts"
+                            try:
+                                res = tool_add_drawer(
+                                    wing=wing,
+                                    room="artifacts",
+                                    content=text[:8000],
+                                    source_file=f"session/{sid_prefix}#artifact/{fname}",
+                                    added_by="brain-miner-sched",
+                                )
+                                if isinstance(res, dict) and res.get("success") \
+                                   and res.get("reason") != "already_exists":
+                                    drawers_filed += 1
+                            except Exception as ex:
+                                print(f"[mempalace-miner] sched add_drawer failed "
+                                      f"{fname}: {ex}", flush=True)
+                        continue
+
+                    # Chat: gate on the parent session's save_to_memory toggle.
+                    full_sid = ChatDB.session_id_for_prefix(sid_prefix)
+                    mem_mode = memory_modes.get(full_sid, 0) if full_sid else 0
+                    if mem_mode <= 0:
+                        folders_skipped_chat += 1
+                        continue
+
+                    # Memory ON: ensure yaml + run miner over the folder.
+                    wing = f"{agent_id}_artifacts"
+                    if not _ensure_mempalace_yaml(folder_path, wing):
+                        continue
+                    buf = io.StringIO()
+                    try:
+                        with contextlib.redirect_stdout(buf):
+                            mp_miner.mine(
+                                project_dir=folder_path,
+                                palace_path=palace_path,
+                                wing_override=wing,
+                                agent="brain-miner-chat",
+                                respect_gitignore=False,
+                            )
+                        out = buf.getvalue().strip()
+                        for line in out.splitlines():
+                            s = line.strip()
+                            if s.startswith("Drawers filed"):
+                                # "Drawers filed: N" — pull the integer
+                                try:
+                                    drawers_filed += int(s.split(":")[-1].strip().split()[0])
+                                except Exception:
+                                    pass
+                                break
+                    except SystemExit:
+                        # miner.load_config calls sys.exit on bad yaml — should not
+                        # happen now that we always write one, but be defensive.
+                        pass
+                    except Exception as e:
+                        print(f"[mempalace-miner] chat folder {folder_name}: "
+                              f"{type(e).__name__}: {e}", flush=True)
+
+                print(f"[mempalace-miner] cycle: filed={drawers_filed} folders={folders_seen} "
+                      f"(sched={folders_sched} chat-skip={folders_skipped_chat})", flush=True)
+            except Exception as e:
+                print(f"[mempalace-miner] cycle error: {type(e).__name__}: {e}", flush=True)
+
             next_interval = int(((mcfg2.get("mine") or {}).get("interval_seconds", interval)))
             time.sleep(max(60, next_interval))
 
