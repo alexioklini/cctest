@@ -11463,9 +11463,10 @@ async function saveModelsConfig() {
       // Parallel tool calls
       const ptc = row.querySelector('.mdl-parallel-tools')?.checked;
       if (ptc === false) mc[mid].parallel_tool_calls = false; else delete mc[mid].parallel_tool_calls;
-      // Warmup
+      // Warmup. Persist explicit false so the speed profile's warmup=true
+      // overlay can't silently re-enable warmup the user just turned off.
       const warm = row.querySelector('.mdl-warmup')?.checked;
-      if (warm) mc[mid].warmup = true; else delete mc[mid].warmup;
+      mc[mid].warmup = !!warm;
       // warmup_ttl_seconds retired: hold-forever semantics (no periodic reprime)
       delete mc[mid].warmup_ttl_seconds;
       const warmMode = row.querySelector('.mdl-warmup-mode')?.value;
