@@ -2562,6 +2562,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_agent_file_write(path)
         elif path == "/v1/schedule":
             self._handle_modify_schedule()
+        elif path == "/v1/schedule/upload":
+            self._handle_schedule_upload()
         elif path == "/v1/providers":
             self._handle_save_providers()
         elif path == "/v1/providers/test":
@@ -4557,6 +4559,93 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         else:
             self._send_json({"schedules": [], "running": []})
 
+    def _handle_schedule_upload(self):
+        """Persist a scheduled-task attachment under
+        agents/<agent>/scheduled_attachments/<unique>/<filename>.
+        Returns {name, path, mime, size} that the UI passes back in the
+        `attachments` array on add/edit. We deliberately decouple upload
+        from schedule creation: the user can upload before naming the task,
+        and the server cleans up orphan folders on a sweep (TODO)."""
+        import mimetypes as _mt
+        content_type = self.headers.get("Content-Type", "")
+        content_length = int(self.headers.get("Content-Length", "0"))
+        if "multipart/form-data" not in content_type:
+            self._send_json({"error": "multipart/form-data required"}, 400)
+            return
+        if not content_length:
+            self._send_json({"error": "No content"}, 400)
+            return
+        body = self.rfile.read(content_length)
+        boundary = None
+        for part in content_type.split(";"):
+            part = part.strip()
+            if part.startswith("boundary="):
+                boundary = part[len("boundary="):]
+                break
+        if not boundary:
+            self._send_json({"error": "No boundary in Content-Type"}, 400)
+            return
+        delimiter = f"--{boundary}".encode()
+        parts = body.split(delimiter)
+        filename = None
+        file_data = None
+        form_fields = {}
+        for part in parts:
+            if not part or part == b"--\r\n" or part == b"--":
+                continue
+            if b"\r\n\r\n" in part:
+                header_block, part_body = part.split(b"\r\n\r\n", 1)
+            elif b"\n\n" in part:
+                header_block, part_body = part.split(b"\n\n", 1)
+            else:
+                continue
+            if part_body.endswith(b"\r\n"):
+                part_body = part_body[:-2]
+            header_text = header_block.decode("utf-8", errors="replace")
+            field_name = None
+            field_filename = None
+            for line in header_text.split("\r\n"):
+                line = line.strip()
+                if line.lower().startswith("content-disposition:"):
+                    for item in line.split(";"):
+                        item = item.strip()
+                        if item.startswith("name="):
+                            field_name = item[5:].strip('"').strip("'")
+                        elif item.startswith("filename="):
+                            field_filename = item[9:].strip('"').strip("'")
+            if field_name == "file" and field_filename:
+                filename = field_filename
+                file_data = part_body
+            elif field_name:
+                form_fields[field_name] = part_body.decode("utf-8", errors="replace")
+        if not filename or file_data is None:
+            self._send_json({"error": "No file uploaded"}, 400)
+            return
+        agent_id = form_fields.get("agent", "main") or "main"
+        # Sanitize agent_id and filename to keep us inside AGENTS_DIR.
+        if "/" in agent_id or ".." in agent_id:
+            self._send_json({"error": "Invalid agent id"}, 400)
+            return
+        safe_name = filename.replace("/", "_").replace("\\", "_")
+        unique = uuid.uuid4().hex[:12]
+        store_dir = os.path.join(engine.AGENTS_DIR, agent_id,
+                                 "scheduled_attachments", unique)
+        try:
+            os.makedirs(store_dir, exist_ok=True)
+            dst = os.path.join(store_dir, safe_name)
+            with open(dst, "wb") as fp:
+                fp.write(file_data)
+        except OSError as e:
+            self._send_json({"error": f"Save failed: {e}"}, 500)
+            return
+        mime = _mt.guess_type(safe_name)[0] or "application/octet-stream"
+        self._send_json({
+            "name": safe_name,
+            "path": dst,
+            "mime": mime,
+            "size": len(file_data),
+        })
+
     def _handle_modify_schedule(self):
         body = self._read_json()
         action = body.get("action", "list")
@@ -4565,10 +4654,17 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             return
 
         if action == "add":
+            atts = body.get("attachments") or []
+            if not isinstance(atts, list):
+                atts = []
+            wd = body.get("working_dir") or None
+            if isinstance(wd, str):
+                wd = wd.strip() or None
             result = engine._scheduler.add(
                 body.get("name", ""), body.get("task", ""),
                 body.get("schedule", ""), body.get("agent", "main"),
                 body.get("model"), timeout=int(body.get("timeout", 300)),
+                attachments=atts, working_dir=wd,
             )
             self._send_json(result)
         elif action == "pause":
@@ -4619,7 +4715,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "name is required"}, 400)
                 return
             fields = {k: body.get(k) for k in
-                      ("task", "schedule", "model", "timeout", "agent", "new_name")
+                      ("task", "schedule", "model", "timeout", "agent",
+                       "new_name", "attachments", "working_dir")
                       if k in body}
             res = engine._scheduler.update(name, fields)
             if isinstance(res, dict) and res.get("error"):
@@ -9266,7 +9363,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         qs = parse_qs(urlparse(self.path).query)
         dir_path = unquote(qs.get("path", [""])[0])
         max_depth = int(qs.get("depth", ["2"])[0])
-        if not dir_path or not os.path.isdir(dir_path):
+        # Empty path defaults to the user's home dir, so the folder picker
+        # doesn't need to know where to start.
+        if not dir_path:
+            dir_path = os.path.expanduser("~")
+        else:
+            dir_path = os.path.expanduser(dir_path)
+        if not os.path.isdir(dir_path):
             self._send_json({"error": "Invalid or missing directory path"}, 400)
             return
 

@@ -13550,12 +13550,34 @@ async function _schedViewEdit(name) {
       <label>Timeout (seconds)</label>
       <input id="sched-edit-timeout" type="number" value="${task.timeout || 300}" min="30" max="3600">
     </div>
+    <div class="sched-form-group">
+      <label>Working directory <span style="color:var(--text-400);font-weight:normal;font-size:11px">(optional)</span></label>
+      <div style="display:flex;gap:6px">
+        <input id="sched-edit-workdir" value="${esc(task.working_dir || '')}" placeholder="(none)" readonly style="font-family:var(--font-mono);flex:1;background:var(--bg-100)">
+        <button type="button" onclick="_schedOpenFolderPicker('sched-edit-workdir')" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border-100);background:transparent;color:var(--text-200);cursor:pointer;font-size:12px">Browse…</button>
+        <button type="button" onclick="document.getElementById('sched-edit-workdir').value=''" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border-100);background:transparent;color:var(--text-400);cursor:pointer;font-size:12px" title="Clear">×</button>
+      </div>
+    </div>
+    <div class="sched-form-group">
+      <label>Attachments</label>
+      <input id="sched-edit-files" type="file" multiple onchange="_schedUploadFiles(this, 'sched-edit-attlist')" style="font-size:12px">
+      <div id="sched-edit-attlist" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px"></div>
+    </div>
     <div class="sched-modal-actions">
       <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Cancel</button>
       <button class="sched-create-btn" onclick="_saveScheduledEdit('${esc(name)}')">Save</button>
     </div>
   </div>`;
   document.body.appendChild(overlay);
+  // Seed the edit modal's attachment accumulator from the existing task row.
+  try {
+    const existing = task.attachments;
+    let arr = [];
+    if (Array.isArray(existing)) arr = existing;
+    else if (typeof existing === 'string' && existing) arr = JSON.parse(existing);
+    window._schedEditAttachments = arr || [];
+  } catch(e) { window._schedEditAttachments = []; }
+  _renderSchedAttList('sched-edit-attlist', '_schedEditAttachments');
 }
 
 async function _saveScheduledEdit(originalName) {
@@ -13565,6 +13587,8 @@ async function _saveScheduledEdit(originalName) {
   const model = document.getElementById('sched-edit-model')?.value || '';
   const schedule = document.getElementById('sched-edit-schedule')?.value?.trim();
   const timeout = parseInt(document.getElementById('sched-edit-timeout')?.value) || 300;
+  const working_dir = document.getElementById('sched-edit-workdir')?.value?.trim() || '';
+  const attachments = window._schedEditAttachments || [];
 
   if (!newName) { showToast('Name is required', true); return; }
   if (!taskText) { showToast('Prompt is required', true); return; }
@@ -13577,6 +13601,8 @@ async function _saveScheduledEdit(originalName) {
     agent,
     schedule,
     timeout,
+    working_dir,
+    attachments,
     // Empty string signals "clear back to Default" so the scheduler falls
     // back to the target agent's preferred_model at dispatch time. null
     // would mean "don't touch" in the server-side patch semantics.
@@ -13588,6 +13614,7 @@ async function _saveScheduledEdit(originalName) {
     const res = await API.manageSchedule(payload);
     if (res.error) { showToast(res.error, true); return; }
     showToast('Saved');
+    window._schedEditAttachments = [];
     document.querySelector('.sched-modal-overlay')?.remove();
     loadScheduledView();
   } catch(e) { showToast('Failed: ' + e.message, true); }
@@ -13652,12 +13679,155 @@ function showCreateScheduledModal() {
       <label>Timeout (seconds)</label>
       <input id="sched-new-timeout" type="number" value="300" min="30" max="3600">
     </div>
+    <div class="sched-form-group">
+      <label>Working directory <span style="color:var(--text-400);font-weight:normal;font-size:11px">(optional)</span></label>
+      <div style="display:flex;gap:6px">
+        <input id="sched-new-workdir" placeholder="(none)" readonly style="font-family:var(--font-mono);flex:1;background:var(--bg-100)">
+        <button type="button" onclick="_schedOpenFolderPicker('sched-new-workdir')" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border-100);background:transparent;color:var(--text-200);cursor:pointer;font-size:12px">Browse…</button>
+        <button type="button" onclick="document.getElementById('sched-new-workdir').value=''" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border-100);background:transparent;color:var(--text-400);cursor:pointer;font-size:12px" title="Clear">×</button>
+      </div>
+    </div>
+    <div class="sched-form-group">
+      <label>Attachments <span style="color:var(--text-400);font-weight:normal;font-size:11px">(optional, copied into the run on each fire)</span></label>
+      <input id="sched-new-files" type="file" multiple onchange="_schedUploadFiles(this, 'sched-new-attlist')" style="font-size:12px">
+      <div id="sched-new-attlist" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px"></div>
+    </div>
     <div class="sched-modal-actions">
       <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Cancel</button>
       <button class="sched-create-btn" onclick="_createScheduledTask()">Create</button>
     </div>
   </div>`;
   document.body.appendChild(overlay);
+  // Attachments accumulator for the open modal. Cleared with the modal.
+  window._schedNewAttachments = [];
+}
+
+// Upload picked files to /v1/schedule/upload and render chips. The chip
+// list is the source of truth that's read at submit time.
+async function _schedUploadFiles(input, listElId) {
+  const files = Array.from(input.files || []);
+  if (!files.length) return;
+  const listEl = document.getElementById(listElId);
+  // Decide which accumulator we're writing to based on the list element.
+  const buckName = (listElId === 'sched-edit-attlist')
+    ? '_schedEditAttachments' : '_schedNewAttachments';
+  // Pick the agent the modal is targeting so the file lands under that
+  // agent's scheduled_attachments folder.
+  const agentSel = document.getElementById('sched-new-agent')
+                || document.getElementById('sched-edit-agent');
+  const agent = agentSel?.value || 'main';
+  // Auth header is required — the global /v1/* gate rejects anonymous POST.
+  // Don't set Content-Type; the browser inserts the multipart boundary.
+  const token = localStorage.getItem('auth-token') || '';
+  const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+  for (const f of files) {
+    const fd = new FormData();
+    fd.append('file', f, f.name);
+    fd.append('agent', agent);
+    try {
+      const resp = await fetch(`${BASE_URL}/v1/schedule/upload`, {
+        method: 'POST', headers, body: fd,
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({error: `HTTP ${resp.status}`}));
+        showToast('Upload failed: ' + (err.error || resp.statusText), true);
+        continue;
+      }
+      const meta = await resp.json();
+      window[buckName] = window[buckName] || [];
+      window[buckName].push(meta);
+      _renderSchedAttList(listElId, buckName);
+    } catch(e) {
+      showToast('Upload failed: ' + e.message, true);
+    }
+  }
+  input.value = '';  // allow re-picking the same file
+}
+
+function _renderSchedAttList(listElId, buckName) {
+  const listEl = document.getElementById(listElId);
+  const items = window[buckName] || [];
+  if (!listEl) return;
+  if (!items.length) { listEl.innerHTML = ''; return; }
+  listEl.innerHTML = items.map((m, i) => {
+    const kb = (m.size/1024).toFixed(1);
+    return `<span style="display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border:1px solid var(--border-100);border-radius:12px;background:var(--bg-100);font-size:11px;font-family:var(--font-mono);color:var(--text-200)" title="${esc(m.path||'')}">
+      ${esc(m.name)} <span style="color:var(--text-400)">${kb}KB</span>
+      <button onclick="_schedRemoveAtt('${esc(buckName)}', ${i}, '${esc(listElId)}')" style="border:none;background:transparent;color:var(--text-400);cursor:pointer;padding:0;font-size:14px;line-height:1">×</button>
+    </span>`;
+  }).join('');
+}
+
+function _schedRemoveAtt(buckName, idx, listElId) {
+  const items = window[buckName] || [];
+  items.splice(idx, 1);
+  window[buckName] = items;
+  _renderSchedAttList(listElId, buckName);
+}
+
+// --- Folder picker (server-side dir browser) ---
+// Opens a modal stacked on top of the schedule modal. Navigates the server
+// filesystem one level at a time via /v1/files/tree?path=X&depth=0. The
+// selected absolute path is written to the input identified by targetInputId.
+function _schedOpenFolderPicker(targetInputId) {
+  const startVal = document.getElementById(targetInputId)?.value?.trim() || '';
+  const overlay = document.createElement('div');
+  overlay.className = 'sched-modal-overlay';
+  overlay.style.zIndex = '10001';  // above the schedule modal
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div class="sched-modal" style="max-width:600px">
+    <h2>Select working directory</h2>
+    <div id="folder-picker-crumbs" style="font-family:var(--font-mono);font-size:12px;color:var(--text-300);padding:6px 10px;background:var(--bg-100);border-radius:6px;margin-bottom:8px;word-break:break-all">…</div>
+    <div id="folder-picker-list" style="max-height:340px;overflow-y:auto;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100)"></div>
+    <div class="sched-modal-actions">
+      <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Cancel</button>
+      <button class="sched-create-btn" id="folder-picker-select" onclick="_schedFolderPickerSelect('${esc(targetInputId)}')">Select this folder</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  _schedLoadFolder(startVal);  // empty string → server defaults to $HOME
+}
+
+async function _schedLoadFolder(path) {
+  const crumbs = document.getElementById('folder-picker-crumbs');
+  const list = document.getElementById('folder-picker-list');
+  if (!crumbs || !list) return;
+  list.innerHTML = '<div style="padding:14px;color:var(--text-400);text-align:center">Loading…</div>';
+  try {
+    const data = await API.get(`/v1/files/tree?path=${encodeURIComponent(path)}&depth=0`);
+    if (data.error) { list.innerHTML = `<div style="padding:14px;color:var(--error)">${esc(data.error)}</div>`; return; }
+    const cur = data.path || path || '/';
+    window._schedPickerPath = cur;
+    crumbs.textContent = cur;
+    const dirs = (data.tree || []).filter(n => n.type === 'dir');
+    const parent = (cur && cur !== '/') ? cur.replace(/\/[^\/]+\/?$/, '') || '/' : null;
+    let html = '';
+    if (parent !== null) {
+      html += `<div onclick="_schedLoadFolder('${esc(parent)}')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border-100);font-family:var(--font-mono);font-size:12px;color:var(--text-300)" onmouseover="this.style.background='var(--bg-200)'" onmouseout="this.style.background=''">↑ ..</div>`;
+    }
+    if (!dirs.length) {
+      html += '<div style="padding:14px;color:var(--text-400);text-align:center;font-size:12px">(no subfolders)</div>';
+    } else {
+      for (const d of dirs) {
+        html += `<div onclick="_schedLoadFolder('${esc(d.path)}')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border-100);font-family:var(--font-mono);font-size:12px;color:var(--text-200);display:flex;align-items:center;gap:8px" onmouseover="this.style.background='var(--bg-200)'" onmouseout="this.style.background=''">
+          <span style="color:var(--text-400)">📁</span>${esc(d.name)}
+        </div>`;
+      }
+    }
+    list.innerHTML = html;
+  } catch(e) {
+    list.innerHTML = `<div style="padding:14px;color:var(--error)">${esc(e.message)}</div>`;
+  }
+}
+
+function _schedFolderPickerSelect(targetInputId) {
+  const path = window._schedPickerPath || '';
+  if (!path) { showToast('No folder selected', true); return; }
+  const inp = document.getElementById(targetInputId);
+  if (inp) inp.value = path;
+  // Close the topmost overlay (the picker), leaving the schedule modal open.
+  const overlays = document.querySelectorAll('.sched-modal-overlay');
+  if (overlays.length) overlays[overlays.length - 1].remove();
 }
 
 function _schedFreqChanged() {
@@ -13698,10 +13868,16 @@ async function _createScheduledTask() {
     schedule = `weekly ${day} ${timeVal}`;
   }
 
+  const working_dir = document.getElementById('sched-new-workdir')?.value?.trim() || '';
+  const attachments = window._schedNewAttachments || [];
   try {
-    const res = await API.manageSchedule({ action: 'add', name, task, schedule, agent, model, timeout });
+    const res = await API.manageSchedule({
+      action: 'add', name, task, schedule, agent, model, timeout,
+      working_dir, attachments,
+    });
     if (res.error) { showToast(res.error, true); return; }
     showToast('Task created');
+    window._schedNewAttachments = [];
     document.querySelector('.sched-modal-overlay')?.remove();
     loadScheduledView();
   } catch(e) { showToast('Failed: ' + e.message, true); }

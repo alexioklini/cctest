@@ -10769,6 +10769,20 @@ class Scheduler:
                 conn.execute("ALTER TABLE schedules ADD COLUMN timeout INTEGER DEFAULT 300")
             except sqlite3.OperationalError:
                 pass
+            # Per-task attachments + working dir (v8.16.0). attachments is a
+            # JSON list of {name, path, mime, size}; path is absolute on the
+            # server's filesystem (under agents/<agent>/scheduled_attachments/
+            # <name>/). working_dir is an absolute path the agent should
+            # treat as the cwd context for shell/file work; it does not
+            # rebase python_exec (artifact folder still wins for that).
+            for _ddl in (
+                "ALTER TABLE schedules ADD COLUMN attachments TEXT DEFAULT '[]'",
+                "ALTER TABLE schedules ADD COLUMN working_dir TEXT",
+            ):
+                try:
+                    conn.execute(_ddl)
+                except sqlite3.OperationalError:
+                    pass
             # Migration: richer per-run telemetry. Older DBs only have
             # status/result/started_at/finished_at; add fields that make the
             # History view diagnosable (trace pivot, artifact folder pivot,
@@ -10792,30 +10806,85 @@ class Scheduler:
 
     def add(self, name: str, task: str, schedule: str,
             agent: str = "main", model: str | None = None,
-            timeout: int = 300) -> dict:
-        """Add a scheduled task. timeout in seconds (default: 300 = 5 min)."""
+            timeout: int = 300,
+            attachments: list | None = None,
+            working_dir: str | None = None) -> dict:
+        """Add a scheduled task. timeout in seconds (default: 300 = 5 min).
+
+        attachments: list of {name, path, mime, size} dicts. Files must already
+        exist on disk (uploaded via /v1/schedule/upload).
+        working_dir: optional absolute path injected into the system prompt so
+        the agent knows where to operate; agent passes it as `cwd` to shell tools.
+        """
         next_run = self._calc_next_run(schedule)
         if next_run is None:
             return {"error": f"Invalid schedule format: {schedule}"}
+        if working_dir:
+            working_dir = os.path.expanduser(working_dir)
+            if not os.path.isdir(working_dir):
+                return {"error": f"Working dir does not exist: {working_dir}"}
+        atts_json = json.dumps(attachments or [])
         try:
             with _sched_conn() as conn:
                 conn.execute("""
-                    INSERT INTO schedules (name, task, schedule, agent, model, next_run, timeout)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (name, task, schedule, agent, model, next_run.isoformat(), timeout))
+                    INSERT INTO schedules (name, task, schedule, agent, model, next_run, timeout, attachments, working_dir)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (name, task, schedule, agent, model, next_run.isoformat(),
+                      timeout, atts_json, working_dir))
                 conn.commit()
             return {"name": name, "schedule": schedule, "agent": agent,
-                    "next_run": next_run.isoformat(), "timeout": timeout, "status": "created"}
+                    "next_run": next_run.isoformat(), "timeout": timeout,
+                    "attachments": attachments or [], "working_dir": working_dir,
+                    "status": "created"}
         except sqlite3.IntegrityError:
             return {"error": f"Schedule '{name}' already exists"}
 
+    def _purge_attachment_paths(self, paths: list[str]) -> int:
+        """Remove the per-upload uuid parent folders for the given attachment
+        paths. Each upload lives in its own folder under
+        agents/<agent>/scheduled_attachments/<uuid>/, so removing the parent
+        dir of each path is safe and complete. Returns count of folders removed.
+        Refuses to touch anything outside scheduled_attachments/ as a guard
+        against malformed metadata."""
+        import shutil
+        removed = 0
+        seen: set[str] = set()
+        for p in paths:
+            if not p:
+                continue
+            parent = os.path.dirname(os.path.abspath(p))
+            if parent in seen:
+                continue
+            seen.add(parent)
+            if "scheduled_attachments" not in parent.split(os.sep):
+                continue
+            try:
+                if os.path.isdir(parent):
+                    shutil.rmtree(parent)
+                    removed += 1
+            except OSError as e:
+                print(f"  [WARN] attachment purge failed for {parent}: {e}", flush=True)
+        return removed
+
     def remove(self, name: str) -> dict:
+        # Read attachment paths before deleting the row so we can purge files.
+        attachment_paths: list[str] = []
         with _sched_conn() as conn:
+            row = conn.execute(
+                "SELECT attachments FROM schedules WHERE name = ?", (name,)
+            ).fetchone()
+            if row and row[0]:
+                try:
+                    atts = json.loads(row[0])
+                    attachment_paths = [a.get("path", "") for a in atts if isinstance(a, dict)]
+                except (ValueError, TypeError):
+                    pass
             r = conn.execute("DELETE FROM schedules WHERE name = ?", (name,))
             conn.commit()
             if r.rowcount == 0:
                 return {"error": f"Schedule '{name}' not found"}
-        return {"name": name, "status": "deleted"}
+        purged = self._purge_attachment_paths(attachment_paths)
+        return {"name": name, "status": "deleted", "attachments_purged": purged}
 
     def pause(self, name: str) -> dict:
         with _sched_conn() as conn:
@@ -11010,19 +11079,22 @@ class Scheduler:
         Recalculates next_run when `schedule` changes. Renaming is allowed but
         rejected if the new name collides with an existing task.
         """
-        allowed = {"task", "schedule", "model", "timeout", "agent"}
+        allowed = {"task", "schedule", "model", "timeout", "agent",
+                   "attachments", "working_dir"}
         updates: dict = {}
         for k in allowed:
             if k not in fields:
                 continue
             v = fields[k]
-            # None = don't touch this field. Empty string for `model` means
-            # "clear back to default" — translate to SQL NULL so
-            # preferred_model fallback kicks in at dispatch time.
+            # None = don't touch this field. Empty string for `model` /
+            # `working_dir` means "clear back to default" — translate to SQL NULL.
             if v is None:
                 continue
-            if k == "model" and v == "":
+            if k in ("model", "working_dir") and v == "":
                 updates[k] = None
+            elif k == "attachments":
+                # Stored as JSON.
+                updates[k] = json.dumps(v if isinstance(v, list) else [])
             else:
                 updates[k] = v
         new_name = fields.get("new_name")
@@ -11055,6 +11127,30 @@ class Scheduler:
                 except (TypeError, ValueError):
                     return {"error": "timeout must be an integer (seconds)"}
 
+            if updates.get("working_dir"):
+                wd = os.path.expanduser(updates["working_dir"])
+                if not os.path.isdir(wd):
+                    return {"error": f"Working dir does not exist: {wd}"}
+                updates["working_dir"] = wd
+
+            # Diff old vs new attachments — paths that disappear get purged
+            # from disk so the user dropping a chip in the edit modal actually
+            # frees the bytes. Done before the UPDATE so a failure here just
+            # leaves the file in place; data loss only happens on success.
+            paths_to_purge: list[str] = []
+            if "attachments" in updates:
+                try:
+                    old_atts = json.loads(row["attachments"] or "[]")
+                except (ValueError, TypeError):
+                    old_atts = []
+                try:
+                    new_atts = json.loads(updates["attachments"])
+                except (ValueError, TypeError):
+                    new_atts = []
+                old_paths = {a.get("path", "") for a in old_atts if isinstance(a, dict)}
+                new_paths = {a.get("path", "") for a in new_atts if isinstance(a, dict)}
+                paths_to_purge = [p for p in (old_paths - new_paths) if p]
+
             set_clauses = []
             values = []
             for k, v in updates.items():
@@ -11070,6 +11166,9 @@ class Scheduler:
                 values,
             )
             conn.commit()
+
+            if paths_to_purge:
+                self._purge_attachment_paths(paths_to_purge)
 
             # Return the fresh row so the UI can refresh without a second call.
             effective_name = new_name or name
@@ -11393,7 +11492,11 @@ class Scheduler:
 
         # Build system prompt
         import platform
-        cwd = os.getcwd()
+        # Per-task working_dir overrides the server's cwd. The agent passes
+        # this as the `cwd` arg to execute_command; python_exec stays pinned
+        # to the artifact folder so file-write tracking still works.
+        task_working_dir = task_row.get("working_dir") or None
+        cwd = task_working_dir or os.getcwd()
         os_name = platform.system()
         soul = target.soul
         tools_guide = target.tools_guide
@@ -11425,12 +11528,46 @@ class Scheduler:
             "- Your final assistant message is a log entry, not a reply to a user.\n"
             "  Keep it short, state what you did and the outcome.\n\n"
         )
+        if task_working_dir:
+            system_prompt += (
+                f"WORKING DIRECTORY: This task should operate inside {task_working_dir}.\n"
+                "When you call `execute_command`, pass `cwd` set to that path (or a\n"
+                "subdirectory) unless the task says otherwise. File operations should\n"
+                "be relative to that directory.\n\n"
+            )
         # MemPalace migration: scheduled-task memory summary injection removed.
         tcfg = target.config.get("token_config", {})
         if tools_guide and tcfg.get("include_tools_guide", True):
             system_prompt += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
 
-        messages = [{"role": "user", "content": task}]
+        # Point the agent at the durable attachment paths (no per-run copy).
+        # Files live under agents/<agent>/scheduled_attachments/<uuid>/<name>
+        # and are persisted with the schedule definition; deletion of the
+        # schedule purges them.
+        task_message = task
+        attachments_meta = []
+        try:
+            atts_raw = task_row.get("attachments") or "[]"
+            attachments_meta = json.loads(atts_raw) if isinstance(atts_raw, str) else atts_raw
+        except (ValueError, TypeError):
+            attachments_meta = []
+        if attachments_meta:
+            existing_paths = [a.get("path", "") for a in attachments_meta
+                              if a.get("path") and os.path.isfile(a["path"])]
+            if existing_paths:
+                paths_list = "\n".join(f"  - {p}" for p in existing_paths)
+                has_docs = any(os.path.splitext(p)[1].lower()
+                               in (".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".tsv")
+                               for p in existing_paths)
+                if has_docs:
+                    notice = (f"\n\n[Task attachments on disk. "
+                              f"IMPORTANT: Use the read_document tool (NOT read_file) "
+                              f"for PDF, DOCX, XLSX, PPTX:]\n{paths_list}")
+                else:
+                    notice = f"\n\n[Task attachments on disk:]\n{paths_list}"
+                task_message = task_message + notice
+
+        messages = [{"role": "user", "content": task_message}]
 
         # Get timeout (default 5 min)
         task_timeout = task_row.get("timeout") or 300
