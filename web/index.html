@@ -2277,7 +2277,6 @@ textarea { resize: none; }
 .sched-card-badge.running { background: rgba(16,185,129,.15); color: #10b981; }
 .sched-card-badge.paused { background: rgba(245,158,11,.15); color: #f59e0b; }
 .sched-card-badge.enabled { background: rgba(59,130,246,.15); color: #3b82f6; }
-.sched-card-badge.loop { background: rgba(168,85,247,.15); color: #a855f7; }
 .sched-card-prompt {
   font-size: 13px;
   color: var(--text-300);
@@ -2439,20 +2438,6 @@ textarea { resize: none; }
   color: var(--bg-000);
 }
 .sched-modal-actions .sched-create-btn:hover { opacity: 0.85; }
-
-/* Loop indicator in chat */
-.loop-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 8px;
-  background: rgba(168,85,247,.12);
-  color: #a855f7;
-  font-size: 11px;
-  font-weight: 500;
-  font-family: var(--font-mono);
-}
 
 .artifacts-container {
   max-width: 1000px;
@@ -3786,8 +3771,6 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       </div>
       <div class="scheduled-tabs">
         <div class="scheduled-tab active" data-filter="all" onclick="setScheduledFilter('all',this)">All</div>
-        <div class="scheduled-tab" data-filter="scheduled" onclick="setScheduledFilter('scheduled',this)">Persistent</div>
-        <div class="scheduled-tab" data-filter="loops" onclick="setScheduledFilter('loops',this)">Loops</div>
         <div class="scheduled-tab" data-filter="running" onclick="setScheduledFilter('running',this)">Running</div>
       </div>
       <div id="scheduled-list">
@@ -4042,10 +4025,6 @@ class API {
   static manageSchedule(body) { return this.post('/v1/schedule', body); }
   static getRunningTasks() { return this.get('/v1/schedule/running'); }
   static cancelScheduledTask(name) { return this.post('/v1/schedule/cancel', { name }); }
-  // Loops API
-  static getLoops(sessionId) { return this.get('/v1/loops' + (sessionId ? `?session_id=${sessionId}` : '')); }
-  static cancelLoop(sessionId, loopId) { return this.post('/v1/loops/cancel', { session_id: sessionId, loop_id: loopId }); }
-  static cancelAllLoops(sessionId) { return this.post('/v1/loops/cancel', { session_id: sessionId, all: true }); }
 
   // Models config
   static getModelsConfig() { return this.get('/v1/models/config'); }
@@ -5663,8 +5642,21 @@ function navigateTo(view, opts) {
       updatePageHeader('Scheduled');
       document.getElementById('status-bar').style.display = '';
       loadScheduledView();
+      renderRecentChats(); // dispatches to renderRecentScheduledRuns when view==='scheduled'
       break;
 
+  }
+
+  // Sync the sidebar list to the new view. Dispatcher in renderRecentChats
+  // picks runs vs chats based on currentView + active chat readonly state.
+  // Skip if 'scheduled' branch above already triggered a runs render.
+  // Defer to microtask so callers like openScheduledArtifact have a chance to
+  // set readonly markers on the active chat AFTER navigateTo returns.
+  if (view !== 'scheduled') {
+    Promise.resolve().then(() => {
+      // Re-check view in case another navigateTo fired in the meantime.
+      if (state.currentView === view) renderRecentChats();
+    });
   }
 
   closeMobileSidebar();
@@ -6348,6 +6340,17 @@ function closeMobileSidebar() {
 
 function renderRecentChats() {
   const container = document.getElementById('sb-recent-chats');
+  // Sidebar shows scheduled runs whenever the user is browsing the scheduled
+  // view OR currently looking at a read-only scheduled-run timeline (which
+  // technically lives in the chat view). Keeps the runs list pinned while the
+  // user click-through-explores the runs.
+  const onScheduledRun = state.currentView === 'chat'
+    && state.activeChat?._readonly
+    && state.activeChat?._scheduledRun;
+  if (state.currentView === 'scheduled' || onScheduledRun) {
+    renderRecentScheduledRuns(container);
+    return;
+  }
   if (!state.activeAgentId) {
     // Show recent across all agents
     let allSessions = [];
@@ -6377,6 +6380,7 @@ function renderRecentChats() {
 
 function renderSessionsList(container, sessions) {
   container.innerHTML = '';
+  container.dataset.mode = 'chats';
   for (const s of sessions) {
     const div = document.createElement('div');
     const sid = s.id || s.session_id;
@@ -6397,6 +6401,70 @@ function renderSessionsList(container, sessions) {
     `;
     div.onclick = () => openSession(sid, sagent);
     container.appendChild(div);
+  }
+}
+
+async function renderRecentScheduledRuns(container) {
+  if (!container) return;
+  const wasRuns = container.dataset.mode === 'runs';
+  container.dataset.mode = 'runs';
+  // Only show the loading placeholder on the first paint to avoid flicker on
+  // every subsequent renderRecentChats() trigger (rename hook, polls, etc.).
+  if (!wasRuns) {
+    container.innerHTML = '<div class="sb-session-item" style="opacity:.6;cursor:default">Loading runs…</div>';
+    // Stale signature from a prior runs session — force a fresh render below.
+    delete container.dataset.sig;
+    delete container.dataset.activeRun;
+  }
+  try {
+    // Fetch live schedules + history in parallel; filter out orphan runs
+    // (schedule_name no longer in the schedules table — e.g. deleted user tasks
+    // or future internal/system tasks) so the sidebar only reflects user-created
+    // schedules that still exist.
+    const [schedRes, histRes] = await Promise.all([
+      API.getSchedule(),
+      API.manageSchedule({ action: 'history', limit: 50 }),
+    ]);
+    const liveNames = new Set((schedRes.schedules || []).map(s => s.name));
+    const runs = (histRes.history || []).filter(h => liveNames.has(h.schedule_name)).slice(0, 20);
+    // Bail if dataset.mode flipped to 'chats' meanwhile (user navigated to a
+    // chat-centric view).
+    if (container.dataset.mode !== 'runs') return;
+    if (!runs.length) {
+      container.innerHTML = '<div class="sb-session-item" style="opacity:.6;cursor:default">No scheduled runs yet</div>';
+      return;
+    }
+    // Cheap stable signature to skip the DOM rebuild when nothing changed
+    // (id+status; status changes mid-run, e.g. running → success).
+    const sig = runs.map(h => `${h.id}:${h.status||''}`).join(',');
+    const activeId = state.activeScheduledRunId || null;
+    if (container.dataset.sig === sig && container.dataset.activeRun === String(activeId || '')) {
+      return;
+    }
+    container.dataset.sig = sig;
+    container.dataset.activeRun = String(activeId || '');
+    container.innerHTML = '';
+    for (const h of runs) {
+      const ok = h.status === 'success' || h.status === 'completed';
+      const running = h.status === 'running';
+      const dotColor = running ? '#3b82f6' : (ok ? '#10b981' : (h.status === 'timeout' ? '#f59e0b' : '#ef4444'));
+      const when = h.started_at ? new Date(h.started_at + 'Z').toLocaleString(undefined, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : '';
+      const title = h.schedule_name || `Run #${h.id}`;
+      const agentId = h.agent || 'main';
+      const div = document.createElement('div');
+      div.className = 'sb-session-item' + (activeId === h.id ? ' active' : '');
+      div.title = `${h.schedule_name || ''}\n${h.status || ''}${when ? ' · ' + when : ''}`;
+      div.innerHTML = `
+        <span class="sb-sess-icon" style="color:${dotColor}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+        <span class="sb-session-title">${esc(title)}</span>
+      `;
+      div.onclick = () => openScheduledArtifact(h.id, `sched-${h.id}`, agentId, null);
+      container.appendChild(div);
+    }
+  } catch (e) {
+    if (!wasRuns) {
+      container.innerHTML = `<div class="sb-session-item" style="opacity:.6;cursor:default;color:var(--error)">Failed: ${esc(e.message)}</div>`;
+    }
   }
 }
 
@@ -6500,6 +6568,8 @@ async function openSession(sessionId, agentId) {
   chat._tokensOut = 0;
   chat._lastSpeed = null;
   chat._lastApiIn = 0;
+  // Real chat open — drop any sticky scheduled-run selection.
+  state.activeScheduledRunId = null;
 
   // Re-declare local inference capabilities for the reopened session (server-
   // side capability state is not persisted across reconnects).
@@ -13096,23 +13166,16 @@ async function loadScheduledView() {
   if (!container) return;
   container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-400)">Loading...</div>';
   try {
-    const [schedData, loopsData] = await Promise.all([
-      API.getSchedule(),
-      API.getLoops()
-    ]);
+    const schedData = await API.getSchedule();
     const schedules = schedData.schedules || [];
     const running = schedData.running || [];
     const runningNames = new Set(running.map(r => r.name));
-    const loops = loopsData.loops || [];
 
     let html = '';
 
-    // Persistent scheduled tasks
     const filteredSchedules = schedules.filter(s => {
-      if (_scheduledFilter === 'loops') return false;
       if (_scheduledFilter === 'running') return runningNames.has(s.name);
-      if (_scheduledFilter === 'scheduled') return true;
-      return true; // 'all'
+      return true; // 'all' or 'scheduled'
     });
 
     for (const s of filteredSchedules) {
@@ -13150,35 +13213,6 @@ async function loadScheduledView() {
       </div>`;
     }
 
-    // Session-scoped loops
-    const filteredLoops = loops.filter(() => {
-      if (_scheduledFilter === 'scheduled') return false;
-      return true;
-    });
-
-    for (const l of filteredLoops) {
-      const interval = _formatLoopInterval(l.interval);
-      const expires = new Date(l.expires_at * 1000).toLocaleString(undefined, {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
-      const nextRun = new Date(l.next_run * 1000).toLocaleString(undefined, {hour:'2-digit',minute:'2-digit',second:'2-digit'});
-      html += `<div class="sched-card">
-        <div class="sched-card-header">
-          <span class="sched-card-name">Loop: ${esc(l.prompt.substring(0, 60))}</span>
-          <span class="sched-card-badge loop">every ${interval}</span>
-        </div>
-        <div class="sched-card-prompt">${esc(l.prompt)}</div>
-        <div class="sched-card-meta">
-          <span>Agent: ${esc(l.agent_id || 'main')}</span>
-          <span>Runs: ${l.run_count}</span>
-          <span>Next: ${nextRun}</span>
-          <span>Expires: ${expires}</span>
-          ${l.session_id ? `<span>Session: ${l.session_id.substring(0,8)}</span>` : ''}
-        </div>
-        <div class="sched-card-actions">
-          <button class="danger" onclick="_loopViewCancel('${esc(l.session_id)}','${esc(l.id)}')">Cancel</button>
-        </div>
-      </div>`;
-    }
-
     if (!html) {
       html = '<div style="padding:40px;text-align:center;color:var(--text-400)">No scheduled tasks. Click "New Task" to create one.</div>';
     }
@@ -13186,13 +13220,6 @@ async function loadScheduledView() {
   } catch(e) {
     container.innerHTML = `<div style="padding:20px;color:var(--error)">Failed to load: ${esc(e.message)}</div>`;
   }
-}
-
-function _formatLoopInterval(seconds) {
-  if (seconds >= 86400) return `${Math.round(seconds/86400)}d`;
-  if (seconds >= 3600) return `${Math.round(seconds/3600)}h`;
-  if (seconds >= 60) return `${Math.round(seconds/60)}m`;
-  return `${seconds}s`;
 }
 
 function setScheduledFilter(filter, el) {
@@ -13562,14 +13589,6 @@ async function _saveScheduledEdit(originalName) {
     if (res.error) { showToast(res.error, true); return; }
     showToast('Saved');
     document.querySelector('.sched-modal-overlay')?.remove();
-    loadScheduledView();
-  } catch(e) { showToast('Failed: ' + e.message, true); }
-}
-
-async function _loopViewCancel(sessionId, loopId) {
-  try {
-    await API.cancelLoop(sessionId, loopId);
-    showToast('Loop cancelled');
     loadScheduledView();
   } catch(e) { showToast('Failed: ' + e.message, true); }
 }
@@ -14975,6 +14994,7 @@ async function openScheduledArtifact(runId, sessionId, agentId, artifactId) {
   chat._tokensOut = 0;
   chat._readonly = true;
   chat._scheduledRun = detail.run;  // stash for header badge
+  state.activeScheduledRunId = runId;
   const runRow = detail.run || {};
   chat.model = runRow.model || chat.model;
   chat.chatTitle = `${runRow.schedule_name || 'Scheduled task'} · run #${runId}`;
@@ -15124,6 +15144,12 @@ async function _schedDeleteRunFromBanner(runId) {
     if (state.activeChat) {
       state.activeChat._readonly = false;
       state.activeChat._scheduledRun = null;
+    }
+    // Drop the active-run marker when leaving the read-only run viewer to a
+    // non-scheduled context. openScheduledArtifact resets it AFTER navigateTo
+    // returns, so chat-view re-entries from a fresh run-click stay correct.
+    if (view !== 'scheduled' && view !== 'chat') {
+      state.activeScheduledRunId = null;
     }
     return _origNav.apply(this, arguments);
   };

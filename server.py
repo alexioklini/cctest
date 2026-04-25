@@ -1325,8 +1325,7 @@ class SessionManager:
             return None
 
     def peek(self, session_id: str) -> Session | None:
-        """Get a cached session without triggering DB load or updating last_active.
-        Used by LoopManager and other internal checks that shouldn't create sessions."""
+        """Get a cached session without triggering DB load or updating last_active."""
         with self._lock:
             s = self._sessions.get(session_id)
             if s is self._LOADING_SENTINEL:
@@ -1348,307 +1347,9 @@ class SessionManager:
     def list_all(self) -> list[dict]:
         return ChatDB.list_sessions()
 
-    def list_for_agent(self, agent_id: str, status: str | None = None) -> list[dict]:
-        return ChatDB.list_sessions(agent_id=agent_id, status=status)
-
-
-# --- Loop Manager (session-scoped /loop tasks) ---
-
-class LoopManager:
-    """Manages session-scoped recurring loop tasks (in-memory, no DB persistence).
-
-    Like Claude Code's /loop — lightweight, ephemeral, auto-expires after 3 days.
-    Loops fire between turns (when session is not streaming).
-    """
-
-    EXPIRY_SECONDS = 3 * 24 * 3600  # 3 days
-    CHECK_INTERVAL = 10  # seconds between checks
-
-    def __init__(self):
-        self._loops: dict[str, dict[str, dict]] = {}  # session_id -> {loop_id -> loop_info}
-        self._lock = threading.Lock()
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-
-    def start(self):
-        self._thread = threading.Thread(target=self._run_loop, daemon=True, name="loop_manager")
-        self._thread.start()
-
-    def stop(self):
-        self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=5)
-
-    @staticmethod
-    def _parse_interval(text: str) -> int | None:
-        """Parse interval string like '5m', '2h', '30s', '1d' to seconds."""
-        import re
-        m = re.match(r'^(\d+)\s*(s|m|h|d)$', text.strip().lower())
-        if not m:
-            return None
-        val, unit = int(m.group(1)), m.group(2)
-        multipliers = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}
-        seconds = val * multipliers[unit]
-        # Minimum 30 seconds
-        return max(30, seconds)
-
-    @staticmethod
-    def parse_loop_command(message: str) -> dict | None:
-        """Parse /loop command variants.
-
-        Supported:
-          /loop <interval> <prompt>       — e.g. /loop 5m check CI status
-          /loop <prompt> every <interval> — e.g. /loop check CI every 5m
-          /loop list                      — list active loops
-          /loop cancel <id>               — cancel a loop
-          /loop cancel all                — cancel all loops in session
-        """
-        parts = message.strip().split(None, 1)
-        if len(parts) < 2:
-            return {"action": "help"}
-
-        rest = parts[1].strip()
-
-        # /loop list
-        if rest.lower() == "list":
-            return {"action": "list"}
-
-        # /loop cancel <id|all>
-        if rest.lower().startswith("cancel"):
-            target = rest[6:].strip()
-            if target.lower() == "all":
-                return {"action": "cancel_all"}
-            return {"action": "cancel", "loop_id": target}
-
-        # /loop <interval> <prompt>
-        first_word = rest.split()[0]
-        interval = LoopManager._parse_interval(first_word)
-        if interval is not None:
-            prompt = rest[len(first_word):].strip()
-            if prompt:
-                return {"action": "create", "interval": interval, "prompt": prompt}
-
-        # /loop <prompt> every <interval>
-        import re
-        m = re.search(r'\s+every\s+(\d+\s*[smhd])\s*$', rest, re.IGNORECASE)
-        if m:
-            interval = LoopManager._parse_interval(m.group(1))
-            prompt = rest[:m.start()].strip()
-            if interval and prompt:
-                return {"action": "create", "interval": interval, "prompt": prompt}
-
-        return None  # Could not parse
-
-    def create(self, session_id: str, agent_id: str, model: str, interval: int, prompt: str) -> dict:
-        """Create a new loop task for a session."""
-        loop_id = uuid.uuid4().hex[:8]
-        now = time.time()
-        loop_info = {
-            "id": loop_id,
-            "session_id": session_id,
-            "agent_id": agent_id,
-            "model": model,
-            "interval": interval,
-            "prompt": prompt,
-            "created_at": now,
-            "expires_at": now + self.EXPIRY_SECONDS,
-            "next_run": now + interval,
-            "run_count": 0,
-            "last_run": None,
-            "cancel_token": engine.CancelToken(),
-        }
-        with self._lock:
-            if session_id not in self._loops:
-                self._loops[session_id] = {}
-            if len(self._loops[session_id]) >= 50:
-                return {"error": "Maximum 50 loops per session"}
-            self._loops[session_id][loop_id] = loop_info
-        return {
-            "id": loop_id,
-            "interval": interval,
-            "prompt": prompt,
-            "next_run": loop_info["next_run"],
-            "expires_at": loop_info["expires_at"],
-            "status": "created",
-        }
-
-    def cancel(self, session_id: str, loop_id: str) -> bool:
-        with self._lock:
-            session_loops = self._loops.get(session_id, {})
-            loop = session_loops.pop(loop_id, None)
-            if loop:
-                loop["cancel_token"].cancel()
-                return True
-        return False
-
-    def cancel_all(self, session_id: str) -> int:
-        with self._lock:
-            session_loops = self._loops.pop(session_id, {})
-            for loop in session_loops.values():
-                loop["cancel_token"].cancel()
-            return len(session_loops)
-
-    def list_loops(self, session_id: str) -> list[dict]:
-        with self._lock:
-            session_loops = self._loops.get(session_id, {})
-            return [{
-                "id": l["id"],
-                "interval": l["interval"],
-                "prompt": l["prompt"],
-                "created_at": l["created_at"],
-                "expires_at": l["expires_at"],
-                "next_run": l["next_run"],
-                "run_count": l["run_count"],
-                "last_run": l["last_run"],
-            } for l in session_loops.values()]
-
-    def _format_interval(self, seconds: int) -> str:
-        if seconds >= 86400:
-            return f"{seconds // 86400}d"
-        if seconds >= 3600:
-            return f"{seconds // 3600}h"
-        if seconds >= 60:
-            return f"{seconds // 60}m"
-        return f"{seconds}s"
-
-    def _run_loop(self):
-        """Background loop: check all sessions for due loop tasks."""
-        while not self._stop.is_set():
-            try:
-                self._check_and_fire()
-            except Exception as e:
-                print(f"  LoopManager error: {e}", flush=True)
-            self._stop.wait(self.CHECK_INTERVAL)
-
-    def _check_and_fire(self):
-        now = time.time()
-        to_fire: list[dict] = []
-        expired_ids: list[tuple[str, str]] = []
-
-        with self._lock:
-            for sid, session_loops in list(self._loops.items()):
-                # Get session to check streaming state (peek: no DB load, no last_active bump)
-                session = sessions.peek(sid)
-                if not session:
-                    # Session gone — clean up
-                    for loop in session_loops.values():
-                        loop["cancel_token"].cancel()
-                    del self._loops[sid]
-                    continue
-
-                # Skip if session is actively streaming
-                with session.lock:
-                    if getattr(session, '_streaming', False):
-                        continue
-
-                for lid, loop in list(session_loops.items()):
-                    # Check expiry
-                    if now >= loop["expires_at"]:
-                        expired_ids.append((sid, lid))
-                        continue
-                    # Check if due
-                    if now >= loop["next_run"]:
-                        loop["next_run"] = now + loop["interval"]
-                        to_fire.append(dict(loop))  # shallow copy
-
-            # Remove expired
-            for sid, lid in expired_ids:
-                loop = self._loops.get(sid, {}).pop(lid, None)
-                if loop:
-                    loop["cancel_token"].cancel()
-                    print(f"  Loop expired: {lid} ({loop['prompt'][:40]})", flush=True)
-
-        # Fire due loops outside lock
-        for loop in to_fire:
-            t = threading.Thread(
-                target=self._execute_loop, args=(loop,),
-                daemon=True, name=f"loop_{loop['id']}")
-            t.start()
-
-    def _execute_loop(self, loop: dict):
-        """Execute a single loop iteration — runs the prompt and adds result to session."""
-        session_id = loop["session_id"]
-        agent_id = loop["agent_id"]
-        model = loop["model"]
-        prompt = loop["prompt"]
-        loop_id = loop["id"]
-        cancel_token = loop["cancel_token"]
-
-        if cancel_token.cancelled:
-            return
-
-        session = sessions.get(session_id)
-        if not session:
-            return
-
-        # Wait if session is streaming (double-check)
-        for _ in range(30):  # wait up to 30s
-            if not getattr(session, '_streaming', False):
-                break
-            time.sleep(1)
-        else:
-            return  # still streaming, skip this iteration
-
-        target = engine.AgentConfig(agent_id)
-        target_memory = engine.MemoryStore(agent_id, base_dir=target.memory_dir)
-
-        # Set thread-local context for tools that need agent/memory context
-        engine._thread_local.current_agent = target
-        engine._thread_local.memory_store = target_memory
-        engine._thread_local.mcp_manager = engine._mcp_manager
-
-        system_prompt = (
-            f"{target.soul}\n\n"
-            f"You are executing a recurring loop task (iteration #{loop.get('run_count', 0) + 1}).\n"
-            f"Current date and time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-            f"Current working directory: {os.getcwd()}\n\n"
-            "IMPORTANT: Be brief and direct. Report findings concisely. "
-            "Complete within 2-3 tool calls maximum.\n"
-        )
-        if target.tools_guide:
-            system_prompt += f"\n--- TOOL USAGE GUIDE ---\n{target.tools_guide}"
-
-        messages = [{"role": "user", "content": prompt}]
-
-        try:
-            inf_params = engine.get_inference_params(model, target.config.get("model_purpose"))
-            result = engine._run_delegate(
-                messages, model, system_prompt,
-                memory_store=target_memory,
-                cancel_token=cancel_token,
-                inference_params=inf_params,
-            ) or "(no response)"
-        except engine.TaskCancelled:
-            result = "(loop cancelled)"
-        except Exception as e:
-            result = f"(loop error: {e})"
-
-        # Clean up thread-local context
-        engine._thread_local.current_agent = None
-        engine._thread_local.memory_store = None
-        engine._thread_local.mcp_manager = None
-
-        # Update run count
-        with self._lock:
-            session_loops = self._loops.get(session_id, {})
-            live = session_loops.get(loop_id)
-            if live:
-                live["run_count"] += 1
-                live["last_run"] = time.time()
-
-        # Add result to session chat as a loop notification
-        interval_str = self._format_interval(loop["interval"])
-        loop_label = f"[Loop every {interval_str}: {prompt[:60]}]"
-        session.add_message("user", f"{loop_label}\n*(auto-triggered, iteration #{loop.get('run_count', 0) + 1})*",
-                           metadata={"loop_id": loop_id, "loop": True})
-        session.add_message("assistant", result,
-                           metadata={"model": model, "loop_id": loop_id, "loop": True})
-
-
 # --- Server globals ---
 
 sessions = SessionManager()
-loop_manager = LoopManager()
 server_config = {
     "api_key": "",
     "base_url": "http://localhost:8317/v1",
@@ -2649,8 +2350,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 mcfg = engine.resolve_model_settings(s.model)
                 warmup_enabled = bool(mcfg.get("warmup", False))
                 self._send_json({"warmup": warmup_enabled, "warming_up": s._warmup_active})
-        elif path == "/v1/loops":
-            self._handle_loops_get()
         elif path == "/v1/schedule":
             self._handle_list_schedule()
         elif path == "/v1/tasks":
@@ -2879,8 +2578,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_install_skill()
         elif path == "/v1/skills/install-zip":
             self._handle_install_skill_zip()
-        elif path == "/v1/loops/cancel":
-            self._handle_loops_cancel()
         elif path == "/v1/schedule/cancel":
             self._handle_cancel_scheduled()
         elif path == "/v1/skills/remove":
@@ -3771,7 +3468,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             archived_only = body.get("archived_only", False)
             sids = ChatDB.delete_all(agent, archived_only)
             for sid in (sids or []):
-                loop_manager.cancel_all(sid)
                 sessions.delete(sid)
                 if agent:
                     try:
@@ -3782,7 +3478,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         elif action == "delete":
             # Get agent_id before deleting so we can trigger summary refresh
             info = ChatDB.get_session_info(sid)
-            loop_manager.cancel_all(sid)  # Clean up session-scoped loops
             sessions.delete(sid)
             self._send_json({"status": "deleted", "session_id": sid})
             # Clean up indexed transcript files and trigger memory summary refresh
@@ -4209,46 +3904,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         if not message:
             self._send_json({"error": "No message"}, 400)
             return
-
-        # --- /loop command handling (session-scoped recurring tasks) ---
-        if message.strip().lower().startswith("/loop"):
-            parsed = LoopManager.parse_loop_command(message)
-            if not parsed or parsed.get("action") == "help":
-                self._send_json({"type": "loop", "action": "help", "usage": (
-                    "/loop <interval> <prompt> — create a recurring task (e.g. /loop 5m check CI)\n"
-                    "/loop <prompt> every <interval> — alternative syntax\n"
-                    "/loop list — show active loops\n"
-                    "/loop cancel <id> — cancel a loop\n"
-                    "/loop cancel all — cancel all loops\n"
-                    "Intervals: 30s, 5m, 2h, 1d (minimum 30s, auto-expires after 3 days)"
-                )})
-                return
-            action = parsed["action"]
-            if action == "list":
-                loops = loop_manager.list_loops(session.id)
-                self._send_json({"type": "loop", "action": "list", "loops": loops})
-                return
-            elif action == "cancel":
-                ok = loop_manager.cancel(session.id, parsed.get("loop_id", ""))
-                self._send_json({"type": "loop", "action": "cancel",
-                                "success": ok, "loop_id": parsed.get("loop_id", "")})
-                return
-            elif action == "cancel_all":
-                count = loop_manager.cancel_all(session.id)
-                self._send_json({"type": "loop", "action": "cancel_all", "cancelled": count})
-                return
-            elif action == "create":
-                result = loop_manager.create(
-                    session_id=session.id,
-                    agent_id=session.agent_id,
-                    model=session.model,
-                    interval=parsed["interval"],
-                    prompt=parsed["prompt"],
-                )
-                result["type"] = "loop"
-                result["action"] = "create"
-                self._send_json(result)
-                return
 
         # Custom command expansion
         if message.startswith("/"):
@@ -4888,45 +4543,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
 
-    # --- Loop Management Endpoints ---
-
-    def _handle_loops_get(self):
-        """GET /v1/loops?session_id=X — list loops for a session, or all loops."""
-        qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-        sid = qs.get("session_id", [None])[0]
-        if sid:
-            loops = loop_manager.list_loops(sid)
-            self._send_json({"loops": loops, "session_id": sid})
-        else:
-            # Return all active loops across all sessions
-            all_loops = []
-            with loop_manager._lock:
-                for session_id, session_loops in loop_manager._loops.items():
-                    for l in session_loops.values():
-                        all_loops.append({
-                            "id": l["id"], "session_id": session_id,
-                            "agent_id": l["agent_id"], "model": l["model"],
-                            "interval": l["interval"], "prompt": l["prompt"],
-                            "created_at": l["created_at"], "expires_at": l["expires_at"],
-                            "next_run": l["next_run"], "run_count": l["run_count"],
-                            "last_run": l["last_run"],
-                        })
-            self._send_json({"loops": all_loops})
-
-    def _handle_loops_cancel(self):
-        """POST /v1/loops/cancel — cancel a loop by session_id + loop_id."""
-        body = self._read_json()
-        sid = body.get("session_id", "")
-        lid = body.get("loop_id", "")
-        if body.get("all"):
-            count = loop_manager.cancel_all(sid)
-            self._send_json({"cancelled": count})
-        elif sid and lid:
-            ok = loop_manager.cancel(sid, lid)
-            self._send_json({"success": ok, "loop_id": lid})
-        else:
-            self._send_json({"error": "session_id and loop_id required"}, 400)
-
     def _handle_list_schedule(self):
         if engine._scheduler:
             schedules = engine._scheduler.list_all()
@@ -4994,6 +4610,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "name is required"}, 400)
                 return
             self._send_json(engine._scheduler.delete_history(name))
+        elif action == "purge_orphan_history":
+            # Wipe history rows whose schedule no longer exists.
+            self._send_json(engine._scheduler.delete_orphan_history())
         elif action == "edit":
             name = body.get("name", "")
             if not name:
@@ -10223,10 +9842,6 @@ def main():
     # Start scheduler
     engine._scheduler = engine.Scheduler()
     engine._scheduler.start()
-
-    # Start session-scoped loop manager
-    loop_manager.start()
-    print("Loop manager: started (session-scoped /loop tasks)")
 
     # Initialize lossless context manager
     engine._context_manager = engine.ContextManager()

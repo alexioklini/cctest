@@ -10952,6 +10952,57 @@ class Scheduler:
         return {"status": "ok", "runs_removed": len(removed_ids),
                 "artifacts_removed": total_artifacts}
 
+    def delete_orphan_history(self) -> dict:
+        """Purge schedule_history rows whose schedule_name no longer exists in
+        the schedules table. Skips in-flight runs. Removes associated artifacts
+        and empty artifact folders, mirroring delete_history's per-row cleanup."""
+        with _sched_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT h.id, h.status, h.agent, h.artifact_folder, h.schedule_name "
+                "FROM schedule_history h "
+                "LEFT JOIN schedules s ON s.name = h.schedule_name "
+                "WHERE s.name IS NULL"
+            ).fetchall()
+            orphans = [dict(r) for r in rows]
+        if not orphans:
+            return {"status": "ok", "runs_removed": 0, "artifacts_removed": 0,
+                    "orphan_names": []}
+        total_artifacts = 0
+        removed_ids: list[int] = []
+        orphan_names: set[str] = set()
+        for r in orphans:
+            rid = r["id"]
+            if r.get("status") == "running":
+                continue  # never touch in-flight runs
+            orphan_names.add(r.get("schedule_name") or "")
+            try:
+                from server import ChatDB
+                n = ChatDB.delete_artifacts_for_session(f"sched-{rid}") or 0
+                total_artifacts += n
+            except Exception:
+                pass
+            folder = r.get("artifact_folder")
+            if folder:
+                agent_id = r.get("agent") or "main"
+                folder_path = os.path.join(AGENTS_DIR, agent_id, "artifacts", folder)
+                try:
+                    if os.path.isdir(folder_path) and not os.listdir(folder_path):
+                        os.rmdir(folder_path)
+                except OSError:
+                    pass
+            removed_ids.append(rid)
+        if removed_ids:
+            placeholders = ",".join("?" * len(removed_ids))
+            with _sched_conn() as conn:
+                conn.execute(
+                    f"DELETE FROM schedule_history WHERE id IN ({placeholders})",
+                    removed_ids)
+                conn.commit()
+        return {"status": "ok", "runs_removed": len(removed_ids),
+                "artifacts_removed": total_artifacts,
+                "orphan_names": sorted(n for n in orphan_names if n)}
+
     def update(self, name: str, fields: dict) -> dict:
         """Edit a scheduled task. Allowed fields: task, schedule, model,
         timeout, agent, new_name. All fields optional; unknown keys ignored.
