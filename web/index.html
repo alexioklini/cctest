@@ -2757,7 +2757,7 @@ textarea { resize: none; }
   border-top: 1px solid var(--border-100);
 }
 
-/* Modal tabs */
+/* Modal tabs (legacy horizontal — kept for any callers we haven't migrated) */
 .modal-tabs {
   display: flex;
   gap: 0;
@@ -2773,6 +2773,71 @@ textarea { resize: none; }
 }
 .modal-tab:hover { color: var(--text-200); }
 .modal-tab.active { color: var(--text-000); border-bottom-color: var(--accent-brand); font-weight: 500; }
+
+/* Vertical sidebar tab list (Settings modals — claude.ai-style left rail).
+   Activate by giving the .modal-content the .has-sidebar-tabs class AND
+   adding .modal-tabs-vertical to the .modal-tabs container. Layout: a
+   2-column CSS grid where the header spans both columns and the sidebar
+   + body sit in the second row. */
+.modal-content.has-sidebar-tabs {
+  display: grid !important;
+  grid-template-columns: 200px 1fr;
+  grid-template-rows: auto 1fr;
+  flex-direction: unset !important;
+  width: calc(100% - 32px);
+  max-width: 1100px;
+  height: 85vh;
+  max-height: 85vh;
+  overflow: hidden;
+}
+.modal-content.has-sidebar-tabs > .modal-header {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+.modal-tabs.modal-tabs-vertical {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-bottom: none;
+  border-right: 1px solid var(--border-100);
+  padding: 8px 8px;
+  overflow-y: auto;
+  background: var(--bg-100);
+}
+.modal-tabs.modal-tabs-vertical .modal-tab {
+  padding: 7px 12px;
+  font-size: 13px;
+  text-align: left;
+  border-bottom: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-200);
+  transition: background 0.12s, color 0.12s;
+}
+.modal-tabs.modal-tabs-vertical .modal-tab:hover { background: var(--bg-200); color: var(--text-000); }
+.modal-tabs.modal-tabs-vertical .modal-tab.active {
+  background: var(--bg-200);
+  color: var(--text-000);
+  border-bottom: none;
+  font-weight: 500;
+}
+.modal-tabs.modal-tabs-vertical .sidebar-group-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-400);
+  padding: 12px 12px 4px;
+}
+.modal-tabs.modal-tabs-vertical .sidebar-group-label:first-child { padding-top: 4px; }
+.modal-content.has-sidebar-tabs > .modal-body {
+  grid-column: 2;
+  grid-row: 2;
+  overflow-y: auto;
+  padding: 0 !important;
+}
 
 /* Buttons */
 .btn-primary {
@@ -9530,26 +9595,28 @@ function openAgentSettings() {
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
 
   const content = document.createElement('div');
-  content.className = 'modal-content x-wide';
-  content.style.height = '85vh';
-  content.style.display = 'flex';
-  content.style.flexDirection = 'column';
+  content.className = 'modal-content x-wide has-sidebar-tabs';
 
   content.innerHTML = `
     <div class="modal-header">
       <span class="modal-title">${esc(display)} <span style="font-size:12px;font-family:var(--font-mono);color:var(--text-400);font-weight:400">${esc(agentId)}</span></span>
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
     </div>
-    <div class="modal-tabs" id="agent-settings-tabs">
+    <div class="modal-tabs modal-tabs-vertical" id="agent-settings-tabs">
+      <div class="sidebar-group-label">Identity</div>
       <button class="modal-tab active" onclick="switchAgentTab('${esc(agentId)}','soul',this)">Soul</button>
       <button class="modal-tab" onclick="switchAgentTab('${esc(agentId)}','agent',this)">Agent</button>
+
+      <div class="sidebar-group-label">Capabilities</div>
       <button class="modal-tab" onclick="switchAgentTab('${esc(agentId)}','skills',this)">Skills</button>
-      <button class="modal-tab" onclick="switchAgentTab('${esc(agentId)}','hooks',this)">Hooks</button>
-      <button class="modal-tab" onclick="switchAgentTab('${esc(agentId)}','schedule',this)">Schedule</button>
       <button class="modal-tab" onclick="switchAgentTab('${esc(agentId)}','mcp',this)">MCP</button>
       <button class="modal-tab" onclick="switchAgentTab('${esc(agentId)}','tokens',this)">Tokens</button>
+
+      <div class="sidebar-group-label">Automation</div>
+      <button class="modal-tab" onclick="switchAgentTab('${esc(agentId)}','hooks',this)">Hooks</button>
+      <button class="modal-tab" onclick="switchAgentTab('${esc(agentId)}','schedule',this)">Schedule</button>
     </div>
-    <div class="modal-body" id="settings-tab-content" style="flex:1;overflow-y:auto;overflow-x:hidden;padding:0">
+    <div class="modal-body" id="settings-tab-content">
     </div>
   `;
 
@@ -9570,33 +9637,39 @@ function openGeneralSettings() {
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
 
   const content = document.createElement('div');
-  content.className = 'modal-content x-wide';
-  content.style.height = '85vh';
-  content.style.display = 'flex';
-  content.style.flexDirection = 'column';
+  content.className = 'modal-content x-wide has-sidebar-tabs';
 
   content.innerHTML = `
     <div class="modal-header">
       <span class="modal-title">General Settings</span>
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
     </div>
-    <div class="modal-tabs" id="general-settings-tabs">
+    <div class="modal-tabs modal-tabs-vertical" id="general-settings-tabs">
+      <div class="sidebar-group-label">Server</div>
       <button class="modal-tab active" onclick="switchGeneralTab('server',this)">Server</button>
+      <button class="modal-tab" onclick="switchGeneralTab('providers',this)">Providers</button>
+      <button class="modal-tab" onclick="switchGeneralTab('nodes',this)">Nodes</button>
+
+      <div class="sidebar-group-label">Models</div>
       <button class="modal-tab" onclick="switchGeneralTab('models',this)">Models</button>
       <button class="modal-tab" onclick="switchGeneralTab('client-models',this)">Client&nbsp;Models</button>
       <button class="modal-tab" onclick="switchGeneralTab('local-inference',this)">Local&nbsp;Inference</button>
-      <button class="modal-tab" onclick="switchGeneralTab('providers',this)">Providers</button>
+
+      <div class="sidebar-group-label">Users &amp; Costs</div>
       <button class="modal-tab" onclick="switchGeneralTab('agents',this)">Agents</button>
       <button class="modal-tab" onclick="switchGeneralTab('teams',this)">Teams</button>
-      <button class="modal-tab" onclick="switchGeneralTab('nodes',this)">Nodes</button>
-      <button class="modal-tab" onclick="switchGeneralTab('context',this)">Context</button>
       <button class="modal-tab" onclick="switchGeneralTab('costs',this)">Costs</button>
       <button class="modal-tab" onclick="switchGeneralTab('quotas',this)">Quotas</button>
-      <button class="modal-tab" onclick="switchGeneralTab('mempalace',this)">MemPalace</button>
+
+      <div class="sidebar-group-label">Privacy &amp; Memory</div>
       <button class="modal-tab" onclick="switchGeneralTab('gdpr',this)">GDPR</button>
+      <button class="modal-tab" onclick="switchGeneralTab('context',this)">Context</button>
+      <button class="modal-tab" onclick="switchGeneralTab('mempalace',this)">MemPalace</button>
+
+      <div class="sidebar-group-label">Tools</div>
       <button class="modal-tab" onclick="switchGeneralTab('tools',this)">Tools</button>
     </div>
-    <div class="modal-body" id="general-tab-content" style="flex:1;overflow-y:auto;padding:0">
+    <div class="modal-body" id="general-tab-content">
     </div>
   `;
 
