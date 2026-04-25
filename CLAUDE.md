@@ -203,9 +203,51 @@ Optional `limits` block in `agent.json` overrides global defaults:
 - `context_safety_ratio`: pre-flight in `send_message` raises `RuntimeError` if estimated tokens > `max_context * ratio` (default 0.95) — avoids provider 400s
 - Resolved via `_get_agent_limits()` + `AGENT_LIMITS_DEFAULTS`
 
-## Session Cost Soft Warnings
+## Per-User Cost Quotas (v8.14.0)
 
-Global `cost_limits.max_session_cost_usd` in `config.json` (Settings → Server → Cost Limits). Status bar shows `$ X.XX`. 70% = amber triangle, 90% = red triangle + one-time modal per session (localStorage `cost-warning-shown:<session_id>`). **No hard abort.** Missing pricing shows `$0.00` with tooltip.
+Replaces the old `cost_limits.max_session_cost_usd` machinery (deleted in 8.14.0). Quotas are per-user with role-based defaults and optional per-user overrides; cost data lives in `cost_log.user_id` (column added 8.14.0).
+
+- **Engine**: `QuotaManager` in `claude_cli.py` (singleton `_quota_manager`). 30s config cache. Two axes per user:
+  - **Daily** (rolling, resets at UTC midnight)
+  - **Cycle** — `monthly` (default, anchor day-of-month, clamped to last day of short months), `weekly` (anchor 0=Mon..6=Sun), or `yearly` (anchor month-of-year)
+- **Levels**: `green` < `warn_pct` (70 default) ≤ `yellow` < `block_pct` (100 default) ≤ `red`. Worst axis wins for the overall pill colour.
+- **Pre-flight gate**: `send_message` round 0, after the GDPR scan. `is_model_local(model)` always bypasses (local cost = 0). Modes via `quotas.enforce_red`:
+  - `warn_only` (default) — pill goes red, requests still allowed, no server-side refusal
+  - `force_local` — silently swap to `default_local_fallback_model` (audit `quota_force_local`); raises `QuotaExceededError` if the configured fallback is unusable
+  - `hard_block` — raise `QuotaExceededError` pre-LLM (audit `quota_blocked`)
+- **Cost logging**: `_log_call_cost` captures `_thread_local.current_user_id` at insert time. Rows with empty `user_id` are pre-quota legacy data — see Backfill below.
+- **API**:
+  - `GET /v1/quotas/me` — daily + cycle state with reset timestamps and worst-axis level
+  - `GET/POST /v1/quotas/config` (admin) — full config
+  - `GET /v1/quotas/admin/users` (admin) — every user's daily + cycle + level
+  - `GET /v1/quotas/admin/breakdown?user_id=X&days=N` (admin or self) — per-model breakdown for current cycle + daily 30-day series
+  - `/v1/costs` and `/v1/costs/daily` extended with optional `?user_id=X` (ownership-gated)
+- **UI**:
+  - Status-bar **Plan-usage donut** (`#status-quota`) — small SVG arc tinted green/yellow/red by worst-axis level, label shows higher of (daily_pct, cycle_pct), hides when both limits are zero. `QuotaMonitor` polls `/v1/quotas/me` every 30s and refreshes after every turn ends
+  - Click opens an anchored popover (`position:fixed`, right-aligned to the pill, two-frame measure-then-position so the bottom edge stays on-screen) with daily + cycle bars, reset countdowns, role + override chips, and a mode-aware footer
+  - **Settings → Quotas tab** (admin only): cycle config, warn/block thresholds, enforce-mode dropdown, local fallback model picker (filtered to enabled local models), per-role limits table (admin/poweruser/user × daily_usd/cycle_usd), per-user override prompts, org-wide user list with level chips, per-user **Details** modal showing per-model + 30-day breakdown
+- **Config** (`config.json` → `quotas`):
+  ```json
+  {
+    "enabled": true,
+    "billing_cycle": "monthly",
+    "cycle_start_day": 1,
+    "warn_pct": 70,
+    "block_pct": 100,
+    "enforce_red": "warn_only",
+    "default_local_fallback_model": "",
+    "limits": {
+      "admin":     {"daily_usd": 50, "cycle_usd": 800},
+      "poweruser": {"daily_usd": 20, "cycle_usd": 200},
+      "user":      {"daily_usd": 5,  "cycle_usd": 50}
+    },
+    "user_overrides": {"<user_id>": {"daily_usd": 10, "cycle_usd": 100}}
+  }
+  ```
+  Set any limit to `0` to mean "no limit" for that axis. Invalidated on `_quota_manager.save_config()`.
+- **Audit trail**: `quota_force_local`, `quota_blocked`, `quota_config_save`. Combined with the cost_log row, every quota refusal is reconstructible.
+- **Backfill (one-time, 8.14.0 migration)**: pre-quota `cost_log` rows have `user_id=''`. The migration takes user from `chats.db.sessions.user_id` where the session row still exists; remaining rows (deleted sessions, scheduler synthetic `sched-*`, background non-chat calls — classifier, summariser, next-prompt, warmup) are reassigned to the org admin. A `cost_log_backfill` row in `audit.db` records the bulk reassignment.
+- **Stages 2+3 deferred**: per-user GDPR compliance reporting (already auditable via `audit.db` filter on user_id), harmful-prompt analytics.
 
 ## GDPR / PII Pre-Submit Scanner
 

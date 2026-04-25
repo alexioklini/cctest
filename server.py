@@ -2409,6 +2409,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         "/v1/mcp/connections",
         "/v1/mcp/registry",
         "/v1/services",
+        "/v1/quotas/config",
+        "/v1/quotas/admin/users",
     }
 
     _ADMIN_POST_EXACT = {
@@ -2650,6 +2652,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_costs()
         elif path == "/v1/costs/daily":
             self._handle_costs_daily()
+        elif path == "/v1/quotas/me":
+            self._handle_quota_me()
+        elif path == "/v1/quotas/config":
+            self._handle_quota_config_get()
+        elif path == "/v1/quotas/admin/users":
+            self._handle_quota_admin_users()
+        elif path.startswith("/v1/quotas/admin/breakdown"):
+            self._handle_quota_admin_breakdown()
         elif path == "/v1/cache/stats":
             self._send_json(engine._web_cache.stats())
         elif path == "/v1/warmup/status":
@@ -2874,6 +2884,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_server_config()
         elif path == "/v1/mempalace/classifier":
             self._handle_mempalace_classifier_save()
+        elif path == "/v1/quotas/config":
+            self._handle_quota_config_save()
         elif path == "/v1/cache/clear":
             engine._web_cache.clear()
             self._send_json({"status": "cleared"})
@@ -7307,7 +7319,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         return []
 
     def _handle_costs(self):
-        """GET /v1/costs?agent=X&hours=24 — cost stats."""
+        """GET /v1/costs?agent=X&hours=24&user_id=Y — cost stats."""
         if not engine._cost_tracker:
             self._send_json({"error": "Cost tracking not initialized"}, 503)
             return
@@ -7316,11 +7328,19 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         from urllib.parse import unquote
         agent = unquote(params.get("agent", "")) or None
         hours = int(params.get("hours", "24"))
-        stats = engine._cost_tracker.get_stats(agent=agent, hours=hours)
+        target_uid = unquote(params.get("user_id", "")) or None
+        if target_uid is not None:
+            user = self._require_auth()
+            if not user:
+                return
+            if target_uid != user["id"] and user.get("role") != "admin" and user["id"] != "__system__":
+                self._send_json({"error": "Insufficient permissions"}, 403)
+                return
+        stats = engine._cost_tracker.get_stats(agent=agent, hours=hours, user_id=target_uid)
         self._send_json(stats)
 
     def _handle_costs_daily(self):
-        """GET /v1/costs/daily?agent=X&days=7 — daily breakdown."""
+        """GET /v1/costs/daily?agent=X&days=7&user_id=Y — daily breakdown."""
         if not engine._cost_tracker:
             self._send_json({"error": "Cost tracking not initialized"}, 503)
             return
@@ -7329,8 +7349,138 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         from urllib.parse import unquote
         agent = unquote(params.get("agent", "")) or None
         days = int(params.get("days", "7"))
-        daily = engine._cost_tracker.get_daily(agent=agent, days=days)
-        self._send_json({"daily": daily, "days": days, "agent_filter": agent})
+        target_uid = unquote(params.get("user_id", "")) or None
+        if target_uid is not None:
+            user = self._require_auth()
+            if not user:
+                return
+            if target_uid != user["id"] and user.get("role") != "admin" and user["id"] != "__system__":
+                self._send_json({"error": "Insufficient permissions"}, 403)
+                return
+        daily = engine._cost_tracker.get_daily(agent=agent, days=days, user_id=target_uid)
+        self._send_json({"daily": daily, "days": days, "agent_filter": agent, "user_id": target_uid})
+
+    # --- Per-user cost quotas ---
+
+    def _handle_quota_me(self):
+        """GET /v1/quotas/me — current authenticated user's quota state."""
+        user = self._require_auth()
+        if not user:
+            return
+        if not engine._quota_manager:
+            self._send_json({"error": "Quota manager not initialized"}, 503)
+            return
+        try:
+            state = engine._quota_manager.get_user_state(user["id"])
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+            return
+        self._send_json(state)
+
+    def _handle_quota_config_get(self):
+        """GET /v1/quotas/config — admin-only. Full quotas config."""
+        user = self._require_role("admin")
+        if not user:
+            return
+        if not engine._quota_manager:
+            self._send_json({"error": "Quota manager not initialized"}, 503)
+            return
+        self._send_json(engine._quota_manager.get_config())
+
+    def _handle_quota_config_save(self):
+        """POST /v1/quotas/config — admin-only. Update quotas config."""
+        user = self._require_role("admin")
+        if not user:
+            return
+        if not engine._quota_manager:
+            self._send_json({"error": "Quota manager not initialized"}, 503)
+            return
+        body = self._read_json() or {}
+        try:
+            saved = engine._quota_manager.save_config(body)
+        except RuntimeError as e:
+            self._send_json({"error": str(e)}, 500)
+            return
+        # Audit log so changes are traceable
+        try:
+            if engine._audit_log:
+                engine._audit_log.log_action(
+                    agent="main",
+                    action_type="quota_config_save",
+                    tool_name="quota",
+                    args_summary=f"by={user.get('username','')} cycle={saved.get('billing_cycle')} enforce={saved.get('enforce_red')}",
+                    result_status="ok",
+                )
+        except Exception:
+            pass
+        self._send_json(saved)
+
+    def _handle_quota_admin_users(self):
+        """GET /v1/quotas/admin/users — admin-only. State for every user."""
+        user = self._require_role("admin")
+        if not user:
+            return
+        if not engine._quota_manager:
+            self._send_json({"error": "Quota manager not initialized"}, 503)
+            return
+        try:
+            users = _auth_mod.AuthDB.list_users()
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+            return
+        out = []
+        cfg = engine._quota_manager.get_config()
+        for u in users:
+            try:
+                st = engine._quota_manager.get_user_state(u["id"], cfg=cfg)
+            except Exception:
+                continue
+            out.append({
+                "user_id": u["id"],
+                "username": u.get("username") or "",
+                "display_name": u.get("display_name") or "",
+                "role": u.get("role") or "user",
+                "disabled": bool(u.get("disabled")),
+                "level": st["level"],
+                "daily": st["daily"],
+                "cycle": st["cycle"],
+                "has_override": st["has_override"],
+            })
+        self._send_json({"users": out, "config": cfg})
+
+    def _handle_quota_admin_breakdown(self):
+        """GET /v1/quotas/admin/breakdown?user_id=X&days=N — per-user
+        per-model + per-day breakdown for the current cycle. Admin sees
+        anyone; non-admin only their own user_id."""
+        user = self._require_auth()
+        if not user:
+            return
+        if not engine._quota_manager or not engine._cost_tracker:
+            self._send_json({"error": "Quota manager not initialized"}, 503)
+            return
+        qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+        from urllib.parse import unquote
+        params = dict(p.split("=", 1) for p in qs.split("&") if "=" in p)
+        target_uid = unquote(params.get("user_id", "")) or user["id"]
+        if target_uid != user["id"] and user.get("role") != "admin" and user["id"] != "__system__":
+            self._send_json({"error": "Insufficient permissions"}, 403)
+            return
+        try:
+            days = max(1, min(365, int(params.get("days", "30"))))
+        except ValueError:
+            days = 30
+        cfg = engine._quota_manager.get_config()
+        state = engine._quota_manager.get_user_state(target_uid, cfg=cfg)
+        cycle_start_iso = state["cycle"]["starts_at"].replace("T", " ").split("+", 1)[0].split(".")[0]
+        per_model = engine._cost_tracker.per_model_user_window(target_uid, cycle_start_iso)
+        daily = engine._cost_tracker.get_daily(days=days, user_id=target_uid)
+        self._send_json({
+            "user_id": target_uid,
+            "state": state,
+            "per_model": per_model,
+            "daily": daily,
+            "days": days,
+        })
 
     def _handle_agent_commands_get(self, path):
         """GET /v1/agents/{id}/commands — list custom commands."""
@@ -7770,7 +7920,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "default_provider": next((name for name, p in server_config.get("providers", {}).items() if p.get("default_model") == server_config.get("default_model")), ""),
                 "default_model": server_config.get("default_model", ""),
                 "attachment_image_model": server_config.get("attachment_image_model", ""),
-                "max_session_cost_usd": float(server_config.get("cost_limits", {}).get("max_session_cost_usd", 0) or 0),
                 "execution_mode": server_config.get("execution_mode", "server"),
                 "client_proxy_tools": server_config.get("client_proxy_tools", engine._CLIENT_PROXY_TOOLS_DEFAULT),
                 "gdpr_scanner": {
@@ -7918,29 +8067,6 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 500)
                 return
             result["attachment_image_model"] = aim
-
-        # --- Max session cost (soft warning; 0/None disables) ---
-        if "max_session_cost_usd" in body:
-            try:
-                mc = float(body.get("max_session_cost_usd") or 0)
-            except (TypeError, ValueError):
-                mc = 0.0
-            if mc < 0:
-                mc = 0.0
-            cost_limits = server_config.setdefault("cost_limits", {})
-            cost_limits["max_session_cost_usd"] = mc
-            try:
-                config = {}
-                if os.path.exists(config_path):
-                    with open(config_path) as f:
-                        config = json.load(f)
-                config.setdefault("cost_limits", {})["max_session_cost_usd"] = mc
-                with open(config_path, "w") as f:
-                    json.dump(config, f, indent=2)
-            except Exception as e:
-                self._send_json({"error": str(e)}, 500)
-                return
-            result["max_session_cost_usd"] = mc
 
         # --- Execution mode ---
         if "execution_mode" in body:
@@ -10021,7 +10147,6 @@ def main():
     server_config["telegram_enabled"] = file_config.get("telegram", {}).get("enabled", True)
     attachments_cfg = file_config.get("attachments", {})
     server_config["attachment_image_model"] = attachments_cfg.get("image_model", "")
-    server_config["cost_limits"] = file_config.get("cost_limits", {}) or {}
     server_config["execution_mode"] = file_config.get("execution_mode", "server")
     server_config["client_proxy_tools"] = file_config.get("client_proxy_tools", engine._CLIENT_PROXY_TOOLS_DEFAULT)
     server_config["gdpr_scanner"] = file_config.get("gdpr_scanner", {}) or {}
@@ -10081,7 +10206,11 @@ def main():
     # Initialize cost tracking and rate limiting
     engine._cost_tracker = engine.CostTracker()
     engine._rate_limiter = engine.RateLimiter()
+    engine._quota_manager = engine.QuotaManager()
     print(f"Cost tracking: {engine.COST_DB}")
+    _q_cfg = engine._quota_manager.get_config()
+    print(f"Quotas: {'enabled' if _q_cfg.get('enabled') else 'disabled'} "
+          f"({_q_cfg.get('billing_cycle')}, enforce_red={_q_cfg.get('enforce_red')})")
 
     # Initialize tracing and audit trail
     engine._trace_manager = engine.TraceManager()

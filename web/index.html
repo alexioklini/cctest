@@ -3764,9 +3764,18 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <span class="status-value" id="status-context-label">0%</span>
     </div>
     <div class="status-item" id="status-cost-wrap" style="display:none" title="Session cost">
-      <span class="status-label" id="status-cost-warn" style="display:none;color:var(--warning);font-weight:600">&#9888;</span>
       <span class="status-label">$</span>
       <span class="status-value" id="status-cost-label">0.00</span>
+    </div>
+    <div class="status-item" id="status-quota" style="display:none;cursor:pointer;gap:4px" title="Plan usage — click for details" onclick="openQuotaModal()">
+      <svg id="status-quota-donut" width="16" height="16" viewBox="0 0 16 16" style="display:block">
+        <circle cx="8" cy="8" r="6" fill="none" stroke="var(--border-100)" stroke-width="2.4"></circle>
+        <circle id="status-quota-arc" cx="8" cy="8" r="6" fill="none" stroke="var(--success)" stroke-width="2.4"
+                stroke-dasharray="0 100" stroke-dashoffset="0" transform="rotate(-90 8 8)" stroke-linecap="butt"
+                pathLength="100"></circle>
+      </svg>
+      <span class="status-label">Plan</span>
+      <span class="status-value" id="status-quota-label">—</span>
     </div>
     <div class="status-item" id="status-warmpool" style="display:none;cursor:pointer;gap:4px" title="Warm pool — click for details" onclick="openWarmPoolModal()">
       <span class="warmup-dot" id="status-warmpool-dot"></span>
@@ -5828,6 +5837,115 @@ function resetGdprCategories() {
   showToast('Defaults restored — click Save to apply');
 }
 
+/* ─── Quota config save + helpers ─── */
+
+async function saveQuotaConfig() {
+  const limits = {};
+  for (const role of ['admin', 'poweruser', 'user']) {
+    limits[role] = {
+      daily_usd: parseFloat(document.querySelector(`[data-quota-role="${role}"][data-quota-field="daily_usd"]`).value) || 0,
+      cycle_usd: parseFloat(document.querySelector(`[data-quota-role="${role}"][data-quota-field="cycle_usd"]`).value) || 0,
+    };
+  }
+  const body = {
+    enabled: document.getElementById('q-enabled').checked,
+    billing_cycle: document.getElementById('q-billing-cycle').value,
+    cycle_start_day: parseInt(document.getElementById('q-start-day').value, 10) || 1,
+    warn_pct: parseInt(document.getElementById('q-warn-pct').value, 10) || 70,
+    block_pct: parseInt(document.getElementById('q-block-pct').value, 10) || 100,
+    enforce_red: document.getElementById('q-enforce').value,
+    default_local_fallback_model: document.getElementById('q-fallback').value || '',
+    limits,
+  };
+  try {
+    await API.post('/v1/quotas/config', body);
+    showToast('Quota settings saved');
+    QuotaMonitor.refresh();
+    // Re-render the tab so the user list reflects new thresholds
+    switchGeneralTab('quotas', document.querySelector('.modal-tab.active'));
+  } catch (e) {
+    showToast('Failed: ' + (e.message || e), true);
+  }
+}
+
+function quotaEditOverride(userId, displayName) {
+  // Quick prompt-driven override editor; full inline form would be heavier than worth it
+  const dailyStr = prompt(`Daily limit for ${displayName} (USD; blank = inherit role default; 0 = no limit):`, '');
+  if (dailyStr === null) return;
+  const cycleStr = prompt(`Cycle limit for ${displayName} (USD; blank = inherit; 0 = no limit):`, '');
+  if (cycleStr === null) return;
+  API.get('/v1/quotas/config').then(cfg => {
+    const ov = Object.assign({}, cfg.user_overrides || {});
+    const entry = {};
+    if (dailyStr.trim() !== '') entry.daily_usd = parseFloat(dailyStr) || 0;
+    if (cycleStr.trim() !== '') entry.cycle_usd = parseFloat(cycleStr) || 0;
+    if (Object.keys(entry).length === 0) {
+      delete ov[userId];
+    } else {
+      ov[userId] = entry;
+    }
+    return API.post('/v1/quotas/config', { user_overrides: ov });
+  }).then(() => {
+    showToast('Override updated');
+    switchGeneralTab('quotas', document.querySelector('.modal-tab.active'));
+  }).catch(e => showToast('Failed: ' + (e.message || e), true));
+}
+
+async function quotaOpenUserBreakdown(userId, displayName) {
+  const existing = document.getElementById('quota-breakdown-modal');
+  if (existing) existing.remove();
+  const div = document.createElement('div');
+  div.id = 'quota-breakdown-modal';
+  div.className = 'modal-overlay';
+  div.style.display = 'flex';
+  div.onclick = (e) => { if (e.target === div) div.remove(); };
+  div.innerHTML = `<div class="modal-content" style="max-width:640px" onclick="event.stopPropagation()">
+    <div class="modal-header"><div class="modal-title">Usage breakdown — ${esc(displayName)}</div>
+      <button class="modal-close" onclick="document.getElementById('quota-breakdown-modal').remove()">&times;</button>
+    </div>
+    <div class="modal-body" id="quota-breakdown-body"><div style="color:var(--text-300);text-align:center;padding:20px">Loading…</div></div>
+  </div>`;
+  document.body.appendChild(div);
+  try {
+    const data = await API.get(`/v1/quotas/admin/breakdown?user_id=${encodeURIComponent(userId)}&days=30`);
+    const body = document.getElementById('quota-breakdown-body');
+    if (!body) return;
+    const fmt = (v) => '$' + (v < 1 ? v.toFixed(3) : v.toFixed(2));
+    const st = data.state || {};
+    const perModel = (data.per_model || []).slice(0, 12);
+    const daily = (data.daily || []).slice(0, 30);
+    const totalCost = perModel.reduce((s, r) => s + (r.cost || 0), 0);
+    body.innerHTML = `
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+        <div style="padding:10px 16px;background:var(--bg-200);border-radius:8px"><div style="font-size:11px;color:var(--text-400)">Cycle</div><div style="font-size:18px;font-weight:600">${fmt(st.cycle?.used_usd||0)} <span style="font-size:11px;color:var(--text-400)">/ ${fmt(st.cycle?.limit_usd||0)}</span></div></div>
+        <div style="padding:10px 16px;background:var(--bg-200);border-radius:8px"><div style="font-size:11px;color:var(--text-400)">Today</div><div style="font-size:18px;font-weight:600">${fmt(st.daily?.used_usd||0)} <span style="font-size:11px;color:var(--text-400)">/ ${fmt(st.daily?.limit_usd||0)}</span></div></div>
+        <div style="padding:10px 16px;background:var(--bg-200);border-radius:8px"><div style="font-size:11px;color:var(--text-400)">Role</div><div style="font-size:14px;font-weight:600;text-transform:capitalize">${esc(st.role||'')}</div></div>
+      </div>
+      <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin:8px 0 4px">By model (current cycle)</div>
+      ${perModel.length ? perModel.map(r => {
+        const pct = totalCost > 0 ? (r.cost / totalCost * 100) : 0;
+        return `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border-100)">
+          <span style="flex:1;font-size:12px;color:var(--text-100);font-family:var(--font-mono)">${esc(modelShortName(r.model))}</span>
+          <span style="font-size:11px;color:var(--text-400)">${(r.calls||0)} calls</span>
+          <span style="font-size:11px;color:var(--text-400);min-width:36px;text-align:right">${pct.toFixed(0)}%</span>
+          <span style="font-size:13px;font-weight:500;min-width:80px;text-align:right">${fmt(r.cost||0)}</span>
+        </div>`;
+      }).join('') : '<div style="color:var(--text-400);padding:8px 0">No usage in current cycle.</div>'}
+      <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin:14px 0 4px">Last 30 days</div>
+      ${daily.length ? daily.map(d => `<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid var(--border-100);font-size:12px">
+        <span style="font-family:var(--font-mono);color:var(--text-200)">${esc(d.day || '')}</span>
+        <span style="flex:1"></span>
+        <span style="color:var(--text-400)">${(d.calls||0)} calls</span>
+        <span style="color:var(--text-400)">${((d.tokens_in||0)+(d.tokens_out||0)).toLocaleString()} tok</span>
+        <span style="font-weight:500;min-width:80px;text-align:right">${fmt(d.cost||0)}</span>
+      </div>`).join('') : '<div style="color:var(--text-400);padding:8px 0">No daily data.</div>'}
+    `;
+  } catch (e) {
+    document.getElementById('quota-breakdown-body').innerHTML =
+      `<div style="color:var(--error);padding:16px">Failed: ${esc(String(e))}</div>`;
+  }
+}
+
 // Apply server-side gdpr_scanner config to both state and PIIScanner.policy so
 // the scanner knows which categories are ignored, warned on, or blocked. Call
 // this anywhere state.pii* is updated from the /v1/services/status response.
@@ -7102,6 +7220,8 @@ async function sendMessage() {
 
         // Reload sessions for sidebar
         loadAgentSessions(chat.agent);
+        // Refresh quota pill so usage updates without waiting for the 30s tick
+        if (typeof QuotaMonitor !== 'undefined') QuotaMonitor.refresh();
 
         // Fetch a "next prompt" suggestion for the composer ghost text (best-effort)
         if (isActive()) {
@@ -8417,10 +8537,10 @@ function updateStatusBar() {
     wrap.style.display = 'none';
   }
 
-  // Session cost indicator (soft warnings at 70%/90%, no hard abort)
+  // Session cost indicator — shows current session $ spend. Quota state
+  // (with role-based thresholds + cycle reset) lives in the Plan-usage pill.
   const costWrap = document.getElementById('status-cost-wrap');
   const costLabel = document.getElementById('status-cost-label');
-  const costWarn = document.getElementById('status-cost-warn');
   let sessionCost = 0;
   let sawCostField = false;
   for (let mi = msgs.length - 1; mi >= 0; mi--) {
@@ -8432,70 +8552,20 @@ function updateStatusBar() {
     }
   }
   if (chat._sessionCost !== undefined) { sessionCost = chat._sessionCost || 0; sawCostField = true; }
-  const maxCost = state.maxSessionCostUsd || 0;
   if (sawCostField) {
     costWrap.style.display = '';
     if (sessionCost <= 0) {
       costLabel.textContent = '0.00';
       costLabel.style.color = 'var(--text-400)';
-      costWarn.style.display = 'none';
       costWrap.title = 'Session cost: $0.00 — no pricing configured for this model. Set cost_input/cost_output in Settings → Models.';
       return;
     }
     costLabel.textContent = sessionCost < 1 ? sessionCost.toFixed(3) : sessionCost.toFixed(2);
-    if (maxCost > 0) {
-      const costPct = sessionCost / maxCost;
-      costWrap.title = `Session cost: $${sessionCost.toFixed(4)} / $${maxCost.toFixed(2)} (${Math.round(costPct*100)}%)`;
-      if (costPct >= 0.9) {
-        costWarn.style.display = '';
-        costWarn.style.color = 'var(--error)';
-        costLabel.style.color = 'var(--error)';
-        maybeShowCostModal(chat, sessionCost, maxCost);
-      } else if (costPct >= 0.7) {
-        costWarn.style.display = '';
-        costWarn.style.color = 'var(--warning)';
-        costLabel.style.color = 'var(--warning)';
-      } else {
-        costWarn.style.display = 'none';
-        costLabel.style.color = '';
-      }
-    } else {
-      costWrap.title = `Session cost: $${sessionCost.toFixed(4)} (no limit configured)`;
-      costWarn.style.display = 'none';
-      costLabel.style.color = '';
-    }
+    costLabel.style.color = '';
+    costWrap.title = `Session cost: $${sessionCost.toFixed(4)}`;
   } else {
     costWrap.style.display = 'none';
   }
-}
-
-function maybeShowCostModal(chat, cost, maxCost) {
-  if (!chat || !chat.sessionId) return;
-  const key = 'cost-warning-shown:' + chat.sessionId;
-  if (localStorage.getItem(key)) return;
-  localStorage.setItem(key, '1');
-  const pct = Math.round((cost / maxCost) * 100);
-  const html = `
-    <div class="modal-overlay" id="cost-warning-modal" style="display:flex">
-      <div class="modal-content" style="max-width:480px">
-        <div class="modal-header">
-          <div class="modal-title" style="color:var(--error)">&#9888; Session cost warning</div>
-        </div>
-        <div class="modal-body">
-          <p>This session has used <strong>$${cost.toFixed(4)}</strong> of the
-          <strong>$${maxCost.toFixed(2)}</strong> soft limit (<strong>${pct}%</strong>).</p>
-          <p style="color:var(--text-300);font-size:13px;margin-top:12px">
-          This is a soft warning only — the session will continue. You can raise or disable the
-          limit in Settings &rarr; Server &rarr; Cost Limits.</p>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-primary" onclick="document.getElementById('cost-warning-modal').remove()">Got it</button>
-        </div>
-      </div>
-    </div>`;
-  const div = document.createElement('div');
-  div.innerHTML = html;
-  document.body.appendChild(div.firstElementChild);
 }
 
 /* ─── PII pre-submit modal ─────────────────────────────────── */
@@ -9521,6 +9591,7 @@ function openGeneralSettings() {
       <button class="modal-tab" onclick="switchGeneralTab('nodes',this)">Nodes</button>
       <button class="modal-tab" onclick="switchGeneralTab('context',this)">Context</button>
       <button class="modal-tab" onclick="switchGeneralTab('costs',this)">Costs</button>
+      <button class="modal-tab" onclick="switchGeneralTab('quotas',this)">Quotas</button>
       <button class="modal-tab" onclick="switchGeneralTab('mempalace',this)">MemPalace</button>
       <button class="modal-tab" onclick="switchGeneralTab('gdpr',this)">GDPR</button>
       <button class="modal-tab" onclick="switchGeneralTab('tools',this)">Tools</button>
@@ -9655,7 +9726,6 @@ async function switchGeneralTab(tab, btn) {
     try {
       const svc = await API.getServices();
       const srv = svc.server || {};
-      state.maxSessionCostUsd = parseFloat(srv.max_session_cost_usd || 0) || 0;
       applyGdprConfigToScanner(srv.gdpr_scanner);
       let svcRows = '';
       for (const [name, info] of Object.entries(svc)) {
@@ -9701,13 +9771,11 @@ async function switchGeneralTab(tab, btn) {
           const hasImageModel = !!(srv.attachment_image_model);
           return (!hasVision && !hasImageModel) ? `<div style="font-size:11px;color:var(--warning, #b45309);margin-top:4px;padding:6px 8px;border-radius:6px;background:var(--bg-200)">&#9888; Your default model does not support vision and no image description model is configured. Attached images will only return basic metadata (dimensions, format).</div>` : '';
         })()}
-        ${SEC('Cost Limits')}
-        <div style="display:flex;gap:8px;align-items:center">
-          <span style="font-size:12px;color:var(--text-300);min-width:130px">Max session cost (USD)</span>
-          <input class="form-input" id="srv-max-session-cost" type="number" step="0.01" min="0" value="${(srv.max_session_cost_usd||0).toFixed(2)}" style="flex:1" placeholder="0 = disabled">
-          <button class="btn-secondary" onclick="API.post('/v1/services/server',{max_session_cost_usd:parseFloat(document.getElementById('srv-max-session-cost').value)||0}).then(r=>{state.maxSessionCostUsd=r.max_session_cost_usd||0;showToast('Cost limit updated')}).catch(e=>showToast('Failed',true))">Set</button>
+        ${SEC('Cost Quotas')}
+        <div style="display:flex;gap:8px;align-items:center;padding:10px 12px;border:1px solid var(--border-100);border-radius:8px;background:var(--bg-100)">
+          <span style="font-size:12px;color:var(--text-200);flex:1">Per-user, per-role limits with billing-cycle reset.</span>
+          <button class="btn-secondary" style="font-size:11px;padding:4px 10px" onclick="switchGeneralTab('quotas', document.querySelector('.modal-tab[onclick*=\\'quotas\\']'))">Configure &rarr;</button>
         </div>
-        <div style="font-size:11px;color:var(--text-400);margin-top:2px">Soft limit (no abort). Warning triangle at 70%, modal at 90%. Set 0 to disable.</div>
         ${SEC('GDPR / PII Scanner')}
         <div style="display:flex;gap:8px;align-items:center;padding:10px 12px;border:1px solid var(--border-100);border-radius:8px;background:var(--bg-100)">
           ${DOT((srv.gdpr_scanner||{}).enabled !== false)}
@@ -10291,6 +10359,125 @@ async function switchGeneralTab(tab, btn) {
       if (!(daily.daily||[]).length) html += '<div style="padding:20px;text-align:center;color:var(--text-400)">No cost data</div>';
       C.innerHTML = P(html + '</div>');
     } catch(e) { C.innerHTML = P('<div style="color:var(--text-400)">Cost data not available</div>'); }
+  }
+
+  /* ─── QUOTAS ─── */
+  if (tab === 'quotas') {
+    if (!state.authUser || state.authUser.role !== 'admin') {
+      C.innerHTML = P('<div style="color:var(--text-400);text-align:center;padding:32px">Quota configuration is admin-only.</div>');
+      return;
+    }
+    try {
+      const cfg = await API.get('/v1/quotas/config');
+      const usersResp = await API.get('/v1/quotas/admin/users').catch(()=>({users:[]}));
+      const users = usersResp.users || [];
+      const localModels = Object.entries(state.modelsConfig?.models || {})
+        .filter(([,c]) => c.enabled && c.is_local).map(([mid]) => mid);
+      const cycleOpts = ['monthly','weekly','yearly'].map(c => `<option value="${c}" ${c===cfg.billing_cycle?'selected':''}>${c}</option>`).join('');
+      const enforceOpts = [
+        ['warn_only','Warn only (no server-side refusal)'],
+        ['force_local','Force local model on red'],
+        ['hard_block','Hard block on red'],
+      ].map(([v,l]) => `<option value="${v}" ${v===cfg.enforce_red?'selected':''}>${esc(l)}</option>`).join('');
+      const fbOpts = ['<option value="">— none —</option>'].concat(
+        localModels.map(mid => `<option value="${esc(mid)}" ${mid===cfg.default_local_fallback_model?'selected':''}>${esc(modelShortName(mid, true))}</option>`)
+      ).join('');
+      const startDayLabel = (cycle) => ({monthly:'Day of month (1-31)', weekly:'Day of week (0=Mon … 6=Sun)', yearly:'Month of year (1-12)'})[cycle] || 'Start';
+      const limitInput = (role, fld) => {
+        const v = (cfg.limits[role]||{})[fld] || 0;
+        return `<input class="form-input" data-quota-role="${role}" data-quota-field="${fld}" type="number" step="0.01" min="0" value="${v}" style="width:100px;text-align:right">`;
+      };
+      const colorByLevel = { green: 'var(--success)', yellow: 'var(--warning)', red: 'var(--error)' };
+      const levelChip = (lv) => `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;background:var(--bg-200);font-size:11px;color:${colorByLevel[lv]||'var(--text-400)'};font-weight:600;text-transform:uppercase">${lv}</span>`;
+      const fmt = (v) => '$' + (v < 1 ? v.toFixed(3) : v.toFixed(2));
+      const usersHtml = users.length ? users.map(u => {
+        const cycPct = (u.cycle?.pct || 0).toFixed(0);
+        const dayPct = (u.daily?.pct || 0).toFixed(0);
+        return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-000)">
+          ${levelChip(u.level)}
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;color:var(--text-100);font-weight:500;display:flex;align-items:center;gap:6px">
+              ${esc(u.display_name || u.username)} <span style="font-size:10px;color:var(--text-400);text-transform:uppercase">${esc(u.role)}</span>
+              ${u.has_override ? '<span style="font-size:10px;color:var(--accent-brand)">override</span>' : ''}
+              ${u.disabled ? '<span style="font-size:10px;color:var(--error)">disabled</span>' : ''}
+            </div>
+            <div style="font-size:11px;color:var(--text-300);margin-top:2px">
+              today ${fmt(u.daily.used_usd)} / ${fmt(u.daily.limit_usd)} (${dayPct}%) &middot;
+              cycle ${fmt(u.cycle.used_usd)} / ${fmt(u.cycle.limit_usd)} (${cycPct}%)
+            </div>
+          </div>
+          <button class="btn-secondary" style="font-size:11px;padding:4px 10px" onclick="quotaOpenUserBreakdown('${esc(u.user_id)}','${esc(u.display_name||u.username)}')">Details</button>
+          <button class="btn-secondary" style="font-size:11px;padding:4px 10px" onclick="quotaEditOverride('${esc(u.user_id)}','${esc(u.display_name||u.username)}')">${u.has_override ? 'Edit override' : 'Set override'}</button>
+        </div>`;
+      }).join('<div style="height:6px"></div>') : '<div style="color:var(--text-400);padding:12px 0">No users.</div>';
+      C.innerHTML = P(`<div style="${G('16px')}">
+        ${SEC('Cycle')}
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <div style="display:flex;flex-direction:column;gap:4px"><label style="font-size:11px;color:var(--text-400)">Billing cycle</label>
+            <select id="q-billing-cycle" class="form-input" style="width:140px">${cycleOpts}</select>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:4px"><label style="font-size:11px;color:var(--text-400)" id="q-start-day-label">${startDayLabel(cfg.billing_cycle)}</label>
+            <input id="q-start-day" class="form-input" type="number" min="0" max="31" value="${cfg.cycle_start_day}" style="width:120px">
+          </div>
+          <div style="display:flex;flex-direction:column;gap:4px"><label style="font-size:11px;color:var(--text-400)">Warn at (%)</label>
+            <input id="q-warn-pct" class="form-input" type="number" min="0" max="100" value="${cfg.warn_pct}" style="width:80px">
+          </div>
+          <div style="display:flex;flex-direction:column;gap:4px"><label style="font-size:11px;color:var(--text-400)">Block at (%)</label>
+            <input id="q-block-pct" class="form-input" type="number" min="0" max="200" value="${cfg.block_pct}" style="width:80px">
+          </div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-200);margin-left:auto">
+            <input id="q-enabled" type="checkbox" ${cfg.enabled?'checked':''}> Enabled
+          </label>
+        </div>
+
+        ${SEC('Enforcement on red')}
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <select id="q-enforce" class="form-input" style="flex:1;max-width:340px">${enforceOpts}</select>
+          <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:200px">
+            <label style="font-size:11px;color:var(--text-400)">Local fallback model (force_local mode)</label>
+            <select id="q-fallback" class="form-input">${fbOpts}</select>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--text-400)">
+          <b>Warn only</b>: pill goes red, requests still allowed. <b>Force local</b>: requests automatically swap to the configured local model. <b>Hard block</b>: requests are refused until the cycle resets.
+        </div>
+
+        ${SEC('Per-role limits (USD)')}
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="color:var(--text-400);font-size:11px">
+            <th style="text-align:left;padding:6px 8px;font-weight:500">Role</th>
+            <th style="text-align:right;padding:6px 8px;font-weight:500">Daily</th>
+            <th style="text-align:right;padding:6px 8px;font-weight:500">${esc(({monthly:'Monthly',weekly:'Weekly',yearly:'Yearly'})[cfg.billing_cycle]||'Cycle')}</th>
+          </tr></thead>
+          <tbody>
+          ${['admin','poweruser','user'].map(role => `
+            <tr><td style="padding:6px 8px;color:var(--text-100);text-transform:capitalize">${role}</td>
+              <td style="padding:6px 8px;text-align:right">${limitInput(role,'daily_usd')}</td>
+              <td style="padding:6px 8px;text-align:right">${limitInput(role,'cycle_usd')}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+        <div style="font-size:11px;color:var(--text-400)">Set 0 to mean "no limit" for that axis. Local-model usage never counts.</div>
+
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn-primary" onclick="saveQuotaConfig()">Save settings</button>
+          <button class="btn-secondary" onclick="switchGeneralTab('quotas', document.querySelector('.modal-tab.active'))">Reload</button>
+        </div>
+
+        ${SEC('Users')}
+        ${usersHtml}
+      </div>`);
+      // Wire dynamic label for start-day
+      const cyc = document.getElementById('q-billing-cycle');
+      if (cyc) {
+        cyc.addEventListener('change', () => {
+          const lbl = document.getElementById('q-start-day-label');
+          if (lbl) lbl.textContent = startDayLabel(cyc.value);
+        });
+      }
+    } catch(e) {
+      C.innerHTML = P(`<div style="color:var(--text-400)">Quotas not available: ${esc(String(e))}</div>`);
+    }
   }
 
   /* ─── MEMPALACE ─── */
@@ -16448,6 +16635,206 @@ const QueueMonitor = {
   },
 };
 
+/* ─── Quota monitor ─── */
+// Polls /v1/quotas/me, updates the status-bar Plan-usage pill and any open
+// modal. The pill mirrors Claude.ai's Plan-usage donut: the visible arc is
+// the larger of (daily_pct, cycle_pct), tinted green/yellow/red by `level`.
+const QuotaMonitor = {
+  _interval: null,
+  _ms: 30000,
+  state: null,
+  start() {
+    if (this._interval) return;
+    this._tick();
+    this._schedule();
+  },
+  stop() { if (this._interval) { clearTimeout(this._interval); this._interval = null; } },
+  refresh() { return this._tick(); },
+  _schedule() { this._interval = setTimeout(() => this._tick(), this._ms); },
+  async _tick() {
+    if (!state.connected || !state.authUser) { this._schedule(); return; }
+    try {
+      const resp = await fetch(`${BASE_URL}/v1/quotas/me`, {
+        method: 'GET', headers: API._headers(),
+        signal: AbortSignal.timeout(3000),
+      });
+      if (resp.ok) {
+        this.state = await resp.json();
+        this._render();
+        if (document.getElementById('quota-modal')) renderQuotaModalBody();
+      }
+    } catch {}
+    this._schedule();
+  },
+  _render() {
+    const wrap = document.getElementById('status-quota');
+    if (!wrap) return;
+    const st = this.state;
+    if (!st || !st.enabled) { wrap.style.display = 'none'; return; }
+    // Hide pill when neither limit is configured (avoids a silent 0-pct donut)
+    const dailyOn = (st.daily?.limit_usd || 0) > 0;
+    const cycleOn = (st.cycle?.limit_usd || 0) > 0;
+    if (!dailyOn && !cycleOn) { wrap.style.display = 'none'; return; }
+    wrap.style.display = 'flex';
+    const arc = document.getElementById('status-quota-arc');
+    const pct = Math.max(st.daily?.pct || 0, st.cycle?.pct || 0);
+    const shown = Math.min(100, Math.max(0, pct));
+    arc.setAttribute('stroke-dasharray', `${shown} ${100 - shown}`);
+    const colorByLevel = { green: 'var(--success)', yellow: 'var(--warning)', red: 'var(--error)' };
+    arc.setAttribute('stroke', colorByLevel[st.level] || 'var(--success)');
+    document.getElementById('status-quota-label').textContent = pct < 1 && pct > 0 ? '<1%' : `${Math.round(pct)}%`;
+    const lim = (cycleOn ? `cycle ${st.cycle.pct.toFixed(0)}%` : '');
+    const day = (dailyOn ? `today ${st.daily.pct.toFixed(0)}%` : '');
+    wrap.title = `Plan usage — ${[day, lim].filter(Boolean).join(' · ')} — click for details`;
+  },
+};
+
+function _quotaResetCountdown(iso) {
+  if (!iso) return '';
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '';
+  const sec = Math.max(0, (t - Date.now()) / 1000);
+  if (sec < 3600) return `${Math.round(sec / 60)}m`;
+  if (sec < 86400) return `${Math.round(sec / 3600)}h`;
+  return `${Math.round(sec / 86400)}d`;
+}
+
+function _quotaBar(used, limit, level) {
+  const colorByLevel = { green: 'var(--success)', yellow: 'var(--warning)', red: 'var(--error)' };
+  const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+  return `
+    <div style="height:6px;background:var(--bg-200);border-radius:999px;overflow:hidden">
+      <div style="height:100%;width:${pct.toFixed(1)}%;background:${colorByLevel[level] || 'var(--success)'};transition:width 0.4s"></div>
+    </div>`;
+}
+
+function openQuotaModal() {
+  const existing = document.getElementById('quota-modal');
+  if (existing) { existing.remove(); return; }
+  const pill = document.getElementById('status-quota');
+  // Outside-click handler attached to document — popover itself isn't an overlay
+  const onDocClick = (e) => {
+    const pop = document.getElementById('quota-modal');
+    if (!pop) { document.removeEventListener('mousedown', onDocClick, true); return; }
+    if (!pop.contains(e.target) && e.target !== pill && !pill.contains(e.target)) {
+      pop.remove();
+      document.removeEventListener('mousedown', onDocClick, true);
+    }
+  };
+  const onKeydown = (e) => {
+    if (e.key === 'Escape') {
+      document.getElementById('quota-modal')?.remove();
+      document.removeEventListener('keydown', onKeydown, true);
+    }
+  };
+  const pop = document.createElement('div');
+  pop.id = 'quota-modal';
+  pop.style.cssText = 'position:fixed;width:340px;background:var(--bg-000);border:1px solid var(--border-100);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.18);z-index:100;padding:14px 16px;font-size:13px;visibility:hidden;left:0;top:0';
+  pop.onclick = (e) => e.stopPropagation();
+  pop.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <div style="font-size:13px;font-weight:600;color:var(--text-100);flex:1">Plan usage</div>
+      <button onclick="document.getElementById('quota-modal')?.remove();openGeneralSettings();setTimeout(()=>{const t=document.querySelector('.modal-tab[onclick*=&quot;quotas&quot;]');if(t)switchGeneralTab('quotas',t);},50);"
+              style="background:transparent;border:1px solid var(--border-100);color:var(--text-300);
+                     border-radius:6px;width:24px;height:24px;cursor:pointer;display:flex;align-items:center;justify-content:center"
+              title="Open Quota settings">&#x2192;</button>
+    </div>
+    <div id="quota-modal-body"><div style="color:var(--text-300);text-align:center;padding:12px">Loading…</div></div>`;
+  document.body.appendChild(pop);
+
+  // Render synchronously so we can measure the real height before positioning.
+  // Without this, the first paint uses the placeholder body and the upward
+  // offset is too small — the bottom third clips below the viewport edge.
+  renderQuotaModalBody();
+
+  const positionPopover = () => {
+    const r = pill.getBoundingClientRect();
+    const popW = pop.offsetWidth || 340;
+    const popH = pop.offsetHeight || 200;
+    const margin = 8;
+    let left = r.right - popW;
+    if (left < margin) left = margin;
+    if (left + popW > window.innerWidth - margin) left = window.innerWidth - popW - margin;
+    let top = r.top - popH - margin;
+    if (top < margin) {
+      // Not enough room above; place below pill but clamp so bottom edge stays visible
+      top = Math.min(r.bottom + margin, window.innerHeight - popH - margin);
+      if (top < margin) top = margin;
+    }
+    pop.style.left = left + 'px';
+    pop.style.top = top + 'px';
+    pop.style.visibility = 'visible';
+  };
+  // First measure after layout, then refresh once more after the async fetch
+  // so the height reflects the final content.
+  requestAnimationFrame(positionPopover);
+
+  // Defer outside-click handler so the click that opened us doesn't close us
+  setTimeout(() => document.addEventListener('mousedown', onDocClick, true), 0);
+  document.addEventListener('keydown', onKeydown, true);
+
+  QuotaMonitor.refresh().then(() => {
+    if (document.getElementById('quota-modal')) requestAnimationFrame(positionPopover);
+  }).catch(() => {});
+}
+
+function renderQuotaModalBody() {
+  const body = document.getElementById('quota-modal-body');
+  if (!body) return;
+  const st = QuotaMonitor.state;
+  if (!st) { body.innerHTML = `<div style="color:var(--text-300);text-align:center;padding:20px">Loading…</div>`; return; }
+  if (!st.enabled) {
+    body.innerHTML = `<div style="color:var(--text-300);text-align:center;padding:24px">Quotas are disabled.</div>`;
+    return;
+  }
+  const dailyOn = (st.daily?.limit_usd || 0) > 0;
+  const cycleOn = (st.cycle?.limit_usd || 0) > 0;
+  if (!dailyOn && !cycleOn) {
+    body.innerHTML = `<div style="color:var(--text-300);text-align:center;padding:24px">No limits set for your role (<b>${esc(st.role)}</b>).
+      Ask an admin to configure them in Settings &rarr; Quotas.</div>`;
+    return;
+  }
+  const enforce = st.enforce_red || 'warn_only';
+  const enforceLabel = ({warn_only:'warn only', force_local:'force local on red', hard_block:'hard block on red'})[enforce] || enforce;
+  const cycleLabel = ({monthly:'Monthly', weekly:'Weekly', yearly:'Yearly'})[st.billing_cycle] || 'Cycle';
+  const fmt = (v) => '$' + (v < 1 ? v.toFixed(3) : v.toFixed(2));
+  const row = (label, used, limit, level, resetIso) => {
+    if (!(limit > 0)) return '';
+    return `<div style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+        <span style="font-size:13px;color:var(--text-100);font-weight:500">${esc(label)}</span>
+        <span style="font-size:12px;color:var(--text-300)">
+          <b style="color:var(--text-100)">${(used/limit*100).toFixed(0)}%</b>
+          &middot; ${fmt(used)} / ${fmt(limit)}
+          ${resetIso ? ` &middot; resets in ${_quotaResetCountdown(resetIso)}` : ''}
+        </span>
+      </div>
+      ${_quotaBar(used, limit, level)}
+    </div>`;
+  };
+  const showLocalCTA = st.level === 'red';
+  body.innerHTML = `
+    ${row('Daily', st.daily.used_usd, st.daily.limit_usd, st.daily.level, st.daily.resets_at)}
+    ${row(cycleLabel, st.cycle.used_usd, st.cycle.limit_usd, st.cycle.level, st.cycle.resets_at)}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:11px;color:var(--text-400)">
+      <span>Role: <b style="color:var(--text-200)">${esc(st.role)}</b>${st.has_override ? ' (override)' : ''}</span>
+      <span>Mode: ${esc(enforceLabel)}</span>
+    </div>
+    ${showLocalCTA && enforce === 'force_local' && st.default_local_fallback_model ? `
+      <div style="margin-top:12px;padding:10px 12px;background:var(--bg-100);border:1px solid var(--border-100);border-radius:8px;font-size:12px;color:var(--text-200)">
+        Quota exhausted &mdash; new requests automatically route to <b>${esc(modelShortName(st.default_local_fallback_model))}</b>.
+      </div>` : ''}
+    ${showLocalCTA && enforce === 'hard_block' ? `
+      <div style="margin-top:12px;padding:10px 12px;background:var(--bg-100);border:1px solid var(--border-100);border-radius:8px;font-size:12px;color:var(--error)">
+        Quota exhausted &mdash; further requests will be refused until reset. Switch to a local model or ask an admin to raise the limit.
+      </div>` : ''}
+    ${showLocalCTA && enforce === 'warn_only' ? `
+      <div style="margin-top:12px;padding:10px 12px;background:var(--bg-100);border:1px solid var(--border-100);border-radius:8px;font-size:12px;color:var(--warning)">
+        Over the configured limit, but enforcement is set to <b>warn only</b> &mdash; requests are still allowed.
+      </div>` : ''}
+  `;
+}
+
 function openQueueModal() {
   const existing = document.getElementById('queue-modal');
   if (existing) { existing.remove(); return; }
@@ -16623,7 +17010,6 @@ async function init() {
     state.providers = Array.isArray(providersData) ? providersData : (providersData.providers || []);
     state.teamStructure = teamsData || {};
     state.modelsConfig = modelsConfigData || {};
-    state.maxSessionCostUsd = parseFloat((servicesData.server || {}).max_session_cost_usd || 0) || 0;
     applyGdprConfigToScanner((servicesData.server || {}).gdpr_scanner);
     state.mempalaceClassifier = clfData || {};
 
@@ -16675,6 +17061,7 @@ async function init() {
   MempalaceActivityMonitor.start();
   WarmupMonitor.start();
   QueueMonitor.start();
+  QuotaMonitor.start();
 }
 
 function renderSuggestionChips() {

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.13.0"
-VERSION_DATE = "2026-04-24"
+VERSION = "8.14.0"
+VERSION_DATE = "2026-04-25"
 CHANGELOG = [
+    ("8.14.0", "2026-04-25", "Per-user cost quotas + Plan-usage pill. New QuotaManager (claude_cli.py) with role-based limits (admin / poweruser / user), per-user overrides, and a billing-cycle window (monthly / weekly / yearly) with start-day clamping for short months — Feb-30 anchors fall back to the last day of the month, weekly anchors are 0=Mon..6=Sun, yearly anchors are month-of-year. Two axes per user: rolling-day (resets at UTC midnight) and cycle (resets on cycle anchor). Three enforce modes via config.json → quotas.enforce_red: (a) warn_only (default) — pill goes red, requests still allowed, no server-side refusal; (b) force_local — silently swap the request to the configured default_local_fallback_model when the user's worst axis hits red, audit-logged as quota_force_local; (c) hard_block — raise QuotaExceededError pre-LLM, audit-logged as quota_blocked. Local models always bypass the gate (is_model_local check). Schema migration: added user_id column + (user_id, created_at) index to cost_log; _log_call_cost now captures user_id from _thread_local.current_user_id. New CostTracker methods sum_user_window / per_model_user_window power the cycle queries. Pre-flight gate fires inside send_message on _tool_round == 0, after the GDPR check, so quota refusals don't burn tool-loop tokens. New endpoints: GET /v1/quotas/me (any user; returns daily + cycle state with reset timestamps and worst-axis level), GET/POST /v1/quotas/config (admin), GET /v1/quotas/admin/users (admin; every user's level + daily + cycle), GET /v1/quotas/admin/breakdown?user_id=X&days=N (admin or self; per-model breakdown for current cycle plus daily 30-day series). Existing /v1/costs and /v1/costs/daily extended with optional ?user_id=X scoped by ownership. Web UI: status-bar Plan-usage donut (#status-quota) — small SVG arc tinted green/yellow/red by worst axis, label shows the higher of (daily_pct, cycle_pct), hides when limits are zero. QuotaMonitor polls /v1/quotas/me every 30s and refreshes after each turn ends. Click opens an anchored popover (position:fixed, right-aligned to the pill, two-frame measure-then-position so the bottom edge stays on-screen) with daily + cycle bars, reset countdowns, role + override chips, and a mode-aware footer that explains what happens on red. New Settings → Quotas tab (admin only): cycle config + warn/block thresholds + enforce-mode dropdown + local-fallback-model picker (filtered to enabled local models) + per-role limits table (admin/poweruser/user × daily_usd/cycle_usd) + org-wide user list with level chips, per-user 'Set override' prompt, and per-user 'Details' modal showing per-model + last-30-days table. Removed: legacy max_session_cost_usd / cost_limits machinery (status-bar warning triangle, 70%/90% modal, Server-tab cost-input field) — the per-user quota system replaces it; Server tab now points to the Quotas tab via a 'Configure →' link. Backfill: pre-existing cost_log rows have user_id='' and are reassigned via session_id → sessions.user_id where the chat row still exists (~$0.20 attributable here), with all remaining unattributed rows (deleted sessions, scheduler synthetic sessions, background non-chat LLM calls — classifier, summariser, next-prompt, warmup) assigned to the org admin. Audit row 'cost_log_backfill' records the bulk reassignment so it's traceable. Stages 2+3 (per-user GDPR compliance reporting + harmful-prompt analytics) deferred."),
     ("8.13.0", "2026-04-24", "Client-hosted local inference + server-local routing shortcut. Two complementary changes to the execution-mode story. (1) Air-gap-mode optimization: when execution_mode=client, requests to server-local models (oMLX, CLIProxyAPI, any RFC1918-base-URL provider) now skip the browser proxy entirely and run server-side as they would in normal mode — saves a full round-trip per turn on every local-model request. The is_model_local(model) check was added to the existing proxy gate in send_message; tool-call proxying (web_fetch, exa_search) is unchanged since those are about internet access, not inference. (2) New client-hosted local inference path: desktop clients (Electron) can declare they serve a model family locally, and the server transparently transfers matching requests to the client for execution — queue-free per-user inference, works in both server and client execution modes, stays local on air-gapped deployments. Independent of execution_mode: the decision is per-request based on the session's capability handshake, not a global toggle. Scheduler tasks, delegates, and background calls never reach this branch because they don't populate the client_capabilities thread-local. Server side: new config.json → client_models: [{id, family, gguf_path, sha256, size_bytes, auto_download}] declares GGUF weights available to desktop clients. GET /v1/client/models/manifest (any auth user) lists entries with absolute paths stripped. GET /v1/client/models/<id>/weights streams bytes with HTTP Range support for resumable downloads, X-Model-SHA256 response header for self-verification, audit-logged on first chunk (start==0) so range resumes don't flood. POST /v1/client/models (admin-only) CRUD with server-computed sha256 + size_bytes on every save so the manifest stays truthful even if the GGUF file changes. New config.json → client_engines: {darwin-arm64, win32-x64, linux-x64 → {url, sha256}} published via GET /v1/client/engines — admins point URLs at an internal mirror; server refuses to invent defaults so misconfigured air-gap deployments never silently fetch from public internet. Session.client_capabilities in-memory field (dict, never persisted) populated via POST /v1/sessions/<id>/capabilities ({enabled, families: [...]}); unknown families are silently dropped server-side (cross-checked against the manifest). Engine routing in send_message reads client_capabilities from thread-local (plumbed by chat worker before send_message_with_fallback), calls is_model_client_executable(caps, model) resolver to match model-id → manifest-entry → family → capability, and emits a new local_inference_request SSE event that reuses ProxyChannel for SSE response streaming. Fallback policy: on client failure the error is surfaced; no server-side retry (explicit design decision — retrying would double latency on failures). Every transfer writes a client_inference audit row with args_summary='model=X family=Y'. New POST /v1/chat/local-inference-usage endpoint lets the client report token counts back to the server after a client-hosted turn; logged to costs.db with provider='client:<sid>' and cost=0 (electricity on the user's laptop is not our problem) so dashboards can distinguish client- vs server-executed turns without schema changes. Desktop Electron app (desktop/local-inference.js, new ~470 LOC module): fully lazy — no binary bundled, no weights bundled, no auto-downloads on launch. Cache under userData/brain-local-inference/{engine,models}/ keyed by sha256; state.json persists engine_sha. Resumable http/https downloader with streaming sha256 verification, .partial sibling files, Range requests, restart-from-zero fallback when server refuses a range, abort signal support. Engine manifest fetched from Brain server on first use; llama-server binary downloaded once and chmod+x on Unix. llama-server spawned on random free localhost port (pickFreePort via net.createServer listen on 0), waitForEngineReady polls /health, 10-min idle SIGTERM→SIGKILL timer, model swap triggers respawn. runInference POSTs OpenAI /v1/chat/completions with stream=true and forwards raw SSE lines to renderer via local-inference-chunk IPC events. Graceful shutdown on app.before-quit — no orphaned child processes. preload.js exposes electronAPI.localInference.{status, ensureEngine, ensureModel, run, cancel, onChunk, onEnd, onError, onProgress, removeListeners}. Web UI: new LocalInference module in web/index.html replaces the Phase-3 stub — FIFO queue via Promise chain (max_concurrent=1, matches llama.cpp single-GPU reality), ensureEngineAndModel gates first use, handleRequest streams llama-server SSE back to /v1/chat/proxy-response. Capability handshake fires on session open + reopen + after toggle save (so changes take effect without re-creating sessions). Two new General Settings tabs: Client Models (admin-facing, manages the manifest with add/delete form + per-row badges showing family/size/sha + read-only engine-manifest view of /v1/client/engines per platform) and Local Inference (per-installation preference, master toggle + per-family checkboxes + Download now prefetch button with live progress bar driven by onLocalInferenceProgress callback). Composer chip ('local' pill in accent colour next to model selector) shows when the current model will route to client-hosted inference — updates on every model switch via refreshLocalInferenceChip(). Auth posture: manifest reads + weight downloads any authenticated user, CRUD admin-only, capabilities + usage scoped to session owner or admin. Known limitations: engine archives (zip/tar) not yet supported — admin must publish a direct llama-server binary URL per platform; usage reporting lane currently placeholder since llama-server's streaming protocol doesn't cleanly expose end-of-turn token counts beyond the SSE usage chunk the server already ingests through the proxy channel."),
     ("8.12.0", "2026-04-24", "Granular GDPR settings — dedicated Settings → GDPR tab replaces the 4-checkbox card. Scanner rules are now grouped into 8 semantic categories (secrets, national_id, national_id_ctx, financial, contact, network, personal, bare_id) with per-category actions (ignore / warn / block). New PII_RULE_CATEGORIES + PII_DEFAULT_CATEGORY_ACTIONS maps in claude_cli.py are the single source of truth, mirrored as PIIScanner.ruleCategories / defaultCategoryActions in web/index.html. Per-rule overrides (rule_overrides: {rule_id: action}) win over category actions. Every finding carries a category + effective action; _pii_scan_text skips 'ignore' rules entirely (no scan, no log). New _pii_effective_action helper resolves rule_overrides > category > default, and downgrades 'block' to 'warn' when server_block (master switch) is off — keeping back-compat for existing configs. New _pii_worst_action helper returns block > warn > ignore across findings; main-chat send_message and gdpr_pick_model_for_background now refuse only when the scan's worst action is 'block' rather than on any finding, so warn-only categories no longer raise RuntimeError. Email allowlist: every email finding is matched against gdpr_scanner.email_allowlist (list of full addresses or '@domain' patterns, case-insensitive); matches are suppressed entirely — no finding, no audit row, no modal. Server validates on POST /v1/services/server: unknown rule_ids are rejected (typos surface), unknown categories silently dropped, actions must be ignore|warn|block, allowlist entries must contain '@' and no whitespace. Web UI: dedicated GDPR tab in General Settings (alongside Server/Models/…) with three sections — master switches (enabled, server_log, server_block, fallback model), email allowlist textarea (one per line, '@domain' for wildcards), and collapsible category rows showing rule counts + override counts + inline action dropdown per category. Expanding a category reveals per-rule override selects (empty = use category default). Single Save button commits everything; Reset-to-defaults restores category actions without touching master switches or allowlist. Server tab now shows a one-line GDPR status chip (active / disabled / hard-block on) with a Configure → button linking to the new tab. applyGdprConfigToScanner() is the single entry point that syncs PIIScanner.policy + state.pii* from the server response; called from the startup fetch, the Server tab refresh, and after every GDPR save. piiBlockActive / piiHistoryWorstAction now gate on scan.worstAction === 'block' instead of any finding, so composer model-filtering only kicks in for true block-severity findings."),
     ("8.10.0", "2026-04-23", "GDPR local-model routing — the long-standing follow-up to v8.8.0's scanner. When the outgoing payload contains personal data the chat is automatically routed to a local model instead of being blocked at the door. Three layers: (1) config.json → gdpr_scanner.default_local_fallback_model — a model id used by every non-interactive LLM call to transparently swap cloud → local when PII is detected. Configurable in Settings → Server → GDPR card (dropdown is populated only with enabled local models; selection is validated server-side against is_local + enabled). (2) Server-side hook gdpr_pick_model_for_background(model, texts, purpose) in claude_cli.py — single decision point called by generate_next_prompt_suggestion, classify_chat_for_memory, _summarise_tool_result (worker subagents), _run_delegate (delegate_task tool + scheduler tasks + agent-to-agent delegation), _generate_chat_summary. Every detection at the background layer emits a pii_detected audit row; every swap emits an additional pii_auto_fallback row; a new pii_blocked row fires when server_block=true and no local fallback is usable. New GDPRBlockedError sentinel (inherits RuntimeError) propagates refusal cleanly: next-prompt/classifier return None, summariser returns the static fallback summary, delegate returns a 'Delegation error: [GDPR block]...' string, chat summary skips. (3) Client-side interlock in web/index.html — piiBlockActive(chat) is true when the composer draft OR the loaded chat history contains PII (new piiHistoryText/piiHistoryHasFindings walk the messages array with a cache keyed by message count, invalidated on openSession / user-message push / stream done / newChat). When active, toggleModelDropdown reduces the model list to is_local-only with an amber 'Personal data detected' header; piiEnsureLocalModel auto-swaps the chat to the configured fallback (or first enabled local) the instant PII is seen; sendMessage refuses-with-toast if server_block is on and no local model is selectable. Badge shows three distinct states: red when no local available, green when routing via local (with 'auto-selected' marker on first swap), amber warn-only when block is off. New badge scope label 'Personal data earlier in this chat' distinguishes history-derived findings from fresh draft input. Server-side send_message block gate now checks is_model_local(model) before raising the user-facing RuntimeError — previously the gate fired unconditionally and would refuse even when the user had already picked a local model, so manual recovery from the dropdown was broken (session b2703917 regression). GET /v1/models/config now annotates every model entry with is_local (derived from _is_local_base_url on the resolved provider) so the web UI doesn't duplicate URL parsing. New is_model_local(model) helper in claude_cli.py is the single authoritative resolver. All call sites verified: scanner runs on both main chat (round 0, warn-or-block) and every background path (detect + swap + optional refuse); audit trail covers detect, swap, and block independently."),
@@ -11687,6 +11688,7 @@ class CostTracker:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     agent TEXT NOT NULL,
                     session_id TEXT,
+                    user_id TEXT NOT NULL DEFAULT '',
                     model TEXT NOT NULL,
                     provider TEXT NOT NULL DEFAULT '',
                     tokens_in INTEGER NOT NULL DEFAULT 0,
@@ -11696,26 +11698,36 @@ class CostTracker:
                     created_at TEXT NOT NULL DEFAULT (datetime('now'))
                 )
             """)
+            # Migration: add user_id column to pre-existing tables
+            try:
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(cost_log)").fetchall()}
+                if "user_id" not in cols:
+                    conn.execute("ALTER TABLE cost_log ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+            except sqlite3.Error as e:
+                logging.warning(f"cost_log user_id migration: {e}")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_agent ON cost_log(agent)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_session ON cost_log(session_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_created ON cost_log(created_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_user ON cost_log(user_id, created_at)")
             conn.commit()
 
     def log_call(self, agent: str, session_id: str, model: str, provider: str,
-                 tokens_in: int, tokens_out: int, tool_round: int = 0):
+                 tokens_in: int, tokens_out: int, tool_round: int = 0,
+                 user_id: str = ""):
         """Log an LLM call with cost estimation."""
         cost = _compute_cost(model, tokens_in, tokens_out)
         try:
             with _cost_conn() as conn:
                 conn.execute("""
-                    INSERT INTO cost_log (agent, session_id, model, provider, tokens_in, tokens_out, cost_usd, tool_round)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (agent, session_id or "", model, provider, tokens_in, tokens_out, cost, tool_round))
+                    INSERT INTO cost_log (agent, session_id, user_id, model, provider, tokens_in, tokens_out, cost_usd, tool_round)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (agent, session_id or "", user_id or "", model, provider, tokens_in, tokens_out, cost, tool_round))
                 conn.commit()
         except (sqlite3.Error, OSError) as e:
             logging.warning(f"Cost tracking error: {e}")
 
-    def get_stats(self, agent: str | None = None, hours: int = 24) -> dict:
+    def get_stats(self, agent: str | None = None, hours: int = 24,
+                  user_id: str | None = None) -> dict:
         """Get aggregate stats for the last N hours."""
         try:
             with _cost_conn() as conn:
@@ -11725,6 +11737,9 @@ class CostTracker:
                 if agent:
                     where += " AND agent = ?"
                     params.append(agent)
+                if user_id is not None:
+                    where += " AND user_id = ?"
+                    params.append(user_id)
                 row = conn.execute(f"""
                     SELECT COUNT(*) as total_calls,
                            COALESCE(SUM(tokens_in), 0) as total_tokens_in,
@@ -11766,7 +11781,8 @@ class CostTracker:
                     "total_cost": 0.0, "hours": hours, "agent_filter": agent,
                     "by_agent": [], "by_model": []}
 
-    def get_daily(self, agent: str | None = None, days: int = 7) -> list[dict]:
+    def get_daily(self, agent: str | None = None, days: int = 7,
+                  user_id: str | None = None) -> list[dict]:
         """Get daily breakdown for the last N days."""
         try:
             with _cost_conn() as conn:
@@ -11776,6 +11792,9 @@ class CostTracker:
                 if agent:
                     where += " AND agent = ?"
                     params.append(agent)
+                if user_id is not None:
+                    where += " AND user_id = ?"
+                    params.append(user_id)
                 rows = conn.execute(f"""
                     SELECT date(created_at) as day,
                            COUNT(*) as calls,
@@ -11788,6 +11807,38 @@ class CostTracker:
                 return [dict(r) for r in rows]
         except (sqlite3.Error, OSError) as e:
             logging.warning(f"Cost daily error: {e}")
+            return []
+
+    def sum_user_window(self, user_id: str, since_iso: str) -> float:
+        """Sum cost_usd for a user since a given ISO timestamp (UTC)."""
+        try:
+            with _cost_conn() as conn:
+                row = conn.execute("""
+                    SELECT COALESCE(SUM(cost_usd), 0.0) AS c
+                    FROM cost_log
+                    WHERE user_id = ? AND created_at >= ?
+                """, (user_id, since_iso)).fetchone()
+                return float(row[0] or 0.0)
+        except (sqlite3.Error, OSError):
+            return 0.0
+
+    def per_model_user_window(self, user_id: str, since_iso: str) -> list[dict]:
+        """Per-model breakdown for a user since ISO timestamp."""
+        try:
+            with _cost_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute("""
+                    SELECT model,
+                           COUNT(*) AS calls,
+                           COALESCE(SUM(tokens_in), 0) AS tokens_in,
+                           COALESCE(SUM(tokens_out), 0) AS tokens_out,
+                           COALESCE(SUM(cost_usd), 0.0) AS cost
+                    FROM cost_log
+                    WHERE user_id = ? AND created_at >= ?
+                    GROUP BY model ORDER BY cost DESC
+                """, (user_id, since_iso)).fetchall()
+                return [dict(r) for r in rows]
+        except (sqlite3.Error, OSError):
             return []
 
     def get_session_cost(self, session_id: str) -> dict:
@@ -11808,6 +11859,368 @@ class CostTracker:
 
 
 _cost_tracker: CostTracker | None = None
+
+
+# --- Per-User Cost Quotas ---
+#
+# Two-axis quota: daily (rolling 24h reset at local midnight UTC) and
+# billing-cycle (monthly/weekly/yearly with admin-configured start day).
+# Limits are per-role with optional per-user overrides. Local models always
+# cost $0 and never count against the quota.
+#
+# Enforcement modes (config.json → quotas.enforce_red):
+#   - "warn_only" (default): UI shows red badge; no server-side refusal
+#   - "force_local": auto-swap to default_local_fallback_model on red, like GDPR
+#   - "hard_block": refuse outright on red
+#
+# Local models bypass the gate (is_model_local).
+
+QUOTA_DEFAULTS = {
+    "enabled": True,
+    "billing_cycle": "monthly",     # monthly | weekly | yearly
+    "cycle_start_day": 1,           # 1-31 monthly, 0-6 weekly (0=Mon), 1-12 yearly (month-of-year)
+    "warn_pct": 70,
+    "block_pct": 100,
+    "enforce_red": "warn_only",     # warn_only | force_local | hard_block
+    "default_local_fallback_model": "",
+    "limits": {
+        "admin":     {"daily_usd": 0.0, "cycle_usd": 0.0},
+        "poweruser": {"daily_usd": 0.0, "cycle_usd": 0.0},
+        "user":      {"daily_usd": 0.0, "cycle_usd": 0.0},
+    },
+    "user_overrides": {},
+}
+
+
+def _quota_default_role_limits(role: str) -> dict:
+    return {"daily_usd": 0.0, "cycle_usd": 0.0}
+
+
+class QuotaExceededError(RuntimeError):
+    """Raised when hard_block mode rejects a request, or when force_local
+    cannot find a usable local fallback."""
+    def __init__(self, message: str, level: str = "red", reason: str = ""):
+        super().__init__(message)
+        self.level = level
+        self.reason = reason
+
+
+class QuotaManager:
+    """Per-user cost quotas. Reads `quotas` block from config.json.
+
+    Stateless beyond a 30s cache of the config and a per-user state cache
+    so the status-bar pill can poll cheaply. Cost numbers come from
+    cost_log via CostTracker; this class only adds the policy + windowing.
+    """
+
+    def __init__(self):
+        self._cfg_cache: tuple[float, dict] | None = None
+        self._cfg_cache_ttl = 30.0
+        self._lock = threading.Lock()
+
+    # --- config ---
+
+    def _load_config(self) -> dict:
+        now = time.time()
+        with self._lock:
+            if self._cfg_cache and (now - self._cfg_cache[0]) < self._cfg_cache_ttl:
+                return self._cfg_cache[1]
+        try:
+            cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+            with open(cfg_path) as f:
+                raw = json.load(f).get("quotas") or {}
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            raw = {}
+        merged = dict(QUOTA_DEFAULTS)
+        for k, v in raw.items():
+            if k == "limits" and isinstance(v, dict):
+                limits = {role: dict(QUOTA_DEFAULTS["limits"].get(role, _quota_default_role_limits(role)))
+                          for role in ("admin", "poweruser", "user")}
+                for role, lim in v.items():
+                    if role in limits and isinstance(lim, dict):
+                        for fld in ("daily_usd", "cycle_usd"):
+                            if fld in lim:
+                                try:
+                                    limits[role][fld] = max(0.0, float(lim[fld] or 0))
+                                except (TypeError, ValueError):
+                                    pass
+                merged["limits"] = limits
+            elif k == "user_overrides" and isinstance(v, dict):
+                ov = {}
+                for uid, lim in v.items():
+                    if not isinstance(lim, dict):
+                        continue
+                    entry = {}
+                    for fld in ("daily_usd", "cycle_usd"):
+                        if fld in lim:
+                            try:
+                                entry[fld] = max(0.0, float(lim[fld] or 0))
+                            except (TypeError, ValueError):
+                                pass
+                    if entry:
+                        ov[str(uid)] = entry
+                merged["user_overrides"] = ov
+            else:
+                merged[k] = v
+        # Normalise enforce_red
+        if merged.get("enforce_red") not in ("warn_only", "force_local", "hard_block"):
+            merged["enforce_red"] = "warn_only"
+        if merged.get("billing_cycle") not in ("monthly", "weekly", "yearly"):
+            merged["billing_cycle"] = "monthly"
+        with self._lock:
+            self._cfg_cache = (now, merged)
+        return merged
+
+    def invalidate_cache(self):
+        with self._lock:
+            self._cfg_cache = None
+
+    def get_config(self) -> dict:
+        """Return the full quotas config for admin UI."""
+        return self._load_config()
+
+    def save_config(self, new_cfg: dict) -> dict:
+        """Validate + persist quotas block to config.json."""
+        cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        try:
+            with open(cfg_path) as f:
+                full = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            full = {}
+        existing = dict(QUOTA_DEFAULTS)
+        existing.update(full.get("quotas") or {})
+        # Whitelist + coerce
+        out = dict(existing)
+        if "enabled" in new_cfg:
+            out["enabled"] = bool(new_cfg["enabled"])
+        if "billing_cycle" in new_cfg and new_cfg["billing_cycle"] in ("monthly", "weekly", "yearly"):
+            out["billing_cycle"] = new_cfg["billing_cycle"]
+        if "cycle_start_day" in new_cfg:
+            try:
+                out["cycle_start_day"] = int(new_cfg["cycle_start_day"])
+            except (TypeError, ValueError):
+                pass
+        if "warn_pct" in new_cfg:
+            try:
+                out["warn_pct"] = max(0, min(100, int(new_cfg["warn_pct"])))
+            except (TypeError, ValueError):
+                pass
+        if "block_pct" in new_cfg:
+            try:
+                out["block_pct"] = max(0, min(200, int(new_cfg["block_pct"])))
+            except (TypeError, ValueError):
+                pass
+        if "enforce_red" in new_cfg and new_cfg["enforce_red"] in ("warn_only", "force_local", "hard_block"):
+            out["enforce_red"] = new_cfg["enforce_red"]
+        if "default_local_fallback_model" in new_cfg:
+            out["default_local_fallback_model"] = str(new_cfg["default_local_fallback_model"] or "")
+        if "limits" in new_cfg and isinstance(new_cfg["limits"], dict):
+            limits = {role: dict(out["limits"].get(role, _quota_default_role_limits(role)))
+                      for role in ("admin", "poweruser", "user")}
+            for role, lim in new_cfg["limits"].items():
+                if role in limits and isinstance(lim, dict):
+                    for fld in ("daily_usd", "cycle_usd"):
+                        if fld in lim:
+                            try:
+                                limits[role][fld] = max(0.0, float(lim[fld] or 0))
+                            except (TypeError, ValueError):
+                                pass
+            out["limits"] = limits
+        if "user_overrides" in new_cfg and isinstance(new_cfg["user_overrides"], dict):
+            ov = {}
+            for uid, lim in new_cfg["user_overrides"].items():
+                if not isinstance(lim, dict):
+                    continue
+                entry = {}
+                for fld in ("daily_usd", "cycle_usd"):
+                    if fld in lim:
+                        try:
+                            entry[fld] = max(0.0, float(lim[fld] or 0))
+                        except (TypeError, ValueError):
+                            pass
+                if entry:
+                    ov[str(uid)] = entry
+            out["user_overrides"] = ov
+        full["quotas"] = out
+        try:
+            with open(cfg_path, "w") as f:
+                json.dump(full, f, indent=2)
+        except OSError as e:
+            raise RuntimeError(f"Failed to save quotas config: {e}") from e
+        self.invalidate_cache()
+        return out
+
+    # --- cycle math ---
+
+    @staticmethod
+    def _last_day_of_month(year: int, month: int) -> int:
+        import calendar
+        return calendar.monthrange(year, month)[1]
+
+    def cycle_window(self, cfg: dict | None = None, now: datetime.datetime | None = None) -> tuple[datetime.datetime, datetime.datetime]:
+        """Return (start_inclusive, end_exclusive) of the current billing cycle in UTC."""
+        cfg = cfg or self._load_config()
+        now = now or datetime.datetime.now(datetime.timezone.utc)
+        cycle = cfg.get("billing_cycle", "monthly")
+        start_day = int(cfg.get("cycle_start_day") or 1)
+        if cycle == "weekly":
+            # 0=Mon..6=Sun
+            anchor_dow = max(0, min(6, start_day))
+            today_dow = now.weekday()
+            delta = (today_dow - anchor_dow) % 7
+            start = (now - datetime.timedelta(days=delta)).replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + datetime.timedelta(days=7)
+            return start, end
+        if cycle == "yearly":
+            anchor_month = max(1, min(12, start_day))
+            year = now.year if (now.month >= anchor_month) else (now.year - 1)
+            start = datetime.datetime(year, anchor_month, 1, tzinfo=datetime.timezone.utc)
+            end = datetime.datetime(year + 1, anchor_month, 1, tzinfo=datetime.timezone.utc)
+            return start, end
+        # monthly (default)
+        anchor = max(1, min(31, start_day))
+        # Clamp to last day of (month-1) if anchor > last day of that month
+        cur_year, cur_month = now.year, now.month
+        last_this = self._last_day_of_month(cur_year, cur_month)
+        # Determine current cycle start: if today >= clamped anchor of this month, start = this month, else previous month
+        anchor_this = min(anchor, last_this)
+        cycle_start_this_month = datetime.datetime(cur_year, cur_month, anchor_this, tzinfo=datetime.timezone.utc)
+        if now >= cycle_start_this_month:
+            start = cycle_start_this_month
+            ny, nm = (cur_year + (cur_month // 12)), ((cur_month % 12) + 1)
+            anchor_next = min(anchor, self._last_day_of_month(ny, nm))
+            end = datetime.datetime(ny, nm, anchor_next, tzinfo=datetime.timezone.utc)
+        else:
+            py, pm = (cur_year - 1, 12) if cur_month == 1 else (cur_year, cur_month - 1)
+            anchor_prev = min(anchor, self._last_day_of_month(py, pm))
+            start = datetime.datetime(py, pm, anchor_prev, tzinfo=datetime.timezone.utc)
+            end = cycle_start_this_month
+        return start, end
+
+    @staticmethod
+    def _today_window(now: datetime.datetime | None = None) -> tuple[datetime.datetime, datetime.datetime]:
+        now = now or datetime.datetime.now(datetime.timezone.utc)
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        return start, start + datetime.timedelta(days=1)
+
+    # --- per-user state ---
+
+    def get_user_role(self, user_id: str) -> str:
+        if not user_id:
+            return "user"
+        try:
+            from auth import AuthDB
+            u = AuthDB.get_user(user_id)
+            return (u or {}).get("role") or "user"
+        except Exception:
+            return "user"
+
+    def get_user_limits(self, user_id: str, role: str | None = None, cfg: dict | None = None) -> dict:
+        cfg = cfg or self._load_config()
+        role = role or self.get_user_role(user_id)
+        base = dict(cfg["limits"].get(role) or _quota_default_role_limits(role))
+        ov = (cfg.get("user_overrides") or {}).get(user_id) or {}
+        for fld in ("daily_usd", "cycle_usd"):
+            if fld in ov:
+                base[fld] = float(ov[fld] or 0)
+        return {"daily_usd": float(base.get("daily_usd") or 0.0),
+                "cycle_usd": float(base.get("cycle_usd") or 0.0),
+                "role": role,
+                "has_override": bool(ov)}
+
+    def get_user_state(self, user_id: str, cfg: dict | None = None) -> dict:
+        """Return per-user quota state suitable for the UI pill + modal."""
+        cfg = cfg or self._load_config()
+        role = self.get_user_role(user_id)
+        limits = self.get_user_limits(user_id, role=role, cfg=cfg)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        d_start, d_end = self._today_window(now)
+        c_start, c_end = self.cycle_window(cfg, now)
+        # Aggregate windows
+        if _cost_tracker and user_id:
+            daily_used = _cost_tracker.sum_user_window(user_id, d_start.strftime("%Y-%m-%d %H:%M:%S"))
+            cycle_used = _cost_tracker.sum_user_window(user_id, c_start.strftime("%Y-%m-%d %H:%M:%S"))
+        else:
+            daily_used, cycle_used = 0.0, 0.0
+        warn_pct = float(cfg.get("warn_pct", 70))
+        block_pct = float(cfg.get("block_pct", 100))
+
+        def _level(used: float, limit: float) -> tuple[str, float]:
+            if limit <= 0:
+                return ("green", 0.0)
+            pct = (used / limit) * 100.0
+            if pct >= block_pct:
+                return ("red", pct)
+            if pct >= warn_pct:
+                return ("yellow", pct)
+            return ("green", pct)
+
+        d_level, d_pct = _level(daily_used, limits["daily_usd"])
+        c_level, c_pct = _level(cycle_used, limits["cycle_usd"])
+        worst = "red" if "red" in (d_level, c_level) else ("yellow" if "yellow" in (d_level, c_level) else "green")
+        return {
+            "user_id": user_id,
+            "role": role,
+            "enabled": bool(cfg.get("enabled", True)),
+            "enforce_red": cfg.get("enforce_red", "warn_only"),
+            "default_local_fallback_model": cfg.get("default_local_fallback_model") or "",
+            "warn_pct": warn_pct,
+            "block_pct": block_pct,
+            "billing_cycle": cfg.get("billing_cycle", "monthly"),
+            "cycle_start_day": cfg.get("cycle_start_day", 1),
+            "daily": {
+                "used_usd": round(daily_used, 4),
+                "limit_usd": limits["daily_usd"],
+                "pct": round(d_pct, 2),
+                "level": d_level,
+                "resets_at": d_end.isoformat(),
+            },
+            "cycle": {
+                "used_usd": round(cycle_used, 4),
+                "limit_usd": limits["cycle_usd"],
+                "pct": round(c_pct, 2),
+                "level": c_level,
+                "starts_at": c_start.isoformat(),
+                "resets_at": c_end.isoformat(),
+            },
+            "level": worst,
+            "has_override": limits["has_override"],
+        }
+
+    # --- enforcement ---
+
+    def check_request(self, user_id: str, model: str) -> tuple[str, str]:
+        """Return (decision, reason). Decisions:
+          - "allow": proceed unchanged
+          - "force_local": caller should swap to fallback model
+          - "block": caller must raise QuotaExceededError
+
+        Local models always allowed. Disabled feature → allow.
+        """
+        cfg = self._load_config()
+        if not cfg.get("enabled", True):
+            return "allow", ""
+        if not user_id:
+            return "allow", ""
+        try:
+            if is_model_local(model):
+                return "allow", "local-model"
+        except Exception:
+            pass
+        st = self.get_user_state(user_id, cfg=cfg)
+        if st["level"] != "red":
+            return "allow", st["level"]
+        mode = cfg.get("enforce_red", "warn_only")
+        worst_axis = "daily" if st["daily"]["level"] == "red" else "cycle"
+        reason = f"{worst_axis} quota exhausted ({st[worst_axis]['pct']:.0f}%)"
+        if mode == "warn_only":
+            return "allow", reason
+        if mode == "force_local":
+            return "force_local", reason
+        return "block", reason
+
+
+_quota_manager: 'QuotaManager | None' = None
 
 
 # --- Observability: Trace Manager ---
@@ -18812,9 +19225,10 @@ def _log_call_cost(model: str, tokens_in: int, tokens_out: int,
     agent = getattr(_thread_local, 'current_agent', None) or _current_agent
     agent_id = agent.agent_id if agent else "main"
     provider = _models_config.get(model, {}).get("provider", "")
+    user_id = getattr(_thread_local, 'current_user_id', "") or ""
     try:
         _cost_tracker.log_call(agent_id, session_id, model, provider,
-                               tokens_in, tokens_out, tool_round)
+                               tokens_in, tokens_out, tool_round, user_id=user_id)
         # Record in rate limiter too
         if _rate_limiter:
             cost = _compute_cost(model, tokens_in, tokens_out)
@@ -19102,6 +19516,89 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                             f"remove the data, or adjust the category action in "
                             f"Settings → GDPR."
                         )
+
+        # Per-user cost quota gate. Local models bypass; force_local swaps
+        # silently to the configured fallback; hard_block refuses with a
+        # user-visible RuntimeError. warn_only is purely UI-side.
+        if _quota_manager:
+            _quota_user = getattr(_thread_local, 'current_user_id', "") or ""
+            try:
+                _qd, _qr = _quota_manager.check_request(_quota_user, model)
+            except Exception:
+                _qd, _qr = "allow", ""
+            if _qd == "force_local":
+                _qcfg = _quota_manager.get_config()
+                _fb = (_qcfg.get("default_local_fallback_model") or "").strip()
+                # Validate fallback: must exist, be enabled, and resolve as local
+                _fb_ok = False
+                if _fb and _fb in _models_config and _models_config.get(_fb, {}).get("enabled", True):
+                    try:
+                        _fb_ok = is_model_local(_fb)
+                    except Exception:
+                        _fb_ok = False
+                _agent_qa = getattr(_thread_local, 'current_agent', None) or _current_agent
+                _agent_qid = _agent_qa.agent_id if _agent_qa else "main"
+                if _fb_ok:
+                    print(f"[quota] session={session_id} user={_quota_user} "
+                          f"force_local: {model} -> {_fb} ({_qr})", flush=True)
+                    if _audit_log:
+                        try:
+                            _audit_log.log_action(
+                                agent=_agent_qid,
+                                action_type="quota_force_local",
+                                tool_name="quota",
+                                args_summary=f"{model} -> {_fb}",
+                                result_summary=_qr[:200],
+                                result_status="warning",
+                                session_id=session_id,
+                                source="llm_request",
+                            )
+                        except Exception:
+                            pass
+                    model = _fb
+                else:
+                    if _audit_log:
+                        try:
+                            _audit_log.log_action(
+                                agent=_agent_qid,
+                                action_type="quota_blocked",
+                                tool_name="quota",
+                                args_summary=f"force_local fallback unusable ({_fb or 'none'})",
+                                result_summary=_qr[:200],
+                                result_status="blocked",
+                                session_id=session_id,
+                                source="llm_request",
+                            )
+                        except Exception:
+                            pass
+                    raise QuotaExceededError(
+                        f"[Quota exceeded] {_qr}. Switch to a local model "
+                        f"or ask an admin to raise the limit (Settings → Quotas).",
+                        level="red", reason=_qr,
+                    )
+            elif _qd == "block":
+                _agent_qa = getattr(_thread_local, 'current_agent', None) or _current_agent
+                _agent_qid = _agent_qa.agent_id if _agent_qa else "main"
+                if _audit_log:
+                    try:
+                        _audit_log.log_action(
+                            agent=_agent_qid,
+                            action_type="quota_blocked",
+                            tool_name="quota",
+                            args_summary=f"hard_block on {model}",
+                            result_summary=_qr[:200],
+                            result_status="blocked",
+                            session_id=session_id,
+                            source="llm_request",
+                        )
+                    except Exception:
+                        pass
+                raise QuotaExceededError(
+                    f"[Quota exceeded] {_qr}. Ask an admin to raise the limit "
+                    f"(Settings → Quotas).",
+                    level="red", reason=_qr,
+                )
+
         # Start a request-level trace span for the full conversation turn
         if _trace_manager:
             agent = getattr(_thread_local, 'current_agent', None) or _current_agent
