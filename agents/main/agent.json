@@ -1,6 +1,6 @@
 {
   "description": "General-purpose main agent",
-  "model": "gemma-4-26b-a4b-it-4bit",
+  "model": "mistral-experimental/mistral-small-2603",
   "avatar": "captain",
   "display_name": "Steve Rogers",
   "memory_summary": {
@@ -39,8 +39,10 @@
       "memory",
       "context",
       "web",
+      "email",
       "documents",
       "delegation",
+      "code_graph",
       "git",
       "scheduler",
       "skills",
@@ -51,7 +53,7 @@
     "include_memory_summary": true,
     "memory_summary_cap": 2000,
     "compact_threshold": 0.7,
-    "scheduled_task_tools": false,
+    "scheduled_task_tools": true,
     "deferred_tool_groups": [
       "email",
       "documents",
