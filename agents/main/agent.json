@@ -71,7 +71,7 @@
   },
   "next_prompt_suggestions": {
     "enabled": true,
-    "model": "gemini-2.5-flash",
+    "model": "mistral-vibe-cli-fast",
     "max_words": 15
   }
 }

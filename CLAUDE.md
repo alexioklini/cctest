@@ -587,6 +587,99 @@ Things that aren't visible from reading the code but will bite if broken:
 
 `list_nodes` tool + `GET /v1/nodes` expose remote nodes. `node.py` supports `--install` (launchd plist), `--uninstall`, `--status`. Plist: `~/Library/LaunchAgents/com.brain-agent.node.{name}.plist`, logs to `~/.brain-agent/node-{name}.log`. Quick `GET /v1/nodes` check before long-poll for instant "Connected" feedback. Tool blocks show a purple `node` pill when `node` param is present.
 
+## Per-User Account Settings (v8.17.0)
+
+Personal state separated from the global admin settings. Sidebar bottom-left: clicking the username/avatar opens **Account Settings** (`openUserSettings()`); the chevron beside the theme toggle opens the dropdown (Sign out + admin shortcuts). The dropdown's "Settings" entry was removed for non-admins; admins still see "General settings" as a separate item there.
+
+**Modal tabs**: Profile · Memory · My Schedules · Security.
+
+**Schema** — new `users.preferences` JSON column on `auth.db` (idempotent ALTER, validated keys via `PREFERENCE_DEFAULTS` + `_coerce_pref(key, value)` in `auth.py`):
+
+- `greeting_name` (≤64 chars) — what the agent calls the user
+- `job_description` (≤500 chars) — one sentence, surfaced in the first-turn preamble
+- `communication_preferences` (≤4000 chars) — per-user soul.md equivalent (tone, style, formatting); surfaced in the first-turn preamble. Refinable via the inline AI button.
+- `memory_chats_default` (0|1|2|null) — overrides the server-wide classifier `default_mode` for new chat sessions when set
+- `memory_sched_default` (0|1|null) — gate the miner from filing this user's sched-run artifacts when explicitly 0; null/1 keeps default behavior
+- `daily_summary_enabled` (bool) — runs the user-profile maintainer once per day
+- `daily_summary_hour_local` (0-23) — local-hour anchor
+
+`update_preferences` is merge-update with atomic validation (invalid value → 400, no partial write). Default-valued keys are pruned out of the stored JSON to keep it small. `_user_dict` returns `preferences: {…}` filled with defaults; admin-only `update_user` does NOT touch this column.
+
+**Endpoints** (all self-only or admin):
+
+- `GET /v1/auth/me` — returns user incl. `preferences`
+- `POST /v1/auth/profile` — display_name + email only (role/disabled stay admin)
+- `POST /v1/auth/preferences` — merge-update preferences
+- `POST /v1/auth/password` — unchanged
+- `GET/POST /v1/auth/profile-doc`, `POST .../update-now`, `POST .../reset` — see User Profile section
+
+**First-turn preamble** (`claude_cli.send_message` round 0): on the first user message of a session, prepends a `[Context about this user: …]` block carrying greeting + job + comm-prefs (only non-empty lines). Stripped before the wire by `_ALLOWED_MSG_KEYS` filter. Kept OUT of the system prompt so the warm-pool KV-prefix stays user-agnostic across all users — an earlier iteration injected the greeting into `_build_system_prompt` and broke prefix matching for every authenticated turn (reverted).
+
+**Per-user inline AI refinement**: `_us_textarea` helper accepts `{refinable: true, fieldLabel}` to render an inline "Refine with AI" button. `/v1/refine` extended with `purpose: "profile_field"` + optional `field_label` — uses a polish-don't-rewrite system prompt (preserves first-person voice, line breaks, no chat-history context for privacy). After refining the button flips to a one-click Undo. Default refine model lives in `tools_config.json` → `refinement.model`; `mistral-vibe-cli-fast` is the validated choice (cliproxyapi/gemini-2.5-flash silently echoes input verbatim regardless of prompt — known model bug, affects all refine purposes equally).
+
+**My Schedules tab**: `GET /v1/schedule` is now scoped — non-admins see only schedules with their `user_id`; admins see everything. Legacy schedules (empty `user_id`) stay admin-only by design (no silent grant on migration). New `_schedule_owner_check(name)` helper gates pause/resume/delete/run_now/edit/history/delete_run/clear_history; `purge_orphan_history` is admin-only. Schema: new `schedules.user_id TEXT DEFAULT ''` column + `idx_sched_user` index.
+
+**Welcome greeting** (`#welcome-greeting-text`): `refreshWelcomeGreeting()` is auth-aware — reads `state.authUser.preferences.greeting_name → display_name → username`, builds `Good morning, Alex` or anonymous `Good morning` when no auth. Re-runs from `renderUserMenu()` so login + profile saves refresh without a page reload.
+
+## User Profile (Memory from chat history) (v8.17.0)
+
+Auto-maintained per-user context profile, mirrored to MemPalace. The Claude.ai "Gedächtnis aus Chat-Verlauf generieren" equivalent. Replaces the v8.14.0 daily-summary activity log (which produced low-value bullet inventories of titles + run counts).
+
+**Storage**: filesystem is the source of truth.
+
+- File: `agents/main/user_profiles/<uid>.md` (gitignored)
+- History: `agents/main/user_profiles/<uid>.history/<ISO-timestamp>.md` — capped at 30 entries; KEPT on Reset by design so users can recover from a hasty rebuild
+- MemPalace mirror: `wing=<uid>--main, room=user_profile`, one drawer per `## section` with `source_file=user/<uid>#profile/<slug>`. Mirror is purge-then-add via `_purge_user_profile_drawers` so renamed/removed sections don't linger.
+
+**Schema** — fixed-order Markdown sections, model fills each one or writes `_(none)_`:
+
+```
+## Work context
+## Personal context
+## Top of mind
+## Recent months
+## Earlier context
+## Long-term background
+```
+
+Hard rules in `_PROFILE_SYSTEM_PROMPT`: never invent, third-person voice, match the user's predominant language (German chats → German profile), edit existing profile in place rather than rewrite, demote stale "Top of mind" → "Recent months" when no fresh evidence appears, no timestamps, no "as of <date>" markers. Each section 2-6 sentences max.
+
+**Daemon** (`user-profile` thread, replaces `daily-summary`): polls every 30 min. Per-user gate: `daily_summary_enabled` ON + local-hour matches `daily_summary_hour_local` + 23h cooldown via `auth.db.user_daily_summary` cursor table (`last_run_ts`, `last_status`, `last_drawer_id`/`last_profile_path`).
+
+**Per-user worker** (`_profile_run_synchronous`, module level so HTTP + daemon share):
+
+1. `_gather_user_chat_samples` pulls 100 most-recently-active chats from the last 90 days. Per chat: title + first user message + last assistant message, 250 chars each. Total input capped at 12K chars.
+2. `_user_profile_run_llm` calls `engine._run_delegate` with `_PROFILE_SYSTEM_PROMPT`. Model resolution via `_profile_pick_model` (refinement → cheapest haiku → cheapest enabled → server default). GDPR auto-fallback to local on PII findings via `gdpr_pick_model_for_background`.
+3. `_write_user_profile_atomic` snapshots prior to history dir, writes via tmp + `os.replace`, then `_mirror_user_profile_to_mempalace`.
+
+**Endpoints**:
+
+- `GET /v1/auth/profile-doc` — content + cursor + `enabled` + `hour_local` + `bytes`
+- `POST /v1/auth/profile-doc` — manual edit (32KB cap, content must be string)
+- `POST /v1/auth/profile-doc/update-now` — synchronous regen for the requesting user; runs in the request thread (~5-60s depending on model). Returns `{result: {status, path, bytes, samples}, cursor}`
+- `POST /v1/auth/profile-doc/reset` — delete file + drawers, reset cursor; history dir KEPT
+
+**UI** — Account Settings → Memory tab gains:
+
+- Toggle "Maintain user profile from chat history" + hour picker
+- 380px tall editable Markdown textarea (monospace) below
+- Buttons: Update now / Reset / Save profile
+- Status line: last-run timestamp + bytes + `no_activity` / `filed` / `error:<reason>` state
+
+**Preamble injection**: `claude_cli.send_message` round 0 reads `<uid>.md` (capped 4KB), prepends as a separate `[Auto-maintained user profile (from chat history; treat as background context, not as ground truth for the current request): …]` block on the first user message. Distinct block from the user-set greeting/job/comm-prefs preamble so the model can tell user-set guidance apart from inferred long-form context. Sentinel `_greeting_injected` keeps it idempotent across retries; `_ALLOWED_MSG_KEYS` filter strips it before the wire.
+
+**Startup purge**: legacy `user_daily_summary` drawers dropped from every wing on every server start (idempotent).
+
+**Module-level helpers** (server.py, all callable from HTTP handlers AND the daemon):
+
+- `_user_profile_dir / _path / _history_dir / _read / _write_atomic / _delete`
+- `_split_profile_sections` (parses ## headings)
+- `_purge_drawers_by_room_and_source(wing, room, source_prefix="")` — note: MemPalace's `tool_list_drawers` summary doesn't include `source_file`, so the `source_prefix` arg is informational; rooms we own (`user_profile`, `user_daily_summary`) are exclusively ours and we purge by (wing, room)
+- `_mirror_user_profile_to_mempalace`, `_purge_user_profile_drawers`
+- `_PROFILE_SYSTEM_PROMPT`, `_profile_pick_model`, `_gather_user_chat_samples`, `_user_profile_run_llm`, `_profile_run_synchronous`
+
+**KV-cache invariant**: `_build_system_prompt` stays user-agnostic. The earlier iteration that injected greeting into the system prompt was reverted because it broke warm-pool KV-prefix matching for every authenticated turn. Per-user content lives only in the first-user-message preamble, which costs nothing across users.
+
 ## MemPalace (Direct Integration)
 
 Memory powered by **MemPalace** imported directly as a Python package — no MCP, no subprocess, no manual `mempalace mine`. One built-in tool queries the palace; two background daemons keep it fresh.

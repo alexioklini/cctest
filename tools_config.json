@@ -27,7 +27,7 @@
   },
   "refinement": {
     "enabled": true,
-    "model": "cliproxyapi/gemini-2.5-flash"
+    "model": "mistral-vibe-cli-fast"
   },
   "read_document": {
     "enabled": true,

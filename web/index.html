@@ -3456,8 +3456,12 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
   </div>
 
 
-  <!-- User section at bottom (populated by renderUserMenu) -->
-  <div class="sb-user-section" id="sb-user-section" onclick="toggleUserDropdown()">
+  <!-- User section at bottom (populated by renderUserMenu).
+       Click on avatar/name → personal Account Settings (Profile, Memory, My Schedules, Security).
+       Theme toggle stays as a quick action. The chevron opens the dropdown
+       (Sign out + admin shortcuts). The previous gear icon was redundant —
+       it duplicated the dropdown's Settings entry. -->
+  <div class="sb-user-section" id="sb-user-section" onclick="openUserSettings()">
     <div class="sb-user-avatar" id="sb-user-avatar">A</div>
     <div class="sb-user-info">
       <div class="sb-user-name" id="sb-user-name">Agent</div>
@@ -3467,8 +3471,8 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <button onclick="event.stopPropagation(); toggleTheme()" title="Toggle theme">
         <svg id="theme-icon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="1.5"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
       </button>
-      <button onclick="event.stopPropagation(); openGeneralSettings()" title="General settings">
-        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      <button onclick="event.stopPropagation(); toggleUserDropdown()" title="More">
+        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="1.5"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
     </div>
     <!-- User dropdown menu (shown on click) -->
@@ -6312,15 +6316,28 @@ function updateSbAgentDisplay() {
   document.getElementById('sb-agent-selector-name').textContent = display;
   document.getElementById('sb-agent-avatar-icon').textContent = aid;
 
-  // Update welcome greeting with agent name
+  refreshWelcomeGreeting();
+}
+
+// Build "Good morning, Alex" using time-of-day + the user's greeting name.
+// Falls back to display_name → username; if the user is not logged in (auth
+// disabled or pre-login), shows just "Good morning".
+function refreshWelcomeGreeting() {
   const greetingEl = document.getElementById('welcome-greeting-text');
-  if (greetingEl) {
-    const hour = new Date().getHours();
-    let greeting = 'Good evening';
-    if (hour < 12) greeting = 'Good morning';
-    else if (hour < 18) greeting = 'Good afternoon';
-    greetingEl.textContent = greeting;
+  if (!greetingEl) return;
+  const hour = new Date().getHours();
+  let timeLabel = 'Good evening';
+  if (hour < 12) timeLabel = 'Good morning';
+  else if (hour < 18) timeLabel = 'Good afternoon';
+  const u = state.authUser;
+  let name = '';
+  if (u) {
+    const prefs = u.preferences || {};
+    name = (prefs.greeting_name || '').trim()
+      || (u.display_name || '').trim()
+      || (u.username || '').trim();
   }
+  greetingEl.textContent = name ? `${timeLabel}, ${name}` : timeLabel;
 }
 
 function toggleSidebar() {
@@ -16059,13 +16076,18 @@ function renderUserMenu() {
   if (nameEl) nameEl.textContent = user.display_name || user.username;
   if (planEl) { planEl.textContent = user.role; planEl.className = 'sb-user-plan'; planEl.style.textTransform = 'capitalize'; }
 
-  // Populate dropdown
+  // Greeting name may have changed (login, profile save) — refresh it.
+  refreshWelcomeGreeting();
+
+  // Populate dropdown. Account settings is the personal modal — distinct
+  // from General settings (org-wide config, admin-only). Removed the
+  // duplicate "Settings" entry that previously mirrored the gear icon.
   if (dropdownEl) {
     dropdownEl.innerHTML = `
+      <div class="sb-user-dropdown-item" onclick="event.stopPropagation(); document.getElementById('sb-user-dropdown')?.classList.remove('open'); openUserSettings()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="7" r="4"/><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/></svg>Account settings</div>
       ${user.role === 'admin' ? '<div class="sb-user-dropdown-item" onclick="event.stopPropagation(); openUserManagement()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>Manage Users</div>' : ''}
       ${(user.role === 'admin' || user.role === 'poweruser') ? '<div class="sb-user-dropdown-item" onclick="event.stopPropagation(); openUserTeams()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>User Teams</div>' : ''}
-      <div class="sb-user-dropdown-item" onclick="event.stopPropagation(); openChangePassword()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>Change Password</div>
-      <div class="sb-user-dropdown-item" onclick="event.stopPropagation(); openGeneralSettings()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>Settings</div>
+      ${user.role === 'admin' ? '<div class="sb-user-dropdown-item" onclick="event.stopPropagation(); openGeneralSettings()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>General settings</div>' : ''}
       <div class="sb-user-dropdown-item danger" onclick="event.stopPropagation(); authLogout()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>Sign out</div>
     `;
   }
@@ -16471,6 +16493,512 @@ async function doChangePassword() {
     alert('Password changed successfully');
     document.querySelector('.modal-overlay')?.remove();
   } catch(e) { alert('Failed: ' + e.message); }
+}
+
+// ═══ User Settings Modal ═══
+// Distinct from openGeneralSettings (admin-style global config). Tabs:
+// Profile | Memory | Schedules | Security. Personal state only — anything
+// org-wide stays in the General Settings modal.
+async function openUserSettings(initialTab) {
+  document.getElementById('sb-user-dropdown')?.classList.remove('open');
+  document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.onclick = e => { if (e.target === modal) modal.remove(); };
+  modal.innerHTML = `
+    <div class="modal-content" style="max-width:780px;width:90vw;height:80vh;display:flex;flex-direction:column">
+      <div class="modal-header">
+        <h2 style="display:flex;align-items:center;gap:8px">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
+          </svg>
+          Account Settings
+        </h2>
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+      </div>
+      <div style="display:flex;flex:1;overflow:hidden">
+        <div class="modal-tabs modal-tabs-vertical" id="user-settings-tabs" style="width:160px;flex-shrink:0">
+          <div class="modal-tab" data-tab="profile" onclick="switchUserSettingsTab('profile', this)">Profile</div>
+          <div class="modal-tab" data-tab="memory" onclick="switchUserSettingsTab('memory', this)">Memory</div>
+          <div class="modal-tab" data-tab="schedules" onclick="switchUserSettingsTab('schedules', this)">My Schedules</div>
+          <div class="modal-tab" data-tab="security" onclick="switchUserSettingsTab('security', this)">Security</div>
+        </div>
+        <div class="modal-body" id="user-settings-body" style="flex:1;overflow:auto;padding:20px">
+          <div style="color:var(--text-400)">Loading…</div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  // Pull a fresh /v1/auth/me so the modal reflects server state, not stale state.authUser
+  try {
+    const r = await API.get('/v1/auth/me');
+    if (r && r.user) state.authUser = r.user;
+  } catch(e) {}
+  const startTab = initialTab || 'profile';
+  const startEl = modal.querySelector(`.modal-tab[data-tab="${startTab}"]`);
+  switchUserSettingsTab(startTab, startEl);
+}
+
+function switchUserSettingsTab(tab, el) {
+  document.querySelectorAll('#user-settings-tabs .modal-tab').forEach(t => t.classList.remove('active'));
+  if (el) el.classList.add('active');
+  const body = document.getElementById('user-settings-body');
+  if (!body) return;
+  if (tab === 'profile') return renderUserSettingsProfile(body);
+  if (tab === 'memory') return renderUserSettingsMemory(body);
+  if (tab === 'schedules') return renderUserSettingsSchedules(body);
+  if (tab === 'security') return renderUserSettingsSecurity(body);
+}
+
+function _us_input(label, id, val, type = 'text', help = '') {
+  return `
+    <div style="margin-bottom:14px">
+      <label style="display:block;font-size:12px;font-weight:500;color:var(--text-200);margin-bottom:4px">${esc(label)}</label>
+      <input id="${id}" type="${type}" value="${esc(val ?? '')}"
+        style="display:block;width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border-light);border-radius:6px;font-size:13px;background:var(--bg-100);color:var(--text-100)">
+      ${help ? `<div style="font-size:11px;color:var(--text-400);margin-top:4px">${esc(help)}</div>` : ''}
+    </div>`;
+}
+
+function _us_textarea(label, id, val, help = '', placeholder = '', opts = {}) {
+  const rows = opts.rows || 3;
+  const maxlength = opts.maxlength || 500;
+  const minHeight = opts.minHeight ? `min-height:${opts.minHeight};` : '';
+  // Optional inline AI polish button — same /v1/refine endpoint as the chat
+  // composer, but with purpose=profile_field so the system prompt switches
+  // to "polish, don't rewrite as a question". Disabled visually (no button)
+  // when opts.refinable is falsy.
+  const refineBtn = opts.refinable ? `
+    <button type="button" id="${id}-refine"
+      onclick="refineProfileField('${id}', ${JSON.stringify(opts.fieldLabel || label).replace(/"/g, '&quot;')})"
+      title="Polish this with AI"
+      style="background:none;border:1px solid var(--border-light);border-radius:4px;padding:2px 8px;font-size:11px;color:var(--text-300);cursor:pointer;display:inline-flex;align-items:center;gap:4px">
+      <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" style="flex-shrink:0">
+        <path d="M12 2l1.5 4.5L18 8l-4.5 1.5L12 14l-1.5-4.5L6 8l4.5-1.5L12 2z"/>
+        <path d="M19 14l.75 2.25L22 17l-2.25.75L19 20l-.75-2.25L16 17l2.25-.75L19 14z"/>
+      </svg>
+      <span id="${id}-refine-label">Refine with AI</span>
+    </button>` : '';
+  return `
+    <div style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;gap:8px">
+        <label for="${id}" style="font-size:12px;font-weight:500;color:var(--text-200)">${esc(label)}</label>
+        ${refineBtn}
+      </div>
+      <textarea id="${id}" rows="${rows}" maxlength="${maxlength}" placeholder="${esc(placeholder)}"
+        style="display:block;width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border-light);border-radius:6px;font-size:13px;background:var(--bg-100);color:var(--text-100);font-family:inherit;resize:vertical;${minHeight}">${esc(val ?? '')}</textarea>
+      ${help ? `<div style="font-size:11px;color:var(--text-400);margin-top:4px">${esc(help)}</div>` : ''}
+    </div>`;
+}
+
+async function refineProfileField(textareaId, fieldLabel) {
+  const ta = document.getElementById(textareaId);
+  if (!ta) return;
+  const text = (ta.value || '').replace(/^\s+|\s+$/g, '');
+  if (!text) { showToast('Type something first', true); return; }
+  const btn = document.getElementById(textareaId + '-refine');
+  const lbl = document.getElementById(textareaId + '-refine-label');
+  const origLabel = lbl?.textContent || 'Refine with AI';
+  if (btn) btn.disabled = true;
+  if (lbl) lbl.textContent = 'Refining…';
+  ta.disabled = true;
+  // Stash original so the user can undo a bad refinement
+  const original = ta.value;
+  try {
+    const result = await API.post('/v1/refine', {
+      text,
+      purpose: 'profile_field',
+      field_label: fieldLabel || '',
+    });
+    if (result && result.refined && result.refined !== text) {
+      ta.value = result.refined;
+      // Offer one-click undo via the button label until the user clicks elsewhere
+      if (lbl) lbl.textContent = 'Undo';
+      if (btn) {
+        btn.disabled = false;
+        const undoHandler = (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          ta.value = original;
+          if (lbl) lbl.textContent = origLabel;
+          btn.removeEventListener('click', undoHandler);
+          // Restore the normal refine handler on the next click
+          btn.onclick = () => refineProfileField(textareaId, fieldLabel);
+        };
+        btn.onclick = undoHandler;
+      }
+      showToast('Refined — click Undo to revert');
+    } else {
+      showToast('Already clean — no change');
+      if (lbl) lbl.textContent = origLabel;
+      if (btn) btn.disabled = false;
+    }
+  } catch (e) {
+    showToast('Refine failed: ' + (e.message || e), true);
+    if (lbl) lbl.textContent = origLabel;
+    if (btn) btn.disabled = false;
+  } finally {
+    ta.disabled = false;
+  }
+}
+
+function renderUserSettingsProfile(body) {
+  const u = state.authUser || {};
+  const prefs = u.preferences || {};
+  body.innerHTML = `
+    <div style="max-width:520px">
+      <h3 style="margin:0 0 4px 0;font-size:15px">Profile</h3>
+      <div style="font-size:12px;color:var(--text-400);margin-bottom:16px">
+        How the agent identifies and addresses you. Changes save on click.
+      </div>
+      <div style="font-size:11px;color:var(--text-400);margin-bottom:14px">
+        <span style="font-weight:500;color:var(--text-300)">Username:</span> ${esc(u.username || '')}
+        &nbsp;·&nbsp;
+        <span style="font-weight:500;color:var(--text-300)">Role:</span> ${esc(u.role || 'user')}
+      </div>
+      ${_us_input('Full name (display)', 'us-display-name', u.display_name, 'text', 'Shown in the sidebar and admin lists.')}
+      ${_us_input('Greeting name', 'us-greeting-name', prefs.greeting_name, 'text', 'What the agent should call you in conversation. Falls back to full name.')}
+      ${_us_input('Email', 'us-email', u.email, 'email', 'Used for notifications. Not shared.')}
+      <hr style="border:none;border-top:1px solid var(--border-light);margin:18px 0">
+      <h3 style="margin:0 0 4px 0;font-size:15px">About you</h3>
+      <div style="font-size:12px;color:var(--text-400);margin-bottom:12px">
+        Surfaced to the agent on the first turn of each chat so it has context about who you are and how you prefer to be talked to. Keep each field to a sentence or two.
+      </div>
+      ${_us_textarea('What describes your job in a sentence?', 'us-job-description', prefs.job_description,
+        'e.g. "Backend engineer working on payments infrastructure" or "PhD student in computational biology". Max 500 chars.',
+        'I\'m a …',
+        {refinable: true, fieldLabel: 'Job description'})}
+      ${_us_textarea('What are your communication preferences?', 'us-comm-prefs', prefs.communication_preferences,
+        'Like soul.md but for you — tone, style, formatting, what to avoid, recurring context the agent should always know. Up to ~4000 characters.',
+        'I prefer direct, technical answers. Skip the preamble. Use code blocks for code, markdown sparingly. Don\'t hedge with "it depends" — pick one and explain.\n\nWhen I ask about architecture, default to discussing tradeoffs. When I ask for code, default to small focused diffs.',
+        {rows: 12, maxlength: 4000, minHeight: '220px', refinable: true, fieldLabel: 'Communication preferences'})}
+      <div style="display:flex;gap:8px;margin-top:18px">
+        <button class="btn-primary" onclick="saveUserSettingsProfile()">Save profile</button>
+        <span id="us-profile-msg" style="align-self:center;font-size:12px;color:var(--text-400)"></span>
+      </div>
+    </div>`;
+}
+
+async function saveUserSettingsProfile() {
+  const display_name = document.getElementById('us-display-name')?.value?.trim() || '';
+  const email = document.getElementById('us-email')?.value?.trim() || '';
+  const greeting_name = document.getElementById('us-greeting-name')?.value?.trim() || '';
+  const job_description = document.getElementById('us-job-description')?.value?.trim() || '';
+  // Communication prefs: only `.trim()` whitespace at the ends. Internal
+  // newlines are kept as-is so users can structure their soul.md-style block.
+  const communication_preferences = (document.getElementById('us-comm-prefs')?.value || '')
+    .replace(/^\s+|\s+$/g, '');
+  const msg = document.getElementById('us-profile-msg');
+  if (msg) { msg.textContent = 'Saving…'; msg.style.color = 'var(--text-400)'; }
+  try {
+    const r1 = await API.post('/v1/auth/profile', {display_name, email});
+    if (r1.error) throw new Error(r1.error);
+    const r2 = await API.post('/v1/auth/preferences', {preferences: {
+      greeting_name, job_description, communication_preferences,
+    }});
+    if (r2.error) throw new Error(r2.error);
+    if (r2.user) state.authUser = r2.user;
+    renderUserMenu();
+    if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--success, #16a34a)'; }
+  } catch (e) {
+    if (msg) { msg.textContent = 'Failed: ' + (e.message || e); msg.style.color = 'var(--error, #dc2626)'; }
+  }
+}
+
+function _us_select(label, id, val, options, help = '') {
+  const opts = options.map(o =>
+    `<option value="${esc(o.value)}" ${String(o.value) === String(val ?? '') ? 'selected' : ''}>${esc(o.label)}</option>`
+  ).join('');
+  return `
+    <div style="margin-bottom:14px">
+      <label style="display:block;font-size:12px;font-weight:500;color:var(--text-200);margin-bottom:4px">${esc(label)}</label>
+      <select id="${id}" style="display:block;width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border-light);border-radius:6px;font-size:13px;background:var(--bg-100);color:var(--text-100)">${opts}</select>
+      ${help ? `<div style="font-size:11px;color:var(--text-400);margin-top:4px">${esc(help)}</div>` : ''}
+    </div>`;
+}
+
+function _us_checkbox(label, id, checked, help = '') {
+  return `
+    <label style="display:flex;align-items:flex-start;gap:8px;margin-bottom:14px;cursor:pointer">
+      <input id="${id}" type="checkbox" ${checked ? 'checked' : ''} style="margin-top:2px">
+      <div>
+        <div style="font-size:13px;color:var(--text-100)">${esc(label)}</div>
+        ${help ? `<div style="font-size:11px;color:var(--text-400);margin-top:2px">${esc(help)}</div>` : ''}
+      </div>
+    </label>`;
+}
+
+function renderUserSettingsMemory(body) {
+  const prefs = (state.authUser || {}).preferences || {};
+  // null sentinel for "use server default" — the server treats it as
+  // memory_chats_default unset, falling through to chat_sync.classifier.default_mode.
+  const memOpts = [
+    {value: '', label: 'Use server default'},
+    {value: '0', label: 'Off — never save chats to memory'},
+    {value: '1', label: 'On — save every chat to memory'},
+    {value: '2', label: 'Auto — classifier decides per turn'},
+  ];
+  const schedOpts = [
+    {value: '', label: 'Use server default (file artifacts)'},
+    {value: '0', label: 'Off — skip scheduled-run artifacts'},
+    {value: '1', label: 'On — file scheduled-run artifacts'},
+  ];
+  const hourOpts = Array.from({length: 24}, (_, i) => ({
+    value: String(i), label: `${String(i).padStart(2, '0')}:00 local`,
+  }));
+  body.innerHTML = `
+    <div style="max-width:520px">
+      <h3 style="margin:0 0 4px 0;font-size:15px">Memory defaults</h3>
+      <div style="font-size:12px;color:var(--text-400);margin-bottom:16px">
+        Controls how your activity is filed to MemPalace. The per-chat toggle in the composer always overrides these defaults.
+      </div>
+      ${_us_select('Default for new chats', 'us-mem-chats',
+        prefs.memory_chats_default == null ? '' : String(prefs.memory_chats_default),
+        memOpts,
+        'Each new chat starts with this memory mode. You can still flip it per-chat.')}
+      ${_us_select('Scheduled-run artifacts', 'us-mem-sched',
+        prefs.memory_sched_default == null ? '' : String(prefs.memory_sched_default),
+        schedOpts,
+        'Whether the miner files artifacts produced by your scheduled tasks. Off keeps them on disk only.')}
+      <hr style="border:none;border-top:1px solid var(--border-light);margin:18px 0">
+      <h3 style="margin:0 0 4px 0;font-size:15px">Memory from chat history</h3>
+      <div style="font-size:12px;color:var(--text-400);margin-bottom:12px">
+        Brain reads your chats and maintains a single profile describing your work, interests, and what's currently on your mind. The agent loads this on the first turn of every chat.
+      </div>
+      ${_us_checkbox('Maintain user profile from chat history', 'us-daily-enabled', !!prefs.daily_summary_enabled,
+        'Runs once per day around the chosen hour. The profile lives at agents/main/user_profiles/&lt;you&gt;.md and mirrors per-section drawers into MemPalace.')}
+      ${_us_select('Update at', 'us-daily-hour', String(prefs.daily_summary_hour_local ?? 6), hourOpts)}
+      <div style="display:flex;gap:8px;margin-top:14px;align-items:center">
+        <button class="btn-primary" onclick="saveUserSettingsMemory()">Save memory settings</button>
+        <span id="us-mem-msg" style="align-self:center;font-size:12px;color:var(--text-400)"></span>
+      </div>
+
+      <div id="us-profile-doc-section" style="margin-top:20px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
+          <label for="us-profile-doc" style="font-size:13px;font-weight:500;color:var(--text-200)">Your profile</label>
+          <div style="display:flex;gap:6px">
+            <button id="us-profile-update-btn" class="btn-secondary" style="font-size:11px;padding:4px 10px" onclick="userProfileUpdateNow()">Update now</button>
+            <button id="us-profile-reset-btn" class="btn-secondary" style="font-size:11px;padding:4px 10px;color:var(--error,#dc2626)" onclick="userProfileReset()">Reset</button>
+          </div>
+        </div>
+        <textarea id="us-profile-doc" rows="20"
+          placeholder="(Profile not yet generated. Enable the toggle above and click Update now, or wait for the daily run.)"
+          style="display:block;width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--border-light);border-radius:6px;font-size:12px;background:var(--bg-100);color:var(--text-100);font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;resize:vertical;min-height:380px;line-height:1.5"></textarea>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">
+          <div id="us-profile-meta" style="font-size:11px;color:var(--text-400)"></div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <span id="us-profile-doc-msg" style="font-size:11px;color:var(--text-400)"></span>
+            <button class="btn-primary" style="padding:4px 12px;font-size:12px" onclick="userProfileSave()">Save profile</button>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--text-400);margin-top:6px">
+          Editable Markdown. Sections must use <code>## Heading</code>. The next daily run will edit your changes in place rather than overwrite them.
+        </div>
+      </div>
+    </div>`;
+  // Lazy-load the profile content after the DOM is in place.
+  loadUserProfileDoc();
+}
+
+async function loadUserProfileDoc() {
+  const ta = document.getElementById('us-profile-doc');
+  const meta = document.getElementById('us-profile-meta');
+  if (!ta) return;
+  try {
+    const r = await API.get('/v1/auth/profile-doc');
+    ta.value = r.content || '';
+    if (meta) {
+      const cur = r.cursor || {};
+      const ts = cur.last_run_ts ? new Date(cur.last_run_ts * 1000).toLocaleString() : '';
+      const status = cur.last_status || '';
+      const bytes = r.bytes || 0;
+      const parts = [];
+      if (bytes) parts.push(`${bytes} bytes`);
+      if (ts) parts.push(`last run ${ts}${status ? ` · ${status}` : ''}`);
+      else if (status) parts.push(status);
+      meta.textContent = parts.join(' · ') || (r.exists ? '' : 'Not yet generated');
+    }
+  } catch (e) {
+    if (meta) meta.textContent = 'Failed to load: ' + (e.message || e);
+  }
+}
+
+async function userProfileSave() {
+  const ta = document.getElementById('us-profile-doc');
+  const msg = document.getElementById('us-profile-doc-msg');
+  if (!ta) return;
+  if (msg) { msg.textContent = 'Saving…'; msg.style.color = 'var(--text-400)'; }
+  try {
+    const r = await API.post('/v1/auth/profile-doc', {content: ta.value});
+    if (r.error) throw new Error(r.error);
+    if (msg) { msg.textContent = `Saved (${r.bytes} bytes)`; msg.style.color = 'var(--success,#16a34a)'; }
+    loadUserProfileDoc();
+  } catch (e) {
+    if (msg) { msg.textContent = 'Failed: ' + (e.message || e); msg.style.color = 'var(--error,#dc2626)'; }
+  }
+}
+
+async function userProfileUpdateNow() {
+  const btn = document.getElementById('us-profile-update-btn');
+  const msg = document.getElementById('us-profile-doc-msg');
+  const origLabel = btn?.textContent || 'Update now';
+  if (btn) { btn.disabled = true; btn.textContent = 'Updating…'; }
+  if (msg) { msg.textContent = 'Generating from chat history (5–60s)…'; msg.style.color = 'var(--text-400)'; }
+  try {
+    const r = await API.post('/v1/auth/profile-doc/update-now', {});
+    if (r.error) throw new Error(r.error);
+    const result = r.result || {};
+    if (result.status === 'no_activity') {
+      if (msg) { msg.textContent = 'No chat activity to summarize yet.'; msg.style.color = 'var(--text-400)'; }
+    } else if (result.status === 'error') {
+      throw new Error(result.error || 'Generation failed');
+    } else {
+      if (msg) { msg.textContent = `Updated (${result.bytes} bytes, ${result.samples} chats)`; msg.style.color = 'var(--success,#16a34a)'; }
+    }
+    loadUserProfileDoc();
+  } catch (e) {
+    if (msg) { msg.textContent = 'Failed: ' + (e.message || e); msg.style.color = 'var(--error,#dc2626)'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origLabel; }
+  }
+}
+
+async function userProfileReset() {
+  if (!confirm('Reset your profile?\n\nDeletes the file + MemPalace drawers. The next daily run (or "Update now") will rebuild from scratch from your last 90 days of chats.\n\nProfile history is kept on disk for rollback.')) {
+    return;
+  }
+  const msg = document.getElementById('us-profile-doc-msg');
+  if (msg) { msg.textContent = 'Resetting…'; msg.style.color = 'var(--text-400)'; }
+  try {
+    const r = await API.post('/v1/auth/profile-doc/reset', {});
+    if (r.error) throw new Error(r.error);
+    if (msg) { msg.textContent = 'Reset.'; msg.style.color = 'var(--success,#16a34a)'; }
+    const ta = document.getElementById('us-profile-doc');
+    if (ta) ta.value = '';
+    loadUserProfileDoc();
+  } catch (e) {
+    if (msg) { msg.textContent = 'Failed: ' + (e.message || e); msg.style.color = 'var(--error,#dc2626)'; }
+  }
+}
+
+async function saveUserSettingsMemory() {
+  const memChats = document.getElementById('us-mem-chats')?.value;
+  const memSched = document.getElementById('us-mem-sched')?.value;
+  const dailyEnabled = !!document.getElementById('us-daily-enabled')?.checked;
+  const dailyHour = parseInt(document.getElementById('us-daily-hour')?.value || '6', 10);
+  const msg = document.getElementById('us-mem-msg');
+  if (msg) { msg.textContent = 'Saving…'; msg.style.color = 'var(--text-400)'; }
+  const prefs = {
+    memory_chats_default: memChats === '' ? null : parseInt(memChats, 10),
+    memory_sched_default: memSched === '' ? null : parseInt(memSched, 10),
+    daily_summary_enabled: dailyEnabled,
+    daily_summary_hour_local: dailyHour,
+  };
+  try {
+    const r = await API.post('/v1/auth/preferences', {preferences: prefs});
+    if (r.error) throw new Error(r.error);
+    if (r.user) state.authUser = r.user;
+    if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--success, #16a34a)'; }
+  } catch (e) {
+    if (msg) { msg.textContent = 'Failed: ' + (e.message || e); msg.style.color = 'var(--error, #dc2626)'; }
+  }
+}
+
+async function renderUserSettingsSchedules(body) {
+  body.innerHTML = `<div style="color:var(--text-400)">Loading your scheduled tasks…</div>`;
+  try {
+    const r = await API.get('/v1/schedule');
+    const schedules = (r && r.schedules) || [];
+    if (!schedules.length) {
+      body.innerHTML = `
+        <div style="max-width:520px">
+          <h3 style="margin:0 0 4px 0;font-size:15px">My scheduled tasks</h3>
+          <div style="font-size:12px;color:var(--text-400);margin-bottom:14px">
+            You don't own any scheduled tasks yet. Create one from the Scheduled view.
+          </div>
+          <button class="btn-secondary" onclick="document.querySelector('.modal-overlay')?.remove();navigateTo('scheduled')">Open Scheduled view</button>
+        </div>`;
+      return;
+    }
+    const rows = schedules.map(s => {
+      const enabled = !!s.enabled;
+      const nextRun = s.next_run ? new Date(s.next_run).toLocaleString() : '—';
+      return `
+        <tr>
+          <td style="padding:8px 6px;font-weight:500">${esc(s.name || '')}</td>
+          <td style="padding:8px 6px;font-size:12px;color:var(--text-300)">${esc(s.schedule || '')}</td>
+          <td style="padding:8px 6px;font-size:12px;color:var(--text-300)">${esc(nextRun)}</td>
+          <td style="padding:8px 6px;font-size:12px;color:${enabled ? 'var(--success,#16a34a)' : 'var(--text-400)'}">
+            ${enabled ? (s.is_running ? 'running' : 'enabled') : 'paused'}
+          </td>
+        </tr>`;
+    }).join('');
+    body.innerHTML = `
+      <div>
+        <h3 style="margin:0 0 4px 0;font-size:15px">My scheduled tasks (${schedules.length})</h3>
+        <div style="font-size:12px;color:var(--text-400);margin-bottom:14px">
+          Tasks you own. Edit, pause, or delete them from the Scheduled view.
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="text-align:left;border-bottom:1px solid var(--border-light)">
+            <th style="padding:6px;font-weight:500;color:var(--text-300)">Name</th>
+            <th style="padding:6px;font-weight:500;color:var(--text-300)">Schedule</th>
+            <th style="padding:6px;font-weight:500;color:var(--text-300)">Next run</th>
+            <th style="padding:6px;font-weight:500;color:var(--text-300)">State</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div style="margin-top:14px">
+          <button class="btn-secondary" onclick="document.querySelector('.modal-overlay')?.remove();navigateTo('scheduled')">Open Scheduled view</button>
+        </div>
+      </div>`;
+  } catch (e) {
+    body.innerHTML = `<div style="color:var(--error,#dc2626)">Failed to load schedules: ${esc(e.message || e)}</div>`;
+  }
+}
+
+function renderUserSettingsSecurity(body) {
+  body.innerHTML = `
+    <div style="max-width:480px">
+      <h3 style="margin:0 0 4px 0;font-size:15px">Change password</h3>
+      <div style="font-size:12px;color:var(--text-400);margin-bottom:16px">
+        Pick something at least 6 characters long.
+      </div>
+      ${_us_input('Current password', 'us-pw-old', '', 'password')}
+      ${_us_input('New password', 'us-pw-new', '', 'password')}
+      ${_us_input('Confirm new password', 'us-pw-new2', '', 'password')}
+      <div style="display:flex;gap:8px;margin-top:6px">
+        <button class="btn-primary" onclick="saveUserSettingsPassword()">Change password</button>
+        <span id="us-pw-msg" style="align-self:center;font-size:12px;color:var(--text-400)"></span>
+      </div>
+    </div>`;
+}
+
+async function saveUserSettingsPassword() {
+  const old_password = document.getElementById('us-pw-old')?.value || '';
+  const new_password = document.getElementById('us-pw-new')?.value || '';
+  const new2 = document.getElementById('us-pw-new2')?.value || '';
+  const msg = document.getElementById('us-pw-msg');
+  if (!old_password || !new_password) {
+    if (msg) { msg.textContent = 'All fields required'; msg.style.color = 'var(--error,#dc2626)'; }
+    return;
+  }
+  if (new_password !== new2) {
+    if (msg) { msg.textContent = 'Passwords do not match'; msg.style.color = 'var(--error,#dc2626)'; }
+    return;
+  }
+  if (msg) { msg.textContent = 'Saving…'; msg.style.color = 'var(--text-400)'; }
+  try {
+    const r = await API.post('/v1/auth/password', {old_password, new_password});
+    if (r.error) throw new Error(r.error);
+    if (msg) { msg.textContent = 'Password changed.'; msg.style.color = 'var(--success,#16a34a)'; }
+    document.getElementById('us-pw-old').value = '';
+    document.getElementById('us-pw-new').value = '';
+    document.getElementById('us-pw-new2').value = '';
+  } catch (e) {
+    if (msg) { msg.textContent = 'Failed: ' + (e.message || e); msg.style.color = 'var(--error,#dc2626)'; }
+  }
 }
 
 // ── Role-based UI visibility ──
@@ -17258,12 +17786,8 @@ async function init() {
   // Init artifact panel resize
   initArtifactResize();
 
-  // Set greeting
-  const hour = new Date().getHours();
-  let greeting = 'Good evening';
-  if (hour < 12) greeting = 'Good morning';
-  else if (hour < 18) greeting = 'Good afternoon';
-  document.getElementById('welcome-greeting-text').textContent = greeting;
+  // Set greeting (auth-aware; re-runs after /v1/auth/me lands)
+  refreshWelcomeGreeting();
 
   // Load initial data
   try {

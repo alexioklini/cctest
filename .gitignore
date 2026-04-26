@@ -21,6 +21,8 @@ config.json.bak-*
 *.bak-*
 agents/*/artifacts/
 agents/*/chats-indexed/
+agents/*/user_profiles/
+agents/*/scheduled_attachments/
 agents/test-*/
 
 # Downloaded docs / scratch files

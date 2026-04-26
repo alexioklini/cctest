@@ -53,6 +53,81 @@ CAPABILITY_DEFAULTS = {
 }
 CAPABILITY_KEYS = tuple(CAPABILITY_DEFAULTS["admin"].keys())
 
+# User-controlled preferences. Anything in here is editable by the user
+# themselves via /v1/auth/me/preferences — admin-only fields belong on the
+# capabilities map, not here. Schema:
+#   greeting_name             — what the agent should call the user (free text;
+#                               falls back to display_name → username)
+#   memory_chats_default      — default for new chat sessions: 0=off, 1=on, 2=auto
+#                               (null = use server `mempalace.chat_sync.classifier
+#                               .default_mode`)
+#   memory_sched_default      — same shape, applied to scheduler-created sessions
+#                               (null = use chat default)
+#   daily_summary_enabled     — once-per-day digest of activity → memory drawer
+#   daily_summary_hour_local  — 0–23, local hour to fire (default 6)
+PREFERENCE_DEFAULTS = {
+    "greeting_name": "",
+    # Free-text "About me" fields, surfaced to the agent on the first turn of
+    # each session (same preamble as greeting_name) so it has context without
+    # a memory lookup. Long enough for a sentence or two each, capped to keep
+    # the preamble token cost bounded.
+    "job_description": "",
+    "communication_preferences": "",
+    "memory_chats_default": None,
+    "memory_sched_default": None,
+    "daily_summary_enabled": False,
+    "daily_summary_hour_local": 6,
+}
+PREFERENCE_KEYS = tuple(PREFERENCE_DEFAULTS.keys())
+
+
+def _coerce_pref(key: str, value):
+    """Validate + coerce a single preference value to its allowed shape.
+    Returns the coerced value, or raises ValueError on bad input."""
+    if key not in PREFERENCE_DEFAULTS:
+        raise ValueError(f"Unknown preference: {key}")
+    if key == "greeting_name":
+        s = (value or "").strip() if isinstance(value, str) else ""
+        if len(s) > 64:
+            raise ValueError("greeting_name too long (max 64)")
+        return s
+    if key == "job_description":
+        s = (value or "").strip() if isinstance(value, str) else ""
+        # Tight cap — this is "what's your role" not "tell me about yourself".
+        if len(s) > 500:
+            raise ValueError("job_description too long (max 500)")
+        return s
+    if key == "communication_preferences":
+        s = (value or "").strip() if isinstance(value, str) else ""
+        # Roomy cap — this is the per-user equivalent of soul.md, intended
+        # to carry tone/voice/style guidance. 4000 chars ≈ ~1k tokens, which
+        # is the upper end of what fits in a per-turn preamble without
+        # crowding out the actual conversation.
+        if len(s) > 4000:
+            raise ValueError("communication_preferences too long (max 4000)")
+        return s
+    if key in ("memory_chats_default", "memory_sched_default"):
+        if value is None or value == "":
+            return None
+        try:
+            iv = int(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{key} must be 0|1|2|null")
+        if iv not in (0, 1, 2):
+            raise ValueError(f"{key} must be 0|1|2|null")
+        return iv
+    if key == "daily_summary_enabled":
+        return bool(value)
+    if key == "daily_summary_hour_local":
+        try:
+            iv = int(value)
+        except (TypeError, ValueError):
+            raise ValueError("daily_summary_hour_local must be 0..23")
+        if not (0 <= iv <= 23):
+            raise ValueError("daily_summary_hour_local must be 0..23")
+        return iv
+    return value
+
 
 def init_auth(config: dict):
     """Initialize auth module from server config. Call once at startup."""
@@ -114,7 +189,10 @@ class AuthDB:
                 last_login REAL,
                 disabled INTEGER DEFAULT 0,
                 -- capabilities: JSON object of feature flags (null = role defaults)
-                capabilities TEXT DEFAULT NULL
+                capabilities TEXT DEFAULT NULL,
+                -- preferences: JSON object of user-controlled prefs (greeting_name,
+                -- memory_chats_default, memory_sched_default, daily_summary_enabled, …)
+                preferences TEXT DEFAULT NULL
             );
 
             CREATE TABLE IF NOT EXISTS user_teams (
@@ -186,6 +264,17 @@ class AuthDB:
             CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
             CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_user_id);
             CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
+
+            -- Per-user daily-summary cursor. The daemon stamps `last_run_ts`
+            -- after a successful summary so it doesn't re-summarise the same
+            -- window; `last_status` carries the most recent outcome string
+            -- (skipped/no_activity/filed/error:<reason>) for debugging.
+            CREATE TABLE IF NOT EXISTS user_daily_summary (
+                user_id TEXT PRIMARY KEY,
+                last_run_ts REAL DEFAULT 0,
+                last_status TEXT DEFAULT '',
+                last_drawer_id TEXT DEFAULT ''
+            );
         """)
 
         # Create default admin if no users exist
@@ -201,12 +290,14 @@ class AuthDB:
             conn.commit()
             print(f"  ⚠  Default admin user created (username: admin, password: admin) — change immediately!")
 
-        # Migrate: add capabilities column to existing DBs
+        # Migrate: add capabilities + preferences columns to existing DBs
         try:
             cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
             if "capabilities" not in cols:
                 conn.execute("ALTER TABLE users ADD COLUMN capabilities TEXT DEFAULT NULL")
-                conn.commit()
+            if "preferences" not in cols:
+                conn.execute("ALTER TABLE users ADD COLUMN preferences TEXT DEFAULT NULL")
+            conn.commit()
         except Exception:
             pass
 
@@ -301,6 +392,118 @@ class AuthDB:
         conn.execute(f"UPDATE users SET {sets} WHERE id = ?", vals)
         conn.commit()
         return AuthDB.get_user(user_id) or {"error": "User not found"}
+
+    @staticmethod
+    def update_self_profile(user_id: str, updates: dict) -> dict:
+        """Self-service profile edit: display_name + email only. Role,
+        disabled, capabilities — admin-only via update_user()."""
+        allowed = {"display_name", "email"}
+        fields = {k: (v or "").strip() if isinstance(v, str) else v
+                  for k, v in updates.items() if k in allowed}
+        if "display_name" in fields and len(fields["display_name"]) > 64:
+            return {"error": "display_name too long (max 64)"}
+        if "email" in fields and len(fields["email"]) > 128:
+            return {"error": "email too long (max 128)"}
+        if not fields:
+            return {"error": "No valid fields to update"}
+        conn = _auth_conn()
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        vals = list(fields.values()) + [user_id]
+        conn.execute(f"UPDATE users SET {sets} WHERE id = ?", vals)
+        conn.commit()
+        return AuthDB.get_user(user_id) or {"error": "User not found"}
+
+    @staticmethod
+    def update_preferences(user_id: str, updates: dict) -> dict:
+        """Merge-update preferences. Unknown keys are silently dropped;
+        invalid values return an error and persist nothing (atomic)."""
+        if not isinstance(updates, dict):
+            return {"error": "preferences must be a dict"}
+        # Load current row
+        row = _auth_conn().execute("SELECT preferences FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            return {"error": "User not found"}
+        current: dict = {}
+        if row["preferences"]:
+            try:
+                stored = json.loads(row["preferences"])
+                if isinstance(stored, dict):
+                    current = stored
+            except Exception:
+                current = {}
+        # Validate everything before writing anything
+        coerced: dict = {}
+        for k, v in updates.items():
+            if k not in PREFERENCE_KEYS:
+                continue
+            try:
+                coerced[k] = _coerce_pref(k, v)
+            except ValueError as e:
+                return {"error": str(e)}
+        merged = {**current, **coerced}
+        # Drop keys whose value matches the default — keeps the JSON small
+        cleaned = {k: v for k, v in merged.items() if v != PREFERENCE_DEFAULTS.get(k)}
+        payload = json.dumps(cleaned) if cleaned else None
+        conn = _auth_conn()
+        conn.execute("UPDATE users SET preferences = ? WHERE id = ?", (payload, user_id))
+        conn.commit()
+        return AuthDB.get_user(user_id) or {"error": "User not found"}
+
+    @staticmethod
+    def get_daily_summary_cursor(user_id: str) -> dict:
+        row = _auth_conn().execute(
+            "SELECT last_run_ts, last_status, last_drawer_id FROM user_daily_summary WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        if not row:
+            return {"last_run_ts": 0.0, "last_status": "", "last_drawer_id": ""}
+        return {
+            "last_run_ts": float(row["last_run_ts"] or 0),
+            "last_status": row["last_status"] or "",
+            "last_drawer_id": row["last_drawer_id"] or "",
+        }
+
+    @staticmethod
+    def set_daily_summary_cursor(user_id: str, ts: float, status: str, drawer_id: str = ""):
+        conn = _auth_conn()
+        conn.execute(
+            "INSERT INTO user_daily_summary (user_id, last_run_ts, last_status, last_drawer_id) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET last_run_ts = excluded.last_run_ts, "
+            "  last_status = excluded.last_status, last_drawer_id = excluded.last_drawer_id",
+            (user_id, ts, status, drawer_id),
+        )
+        conn.commit()
+
+    @staticmethod
+    def list_users_with_preferences() -> list[dict]:
+        """For the daily-summary daemon: only fields it actually needs."""
+        rows = _auth_conn().execute(
+            "SELECT id, username, display_name, email, role, disabled, preferences FROM users"
+        ).fetchall()
+        out: list[dict] = []
+        for r in rows:
+            if r["disabled"]:
+                continue
+            prefs = dict(PREFERENCE_DEFAULTS)
+            if r["preferences"]:
+                try:
+                    stored = json.loads(r["preferences"])
+                    if isinstance(stored, dict):
+                        for k in PREFERENCE_KEYS:
+                            if k in stored:
+                                try:
+                                    prefs[k] = _coerce_pref(k, stored[k])
+                                except ValueError:
+                                    pass
+                except Exception:
+                    pass
+            out.append({
+                "id": r["id"], "username": r["username"],
+                "display_name": r["display_name"], "email": r["email"],
+                "role": r["role"], "preferences": prefs,
+            })
+        return out
 
     @staticmethod
     def delete_user(user_id: str) -> bool:
@@ -846,6 +1049,24 @@ def _user_dict(row) -> dict:
                         caps[k] = bool(override[k])
         except Exception:
             pass
+    prefs = dict(PREFERENCE_DEFAULTS)
+    pref_raw = None
+    try:
+        pref_raw = row["preferences"]
+    except (IndexError, KeyError):
+        pref_raw = None
+    if pref_raw:
+        try:
+            stored = json.loads(pref_raw)
+            if isinstance(stored, dict):
+                for k in PREFERENCE_KEYS:
+                    if k in stored:
+                        try:
+                            prefs[k] = _coerce_pref(k, stored[k])
+                        except ValueError:
+                            pass
+        except Exception:
+            pass
     return {
         "id": row["id"],
         "username": row["username"],
@@ -856,6 +1077,7 @@ def _user_dict(row) -> dict:
         "last_login": row["last_login"],
         "disabled": bool(row["disabled"]),
         "capabilities": caps,
+        "preferences": prefs,
     }
 
 

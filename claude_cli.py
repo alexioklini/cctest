@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.16.0"
-VERSION_DATE = "2026-04-25"
+VERSION = "8.17.0"
+VERSION_DATE = "2026-04-26"
 CHANGELOG = [
+    ("8.17.0", "2026-04-26", "Per-user account settings + auto-maintained user profile (Memory from chat history). New User Settings modal split out from the global admin settings: clicking the username in the bottom-left sidebar opens a four-tab dialog (Profile, Memory, My Schedules, Security) — the gear button beside the theme toggle was redundant (already in the dropdown) and is now a chevron that toggles the dropdown. The dropdown's Settings entry was removed for non-admins; admins still see General settings as a separate item. Auth schema: new users.preferences JSON column (idempotent ALTER, validated keys greeting_name / job_description / communication_preferences / memory_chats_default / memory_sched_default / daily_summary_enabled / daily_summary_hour_local) with PREFERENCE_DEFAULTS + _coerce_pref(key, value) as the single source of truth — invalid values return 400 atomically without partial writes. New self-service endpoints POST /v1/auth/profile (display_name + email only — role/disabled stay admin-only) and POST /v1/auth/preferences (merge update, unknown keys silently dropped, default-valued keys cleaned out so the JSON stays small). Per-user defaults wired into the engine: chat creation in /v1/sessions reads memory_chats_default and overrides the server-wide classifier default for new sessions; the mempalace miner gates every sched-folder file on the schedule owner's memory_sched_default — explicit 0 skips, anything else (null/1/2) keeps the legacy 'always file' path. New schedules.user_id column + index records the creator; non-admins only see/edit/delete/run their own (admin sees everything; legacy rows with empty user_id stay admin-only on purpose). New _schedule_owner_check helper gates pause/resume/delete/run_now/edit/history/delete_run/clear_history; purge_orphan_history is admin-only. First-turn greeting preamble injected on the first user message (kept OUT of the system prompt so the warm-pool KV-prefix stays user-agnostic across all users) carries up to three lines: 'You are talking to <name>.' / 'Their role: <job>' / 'How they like to communicate: <prefs>'. Empty fields drop out, fully-empty preamble skips entirely. _greeting_injected sentinel is stripped by the existing _ALLOWED_MSG_KEYS filter so it never leaks to the wire. job_description capped at 500 chars; communication_preferences capped at 4000 chars (this field is the per-user equivalent of soul.md, intended for tone/voice/style guidance — large enough to fit a soul-style block, bounded so the per-turn preamble doesn't blow up the prompt budget). Both fields ship with inline 'Refine with AI' buttons in the Profile tab; /v1/refine extended with optional purpose='profile_field' (+ field_label) — uses a polish-don't-rewrite system prompt that preserves first-person voice and line breaks, skips chat-history context (privacy + irrelevance for bio polishing). After-refine the button flips to one-click Undo until used. Default refinement model in tools_config.json switched from cliproxyapi/gemini-2.5-flash (silently echoed input verbatim — bad for any polish prompt) to mistral-vibe-cli-fast which actually follows the polish rules (tested round-trip across job-desc, comm-prefs, and chat-prompt rewrites). Auto-maintained 'Memory from chat history' (the Claude.ai 'Gedächtnis aus Chat-Verlauf generieren' equivalent): one Markdown file per user at agents/main/user_profiles/<uid>.md mirrored as one drawer per ## section into MemPalace (wing=<uid>--main, room=user_profile, source_file=user/<uid>#profile/<slug>). Sections in fixed order: Work context, Personal context, Top of mind, Recent months, Earlier context, Long-term background. File is the source of truth; mirror is purge-then-add so renamed/removed sections don't linger. Atomic write via tmp + os.replace, with versioned history at <uid>.history/<ISO-timestamp>.md (capped at 30 entries; intentionally KEPT on Reset so users can recover from a hasty rebuild). New _user_profile_dir / _user_profile_path / _read_user_profile / _write_user_profile_atomic / _delete_user_profile / _split_profile_sections / _mirror_user_profile_to_mempalace / _purge_drawers_by_room_and_source / _purge_user_profile_drawers helpers — all module-level so HTTP handlers and the daemon share them. New user-profile daemon thread (replaces the v8.14.0 daily-summary path which built activity logs of dubious value): polls every 30 min, gates on daily_summary_enabled + local-hour match + 23h cooldown, fires once per local day per opted-in user. Per-user worker (_profile_run_synchronous) pulls 100 most-recent chats from the last 90 days, samples title + first user msg + last assistant msg (250 chars each, total input capped at 12K chars), feeds them through engine._run_delegate with the fixed-schema _PROFILE_SYSTEM_PROMPT — hard rules: never invent, third-person voice, match the user's predominant language, edit existing profile in place rather than rewrite, demote stale 'Top of mind' to 'Recent months' when no fresh evidence appears. Refinement model resolved via _profile_pick_model (refinement → cheapest → server default), GDPR auto-fallback to local on PII findings via gdpr_pick_model_for_background. New self-service endpoints GET /v1/auth/profile-doc (content + cursor + enabled flag), POST /v1/auth/profile-doc (manual edit, 32KB cap), POST /v1/auth/profile-doc/update-now (synchronous regen — same logic as the daemon worker, ~5-60s), POST /v1/auth/profile-doc/reset (delete file + drawers, keep history dir). Account Settings → Memory tab gains an editable Markdown textarea (380px tall, monospace) with Update now / Reset / Save buttons + status line showing last-run timestamp + bytes + 'no_activity' / 'filed' / 'error' state. send_message round 0 reads the profile file (capped 4KB) and prepends as a separate '[Auto-maintained user profile (from chat history; treat as background context, not as ground truth for the current request):...]' block on the first user message of each session — distinct block from the user-set greeting/job/comm-prefs preamble so the model can tell user-set guidance apart from inferred long-form context. Module-level _gather_user_chat_samples builds the per-chat samples; module-level _user_profile_run_llm wraps the delegate call with proper thread-local cleanup in finally. One-shot startup purge of the deprecated user_daily_summary room across every user wing on every server start (idempotent — second call is a no-op once the room is empty); was 0 on this install since the v8.14.0 daemon never actually fired due to the local_hour gate. Welcome view greeting now reads 'Good morning, Alex' instead of 'Good morning' — refreshWelcomeGreeting() is auth-aware (greeting_name → display_name → username, falls back to anonymous 'Good morning' when no auth or pre-login) and re-runs from renderUserMenu() so login + profile saves update it without a page reload. Schedules My Schedules tab shows the user's owned tasks with state badges + link back to the Scheduled view. Cleanup: all bare AGENTS_DIR references in server.py replaced with engine.AGENTS_DIR (latent bug — the helpers were inside main() so the bare name resolved nowhere; would have crashed if exercised, but try/except wrapping made it silent). Module-level imports added: datetime, sqlite3 (one was duplicated). KV-cache stability invariant preserved: _build_system_prompt remains user-agnostic (the user-greeting injection from an earlier iteration was reverted because it broke warm-pool prefix matching for every authenticated turn — now lives in the first-user-message preamble where it costs nothing across users)."),
     ("8.16.0", "2026-04-25", "Scheduled-task attachments + working directory. Two pieces of context the agent previously had no way to receive on a scheduled run: file attachments (durable, picked once, referenced on every fire) and a per-task working directory (the cwd the agent should pass to execute_command). DB: new schedules.attachments (JSON list of {name,path,mime,size}) + working_dir (TEXT) columns added by idempotent ALTER in Scheduler._init_db. Engine: _execute_scheduled appends a disk-files notice listing the stored absolute paths so the agent reads them in place with read_document/read_file — no per-run /tmp copy. working_dir overrides the 'Current working directory:' line in the system prompt and adds a directive to pass it as cwd= to execute_command; python_exec stays pinned to the artifact folder by design (file-write tracking depends on it). Cleanup: Scheduler.remove() reads the attachments JSON before DELETE and rmtrees each per-upload uuid folder under agents/<agent>/scheduled_attachments/<uuid>/; Scheduler.update() diffs old vs new attachment paths and purges orphans (chip removal in the edit modal frees bytes). _purge_attachment_paths() refuses to touch anything outside scheduled_attachments/ as a guard against malformed metadata. New POST /v1/schedule/upload (multipart, auth-gated) saves files under agents/<agent>/scheduled_attachments/<uuid>/<name> and returns {name,path,mime,size}. /v1/schedule add/edit accept attachments[] and working_dir. GET /v1/files/tree gains an empty-path default of $HOME so the folder picker has somewhere to start without leaking $HOME via a separate endpoint. UI: showCreateScheduledModal() and _schedViewEdit() got an attachments file picker (uploads on selection, removable chips with kb size + filename) and a read-only working_dir input + Browse… button + clear (×). Browse opens a stacked folder-picker modal (z-index above the schedule modal): breadcrumb of the current absolute path + scrollable list of subfolders, ↑ .. row to go up, click any folder to descend, Select this folder writes the path back to the input and closes only the picker. Hidden files and the usual junk (.git, node_modules, __pycache__, dist, etc.) are filtered by the existing /v1/files/tree IGNORE set; only entries with type === 'dir' show up. _schedUploadFiles sends Authorization: Bearer <token> from localStorage('auth-token') and uses BASE_URL — bare fetch hit the global /v1/* auth gate and 401-ed before the handler ran. Dropped an earlier per-run copy that would have churned /tmp on every fire (50MB CSV × daily = 18GB/year for no benefit) — the source path under scheduled_attachments/ is durable and on the same filesystem, so the agent reads in place; only delete-time cleanup is needed."),
     ("8.15.1", "2026-04-25", "oMLX continuous-batching opt-in + speed-profile resource-knob fix. Two related changes. (1) Bumped oMLX provider seed max_concurrent from 1 → 2 in config defaults. Re-benchmarking on gemma-4-26b-a4b-it-4bit (Apple Silicon) showed oMLX *does* fuse concurrent /chat/completions into batched forward passes (continuous batching) — earlier 8.9.0 prose claiming 'GPU serializes internally' was wrong for oMLX (still correct for CLIProxyAPI). Numbers: batch=1 → 63 tok/s decode, 2.3s TTFT; batch=2 → 80 tok/s aggregate, 4.3s TTFT; batch=4 → 91 tok/s aggregate, 8.6s TTFT. 2 is the sweet spot for multi-user / parallel-tool / warmup-overlap workloads — 27% aggregate throughput gain for ~40% per-request decode slowdown when both slots are full. CLAUDE.md Provider Concurrency Queue section rewritten to reflect this and document the per-provider tradeoff. (2) Removed `warmup: True` from the `speed` MODEL_PROFILES overlay (claude_cli.py). The profile system is supposed to set request-style defaults (warmup_mode, parallel_tool_calls, caveman_system, deferred_tool_groups, compact_threshold), not resource knobs. With warmup in the overlay, toggling warmup off in the Models tab on a speed-profile model would be silently re-enabled at next resolve_model_settings() — surprising and unfixable from the UI. Web UI saveModelsConfig now persists `warmup: false` explicitly (rather than deleting the key), so an explicit user-off survives even if a future overlay drift re-introduces a warmup default. Memory note feedback_profile_overlay_resource_knobs.md captures the rule for future profile edits. No schema change, no API change — config-only."),
     ("8.15.0", "2026-04-25", "Autonomous MemPalace artifact ingestion. The mempalace miner daemon (server.py) is rewritten end-to-end. Old behavior: read flat sources[] from config, refuse to run without a hand-written mempalace.yaml in each source dir, mine everything indiscriminately — result on this install was 392 sessions × 0 drawers because (a) no yaml had ever been created and (b) the chat-sync default_mode=0 means every session started with save_to_memory=0. New behavior: (1) auto-discover every agent under AGENTS_DIR; for each agent walk agents/<id>/artifacts/ and split folder names <date>_<sid_prefix> into sched (sid_prefix starts with sched-) vs chat. (2) Sched folders: file only output-role files via tool_add_drawer using extension-based classification (skip _ARTIFACT_INTERMEDIATE_EXTS = py/sh/js/ts/json/yaml/csv/log/etc), source_file=session/sched-<run>#artifact/<name>. Sched chat content (reasoning, tool calls) deliberately stays out — there are no sched-* rows in messages for chat-sync to mirror. (3) Chat folders: gate on parent session save_to_memory>0; when ON, ensure a mempalace.yaml exists in that folder (auto-written with brain-managed marker, never a manual step) and run mp_miner.mine() over it. When OFF, skip silently — keeps drawers from leaking past the per-chat toggle. (4) New helper _purge_orphan_chroma_queue runs once at startup: detects segments missing a max_seq_id bootstrap (= compactor never knew where to start) and deletes their >24h-old embeddings_queue rows. Cleared 323 stale closet entries from this install — those had been pinned to a bootstrap-less HNSW segment since 2026-04-19 with no path to compaction. (5) Two new ChatDB helpers: session_memory_modes() returns {sid: save_to_memory} in one query (cycle-scoped, no per-folder DB hit), session_id_for_prefix() resolves 8-char folder prefixes to full session ids via LIKE lookup. (6) launchd plist now sets PYTHONUNBUFFERED=1 so daemon prints reach server.log immediately instead of buffering indefinitely under launchd stdout redirection — that buffering is why the old miner's 'No mempalace.yaml found' errors had been invisible for weeks. Wing convention is <agent_id>_artifacts so future per-agent scoping queries work without schema change. Recursive folder walk not yet implemented — sched-task subdirectories like 2026-04-23_sched-75/artifacts/ are currently top-level-only; revisit if it bites."),
@@ -10779,11 +10780,20 @@ class Scheduler:
             for _ddl in (
                 "ALTER TABLE schedules ADD COLUMN attachments TEXT DEFAULT '[]'",
                 "ALTER TABLE schedules ADD COLUMN working_dir TEXT",
+                # Owner: who created the schedule. Empty string for legacy rows
+                # (pre-v8.17.0); the server endpoint backfills those to the org
+                # admin lazily so list-by-owner stays consistent.
+                "ALTER TABLE schedules ADD COLUMN user_id TEXT DEFAULT ''",
             ):
                 try:
                     conn.execute(_ddl)
                 except sqlite3.OperationalError:
                     pass
+            try:
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_sched_user ON schedules(user_id)")
+            except sqlite3.OperationalError:
+                pass
             # Migration: richer per-run telemetry. Older DBs only have
             # status/result/started_at/finished_at; add fields that make the
             # History view diagnosable (trace pivot, artifact folder pivot,
@@ -10809,13 +10819,16 @@ class Scheduler:
             agent: str = "main", model: str | None = None,
             timeout: int = 300,
             attachments: list | None = None,
-            working_dir: str | None = None) -> dict:
+            working_dir: str | None = None,
+            user_id: str = "") -> dict:
         """Add a scheduled task. timeout in seconds (default: 300 = 5 min).
 
         attachments: list of {name, path, mime, size} dicts. Files must already
         exist on disk (uploaded via /v1/schedule/upload).
         working_dir: optional absolute path injected into the system prompt so
         the agent knows where to operate; agent passes it as `cwd` to shell tools.
+        user_id: owner. Server fills this from the authenticated request; empty
+        string only for tooling that creates schedules outside the auth path.
         """
         next_run = self._calc_next_run(schedule)
         if next_run is None:
@@ -10828,14 +10841,15 @@ class Scheduler:
         try:
             with _sched_conn() as conn:
                 conn.execute("""
-                    INSERT INTO schedules (name, task, schedule, agent, model, next_run, timeout, attachments, working_dir)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO schedules (name, task, schedule, agent, model, next_run, timeout, attachments, working_dir, user_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (name, task, schedule, agent, model, next_run.isoformat(),
-                      timeout, atts_json, working_dir))
+                      timeout, atts_json, working_dir, user_id or ""))
                 conn.commit()
             return {"name": name, "schedule": schedule, "agent": agent,
                     "next_run": next_run.isoformat(), "timeout": timeout,
                     "attachments": attachments or [], "working_dir": working_dir,
+                    "user_id": user_id or "",
                     "status": "created"}
         except sqlite3.IntegrityError:
             return {"error": f"Schedule '{name}' already exists"}
@@ -19481,6 +19495,10 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
     # Round timestamp to the hour so the KV-prefix stays stable across
     # warmup → real-request boundaries. Minute-level precision broke prompt
     # cache reuse on every request (~15s extra first-token latency).
+    # NOTE: this prompt must stay user-agnostic. Per-user greeting (see
+    # `greeting_name` pref) is injected as a one-time preamble on the first
+    # user message in send_message — keeping it OUT of the system prompt
+    # preserves the warm-pool KV-prefix match across users.
     system_instruction += (
         f"You are agent '{agent_id}' in the Brain Agent system. "
         f"Current date and time: {_dt.now().strftime('%Y-%m-%d %H:00 %Z').strip()}\n"
@@ -19659,6 +19677,93 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         _thread_local._has_attempted_reactive_compact = False
         _thread_local._escape_watcher = escape_watcher
         _thread_local._round_deltas = []
+
+        # First-turn greeting: prepend the user's preferred name to the first
+        # user message of a session. Kept OUT of the system prompt so the
+        # warm-pool KV-prefix stays user-agnostic and matches across users.
+        # Fires when:
+        #   - this is round 0 of the first turn (no assistant message yet)
+        #   - we know the user_id (auth on)
+        #   - the user has a non-default greeting_name OR a display_name
+        # Idempotent: a sentinel marker on the message metadata prevents
+        # double-prepending if send_message is retried for the same turn.
+        try:
+            _has_assistant = any(m.get("role") == "assistant" for m in messages)
+        except Exception:
+            _has_assistant = True
+        if not _has_assistant:
+            _greeting_uid = getattr(_thread_local, 'current_user_id', "") or ""
+            if _greeting_uid:
+                try:
+                    import auth as _auth_mod_local
+                    _u = _auth_mod_local.AuthDB.get_user(_greeting_uid)
+                except Exception:
+                    _u = None
+                if _u:
+                    _prefs = _u.get("preferences") or {}
+                    _greet = (_prefs.get("greeting_name") or "").strip() \
+                             or (_u.get("display_name") or "").strip() \
+                             or (_u.get("username") or "").strip()
+                    _job = (_prefs.get("job_description") or "").strip()
+                    _commprefs = (_prefs.get("communication_preferences") or "").strip()
+                    # Long-form auto-maintained profile (agents/main/user_profiles/<uid>.md).
+                    # Loaded once on round 0; capped at 4KB so it can't blow up the prompt.
+                    _profile_doc = ""
+                    try:
+                        _safe_uid = "".join(c for c in _greeting_uid if c.isalnum() or c in "-_")
+                        _profile_path = os.path.join(
+                            AGENTS_DIR, "main", "user_profiles", f"{_safe_uid}.md")
+                        if os.path.isfile(_profile_path):
+                            with open(_profile_path, "r", encoding="utf-8") as _pf:
+                                _profile_doc = _pf.read().strip()
+                            if len(_profile_doc) > 4096:
+                                _profile_doc = _profile_doc[:4096] + "\n…[truncated]"
+                    except Exception:
+                        _profile_doc = ""
+                    # Build the preamble. Skip entirely if there's nothing
+                    # interesting (no name AND no about-me fields AND no profile).
+                    _preamble_lines: list[str] = []
+                    if _greet:
+                        _preamble_lines.append(
+                            f"You are talking to {_greet}. Address them by "
+                            f"this name when natural."
+                        )
+                    if _job:
+                        _preamble_lines.append(f"Their role: {_job}")
+                    if _commprefs:
+                        _preamble_lines.append(f"How they like to communicate: {_commprefs}")
+                    if _preamble_lines or _profile_doc:
+                        for _idx, _m in enumerate(messages):
+                            if _m.get("role") != "user":
+                                continue
+                            if _m.get("_greeting_injected"):
+                                break
+                            _bits: list[str] = []
+                            if _preamble_lines:
+                                _bits.append(
+                                    "[Context about this user:\n- "
+                                    + "\n- ".join(_preamble_lines)
+                                    + "]"
+                                )
+                            if _profile_doc:
+                                # The auto-maintained profile is its own block
+                                # so the model can tell user-set comm prefs
+                                # apart from inferred long-form context.
+                                _bits.append(
+                                    "[Auto-maintained user profile (from chat "
+                                    "history; treat as background context, "
+                                    "not as ground truth for the current "
+                                    "request):\n" + _profile_doc + "]"
+                                )
+                            _preamble = "\n\n".join(_bits) + "\n\n"
+                            _content = _m.get("content")
+                            if isinstance(_content, str):
+                                _m["content"] = _preamble + _content
+                            elif isinstance(_content, list):
+                                _m["content"] = ([{"type": "text", "text": _preamble}]
+                                                  + _content)
+                            _m["_greeting_injected"] = True
+                            break
 
         # GDPR/PII scan on first round only. Assistant/tool rounds reuse the
         # same user content, so re-scanning every round is wasted work.
