@@ -2231,7 +2231,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         "/v1/auth/users",
         # Server & agent config reads that can leak secrets or resource counts
         "/v1/providers",
-        "/v1/models/config",
+        # NOTE: /v1/models/config is intentionally NOT here. Non-admin users
+        # need to read the model list to populate the chat model dropdown;
+        # the handler filters to allowed_models + strips sensitive fields.
         "/v1/mempalace/classifier",
         "/v1/mempalace/stats",
         "/v1/mempalace/drawers",
@@ -2263,7 +2265,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         # the handler itself allows non-admins to read their own grants
         # but rejects cross-user lookups. See _handle_auth_permissions_get.
         "/v1/providers",
-        "/v1/models/config",
+        # /v1/models/config is open to non-admins; handler filters by
+        # per-user allowed_models and strips sensitive fields.
         "/v1/mempalace/classifier",
         "/v1/mempalace/drawers",
         "/v1/tools/config",
@@ -5467,14 +5470,39 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         Each model entry is annotated with `is_local` (derived from the resolved
         provider's base_url) so the web UI can filter without re-implementing
         the local-URL matcher.
+
+        Non-admin callers receive only the models in their allowed_models grant
+        (mirrors /v1/models scoping), and sensitive fields are stripped — the
+        chat dropdown only needs naming + locality + enable/priority. Admins
+        get the full payload for the Models tab.
         """
+        user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+        is_admin = bool(user) and (user["role"] == "admin" or user["id"] == "__system__")
+
+        allowed = None
+        if not is_admin:
+            allowed = _auth_mod.AuthDB.get_user_allowed_models(user["id"])
+
+        # Whitelist of fields safe to expose to non-admin chat UI. Anything
+        # else (api keys are already in providers, but cost/inference/warmup
+        # internals, raw_formats, profile knobs, base_url, etc.) is stripped.
+        _SAFE_FIELDS = (
+            "display_name", "shortname", "enabled", "priority", "provider",
+            "base_model_id", "is_local", "thinking_format", "max_context",
+            "max_output", "capabilities", "caveman_system",
+        )
+
         models = {}
         for mid, cfg in (engine._models_config or {}).items():
+            if allowed is not None and mid not in allowed:
+                continue
             entry = dict(cfg)
             try:
                 entry["is_local"] = engine.is_model_local(mid)
             except Exception:
                 entry["is_local"] = False
+            if not is_admin:
+                entry = {k: entry[k] for k in _SAFE_FIELDS if k in entry}
             models[mid] = entry
         self._send_json({
             "models": models,
