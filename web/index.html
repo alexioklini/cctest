@@ -5763,10 +5763,21 @@ function navigateTo(view, opts) {
   closeMobileSidebar();
 }
 
-function updatePageHeader(title, breadcrumb) {
+function updatePageHeader(title, breadcrumb, breadcrumbAgentId) {
   const el = document.getElementById('page-header-title');
   if (breadcrumb) {
-    el.innerHTML = `<span style="color:var(--text-400)">${esc(breadcrumb)}</span> <span class="breadcrumb-sep">/</span> ${esc(title)}`;
+    // When breadcrumbAgentId is set, the breadcrumb is a project name and the
+    // span becomes a click target that opens the project view. The listener is
+    // attached programmatically (not inline) so quotes in the names can't
+    // break out of the attribute and silently disable the handler.
+    el.innerHTML = `<span class="page-header-crumb"${breadcrumbAgentId ? ' data-clickable="1" style="color:var(--text-400);cursor:pointer" title="Open project"' : ' style="color:var(--text-400)"'}>${esc(breadcrumb)}</span> <span class="breadcrumb-sep">/</span> ${esc(title)}`;
+    if (breadcrumbAgentId) {
+      const crumb = el.querySelector('.page-header-crumb');
+      crumb.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        openProject(breadcrumbAgentId, breadcrumb);
+      });
+    }
   } else {
     el.textContent = title;
   }
@@ -6469,11 +6480,15 @@ function renderRecentChats() {
     renderRecentScheduledRuns(container);
     return;
   }
-  // In any project view (list, detail), the sidebar shows chats that belong to
-  // a project the current user has access to — across all such projects, not
-  // just the one currently open. Project access is gated server-side: the
-  // /v1/projects endpoint per agent only returns projects this user can see.
-  if (state.currentView === 'project-detail' || state.currentView === 'projects') {
+  // In any project context — the projects list, a project detail page, or a
+  // chat that belongs to a project — the sidebar shows project chats the user
+  // has access to. Project access is gated server-side via /v1/projects.
+  // Inversely, the normal-chat sidebar excludes every project chat so the two
+  // worlds stay visually separated.
+  const inProjectContext = state.currentView === 'project-detail'
+    || state.currentView === 'projects'
+    || !!state.currentProject;
+  if (inProjectContext) {
     renderRecentProjectChats(container);
     return;
   }
@@ -6483,7 +6498,9 @@ function renderRecentChats() {
     for (const [agentId, data] of Object.entries(state.agentSessions)) {
       if (data.sessions) {
         for (const s of data.sessions) {
-          if (s.status !== 'code' && (s.message_count || 0) > 0) allSessions.push({...s, agentId});
+          if (s.status !== 'code' && (s.message_count || 0) > 0 && !(s.project || '')) {
+            allSessions.push({...s, agentId});
+          }
         }
       }
     }
@@ -6497,7 +6514,9 @@ function renderRecentChats() {
   if (!data?.sessions) { container.innerHTML = ''; return; }
 
   const sessions = data.sessions
-    .filter(s => s.status !== 'archived' && s.status !== 'code' && (s.message_count || 0) > 0)
+    .filter(s => s.status !== 'archived' && s.status !== 'code'
+      && (s.message_count || 0) > 0
+      && !(s.project || ''))
     .sort((a,b) => new Date(b.last_active||0) - new Date(a.last_active||0))
     .slice(0, 20);
 
@@ -8776,7 +8795,8 @@ function updateChatView() {
   const agentDisplay = agent?.display_name || state.activeAgentId || 'Chat';
   const chatTitle = chat.chatTitle || '';
   if (state.currentProject) {
-    updatePageHeader(chatTitle || agentDisplay, state.currentProject);
+    const projAgent = chat.agentId || state._projectDetailAgent || state.activeAgentId;
+    updatePageHeader(chatTitle || agentDisplay, state.currentProject, projAgent);
   } else if (chatTitle) {
     updatePageHeader(chatTitle, agentDisplay);
   } else {
@@ -9628,7 +9648,7 @@ async function loadProjectChats(agentId, projectName) {
       // Stash status flag for the menu (avoids a second fetch).
       item.dataset.archived = isArchived ? '1' : '0';
       item.innerHTML = `
-        <span class="project-chat-item-title">${esc(s.title || 'Untitled')}</span>
+        <span class="project-chat-item-title">${esc(s.summary || s.title || 'Untitled')}</span>
         <span class="project-chat-item-meta">${ago ? 'Last message ' + ago : ''}</span>
         <span class="project-chat-item-actions">
           <button style="color:var(--text-400);padding:4px" onclick="event.stopPropagation(); showProjectChatMenu(event, '${esc(s.id)}', ${isArchived ? 'true' : 'false'})" title="More options">
