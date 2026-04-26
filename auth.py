@@ -962,11 +962,21 @@ def can_access_session(user: dict, session_user_id: str) -> bool:
 
 
 def can_access_project(user: dict, project_config: dict) -> bool:
-    visibility = project_config.get("visibility", "global")
-    if visibility == "global" or user["role"] == "admin" or user["id"] == "__system__":
+    if user["role"] == "admin" or user["id"] == "__system__":
         return True
+    visibility = project_config.get("visibility", "global")
+    owner_uid = project_config.get("owner_user_id", "")
+    extras = project_config.get("extra_member_user_ids") or []
+    excluded = project_config.get("excluded_user_ids") or []
+    # Owner always has access (even if they appear in excluded somehow)
+    if owner_uid and owner_uid == user["id"]:
+        return True
+    if user["id"] in extras:
+        return True
+    if visibility == "global":
+        return user["id"] not in excluded
     if visibility == "user":
-        return project_config.get("owner_user_id") == user["id"]
+        return False  # only owner + extras (handled above)
     if visibility == "team":
         team_id = project_config.get("owner_team_id", "")
         if not team_id:
@@ -974,6 +984,15 @@ def can_access_project(user: dict, project_config: dict) -> bool:
         teams = AuthDB.get_user_teams(user["id"])
         return any(t["id"] == team_id for t in teams)
     return False
+
+
+def can_manage_project(user: dict, project_config: dict) -> bool:
+    """Project management (edit, add/remove members, archive, delete).
+    Owner-centric: only the named owner_user_id or admin."""
+    if user["role"] == "admin" or user["id"] == "__system__":
+        return True
+    owner_uid = project_config.get("owner_user_id", "")
+    return bool(owner_uid) and owner_uid == user["id"]
 
 
 def can_delete_resource(user: dict, owner_user_id: str, owner_team_id: str = "") -> bool:

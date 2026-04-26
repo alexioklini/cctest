@@ -1375,6 +1375,26 @@ def _wake_warmup_keeper():
     _warmup_wakeup.set()
 
 
+def _filter_known_user_ids(ids) -> list[str]:
+    """Validate a user-id list against the auth DB. Drops unknowns + duplicates,
+    preserves order. Returns [] for non-list input."""
+    if not isinstance(ids, list):
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in ids:
+        if not isinstance(raw, str):
+            continue
+        uid = raw.strip()
+        if not uid or uid in seen:
+            continue
+        if not _auth_mod.AuthDB.get_user(uid):
+            continue
+        seen.add(uid)
+        out.append(uid)
+    return out
+
+
 def _trigger_warmup(session):
     """Prime the KV cache for a session's model.
 
@@ -1964,6 +1984,19 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             return
         self._send_json({"users": _auth_mod.AuthDB.list_users()})
 
+    def _handle_auth_users_lookup(self):
+        """GET /v1/auth/users/lookup — minimal user directory for any
+        authenticated caller. Used by member-pickers (projects, teams).
+        Returns id, username, display_name only — no role/email/disabled."""
+        user = self._require_auth()
+        if not user:
+            return
+        rows = _auth_mod.AuthDB.list_users()
+        out = [{"id": u["id"], "username": u.get("username", ""),
+                "display_name": u.get("display_name", "")}
+               for u in rows if not u.get("disabled")]
+        self._send_json({"users": out})
+
     def _handle_auth_users_manage(self):
         user = self._require_role("admin")
         if not user:
@@ -2439,6 +2472,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             return
         elif path == "/v1/auth/users":
             self._handle_auth_users_list()
+            return
+        elif path == "/v1/auth/users/lookup":
+            self._handle_auth_users_lookup()
             return
         elif path == "/v1/auth/permissions":
             self._handle_auth_permissions_get()
@@ -5946,16 +5982,47 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         if not name:
             self._send_json({"error": "Project name is required"}, 400)
             return
-        # Multi-user: stamp visibility and ownership
-        auth_user = getattr(self, '_auth_user', None)
-        owner_uid = auth_user["id"] if auth_user and auth_user["id"] != "__system__" else ""
+        auth_user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+        is_system = auth_user["id"] == "__system__"
+        is_admin = auth_user["role"] == "admin" or is_system
+        # Owner: admin can pick anyone; others are forced to self.
+        requested_owner = (body.get("owner_user_id") or "").strip()
+        if is_admin and requested_owner:
+            if not _auth_mod.AuthDB.get_user(requested_owner):
+                self._send_json({"error": "Unknown owner_user_id"}, 400)
+                return
+            owner_uid = requested_owner
+        else:
+            owner_uid = auth_user["id"] if not is_system else (requested_owner or "")
+        visibility = body.get("visibility", "global" if is_admin else "user")
+        owner_tid = body.get("owner_team_id", "")
+        # Scope-based gating
+        if visibility == "global" and not is_admin:
+            self._send_json({"error": "Only admins can create global projects"}, 403)
+            return
+        if visibility == "team":
+            if not owner_tid:
+                self._send_json({"error": "owner_team_id required for team-scoped project"}, 400)
+                return
+            if not is_admin:
+                # Caller must be head of that team
+                my_teams = _auth_mod.AuthDB.get_user_teams(auth_user["id"])
+                if not any(t["id"] == owner_tid and t["head_user_id"] == auth_user["id"] for t in my_teams):
+                    self._send_json({"error": "Only the team head can create team-scoped projects"}, 403)
+                    return
+        elif visibility not in ("user", "global"):
+            self._send_json({"error": f"Invalid visibility '{visibility}'"}, 400)
+            return
+        # Member lists: validated against existing users
+        extras = _filter_known_user_ids(body.get("extra_member_user_ids"))
+        excluded = _filter_known_user_ids(body.get("excluded_user_ids")) if visibility == "global" else []
         result = engine.ProjectManager.create_project(
             agent_id, name,
             description=body.get("description", ""),
-            config=body,
-            visibility=body.get("visibility", "global"),
+            config={**body, "extra_member_user_ids": extras, "excluded_user_ids": excluded},
+            visibility=visibility,
             owner_user_id=owner_uid,
-            owner_team_id=body.get("owner_team_id", ""),
+            owner_team_id=owner_tid,
         )
         if "error" in result:
             self._send_json(result, 400)
@@ -6007,12 +6074,9 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Access to this project is not permitted"}, 403)
             return None
         if require_manage:
-            if user["role"] != "admin" and user["id"] != "__system__":
-                owner_uid = project.get("owner_user_id", "")
-                owner_tid = project.get("owner_team_id", "")
-                if not _auth_mod.can_delete_resource(user, owner_uid, owner_tid):
-                    self._send_json({"error": "Only project owner (or admin) can modify this project"}, 403)
-                    return None
+            if not _auth_mod.can_manage_project(user, project):
+                self._send_json({"error": "Only the project owner (or admin) can modify this project"}, 403)
+                return None
         return project
 
     def _handle_project_get(self, path: str):
@@ -6038,11 +6102,28 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         if project is None:
             return
         body = self._read_json()
-        # Non-admins cannot change visibility/ownership — only admins can reassign
         user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
-        if user["role"] != "admin" and user["id"] != "__system__":
-            for locked in ("visibility", "owner_user_id", "owner_team_id"):
+        is_admin = user["role"] == "admin" or user["id"] == "__system__"
+        # Visibility + team scope are admin-only.
+        if not is_admin:
+            for locked in ("visibility", "owner_team_id"):
                 body.pop(locked, None)
+        # Ownership transfer: owner or admin may transfer; new owner must exist.
+        if "owner_user_id" in body:
+            new_owner = (body.get("owner_user_id") or "").strip()
+            if new_owner and not _auth_mod.AuthDB.get_user(new_owner):
+                self._send_json({"error": "Unknown owner_user_id"}, 400)
+                return
+            body["owner_user_id"] = new_owner
+        # Validate member lists against the auth DB.
+        if "extra_member_user_ids" in body:
+            body["extra_member_user_ids"] = _filter_known_user_ids(body["extra_member_user_ids"])
+        if "excluded_user_ids" in body:
+            # Only meaningful for global; for non-global scopes, drop silently.
+            scope = body.get("visibility", project.get("visibility", "global"))
+            body["excluded_user_ids"] = (
+                _filter_known_user_ids(body["excluded_user_ids"]) if scope == "global" else []
+            )
         result = engine.ProjectManager.update_project(agent_id, proj_name, body)
         if "error" in result:
             self._send_json(result, 400)

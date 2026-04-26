@@ -5654,16 +5654,25 @@ class ProjectManager:
                 "visibility": visibility,
                 "owner_user_id": owner_uid,
                 "owner_team_id": owner_tid,
+                "extra_member_user_ids": cfg.get("extra_member_user_ids", []) or [],
+                "excluded_user_ids": cfg.get("excluded_user_ids", []) or [],
             })
         # Filter by user access if user_id provided
         if user_id is not None:
             team_set = set(user_team_ids or [])
-            projects = [
-                p for p in projects
-                if p["visibility"] == "global"
-                or (p["visibility"] == "user" and p["owner_user_id"] == user_id)
-                or (p["visibility"] == "team" and p["owner_team_id"] in team_set)
-            ]
+            def _accessible(p):
+                if p["owner_user_id"] == user_id:
+                    return True
+                extras = p.get("extra_member_user_ids") or []
+                if user_id in extras:
+                    return True
+                if p["visibility"] == "global":
+                    return user_id not in (p.get("excluded_user_ids") or [])
+                if p["visibility"] == "team":
+                    return p["owner_team_id"] in team_set
+                # visibility == "user"
+                return False
+            projects = [p for p in projects if _accessible(p)]
         return projects
 
     @staticmethod
@@ -5695,6 +5704,8 @@ class ProjectManager:
             "visibility": visibility,
             "owner_user_id": owner_user_id,
             "owner_team_id": owner_team_id,
+            "extra_member_user_ids": (config or {}).get("extra_member_user_ids", []) or [],
+            "excluded_user_ids": (config or {}).get("excluded_user_ids", []) or [],
         }
         cfg_path = os.path.join(pdir, "project.json")
         with open(cfg_path, "w") as f:
@@ -5749,7 +5760,8 @@ class ProjectManager:
                 cfg = json.load(f)
             for k in ("description", "watch_folders", "tags", "model", "name", "icon",
                        "status", "instructions",
-                       "visibility", "owner_user_id", "owner_team_id"):
+                       "visibility", "owner_user_id", "owner_team_id",
+                       "extra_member_user_ids", "excluded_user_ids"):
                 if k in updates:
                     cfg[k] = updates[k]
             with open(cfg_path, "w") as f:

@@ -4021,12 +4021,10 @@ class API {
 
   // Projects
   static getProjects(agent) { return this.get(`/v1/agents/${agent}/projects`); }
-  static createProject(agent, name, desc, visibility, ownerTeamId) {
-    const body = {name, description:desc};
-    if (visibility) body.visibility = visibility;
-    if (ownerTeamId) body.owner_team_id = ownerTeamId;
+  static createProject(agent, body) {
     return this.post(`/v1/agents/${agent}/projects`, body);
   }
+  static lookupUsers() { return this.get('/v1/auth/users/lookup'); }
   static getProject(agent, name) { return this.get(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}`); }
   static updateProject(agent, name, cfg) { return this.put(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}`, cfg); }
   static deleteProject(agent, name) { return this.del(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}`); }
@@ -9376,18 +9374,23 @@ async function uploadProjectFiles(files) {
   const projectName = state._projectDetailName;
   if (!agentId || !projectName) return;
 
+  // Auth header is required — the global /v1/* gate rejects anonymous POST.
+  // Don't set Content-Type; the browser inserts the multipart boundary.
+  const token = localStorage.getItem('auth-token') || '';
+  const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
   for (const file of files) {
     try {
       const formData = new FormData();
       formData.append('file', file);
       showToast(`Uploading ${file.name}...`);
-      const resp = await fetch(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/ingest`, {
+      const resp = await fetch(`${BASE_URL}/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/ingest`, {
         method: 'POST',
+        headers,
         body: formData,
       });
-      const result = await resp.json();
-      if (result.error) {
-        showToast(`Error: ${result.error}`);
+      const result = await resp.json().catch(() => ({error: `HTTP ${resp.status}`}));
+      if (!resp.ok || result.error) {
+        showToast(`Error: ${result.error || resp.statusText}`);
       } else {
         showToast(`Uploaded ${file.name}`);
       }
@@ -9544,8 +9547,86 @@ async function saveProjectInstructions() {
   }
 }
 
-function showCreateProjectModal() {
+// ─── Project member-picker helpers ───────────────────────────────
+async function _ensureUserDirectory() {
+  if (state._userDirectory) return state._userDirectory;
+  try {
+    const r = await API.lookupUsers();
+    state._userDirectory = (r.users || []);
+  } catch(e) {
+    state._userDirectory = [];
+  }
+  return state._userDirectory;
+}
+
+function _userLabel(u) {
+  return u.display_name || u.username || u.id;
+}
+
+function _renderProjectMemberChips(containerId, ids, listId) {
+  const wrap = document.getElementById(containerId);
+  if (!wrap) return;
+  const dir = state._userDirectory || [];
+  const byId = {};
+  for (const u of dir) byId[u.id] = u;
+  if (!ids.length) {
+    wrap.innerHTML = '<span style="font-size:12px;color:var(--text-400);font-style:italic">None added</span>';
+    return;
+  }
+  wrap.innerHTML = ids.map(uid => {
+    const u = byId[uid] || {id: uid, display_name: uid};
+    return `<span class="project-member-chip" data-uid="${esc(uid)}" style="display:inline-flex;align-items:center;gap:6px;padding:4px 8px;background:var(--bg-200);border:1px solid var(--border-200);border-radius:12px;font-size:12px;margin:2px 4px 2px 0">
+      ${esc(_userLabel(u))}
+      <button onclick="_pmRemove('${esc(listId)}','${esc(uid)}','${esc(containerId)}')" style="background:none;border:none;cursor:pointer;color:var(--text-400);padding:0;line-height:1" title="Remove">×</button>
+    </span>`;
+  }).join('');
+}
+
+function _pmRemove(listId, uid, containerId) {
+  const arr = window[listId] || [];
+  const idx = arr.indexOf(uid);
+  if (idx >= 0) arr.splice(idx, 1);
+  _renderProjectMemberChips(containerId, arr, listId);
+}
+
+function _pmAdd(selectId, listId, containerId) {
+  const sel = document.getElementById(selectId);
+  const uid = sel?.value;
+  if (!uid) return;
+  const arr = window[listId] = window[listId] || [];
+  if (!arr.includes(uid)) arr.push(uid);
+  sel.value = '';
+  _renderProjectMemberChips(containerId, arr, listId);
+}
+
+function _renderMemberPicker(opts) {
+  // opts: {label, helpText, listId, containerId, selectId, excludeIds}
+  const dir = state._userDirectory || [];
+  const exclude = new Set(opts.excludeIds || []);
+  const options = dir.filter(u => !exclude.has(u.id))
+    .map(u => `<option value="${esc(u.id)}">${esc(_userLabel(u))}</option>`).join('');
+  return `
+    <div class="project-modal-field">
+      <label class="project-modal-label">${esc(opts.label)}</label>
+      ${opts.helpText ? `<div style="font-size:11px;color:var(--text-400);margin-bottom:6px">${opts.helpText}</div>` : ''}
+      <div id="${opts.containerId}" style="min-height:24px;margin-bottom:6px"></div>
+      <div style="display:flex;gap:6px">
+        <select class="project-modal-input" id="${opts.selectId}" style="flex:1">
+          <option value="">Select user…</option>
+          ${options}
+        </select>
+        <button class="btn-secondary" onclick="_pmAdd('${esc(opts.selectId)}','${esc(opts.listId)}','${esc(opts.containerId)}')">Add</button>
+      </div>
+    </div>`;
+}
+
+async function showCreateProjectModal() {
   const agentId = state.activeAgentId || 'main';
+  const authed = !!(state.authUser && state.authEnabled);
+  if (authed) await _ensureUserDirectory();
+  // Reset shared lists used by the chip picker
+  window._projectCreateExtras = [];
+  window._projectCreateExcluded = [];
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -9553,7 +9634,7 @@ function showCreateProjectModal() {
 
   const content = document.createElement('div');
   content.className = 'modal-content';
-  content.style.maxWidth = '500px';
+  content.style.maxWidth = '520px';
   content.innerHTML = `
     <div class="modal-header">
       <span class="modal-title">New Project</span>
@@ -9578,23 +9659,63 @@ function showCreateProjectModal() {
           }).join('')}
         </select>
       </div>
-      ${(state.authUser && state.authEnabled) ? `
-      <div class="project-modal-field">
-        <label class="project-modal-label">Visibility</label>
-        <select class="project-modal-input" id="create-project-visibility" onchange="document.getElementById('create-project-team-wrap').style.display=(this.value==='team'?'block':'none')">
-          <option value="user" ${state.authUser.role==='user'?'selected':''}>Private (only me)</option>
-          <option value="team">Team</option>
-          ${state.authUser.role === 'admin' ? '<option value="global" selected>Global (everyone)</option>' : ''}
-        </select>
-      </div>
-      <div class="project-modal-field" id="create-project-team-wrap" style="display:none">
-        <label class="project-modal-label">Team</label>
-        <select class="project-modal-input" id="create-project-team">
-          <option value="">Select team...</option>
-          ${(state.userTeams || []).map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}
-        </select>
-      </div>
-      ` : ''}
+      ${authed ? (() => {
+        const isAdmin = state.authUser.role === 'admin';
+        const headedTeams = (state.userTeams || []).filter(t => t.head_user_id === state.authUser.id);
+        const canTeam = isAdmin || headedTeams.length > 0;
+        const teamOptions = isAdmin ? (state.userTeams || []) : headedTeams;
+        const visOpts = [];
+        visOpts.push(`<option value="user"${!isAdmin && !canTeam ? ' selected' : ''}>Personal</option>`);
+        if (canTeam) visOpts.push(`<option value="team"${!isAdmin ? ' selected' : ''}>Team</option>`);
+        if (isAdmin) visOpts.push('<option value="global" selected>Global (everyone)</option>');
+        const initialVis = isAdmin ? 'global' : (canTeam ? 'team' : 'user');
+        const ownerBlock = isAdmin
+          ? `<div class="project-modal-field">
+              <label class="project-modal-label">Owner</label>
+              <select class="project-modal-input" id="create-project-owner">
+                ${(state._userDirectory || []).map(u => `<option value="${esc(u.id)}" ${u.id===state.authUser.id?'selected':''}>${esc(_userLabel(u))}</option>`).join('')}
+              </select>
+            </div>`
+          : `<input type="hidden" id="create-project-owner" value="${esc(state.authUser.id)}">`;
+        const visBlock = (visOpts.length === 1)
+          ? `<input type="hidden" id="create-project-visibility" value="user">`
+          : `<div class="project-modal-field">
+              <label class="project-modal-label">Visibility</label>
+              <select class="project-modal-input" id="create-project-visibility" onchange="_createProjectOnVisChange(this.value)">
+                ${visOpts.join('')}
+              </select>
+            </div>
+            <div class="project-modal-field" id="create-project-team-wrap" style="display:${initialVis==='team'?'block':'none'}">
+              <label class="project-modal-label">Team</label>
+              <select class="project-modal-input" id="create-project-team">
+                <option value="">Select team...</option>
+                ${teamOptions.map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}
+              </select>
+            </div>`;
+        // Members panels (rendered for create; default to whatever initialVis dictates)
+        const extrasPicker = _renderMemberPicker({
+          label: 'Add members',
+          helpText: 'Personal: people who get access. Team: extras outside the team. Global: ignored.',
+          listId: '_projectCreateExtras',
+          containerId: 'create-project-extras-chips',
+          selectId: 'create-project-extras-select',
+          excludeIds: [state.authUser.id],
+        });
+        const excludedPicker = _renderMemberPicker({
+          label: 'Exclude users',
+          helpText: 'Global only — block specific users from this project.',
+          listId: '_projectCreateExcluded',
+          containerId: 'create-project-excluded-chips',
+          selectId: 'create-project-excluded-select',
+          excludeIds: [state.authUser.id],
+        });
+        return `
+          ${ownerBlock}
+          ${visBlock}
+          <div id="create-project-extras-wrap" style="display:${initialVis==='global'?'none':'block'}">${extrasPicker}</div>
+          <div id="create-project-excluded-wrap" style="display:${initialVis==='global'?'block':'none'}">${excludedPicker}</div>
+        `;
+      })() : ''}
     </div>
     <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--border-100)">
       <button class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
@@ -9605,30 +9726,54 @@ function showCreateProjectModal() {
   document.body.appendChild(overlay);
   setTimeout(() => document.getElementById('create-project-name')?.focus(), 100);
 
+  // Render initial (empty) chips for the member-pickers
+  if (document.getElementById('create-project-extras-chips')) {
+    _renderProjectMemberChips('create-project-extras-chips', window._projectCreateExtras, '_projectCreateExtras');
+  }
+  if (document.getElementById('create-project-excluded-chips')) {
+    _renderProjectMemberChips('create-project-excluded-chips', window._projectCreateExcluded, '_projectCreateExcluded');
+  }
+
   // Enter key support
   document.getElementById('create-project-name').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') createProject();
   });
 }
 
+function _createProjectOnVisChange(value) {
+  const teamWrap = document.getElementById('create-project-team-wrap');
+  const extrasWrap = document.getElementById('create-project-extras-wrap');
+  const excludedWrap = document.getElementById('create-project-excluded-wrap');
+  if (teamWrap) teamWrap.style.display = (value === 'team' ? 'block' : 'none');
+  if (extrasWrap) extrasWrap.style.display = (value === 'global' ? 'none' : 'block');
+  if (excludedWrap) excludedWrap.style.display = (value === 'global' ? 'block' : 'none');
+}
+
 async function createProject() {
   const name = document.getElementById('create-project-name')?.value?.trim();
   const desc = document.getElementById('create-project-desc')?.value?.trim();
   const agentId = document.getElementById('create-project-agent')?.value || 'main';
-  const visibility = document.getElementById('create-project-visibility')?.value;
-  const teamId = document.getElementById('create-project-team')?.value;
+  const visibility = document.getElementById('create-project-visibility')?.value || '';
+  const teamId = document.getElementById('create-project-team')?.value || '';
+  const ownerId = document.getElementById('create-project-owner')?.value || '';
   if (!name) { showToast('Project name is required'); return; }
   if (visibility === 'team' && !teamId) { showToast('Select a team for team-scoped project'); return; }
 
+  const body = { name, description: desc || '' };
+  if (visibility) body.visibility = visibility;
+  if (teamId) body.owner_team_id = teamId;
+  if (ownerId) body.owner_user_id = ownerId;
+  if (visibility === 'global') {
+    body.excluded_user_ids = (window._projectCreateExcluded || []).slice();
+  } else {
+    body.extra_member_user_ids = (window._projectCreateExtras || []).slice();
+  }
+
   try {
-    const result = await API.createProject(agentId, name, desc || '', visibility, teamId);
-    if (result.error) {
-      showToast(result.error);
-      return;
-    }
+    const result = await API.createProject(agentId, body);
+    if (result.error) { showToast(result.error); return; }
     showToast('Project created');
     document.querySelector('.modal-overlay')?.remove();
-    // Open the new project
     openProject(agentId, result.name || name);
   } catch(e) {
     showToast('Failed to create project');
@@ -9686,9 +9831,179 @@ function showProjectChatMenu(event, sessionId) {
   }), 10);
 }
 
-function editProjectFromMenu(agentId, projectName) {
-  // Open detail view for editing
-  openProject(agentId, projectName);
+async function editProjectFromMenu(agentId, projectName) {
+  let project = null;
+  try { project = await API.getProject(agentId, projectName); } catch(e) {}
+  if (!project) { showToast('Failed to load project'); return; }
+
+  const isAdmin = state.authUser && state.authUser.role === 'admin';
+  const ownerUid = project.owner_user_id || '';
+  const ownerTid = project.owner_team_id || '';
+  const isOwner = state.authUser && ownerUid && ownerUid === state.authUser.id;
+  const canManage = isAdmin || isOwner;
+  if (!canManage) { showToast('Only the project owner can edit this project'); return; }
+
+  await _ensureUserDirectory();
+  // Stash for the save handler so it knows the effective scope when the
+  // visibility selector isn't rendered (non-admin owner).
+  window._projectEditOriginal = project;
+  // Visibility / team re-scoping is admin-only.
+  const canRescope = isAdmin;
+  // Owner transfer: owner or admin.
+  const canTransfer = canManage;
+  const allTeams = state.userTeams || [];
+
+  // Seed the chip lists from the project's current state
+  window._projectEditExtras = (project.extra_member_user_ids || []).slice();
+  window._projectEditExcluded = (project.excluded_user_ids || []).slice();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+  content.style.maxWidth = '540px';
+  const ownerSelectorBlock = canTransfer
+    ? `<div class="project-modal-field">
+        <label class="project-modal-label">Owner</label>
+        <select class="project-modal-input" id="edit-project-owner">
+          ${(state._userDirectory || []).map(u => `<option value="${esc(u.id)}" ${u.id===ownerUid?'selected':''}>${esc(_userLabel(u))}</option>`).join('')}
+        </select>
+        ${isAdmin ? '' : '<div style="font-size:11px;color:var(--text-400);margin-top:4px">Transferring removes your edit rights.</div>'}
+      </div>`
+    : `<div class="project-modal-field" style="font-size:12px;color:var(--text-400)">Owner: <strong>${esc(_userLabel((state._userDirectory||[]).find(u=>u.id===ownerUid)||{id:ownerUid,display_name:ownerUid}))}</strong></div>`;
+
+  const scopeBlock = canRescope
+    ? `<div class="project-modal-field">
+        <label class="project-modal-label">Visibility</label>
+        <select class="project-modal-input" id="edit-project-visibility" onchange="_editProjectOnVisChange(this.value)">
+          <option value="user" ${project.visibility==='user'?'selected':''}>Personal</option>
+          <option value="team" ${project.visibility==='team'?'selected':''}>Team</option>
+          <option value="global" ${project.visibility==='global'?'selected':''}>Global (everyone)</option>
+        </select>
+      </div>
+      <div class="project-modal-field" id="edit-project-team-wrap" style="display:${project.visibility==='team'?'block':'none'}">
+        <label class="project-modal-label">Team</label>
+        <select class="project-modal-input" id="edit-project-team">
+          <option value="">Select team...</option>
+          ${allTeams.map(t => `<option value="${esc(t.id)}" ${t.id===ownerTid?'selected':''}>${esc(t.name)}</option>`).join('')}
+        </select>
+      </div>`
+    : `<div class="project-modal-field" style="font-size:12px;color:var(--text-400)">
+        Visibility: <strong>${esc(project.visibility || 'global')}</strong>${ownerTid?` · Team: <strong>${esc((allTeams.find(t=>t.id===ownerTid)||{}).name||ownerTid)}</strong>`:''}
+        <div style="margin-top:4px">Only admins can change scope.</div>
+      </div>`;
+
+  // Member pickers
+  const extrasPicker = _renderMemberPicker({
+    label: 'Members',
+    helpText: project.visibility === 'team'
+      ? 'Team members are auto-included. List below holds extras outside the team.'
+      : (project.visibility === 'global' ? '' : 'Users granted access in addition to the owner.'),
+    listId: '_projectEditExtras',
+    containerId: 'edit-project-extras-chips',
+    selectId: 'edit-project-extras-select',
+    excludeIds: [ownerUid],
+  });
+  const excludedPicker = _renderMemberPicker({
+    label: 'Excluded users',
+    helpText: 'Block these users from a Global project.',
+    listId: '_projectEditExcluded',
+    containerId: 'edit-project-excluded-chips',
+    selectId: 'edit-project-excluded-select',
+    excludeIds: [ownerUid],
+  });
+
+  content.innerHTML = `
+    <div class="modal-header">
+      <span class="modal-title">Edit Project</span>
+      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+    </div>
+    <div class="modal-body" style="padding:16px">
+      <div class="project-modal-field">
+        <label class="project-modal-label">Project name</label>
+        <input class="project-modal-input" id="edit-project-display-name" value="${esc(project.name || projectName)}" placeholder="My Project">
+        <div style="font-size:11px;color:var(--text-400);margin-top:4px">Display name only. Folder name stays <code>${esc(projectName)}</code>.</div>
+      </div>
+      <div class="project-modal-field">
+        <label class="project-modal-label">Description</label>
+        <textarea class="project-modal-input" id="edit-project-desc" rows="3" style="resize:vertical"
+          placeholder="What is this project about?">${esc(project.description || '')}</textarea>
+      </div>
+      <div class="project-modal-field">
+        <label class="project-modal-label">Icon</label>
+        <input class="project-modal-input" id="edit-project-icon" value="${esc(project.icon || '📁')}" maxlength="4" style="width:80px;text-align:center;font-size:18px">
+      </div>
+      ${ownerSelectorBlock}
+      ${scopeBlock}
+      <div id="edit-project-extras-wrap" style="display:${project.visibility==='global'?'none':'block'}">${extrasPicker}</div>
+      <div id="edit-project-excluded-wrap" style="display:${project.visibility==='global'?'block':'none'}">${excludedPicker}</div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--border-100)">
+      <button class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      <button class="btn-primary" onclick="saveProjectEdit('${esc(agentId)}','${esc(projectName)}')">Save</button>
+    </div>
+  `;
+  overlay.appendChild(content);
+  document.body.appendChild(overlay);
+  // Render the chips after mount
+  _renderProjectMemberChips('edit-project-extras-chips', window._projectEditExtras, '_projectEditExtras');
+  _renderProjectMemberChips('edit-project-excluded-chips', window._projectEditExcluded, '_projectEditExcluded');
+  setTimeout(() => document.getElementById('edit-project-display-name')?.focus(), 100);
+}
+
+function _editProjectOnVisChange(value) {
+  const teamWrap = document.getElementById('edit-project-team-wrap');
+  const extrasWrap = document.getElementById('edit-project-extras-wrap');
+  const excludedWrap = document.getElementById('edit-project-excluded-wrap');
+  if (teamWrap) teamWrap.style.display = (value === 'team' ? 'block' : 'none');
+  if (extrasWrap) extrasWrap.style.display = (value === 'global' ? 'none' : 'block');
+  if (excludedWrap) excludedWrap.style.display = (value === 'global' ? 'block' : 'none');
+}
+
+async function saveProjectEdit(agentId, projectName) {
+  const displayName = document.getElementById('edit-project-display-name')?.value?.trim();
+  const desc = document.getElementById('edit-project-desc')?.value;
+  const icon = document.getElementById('edit-project-icon')?.value?.trim() || '📁';
+  const visEl = document.getElementById('edit-project-visibility');
+  const teamEl = document.getElementById('edit-project-team');
+  const ownerEl = document.getElementById('edit-project-owner');
+  if (!displayName) { showToast('Project name is required'); return; }
+  const updates = { name: displayName, description: desc, icon };
+  if (ownerEl) updates.owner_user_id = ownerEl.value || '';
+  if (visEl) {
+    updates.visibility = visEl.value;
+    if (visEl.value === 'team') {
+      const tid = teamEl?.value || '';
+      if (!tid) { showToast('Select a team'); return; }
+      updates.owner_team_id = tid;
+    } else {
+      updates.owner_team_id = '';
+    }
+  }
+  // Effective scope for choosing which member list to send. Non-admins
+  // can't change scope, so fall back to the project's stored visibility.
+  const effectiveScope = visEl?.value || (window._projectEditOriginal?.visibility) || '';
+  if (effectiveScope === 'global') {
+    updates.excluded_user_ids = (window._projectEditExcluded || []).slice();
+    updates.extra_member_user_ids = [];
+  } else if (effectiveScope) {
+    updates.extra_member_user_ids = (window._projectEditExtras || []).slice();
+    updates.excluded_user_ids = [];
+  }
+  try {
+    const result = await API.updateProject(agentId, projectName, updates);
+    if (result && result.error) { showToast(result.error); return; }
+    showToast('Project updated');
+    document.querySelector('.modal-overlay')?.remove();
+    if (state._projectDetailAgent === agentId && state._projectDetailName === projectName) {
+      loadProjectDetail(agentId, projectName);
+    }
+    loadProjectsList();
+  } catch(e) {
+    showToast('Failed to update project');
+  }
 }
 
 async function archiveProject(agentId, projectName) {
