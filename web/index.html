@@ -6151,6 +6151,11 @@ function toggleModelDropdown(event) {
         const oldModel = chat.model;
         chat.model = mid;
         updateModelSelectorDisplay(mid);
+        // New model may have a different thinking_format — demote the
+        // composer's saved thinking_level when it's no longer valid and
+        // refresh the icon (color/disabled state).
+        try { _ensureValidThinkingLevel(); } catch(_) {}
+        refreshThinkingButton();
         if (mid !== oldModel) {
           stopWarmupPoll(chat);
           updateStatusBar();
@@ -10097,8 +10102,12 @@ async function switchGeneralTab(tab, btn) {
                 </select>
               </div>
               <div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px" title="How this model emits reasoning. none = disabled. inline_tags = <think>...</think> in content (DeepSeek-R1, GLM-Zero). reasoning_field = sibling reasoning_content (oMLX with enable_thinking, Gemini 2.5, DeepSeek-R1 direct). mistral_blocks = nested thinking blocks (magistral, mistral-small-2603+). openai_opaque = hidden, only token count exposed (o1/o3/o4-mini).">Thinking Format</label>
-                <select class="mdl-thinking-format" style="width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)">
+                <select class="mdl-thinking-format" data-mid="${esc(mid)}" onchange="_mdlRefreshThinkingLevel(this)" style="width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)">
                   ${['none','inline_tags','reasoning_field','mistral_blocks','openai_opaque'].map(v => `<option value="${v}"${(cfg.thinking_format||'none')===v?' selected':''}>${v}</option>`).join('')}
+                </select>
+              </div>
+              <div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px" title="Default thinking level for this model. Used when a chat or scheduled task selects 'Inherit from model'. Available options depend on the Thinking Format.">Thinking Level</label>
+                <select class="mdl-thinking-level" data-mid="${esc(mid)}" data-current="${esc((inf||{}).thinking_level||'')}" style="width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)">
                 </select>
               </div>
               <div style="display:flex;align-items:center;gap:6px;padding-top:14px"><input type="checkbox" class="mdl-parallel-tools" ${cfg.parallel_tool_calls !== false ? 'checked' : ''} style="margin:0"><label class="form-label" style="font-size:11px;margin:0;cursor:pointer">Parallel Tool Calls</label></div>
@@ -10132,6 +10141,13 @@ async function switchGeneralTab(tab, btn) {
       <button class="btn-primary" onclick="saveModelsConfig()">Save</button>
     </div></div>`;
     C.innerHTML = P(html);
+    // Populate every per-model Thinking Level dropdown using the row's
+    // current Thinking Format. The format <select> has an inline onchange
+    // that re-renders its sibling level <select> via _mdlRefreshThinkingLevel.
+    C.querySelectorAll('.mdl-thinking-level').forEach(sel => {
+      const fmtSel = sel.closest('div').parentElement.querySelector('.mdl-thinking-format');
+      if (fmtSel) _mdlPopulateThinkingLevel(fmtSel.value || 'none', sel, sel.dataset.current || '');
+    });
   }
 
   /* ─── CLIENT MODELS (admin manifest of GGUF weights for desktop clients) ─── */
@@ -11563,6 +11579,12 @@ async function saveModelsConfig() {
       // String params (reasoning_effort)
       const re = readStr(row, 'mdl-inf-reasoning_effort');
       if (re) inf.reasoning_effort = re;
+      // Thinking level: '' = unset (use API default for the format), explicit
+      // 'none'/'low'/'medium'/'high' wins. Skip when format='none' (column is
+      // disabled in that case anyway).
+      const tlSel = row.querySelector('.mdl-thinking-level');
+      const tl = tlSel && !tlSel.disabled ? (tlSel.value || '') : '';
+      if (tl) inf.thinking_level = tl;
       mc[mid].inference = Object.keys(inf).length > 0 ? inf : undefined;
       if (!mc[mid].inference) delete mc[mid].inference;
       // Caveman system level (per-model system prompt compression)
@@ -13624,6 +13646,150 @@ async function _schedViewRunDetail(runId) {
   }
 }
 
+// Format-aware option set for the per-task / per-model thinking dropdown.
+// modelId='' or unknown → caller decides whether to render a generic set
+// (schedule modal "Default model") or hide the control entirely.
+//
+// Returns { format, supported, options:[{value,label}], note }.
+//   format: the model's thinking_format, '' if unknown.
+//   supported: false when format='none' — the control should be disabled or hidden.
+//   options: ordered list (value strings) for a <select>.
+//   note: optional one-liner the caller can show as a hint.
+function _thinkingOptionsForModel(modelId) {
+  const mc = state.modelsConfig?.models || {};
+  const cfg = modelId ? (mc[modelId] || {}) : null;
+  const fmt = cfg ? (cfg.thinking_format || 'none') : '';
+  // Unknown model (e.g. schedule modal with model="" Default): full set,
+  // resolved at fire time. Caller should add an "Inherit" entry on top.
+  if (!modelId || !cfg) {
+    return {
+      format: '', supported: true,
+      options: [
+        {value:'none',   label:'Off'},
+        {value:'low',    label:'Low'},
+        {value:'medium', label:'Medium'},
+        {value:'high',   label:'High'},
+      ],
+      note: "Actual options depend on the model resolved at fire time.",
+    };
+  }
+  if (fmt === 'none') {
+    return {format: fmt, supported: false, options: [], note: "This model doesn't support reasoning."};
+  }
+  if (fmt === 'inline_tags') {
+    // <think>...</think> models think unconditionally per turn; the only dial
+    // most providers expose is on/off (chat_template_kwargs.enable_thinking on
+    // oMLX-served Qwen3, etc.). No graduated levels.
+    return {format: fmt, supported: true,
+      options: [
+        {value:'none', label:'Off'},
+        {value:'high', label:'On'},
+      ],
+      note: "This model supports thinking on/off only — no graduated levels."};
+  }
+  if (fmt === 'mistral_blocks') {
+    // Mistral API only accepts reasoning_effort: none|high.
+    return {format: fmt, supported: true,
+      options: [
+        {value:'none', label:'Off'},
+        {value:'high', label:'High'},
+      ],
+      note: "Mistral accepts only Off / High."};
+  }
+  // reasoning_field (Gemini 2.5 / DeepSeek-R1 / oMLX), openai_opaque (o-series)
+  return {format: fmt, supported: true,
+    options: [
+      {value:'none',   label:'Off'},
+      {value:'low',    label:'Low'},
+      {value:'medium', label:'Medium'},
+      {value:'high',   label:'High'},
+    ]};
+}
+
+// Format-driven option set, but for the Models tab (no "Inherit" entry —
+// this dropdown IS the per-model default). Returns null when format='none'
+// so the caller can disable the control.
+function _thinkingOptionsForFormat(fmt) {
+  if (fmt === 'none' || !fmt) return null;
+  if (fmt === 'inline_tags') {
+    return {options: [{value:'none',label:'Off'},{value:'high',label:'On'}],
+            note: "Thinking on/off only — no graduated levels."};
+  }
+  if (fmt === 'mistral_blocks') {
+    return {options: [{value:'none',label:'Off'},{value:'high',label:'High'}],
+            note: "Mistral accepts only Off / High."};
+  }
+  return {options: [
+    {value:'none',label:'Off'},
+    {value:'low',label:'Low'},
+    {value:'medium',label:'Medium'},
+    {value:'high',label:'High'},
+  ]};
+}
+
+// Render a Models-tab Thinking Level <select> for a given format. selectedValue
+// is the current saved level ('' = unset/inherit-API-default).
+function _mdlPopulateThinkingLevel(fmt, levelSel, selectedValue) {
+  if (!levelSel) return;
+  const info = _thinkingOptionsForFormat(fmt);
+  if (!info) {
+    levelSel.innerHTML = `<option value="" selected>(unsupported)</option>`;
+    levelSel.disabled = true;
+    levelSel.title = "This model doesn't support reasoning.";
+    return;
+  }
+  levelSel.disabled = false;
+  levelSel.title = info.note || '';
+  const allowed = new Set(['', ...info.options.map(o => o.value)]);
+  const cur = allowed.has(selectedValue) ? selectedValue : '';
+  // "(unset)" preserves the API default — same as deleting the key from
+  // inference. Distinct from "Off" which sends thinking_level=none explicitly.
+  const opts = [{value:'',label:'(unset)'}, ...info.options];
+  levelSel.innerHTML = opts.map(o =>
+    `<option value="${esc(o.value)}"${o.value === cur ? ' selected' : ''}>${esc(o.label)}</option>`
+  ).join('');
+}
+
+// Called by the Models-tab Thinking Format <select> onchange. Finds the
+// sibling level select in the same row and re-renders its options for the
+// new format, preserving the user's level choice when still valid.
+function _mdlRefreshThinkingLevel(fmtSelectEl) {
+  // Format and level are both <div> children of the same flex row's grid
+  // container. Find the level by class within the same parent grid.
+  const grid = fmtSelectEl.closest('div[style*="grid-template-columns"]');
+  const levelSel = grid?.querySelector('.mdl-thinking-level');
+  if (!levelSel) return;
+  _mdlPopulateThinkingLevel(fmtSelectEl.value || 'none', levelSel, levelSel.value || '');
+}
+
+// Re-render a schedule-modal thinking dropdown when the model selector
+// changes. Includes the "Inherit from model" entry that's specific to
+// scheduled tasks (model defaults win).
+function _schedRefreshThinking(modelSelectId, thinkingSelectId, currentValue) {
+  const modelSel = document.getElementById(modelSelectId);
+  const ts = document.getElementById(thinkingSelectId);
+  if (!ts) return;
+  const modelId = modelSel?.value || '';
+  const info = _thinkingOptionsForModel(modelId);
+  // Preserve the user's prior choice when possible. If the new option set
+  // doesn't include it, fall back to "" (Inherit).
+  const prev = (currentValue !== undefined ? currentValue : ts.value) || '';
+  const allowed = new Set(['', ...info.options.map(o => o.value)]);
+  const keep = allowed.has(prev) ? prev : '';
+  if (!info.supported) {
+    ts.innerHTML = `<option value="" selected>(unsupported)</option>`;
+    ts.disabled = true;
+    ts.title = info.note || '';
+    return;
+  }
+  ts.disabled = false;
+  ts.title = info.note || '';
+  const opts = [{value:'', label:'Inherit from model'}, ...info.options];
+  ts.innerHTML = opts.map(o =>
+    `<option value="${esc(o.value)}"${o.value === keep ? ' selected' : ''}>${esc(o.label)}</option>`
+  ).join('');
+}
+
 async function _schedViewEdit(name) {
   // Inline edit modal: fetch the current task row, prefill form, PATCH via
   // action:'edit'. `schedule` is a free-form string (same format as create).
@@ -13664,16 +13830,31 @@ async function _schedViewEdit(name) {
       </div>
       <div class="sched-form-group">
         <label>Model</label>
-        <select id="sched-edit-model"><option value="">Default</option>${modelOpts}</select>
+        <select id="sched-edit-model" onchange="_schedRefreshThinking('sched-edit-model','sched-edit-thinking')"><option value="">Default</option>${modelOpts}</select>
       </div>
     </div>
     <div class="sched-form-group">
       <label>Schedule <span style="color:var(--text-400);font-weight:normal;font-size:11px">(e.g. "daily 09:00", "every 30m", "weekly mon 14:00", "once 2026-05-01 12:00")</span></label>
       <input id="sched-edit-schedule" value="${esc(task.schedule || '')}" style="font-family:var(--font-mono)">
     </div>
-    <div class="sched-form-group">
-      <label>Timeout (seconds)</label>
-      <input id="sched-edit-timeout" type="number" value="${task.timeout || 300}" min="30" max="3600">
+    <div class="sched-form-row">
+      <div class="sched-form-group">
+        <label>Timeout (seconds)</label>
+        <input id="sched-edit-timeout" type="number" value="${task.timeout || 300}" min="30" max="3600">
+      </div>
+      <div class="sched-form-group">
+        <label>Thinking level <span style="color:var(--text-400);font-weight:normal;font-size:11px">(reasoning effort)</span></label>
+        <select id="sched-edit-thinking"></select>
+      </div>
+      <div class="sched-form-group">
+        <label>Caveman mode <span style="color:var(--text-400);font-weight:normal;font-size:11px">(response compression)</span></label>
+        <select id="sched-edit-caveman">
+          ${[[0,'Off'],[1,'Lite'],[2,'Full'],[3,'Ultra']].map(([v,lbl]) => {
+            const sel = Number(task.caveman_chat || 0) === v ? 'selected' : '';
+            return `<option value="${v}" ${sel}>${esc(lbl)}</option>`;
+          }).join('')}
+        </select>
+      </div>
     </div>
     <div class="sched-form-group">
       <label>Working directory <span style="color:var(--text-400);font-weight:normal;font-size:11px">(optional)</span></label>
@@ -13694,6 +13875,9 @@ async function _schedViewEdit(name) {
     </div>
   </div>`;
   document.body.appendChild(overlay);
+  // Populate the thinking dropdown using the model the task is currently
+  // bound to (or empty=Default → generic set with "Inherit" pre-selected).
+  _schedRefreshThinking('sched-edit-model', 'sched-edit-thinking', task.thinking_level || '');
   // Seed the edit modal's attachment accumulator from the existing task row.
   try {
     const existing = task.attachments;
@@ -13712,6 +13896,8 @@ async function _saveScheduledEdit(originalName) {
   const model = document.getElementById('sched-edit-model')?.value || '';
   const schedule = document.getElementById('sched-edit-schedule')?.value?.trim();
   const timeout = parseInt(document.getElementById('sched-edit-timeout')?.value) || 300;
+  const thinking_level = document.getElementById('sched-edit-thinking')?.value || '';
+  const caveman_chat = parseInt(document.getElementById('sched-edit-caveman')?.value) || 0;
   const working_dir = document.getElementById('sched-edit-workdir')?.value?.trim() || '';
   const attachments = window._schedEditAttachments || [];
 
@@ -13726,6 +13912,8 @@ async function _saveScheduledEdit(originalName) {
     agent,
     schedule,
     timeout,
+    thinking_level,
+    caveman_chat,
     working_dir,
     attachments,
     // Empty string signals "clear back to Default" so the scheduler falls
@@ -13781,7 +13969,7 @@ function showCreateScheduledModal() {
       </div>
       <div class="sched-form-group">
         <label>Model (optional)</label>
-        <select id="sched-new-model"><option value="">Default</option>${modelOpts}</select>
+        <select id="sched-new-model" onchange="_schedRefreshThinking('sched-new-model','sched-new-thinking')"><option value="">Default</option>${modelOpts}</select>
       </div>
     </div>
     <div class="sched-form-row">
@@ -13803,9 +13991,24 @@ function showCreateScheduledModal() {
       <label>Custom Schedule</label>
       <input id="sched-new-custom" placeholder="e.g. every 30m, daily 14:00, weekly fri 17:00" style="font-family:var(--font-mono)">
     </div>
-    <div class="sched-form-group">
-      <label>Timeout (seconds)</label>
-      <input id="sched-new-timeout" type="number" value="300" min="30" max="3600">
+    <div class="sched-form-row">
+      <div class="sched-form-group">
+        <label>Timeout (seconds)</label>
+        <input id="sched-new-timeout" type="number" value="300" min="30" max="3600">
+      </div>
+      <div class="sched-form-group">
+        <label>Thinking level <span style="color:var(--text-400);font-weight:normal;font-size:11px">(reasoning effort)</span></label>
+        <select id="sched-new-thinking"></select>
+      </div>
+      <div class="sched-form-group">
+        <label>Caveman mode <span style="color:var(--text-400);font-weight:normal;font-size:11px">(response compression)</span></label>
+        <select id="sched-new-caveman">
+          <option value="0" selected>Off</option>
+          <option value="1">Lite</option>
+          <option value="2">Full</option>
+          <option value="3">Ultra</option>
+        </select>
+      </div>
     </div>
     <div class="sched-form-group">
       <label>Working directory <span style="color:var(--text-400);font-weight:normal;font-size:11px">(optional)</span></label>
@@ -13826,6 +14029,9 @@ function showCreateScheduledModal() {
     </div>
   </div>`;
   document.body.appendChild(overlay);
+  // Populate the thinking dropdown for the initially-selected model
+  // (typically empty=Default → generic set with "Inherit" pre-selected).
+  _schedRefreshThinking('sched-new-model', 'sched-new-thinking', '');
   // Attachments accumulator for the open modal. Cleared with the modal.
   window._schedNewAttachments = [];
 }
@@ -13980,6 +14186,8 @@ async function _createScheduledTask() {
   const timeVal = document.getElementById('sched-new-time')?.value || '09:00';
   const customSched = document.getElementById('sched-new-custom')?.value?.trim();
   const timeout = parseInt(document.getElementById('sched-new-timeout')?.value) || 300;
+  const thinking_level = document.getElementById('sched-new-thinking')?.value || '';
+  const caveman_chat = parseInt(document.getElementById('sched-new-caveman')?.value) || 0;
 
   if (!name || !task) { showToast('Name and prompt are required', true); return; }
 
@@ -14001,6 +14209,7 @@ async function _createScheduledTask() {
   try {
     const res = await API.manageSchedule({
       action: 'add', name, task, schedule, agent, model, timeout,
+      thinking_level, caveman_chat,
       working_dir, attachments,
     });
     if (res.error) { showToast(res.error, true); return; }
@@ -15722,17 +15931,58 @@ function getActiveThinkingFormat() {
   return (cfg && cfg.thinking_format) || 'none';
 }
 
+// Levels the composer cycles through for a given thinking_format. Mirrors
+// the schedule + Models-tab logic so the UI never offers a setting the
+// provider would silently coerce. Returns ['none'] when format='none' so
+// callers can short-circuit.
+function _composerLevelsForFormat(fmt) {
+  const info = _thinkingOptionsForFormat(fmt);
+  if (!info) return ['none'];  // unsupported
+  // info.options is [{value,label}, ...] — extract values, ensure 'none' is first.
+  const vals = info.options.map(o => o.value);
+  if (!vals.includes('none')) vals.unshift('none');
+  return vals;
+}
+
 function cycleThinkingLevel() {
-  if (getActiveThinkingFormat() === 'none') {
+  const fmt = getActiveThinkingFormat();
+  if (fmt === 'none') {
     showToast("Selected model doesn't support thinking", true);
     return;
   }
-  const levels = ['none', 'low', 'medium', 'high'];
-  const idx = levels.indexOf(state.thinkingLevel);
-  state.thinkingLevel = levels[(idx + 1) % levels.length];
+  const levels = _composerLevelsForFormat(fmt);
+  // If the saved level isn't in this format's set, jump to the first non-off
+  // level. Otherwise advance one step.
+  const cur = state.thinkingLevel || 'none';
+  let next;
+  const idx = levels.indexOf(cur);
+  if (idx < 0) {
+    next = levels.length > 1 ? levels[1] : 'none';
+  } else {
+    next = levels[(idx + 1) % levels.length];
+  }
+  state.thinkingLevel = next;
   localStorage.setItem('thinking-level', state.thinkingLevel);
   refreshThinkingButton();
   showToast(`Thinking: ${state.thinkingLevel}`);
+}
+
+// Demote state.thinkingLevel to a value valid for the current model's
+// thinking_format. Called when the active chat's model changes.
+function _ensureValidThinkingLevel() {
+  const fmt = getActiveThinkingFormat();
+  const cur = state.thinkingLevel || 'none';
+  if (fmt === 'none') {
+    // Don't clear localStorage — user might switch back to a thinking model.
+    // The button is disabled in this state regardless.
+    return;
+  }
+  const levels = _composerLevelsForFormat(fmt);
+  if (!levels.includes(cur)) {
+    state.thinkingLevel = 'none';
+    localStorage.setItem('thinking-level', 'none');
+    refreshThinkingButton();
+  }
 }
 
 // Bulb glyph that grows brighter and more filled with the thinking level.
@@ -15760,6 +16010,19 @@ function thinkingIconFor(level) {
 function refreshThinkingButton() {
   const fmt = getActiveThinkingFormat();
   const supported = fmt !== 'none';
+  // Self-correct: if the saved level isn't valid for this model's format,
+  // demote in-place. Done before the icon/tooltip render so the displayed
+  // state matches what would actually be sent on the next turn. Skipped
+  // when the model doesn't support thinking at all (button is disabled
+  // anyway, so the saved level can stay around for when the user switches
+  // back to a thinking-capable model).
+  if (supported) {
+    const valid = _composerLevelsForFormat(fmt);
+    if (!valid.includes(state.thinkingLevel || 'none')) {
+      state.thinkingLevel = 'none';
+      localStorage.setItem('thinking-level', 'none');
+    }
+  }
   // Per-level color ramp: off=neutral grey, low=amber, medium=orange, high=red.
   const colorMap = { none: '', low: '#f59e0b', medium: '#f97316', high: '#ef4444' };
   const level = state.thinkingLevel || 'none';
@@ -15777,7 +16040,11 @@ function refreshThinkingButton() {
       btn.style.opacity = '';
       btn.style.cursor = '';
       btn.style.color = colorMap[level] || '';
-      btn.title = `Thinking: ${level} (${fmt})`;
+      // Show the levels this model accepts so the user knows what cycling
+      // does. e.g. mistral_blocks → "Thinking: off · cycle: off → high".
+      const valid = _composerLevelsForFormat(fmt);
+      const cycleHint = valid.length > 1 ? ' · cycle: ' + valid.join(' → ') : '';
+      btn.title = `Thinking: ${level} (${fmt})${cycleHint}`;
     }
   }
 }
@@ -18132,6 +18399,10 @@ async function init() {
     toolBtn.style.color = state.showToolCalls ? 'var(--accent-brand)' : '';
     toolBtn.title = state.showToolCalls ? 'Tool calls: visible' : 'Tool calls: hidden';
   }
+  // Demote a stored thinking_level that doesn't fit the active chat's
+  // model (e.g. localStorage carried 'medium' across a model switch to a
+  // mistral_blocks model that only accepts none/high).
+  try { _ensureValidThinkingLevel(); } catch(_) {}
   refreshThinkingButton();
 
   // Start on welcome view

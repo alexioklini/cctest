@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.17.0"
+VERSION = "8.18.0"
 VERSION_DATE = "2026-04-26"
 CHANGELOG = [
+    ("8.18.0", "2026-04-26", "Per-task thinking level + caveman mode for scheduled runs, format-aware UX everywhere. Two new schedules columns added by idempotent ALTER: thinking_level TEXT (''=inherit | none | low | medium | high) and caveman_chat INTEGER (0..3, response-style compression analogous to the chat composer toggle). Scheduler.add / Scheduler.update validate them; _execute_scheduled overlays thinking_level onto the resolved inference_params (or removes it on 'none' + sets thinking=False) before _run_delegate, and appends CAVEMAN_CHAT_PROMPTS[level] directly to the system prompt — same suffix the chat composer toggle uses. caveman_system is intentionally NOT exposed per task: it's a per-model knob tied to KV-prefix stability and would invalidate warmup. /v1/schedule add/edit endpoints accept the two new fields. Schedule create + edit modals get a 3-column row (Timeout · Thinking level · Caveman mode); the edit modal preselects the saved values. Format-aware option set everywhere via _thinkingOptionsForFormat / _thinkingOptionsForModel helpers in web/index.html: 'none' → '(unsupported)' disabled select; 'inline_tags' → Off/On (no graduated levels); 'mistral_blocks' → Off/High (provider only accepts those two); 'reasoning_field' / 'openai_opaque' → Off/Low/Medium/High. Schedule modal also gets an 'Inherit from model' entry on top, re-rendered when the model selector changes (preserves the user's prior choice when still valid). Models tab General Settings detail panel adds a Thinking Level dropdown next to Thinking Format — driven by the row's current format, re-renders on format change, persists inference.thinking_level (or omits when unset/disabled). Save path validates both per-row. Composer thinking-level button (#btn-thinking / #welcome-btn-thinking) is now format-aware: cycleThinkingLevel uses _composerLevelsForFormat to cycle only through valid steps for the current model (mistral_blocks cycles Off→High, inline_tags cycles Off→On, reasoning_field/openai_opaque keep the full Off→Low→Medium→High cycle). refreshThinkingButton self-corrects state.thinkingLevel in place when the user switches to a model that can't honor the saved level — every existing call site that already refreshes after a model change naturally enforces the rule. Tooltip now shows the cycle for the current format ('Thinking: medium (reasoning_field) · cycle: none → low → medium → high') so users can see why mid-levels aren't reachable on capped formats. Server-side belt-and-braces: new _validate_thinking_level_for_model helper rejects mismatches with helpful messages ('Mistral accepts only none or high', 'Model X does not support reasoning'); called from Scheduler.add (before INSERT) and Scheduler.update (cross-field check using the effective model — the one in the patch, or the existing row's). Empty model defers validation to runtime so 'Default' schedules still work. Detector fix: _detect_thinking_format gained an optional provider arg; cliproxyapi+gemini-2.5* and oMLX+qwen3/deepseek-r1/glm-zero/magistral now match even when the stored model id is bare (no scoped prefix). _match_known_model passes provider through. init_models_config does a forward-looking re-detect — when stored format is the conservative default 'none' but the provider-aware detector now returns a real format, upgrade in place; never the other direction (would clobber a deliberate user 'off'). Server startup persists the upgraded models when init produces a real change (was first-run-only before), so e.g. gemini-2.5-flash auto-upgraded from 'none' to 'reasoning_field' on this install. KV-cache invariant preserved — _build_system_prompt unchanged, scheduled tasks build their system prompt independently so the per-task caveman_chat append doesn't touch warm-pool prefixes."),
     ("8.17.0", "2026-04-26", "Per-user account settings + auto-maintained user profile (Memory from chat history). New User Settings modal split out from the global admin settings: clicking the username in the bottom-left sidebar opens a four-tab dialog (Profile, Memory, My Schedules, Security) — the gear button beside the theme toggle was redundant (already in the dropdown) and is now a chevron that toggles the dropdown. The dropdown's Settings entry was removed for non-admins; admins still see General settings as a separate item. Auth schema: new users.preferences JSON column (idempotent ALTER, validated keys greeting_name / job_description / communication_preferences / memory_chats_default / memory_sched_default / daily_summary_enabled / daily_summary_hour_local) with PREFERENCE_DEFAULTS + _coerce_pref(key, value) as the single source of truth — invalid values return 400 atomically without partial writes. New self-service endpoints POST /v1/auth/profile (display_name + email only — role/disabled stay admin-only) and POST /v1/auth/preferences (merge update, unknown keys silently dropped, default-valued keys cleaned out so the JSON stays small). Per-user defaults wired into the engine: chat creation in /v1/sessions reads memory_chats_default and overrides the server-wide classifier default for new sessions; the mempalace miner gates every sched-folder file on the schedule owner's memory_sched_default — explicit 0 skips, anything else (null/1/2) keeps the legacy 'always file' path. New schedules.user_id column + index records the creator; non-admins only see/edit/delete/run their own (admin sees everything; legacy rows with empty user_id stay admin-only on purpose). New _schedule_owner_check helper gates pause/resume/delete/run_now/edit/history/delete_run/clear_history; purge_orphan_history is admin-only. First-turn greeting preamble injected on the first user message (kept OUT of the system prompt so the warm-pool KV-prefix stays user-agnostic across all users) carries up to three lines: 'You are talking to <name>.' / 'Their role: <job>' / 'How they like to communicate: <prefs>'. Empty fields drop out, fully-empty preamble skips entirely. _greeting_injected sentinel is stripped by the existing _ALLOWED_MSG_KEYS filter so it never leaks to the wire. job_description capped at 500 chars; communication_preferences capped at 4000 chars (this field is the per-user equivalent of soul.md, intended for tone/voice/style guidance — large enough to fit a soul-style block, bounded so the per-turn preamble doesn't blow up the prompt budget). Both fields ship with inline 'Refine with AI' buttons in the Profile tab; /v1/refine extended with optional purpose='profile_field' (+ field_label) — uses a polish-don't-rewrite system prompt that preserves first-person voice and line breaks, skips chat-history context (privacy + irrelevance for bio polishing). After-refine the button flips to one-click Undo until used. Default refinement model in tools_config.json switched from cliproxyapi/gemini-2.5-flash (silently echoed input verbatim — bad for any polish prompt) to mistral-vibe-cli-fast which actually follows the polish rules (tested round-trip across job-desc, comm-prefs, and chat-prompt rewrites). Auto-maintained 'Memory from chat history' (the Claude.ai 'Gedächtnis aus Chat-Verlauf generieren' equivalent): one Markdown file per user at agents/main/user_profiles/<uid>.md mirrored as one drawer per ## section into MemPalace (wing=<uid>--main, room=user_profile, source_file=user/<uid>#profile/<slug>). Sections in fixed order: Work context, Personal context, Top of mind, Recent months, Earlier context, Long-term background. File is the source of truth; mirror is purge-then-add so renamed/removed sections don't linger. Atomic write via tmp + os.replace, with versioned history at <uid>.history/<ISO-timestamp>.md (capped at 30 entries; intentionally KEPT on Reset so users can recover from a hasty rebuild). New _user_profile_dir / _user_profile_path / _read_user_profile / _write_user_profile_atomic / _delete_user_profile / _split_profile_sections / _mirror_user_profile_to_mempalace / _purge_drawers_by_room_and_source / _purge_user_profile_drawers helpers — all module-level so HTTP handlers and the daemon share them. New user-profile daemon thread (replaces the v8.14.0 daily-summary path which built activity logs of dubious value): polls every 30 min, gates on daily_summary_enabled + local-hour match + 23h cooldown, fires once per local day per opted-in user. Per-user worker (_profile_run_synchronous) pulls 100 most-recent chats from the last 90 days, samples title + first user msg + last assistant msg (250 chars each, total input capped at 12K chars), feeds them through engine._run_delegate with the fixed-schema _PROFILE_SYSTEM_PROMPT — hard rules: never invent, third-person voice, match the user's predominant language, edit existing profile in place rather than rewrite, demote stale 'Top of mind' to 'Recent months' when no fresh evidence appears. Refinement model resolved via _profile_pick_model (refinement → cheapest → server default), GDPR auto-fallback to local on PII findings via gdpr_pick_model_for_background. New self-service endpoints GET /v1/auth/profile-doc (content + cursor + enabled flag), POST /v1/auth/profile-doc (manual edit, 32KB cap), POST /v1/auth/profile-doc/update-now (synchronous regen — same logic as the daemon worker, ~5-60s), POST /v1/auth/profile-doc/reset (delete file + drawers, keep history dir). Account Settings → Memory tab gains an editable Markdown textarea (380px tall, monospace) with Update now / Reset / Save buttons + status line showing last-run timestamp + bytes + 'no_activity' / 'filed' / 'error' state. send_message round 0 reads the profile file (capped 4KB) and prepends as a separate '[Auto-maintained user profile (from chat history; treat as background context, not as ground truth for the current request):...]' block on the first user message of each session — distinct block from the user-set greeting/job/comm-prefs preamble so the model can tell user-set guidance apart from inferred long-form context. Module-level _gather_user_chat_samples builds the per-chat samples; module-level _user_profile_run_llm wraps the delegate call with proper thread-local cleanup in finally. One-shot startup purge of the deprecated user_daily_summary room across every user wing on every server start (idempotent — second call is a no-op once the room is empty); was 0 on this install since the v8.14.0 daemon never actually fired due to the local_hour gate. Welcome view greeting now reads 'Good morning, Alex' instead of 'Good morning' — refreshWelcomeGreeting() is auth-aware (greeting_name → display_name → username, falls back to anonymous 'Good morning' when no auth or pre-login) and re-runs from renderUserMenu() so login + profile saves update it without a page reload. Schedules My Schedules tab shows the user's owned tasks with state badges + link back to the Scheduled view. Cleanup: all bare AGENTS_DIR references in server.py replaced with engine.AGENTS_DIR (latent bug — the helpers were inside main() so the bare name resolved nowhere; would have crashed if exercised, but try/except wrapping made it silent). Module-level imports added: datetime, sqlite3 (one was duplicated). KV-cache stability invariant preserved: _build_system_prompt remains user-agnostic (the user-greeting injection from an earlier iteration was reverted because it broke warm-pool prefix matching for every authenticated turn — now lives in the first-user-message preamble where it costs nothing across users)."),
     ("8.16.0", "2026-04-25", "Scheduled-task attachments + working directory. Two pieces of context the agent previously had no way to receive on a scheduled run: file attachments (durable, picked once, referenced on every fire) and a per-task working directory (the cwd the agent should pass to execute_command). DB: new schedules.attachments (JSON list of {name,path,mime,size}) + working_dir (TEXT) columns added by idempotent ALTER in Scheduler._init_db. Engine: _execute_scheduled appends a disk-files notice listing the stored absolute paths so the agent reads them in place with read_document/read_file — no per-run /tmp copy. working_dir overrides the 'Current working directory:' line in the system prompt and adds a directive to pass it as cwd= to execute_command; python_exec stays pinned to the artifact folder by design (file-write tracking depends on it). Cleanup: Scheduler.remove() reads the attachments JSON before DELETE and rmtrees each per-upload uuid folder under agents/<agent>/scheduled_attachments/<uuid>/; Scheduler.update() diffs old vs new attachment paths and purges orphans (chip removal in the edit modal frees bytes). _purge_attachment_paths() refuses to touch anything outside scheduled_attachments/ as a guard against malformed metadata. New POST /v1/schedule/upload (multipart, auth-gated) saves files under agents/<agent>/scheduled_attachments/<uuid>/<name> and returns {name,path,mime,size}. /v1/schedule add/edit accept attachments[] and working_dir. GET /v1/files/tree gains an empty-path default of $HOME so the folder picker has somewhere to start without leaking $HOME via a separate endpoint. UI: showCreateScheduledModal() and _schedViewEdit() got an attachments file picker (uploads on selection, removable chips with kb size + filename) and a read-only working_dir input + Browse… button + clear (×). Browse opens a stacked folder-picker modal (z-index above the schedule modal): breadcrumb of the current absolute path + scrollable list of subfolders, ↑ .. row to go up, click any folder to descend, Select this folder writes the path back to the input and closes only the picker. Hidden files and the usual junk (.git, node_modules, __pycache__, dist, etc.) are filtered by the existing /v1/files/tree IGNORE set; only entries with type === 'dir' show up. _schedUploadFiles sends Authorization: Bearer <token> from localStorage('auth-token') and uses BASE_URL — bare fetch hit the global /v1/* auth gate and 401-ed before the handler ran. Dropped an earlier per-run copy that would have churned /tmp on every fire (50MB CSV × daily = 18GB/year for no benefit) — the source path under scheduled_attachments/ is durable and on the same filesystem, so the agent reads in place; only delete-time cleanup is needed."),
     ("8.15.1", "2026-04-25", "oMLX continuous-batching opt-in + speed-profile resource-knob fix. Two related changes. (1) Bumped oMLX provider seed max_concurrent from 1 → 2 in config defaults. Re-benchmarking on gemma-4-26b-a4b-it-4bit (Apple Silicon) showed oMLX *does* fuse concurrent /chat/completions into batched forward passes (continuous batching) — earlier 8.9.0 prose claiming 'GPU serializes internally' was wrong for oMLX (still correct for CLIProxyAPI). Numbers: batch=1 → 63 tok/s decode, 2.3s TTFT; batch=2 → 80 tok/s aggregate, 4.3s TTFT; batch=4 → 91 tok/s aggregate, 8.6s TTFT. 2 is the sweet spot for multi-user / parallel-tool / warmup-overlap workloads — 27% aggregate throughput gain for ~40% per-request decode slowdown when both slots are full. CLAUDE.md Provider Concurrency Queue section rewritten to reflect this and document the per-provider tradeoff. (2) Removed `warmup: True` from the `speed` MODEL_PROFILES overlay (claude_cli.py). The profile system is supposed to set request-style defaults (warmup_mode, parallel_tool_calls, caveman_system, deferred_tool_groups, compact_threshold), not resource knobs. With warmup in the overlay, toggling warmup off in the Models tab on a speed-profile model would be silently re-enabled at next resolve_model_settings() — surprising and unfixable from the UI. Web UI saveModelsConfig now persists `warmup: false` explicitly (rather than deleting the key), so an explicit user-off survives even if a future overlay drift re-introduces a warmup default. Memory note feedback_profile_overlay_resource_knobs.md captures the rule for future profile edits. No schema change, no API change — config-only."),
@@ -10736,6 +10737,33 @@ def _sched_conn():
     return conn
 
 
+def _validate_thinking_level_for_model(model: str | None, level: str) -> str | None:
+    """Reject a thinking_level the model can't actually use, returning an
+    error string when invalid (None = OK).
+
+    Empty `level` ('' = inherit) is always OK.
+    Empty/unknown `model` is OK (resolved at fire time — defer to runtime).
+    """
+    level = (level or "").strip().lower()
+    if not level:
+        return None
+    if level not in ("none", "low", "medium", "high"):
+        return f"Invalid thinking_level: {level}"
+    if not model:
+        return None
+    cfg = _models_config.get(model) or {}
+    fmt = cfg.get("thinking_format", "none")
+    if fmt == "none":
+        if level == "none":
+            return None  # explicit off on a non-thinking model is harmless
+        return f"Model '{model}' does not support reasoning (thinking_format=none)"
+    if fmt == "inline_tags" and level in ("low", "medium"):
+        return f"Model '{model}' supports thinking on/off only — use 'none' or 'high'"
+    if fmt == "mistral_blocks" and level in ("low", "medium"):
+        return f"Model '{model}' (Mistral) accepts only 'none' or 'high'"
+    return None
+
+
 class Scheduler:
     """Background task scheduler with cron-like scheduling."""
 
@@ -10795,6 +10823,14 @@ class Scheduler:
                 # (pre-v8.17.0); the server endpoint backfills those to the org
                 # admin lazily so list-by-owner stays consistent.
                 "ALTER TABLE schedules ADD COLUMN user_id TEXT DEFAULT ''",
+                # Per-task execution knobs: thinking_level (none|low|medium|high,
+                # empty string = inherit from model defaults) and caveman_chat
+                # (0..3, response-style compression analogous to the chat
+                # composer toggle). System-level caveman is intentionally not
+                # exposed here — it's a per-model setting tied to KV-prefix
+                # stability.
+                "ALTER TABLE schedules ADD COLUMN thinking_level TEXT DEFAULT ''",
+                "ALTER TABLE schedules ADD COLUMN caveman_chat INTEGER DEFAULT 0",
             ):
                 try:
                     conn.execute(_ddl)
@@ -10831,7 +10867,9 @@ class Scheduler:
             timeout: int = 300,
             attachments: list | None = None,
             working_dir: str | None = None,
-            user_id: str = "") -> dict:
+            user_id: str = "",
+            thinking_level: str = "",
+            caveman_chat: int = 0) -> dict:
         """Add a scheduled task. timeout in seconds (default: 300 = 5 min).
 
         attachments: list of {name, path, mime, size} dicts. Files must already
@@ -10840,6 +10878,8 @@ class Scheduler:
         the agent knows where to operate; agent passes it as `cwd` to shell tools.
         user_id: owner. Server fills this from the authenticated request; empty
         string only for tooling that creates schedules outside the auth path.
+        thinking_level: '' (inherit) | 'none' | 'low' | 'medium' | 'high'.
+        caveman_chat: 0..3 — chat-style response compression for this task.
         """
         next_run = self._calc_next_run(schedule)
         if next_run is None:
@@ -10848,19 +10888,37 @@ class Scheduler:
             working_dir = os.path.expanduser(working_dir)
             if not os.path.isdir(working_dir):
                 return {"error": f"Working dir does not exist: {working_dir}"}
+        thinking_level = (thinking_level or "").strip().lower()
+        if thinking_level not in ("", "none", "low", "medium", "high"):
+            return {"error": f"Invalid thinking_level: {thinking_level}"}
+        # Reject combinations the chosen model can't honor (mistral wants
+        # none/high only, inline_tags wants none/high, format=none rejects
+        # any non-empty level except 'none').
+        _tl_err = _validate_thinking_level_for_model(model, thinking_level)
+        if _tl_err:
+            return {"error": _tl_err}
+        try:
+            caveman_chat = int(caveman_chat or 0)
+        except (TypeError, ValueError):
+            caveman_chat = 0
+        if caveman_chat < 0 or caveman_chat > 3:
+            return {"error": "caveman_chat must be between 0 and 3"}
         atts_json = json.dumps(attachments or [])
         try:
             with _sched_conn() as conn:
                 conn.execute("""
-                    INSERT INTO schedules (name, task, schedule, agent, model, next_run, timeout, attachments, working_dir, user_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO schedules (name, task, schedule, agent, model, next_run, timeout, attachments, working_dir, user_id, thinking_level, caveman_chat)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (name, task, schedule, agent, model, next_run.isoformat(),
-                      timeout, atts_json, working_dir, user_id or ""))
+                      timeout, atts_json, working_dir, user_id or "",
+                      thinking_level, caveman_chat))
                 conn.commit()
             return {"name": name, "schedule": schedule, "agent": agent,
                     "next_run": next_run.isoformat(), "timeout": timeout,
                     "attachments": attachments or [], "working_dir": working_dir,
                     "user_id": user_id or "",
+                    "thinking_level": thinking_level,
+                    "caveman_chat": caveman_chat,
                     "status": "created"}
         except sqlite3.IntegrityError:
             return {"error": f"Schedule '{name}' already exists"}
@@ -11106,7 +11164,8 @@ class Scheduler:
         rejected if the new name collides with an existing task.
         """
         allowed = {"task", "schedule", "model", "timeout", "agent",
-                   "attachments", "working_dir"}
+                   "attachments", "working_dir",
+                   "thinking_level", "caveman_chat"}
         updates: dict = {}
         for k in allowed:
             if k not in fields:
@@ -11121,6 +11180,19 @@ class Scheduler:
             elif k == "attachments":
                 # Stored as JSON.
                 updates[k] = json.dumps(v if isinstance(v, list) else [])
+            elif k == "thinking_level":
+                tl = str(v or "").strip().lower()
+                if tl not in ("", "none", "low", "medium", "high"):
+                    return {"error": f"Invalid thinking_level: {v}"}
+                updates[k] = tl
+            elif k == "caveman_chat":
+                try:
+                    cv = int(v)
+                except (TypeError, ValueError):
+                    return {"error": "caveman_chat must be an integer 0..3"}
+                if cv < 0 or cv > 3:
+                    return {"error": "caveman_chat must be between 0 and 3"}
+                updates[k] = cv
             else:
                 updates[k] = v
         new_name = fields.get("new_name")
@@ -11152,6 +11224,21 @@ class Scheduler:
                     updates["timeout"] = int(updates["timeout"])
                 except (TypeError, ValueError):
                     return {"error": "timeout must be an integer (seconds)"}
+
+            # Cross-field: thinking_level must be honorable by the effective
+            # model (the one in this patch, or the existing row's). Run after
+            # both fields have been individually validated.
+            if "thinking_level" in updates:
+                effective_model = updates.get("model")
+                if effective_model is None:  # not in this patch — keep current
+                    try:
+                        effective_model = row["model"]
+                    except (KeyError, IndexError):
+                        effective_model = None
+                _tl_err = _validate_thinking_level_for_model(
+                    effective_model, updates["thinking_level"])
+                if _tl_err:
+                    return {"error": _tl_err}
 
             if updates.get("working_dir"):
                 wd = os.path.expanduser(updates["working_dir"])
@@ -11566,6 +11653,17 @@ class Scheduler:
         if tools_guide and tcfg.get("include_tools_guide", True):
             system_prompt += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
 
+        # Per-task chat-style response compression: same prompt suffix the
+        # composer toggle applies to interactive chat. Appended last so it
+        # follows the tools guide and isn't accidentally compressed by a
+        # future system-prompt postprocessor.
+        try:
+            _task_caveman = int(task_row.get("caveman_chat") or 0)
+        except (TypeError, ValueError):
+            _task_caveman = 0
+        if _task_caveman and _task_caveman in CAVEMAN_CHAT_PROMPTS:
+            system_prompt += CAVEMAN_CHAT_PROMPTS[_task_caveman]
+
         # Point the agent at the durable attachment paths (no per-run copy).
         # Files live under agents/<agent>/scheduled_attachments/<uuid>/<name>
         # and are persisted with the schedule definition; deletion of the
@@ -11634,6 +11732,18 @@ class Scheduler:
             _thread_local.trace_id = None
 
             sched_inf = get_inference_params(model, target.config.get("model_purpose"))
+            # Per-task thinking override: '' = inherit model defaults; 'none'
+            # explicitly disables; otherwise (low|medium|high) wins over the
+            # model's inference.thinking_level so the UI choice takes effect
+            # even if the model has a different default.
+            _task_thinking = (task_row.get("thinking_level") or "").strip().lower()
+            if _task_thinking and _task_thinking != "none":
+                sched_inf = dict(sched_inf)
+                sched_inf["thinking_level"] = _task_thinking
+            elif _task_thinking == "none":
+                sched_inf = dict(sched_inf)
+                sched_inf.pop("thinking_level", None)
+                sched_inf["thinking"] = False
             # Memory summary tasks only need memory tools, not the full 39-tool schema
             sched_tools = tcfg.get("scheduled_task_tools", True)
             if name.startswith("_memory_summary_"):
@@ -17169,8 +17279,8 @@ CAPABILITY_VALUES = ["coding", "analysis", "agentic", "fast", "creative", "local
 _models_config: dict = {}
 
 
-def _detect_thinking_format(model_id: str) -> str:
-    """Infer thinking_format from model id. Returns one of:
+def _detect_thinking_format(model_id: str, provider: str = "") -> str:
+    """Infer thinking_format from model id (and optional provider). Returns one of:
     "none" — model has no reasoning phase (default).
     "inline_tags" — emits <think>...</think> in content string (Qwen3, DeepSeek-R1 distills, GLM-Zero served via third parties).
     "reasoning_field" — emits separate message.reasoning_content / delta.reasoning_content (oMLX for all its models, cliproxyapi Gemini with reasoning_effort, DeepSeek-R1 direct).
@@ -17182,6 +17292,24 @@ def _detect_thinking_format(model_id: str) -> str:
     Brain routes thinking-capable models direct to their provider for exactly this reason.
     """
     m = model_id.lower()
+    p = (provider or "").lower()
+    # Provider-aware match: cliproxyapi serves Gemini 2.5 reasoning even when
+    # the stored id is bare ("gemini-2.5-flash") with no scoped prefix. The
+    # id-only patterns below still cover the prefixed form for back-compat.
+    if p == "cliproxyapi" and "gemini-2.5" in m:
+        return "reasoning_field"
+    # oMLX provider catch-all for any reasoning-capable model served locally,
+    # even when the id doesn't carry an OMLX/ prefix. Non-reasoning models on
+    # oMLX (gemma, crow) still hit the default 'none' below because none of
+    # the id patterns match them.
+    if p == "omlx" and (
+        "qwen3" in m or "qwen-3" in m
+        or "deepseek-r1" in m or "deepseek/r1" in m
+        or "glm-zero" in m or "glm4-zero" in m
+        or "thinking" in m
+        or "magistral" in m
+    ):
+        return "reasoning_field"
     # OpenAI o-series — opaque reasoning
     for p in ("o1-", "o1/", "/o1", "o3-", "o3/", "/o3", "o4-mini"):
         if p in m:
@@ -17219,7 +17347,7 @@ def _detect_thinking_format(model_id: str) -> str:
     return "none"
 
 
-def _match_known_model(model_id: str) -> dict:
+def _match_known_model(model_id: str, provider: str = "") -> dict:
     """Match a model ID against KNOWN_MODELS patterns. Returns default config."""
     m = model_id.lower()
     for prefix, defaults in KNOWN_MODELS.items():
@@ -17236,7 +17364,7 @@ def _match_known_model(model_id: str) -> dict:
                 "icon": defaults["icon"],
                 "priority": defaults["priority"],
                 "capabilities": list(defaults["capabilities"]),
-                "thinking_format": _detect_thinking_format(model_id),
+                "thinking_format": _detect_thinking_format(model_id, provider),
             }
             if "max_context" in defaults:
                 result["max_context"] = defaults["max_context"]
@@ -17257,7 +17385,7 @@ def _match_known_model(model_id: str) -> dict:
         "priority": 10,
         "capabilities": [],
         "raw_formats": [],
-        "thinking_format": _detect_thinking_format(model_id),
+        "thinking_format": _detect_thinking_format(model_id, provider),
     }
 
 
@@ -17296,14 +17424,14 @@ def init_models_config(providers: dict, existing_models: dict | None = None,
             if model_id in tombstones or scoped_key in tombstones:
                 continue
             if model_id not in _models_config:
-                entry = _match_known_model(model_id)
+                entry = _match_known_model(model_id, name)
                 entry["provider"] = name
                 entry["profile"] = default_profile
                 _models_config[model_id] = entry
             elif _models_config[model_id].get("provider") != name:
                 # Same model ID exists under a different provider — add with provider-scoped key
                 if scoped_key not in _models_config:
-                    entry = _match_known_model(model_id)
+                    entry = _match_known_model(model_id, name)
                     entry["provider"] = name
                     entry["base_model_id"] = model_id
                     entry["profile"] = default_profile
@@ -17336,13 +17464,25 @@ def init_models_config(providers: dict, existing_models: dict | None = None,
 
     # Backfill defaults from KNOWN_MODELS for all models missing fields
     for model_id, cfg in _models_config.items():
-        known = _match_known_model(model_id)
+        prov = cfg.get("provider", "") or ""
+        known = _match_known_model(model_id, prov)
         if "max_context" not in cfg and "max_context" in known:
             cfg["max_context"] = known["max_context"]
         if "raw_formats" not in cfg and "raw_formats" in known:
             cfg["raw_formats"] = known["raw_formats"]
         if "thinking_format" not in cfg:
             cfg["thinking_format"] = known.get("thinking_format", "none")
+        else:
+            # Forward-looking re-detect: when the stored format is the
+            # conservative default ('none') but the provider-aware detector
+            # now produces a real format (e.g. cliproxyapi/gemini-2.5
+            # gained provider-aware matching post-8.17.x), upgrade in place.
+            # We never go in the other direction — that would clobber a
+            # deliberate user "off" choice on a thinking-capable model.
+            if cfg["thinking_format"] == "none":
+                redetected = known.get("thinking_format", "none")
+                if redetected != "none":
+                    cfg["thinking_format"] = redetected
 
     return _models_config
 

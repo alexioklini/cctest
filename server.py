@@ -4862,6 +4862,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 body.get("model"), timeout=int(body.get("timeout", 300)),
                 attachments=atts, working_dir=wd,
                 user_id=owner_id,
+                thinking_level=body.get("thinking_level", "") or "",
+                caveman_chat=body.get("caveman_chat", 0) or 0,
             )
             self._send_json(result)
         elif action == "pause":
@@ -4939,7 +4941,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 return
             fields = {k: body.get(k) for k in
                       ("task", "schedule", "model", "timeout", "agent",
-                       "new_name", "attachments", "working_dir")
+                       "new_name", "attachments", "working_dir",
+                       "thinking_level", "caveman_chat")
                       if k in body}
             res = engine._scheduler.update(name, fields)
             if isinstance(res, dict) and res.get("error"):
@@ -10728,8 +10731,25 @@ def main():
     if providers:
         synced = engine.init_models_config(providers, existing_models,
                                            deleted_models=deleted_models)
-        if not existing_models and synced:
-            # First run: persist auto-discovered models to config.json
+        # Persist when (a) first run with no stored models, or (b) the in-memory
+        # init upgraded fields on existing rows (e.g. provider-aware
+        # thinking_format re-detection upgrading 'none' → 'reasoning_field').
+        # Without this branch, the upgrade only lives in RAM until the next
+        # explicit Save in the Models tab.
+        def _models_differ(a: dict, b: dict) -> bool:
+            if set(a.keys()) != set(b.keys()):
+                return True
+            for k, av in a.items():
+                bv = b.get(k, {})
+                # Compare just the fields init_models_config actually touches.
+                for fld in ("thinking_format", "provider", "max_context",
+                            "raw_formats", "profile"):
+                    if av.get(fld) != bv.get(fld):
+                        return True
+            return False
+        should_save = bool(synced) and (
+            not existing_models or _models_differ(synced, existing_models))
+        if should_save:
             try:
                 config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
                 config = {}
