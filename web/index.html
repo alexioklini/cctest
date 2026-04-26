@@ -3444,7 +3444,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <span class="sb-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
         <span class="sb-label">Scheduled</span>
       </div>
-      <div class="sb-nav-item" onclick="openAgentSettings()" data-view="settings">
+      <div class="sb-nav-item" id="sb-nav-customize" onclick="openAgentSettings()" data-view="settings">
         <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
         <span class="sb-label">Customize</span>
       </div>
@@ -3818,15 +3818,15 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     <div class="status-item" id="status-exec-mode" style="display:none">
       <span style="font-size:9px;font-weight:600;background:#7c3aed;color:#fff;padding:1px 5px;border-radius:3px;letter-spacing:0.5px">CLIENT</span>
     </div>
-    <div class="status-item" title="Input tokens (total)">
+    <div class="status-item" id="status-tokens-in-wrap" title="Input tokens (total)">
       <span class="status-label">In:</span>
       <span class="status-value" id="status-tokens-in">0</span>
     </div>
-    <div class="status-item" title="Output tokens (total)">
+    <div class="status-item" id="status-tokens-out-wrap" title="Output tokens (total)">
       <span class="status-label">Out:</span>
       <span class="status-value" id="status-tokens-out">0</span>
     </div>
-    <div class="status-item" title="Last request speed">
+    <div class="status-item" id="status-speed-wrap" title="Last request speed">
       <span class="status-label">Speed:</span>
       <span class="status-value" id="status-speed">-</span>
     </div>
@@ -3860,7 +3860,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     </div>
     <div class="status-item" style="margin-left:auto;gap:6px">
       <span class="status-value" id="status-session"></span>
-      <button class="compact-btn" onclick="openInspectModal()" title="Inspect session" style="font-size:13px;padding:1px 6px">&#x1F50D;</button>
+      <button class="compact-btn" id="status-inspect-btn" onclick="openInspectModal()" title="Inspect session" style="font-size:13px;padding:1px 6px">&#x1F50D;</button>
     </div>
   </div>
 </div>
@@ -8605,6 +8605,28 @@ function updateChatView() {
   scrollToBottom();
 }
 
+// Role-gate: admins see everything; powerusers lose pool/queue (infra-internal);
+// users additionally lose tokens in/out, speed, cost, and the inspect button.
+// Returns the role string so callers can short-circuit later sections.
+function applyStatusBarRoleVisibility() {
+  const role = (state.authUser && state.authUser.role) || 'admin';
+  const hide = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? 'none' : ''; };
+  const isUser = role === 'user';
+  const isPower = role === 'poweruser';
+  hide('status-tokens-in-wrap',  isUser);
+  hide('status-tokens-out-wrap', isUser);
+  hide('status-speed-wrap',      isUser);
+  hide('status-cost-wrap',       isUser);
+  hide('status-inspect-btn',     isUser);
+  // Pool + queue: hidden for powerusers and users (admins-only).
+  // Their monitors set display:flex on poll — see _renderPoolIndicator + QueueMonitor._render.
+  if (isUser || isPower) {
+    hide('status-warmpool', true);
+    hide('status-queue', true);
+  }
+  return role;
+}
+
 function updateStatusBar() {
   const chat = state.activeChat;
   if (!chat) return;
@@ -8734,14 +8756,18 @@ function updateStatusBar() {
       costLabel.textContent = '0.00';
       costLabel.style.color = 'var(--text-400)';
       costWrap.title = 'Session cost: $0.00 — no pricing configured for this model. Set cost_input/cost_output in Settings → Models.';
-      return;
+    } else {
+      costLabel.textContent = sessionCost < 1 ? sessionCost.toFixed(3) : sessionCost.toFixed(2);
+      costLabel.style.color = '';
+      costWrap.title = `Session cost: $${sessionCost.toFixed(4)}`;
     }
-    costLabel.textContent = sessionCost < 1 ? sessionCost.toFixed(3) : sessionCost.toFixed(2);
-    costLabel.style.color = '';
-    costWrap.title = `Session cost: $${sessionCost.toFixed(4)}`;
   } else {
     costWrap.style.display = 'none';
   }
+
+  // Final pass: hide role-restricted items. Runs last so it wins over the
+  // data-driven branches above (e.g. cost-wrap re-show on cost data arrival).
+  applyStatusBarRoleVisibility();
 }
 
 /* ─── PII pre-submit modal ─────────────────────────────────── */
@@ -9697,6 +9723,14 @@ function toggleProjectStar() {
    AGENT SETTINGS MODAL (per-agent config)
    ═══════════════════════════════════════════════════════════ */
 function openAgentSettings() {
+  // Agent config (soul, agent.json, hooks, MCP, tokens) is admin-only on the
+  // server — POST /v1/agents/<id>/{file,hooks,...} returns 403 for everyone
+  // else. Refuse early so non-admins don't see editable system prompts they
+  // can't save, and so /settings + future entry points fail closed.
+  if ((state.authUser?.role || 'admin') !== 'admin') {
+    showToast('Agent customization is admin-only', true);
+    return;
+  }
   const agentId = state.activeAgentId || 'main';
   const agent = state.agents.find(a => (a.id || a.name) === agentId);
   const display = agent?.display_name || agentId;
@@ -9743,6 +9777,14 @@ function openSettingsModal() { openAgentSettings(); }
    GENERAL SETTINGS MODAL (system-wide)
    ═══════════════════════════════════════════════════════════ */
 function openGeneralSettings() {
+  // Server-wide config (providers, models, quotas, GDPR, MemPalace, ...) is
+  // admin-only at the server's POST gate. Refuse early so non-admin entry
+  // points (slash command, future shortcuts) fail closed instead of letting
+  // a non-admin browse and then 403 on save.
+  if ((state.authUser?.role || 'admin') !== 'admin') {
+    showToast('General settings are admin-only', true);
+    return;
+  }
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
@@ -16615,6 +16657,19 @@ function renderUserMenu() {
       <div class="sb-user-dropdown-item danger" onclick="event.stopPropagation(); authLogout()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>Sign out</div>
     `;
   }
+
+  // Role may have changed (login, role edit) — refresh status-bar gating now
+  // so users don't briefly see admin-only fields before their first turn.
+  if (typeof applyStatusBarRoleVisibility === 'function') applyStatusBarRoleVisibility();
+
+  // Sidebar "Customize" → admin-only (opens agent soul/agent.json/MCP/hooks
+  // editors, all admin-gated POSTs). Hide for non-admins so the row doesn't
+  // tease an editor that 403s on save.
+  const customizeNav = document.getElementById('sb-nav-customize');
+  if (customizeNav) {
+    const isAdmin = (state.authUser?.role || 'admin') === 'admin';
+    customizeNav.style.display = isAdmin ? '' : 'none';
+  }
 }
 
 function toggleUserDropdown() {
@@ -17869,6 +17924,8 @@ const WarmupMonitor = {
   _renderPoolIndicator() {
     const wrap = document.getElementById('status-warmpool');
     if (!wrap) return;
+    // Admins-only — pool is infra detail not relevant to powerusers/users.
+    if ((state.authUser?.role || 'admin') !== 'admin') { wrap.style.display = 'none'; return; }
     const entries = Object.entries(this.states);
     const warmupModels = entries.filter(([_, st]) => st.enabled);
     if (!warmupModels.length) { wrap.style.display = 'none'; return; }
@@ -17965,6 +18022,8 @@ const QueueMonitor = {
   _render() {
     const wrap = document.getElementById('status-queue');
     if (!wrap) return;
+    // Admins-only — provider queue is infra detail not relevant to powerusers/users.
+    if ((state.authUser?.role || 'admin') !== 'admin') { wrap.style.display = 'none'; return; }
     const entries = Object.entries(this.providers);
     // Hide only when no providers are configured for queueing at all.
     if (!entries.length) { wrap.style.display = 'none'; return; }
@@ -18086,13 +18145,14 @@ function openQuotaModal() {
   pop.id = 'quota-modal';
   pop.style.cssText = 'position:fixed;width:340px;background:var(--bg-000);border:1px solid var(--border-100);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.18);z-index:100;padding:14px 16px;font-size:13px;visibility:hidden;left:0;top:0';
   pop.onclick = (e) => e.stopPropagation();
+  const isAdmin = (state.authUser?.role || 'admin') === 'admin';
   pop.innerHTML = `
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
       <div style="font-size:13px;font-weight:600;color:var(--text-100);flex:1">Plan usage</div>
-      <button onclick="document.getElementById('quota-modal')?.remove();openGeneralSettings();setTimeout(()=>{const t=document.querySelector('.modal-tab[onclick*=&quot;quotas&quot;]');if(t)switchGeneralTab('quotas',t);},50);"
+      ${isAdmin ? `<button onclick="document.getElementById('quota-modal')?.remove();openGeneralSettings();setTimeout(()=>{const t=document.querySelector('.modal-tab[onclick*=&quot;quotas&quot;]');if(t)switchGeneralTab('quotas',t);},50);"
               style="background:transparent;border:1px solid var(--border-100);color:var(--text-300);
                      border-radius:6px;width:24px;height:24px;cursor:pointer;display:flex;align-items:center;justify-content:center"
-              title="Open Quota settings">&#x2192;</button>
+              title="Open Quota settings">&#x2192;</button>` : ''}
     </div>
     <div id="quota-modal-body"><div style="color:var(--text-300);text-align:center;padding:12px">Loading…</div></div>`;
   document.body.appendChild(pop);
