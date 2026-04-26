@@ -2139,6 +2139,115 @@ textarea { resize: none; }
   background: var(--bg-200);
 }
 
+/* Project sync chip — shown in the project header, polled every 5s. */
+.project-sync-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  margin-top: 6px;
+  border-radius: 12px;
+  background: var(--bg-200);
+  border: 1px solid var(--border-200);
+  font-size: 12px;
+  color: var(--text-400);
+  cursor: pointer;
+  transition: all 0.15s;
+  width: fit-content;
+}
+.project-sync-chip:hover { background: var(--bg-300); border-color: var(--border-300); }
+.project-sync-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-500);
+  flex-shrink: 0;
+}
+.project-sync-chip[data-state="syncing"] .project-sync-dot {
+  background: var(--accent-brand);
+  animation: project-sync-pulse 1.2s ease-in-out infinite;
+}
+.project-sync-chip[data-state="error"] .project-sync-dot { background: #d33; }
+.project-sync-chip[data-state="idle"] .project-sync-dot { background: #4caf50; }
+@keyframes project-sync-pulse {
+  0%,100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.4); }
+}
+
+/* Input folder rows */
+.project-input-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-300);
+}
+.project-input-folder-row:hover { background: var(--bg-200); }
+.project-input-folder-row .pif-icon {
+  flex-shrink: 0;
+  color: var(--text-400);
+}
+.project-input-folder-row .pif-path {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.project-input-folder-row .pif-flag {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-300);
+  color: var(--text-400);
+  flex-shrink: 0;
+}
+.project-input-folder-row .pif-remove {
+  cursor: pointer;
+  color: var(--text-500);
+  padding: 2px 6px;
+  font-size: 14px;
+}
+.project-input-folder-row .pif-remove:hover { color: #d33; }
+
+/* Per-item sync state pill — appears next to each attachment + input folder. */
+.project-item-pill {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  border: 1px solid transparent;
+}
+.project-item-pill[data-state="indexed"] {
+  background: rgba(76,175,80,0.12);
+  color: #2d8c33;
+  border-color: rgba(76,175,80,0.3);
+}
+.project-item-pill[data-state="syncing"] {
+  background: rgba(60,140,255,0.12);
+  color: #2d6ad9;
+  border-color: rgba(60,140,255,0.3);
+  animation: project-item-pulse 1.2s ease-in-out infinite;
+}
+.project-item-pill[data-state="pending"] {
+  background: var(--bg-300);
+  color: var(--text-400);
+  border-color: var(--border-200);
+}
+.project-item-pill[data-state="error"] {
+  background: rgba(217,51,51,0.12);
+  color: #b32424;
+  border-color: rgba(217,51,51,0.3);
+}
+@keyframes project-item-pulse {
+  0%,100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
 /* ── Project Instructions Modal ── */
 .project-instructions-editor {
   width: 100%;
@@ -3707,6 +3816,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           </button>
         </div>
         <div class="project-detail-desc" id="project-detail-desc"></div>
+        <div id="project-sync-chip" class="project-sync-chip" style="display:none" onclick="projectSyncNow()" title="Click to run sync now">
+          <span class="project-sync-dot" id="project-sync-dot"></span>
+          <span id="project-sync-label">Memory: idle</span>
+        </div>
       </div>
       <div class="project-detail-composer">
         <div class="project-detail-prompt-hint">How can I help you today?</div>
@@ -3794,6 +3907,19 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           Upload files
           <input type="file" multiple style="display:none" onchange="uploadProjectFiles(this.files)">
         </label>
+      </div>
+      <div class="project-panel-section">
+        <div class="project-panel-section-header">
+          <span class="project-panel-section-title">Input folders</span>
+          <span class="project-panel-section-action" onclick="addProjectInputFolder()">+ Add</span>
+        </div>
+        <div id="project-panel-input-folders">
+          <span class="project-panel-placeholder">Add folders on disk to ingest into this project's memory. Files are scanned every 30 minutes and indexed for semantic search.</span>
+        </div>
+        <button class="project-upload-btn" onclick="projectSyncNow()" style="margin-top:6px">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          Sync now
+        </button>
       </div>
     </div>
   </div>
@@ -5670,6 +5796,8 @@ const NextPrompt = {
    ═══════════════════════════════════════════════════════════ */
 function navigateTo(view, opts) {
   state.currentView = view;
+  // Stop project-sync polling whenever we leave the project-detail view.
+  if (view !== 'project-detail') stopProjectSyncPoll();
 
   // Hide all views
   document.getElementById('welcome-view').style.display = 'none';
@@ -6179,8 +6307,10 @@ function piiEnsureLocalModel() {
     try { stopWarmupPoll(chat); } catch(e) {}
     updateStatusBar();
     if (chat.messages.length === 0) {
+      // Session not yet created — drop any stale id and let the next send
+      // create a fresh one. Don't pre-create: every model switch on an
+      // unsent chat would otherwise leave an orphan session row.
       chat.sessionId = null;
-      ensureSession(chat).catch(() => {});
     } else if (chat.sessionId) {
       API.post(`/v1/sessions/${chat.sessionId}/warmup`, {model: target}).then(d => {
         if (d.warmup) startWarmupPoll(chat);
@@ -6248,9 +6378,9 @@ function toggleModelDropdown(event) {
           stopWarmupPoll(chat);
           updateStatusBar();
           if (chat.messages.length === 0) {
-            // Re-create session + warmup for empty chats
+            // Drop stale session-id; let the next send create one. No
+            // pre-create — orphans stack up otherwise.
             chat.sessionId = null;
-            ensureSession(chat).catch(() => {});
           } else if (chat.sessionId) {
             // Trigger warmup on existing session with new model
             API.post(`/v1/sessions/${chat.sessionId}/warmup`, {model: mid}).then(data => {
@@ -6983,8 +7113,11 @@ function newChat() {
   closeRightPanel();
   navigateTo('welcome');
   schedulePIIBadgeUpdate();
-  // Pre-create session to trigger warmup for local models
-  ensureSession(chat).catch(() => {});
+  // Session is created lazily on first send — pre-creating here would
+  // leave an orphan 0-message row in the DB whenever the user opens a
+  // fresh chat and walks away. The warm-pool keeper (for main agent) and
+  // the per-model warmup keeper handle first-token latency without
+  // needing a session.
 }
 
 async function archiveSession(sessionId) {
@@ -9535,12 +9668,252 @@ async function loadProjectDetail(agentId, projectName) {
     // Load project files
     loadProjectFiles(agentId, projectName);
 
+    // Load input folders + start polling sync status.
+    loadProjectInputFolders(agentId, projectName);
+    startProjectSyncPoll(agentId, projectName);
+
     // Load project conversations
     loadProjectChats(agentId, projectName);
   } catch(e) {
     showToast('Failed to load project');
     console.error(e);
   }
+}
+
+// ─── Project input folders + sync indicator ───────────────────────────
+async function loadProjectInputFolders(agentId, projectName) {
+  const container = document.getElementById('project-panel-input-folders');
+  if (!container) return;
+  try {
+    const data = await API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/input-folders`);
+    const folders = data.folders || [];
+    if (!folders.length) {
+      container.innerHTML = '<span class="project-panel-placeholder">Add folders on disk to ingest into this project\'s memory. Files are scanned every 30 minutes and indexed for semantic search.</span>';
+      return;
+    }
+    container.innerHTML = folders.map((f, idx) => `
+      <div class="project-input-folder-row">
+        <svg class="pif-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        <span class="pif-path" title="${esc(f.path)}">${esc(f.path)}</span>
+        ${f.recursive ? '<span class="pif-flag">recursive</span>' : '<span class="pif-flag">top-level</span>'}
+        <span data-pif-pill data-pif-kind="folder" data-pif-id="${esc(f.path)}">${projectItemPillHtml('folder', f.path)}</span>
+        <span class="pif-remove" onclick="removeProjectInputFolder(${idx})" title="Remove">×</span>
+      </div>
+    `).join('');
+  } catch(e) {
+    container.innerHTML = '<span class="project-panel-placeholder">Failed to load input folders.</span>';
+  }
+}
+
+function addProjectInputFolder() {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  // Custom modal: filesystem browser (reuses the same /v1/files/tree backend
+  // as the schedule modal's picker, but renders standalone so the schedule
+  // modal's `_schedFolderPickerSelect` close-topmost behavior doesn't apply).
+  const overlay = document.createElement('div');
+  overlay.className = 'sched-modal-overlay';
+  overlay.style.zIndex = '10001';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div class="sched-modal" style="max-width:600px">
+    <h2>Add input folder</h2>
+    <div style="font-size:12px;color:var(--text-400);margin-bottom:8px">Pick a folder on disk. Files are scanned every 30 minutes and indexed into this project's memory.</div>
+    <div id="pif-picker-crumbs" style="font-family:var(--font-mono);font-size:12px;color:var(--text-300);padding:6px 10px;background:var(--bg-100);border-radius:6px;margin-bottom:8px;word-break:break-all">…</div>
+    <div id="pif-picker-list" style="max-height:340px;overflow-y:auto;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100)"></div>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--text-300);cursor:pointer">
+      <input type="checkbox" id="pif-picker-recursive" checked>
+      Scan recursively (include all subfolders)
+    </label>
+    <div class="sched-modal-actions">
+      <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Cancel</button>
+      <button class="sched-create-btn" onclick="_pifPickerSelect()">Add this folder</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  _pifLoadFolder('');  // empty path → server defaults to $HOME
+}
+
+async function _pifLoadFolder(path) {
+  const crumbs = document.getElementById('pif-picker-crumbs');
+  const list = document.getElementById('pif-picker-list');
+  if (!crumbs || !list) return;
+  list.innerHTML = '<div style="padding:14px;color:var(--text-400);text-align:center">Loading…</div>';
+  try {
+    const data = await API.get(`/v1/files/tree?path=${encodeURIComponent(path)}&depth=0`);
+    if (data.error) { list.innerHTML = `<div style="padding:14px;color:var(--error)">${esc(data.error)}</div>`; return; }
+    const cur = data.path || path || '/';
+    window._pifPickerPath = cur;
+    crumbs.textContent = cur;
+    const dirs = (data.tree || []).filter(n => n.type === 'dir');
+    const parent = (cur && cur !== '/') ? cur.replace(/\/[^\/]+\/?$/, '') || '/' : null;
+    let html = '';
+    if (parent !== null) {
+      html += `<div onclick="_pifLoadFolder('${esc(parent)}')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border-100);font-family:var(--font-mono);font-size:12px;color:var(--text-300)" onmouseover="this.style.background='var(--bg-200)'" onmouseout="this.style.background=''">↑ ..</div>`;
+    }
+    if (!dirs.length) {
+      html += '<div style="padding:14px;color:var(--text-400);text-align:center;font-size:12px">(no subfolders)</div>';
+    } else {
+      for (const d of dirs) {
+        html += `<div onclick="_pifLoadFolder('${esc(d.path)}')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border-100);font-family:var(--font-mono);font-size:12px;color:var(--text-200);display:flex;align-items:center;gap:8px" onmouseover="this.style.background='var(--bg-200)'" onmouseout="this.style.background=''">
+          <span style="color:var(--text-400)">📁</span>${esc(d.name)}
+        </div>`;
+      }
+    }
+    list.innerHTML = html;
+  } catch(e) {
+    list.innerHTML = `<div style="padding:14px;color:var(--error)">${esc(e.message)}</div>`;
+  }
+}
+
+async function _pifPickerSelect() {
+  const path = window._pifPickerPath || '';
+  if (!path) { showToast('No folder selected', true); return; }
+  const recursive = document.getElementById('pif-picker-recursive')?.checked ?? true;
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  try {
+    const res = await API.post(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/input-folders`,
+      { path, recursive });
+    if (res?.error) {
+      showToast(res.error);
+      return;
+    }
+    showToast('Folder added — first scan running');
+    document.querySelector('.sched-modal-overlay')?.remove();
+    loadProjectInputFolders(agentId, projectName);
+    // Trigger a sync now so the user sees activity immediately.
+    projectSyncNow();
+  } catch(e) {
+    showToast('Failed to add folder: ' + (e?.message || e));
+  }
+}
+
+async function removeProjectInputFolder(idx) {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  if (!confirm('Remove this folder from project memory?\n\n(Already-indexed content stays in memory until the project is purged.)')) return;
+  try {
+    await API.del(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/input-folders/${idx}`);
+    loadProjectInputFolders(agentId, projectName);
+  } catch(e) {
+    showToast('Failed to remove folder');
+  }
+}
+
+async function projectSyncNow() {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  try {
+    await API.post(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/sync-now`, {});
+    showToast('Sync queued');
+    // Force an immediate status refresh so the chip flips to syncing.
+    refreshProjectSyncStatus(agentId, projectName);
+  } catch(e) {
+    showToast('Failed to trigger sync');
+  }
+}
+
+function startProjectSyncPoll(agentId, projectName) {
+  stopProjectSyncPoll();
+  refreshProjectSyncStatus(agentId, projectName);
+  state._projectSyncPollHandle = setInterval(() => {
+    refreshProjectSyncStatus(agentId, projectName);
+  }, 5000);
+}
+
+function stopProjectSyncPoll() {
+  if (state._projectSyncPollHandle) {
+    clearInterval(state._projectSyncPollHandle);
+    state._projectSyncPollHandle = null;
+  }
+}
+
+async function refreshProjectSyncStatus(agentId, projectName) {
+  const chip = document.getElementById('project-sync-chip');
+  const labelEl = document.getElementById('project-sync-label');
+  if (!chip || !labelEl) return;
+  try {
+    const data = await API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/sync-status`);
+    if (window._brainProjectSyncDebug) console.log('[sync-status]', data);
+    const st = data.status || {};
+    // Cache for per-item pill rendering inside loadProjectFiles /
+    // loadProjectInputFolders.
+    state._projectSyncItems = st.items || {};
+    const live = st.state || 'idle';
+    chip.style.display = '';
+    chip.dataset.state = live;
+    let label = 'Memory: idle';
+    if (live === 'syncing') {
+      const cur = st.current_folder ? ` (${st.current_folder.split('/').pop()})` : '';
+      label = `Memory: syncing${cur}`;
+    } else if (live === 'error') {
+      label = 'Memory: error';
+      chip.title = st.last_error || 'Sync failed — click to retry';
+    } else {
+      // total_indexed is cumulative authoritative count from MemPalace;
+      // last_files_filed is the delta from the most recent cycle (often 0
+      // after the first run — re-mining the same content dedups by hash).
+      const total = st.total_indexed != null ? st.total_indexed : (st.last_files_filed || 0);
+      const last = st.last_run_finished || data.last_scan || '';
+      const ago = last ? ` · ${humanAgo(last)} ago` : '';
+      label = `Memory: ${total} indexed${ago}`;
+      chip.title = 'Click to sync now';
+    }
+    labelEl.textContent = label;
+    // Re-paint per-item pills without re-fetching the underlying lists.
+    paintProjectItemPills();
+  } catch(e) {
+    // Hide on auth/404 — non-managers may not be able to read it.
+    chip.style.display = 'none';
+  }
+}
+
+// Render the right-side status pill for one item ("attachment:<hash>" or
+// "folder:<abs path>"). Returns inline HTML so callers can splice it into
+// their row template — but we also use it imperatively via paintProjectItemPills().
+function projectItemPillHtml(kind, ident) {
+  const items = state._projectSyncItems || {};
+  const key = `${kind}:${ident}`;
+  const it = items[key];
+  if (!it) {
+    return '<span class="project-item-pill" data-state="pending" title="Waiting for next sync cycle">pending</span>';
+  }
+  const stateName = it.state || 'pending';
+  const tip = it.error ? it.error
+            : (stateName === 'indexed'
+                ? `Indexed ${it.drawers_filed != null ? '(' + it.drawers_filed + ' drawers)' : ''}`.trim()
+                : (stateName === 'syncing' ? 'Sync in progress…' : 'Pending'));
+  let label = stateName;
+  if (stateName === 'indexed') label = 'indexed';
+  else if (stateName === 'syncing') label = 'syncing…';
+  else if (stateName === 'error') label = 'error';
+  return `<span class="project-item-pill" data-state="${stateName}" title="${esc(tip)}">${esc(label)}</span>`;
+}
+
+// Imperative re-paint after each /sync-status poll. Cheaper than re-rendering
+// the lists, and preserves DOM identity (no flicker).
+function paintProjectItemPills() {
+  document.querySelectorAll('[data-pif-pill]').forEach(el => {
+    const kind = el.getAttribute('data-pif-kind');
+    const ident = el.getAttribute('data-pif-id');
+    if (!kind || !ident) return;
+    el.outerHTML = `<span data-pif-pill data-pif-kind="${esc(kind)}" data-pif-id="${esc(ident)}">${projectItemPillHtml(kind, ident)}</span>`;
+  });
+}
+
+function humanAgo(iso) {
+  if (!iso) return '';
+  const t = new Date(iso).getTime();
+  if (!t) return '';
+  const sec = Math.max(0, (Date.now() - t) / 1000);
+  if (sec < 60) return Math.floor(sec) + 's';
+  if (sec < 3600) return Math.floor(sec / 60) + 'm';
+  if (sec < 86400) return Math.floor(sec / 3600) + 'h';
+  return Math.floor(sec / 86400) + 'd';
 }
 
 function toggleProjectDesc() {
@@ -9568,10 +9941,12 @@ async function loadProjectFiles(agentId, projectName) {
     for (const doc of docs) {
       const item = document.createElement('div');
       item.className = 'project-file-item';
+      const srcHash = doc.source_hash || '';
       item.innerHTML = `
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
         <span class="project-file-name" title="${esc(doc.source || doc.name || '')}">${esc(doc.source || doc.name || 'Document')}</span>
-        <span class="project-file-delete" onclick="deleteProjectFile('${esc(agentId)}','${esc(projectName)}','${esc(doc.source_hash || '')}'); event.stopPropagation();" title="Remove">
+        <span data-pif-pill data-pif-kind="attachment" data-pif-id="${esc(srcHash)}">${projectItemPillHtml('attachment', srcHash)}</span>
+        <span class="project-file-delete" onclick="deleteProjectFile('${esc(agentId)}','${esc(projectName)}','${esc(srcHash)}'); event.stopPropagation();" title="Remove">
           <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </span>
       `;

@@ -588,10 +588,32 @@ Things that aren't visible from reading the code but will bite if broken:
 `ProjectManager` CRUD, `instructions` field in `project.json` injected into system prompt, file upload via multipart to `IngestManager`.
 
 - Project-scoped conversations: `session.project`, `list_sessions(project=X)`, `state.currentProject`
+- **Project ID** (v8.18.2): `id` field in `project.json` is a uuid4 hex[:12] assigned on first read and persisted. Used as the MemPalace wing key — renaming the project doesn't strand its drawers, and two same-named projects under different agents never collide. Backfilled lazily; `create_project` mints one upfront.
 - Archive: `status: "archived"` in `project.json`, files preserved
 - Delete: soft to `.trash/`, recoverable
 - **Notes**: `NoteManager` CRUD. AI editing uses `write_file`/`edit_file` (not `EDIT_NOTE` tags). Auto-reload on filesystem changes. Note-AI sessions use `status: note_chat`, hidden from project chat list, persistent per note via localStorage
 - Project panel auto-refresh: 5s polling detects filesystem changes from any source
+
+### Project Input Folders + Sync (v8.18.2)
+
+Each project can specify on-disk folders that are mined into its private MemPalace wing on a 30-minute cycle. Combined with manual attachments (`ingested/`), this is what fills the project's memory store.
+
+- **Schema** (`project.json`): `input_folders: [{path, recursive, added_at}]`, `input_folders_last_scan`, `sync_status: {state, last_run_started, last_run_finished, last_files_filed, total_indexed, last_folders_seen, last_error, items: {<key>: {kind, id, state, drawers_filed, error, ...}}}`. `items` keyed `attachment:<src_hash>` or `folder:<abs_path>`.
+- **Endpoints** (manage-gated except `sync-status` which is read-gated): `GET/POST /v1/agents/<id>/projects/<name>/input-folders`, `DELETE .../input-folders/<idx>`, `POST .../sync-now`, `GET .../sync-status`. `_handle_project_sync_status` layers `_project_sync_live` (in-flight state) on top of the persisted `sync_status` so the UI sees state changes mid-cycle.
+- **Path-traversal guard** in `_project_input_folder_validate`: refuses paths inside `agents/`, `/etc`, `/var`, `/usr`, `/bin`, `/sbin`, `/System`, `/Library/Keychains`. Realpath-resolved before comparison.
+- **Daemon** (`mempalace-project-sync` thread, server.py): polls every `mempalace.project_sync.interval_seconds` (default 1800). On every tick: enumerates all `(agent, project)` pairs; processes any in `_project_sync_requests` first (drained via `_project_sync_wakeup`); per project resolves `wing = project__<id>`, ensures `mempalace.yaml` matches the expected wing (rewrites on drift), mines `ingested/` then each input folder via `mp_miner.mine(wing_override=wing)`. Per-folder cap (`max_files_per_folder`, default 5000) refuses runaway home-dir picks at the top level. **Authoritative drawer counts** via `_count_wing_drawers_by_source(wing, source_prefix)` — Chroma metadata `where={"wing": wing}` plus in-Python `source_file.startswith` — and `_count_wing_drawers_total(wing)`. Persists `total_indexed` (cumulative, survives dedup-only re-runs) plus per-item `drawers_filed`. Without this the miner's "Drawers filed: 0" reply on every cycle after the first would clobber the persisted count back to zero.
+- **Wing scheme is ID-only** (v8.18.2): `project__<project_id>` (no agent suffix, no project name). See the MemPalace section for the full scheme.
+- **Startup wipe**: at thread start the daemon drops every drawer in any `project__*` wing AND clears every project's persisted `sync_status`. Designed for the dev-phase reset the user requested when this feature shipped — the daemon then rebuilds from disk on its first cycle. Idempotent — a second call is a no-op once nothing matches.
+- **System prompt** (`_build_system_prompt` claude_cli.py): when `_thread_local.project` is set, prepends a PROJECT MEMORY block listing total indexed drawer count + attachment count + input folder count, with an explicit directive to call `mempalace_query` BEFORE answering project-knowledge questions, plus a PROJECT INPUT FOLDERS block listing every absolute path with a worked example showing how to join the absolute root with `source_file` (relative path, as stored by `mp_miner`) before calling `read_file`/`read_document`. Without this the model would see `source_file=screen.py` and try to read it against the server's cwd.
+- **UI** (`web/index.html`): project header gets a `Memory: …` chip — pulses blue when syncing, green when idle, red on error; click triggers `projectSyncNow()`. Right panel grows an "Input folders" section (next to Files) with `+ Add` (opens a stacked filesystem-browser modal `_pifLoadFolder` reusing `/v1/files/tree`, with recursive checkbox), per-folder rows showing path + flag + status pill + remove ×. Files section gets a status pill per attachment. Pills repaint every 5s from `/sync-status` polling via `paintProjectItemPills()` walking `data-pif-pill` nodes — preserves DOM identity (no flicker, no list re-render). Pill colours: indexed (green), syncing (blue, pulsing), pending (grey), error (red).
+
+## Empty-Session Cleanup (v8.18.2)
+
+Sessions are now created lazily on the first send instead of pre-emptively on every model switch / `newChat()` / PII auto-swap. The pre-create logic was originally added to give local models a head-start (the session-create endpoint kicks `_trigger_warmup`), but it left empty rows in `chats.db` whenever the user walked away — those showed up as "Untitled" duplicates in the project chat list. Three changes:
+
+- **Client** (`web/index.html`): the three pre-emptive `ensureSession()` call sites — `newChat()`, the model dropdown's empty-chat branch, and the PII auto-swap path — were dropped. First-token latency stays covered by the warm-pool keeper (for `agent=main, project=''` chats) and the per-model warmup keeper (which doesn't need a session).
+- **Server** (`list_sessions`): SQL `WHERE` clause now hides any session with 0 messages older than 60 seconds. Fresh-but-empty sessions (the one being typed into right now) still show.
+- **Server startup**: one-shot purge in `main()` deletes empty sessions older than 5 minutes. Idempotent, runs on every start. Cleared 551 historical orphans on the install where the bug was found.
 
 ## Cost Tracking & Rate Limiting
 
@@ -645,7 +667,7 @@ Auto-maintained per-user context profile, mirrored to MemPalace. The Claude.ai "
 
 - File: `agents/main/user_profiles/<uid>.md` (gitignored)
 - History: `agents/main/user_profiles/<uid>.history/<ISO-timestamp>.md` — capped at 30 entries; KEPT on Reset by design so users can recover from a hasty rebuild
-- MemPalace mirror: `wing=<uid>--main, room=user_profile`, one drawer per `## section` with `source_file=user/<uid>#profile/<slug>`. Mirror is purge-then-add via `_purge_user_profile_drawers` so renamed/removed sections don't linger.
+- MemPalace mirror: `wing=user__<uid>, room=user_profile` (post-8.18.2 ID-only scheme; was `<uid>--main` before), one drawer per `## section` with `source_file=user/<uid>#profile/<slug>`. Mirror is purge-then-add via `_purge_user_profile_drawers` so renamed/removed sections don't linger.
 
 **Schema** — fixed-order Markdown sections, model fills each one or writes `_(none)_`:
 
@@ -704,14 +726,18 @@ Memory powered by **MemPalace** imported directly as a Python package — no MCP
 - **Drawer** — atomic verbatim chunk (~800 chars), deterministic content-hash id
 - **Closet** — auto-built index layer; packed `topic|entities|→drawer_ids` pointers that boost search ranking
 - **Room** — topic bucket (`chat`, `chat_summary`, `chat_attachment`, `reference`, `document`, `artifacts`, …)
-- **Wing** — namespace; `user_id--agent_id` for per-user isolation (e.g. `17368b--main`), or bare name for shared content (e.g. `brain_code`)
+- **Wing** — namespace. ID-only scheme as of v8.18.2: `user__<user_id>` / `team__<team_id>` / `project__<project_id>`. Plus bare names for shared content (e.g. `brain_code`).
 - **Hall** / **Tunnel** — read-only graph edges (intra-wing / cross-wing; future: automatic tunneling)
 
-**Per-user isolation** (v7.5.0, fixed v7.7.0):
-- Chat sync writes drawers to `wing=user_id--agent_id`. `--` separator (not `/`) because MemPalace `sanitize_name` rejects `/`
-- Sessions without `user_id` use bare `agent_id`
-- `mempalace_query` auto-scopes: bare agent name (e.g. `"main"`) is prefixed with `_thread_local.current_user_id`; unfiltered searches over-fetch 3× then post-filter to exclude other users' per-user wings while keeping shared wings (no `--`)
-- Shared wings (`brain_code`) stay globally accessible
+**Wing scheme** (v8.18.2 — ID-only, no agent suffix, no name strings):
+- `user__<user_id>` — per-user private memory
+- `team__<team_id>` — shared across team members
+- `project__<project_id>` — strictly isolated project memory (input folders, attachments, prior project chats)
+- Bare names (`brain_code`, …) — shared, anyone can read
+- **Why ID-only**: agent suffix added complexity without isolation value (a project IS the boundary, mixing `--main` was redundant; same for user wings — agents share their owner's memory by design). Project ids are uuid4 hex[:12] generated on first read of `project.json`, so renaming the project doesn't strand its drawers and same-named projects under different agents never collide. Old scheme `user_id--agent_id` / `team_id--agent_id` / `project__<name>--<agent_id>` is gone.
+- **`_resolve_session_wing`** (server.py): priority is project → team → user → empty. Anonymous sessions return `""` and are skipped by chat-sync (no longer pollute the global namespace).
+- **`mempalace_query`** (claude_cli.py): when `_thread_local.project` is set, force-scopes to `project__<id>` (refuses if id missing rather than leaking). Otherwise auto-defaults to `user__<current_user_id>`. The visibility filter for unspecified-wing searches drops every `project__*` result (project wings are always private), matches `user__/team__` against the caller's identity, treats untyped wings as shared.
+- **One-shot startup wipe**: at `mempalace-project-sync` thread start, every drawer in any `project__*` wing is dropped and every project's `sync_status` is cleared. Daemon rebuilds from disk on its first cycle. Idempotent.
 - `save_session` uses `ON CONFLICT` to preserve `user_id` when not explicitly provided
 - Future: automatic tunneling for cross-user/team/project sharing
 

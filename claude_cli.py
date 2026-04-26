@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.18.1"
+VERSION = "8.18.2"
 VERSION_DATE = "2026-04-26"
 CHANGELOG = [
+    ("8.18.2", "2026-04-26", "Project-scoped MemPalace with input folders + per-item sync UI; ID-only wing scheme. Two big features and a chronic-bug cleanup. (1) Project input folders: each project's right-side panel grows a new section where a manager can pick on-disk folders via a stacked filesystem-browser modal (reuses GET /v1/files/tree with the existing IGNORE set, recursive vs top-level toggle). New project.json fields input_folders[] / input_folders_last_scan / sync_status. New endpoints: GET/POST/DELETE /v1/agents/<id>/projects/<name>/input-folders, POST .../sync-now, GET .../sync-status — all ACL-gated via _project_access_check (manage for write, read for status). New mempalace-project-sync daemon thread polls every 30 minutes (overridable via mempalace.project_sync.interval_seconds), walks each project's manual attachments (ingested/) plus every input folder, files into the project's MemPalace wing via the existing mp_miner.mine() pipeline. Path-traversal guard refuses paths inside agents/, /etc, /var, /usr, /bin, /sbin, /System, /Library/Keychains. Per-folder cap (max_files_per_folder, default 5000) skips runaway home-dir picks. Wakeup event fires immediately when a folder is added or 'Sync now' is pressed; live status flips to 'syncing' before mining begins so the UI reflects activity. Authoritative drawer counts via _count_wing_drawers_by_source / _count_wing_drawers_total — query Chroma directly at the end of each pass and persist sync_status.total_indexed (cumulative) plus per-item drawers_filed. Without this, every dedup-only re-run would clobber the count back to 0 (miner reports 0 new drawers when content hashes match, which is true on every cycle after the first). (2) Per-item sync UI: project header gets a Memory chip (idle/syncing/error states with pulse animation, click = Sync now); attachments section gets a status pill per file; input-folders section gets a status pill per folder. Pills repaint every 5s from /sync-status polling without re-rendering the lists (paintProjectItemPills walks data-pif-pill nodes), so DOM identity is preserved and hovering doesn't flicker. (3) ID-only wing scheme: dropped agent suffix and project name from MemPalace wings. Old: project__<name>--<agent_id>, user_id--<agent_id>, team_id--<agent_id>. New: project__<project_id>, user__<user_id>, team__<team_id>. Project IDs are uuid4 hex[:12], assigned on first read of project.json and persisted (so renaming the project doesn't strand its drawers, and two same-named projects under different agents never collide). _resolve_session_wing now returns '' for anonymous sessions instead of writing into the agent's namespace; chat-sync, _memorize_mempalace_turns, and _generate_session_summary all early-out on empty wing. _user_wing(uid) / _team_wing(tid) helpers. mempalace_query tool resolves project name → id via ProjectManager.get_project() and refuses to search if the id is missing rather than leaking. Visibility filter rewritten: project__* never appears in cross-wing searches, user__/team__ matched against the caller's identity, untyped wings treated as shared. Startup wipe in the project-sync daemon drops every drawer in any project__* wing and clears each project.json's sync_status — the daemon rebuilds from input_folders + ingested/ on its first cycle. _ensure_mempalace_yaml now compares the wing line in the file against the expected wing and rewrites on mismatch, so wing-scheme changes propagate without a manual yaml clean. (4) Orphan empty-session cleanup: ensureSession() in web/index.html previously pre-created a session row on every newChat(), every model-dropdown selection, and every PII auto-swap to give local models a head-start. The session-create endpoint kicks _trigger_warmup, but the resulting empty rows lingered in chats.db forever and showed up as 'Untitled' duplicates in the project chat list (the test project alone had 4 phantoms; org-wide we had 551 of these accumulated since the pre-create logic shipped). Fixed three ways: pre-emptive ensureSession() calls removed (warm-pool keeper + per-model warmup keeper still cover first-token latency without a session row), list_sessions filters sessions with 0 messages older than 60 seconds (the freshly-created one being typed into still shows), and a one-shot startup purge drops empty sessions older than 5 minutes. (5) Project chat input folders nudge: _build_system_prompt now lists every input folder by absolute path and explicitly tells the model that mempalace_query drawers carry source_file values RELATIVE to one of those roots, with a worked example showing how to join the absolute base + relative path before calling read_file/read_document. Without this the model would see source_file=screen.py from a drawer mined under /Users/alexander/Documents/dev/qb/ and try to read screen.py against the server's cwd. Plus a stronger memory directive: 'BEFORE answering ANY question that could draw on project knowledge — the user's documents, files in their input folders, facts they previously told you, project decisions — you MUST call mempalace_query first.' KV-cache invariant preserved for the user/team paths (the project block is per-project and warm-pool slots only seed for agent=main, project=''). Two new memory notes captured the wing-scheme rules and the orphan-session root cause for future sessions."),
     ("8.18.1", "2026-04-26", "Gemma 4 reasoning + thinking-block UX polish. (1) _detect_thinking_format gained gemma-4 / gemma4 to its oMLX reasoning-capable substring set — Gemma 4 ships with built-in thinking (enable_thinking kwarg + <|channel>thought channel-token output, AIME 88.3% / GPQA 82.3% with thinking on per the HF model card) and oMLX surfaces the channel-token output as delta.reasoning_content, so reasoning_field is the right classification. The CLAUDE.md comment that previously called gemma a non-reasoning model was written for Gemma 3 and never updated. (2) Latent persist bug fixed: init_models_config did dict(existing_models) — a shallow copy — so the per-model cfg dicts were aliased back to server.py's pre-init snapshot. The forward-looking thinking_format upgrade then mutated both sides, _models_differ saw matching values, and the persist gate skipped the save. The 8.18.0 forward-looking re-detect for cliproxyapi/gemini-2.5 only happened to land in config.json because of unrelated saves. Replaced the shallow copy with {k: dict(v) for k, v in existing_models.items()} so any in-place upgrade now actually persists across restarts. The three Gemma 4 entries (26B-A4B-it-MLX-4bit, e2b-it-4bit, e4b-it-4bit) auto-upgraded from 'none' to 'reasoning_field' on next server start. (3) Streaming thinking block now defaults to collapsed — the live render at renderStreamingMessage previously auto-expanded while thinking text was arriving and only collapsed once the answer started streaming. The header still shows 'Thinking...'/'Thinking' progress; click to peek at the chain-of-thought as it streams. The two finalized renderers (renderThinkingMessage history path + the inline assistant-message thinking) were already collapsed-by-default, no change needed there. KV-cache invariant preserved — no system prompt or warmup payload changes."),
     ("8.18.0", "2026-04-26", "Per-task thinking level + caveman mode for scheduled runs, format-aware UX everywhere. Two new schedules columns added by idempotent ALTER: thinking_level TEXT (''=inherit | none | low | medium | high) and caveman_chat INTEGER (0..3, response-style compression analogous to the chat composer toggle). Scheduler.add / Scheduler.update validate them; _execute_scheduled overlays thinking_level onto the resolved inference_params (or removes it on 'none' + sets thinking=False) before _run_delegate, and appends CAVEMAN_CHAT_PROMPTS[level] directly to the system prompt — same suffix the chat composer toggle uses. caveman_system is intentionally NOT exposed per task: it's a per-model knob tied to KV-prefix stability and would invalidate warmup. /v1/schedule add/edit endpoints accept the two new fields. Schedule create + edit modals get a 3-column row (Timeout · Thinking level · Caveman mode); the edit modal preselects the saved values. Format-aware option set everywhere via _thinkingOptionsForFormat / _thinkingOptionsForModel helpers in web/index.html: 'none' → '(unsupported)' disabled select; 'inline_tags' → Off/On (no graduated levels); 'mistral_blocks' → Off/High (provider only accepts those two); 'reasoning_field' / 'openai_opaque' → Off/Low/Medium/High. Schedule modal also gets an 'Inherit from model' entry on top, re-rendered when the model selector changes (preserves the user's prior choice when still valid). Models tab General Settings detail panel adds a Thinking Level dropdown next to Thinking Format — driven by the row's current format, re-renders on format change, persists inference.thinking_level (or omits when unset/disabled). Save path validates both per-row. Composer thinking-level button (#btn-thinking / #welcome-btn-thinking) is now format-aware: cycleThinkingLevel uses _composerLevelsForFormat to cycle only through valid steps for the current model (mistral_blocks cycles Off→High, inline_tags cycles Off→On, reasoning_field/openai_opaque keep the full Off→Low→Medium→High cycle). refreshThinkingButton self-corrects state.thinkingLevel in place when the user switches to a model that can't honor the saved level — every existing call site that already refreshes after a model change naturally enforces the rule. Tooltip now shows the cycle for the current format ('Thinking: medium (reasoning_field) · cycle: none → low → medium → high') so users can see why mid-levels aren't reachable on capped formats. Server-side belt-and-braces: new _validate_thinking_level_for_model helper rejects mismatches with helpful messages ('Mistral accepts only none or high', 'Model X does not support reasoning'); called from Scheduler.add (before INSERT) and Scheduler.update (cross-field check using the effective model — the one in the patch, or the existing row's). Empty model defers validation to runtime so 'Default' schedules still work. Detector fix: _detect_thinking_format gained an optional provider arg; cliproxyapi+gemini-2.5* and oMLX+qwen3/deepseek-r1/glm-zero/magistral now match even when the stored model id is bare (no scoped prefix). _match_known_model passes provider through. init_models_config does a forward-looking re-detect — when stored format is the conservative default 'none' but the provider-aware detector now returns a real format, upgrade in place; never the other direction (would clobber a deliberate user 'off'). Server startup persists the upgraded models when init produces a real change (was first-run-only before), so e.g. gemini-2.5-flash auto-upgraded from 'none' to 'reasoning_field' on this install. KV-cache invariant preserved — _build_system_prompt unchanged, scheduled tasks build their system prompt independently so the per-task caveman_chat append doesn't touch warm-pool prefixes."),
     ("8.17.0", "2026-04-26", "Per-user account settings + auto-maintained user profile (Memory from chat history). New User Settings modal split out from the global admin settings: clicking the username in the bottom-left sidebar opens a four-tab dialog (Profile, Memory, My Schedules, Security) — the gear button beside the theme toggle was redundant (already in the dropdown) and is now a chevron that toggles the dropdown. The dropdown's Settings entry was removed for non-admins; admins still see General settings as a separate item. Auth schema: new users.preferences JSON column (idempotent ALTER, validated keys greeting_name / job_description / communication_preferences / memory_chats_default / memory_sched_default / daily_summary_enabled / daily_summary_hour_local) with PREFERENCE_DEFAULTS + _coerce_pref(key, value) as the single source of truth — invalid values return 400 atomically without partial writes. New self-service endpoints POST /v1/auth/profile (display_name + email only — role/disabled stay admin-only) and POST /v1/auth/preferences (merge update, unknown keys silently dropped, default-valued keys cleaned out so the JSON stays small). Per-user defaults wired into the engine: chat creation in /v1/sessions reads memory_chats_default and overrides the server-wide classifier default for new sessions; the mempalace miner gates every sched-folder file on the schedule owner's memory_sched_default — explicit 0 skips, anything else (null/1/2) keeps the legacy 'always file' path. New schedules.user_id column + index records the creator; non-admins only see/edit/delete/run their own (admin sees everything; legacy rows with empty user_id stay admin-only on purpose). New _schedule_owner_check helper gates pause/resume/delete/run_now/edit/history/delete_run/clear_history; purge_orphan_history is admin-only. First-turn greeting preamble injected on the first user message (kept OUT of the system prompt so the warm-pool KV-prefix stays user-agnostic across all users) carries up to three lines: 'You are talking to <name>.' / 'Their role: <job>' / 'How they like to communicate: <prefs>'. Empty fields drop out, fully-empty preamble skips entirely. _greeting_injected sentinel is stripped by the existing _ALLOWED_MSG_KEYS filter so it never leaks to the wire. job_description capped at 500 chars; communication_preferences capped at 4000 chars (this field is the per-user equivalent of soul.md, intended for tone/voice/style guidance — large enough to fit a soul-style block, bounded so the per-turn preamble doesn't blow up the prompt budget). Both fields ship with inline 'Refine with AI' buttons in the Profile tab; /v1/refine extended with optional purpose='profile_field' (+ field_label) — uses a polish-don't-rewrite system prompt that preserves first-person voice and line breaks, skips chat-history context (privacy + irrelevance for bio polishing). After-refine the button flips to one-click Undo until used. Default refinement model in tools_config.json switched from cliproxyapi/gemini-2.5-flash (silently echoed input verbatim — bad for any polish prompt) to mistral-vibe-cli-fast which actually follows the polish rules (tested round-trip across job-desc, comm-prefs, and chat-prompt rewrites). Auto-maintained 'Memory from chat history' (the Claude.ai 'Gedächtnis aus Chat-Verlauf generieren' equivalent): one Markdown file per user at agents/main/user_profiles/<uid>.md mirrored as one drawer per ## section into MemPalace (wing=<uid>--main, room=user_profile, source_file=user/<uid>#profile/<slug>). Sections in fixed order: Work context, Personal context, Top of mind, Recent months, Earlier context, Long-term background. File is the source of truth; mirror is purge-then-add so renamed/removed sections don't linger. Atomic write via tmp + os.replace, with versioned history at <uid>.history/<ISO-timestamp>.md (capped at 30 entries; intentionally KEPT on Reset so users can recover from a hasty rebuild). New _user_profile_dir / _user_profile_path / _read_user_profile / _write_user_profile_atomic / _delete_user_profile / _split_profile_sections / _mirror_user_profile_to_mempalace / _purge_drawers_by_room_and_source / _purge_user_profile_drawers helpers — all module-level so HTTP handlers and the daemon share them. New user-profile daemon thread (replaces the v8.14.0 daily-summary path which built activity logs of dubious value): polls every 30 min, gates on daily_summary_enabled + local-hour match + 23h cooldown, fires once per local day per opted-in user. Per-user worker (_profile_run_synchronous) pulls 100 most-recent chats from the last 90 days, samples title + first user msg + last assistant msg (250 chars each, total input capped at 12K chars), feeds them through engine._run_delegate with the fixed-schema _PROFILE_SYSTEM_PROMPT — hard rules: never invent, third-person voice, match the user's predominant language, edit existing profile in place rather than rewrite, demote stale 'Top of mind' to 'Recent months' when no fresh evidence appears. Refinement model resolved via _profile_pick_model (refinement → cheapest → server default), GDPR auto-fallback to local on PII findings via gdpr_pick_model_for_background. New self-service endpoints GET /v1/auth/profile-doc (content + cursor + enabled flag), POST /v1/auth/profile-doc (manual edit, 32KB cap), POST /v1/auth/profile-doc/update-now (synchronous regen — same logic as the daemon worker, ~5-60s), POST /v1/auth/profile-doc/reset (delete file + drawers, keep history dir). Account Settings → Memory tab gains an editable Markdown textarea (380px tall, monospace) with Update now / Reset / Save buttons + status line showing last-run timestamp + bytes + 'no_activity' / 'filed' / 'error' state. send_message round 0 reads the profile file (capped 4KB) and prepends as a separate '[Auto-maintained user profile (from chat history; treat as background context, not as ground truth for the current request):...]' block on the first user message of each session — distinct block from the user-set greeting/job/comm-prefs preamble so the model can tell user-set guidance apart from inferred long-form context. Module-level _gather_user_chat_samples builds the per-chat samples; module-level _user_profile_run_llm wraps the delegate call with proper thread-local cleanup in finally. One-shot startup purge of the deprecated user_daily_summary room across every user wing on every server start (idempotent — second call is a no-op once the room is empty); was 0 on this install since the v8.14.0 daemon never actually fired due to the local_hour gate. Welcome view greeting now reads 'Good morning, Alex' instead of 'Good morning' — refreshWelcomeGreeting() is auth-aware (greeting_name → display_name → username, falls back to anonymous 'Good morning' when no auth or pre-login) and re-runs from renderUserMenu() so login + profile saves update it without a page reload. Schedules My Schedules tab shows the user's owned tasks with state badges + link back to the Scheduled view. Cleanup: all bare AGENTS_DIR references in server.py replaced with engine.AGENTS_DIR (latent bug — the helpers were inside main() so the bare name resolved nowhere; would have crashed if exercised, but try/except wrapping made it silent). Module-level imports added: datetime, sqlite3 (one was duplicated). KV-cache stability invariant preserved: _build_system_prompt remains user-agnostic (the user-greeting injection from an earlier iteration was reverted because it broke warm-pool prefix matching for every authenticated turn — now lives in the first-user-message preamble where it costs nothing across users)."),
@@ -3391,13 +3392,32 @@ def tool_mempalace_query(args: dict) -> str:
     if not query:
         return _err("mempalace_query: 'query' is required")
     wing = args.get("wing") or None
-    # Auto-scope to current user's wing for per-user memory isolation.
-    # LLM can pass a bare agent_id (e.g. "main"); we prepend user_id--.
-    # Explicit full wing names (containing "--") are left as-is.
+    # Wing scheme is ID-only (no agent suffix):
+    #   project__<project_id>  ← project chats force-scope to this
+    #   team__<team_id>        ← team-visible chats
+    #   user__<user_id>        ← per-user
+    # Plus shared wings (no "__" prefix, e.g. "brain_code") that anyone can read.
     current_user_id = getattr(_thread_local, "current_user_id", "") or ""
     current_team_ids = list(getattr(_thread_local, "current_team_ids", []) or [])
-    if current_user_id and wing and "--" not in wing:
-        wing = f"{current_user_id}--{wing}"
+    current_project = getattr(_thread_local, "project", None) or ""
+    _ag = getattr(_thread_local, "current_agent", None)
+    # _thread_local.current_agent is an AgentConfig instance (not a string).
+    current_agent_id = getattr(_ag, "agent_id", None) or (
+        _ag if isinstance(_ag, str) else "main") or "main"
+    project_pinned = False
+    if current_project:
+        # Resolve project name → id (uuid hex). Without an id we refuse to
+        # search rather than leak across projects.
+        proj_cfg = ProjectManager.get_project(current_agent_id, current_project)
+        proj_id = (proj_cfg or {}).get("id") or ""
+        if proj_id:
+            wing = f"project__{re.sub(r'[^A-Za-z0-9_.-]', '_', proj_id)}"
+            project_pinned = True
+        else:
+            return _err("mempalace_query: project has no id (run a sync first)")
+    elif current_user_id and not wing:
+        # Default to the user's own wing when nothing else is specified.
+        wing = f"user__{current_user_id}"
     room = args.get("room") or None
     n_results = args.get("n_results") or 5
     try:
@@ -3405,12 +3425,11 @@ def tool_mempalace_query(args: dict) -> str:
     except (TypeError, ValueError):
         n_results = 5
 
-    # When no wing filter and user is known, over-fetch then post-filter.
-    # Visible wings:
-    #   - shared (no "--" in name, e.g. "brain_code")
-    #   - own user wings: "{user_id}--..."
-    #   - team wings for teams the user is in: "{team_id}--..."
-    _needs_user_filter = bool(current_user_id and not wing)
+    # When no explicit wing and we want to see across the user's own wings +
+    # any team wings they're in + shared wings, over-fetch then filter.
+    # With the new ID-only scheme this only triggers when something deliberately
+    # passes wing=None and we couldn't auto-set a user wing (anonymous caller).
+    _needs_user_filter = bool(current_user_id and not wing and not project_pinned)
     fetch_n = n_results * 4 if _needs_user_filter else n_results
 
     mempalace_activity.retrieve_begin()
@@ -3443,16 +3462,20 @@ def tool_mempalace_query(args: dict) -> str:
 
     raw_results = (results or {}).get("results", [])
     if _needs_user_filter:
-        team_prefixes = tuple(f"{tid}--" for tid in current_team_ids)
+        own_user = f"user__{current_user_id}"
+        own_teams = {f"team__{tid}" for tid in current_team_ids}
         def _visible(r):
             w = r.get("wing", "")
-            if "--" not in w:
-                return True  # shared wing (brain_code, etc.)
-            if w.startswith(current_user_id + "--"):
-                return True  # own per-user wing
-            if team_prefixes and w.startswith(team_prefixes):
-                return True  # team wing for a team this user belongs to
-            return False
+            # Project wings are always private — never returned in
+            # cross-wing searches.
+            if w.startswith("project__"):
+                return False
+            if w.startswith("user__"):
+                return w == own_user
+            if w.startswith("team__"):
+                return w in own_teams
+            # Anything without a typed prefix is treated as shared.
+            return True
         raw_results = [r for r in raw_results if isinstance(r, dict) and _visible(r)]
 
     drawers = []
@@ -5647,6 +5670,9 @@ class ProjectManager:
                 "created_at": cfg.get("created_at", ""),
                 "tags": cfg.get("tags", []),
                 "watch_folders": cfg.get("watch_folders", []),
+                "input_folders": cfg.get("input_folders", []) or [],
+                "input_folders_last_scan": cfg.get("input_folders_last_scan", ""),
+                "sync_status": cfg.get("sync_status", {}) or {},
                 "status": cfg.get("status", "active"),
                 "chunks": chunk_count,
                 "doc_count": doc_count,
@@ -5694,6 +5720,7 @@ class ProjectManager:
         os.makedirs(os.path.join(pdir, "ingested"), exist_ok=True)
         os.makedirs(os.path.join(pdir, "notes"), exist_ok=True)
         cfg = {
+            "id": uuid.uuid4().hex[:12],
             "name": config.get("name", name) if config else name,
             "description": description,
             "icon": (config or {}).get("icon", "📁"),
@@ -5737,6 +5764,19 @@ class ProjectManager:
         try:
             with open(cfg_path, "r") as f:
                 cfg = json.load(f)
+            # Backfill a stable globally-unique id on first read. Used as the
+            # MemPalace wing key so renaming the project doesn't strand its
+            # drawers, and so two same-named projects under different agents
+            # never collide. Persisted lazily — if the disk file is read-only
+            # we still hand back the in-memory id, but old chats may produce
+            # new ids on each read until the file becomes writable.
+            if not cfg.get("id"):
+                cfg["id"] = uuid.uuid4().hex[:12]
+                try:
+                    with open(cfg_path, "w") as f:
+                        json.dump(cfg, f, indent=2)
+                except OSError:
+                    pass
             # Add computed stats
             ingested_dir = os.path.join(pdir, "ingested")
             chunk_count = 0
@@ -5760,6 +5800,7 @@ class ProjectManager:
                 cfg = json.load(f)
             for k in ("description", "watch_folders", "tags", "model", "name", "icon",
                        "status", "instructions",
+                       "input_folders", "input_folders_last_scan", "sync_status",
                        "visibility", "owner_user_id", "owner_team_id",
                        "extra_member_user_ids", "excluded_user_ids"):
                 if k in updates:
@@ -19705,10 +19746,57 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
             )
             if proj_desc:
                 system_instruction += f" {proj_desc}"
+            input_folders = proj_cfg.get("input_folders") or []
+            attachment_count = int(proj_cfg.get("chunks") or 0)
+            try:
+                _proj_total_drawers = int(
+                    (proj_cfg.get("sync_status") or {}).get("total_indexed") or 0)
+            except (TypeError, ValueError):
+                _proj_total_drawers = 0
             system_instruction += (
-                "\nPrioritize project-specific documents when answering. "
-                "Memory operations (store/recall) are scoped to this project.\n\n"
+                "\nPROJECT MEMORY — IMPORTANT:\n"
+                "This project has a dedicated, isolated memory store. It contains "
+                f"{_proj_total_drawers} indexed chunks from "
+                f"{attachment_count} manual attachment(s) and "
+                f"{len(input_folders)} input folder(s) on disk, plus prior "
+                "chats inside this project.\n"
+                "BEFORE answering ANY question that could draw on project "
+                "knowledge — the user's documents, files in their input folders, "
+                "facts they previously told you, project decisions — you MUST "
+                "call `mempalace_query` first. Do not guess or rely on general "
+                "knowledge when the project may have specifics.\n"
+                "Examples of when to call mempalace_query:\n"
+                "  • User asks about a topic, file, person, or decision → query first\n"
+                "  • User says 'what does X say about Y' → query for X and Y\n"
+                "  • User asks you to summarise, compare, or extract → query first\n"
+                "  • User says 'do you remember…' → query\n"
+                "Do NOT pass a `wing` argument — it is set automatically to this "
+                "project's private wing. Pass concise keyword queries (3–8 words). "
+                "If the first query returns nothing relevant, try a different phrasing "
+                "before falling back to general knowledge.\n\n"
             )
+            if input_folders:
+                folder_lines = []
+                for entry in input_folders:
+                    p = (entry or {}).get("path", "").strip()
+                    if not p:
+                        continue
+                    rec = " (recursive)" if entry.get("recursive", True) else " (top-level only)"
+                    folder_lines.append(f"  • {p}{rec}")
+                if folder_lines:
+                    system_instruction += (
+                        "PROJECT INPUT FOLDERS (on-disk, indexed into project memory):\n"
+                        + "\n".join(folder_lines) + "\n"
+                        "When mempalace_query returns a drawer with `source_file` "
+                        "that is a RELATIVE path (e.g. `screen.py` or `docs/api.md`), "
+                        "that path is relative to ONE of the folders listed above. "
+                        "To open the file with read_file or read_document, JOIN the "
+                        "input folder's absolute path with the source_file — do NOT "
+                        "use the current working directory. Example: source_file "
+                        "`screen.py` from a drawer mined under "
+                        f"`{input_folders[0].get('path','')}` becomes "
+                        f"`{os.path.join(input_folders[0].get('path',''), 'screen.py')}`.\n\n"
+                    )
             # Inject project custom instructions
             proj_instructions = proj_cfg.get("instructions", "")
             if proj_instructions:

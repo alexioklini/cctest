@@ -10,6 +10,7 @@ import io
 import json
 import os
 import queue
+import re
 import shutil
 import signal
 import socket
@@ -293,23 +294,50 @@ def _purge_mempalace_turns(session_id: str, turn_ids: list[int]):
                      name=f"mp-purge-turns-{session_id[:8]}").start()
 
 
+def _project_wing(project_id: str) -> str:
+    """Wing name for project-scoped memory. ID-only — no agent, no name.
+    Project IDs are globally unique (uuid4 hex[:12]) so collisions across
+    agents are impossible. Renaming a project doesn't strand its drawers.
+    """
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", project_id or "")
+    return f"project__{safe}"
+
+
+def _user_wing(user_id: str) -> str:
+    return f"user__{user_id}"
+
+
+def _team_wing(team_id: str) -> str:
+    return f"team__{team_id}"
+
+
 def _resolve_session_wing(info: dict) -> str:
-    """Pick the MemPalace wing for a given session row.
+    """Pick the MemPalace wing for a given session row. ID-only scheme.
 
     Priority:
-      1. Team-scoped session (visibility='team' + team_id) → `{team_id}--{agent_id}`
-      2. User-owned session (user_id)                    → `{user_id}--{agent_id}`
-      3. Legacy anonymous                                → bare `{agent_id}`
+      1. Project-scoped session (project set)              → `project__{project_id}`
+      2. Team-scoped session (visibility='team' + team_id) → `team__{team_id}`
+      3. User-owned session (user_id)                      → `user__{user_id}`
+      4. Legacy anonymous                                  → empty (skip)
     """
-    agent_id = info.get("agent_id", "main")
+    project = info.get("project", "") or ""
+    if project:
+        # `project` here is the directory name (not the id) because that's
+        # how sessions reference their project today. Resolve to the id.
+        agent_id = info.get("agent_id", "main") or "main"
+        proj = engine.ProjectManager.get_project(agent_id, project)
+        if proj and proj.get("id"):
+            return _project_wing(proj["id"])
+        # Project lookup failed — fall through to user/team to avoid
+        # silently writing into a wing the model can't query.
     visibility = info.get("visibility", "user")
     team_id = info.get("team_id", "")
     if visibility == "team" and team_id:
-        return f"{team_id}--{agent_id}"
+        return _team_wing(team_id)
     user_id = info.get("user_id", "")
     if user_id:
-        return f"{user_id}--{agent_id}"
-    return agent_id
+        return _user_wing(user_id)
+    return ""
 
 
 def _memorize_mempalace_turns(session_id: str, turn_ids: list[int]):
@@ -338,6 +366,8 @@ def _memorize_mempalace_turns(session_id: str, turn_ids: list[int]):
             return 0
         agent_id = info.get("agent_id", "main")
         wing = _resolve_session_wing(info)
+        if not wing:
+            return 0  # anonymous session — don't pollute the global namespace
 
         sync_cfg = mcfg.get("chat_sync", {}) or {}
         default_room = sync_cfg.get("room", "chat")
@@ -836,6 +866,7 @@ class ChatDB:
                        COALESCE(s.user_id, '') as user_id,
                        COALESCE(s.team_id, '') as team_id,
                        COALESCE(s.visibility, 'user') as visibility,
+                       COALESCE(s.project, '') as project,
                        COALESCE(s.summary, '') as summary,
                        COALESCE(s.save_to_memory, 0) as save_to_memory,
                        COALESCE(c.last_message_id, 0) as last_message_id_filed,
@@ -961,6 +992,19 @@ class ChatDB:
                 else:
                     q += " AND s.status = ?"
                     params.append(status)
+            # Hide orphan empty sessions: ensureSession() pre-creates a row
+            # whenever a model is switched or a fresh chat is opened, even
+            # if the user never types anything. Those linger as 0-message
+            # rows in the DB and would otherwise pollute the session list
+            # (especially noticeable on project-detail because every project
+            # visit creates one). Hide rows with no messages older than 60s,
+            # keep the freshly-created one so the active chat doesn't blink
+            # out of the list mid-creation.
+            stale_cutoff = time.time() - 60
+            q += (" AND (((SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id "
+                  "AND (m.compacted = 0 OR m.compacted IS NULL)) > 0) "
+                  "OR s.last_active >= ?)")
+            params.append(stale_cutoff)
             q += " ORDER BY s.last_active DESC"
             rows = conn.execute(q, params).fetchall()
             results = []
@@ -1398,6 +1442,41 @@ _warmup_wakeup = threading.Event()
 
 def _wake_warmup_keeper():
     _warmup_wakeup.set()
+
+
+# Project-sync (input folders → project MemPalace wing) cross-thread state.
+# - `_project_sync_wakeup`: Event the daemon waits on; setting it interrupts
+#   the sleep so the next cycle starts now.
+# - `_project_sync_requests`: set of (agent_id, project_name) the user pressed
+#   "Sync now" on. The daemon drains it and processes those projects first.
+# - `_project_sync_live`: dict[(agent, project)] -> {state, started_at, files_filed}
+#   live snapshot the daemon updates so /sync-status reflects in-flight work.
+_project_sync_wakeup = threading.Event()
+_project_sync_requests: set[tuple[str, str]] = set()
+_project_sync_live: dict[tuple[str, str], dict] = {}
+_project_sync_lock = threading.Lock()
+
+
+def _project_sync_request(agent_id: str, project_name: str):
+    with _project_sync_lock:
+        _project_sync_requests.add((agent_id, project_name))
+    _project_sync_wakeup.set()
+
+
+def _project_sync_live_status(agent_id: str, project_name: str) -> dict:
+    with _project_sync_lock:
+        return dict(_project_sync_live.get((agent_id, project_name), {}))
+
+
+def _project_sync_set_live(agent_id: str, project_name: str, **fields):
+    with _project_sync_lock:
+        cur = _project_sync_live.setdefault((agent_id, project_name), {})
+        cur.update(fields)
+
+
+def _project_sync_clear_live(agent_id: str, project_name: str):
+    with _project_sync_lock:
+        _project_sync_live.pop((agent_id, project_name), None)
 
 
 def _filter_known_user_ids(ids) -> list[str]:
@@ -2644,6 +2723,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_notes(path, "GET")
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/docs" in path:
             self._handle_project_docs(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/input-folders"):
+            self._handle_project_input_folders_list(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/sync-status"):
+            self._handle_project_sync_status(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path:
             self._handle_project_get(path)
         elif path.startswith("/v1/agents/") and path.endswith("/projects"):
@@ -2889,6 +2972,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         # --- Projects & Ingestion POST routes ---
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/notes" in path:
             self._handle_notes(path, "POST")
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/input-folders"):
+            self._handle_project_input_folders_add(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/sync-now"):
+            self._handle_project_sync_now(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/ingest" in path:
             self._handle_project_ingest(path)
         elif path.startswith("/v1/agents/") and path.endswith("/projects"):
@@ -2978,6 +3065,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_notes(path, "DELETE")
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/docs/" in path:
             self._handle_project_doc_delete(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/input-folders/" in path:
+            self._handle_project_input_folders_delete(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path:
             self._handle_project_delete(path)
         elif path.startswith("/v1/agents/") and "/ingested/" in path:
@@ -6179,6 +6268,157 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json(result, 404)
         else:
             self._send_json(result)
+
+    # ── Project Input Folders + Sync ──────────────────────────────────────
+    # Adds user-selected on-disk folders to a project. The mempalace-project-sync
+    # daemon scans them on a hourly poll and files everything into the project's
+    # private MemPalace wing (`project__<name>--<agent>`).
+
+    _PROJECT_INPUT_FOLDER_FORBIDDEN = (
+        # Refuse paths that obviously belong to brain itself or sensitive system dirs.
+        "/etc", "/var", "/usr", "/bin", "/sbin", "/System", "/Library/Keychains",
+    )
+
+    def _project_input_folder_validate(self, raw: str) -> tuple[str, str]:
+        """Return (resolved_path, error). Refuses non-dirs, brain agents/, and
+        obviously sensitive system dirs."""
+        if not raw or not isinstance(raw, str):
+            return "", "Path is required"
+        try:
+            p = os.path.expanduser(raw.strip())
+            p = os.path.realpath(p)
+        except (OSError, ValueError) as e:
+            return "", f"Invalid path: {e}"
+        if not os.path.isdir(p):
+            return "", "Path is not a directory or does not exist"
+        # Refuse paths inside our agents tree — those are managed elsewhere.
+        agents_root = os.path.realpath(engine.AGENTS_DIR)
+        if p == agents_root or p.startswith(agents_root + os.sep):
+            return "", "Cannot add a folder inside the agents directory"
+        for forbidden in self._PROJECT_INPUT_FOLDER_FORBIDDEN:
+            if p == forbidden or p.startswith(forbidden + os.sep):
+                return "", f"Path is in a protected location ({forbidden})"
+        return p, ""
+
+    def _handle_project_input_folders_list(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/input-folders"""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return
+        folders = project.get("input_folders") or []
+        self._send_json({
+            "agent": agent_id,
+            "project": proj_name,
+            "folders": folders,
+            "last_scan": project.get("input_folders_last_scan", ""),
+        })
+
+    def _handle_project_input_folders_add(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/input-folders
+        Body: {path: "/abs/path", recursive: bool}"""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return
+        body = self._read_json() or {}
+        resolved, err = self._project_input_folder_validate(body.get("path", ""))
+        if err:
+            self._send_json({"error": err}, 400)
+            return
+        recursive = bool(body.get("recursive", True))
+        folders = list(project.get("input_folders") or [])
+        # Dedup by resolved path
+        for entry in folders:
+            if os.path.realpath(entry.get("path", "")) == resolved:
+                self._send_json({"error": "Folder already added"}, 400)
+                return
+        folders.append({
+            "path": resolved,
+            "recursive": recursive,
+            "added_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        })
+        engine.ProjectManager.update_project(agent_id, proj_name, {
+            "input_folders": folders,
+        })
+        # Wake the project-sync daemon so the user sees activity immediately.
+        try:
+            _project_sync_wakeup.set()
+        except Exception:
+            pass
+        self._send_json({"status": "added", "folders": folders})
+
+    def _handle_project_input_folders_delete(self, path: str):
+        """DELETE /v1/agents/{id}/projects/{name}/input-folders/{idx}"""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return
+        # /input-folders/<idx> — last segment is the index
+        try:
+            idx = int(path.rstrip("/").rsplit("/", 1)[-1])
+        except (ValueError, IndexError):
+            self._send_json({"error": "Invalid folder index"}, 400)
+            return
+        folders = list(project.get("input_folders") or [])
+        if idx < 0 or idx >= len(folders):
+            self._send_json({"error": "Folder index out of range"}, 404)
+            return
+        removed = folders.pop(idx)
+        engine.ProjectManager.update_project(agent_id, proj_name, {
+            "input_folders": folders,
+        })
+        self._send_json({"status": "removed", "folder": removed, "folders": folders})
+
+    def _handle_project_sync_status(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/sync-status"""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return
+        st = project.get("sync_status") or {}
+        # Layer in live state from the daemon (running flag) so the UI reflects
+        # the actual sync currently happening, not just the last persisted row.
+        live = _project_sync_live_status(agent_id, proj_name)
+        if live:
+            st = {**st, **live}
+        self._send_json({
+            "agent": agent_id,
+            "project": proj_name,
+            "status": st,
+            "last_scan": project.get("input_folders_last_scan", ""),
+        })
+
+    def _handle_project_sync_now(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/sync-now — kick the daemon
+        to scan this project on its next tick. Returns immediately; the UI
+        polls /sync-status to watch progress."""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return
+        _project_sync_request(agent_id, proj_name)
+        self._send_json({"status": "queued", "agent": agent_id, "project": proj_name})
 
     def _handle_notes(self, path: str, method: str):
         """Handle notes CRUD: /v1/agents/{id}/projects/{name}/notes[/{path...}]"""
@@ -10461,9 +10701,9 @@ def _purge_drawers_by_room_and_source(wing: str, room: str, source_prefix: str =
     return deleted
 
 def _purge_user_profile_drawers(uid: str) -> int:
-    """Drop every drawer in (wing=<uid>--main, room=user_profile)."""
+    """Drop every drawer in (wing=user__<uid>, room=user_profile)."""
     return _purge_drawers_by_room_and_source(
-        wing=f"{uid}--main",
+        wing=_user_wing(uid),
         room="user_profile",
         source_prefix=f"user/{uid}#profile/",
     )
@@ -10479,7 +10719,7 @@ def _mirror_user_profile_to_mempalace(uid: str, content: str):
         _purge_user_profile_drawers(uid)
     except Exception:
         pass
-    wing = f"{uid}--main"
+    wing = _user_wing(uid)
     sections = _split_profile_sections(content)
     for title, body in sections.items():
         if title == "_intro" or not body:
@@ -10962,6 +11202,29 @@ def main():
     mcp_count = engine._mcp_manager.load_config(main_mcp)
     print(f"MCP: loaded {mcp_count} server(s) from mcp.json")
 
+    # One-shot startup: drop empty (0-message) sessions older than 5 minutes.
+    # ensureSession() previously pre-created a row on every model switch and
+    # every newChat() to trigger warmup; those that never got a message stayed
+    # in the DB forever and showed up in the project chat list as
+    # "Untitled". Pre-creation was removed in 8.18.2; this cleans up the
+    # historical orphans. Idempotent — safe to keep running on every start.
+    try:
+        with _db_conn() as conn:
+            cutoff = time.time() - 300  # 5 minutes
+            cur = conn.execute(
+                "DELETE FROM sessions WHERE last_active < ? AND id IN ("
+                "  SELECT s.id FROM sessions s WHERE NOT EXISTS ("
+                "    SELECT 1 FROM messages m WHERE m.session_id = s.id"
+                "  )"
+                ")",
+                (cutoff,),
+            )
+            n = cur.rowcount or 0
+            if n:
+                print(f"[startup-purge] dropped {n} orphan empty session(s)", flush=True)
+    except Exception as e:
+        print(f"[startup-purge] empty-session purge failed: {type(e).__name__}: {e}", flush=True)
+
     # Backfill: index any unindexed chat transcripts (runs once at startup)
     def _cleanup_orphaned_chat_indexes():
         """Remove chats-indexed files for sessions that no longer exist in the DB."""
@@ -11343,16 +11606,21 @@ def main():
         )
 
     def _ensure_mempalace_yaml(project_dir: str, wing: str) -> bool:
-        """Write a mempalace.yaml if missing or if the brain-managed marker is gone.
-        Returns True if the file is present (existing or freshly written)."""
+        """Write a mempalace.yaml if missing, if the brain-managed marker is
+        gone, or if the wing line in the file disagrees with `wing` (the
+        expected wing for the caller). Returns True if the file is present
+        and matches `wing` (existing or freshly written)."""
         try:
             yaml_path = os.path.join(project_dir, "mempalace.yaml")
             existing_ok = False
             if os.path.isfile(yaml_path):
                 try:
                     with open(yaml_path, "r", encoding="utf-8", errors="replace") as f:
-                        head = f.read(200)
-                    if head.startswith(_MEMPALACE_YAML_MARKER) or "wing:" in head:
+                        head = f.read(400)
+                    has_marker = (head.startswith(_MEMPALACE_YAML_MARKER)
+                                  or "wing:" in head)
+                    wing_matches = f"wing: {wing}" in head
+                    if has_marker and wing_matches:
                         existing_ok = True
                 except Exception:
                     existing_ok = False
@@ -11812,11 +12080,17 @@ def main():
                         ChatDB.mempalace_update_cursor(sid, max_msg_id)
                         continue
 
-                    # Wing resolution:
-                    #   team-scoped session → team_id--agent_id (shared across team members)
-                    #   user-owned          → user_id--agent_id (private to user)
-                    #   legacy anonymous    → bare agent_id
+                    # Wing resolution (ID-only):
+                    #   project session → project__<project_id>
+                    #   team session    → team__<team_id>
+                    #   user session    → user__<user_id>
+                    #   anonymous       → "" (skipped)
                     wing = _resolve_session_wing(session_row)
+                    if not wing:
+                        # Anonymous — advance cursor so we don't reprocess
+                        # forever, but don't file anything.
+                        ChatDB.mempalace_update_cursor(sid, max_msg_id)
+                        continue
 
                     new_messages = ChatDB.mempalace_load_new_messages(sid, after_id) or []
                     # Per (wing, room, source_file) → list[(drawer_id, text)] for closet rebuild.
@@ -12054,6 +12328,429 @@ def main():
 
     threading.Thread(target=_mempalace_chat_sync_loop, daemon=True, name="mempalace-chat-sync").start()
 
+    # ── Project-sync daemon ─────────────────────────────────────────────
+    # Walks every project's manual attachments (`ingested/`) plus any
+    # user-configured `input_folders[]` and files them into the project's
+    # private MemPalace wing (`project__<name>--<agent>`). Strict isolation:
+    # only chats opened *inside* this project can ever see these drawers
+    # because (a) chat-sync writes to the same project wing, and (b)
+    # mempalace_query is force-scoped when the chat has a project set.
+    #
+    # Cadence: poll every 30 minutes by default. The user asked for hourly
+    # freshness as the floor — 30 min lets a typical edit be discoverable
+    # in the worst-case half hour. Overridable via mempalace.project_sync.
+    # interval_seconds.
+    def _project_sync_loop():
+        mcfg = engine._load_mempalace_config()
+        if not mcfg.get("enabled", True):
+            print("[project-sync] disabled (mempalace.enabled = false)", flush=True)
+            return
+        ok, err = engine._ensure_mempalace_importable()
+        if not ok:
+            print(f"[project-sync] {err}", flush=True)
+            return
+        try:
+            from mempalace import miner as mp_miner
+            from mempalace.mcp_server import tool_add_drawer  # noqa: F401  (used indirectly via miner)
+            from mempalace.palace import get_collection as _get_drawers_col
+        except Exception as e:
+            print(f"[project-sync] import failed: {e}", flush=True)
+            return
+
+        palace_path = mcfg.get("palace_path", "")
+
+        def _count_wing_drawers_by_source(wing: str, source_prefix: str) -> int:
+            """Authoritative count of drawers in `wing` whose source_file
+            startswith(source_prefix). Used to populate per-item drawer
+            counts after a mine — survives dedup-only re-runs unchanged.
+            """
+            try:
+                col = _get_drawers_col(palace_path, create=False)
+                if not col:
+                    return 0
+                # Chroma supports operator filters; use $and + startswith via
+                # `$contains` is unreliable on metadata. Pull all and filter
+                # in-Python — wings are typically small.
+                got = col.get(where={"wing": wing}, include=["metadatas"])
+                metas = got.get("metadatas") or []
+                hits = 0
+                for m in metas:
+                    sf = (m or {}).get("source_file") or ""
+                    if sf.startswith(source_prefix):
+                        hits += 1
+                return hits
+            except Exception:
+                return 0
+
+        def _count_wing_drawers_total(wing: str) -> int:
+            try:
+                col = _get_drawers_col(palace_path, create=False)
+                if not col:
+                    return 0
+                got = col.get(where={"wing": wing}, include=[])
+                return len(got.get("ids") or [])
+            except Exception:
+                return 0
+
+        # One-shot startup wipe of every project-scoped wing. The wing scheme
+        # changed in 8.18.2 from `project__<name>--<agent_id>` (mixed separator,
+        # name-keyed) to `project__<id>` (ID-only). Old drawers in the old
+        # scheme would never be queried by the new mempalace_query (different
+        # wing string) — they'd just orphan. Cleanup is one-shot at startup;
+        # the daemon then rebuilds from input_folders + ingested/ on its first
+        # cycle.
+        try:
+            col = _get_drawers_col(palace_path, create=False)
+            if col is not None:
+                got = col.get(include=["metadatas"])
+                stale_ids = []
+                for did, meta in zip(got.get("ids") or [], got.get("metadatas") or []):
+                    w = (meta or {}).get("wing", "")
+                    # Match every wing whose name is project-related: both
+                    # the new `project__<id>` (re-mineable, dropping is fine
+                    # for the dev-phase reset the user asked for) and the
+                    # legacy `project__<name>--<agent>`.
+                    if w.startswith("project__"):
+                        stale_ids.append(did)
+                # Also drop any closets pointing at those wings.
+                if stale_ids:
+                    # Chroma allows deleting in batches.
+                    BATCH = 500
+                    for i in range(0, len(stale_ids), BATCH):
+                        try:
+                            col.delete(ids=stale_ids[i:i+BATCH])
+                        except Exception as e:
+                            print(f"[project-sync] startup wipe batch failed: "
+                                  f"{type(e).__name__}: {e}", flush=True)
+                    print(f"[project-sync] startup wipe: dropped "
+                          f"{len(stale_ids)} project drawer(s)", flush=True)
+                else:
+                    print("[project-sync] startup wipe: no project drawers found", flush=True)
+                # Clear persisted sync_status on every project so the UI
+                # reflects "0 indexed" until the daemon's first rebuild cycle.
+                try:
+                    for agent_id in sorted(os.listdir(engine.AGENTS_DIR)):
+                        proj_root = os.path.join(engine.AGENTS_DIR, agent_id, "projects")
+                        if not os.path.isdir(proj_root):
+                            continue
+                        for proj_name in sorted(os.listdir(proj_root)):
+                            cfg_path = os.path.join(proj_root, proj_name, "project.json")
+                            if not os.path.isfile(cfg_path):
+                                continue
+                            try:
+                                with open(cfg_path, "r") as f:
+                                    cfg = json.load(f)
+                                if cfg.get("sync_status") or cfg.get("input_folders_last_scan"):
+                                    cfg["sync_status"] = {}
+                                    cfg["input_folders_last_scan"] = ""
+                                    with open(cfg_path, "w") as f:
+                                        json.dump(cfg, f, indent=2)
+                            except (OSError, json.JSONDecodeError):
+                                continue
+                except OSError:
+                    pass
+        except Exception as e:
+            print(f"[project-sync] startup wipe failed: {type(e).__name__}: {e}", flush=True)
+
+        # Small startup delay so we don't compete with the other two daemons.
+        time.sleep(25)
+
+        while True:
+            try:
+                mcfg2 = engine._load_mempalace_config()
+                if not mcfg2.get("enabled", True):
+                    return
+                ps_cfg = (mcfg2.get("project_sync") or {})
+                if not ps_cfg.get("enabled", True):
+                    time.sleep(60)
+                    continue
+                interval = int(ps_cfg.get("interval_seconds", 1800))
+                max_files_per_folder = int(ps_cfg.get("max_files_per_folder", 5000))
+
+                # Drain manual "Sync now" requests first.
+                with _project_sync_lock:
+                    requested = set(_project_sync_requests)
+                    _project_sync_requests.clear()
+
+                # Enumerate all (agent, project) pairs by walking AGENTS_DIR.
+                pairs = []
+                try:
+                    for agent_id in sorted(os.listdir(engine.AGENTS_DIR)):
+                        agent_dir = os.path.join(engine.AGENTS_DIR, agent_id)
+                        if not os.path.isdir(agent_dir) or agent_id.startswith("."):
+                            continue
+                        proj_root = os.path.join(agent_dir, "projects")
+                        if not os.path.isdir(proj_root):
+                            continue
+                        for proj_name in sorted(os.listdir(proj_root)):
+                            pdir = os.path.join(proj_root, proj_name)
+                            if not os.path.isdir(pdir) or proj_name.startswith("."):
+                                continue
+                            pairs.append((agent_id, proj_name))
+                except Exception as e:
+                    print(f"[project-sync] enumerate failed: {e}", flush=True)
+                    pairs = []
+
+                # Process requested-first, then everyone else.
+                ordered = [p for p in pairs if p in requested] + [
+                    p for p in pairs if p not in requested
+                ]
+
+                cycle_filed = 0
+                for agent_id, proj_name in ordered:
+                    project = engine.ProjectManager.get_project(agent_id, proj_name)
+                    if not project:
+                        continue
+                    if project.get("status") == "archived":
+                        continue
+                    pdir = project.get("dir") or os.path.join(
+                        engine.AGENTS_DIR, agent_id, "projects", proj_name)
+                    project_id = project.get("id") or ""
+                    if not project_id:
+                        # Backfill safety net: get_project() should have set
+                        # this on first read, but if persisting failed (RO
+                        # filesystem etc.) skip this project for the cycle.
+                        print(f"[project-sync] skip {agent_id}/{proj_name}: "
+                              f"no project id", flush=True)
+                        continue
+                    wing = _project_wing(project_id)
+
+                    started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    _project_sync_set_live(agent_id, proj_name,
+                        state="syncing", started_at=started_at,
+                        files_filed=0, error="")
+                    files_filed = 0
+                    folders_seen = 0
+                    last_error = ""
+                    # Per-item state map: keyed by ("attachment", source_hash) for
+                    # uploaded docs and ("folder", absolute_path) for input folders.
+                    # The web UI joins this onto its rendered lists so each row
+                    # carries its own indexed/syncing/error pill.
+                    # Seed from the prior persisted run so cumulative counters
+                    # (drawers_filed_total) survive — every cycle after the
+                    # first is dedup-mostly and would otherwise overwrite a
+                    # real "180 drawers indexed" snapshot with 0.
+                    prior_items = ((project.get("sync_status") or {}).get("items") or {})
+                    item_states: dict[str, dict] = {}
+                    for k, v in prior_items.items():
+                        if isinstance(v, dict):
+                            item_states[k] = dict(v)
+                    # Project-level cumulative count (across all cycles).
+                    prior_total_indexed = int(
+                        (project.get("sync_status") or {}).get("total_indexed") or 0)
+
+                    def _item_key(kind: str, ident: str) -> str:
+                        return f"{kind}:{ident}"
+
+                    def _set_item(kind: str, ident: str, **fields):
+                        k = _item_key(kind, ident)
+                        cur = item_states.setdefault(k, {"kind": kind, "id": ident})
+                        cur.update(fields)
+                        # Push live snapshot so the UI sees state changes during
+                        # the cycle, not just after the project.json write.
+                        live = dict(_project_sync_live_status(agent_id, proj_name))
+                        items_live = dict(live.get("items") or {})
+                        items_live[k] = dict(cur)
+                        _project_sync_set_live(agent_id, proj_name,
+                            state="syncing", items=items_live,
+                            files_filed=files_filed)
+
+                    # 1. Manual attachments — `ingested/` mined into project wing.
+                    #    Each chunk file is named ingest-<src_hash>-<idx>.md;
+                    #    we group by src_hash so each upload appears as one item.
+                    ingested_dir = os.path.join(pdir, "ingested")
+                    if os.path.isdir(ingested_dir):
+                        folders_seen += 1
+                        # Discover all unique source hashes in the folder so we
+                        # can mark each as "syncing" before mining begins.
+                        hashes: set[str] = set()
+                        try:
+                            for fn in os.listdir(ingested_dir):
+                                if fn.startswith("ingest-") and fn.endswith(".md"):
+                                    parts_fn = fn.split("-", 2)
+                                    if len(parts_fn) >= 2:
+                                        hashes.add(parts_fn[1])
+                        except OSError:
+                            pass
+                        for h in hashes:
+                            _set_item("attachment", h,
+                                state="syncing",
+                                last_run_started=started_at)
+                        if _ensure_mempalace_yaml(ingested_dir, wing):
+                            ingest_filed = 0
+                            ingest_err = ""
+                            buf = io.StringIO()
+                            try:
+                                with contextlib.redirect_stdout(buf):
+                                    mp_miner.mine(
+                                        project_dir=ingested_dir,
+                                        palace_path=palace_path,
+                                        wing_override=wing,
+                                        agent="brain-project-sync",
+                                        respect_gitignore=False,
+                                    )
+                                for line in buf.getvalue().splitlines():
+                                    s = line.strip()
+                                    if s.startswith("Drawers filed"):
+                                        try:
+                                            ingest_filed = int(
+                                                s.split(":")[-1].strip().split()[0])
+                                        except Exception:
+                                            pass
+                                        break
+                            except SystemExit:
+                                pass
+                            except Exception as e:
+                                ingest_err = f"{type(e).__name__}: {e}"
+                                last_error = ingest_err
+                                print(f"[project-sync] {agent_id}/{proj_name} "
+                                      f"ingested: {ingest_err}", flush=True)
+                            files_filed += ingest_filed
+                            finished_at_attach = datetime.datetime.now(
+                                datetime.timezone.utc).isoformat()
+                            # Authoritative count per source: pull all wing
+                            # drawers whose source_file references the chunk
+                            # files belonging to this hash. Miner mines from
+                            # the chunk file, so source_file ends with
+                            # ingest-<hash>-<idx>.md.
+                            for h in hashes:
+                                cnt = _count_wing_drawers_by_source(
+                                    wing, f"ingest-{h}-")
+                                _set_item("attachment", h,
+                                    state=("error" if ingest_err else "indexed"),
+                                    last_run_finished=finished_at_attach,
+                                    drawers_filed=cnt,
+                                    error=ingest_err)
+                        else:
+                            for h in hashes:
+                                _set_item("attachment", h,
+                                    state="error",
+                                    error="failed to write mempalace.yaml")
+
+                    # 2. User-specified input folders — each entry has its own
+                    #    mempalace.yaml, scanned recursively or top-level only.
+                    for entry in (project.get("input_folders") or []):
+                        folders_seen += 1
+                        fpath = entry.get("path", "")
+                        if not fpath:
+                            continue
+                        if not os.path.isdir(fpath):
+                            _set_item("folder", fpath,
+                                state="error",
+                                error="folder not found",
+                                last_run_started=started_at)
+                            continue
+                        _set_item("folder", fpath,
+                            state="syncing",
+                            last_run_started=started_at,
+                            error="")
+                        # Tell live status which folder we're chewing on.
+                        _project_sync_set_live(agent_id, proj_name,
+                            state="syncing", current_folder=fpath,
+                            files_filed=files_filed)
+                        if not _ensure_mempalace_yaml(fpath, wing):
+                            _set_item("folder", fpath,
+                                state="error",
+                                error="failed to write mempalace.yaml")
+                            continue
+                        # Cap the number of top-level entries to avoid runaway
+                        # walks on accidentally-pointed-at home dirs etc.
+                        try:
+                            top_count = sum(1 for _ in os.scandir(fpath))
+                            if top_count > max_files_per_folder:
+                                msg = (f"folder has {top_count} entries "
+                                       f"(>{max_files_per_folder} cap) — skipped")
+                                last_error = msg
+                                _set_item("folder", fpath,
+                                    state="error", error=msg)
+                                print(f"[project-sync] {agent_id}/{proj_name} "
+                                      f"{fpath}: {msg}", flush=True)
+                                continue
+                        except OSError as e:
+                            _set_item("folder", fpath,
+                                state="error", error=str(e))
+                            continue
+                        folder_filed = 0
+                        folder_err = ""
+                        buf = io.StringIO()
+                        try:
+                            with contextlib.redirect_stdout(buf):
+                                mp_miner.mine(
+                                    project_dir=fpath,
+                                    palace_path=palace_path,
+                                    wing_override=wing,
+                                    agent="brain-project-sync",
+                                    respect_gitignore=True,
+                                )
+                            for line in buf.getvalue().splitlines():
+                                s = line.strip()
+                                if s.startswith("Drawers filed"):
+                                    try:
+                                        folder_filed = int(
+                                            s.split(":")[-1].strip().split()[0])
+                                    except Exception:
+                                        pass
+                                    break
+                        except SystemExit:
+                            pass
+                        except Exception as e:
+                            folder_err = f"{type(e).__name__}: {e}"
+                            last_error = folder_err
+                            print(f"[project-sync] {agent_id}/{proj_name} "
+                                  f"{fpath}: {folder_err}", flush=True)
+                        files_filed += folder_filed
+                        # Authoritative cumulative drawer count: source_file
+                        # in the wing always startswith the absolute folder
+                        # path for files mined from this folder.
+                        cum = _count_wing_drawers_by_source(wing, fpath)
+                        _set_item("folder", fpath,
+                            state=("error" if folder_err else "indexed"),
+                            last_run_finished=datetime.datetime.now(
+                                datetime.timezone.utc).isoformat(),
+                            drawers_filed=cum,
+                            error=folder_err)
+
+                    finished_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    final_state = "error" if last_error and files_filed == 0 else "idle"
+                    # Authoritative total: query MemPalace for everything in
+                    # the project's wing. Survives dedup-only cycles unchanged.
+                    total_indexed = _count_wing_drawers_total(wing)
+                    sync_row = {
+                        "state": final_state,
+                        "last_run_started": started_at,
+                        "last_run_finished": finished_at,
+                        "last_files_filed": files_filed,  # delta this cycle
+                        "total_indexed": total_indexed,    # cumulative
+                        "last_folders_seen": folders_seen,
+                        "last_error": last_error,
+                        "items": item_states,
+                    }
+                    try:
+                        engine.ProjectManager.update_project(agent_id, proj_name, {
+                            "sync_status": sync_row,
+                            "input_folders_last_scan": finished_at,
+                        })
+                    except Exception as e:
+                        print(f"[project-sync] persist failed {agent_id}/{proj_name}: "
+                              f"{type(e).__name__}: {e}", flush=True)
+                    _project_sync_clear_live(agent_id, proj_name)
+                    cycle_filed += files_filed
+
+                print(f"[project-sync] cycle: filed={cycle_filed} "
+                      f"projects={len(pairs)} requested={len(requested)}", flush=True)
+            except Exception as e:
+                print(f"[project-sync] cycle error: {type(e).__name__}: {e}", flush=True)
+
+            # Wait for the next interval, but wake up on demand.
+            wait_for = max(60, int(((engine._load_mempalace_config().get(
+                "project_sync") or {}).get("interval_seconds", 1800))))
+            woken = _project_sync_wakeup.wait(timeout=wait_for)
+            if woken:
+                _project_sync_wakeup.clear()
+
+    threading.Thread(target=_project_sync_loop, daemon=True,
+                     name="mempalace-project-sync").start()
+
     # Per-user profile maintainer daemon (worker logic is at module level so
     # both the daemon and the /v1/auth/profile-doc/update-now HTTP handler
     # can call it). Once per local hour walks users with
@@ -12224,6 +12921,8 @@ def main():
                 if not info:
                     return
                 wing = _resolve_session_wing(info)
+                if not wing:
+                    return
                 msgs = ChatDB.mempalace_load_new_messages(session_id, 0) or []
                 filed = 0
                 current_turn_id = 0

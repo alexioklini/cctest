@@ -31,7 +31,7 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
 - **Multi-agent system** — agents with personalities (`soul.md`), avatars, teams, model preferences
 - **30+ built-in tools** — file ops, shell, search, web, Gmail, delegation, scheduling, memory, MCP
 - **MemPalace memory (direct)** — `mempalace_query` tool searches long-term memory in-process (no MCP subprocess). Background daemons auto-mine source code, artifacts, chat history, web references, and attachment metadata into MemPalace drawers with closet index rebuilds
-- **Projects** — per-agent scoped workspaces with documents, watched folders, and chat scoping
+- **Projects** — per-agent scoped workspaces with documents, **input folders auto-mined into project memory every 30 min**, and chat scoping. Each project has its own private MemPalace wing (`project__<id>`) — chats inside the project only see drawers from that project's attachments + input folders + prior project chats. Per-attachment + per-folder sync status pills in the project view
 - **Agent workflows** — YAML-defined multi-step pipelines with approval gates and variable substitution
 - **Custom slash commands** — user-defined prompt templates with `{{variable}}` interpolation
 
