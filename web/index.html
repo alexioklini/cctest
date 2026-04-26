@@ -2167,6 +2167,15 @@ textarea { resize: none; }
 }
 .project-sync-chip[data-state="error"] .project-sync-dot { background: #d33; }
 .project-sync-chip[data-state="idle"] .project-sync-dot { background: #4caf50; }
+/* KG state overlays — only kick in when sync state is idle. While drawer
+ * sync is happening the sync animation owns the dot. */
+.project-sync-chip[data-state="idle"][data-kg-state="extracting"] .project-sync-dot {
+  background: #b370ff;  /* purple */
+  animation: project-sync-pulse 1.2s ease-in-out infinite;
+}
+.project-sync-chip[data-state="idle"][data-kg-state="error"] .project-sync-dot {
+  background: #d33;
+}
 @keyframes project-sync-pulse {
   0%,100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.5; transform: scale(1.4); }
@@ -2242,6 +2251,25 @@ textarea { resize: none; }
   background: rgba(217,51,51,0.12);
   color: #b32424;
   border-color: rgba(217,51,51,0.3);
+}
+.project-item-pill[data-kg="ok"] {
+  background: rgba(179,112,255,0.10);
+  color: #6f3fb3;
+  border-color: rgba(179,112,255,0.3);
+  margin-left: 4px;
+}
+.project-item-pill[data-kg="extracting"] {
+  background: rgba(179,112,255,0.18);
+  color: #5e2fa3;
+  border-color: rgba(179,112,255,0.4);
+  animation: project-item-pulse 1.4s ease-in-out infinite;
+  margin-left: 4px;
+}
+.project-item-pill[data-kg="error"] {
+  background: rgba(217,51,51,0.10);
+  color: #b32424;
+  border-color: rgba(217,51,51,0.3);
+  margin-left: 4px;
 }
 @keyframes project-item-pulse {
   0%,100% { opacity: 1; }
@@ -9860,10 +9888,35 @@ async function refreshProjectSyncStatus(agentId, projectName) {
       const total = st.total_indexed != null ? st.total_indexed : (st.last_files_filed || 0);
       const last = st.last_run_finished || data.last_scan || '';
       const ago = last ? ` · ${humanAgo(last)} ago` : '';
-      label = `Memory: ${total} indexed${ago}`;
-      chip.title = 'Click to sync now';
+      const triples = st.total_triples;
+      const tripleStr = (triples != null && triples > 0) ? ` · ${triples} triples` : '';
+      label = `Memory: ${total} indexed${tripleStr}${ago}`;
+      chip.title = (triples != null && triples > 0)
+        ? 'Click to sync now · double-click to open Knowledge Graph'
+        : 'Click to sync now';
     }
+    // KG is currently extracting on any item? pulse purple.
+    let kgWorking = false;
+    let kgError = false;
+    for (const k of Object.keys(state._projectSyncItems || {})) {
+      const it = state._projectSyncItems[k] || {};
+      if (it.kg_state === 'extracting') { kgWorking = true; break; }
+      if (it.kg_state === 'error') kgError = true;
+    }
+    chip.dataset.kgState = kgWorking ? 'extracting' : (kgError ? 'error' : '');
     labelEl.textContent = label;
+    // Stash project ids on the chip so a double-click can open the KG modal.
+    chip.dataset.agentId = agentId;
+    chip.dataset.projectName = projectName;
+    if (!chip._kgDblbound) {
+      chip.addEventListener('dblclick', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (typeof kgOpenProject === 'function')
+          kgOpenProject(chip.dataset.agentId, chip.dataset.projectName);
+      });
+      chip._kgDblbound = true;
+    }
     // Re-paint per-item pills without re-fetching the underlying lists.
     paintProjectItemPills();
   } catch(e) {
@@ -9891,7 +9944,18 @@ function projectItemPillHtml(kind, ident) {
   if (stateName === 'indexed') label = 'indexed';
   else if (stateName === 'syncing') label = 'syncing…';
   else if (stateName === 'error') label = 'error';
-  return `<span class="project-item-pill" data-state="${stateName}" title="${esc(tip)}">${esc(label)}</span>`;
+  let kgBadge = '';
+  const kgState = it.kg_state || '';
+  const triples = it.triples_extracted;
+  if (kgState === 'extracting') {
+    kgBadge = ` <span class="project-item-pill" data-kg="extracting" title="Knowledge graph extraction running">KG…</span>`;
+  } else if (kgState === 'error') {
+    const kgErr = it.kg_last_error || 'KG extraction failed';
+    kgBadge = ` <span class="project-item-pill" data-kg="error" title="${esc(kgErr)}">KG !</span>`;
+  } else if (typeof triples === 'number' && triples > 0) {
+    kgBadge = ` <span class="project-item-pill" data-kg="ok" title="Knowledge graph triples extracted">${triples} triples</span>`;
+  }
+  return `<span class="project-item-pill" data-state="${stateName}" title="${esc(tip)}">${esc(label)}</span>${kgBadge}`;
 }
 
 // Imperative re-paint after each /sync-status poll. Cheaper than re-rendering
@@ -10777,6 +10841,7 @@ function openGeneralSettings() {
       <button class="modal-tab" onclick="switchGeneralTab('gdpr',this)">GDPR</button>
       <button class="modal-tab" onclick="switchGeneralTab('context',this)">Context</button>
       <button class="modal-tab" onclick="switchGeneralTab('mempalace',this)">MemPalace</button>
+      <button class="modal-tab" onclick="switchGeneralTab('knowledge-graph',this)">Knowledge&nbsp;Graph</button>
 
       <div class="sidebar-group-label">Tools</div>
       <button class="modal-tab" onclick="switchGeneralTab('tools',this)">Tools</button>
@@ -12081,6 +12146,131 @@ async function switchGeneralTab(tab, btn) {
     } catch(e) { C.innerHTML = P(`<div style="color:var(--error)">Failed to load MemPalace stats: ${esc(e.message||e)}</div>`); }
   }
 
+  /* ─── KNOWLEDGE GRAPH ─── */
+  if (tab === 'knowledge-graph') {
+    try {
+      const [stats, kgConfig] = await Promise.all([
+        API.get('/v1/mempalace/kg/stats').catch(e => ({error: e.message || String(e)})),
+        API.get('/v1/mempalace/kg/config').catch(() => ({})),
+      ]);
+      if (stats.error) {
+        C.innerHTML = P(`<div style="color:var(--error)">${esc(stats.error)}</div>`);
+        return;
+      }
+      const isAdmin = state.authUser && state.authUser.role === 'admin';
+
+      // Model picker — same shape as classifier picker.
+      const enabledMc = state.modelsConfig?.models || {};
+      const enabledModelList = Object.entries(enabledMc).filter(([,c])=>c.enabled !== false)
+        .sort((a,b)=>(b[1].priority||0)-(a[1].priority||0));
+      const currentModel = kgConfig.extraction_model || '';
+      const modelOptionsKg = '<option value="">Auto (background-pick: cheapest local first)</option>'
+        + enabledModelList.map(([mid,cfg])=>{
+          const sel = mid === currentModel ? ' selected' : '';
+          const localTag = cfg.is_local ? ' [local]' : '';
+          return `<option value="${esc(mid)}"${sel}>${esc(modelShortName(mid))}${localTag}</option>`;
+        }).join('');
+
+      const profileOpts = ['normative','generic'].map(p =>
+        `<option value="${p}" ${p === (kgConfig.profile||'normative')?'selected':''}>${p}</option>`
+      ).join('');
+
+      const STAT = (val, label, color='var(--accent-brand)') => `<div style="padding:12px 20px;background:var(--bg-200);border-radius:8px;text-align:center;min-width:120px">
+        <div style="font-size:22px;font-weight:600;color:${color}">${val}</div>
+        <div style="font-size:11px;color:var(--text-400)">${label}</div>
+      </div>`;
+
+      const totalEntities = (stats.entities || 0).toLocaleString();
+      const totalTriples = (stats.triples || 0).toLocaleString();
+      const totalProjects = (stats.projects || []).length;
+
+      // Per-project rows
+      const projectRows = (stats.projects || []).map(p => {
+        const topPred = (p.top_predicates || []).slice(0,5).map(pp =>
+          `<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:var(--bg-300);color:var(--text-300)">${esc(pp.predicate)} (${pp.count})</span>`
+        ).join(' ');
+        return `<div style="${ROW};cursor:pointer" onclick="kgOpenProject('${esc(p.agent_id)}','${esc(p.project)}')">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;color:var(--text-100);font-weight:500">${esc(p.project)}</div>
+            <div style="${MONO}">${esc(p.agent_id)} &middot; wing=${esc(p.wing)}</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;flex:2">${topPred}</div>
+          <div style="text-align:right;min-width:160px">
+            <div style="font-size:13px;color:var(--text-100)"><b>${(p.triples||0).toLocaleString()}</b> triples</div>
+            <div style="${MONO}">${(p.entities||0).toLocaleString()} entities</div>
+          </div>
+        </div>`;
+      }).join('') || `<div style="padding:14px;color:var(--text-400);font-size:12px">No KG content yet — drop documents into a project's input folder to start extraction.</div>`;
+
+      C.innerHTML = P(`<div style="${G('16px')}">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="width:7px;height:7px;border-radius:50%;background:${kgConfig.enabled === false ? 'var(--error)' : 'var(--success)'};flex-shrink:0"></span>
+          <span style="font-size:14px;font-weight:500;color:var(--text-100)">Knowledge Graph</span>
+          <span style="${MONO}">${kgConfig.enabled === false ? 'disabled' : 'active'}</span>
+          <span style="margin-left:auto;${MONO}">scope: ${esc((kgConfig.scopes||['projects']).join(','))}</span>
+        </div>
+
+        ${SEC('Overview')}
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          ${STAT(totalEntities, 'Entities')}
+          ${STAT(totalTriples, 'Triples')}
+          ${STAT(totalProjects, 'Projects with KG')}
+          ${STAT(esc(kgConfig.profile || 'normative'), 'Profile', 'var(--text-200)')}
+        </div>
+
+        ${SEC('Extraction Settings')}
+        <div style="${G('10px')};padding:12px;border:1px solid var(--border-100);border-radius:8px">
+          <div style="display:grid;grid-template-columns:140px 1fr auto;gap:10px;align-items:center">
+            <label style="font-size:12px;color:var(--text-300)">Enabled</label>
+            <label style="display:inline-flex;gap:6px;font-size:12px"><input type="checkbox" id="kg-enabled" ${kgConfig.enabled===false?'':'checked'}> Run KG extraction during project sync</label>
+            <span></span>
+          </div>
+          <div style="display:grid;grid-template-columns:140px 1fr;gap:10px;align-items:center">
+            <label style="font-size:12px;color:var(--text-300)">Extraction model</label>
+            <select class="form-select" id="kg-model" ${isAdmin?'':'disabled'}>${modelOptionsKg}</select>
+          </div>
+          <div style="font-size:11px;color:var(--text-400);margin-left:150px;margin-top:-4px">Cloud models extract higher-quality triples; local models keep your documents on-prem. The selected model runs once per drawer during sync — pick frugally. <b>Tested default:</b> gemma-4-e4b-it-4bit (local, German-capable, runs alongside the chat warmpool).</div>
+          <div style="display:grid;grid-template-columns:140px 1fr;gap:10px;align-items:center">
+            <label style="font-size:12px;color:var(--text-300)">Profile</label>
+            <select class="form-select" id="kg-profile" ${isAdmin?'':'disabled'}>${profileOpts}</select>
+          </div>
+          <div style="font-size:11px;color:var(--text-400);margin-left:150px;margin-top:-4px"><b>normative</b>: policies, regulations, laws, specifications, contracts, SOPs &mdash; controlled predicates (requires/forbids/cites/...). <b>generic</b>: open predicates, any document type.</div>
+          <div style="display:grid;grid-template-columns:140px 1fr 140px 1fr;gap:10px;align-items:center">
+            <label style="font-size:12px;color:var(--text-300)">Max triples / drawer</label>
+            <input type="number" class="form-input" id="kg-max-triples" min="1" max="50" value="${kgConfig.max_triples_per_drawer||12}" ${isAdmin?'':'disabled'}>
+            <label style="font-size:12px;color:var(--text-300)">Min confidence</label>
+            <input type="number" class="form-input" id="kg-min-conf" min="0" max="1" step="0.05" value="${kgConfig.min_confidence??0.5}" ${isAdmin?'':'disabled'}>
+          </div>
+          <div style="display:grid;grid-template-columns:140px 1fr;gap:10px;align-items:center">
+            <label style="font-size:12px;color:var(--text-300)">Max chars / drawer</label>
+            <input type="number" class="form-input" id="kg-max-chars" min="500" max="20000" step="500" value="${kgConfig.max_drawer_chars||6000}" ${isAdmin?'':'disabled'}>
+          </div>
+          <div style="display:grid;grid-template-columns:140px 1fr 140px 1fr;gap:10px;align-items:center">
+            <label style="font-size:12px;color:var(--text-300)">Regenerate closets</label>
+            <label style="display:inline-flex;gap:6px;font-size:12px"><input type="checkbox" id="kg-regen-closets" ${kgConfig.regenerate_closets?'checked':''} ${isAdmin?'':'disabled'}> Re-rank drawer retrieval via LLM after each sync</label>
+            <span></span><span></span>
+          </div>
+          <div style="font-size:11px;color:var(--text-400);margin-left:150px;margin-top:-4px">Adds ~1 LLM call per source file per cycle. Boosts <code>mempalace_query</code> ranking by replacing MemPalace's regex closet generation with an LLM pass that captures implicit topics, foreign-language content, and contextual references. Reuses the extraction model selected above.</div>
+          <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn-primary" id="kg-save-btn" onclick="saveKgConfig()" ${isAdmin?'':'disabled'}>${isAdmin?'Save Settings':'Admin only'}</button>
+          </div>
+        </div>
+
+        ${SEC('Per-Project Knowledge Graphs')}
+        <div style="${G('6px')}">${projectRows}</div>
+
+        ${SEC('Documentation')}
+        <div style="font-size:12px;color:var(--text-300);padding:10px 12px;background:var(--bg-100);border-radius:8px;line-height:1.5">
+          The KG is built automatically by the project-sync daemon. Every drawer mined from a project's input folders is sent to the configured LLM for triple extraction. Triples are written to <code>${esc((window.__brain_palace_path||'~/.mempalace/brain'))}/knowledge_graph.sqlite3</code> with <code>source_file</code> and <code>source_drawer_id</code> provenance — so every claim links back to its origin.
+          <br><br>
+          Agent tools: <code>mempalace_kg_query(entity)</code>, <code>mempalace_kg_search(predicate)</code>, <code>mempalace_kg_neighbors(entity, depth)</code> — all auto-scoped to the calling project.
+        </div>
+      </div>`);
+    } catch(e) {
+      C.innerHTML = P(`<div style="color:var(--error)">Failed to load Knowledge Graph view: ${esc(e.message||e)}</div>`);
+    }
+  }
+
   /* ─── GDPR ─── */
   if (tab === 'gdpr') {
     try {
@@ -12432,6 +12622,200 @@ async function saveMpClassifier() {
     state.mempalaceClassifier = await API.get('/v1/mempalace/classifier').catch(() => ({}));
     showToast('Classifier config saved');
   } catch(e) { showToast('Save failed: ' + e.message, true); }
+}
+
+function _kgShowInfo(title, htmlBody) {
+  const modalId = '__kgInfoModal';
+  let m = document.getElementById(modalId);
+  if (m) m.remove();
+  m = document.createElement('div');
+  m.id = modalId;
+  m.className = 'modal-overlay';
+  m.style.zIndex = '12001';
+  m.innerHTML = `<div class="modal" style="max-width:780px;width:80vw;max-height:80vh;display:flex;flex-direction:column">
+    <div class="modal-header" style="display:flex;align-items:center;gap:10px">
+      <span style="font-weight:600">${esc(title)}</span>
+      <button class="btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 10px" onclick="document.getElementById('${modalId}').remove()">Close</button>
+    </div>
+    <div class="modal-body" style="overflow:auto;flex:1;padding:14px">${htmlBody}</div>
+  </div>`;
+  document.body.appendChild(m);
+  m.addEventListener('click', (ev) => { if (ev.target === m) m.remove(); });
+}
+
+async function saveKgConfig() {
+  try {
+    const body = {
+      enabled: document.getElementById('kg-enabled')?.checked ?? true,
+      extraction_model: document.getElementById('kg-model')?.value || '',
+      profile: document.getElementById('kg-profile')?.value || 'normative',
+      max_triples_per_drawer: parseInt(document.getElementById('kg-max-triples')?.value) || 12,
+      min_confidence: parseFloat(document.getElementById('kg-min-conf')?.value) || 0.5,
+      max_drawer_chars: parseInt(document.getElementById('kg-max-chars')?.value) || 6000,
+      regenerate_closets: document.getElementById('kg-regen-closets')?.checked ?? false,
+    };
+    await API.post('/v1/mempalace/kg/config', body);
+    showToast('Knowledge Graph settings saved');
+    switchGeneralTab('knowledge-graph');
+  } catch(e) { showToast('Save failed: ' + (e.message || e), true); }
+}
+
+async function kgOpenProject(agentId, projectName) {
+  // Modal with per-project drilldown: stats, top predicates, top entities,
+  // sample triples, recent extraction-log rows. Admin gets a Re-extract
+  // button.
+  const modalId = '__kgProjectModal';
+  let m = document.getElementById(modalId);
+  if (m) m.remove();
+  m = document.createElement('div');
+  m.id = modalId;
+  m.className = 'modal-overlay';
+  m.style.zIndex = '12000';
+  m.innerHTML = `<div class="modal" style="max-width:980px;width:90vw;max-height:90vh;display:flex;flex-direction:column">
+    <div class="modal-header" style="display:flex;align-items:center;gap:10px">
+      <span style="font-weight:600">Knowledge Graph &mdash; ${esc(projectName)}</span>
+      <span style="font-size:11px;color:var(--text-400);font-family:var(--font-mono)">${esc(agentId)}</span>
+      <button class="btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 10px" onclick="document.getElementById('${modalId}').remove()">Close</button>
+    </div>
+    <div class="modal-body" id="kg-project-body" style="overflow:auto;flex:1;padding:16px">Loading…</div>
+  </div>`;
+  document.body.appendChild(m);
+  m.addEventListener('click', (ev) => { if (ev.target === m) m.remove(); });
+
+  try {
+    const data = await API.get(`/v1/mempalace/kg/wing?agent_id=${encodeURIComponent(agentId)}&project=${encodeURIComponent(projectName)}`);
+    const isAdmin = state.authUser && state.authUser.role === 'admin';
+    const body = document.getElementById('kg-project-body');
+    if (!body) return;
+
+    const STAT = (val, label) => `<div style="padding:10px 16px;background:var(--bg-200);border-radius:8px;text-align:center;min-width:110px">
+      <div style="font-size:20px;font-weight:600;color:var(--accent-brand)">${val}</div>
+      <div style="font-size:11px;color:var(--text-400)">${label}</div>
+    </div>`;
+
+    // Predicate frequency bar — biggest at left
+    const maxPredCount = Math.max(1, ...(data.top_predicates||[]).map(p => p.count));
+    const predBars = (data.top_predicates||[]).map(p => {
+      const w = Math.max(8, Math.round(p.count / maxPredCount * 100));
+      return `<div style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer" onclick="kgSearchPredicate('${esc(agentId)}','${esc(projectName)}','${esc(p.predicate)}')">
+        <span style="font-family:var(--font-mono);min-width:160px;color:var(--text-200)">${esc(p.predicate)}</span>
+        <div style="flex:1;height:14px;background:var(--bg-200);border-radius:3px;position:relative;overflow:hidden">
+          <div style="height:100%;width:${w}%;background:var(--accent-brand);opacity:0.7"></div>
+        </div>
+        <span style="min-width:40px;text-align:right;color:var(--text-300);font-family:var(--font-mono)">${p.count}</span>
+      </div>`;
+    }).join('') || '<div style="font-size:12px;color:var(--text-400)">No triples yet.</div>';
+
+    // Top entities
+    const entRows = (data.top_entities||[]).slice(0,15).map(e =>
+      `<div style="display:flex;gap:8px;align-items:center;font-size:12px;padding:4px 0;cursor:pointer" onclick="kgQueryEntity('${esc(agentId)}','${esc(projectName)}','${esc(e.name||'').replace(/'/g,"\\'")}')">
+        <span style="flex:1;color:var(--text-100);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.name||e.id)}</span>
+        <span style="font-size:10px;padding:1px 5px;background:var(--bg-300);border-radius:3px;color:var(--text-400)">${esc(e.type||'unknown')}</span>
+        <span style="min-width:30px;text-align:right;color:var(--text-300);font-family:var(--font-mono)">${e.degree}</span>
+      </div>`
+    ).join('') || '<div style="font-size:12px;color:var(--text-400)">No entities.</div>';
+
+    // Sample triples
+    const sampleRows = (data.sample_triples||[]).map(t => {
+      const sf = (t.source_file||'').split('/').slice(-2).join('/');
+      const conf = typeof t.confidence === 'number' ? t.confidence.toFixed(2) : '';
+      return `<div style="padding:8px 10px;border:1px solid var(--border-100);border-radius:6px;margin-bottom:6px;font-size:12px">
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <span style="color:var(--text-100);flex:1">(${esc(t.subject)})</span>
+          <span style="font-family:var(--font-mono);color:var(--accent-brand)">--[${esc(t.predicate)}]--&gt;</span>
+          <span style="color:var(--text-100);flex:1">(${esc(t.object)})</span>
+          ${conf?`<span style="font-family:var(--font-mono);color:var(--text-400)">c=${conf}</span>`:''}
+        </div>
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-400);margin-top:3px">${esc(sf)}</div>
+      </div>`;
+    }).join('') || '<div style="font-size:12px;color:var(--text-400)">No triples extracted yet.</div>';
+
+    // Extraction log
+    const logRows = (data.extraction_log||[]).slice(0,15).map(r => {
+      const dt = r.started_at ? new Date(r.started_at*1000).toLocaleString() : '?';
+      const ok = !r.error_msg && (r.errors||0) === 0;
+      const dot = `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${ok?'var(--success)':'var(--error)'};margin-right:6px"></span>`;
+      return `<div style="font-size:11px;padding:4px 0;border-bottom:1px dotted var(--border-100)">
+        ${dot}<span style="font-family:var(--font-mono);color:var(--text-300)">${esc(dt)}</span>
+        seen=${r.drawers_seen||0} new=${r.drawers_processed||0} skip=${r.drawers_skipped||0}
+        triples=<b>${r.triples_extracted||0}</b> errors=${r.errors||0}
+        ${r.error_msg?`<span style="color:var(--error)" title="${esc(r.error_msg)}"> · ${esc((r.error_msg||'').slice(0,80))}</span>`:''}
+      </div>`;
+    }).join('') || '<div style="font-size:12px;color:var(--text-400)">No runs yet.</div>';
+
+    body.innerHTML = `
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+        ${STAT((data.entities||0).toLocaleString(),'Entities')}
+        ${STAT((data.triples||0).toLocaleString(),'Triples')}
+        ${STAT((data.top_predicates||[]).length,'Predicates seen')}
+        ${STAT((data.extraction_log||[]).length,'Runs logged')}
+      </div>
+      ${isAdmin?`<div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:14px">
+        <button class="btn-secondary" onclick="kgReextract('${esc(agentId)}','${esc(projectName)}')">Re-extract everything</button>
+      </div>`:''}
+
+      <div style="font-size:12px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin:8px 0 6px">Predicate frequency</div>
+      <div style="display:grid;gap:4px">${predBars}</div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px">
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">Top entities by degree</div>
+          ${entRows}
+        </div>
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">Recent extraction runs</div>
+          ${logRows}
+        </div>
+      </div>
+
+      <div style="font-size:12px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin:18px 0 6px">Sample triples (highest confidence)</div>
+      <div>${sampleRows}</div>
+    `;
+  } catch(e) {
+    const body = document.getElementById('kg-project-body');
+    if (body) body.innerHTML = `<div style="color:var(--error)">Failed to load: ${esc(e.message||e)}</div>`;
+  }
+}
+
+async function kgQueryEntity(agentId, projectName, entityName) {
+  try {
+    const data = await API.get(`/v1/mempalace/kg/entity?agent_id=${encodeURIComponent(agentId)}&project=${encodeURIComponent(projectName)}&name=${encodeURIComponent(entityName)}`);
+    const triples = (data.triples||[]).map(t => {
+      const conf = typeof t.confidence === 'number' ? t.confidence.toFixed(2) : '';
+      return `<div style="padding:8px 10px;border:1px solid var(--border-100);border-radius:6px;margin-bottom:6px;font-size:12px">
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <span style="color:var(--text-100);flex:1">(${esc(t.subject||'')})</span>
+          <span style="font-family:var(--font-mono);color:var(--accent-brand)">--[${esc(t.predicate||'')}]--&gt;</span>
+          <span style="color:var(--text-100);flex:1">(${esc(t.object||'')})</span>
+          ${conf?`<span style="font-family:var(--font-mono);color:var(--text-400)">c=${conf}</span>`:''}
+        </div>
+      </div>`;
+    }).join('') || '<div style="font-size:12px;color:var(--text-400)">No triples for this entity.</div>';
+    _kgShowInfo(`Entity: ${entityName}`, `<div style="font-size:11px;color:var(--text-400);margin-bottom:8px">${data.count} triples (${data.total_in_kg} in KG before scope filter)</div>${triples}`);
+  } catch(e) { showToast('Lookup failed: ' + (e.message||e), true); }
+}
+
+async function kgSearchPredicate(agentId, projectName, predicate) {
+  try {
+    const data = await API.get(`/v1/mempalace/kg/wing?agent_id=${encodeURIComponent(agentId)}&project=${encodeURIComponent(projectName)}`);
+    const filtered = (data.sample_triples||[]).filter(t => t.predicate === predicate);
+    const list = filtered.map(t => {
+      const conf = typeof t.confidence === 'number' ? t.confidence.toFixed(2) : '';
+      return `<div style="padding:6px 0;font-size:12px;border-bottom:1px dotted var(--border-100)">
+        (${esc(t.subject||'')}) <span style="font-family:var(--font-mono);color:var(--accent-brand)">[${esc(predicate)}]</span> (${esc(t.object||'')}) ${conf?`<span style="font-family:var(--font-mono);color:var(--text-400);margin-left:6px">c=${conf}</span>`:''}
+      </div>`;
+    }).join('') || `<div style="font-size:12px;color:var(--text-400)">No "${esc(predicate)}" triples in the sample (full set may have more — ${(data.top_predicates||[]).find(p=>p.predicate===predicate)?.count||0} total).</div>`;
+    _kgShowInfo(`Triples with predicate: ${predicate}`, list);
+  } catch(e) { showToast('Search failed: ' + (e.message||e), true); }
+}
+
+async function kgReextract(agentId, projectName) {
+  if (!confirm(`Purge all triples for "${projectName}" and re-extract from scratch?\n\nThis deletes existing triples + the extraction cursor, then queues the project for the next sync cycle (within 30 min, or trigger Sync now from the project panel).`)) return;
+  try {
+    const res = await API.post('/v1/mempalace/kg/reextract', {agent_id: agentId, project: projectName});
+    showToast(`Purged ${res.triples_deleted||0} triples · queued for re-extraction`);
+    setTimeout(()=>kgOpenProject(agentId, projectName), 500);
+  } catch(e) { showToast('Re-extract failed: ' + (e.message||e), true); }
 }
 
 async function saveContextConfig() {

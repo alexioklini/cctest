@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.18.2"
+VERSION = "8.19.0"
 VERSION_DATE = "2026-04-26"
 CHANGELOG = [
+    ("8.19.0", "2026-04-26", "Project knowledge graph (step 1) — LLM-driven document → triples extraction over project input folders + attachments. New kg_extract.py module: profile-driven extraction (`normative` for policies/regulations/specs/contracts/SOPs with controlled predicates requires/forbids/permits/defines/cites/applies_to/effective_from/supersedes/responsible_party/condition/exception/penalty; `generic` for open prose), source_file chunking mode that re-chunks at 3500 chars paragraph-aware (~70× yield improvement vs feeding MemPalace's 700-char drawer fragments 1:1 to the LLM — validated 430 triples from one German bank-policy PDF, 9.8 triples/chunk, 98% controlled-vocab compliance), per-drawer mode preserved as fallback. New cursor + log tables in chats.db (kg_extraction_progress keyed by `<rep_drawer_id>#<chunk_index>` for chunk-level idempotency, kg_extraction_log for run history). Triples persist via MemPalace's KnowledgeGraph (entities + triples) at <palace_path>/knowledge_graph.sqlite3 with TypeError-fallback for 3.3.0 schemas lacking source_drawer_id/adapter_name. Daemon hook in mempalace-project-sync runs after every mp_miner.mine() call, scoped per attachment hash and per input folder. New doc_convert.py: PDF/DOCX/PPTX/XLSX/EML/MSG → companion .md under <folder>/.brain-extracted/ pre-mine pass with idempotent (mtime, size) hash, paragraph-aware extraction, frontmatter source-anchor, stale-md sweeper, per-file isolation. xlsx extracts every row up to 100k/sheet (warn at 5k) since policy lookup tables ARE the policy. Three new agent-facing tools in the `memory` group: mempalace_kg_query (entity-first traversal with direction outgoing|incoming|both), mempalace_kg_search (predicate filter for contradiction/coverage analysis — e.g. predicate=requires + subject_contains=retention), mempalace_kg_neighbors (multi-hop BFS up to depth 3); all auto-scope to the caller's project via _thread_local.project, refuse outside project context (step 1 is projects-only). Five new HTTP endpoints under /v1/mempalace/kg: /stats (aggregate across accessible projects, admin sees all), /wing (per-project drilldown with predicate frequency, top entities by degree, sample triples, recent extraction-log), /entity (neighborhood for one entity), /extraction-log, /config (admin GET/POST). POST /reextract (admin or project owner) purges + queues sync. Settings → Knowledge Graph sub-tab: model picker (defaults to gemini-2.5-flash post-validation; GUI exposes the same picker for closet regen so one choice covers both), profile picker, max_triples / min_confidence / max_drawer_chars knobs, regenerate_closets opt-in checkbox, per-project KG cards with click-through to drilldown modal showing predicate frequency bars, top entities, sample triples, recent runs, admin re-extract button. Project Memory chip extended: shows 'Memory: N indexed · M triples', pulses purple while extraction running, double-click opens KG drilldown. Per-item pills (folder + attachment rows) gain KG sub-badge: '12 triples' (purple, indexed), 'KG…' (purple-pulse, in flight), 'KG !' (red, error). All wing access HTTP-side gated via _project_access_check; agent tools filter triples by source_file LIKE prefix matching project_dir + every input_folders[].path (resolved via os.path.realpath for macOS /tmp → /private/tmp symlink). Default extraction model set to gemini-2.5-flash because 26B chat warmpool + e4b extraction don't both fit under oMLX's 25.6GB process cap (host-level constraint, not a Brain limitation); local model can be selected when GPU headroom allows or warmup is off. Reasoning models need inference_max_tokens=8000 (default) to avoid mid-JSON exhaustion. Connection-refused retries 3× with 0.8s+2.0s backoff. New optional regenerate_closets: when on, daemon calls mempalace.closet_llm.regenerate_closets per project wing at end-of-cycle using the same model selected for KG extraction — boosts mempalace_query ranking by replacing MemPalace's regex closets with LLM-generated topic lines that capture implicit topics, foreign-language content, and contextual references; one LLM call per source file, default off. Multi-prefix scoping in every prefix-builder (daemon _run_kg_for, agent _kg_resolve_project_scope, HTTP _kg_resolve_project_from_query, _handle_kg_stats_global, _handle_kg_reextract, project sync's total_triples rollup) resolves symlinks so source_file matches what the miner actually stored. System-prompt nudge extended: tells the model that .brain-extracted/<name>.<ext>.md drawers came from a binary in the same folder — open the original with read_document for full fidelity. KV-cache invariant preserved (per-project block stays out of the warm-pool prefix). Validated end-to-end on Richtlinie-ZV-Vordrucke-2016 (DK Zahlungsverkehrsvordrucke): 44 chunks → 430 triples (191 requires, 55 cites, 53 permits, 33 forbids, 30 defines, 23 condition, 7 exception, 3 penalty), 950s elapsed, source-language preserved (German subjects/objects, English predicates)."),
     ("8.18.2", "2026-04-26", "Project-scoped MemPalace with input folders + per-item sync UI; ID-only wing scheme. Two big features and a chronic-bug cleanup. (1) Project input folders: each project's right-side panel grows a new section where a manager can pick on-disk folders via a stacked filesystem-browser modal (reuses GET /v1/files/tree with the existing IGNORE set, recursive vs top-level toggle). New project.json fields input_folders[] / input_folders_last_scan / sync_status. New endpoints: GET/POST/DELETE /v1/agents/<id>/projects/<name>/input-folders, POST .../sync-now, GET .../sync-status — all ACL-gated via _project_access_check (manage for write, read for status). New mempalace-project-sync daemon thread polls every 30 minutes (overridable via mempalace.project_sync.interval_seconds), walks each project's manual attachments (ingested/) plus every input folder, files into the project's MemPalace wing via the existing mp_miner.mine() pipeline. Path-traversal guard refuses paths inside agents/, /etc, /var, /usr, /bin, /sbin, /System, /Library/Keychains. Per-folder cap (max_files_per_folder, default 5000) skips runaway home-dir picks. Wakeup event fires immediately when a folder is added or 'Sync now' is pressed; live status flips to 'syncing' before mining begins so the UI reflects activity. Authoritative drawer counts via _count_wing_drawers_by_source / _count_wing_drawers_total — query Chroma directly at the end of each pass and persist sync_status.total_indexed (cumulative) plus per-item drawers_filed. Without this, every dedup-only re-run would clobber the count back to 0 (miner reports 0 new drawers when content hashes match, which is true on every cycle after the first). (2) Per-item sync UI: project header gets a Memory chip (idle/syncing/error states with pulse animation, click = Sync now); attachments section gets a status pill per file; input-folders section gets a status pill per folder. Pills repaint every 5s from /sync-status polling without re-rendering the lists (paintProjectItemPills walks data-pif-pill nodes), so DOM identity is preserved and hovering doesn't flicker. (3) ID-only wing scheme: dropped agent suffix and project name from MemPalace wings. Old: project__<name>--<agent_id>, user_id--<agent_id>, team_id--<agent_id>. New: project__<project_id>, user__<user_id>, team__<team_id>. Project IDs are uuid4 hex[:12], assigned on first read of project.json and persisted (so renaming the project doesn't strand its drawers, and two same-named projects under different agents never collide). _resolve_session_wing now returns '' for anonymous sessions instead of writing into the agent's namespace; chat-sync, _memorize_mempalace_turns, and _generate_session_summary all early-out on empty wing. _user_wing(uid) / _team_wing(tid) helpers. mempalace_query tool resolves project name → id via ProjectManager.get_project() and refuses to search if the id is missing rather than leaking. Visibility filter rewritten: project__* never appears in cross-wing searches, user__/team__ matched against the caller's identity, untyped wings treated as shared. Startup wipe in the project-sync daemon drops every drawer in any project__* wing and clears each project.json's sync_status — the daemon rebuilds from input_folders + ingested/ on its first cycle. _ensure_mempalace_yaml now compares the wing line in the file against the expected wing and rewrites on mismatch, so wing-scheme changes propagate without a manual yaml clean. (4) Orphan empty-session cleanup: ensureSession() in web/index.html previously pre-created a session row on every newChat(), every model-dropdown selection, and every PII auto-swap to give local models a head-start. The session-create endpoint kicks _trigger_warmup, but the resulting empty rows lingered in chats.db forever and showed up as 'Untitled' duplicates in the project chat list (the test project alone had 4 phantoms; org-wide we had 551 of these accumulated since the pre-create logic shipped). Fixed three ways: pre-emptive ensureSession() calls removed (warm-pool keeper + per-model warmup keeper still cover first-token latency without a session row), list_sessions filters sessions with 0 messages older than 60 seconds (the freshly-created one being typed into still shows), and a one-shot startup purge drops empty sessions older than 5 minutes. (5) Project chat input folders nudge: _build_system_prompt now lists every input folder by absolute path and explicitly tells the model that mempalace_query drawers carry source_file values RELATIVE to one of those roots, with a worked example showing how to join the absolute base + relative path before calling read_file/read_document. Without this the model would see source_file=screen.py from a drawer mined under /Users/alexander/Documents/dev/qb/ and try to read screen.py against the server's cwd. Plus a stronger memory directive: 'BEFORE answering ANY question that could draw on project knowledge — the user's documents, files in their input folders, facts they previously told you, project decisions — you MUST call mempalace_query first.' KV-cache invariant preserved for the user/team paths (the project block is per-project and warm-pool slots only seed for agent=main, project=''). Two new memory notes captured the wing-scheme rules and the orphan-session root cause for future sessions."),
     ("8.18.1", "2026-04-26", "Gemma 4 reasoning + thinking-block UX polish. (1) _detect_thinking_format gained gemma-4 / gemma4 to its oMLX reasoning-capable substring set — Gemma 4 ships with built-in thinking (enable_thinking kwarg + <|channel>thought channel-token output, AIME 88.3% / GPQA 82.3% with thinking on per the HF model card) and oMLX surfaces the channel-token output as delta.reasoning_content, so reasoning_field is the right classification. The CLAUDE.md comment that previously called gemma a non-reasoning model was written for Gemma 3 and never updated. (2) Latent persist bug fixed: init_models_config did dict(existing_models) — a shallow copy — so the per-model cfg dicts were aliased back to server.py's pre-init snapshot. The forward-looking thinking_format upgrade then mutated both sides, _models_differ saw matching values, and the persist gate skipped the save. The 8.18.0 forward-looking re-detect for cliproxyapi/gemini-2.5 only happened to land in config.json because of unrelated saves. Replaced the shallow copy with {k: dict(v) for k, v in existing_models.items()} so any in-place upgrade now actually persists across restarts. The three Gemma 4 entries (26B-A4B-it-MLX-4bit, e2b-it-4bit, e4b-it-4bit) auto-upgraded from 'none' to 'reasoning_field' on next server start. (3) Streaming thinking block now defaults to collapsed — the live render at renderStreamingMessage previously auto-expanded while thinking text was arriving and only collapsed once the answer started streaming. The header still shows 'Thinking...'/'Thinking' progress; click to peek at the chain-of-thought as it streams. The two finalized renderers (renderThinkingMessage history path + the inline assistant-message thinking) were already collapsed-by-default, no change needed there. KV-cache invariant preserved — no system prompt or warmup payload changes."),
     ("8.18.0", "2026-04-26", "Per-task thinking level + caveman mode for scheduled runs, format-aware UX everywhere. Two new schedules columns added by idempotent ALTER: thinking_level TEXT (''=inherit | none | low | medium | high) and caveman_chat INTEGER (0..3, response-style compression analogous to the chat composer toggle). Scheduler.add / Scheduler.update validate them; _execute_scheduled overlays thinking_level onto the resolved inference_params (or removes it on 'none' + sets thinking=False) before _run_delegate, and appends CAVEMAN_CHAT_PROMPTS[level] directly to the system prompt — same suffix the chat composer toggle uses. caveman_system is intentionally NOT exposed per task: it's a per-model knob tied to KV-prefix stability and would invalidate warmup. /v1/schedule add/edit endpoints accept the two new fields. Schedule create + edit modals get a 3-column row (Timeout · Thinking level · Caveman mode); the edit modal preselects the saved values. Format-aware option set everywhere via _thinkingOptionsForFormat / _thinkingOptionsForModel helpers in web/index.html: 'none' → '(unsupported)' disabled select; 'inline_tags' → Off/On (no graduated levels); 'mistral_blocks' → Off/High (provider only accepts those two); 'reasoning_field' / 'openai_opaque' → Off/Low/Medium/High. Schedule modal also gets an 'Inherit from model' entry on top, re-rendered when the model selector changes (preserves the user's prior choice when still valid). Models tab General Settings detail panel adds a Thinking Level dropdown next to Thinking Format — driven by the row's current format, re-renders on format change, persists inference.thinking_level (or omits when unset/disabled). Save path validates both per-row. Composer thinking-level button (#btn-thinking / #welcome-btn-thinking) is now format-aware: cycleThinkingLevel uses _composerLevelsForFormat to cycle only through valid steps for the current model (mistral_blocks cycles Off→High, inline_tags cycles Off→On, reasoning_field/openai_opaque keep the full Off→Low→Medium→High cycle). refreshThinkingButton self-corrects state.thinkingLevel in place when the user switches to a model that can't honor the saved level — every existing call site that already refreshes after a model change naturally enforces the rule. Tooltip now shows the cycle for the current format ('Thinking: medium (reasoning_field) · cycle: none → low → medium → high') so users can see why mid-levels aren't reachable on capped formats. Server-side belt-and-braces: new _validate_thinking_level_for_model helper rejects mismatches with helpful messages ('Mistral accepts only none or high', 'Model X does not support reasoning'); called from Scheduler.add (before INSERT) and Scheduler.update (cross-field check using the effective model — the one in the patch, or the existing row's). Empty model defers validation to runtime so 'Default' schedules still work. Detector fix: _detect_thinking_format gained an optional provider arg; cliproxyapi+gemini-2.5* and oMLX+qwen3/deepseek-r1/glm-zero/magistral now match even when the stored model id is bare (no scoped prefix). _match_known_model passes provider through. init_models_config does a forward-looking re-detect — when stored format is the conservative default 'none' but the provider-aware detector now returns a real format, upgrade in place; never the other direction (would clobber a deliberate user 'off'). Server startup persists the upgraded models when init produces a real change (was first-run-only before), so e.g. gemini-2.5-flash auto-upgraded from 'none' to 'reasoning_field' on this install. KV-cache invariant preserved — _build_system_prompt unchanged, scheduled tasks build their system prompt independently so the per-task caveman_chat append doesn't touch warm-pool prefixes."),
@@ -558,6 +559,135 @@ TOOL_DEFINITIONS = [
                 },
             },
             "required": ["query"],
+        },
+    },
+    {
+        "name": "mempalace_kg_query",
+        "description": (
+            "Query the project's knowledge graph for an entity — get all "
+            "(subject, predicate, object) triples where this entity appears. "
+            "The graph is built by an LLM extractor over normative documents "
+            "(policies, regulations, specs, contracts). Use this when the "
+            "user asks 'what does X require / forbid / cite / define', 'who "
+            "is responsible for X', 'what depends on X', or wants a "
+            "structured view of obligations. Returns triples with source "
+            "drawer references — use mempalace_query on the same source_file "
+            "to read the verbatim chunk. Auto-scoped to the current project; "
+            "refuses outside a project context."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {
+                    "type": "string",
+                    "description": (
+                        "The entity to look up — verbatim in the document's "
+                        "source language (e.g. German). Case-insensitive."
+                    ),
+                },
+                "direction": {
+                    "type": "string",
+                    "enum": ["outgoing", "incoming", "both"],
+                    "description": (
+                        "outgoing = X→? (what this entity requires/forbids/"
+                        "cites). incoming = ?→X (what depends on / refers to "
+                        "this entity). both = union. Default outgoing."
+                    ),
+                },
+                "as_of": {
+                    "type": "string",
+                    "description": (
+                        "Optional date filter (ISO YYYY-MM-DD). Returns only "
+                        "triples valid at that point in time. Omit for all "
+                        "currently-valid triples."
+                    ),
+                },
+            },
+            "required": ["entity"],
+        },
+    },
+    {
+        "name": "mempalace_kg_search",
+        "description": (
+            "Find every triple matching a predicate filter (and optionally a "
+            "subject or object substring). This is the contradiction- and "
+            "coverage-detection primitive: 'show me every requires triple "
+            "about retention', 'every cites triple referencing GDPR', 'every "
+            "forbids rule applied to employees'. Compare the returned set to "
+            "spot disagreements and gaps. Auto-scoped to the current project."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "predicate": {
+                    "type": "string",
+                    "description": (
+                        "Required. The relation type — must be lowercase "
+                        "snake_case. Common: requires, forbids, permits, "
+                        "defines, cites, applies_to, effective_from, "
+                        "supersedes, responsible_party, condition, exception, "
+                        "penalty."
+                    ),
+                },
+                "subject_contains": {
+                    "type": "string",
+                    "description": (
+                        "Optional substring filter on the subject (case-"
+                        "insensitive). Use to narrow to a topic."
+                    ),
+                },
+                "object_contains": {
+                    "type": "string",
+                    "description": (
+                        "Optional substring filter on the object (case-"
+                        "insensitive). Use to find e.g. all rules mentioning "
+                        "'7 Jahre' or 'GDPR'."
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max triples to return (default 25, max 200).",
+                    "minimum": 1,
+                    "maximum": 200,
+                },
+            },
+            "required": ["predicate"],
+        },
+    },
+    {
+        "name": "mempalace_kg_neighbors",
+        "description": (
+            "Multi-hop neighborhood traversal in the project's knowledge "
+            "graph. Returns the entities reachable from a starting entity "
+            "within N hops, plus the predicates connecting them. Use to "
+            "answer 'what is everything connected to X' / 'what are the "
+            "downstream implications of X' / 'which obligations cluster "
+            "around the same topic'. Auto-scoped to the current project."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {
+                    "type": "string",
+                    "description": "The starting entity (verbatim, case-insensitive).",
+                },
+                "depth": {
+                    "type": "integer",
+                    "description": "Max hops (default 1, max 3).",
+                    "minimum": 1,
+                    "maximum": 3,
+                },
+                "predicate": {
+                    "type": "string",
+                    "description": (
+                        "Optional: only follow edges with this predicate. "
+                        "Useful for tracing a single relation type — e.g. "
+                        "predicate='cites' walks the citation graph, "
+                        "predicate='supersedes' walks version history."
+                    ),
+                },
+            },
+            "required": ["entity"],
         },
     },
     {
@@ -1164,7 +1294,9 @@ _TOOL_DEF_OPENAI_INDEX = {td["function"]["name"]: td for td in TOOL_DEFINITIONS_
 TOOL_GROUPS = {
     "core": {"read_file", "write_file", "edit_file", "list_directory", "search_files",
              "execute_command", "tool_search", "ask_user"},
-    "memory": {"mempalace_query", "save_chat_to_memory"},
+    "memory": {"mempalace_query", "save_chat_to_memory",
+               "mempalace_kg_query", "mempalace_kg_search",
+               "mempalace_kg_neighbors"},
     "context": {"context_search", "context_detail", "context_recall"},
     "web": {"web_fetch", "exa_search"},
     "email": {"gmail_inbox", "gmail_read", "gmail_search", "gmail_send", "gmail_reply"},
@@ -3499,6 +3631,303 @@ def tool_mempalace_query(args: dict) -> str:
         "total_before_filter": (results or {}).get("total_before_filter"),
         "drawers": drawers,
     })
+
+
+# ── Knowledge Graph tools (project-scoped) ───────────────────────────────────
+#
+# These wrap MemPalace's KnowledgeGraph (entities + triples table). Every tool
+# auto-scopes to the caller's current project via _thread_local.project; we
+# refuse outside a project context for now (step 1: projects only). Source
+# scoping uses (source_file LIKE <input_folder>%) plus adapter_name when
+# the KG schema has it (3.3.3+).
+
+def _kg_resolve_project_scope() -> tuple[str, list[str], str | None]:
+    """Return (palace_path, source_prefixes, error_msg) for the current
+    project, or ("",[], "<reason>") if scoping fails. source_prefixes is
+    the union of (project_dir, every input_folder.path) — drawers carrying
+    any of these prefixes belong to this project.
+    """
+    cfg = _load_mempalace_config()
+    if not cfg.get("enabled", True):
+        return "", [], "mempalace: disabled in config.json"
+    palace_path = cfg.get("palace_path", "")
+    if not palace_path or not os.path.isdir(palace_path):
+        return "", [], f"mempalace: palace_path missing: {palace_path}"
+
+    current_project = getattr(_thread_local, "project", None) or ""
+    if not current_project:
+        return "", [], (
+            "mempalace_kg: this tool requires a project context. "
+            "Step 1 supports only project-scoped queries.")
+
+    _ag = getattr(_thread_local, "current_agent", None)
+    current_agent_id = getattr(_ag, "agent_id", None) or (
+        _ag if isinstance(_ag, str) else "main") or "main"
+    proj_cfg = ProjectManager.get_project(current_agent_id, current_project)
+    if not proj_cfg:
+        return "", [], f"project not found: {current_project}"
+    pid = proj_cfg.get("id") or ""
+    if not pid:
+        return "", [], "project has no id (run a sync first)"
+
+    pdir = proj_cfg.get("dir") or ""
+    prefixes: list[str] = []
+    def _norm(p: str) -> str:
+        # Resolve symlinks so the prefix filter matches what the miner stored
+        # in drawer source_file (macOS /tmp → /private/tmp, etc.).
+        try:
+            r = os.path.realpath(p)
+        except OSError:
+            r = p
+        if r and not r.endswith(os.sep):
+            r += os.sep
+        return r
+    if pdir:
+        prefixes.append(_norm(pdir))
+    for entry in (proj_cfg.get("input_folders") or []):
+        fp = (entry.get("path") or "").strip()
+        if fp:
+            prefixes.append(_norm(fp))
+    if not prefixes:
+        return "", [], "project has no input folders or attachments to scope by"
+    return palace_path, prefixes, None
+
+
+def _kg_open(palace_path: str):
+    """Lazy-open the KG. Returns (kg, error_msg)."""
+    ok, err = _ensure_mempalace_importable()
+    if not ok:
+        return None, err
+    try:
+        from mempalace.knowledge_graph import KnowledgeGraph
+    except Exception as e:
+        return None, f"import KnowledgeGraph: {type(e).__name__}: {e}"
+    kg_path = os.path.join(palace_path, "knowledge_graph.sqlite3")
+    if not os.path.isfile(kg_path):
+        return None, "knowledge_graph.sqlite3 not yet created (no extractions run)"
+    try:
+        return KnowledgeGraph(db_path=kg_path), None
+    except Exception as e:
+        return None, f"open KG: {type(e).__name__}: {e}"
+
+
+def _kg_source_in_scope(source_file: str, prefixes: list[str]) -> bool:
+    if not source_file:
+        return False
+    return any(source_file.startswith(p) for p in prefixes)
+
+
+def _kg_has_adapter_column(palace_path: str) -> bool:
+    """Cheap one-time PRAGMA check for adapter_name. Cached on the module."""
+    cache_key = f"_kg_adapter_col_{palace_path}"
+    cached = globals().get(cache_key)
+    if cached is not None:
+        return cached
+    import sqlite3 as _sql
+    kg_path = os.path.join(palace_path, "knowledge_graph.sqlite3")
+    if not os.path.isfile(kg_path):
+        return False
+    try:
+        c = _sql.connect(kg_path, timeout=5, check_same_thread=False)
+        try:
+            cols = {r[1] for r in c.execute("PRAGMA table_info(triples)")}
+        finally:
+            c.close()
+        out = "adapter_name" in cols
+    except Exception:
+        out = False
+    globals()[cache_key] = out
+    return out
+
+
+def tool_mempalace_kg_query(args: dict) -> str:
+    """Entity-first KG lookup, scoped to the caller's current project."""
+    palace_path, prefixes, err = _kg_resolve_project_scope()
+    if err:
+        return _err(err)
+    entity = (args.get("entity") or "").strip()
+    if not entity:
+        return _err("mempalace_kg_query: 'entity' is required")
+    direction = (args.get("direction") or "outgoing").strip().lower()
+    if direction not in {"outgoing", "incoming", "both"}:
+        direction = "outgoing"
+    as_of = (args.get("as_of") or "").strip() or None
+
+    kg, err = _kg_open(palace_path)
+    if err or kg is None:
+        return _err(err or "kg unavailable")
+    try:
+        triples = kg.query_entity(entity, as_of=as_of, direction=direction) or []
+    except Exception as e:
+        return _err(f"kg.query_entity: {type(e).__name__}: {e}")
+    finally:
+        try: kg.close()
+        except Exception: pass
+
+    # Post-filter by project source prefix. Only triples whose source_file
+    # falls under one of the project's known prefixes are returned.
+    in_scope = []
+    for t in triples:
+        if not isinstance(t, dict):
+            continue
+        sf = t.get("source_file", "") or ""
+        if _kg_source_in_scope(sf, prefixes):
+            in_scope.append(t)
+    return _ok({
+        "entity": entity,
+        "direction": direction,
+        "as_of": as_of,
+        "count": len(in_scope),
+        "total_before_scope_filter": len(triples),
+        "triples": in_scope[:200],
+    })
+
+
+def tool_mempalace_kg_search(args: dict) -> str:
+    """Find triples matching a predicate filter, scoped to the project."""
+    palace_path, prefixes, err = _kg_resolve_project_scope()
+    if err:
+        return _err(err)
+    predicate = (args.get("predicate") or "").strip().lower().replace(" ", "_")
+    if not predicate:
+        return _err("mempalace_kg_search: 'predicate' is required")
+    subj_q = (args.get("subject_contains") or "").strip().lower()
+    obj_q = (args.get("object_contains") or "").strip().lower()
+    try:
+        limit = max(1, min(200, int(args.get("limit") or 25)))
+    except (TypeError, ValueError):
+        limit = 25
+
+    ok, err_imp = _ensure_mempalace_importable()
+    if not ok:
+        return _err(err_imp)
+
+    kg_path = os.path.join(palace_path, "knowledge_graph.sqlite3")
+    if not os.path.isfile(kg_path):
+        return _err("knowledge_graph.sqlite3 not yet created")
+
+    import sqlite3 as _sql
+    has_adapter = _kg_has_adapter_column(palace_path)
+    conn = _sql.connect(kg_path, timeout=5, check_same_thread=False)
+    conn.row_factory = _sql.Row
+    try:
+        # Build source_file scope filter from the project's prefixes.
+        scope_clause = " OR ".join(["source_file LIKE ? || '%'"] * len(prefixes))
+        params: list = list(prefixes)
+        sql = (
+            "SELECT t.subject AS sub_id, e1.name AS sub_name, "
+            "       t.predicate, "
+            "       t.object AS obj_id, e2.name AS obj_name, "
+            "       t.confidence, t.source_file, "
+            f"       {'t.source_drawer_id' if has_adapter else 'NULL'} AS source_drawer_id, "
+            f"       {'t.adapter_name' if has_adapter else 'NULL'} AS adapter_name, "
+            "       t.valid_from, t.valid_to "
+            "FROM triples t "
+            "LEFT JOIN entities e1 ON t.subject = e1.id "
+            "LEFT JOIN entities e2 ON t.object = e2.id "
+            f"WHERE t.predicate = ? AND ({scope_clause}) AND t.valid_to IS NULL "
+        )
+        params = [predicate] + list(prefixes)
+        if subj_q:
+            sql += " AND LOWER(e1.name) LIKE ? "
+            params.append(f"%{subj_q}%")
+        if obj_q:
+            sql += " AND LOWER(e2.name) LIKE ? "
+            params.append(f"%{obj_q}%")
+        sql += " ORDER BY t.confidence DESC, t.extracted_at DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
+
+    triples = []
+    for r in rows:
+        triples.append({
+            "subject": r["sub_name"] or r["sub_id"],
+            "predicate": r["predicate"],
+            "object": r["obj_name"] or r["obj_id"],
+            "confidence": r["confidence"],
+            "source_file": r["source_file"] or "",
+            "source_drawer_id": r["source_drawer_id"] or "",
+            "valid_from": r["valid_from"] or "",
+        })
+    return _ok({
+        "predicate": predicate,
+        "subject_contains": subj_q or None,
+        "object_contains": obj_q or None,
+        "count": len(triples),
+        "triples": triples,
+    })
+
+
+def tool_mempalace_kg_neighbors(args: dict) -> str:
+    """BFS in the project's KG. Returns reachable entities + connecting triples."""
+    palace_path, prefixes, err = _kg_resolve_project_scope()
+    if err:
+        return _err(err)
+    entity = (args.get("entity") or "").strip()
+    if not entity:
+        return _err("mempalace_kg_neighbors: 'entity' is required")
+    try:
+        depth = max(1, min(3, int(args.get("depth") or 1)))
+    except (TypeError, ValueError):
+        depth = 1
+    pred_filter = (args.get("predicate") or "").strip().lower().replace(" ", "_") or None
+
+    kg, err = _kg_open(palace_path)
+    if err or kg is None:
+        return _err(err or "kg unavailable")
+
+    visited: set[str] = set()
+    frontier: list[str] = [entity]
+    edges: list[dict] = []
+    try:
+        for hop in range(depth):
+            next_frontier: list[str] = []
+            for ent in frontier:
+                if ent in visited:
+                    continue
+                visited.add(ent)
+                try:
+                    triples = kg.query_entity(ent, direction="both") or []
+                except Exception:
+                    triples = []
+                for t in triples:
+                    if not isinstance(t, dict):
+                        continue
+                    if not _kg_source_in_scope(t.get("source_file", "") or "",
+                                                prefixes):
+                        continue
+                    if pred_filter and t.get("predicate") != pred_filter:
+                        continue
+                    edges.append({
+                        "subject": t.get("subject", ""),
+                        "predicate": t.get("predicate", ""),
+                        "object": t.get("object", ""),
+                        "confidence": t.get("confidence"),
+                        "source_file": t.get("source_file", "") or "",
+                        "hop": hop + 1,
+                    })
+                    other = t.get("object") if t.get("subject") == ent \
+                            else t.get("subject")
+                    if other and other not in visited:
+                        next_frontier.append(other)
+            frontier = next_frontier
+            if not frontier:
+                break
+    finally:
+        try: kg.close()
+        except Exception: pass
+
+    return _ok({
+        "entity": entity,
+        "depth": depth,
+        "predicate_filter": pred_filter,
+        "entities_reached": sorted(visited),
+        "edge_count": len(edges),
+        "edges": edges[:300],
+    })
+
 
 # Callback set by server.py to trigger immediate chat sync for a session
 _save_chat_to_memory_callback = None
@@ -18458,6 +18887,9 @@ TOOL_DISPATCH = {
         category=args.get("category"),
     ),
     "mempalace_query": tool_mempalace_query,
+    "mempalace_kg_query": lambda args: tool_mempalace_kg_query(args),
+    "mempalace_kg_search": lambda args: tool_mempalace_kg_search(args),
+    "mempalace_kg_neighbors": lambda args: tool_mempalace_kg_neighbors(args),
     "save_chat_to_memory": tool_save_chat_to_memory,
     "memory_store": tool_memory_store,
     "memory_recall": tool_memory_recall,
@@ -19795,7 +20227,19 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
                         "use the current working directory. Example: source_file "
                         "`screen.py` from a drawer mined under "
                         f"`{input_folders[0].get('path','')}` becomes "
-                        f"`{os.path.join(input_folders[0].get('path',''), 'screen.py')}`.\n\n"
+                        f"`{os.path.join(input_folders[0].get('path',''), 'screen.py')}`.\n"
+                        "BINARY DOCUMENTS (PDF, DOCX, PPTX, XLSX, EML, MSG) "
+                        "in input folders are auto-converted into companion "
+                        "`.md` files under the hidden `.brain-extracted/` "
+                        "subdirectory before mining. So a drawer with "
+                        "`source_file` like `.brain-extracted/policy.pdf.md` "
+                        "actually came from `policy.pdf` in the same folder — "
+                        "open the ORIGINAL binary with read_document for full "
+                        "fidelity (tables, page layout, complete spreadsheet "
+                        "rows beyond the preview). The `.md` is a text "
+                        "preview optimised for retrieval and triple "
+                        "extraction; use it only when you don't need the "
+                        "original layout.\n\n"
                     )
             # Inject project custom instructions
             proj_instructions = proj_cfg.get("instructions", "")

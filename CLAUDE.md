@@ -615,6 +615,108 @@ Sessions are now created lazily on the first send instead of pre-emptively on ev
 - **Server** (`list_sessions`): SQL `WHERE` clause now hides any session with 0 messages older than 60 seconds. Fresh-but-empty sessions (the one being typed into right now) still show.
 - **Server startup**: one-shot purge in `main()` deletes empty sessions older than 5 minutes. Idempotent, runs on every start. Cleared 551 historical orphans on the install where the bug was found.
 
+## Project Knowledge Graph (v8.19.0)
+
+LLM-driven document → triples extraction over project input folders + manual attachments. Builds on the existing project-sync daemon: drawer mining stays unchanged, a follow-up post-pass calls a configurable LLM to extract `(subject, predicate, object)` triples and writes them to MemPalace's KG (`<palace_path>/knowledge_graph.sqlite3`). Step 1 = projects only.
+
+### Modules
+
+- `kg_extract.py` — extraction module. `Profile` registry (`normative` for policies/regulations/specs/contracts/SOPs; `generic` for open prose), `extract_triples_from_drawer`, `run_kg_post_pass`. Two chunking modes: **`source_file`** (default) reads the original markdown from disk and re-chunks at `source_chunk_chars` (3500 default) with paragraph boundaries — ~70× yield improvement vs feeding miner drawers 1:1; **`per_drawer`** preserved as fallback. Cursor key encoded as `<rep_drawer_id>#<chunk_index>` so chunk-level idempotency works without schema migration. Connection-refused retries 3× with 0.8s + 2.0s backoff. `inference_max_tokens=8000` default — reasoning models (gemini-2.5-flash, mistral-vibe-cli-latest) need it to avoid mid-JSON exhaustion.
+- `doc_convert.py` — pre-mine document conversion. Walks each input folder, converts unsupported binaries to companion `.md` under `<folder>/.brain-extracted/<name>.<ext>.md`. Idempotent via `(mtime, size)` frontmatter, stale-md sweeper (`sweep_stale`) drops orphans when sources removed, per-file isolated. Formats: `.pdf` (fitz), `.docx` (python-docx), `.pptx` (python-pptx, includes speaker notes), `.xlsx` (openpyxl, full rows up to 100k/sheet — bank lookup tables ARE the policy; warn at 5k), `.eml` (stdlib email), `.msg` (extract-msg, optional install). Frontmatter writes `<!-- brain-source: <abs path> -->` so the agent's read_document path resolves back to the original binary for full fidelity.
+
+### Profile vocabulary (`normative`)
+
+Twelve controlled English predicates: `requires`, `forbids`, `permits`, `defines`, `cites`, `applies_to`, `effective_from`, `supersedes`, `responsible_party`, `condition`, `exception`, `penalty`. Subjects/objects stay verbatim in the source language (German content stays German; predicates stay English so triples join across languages). Off-vocab predicates allowed as escape hatch; in production runs ~98% of triples land on controlled vocabulary.
+
+### Daemon hook
+
+`mempalace-project-sync` daemon's per-project loop calls `_run_kg_for(...)` after every `mp_miner.mine()`:
+1. Resolves prefix via `os.path.realpath()` (macOS `/tmp` → `/private/tmp`; without this, drawers' resolved-path source_files don't match).
+2. Calls `kg_extract.run_kg_post_pass` scoped to `(wing, source_prefix)` with `adapter_name="brain-project-kg"`.
+3. Updates per-item state: `triples_extracted`, `kg_state` (idle/extracting/error), `kg_drawers_processed`, `kg_last_error`, `kg_elapsed_s`.
+4. Project-level `sync_status.total_triples` rollup runs at end-of-cycle (one COUNT per prefix-scoped slice).
+
+End-of-project: optional `_run_closet_regen_for(wing)` runs `mempalace.closet_llm.regenerate_closets` using the same model selected for KG extraction (no separate model picker). Boosts `mempalace_query` ranking by replacing MemPalace's regex closets with LLM-generated topic lines that capture implicit topics, foreign-language content, contextual references. One LLM call per source file. Opt-in via `mempalace.kg.regenerate_closets`, default off — adds load to every cycle.
+
+### Schema (chats.db, idempotent)
+
+```sql
+CREATE TABLE kg_extraction_progress (
+    palace_wing       TEXT NOT NULL,
+    source_drawer_id  TEXT NOT NULL,  -- "<rep_drawer_id>#<chunk_index>" in source_file mode
+    source_file       TEXT,
+    adapter_name      TEXT,
+    processed_at      REAL NOT NULL,
+    triples           INTEGER NOT NULL DEFAULT 0,
+    error             TEXT DEFAULT '',
+    PRIMARY KEY (palace_wing, source_drawer_id)
+);
+CREATE TABLE kg_extraction_log (
+    id, palace_wing, adapter_name, source_prefix, profile, model,
+    started_at, finished_at,
+    drawers_seen, drawers_processed, drawers_skipped, triples_extracted, errors, error_msg
+);
+```
+
+### Agent tools (in `memory` group)
+
+All three auto-scope to the caller's project via `_thread_local.project`. Refused outside project context (step 1 = projects only). Filter triples by `source_file LIKE prefix%` matching `project_dir + every input_folders[].path`, paths normalised through `os.path.realpath`.
+
+- `mempalace_kg_query(entity, direction?, as_of?)` — entity-first traversal.
+- `mempalace_kg_search(predicate, subject_contains?, object_contains?)` — predicate filter for contradiction/coverage analysis (e.g. `predicate=requires` + `subject_contains=retention`).
+- `mempalace_kg_neighbors(entity, depth?, predicate?)` — multi-hop BFS up to depth 3.
+
+### HTTP endpoints (`/v1/mempalace/kg/*`)
+
+- `GET /stats` — aggregate across accessible projects (admin: all; user: those they can access via `_project_access_check`). Top predicates per project.
+- `GET /wing?agent_id=X&project=Y` — per-project drilldown: counts, top predicates, top entities by degree, sample triples (highest confidence first), recent extraction-log rows.
+- `GET /entity?agent_id=X&project=Y&name=Z` — neighborhood of one entity (project-scoped).
+- `GET /extraction-log?agent_id=X&project=Y&limit=N` — run history.
+- `GET/POST /config` — KG settings (admin write). Validates model id against known models, profile against `normative|generic`, scopes against `{projects,scheduled,chats}`.
+- `POST /reextract` (admin or project owner) — purges scope's triples + cursor, queues sync. Audit-logged as `kg_reextract`.
+
+### Settings UI (Settings → Knowledge Graph sub-tab)
+
+Top stats row + extraction settings (model picker populated from `/v1/models/config` with `[local]` annotation, profile picker, max_triples / min_confidence / max_drawer_chars knobs, regenerate_closets opt-in). Per-project KG cards with click-through to a drilldown modal: predicate frequency bars, top entities by degree, sample triples (with source_file shown), recent extraction-log. Admin gets Re-extract button on the modal.
+
+### Project Memory chip extension
+
+Project header chip now reads `Memory: N indexed · M triples` and pulses purple while extraction is running. Double-click opens the project's KG drilldown. Per-item pills (folder + attachment rows) gain a KG sub-badge: `12 triples` (purple, indexed) / `KG…` (purple-pulse, in flight) / `KG !` (red, error).
+
+### Config (`config.json` → `mempalace.kg`)
+
+```json
+{
+  "enabled": true,
+  "extraction_model": "gemini-2.5-flash",
+  "scopes": ["projects"],
+  "profile": "normative",
+  "max_triples_per_drawer": 12,
+  "min_confidence": 0.5,
+  "max_drawer_chars": 6000,
+  "chunking_mode": "source_file",
+  "source_chunk_chars": 3500,
+  "regenerate_closets": false
+}
+```
+
+### Known constraints
+
+1. **GPU memory tradeoff**: 26B chat warmpool (~22GB) + e4b extraction (~5GB) doesn't fit under oMLX's 25.6GB process cap. Either raise the cap, set 26B `warmup: false` and `oMLX max_concurrent: 1` so e4b loads on demand (slower chat), or use a cloud model for KG (current default `gemini-2.5-flash`).
+2. **MemPalace KG schema 3.3.0 vs 3.3.3**: 3.3.0 lacks `source_drawer_id` and `adapter_name` columns. `kg_extract` falls back via `TypeError` to legacy 5-arg `add_triple`. Source-scoping then relies on `source_file LIKE prefix%` only — works because project input folders have unique absolute path prefixes. Upgrading to 3.3.3 lets us additionally filter by `adapter_name` without schema migration.
+3. **MemPalace KG path**: always `<palace_path>/knowledge_graph.sqlite3`, NOT `~/.mempalace/knowledge_graph.sqlite3` (the unrelated default of `KnowledgeGraph()` when called with no `db_path`). Stale default-path file exists from earlier exploration; ignore it.
+4. **Code skipped**: `_is_code_path()` matches `.py/.js/.ts/.go/.json/...` extensions; recorded as `skipped: code` in cursor — handled by Brain's existing code graph (separate substrate). Folding code AST extraction into the same KG profile system is captured as backlog (`backlog_code_graph_into_mempalace.md`).
+
+### Validation
+
+End-to-end on the German bank-policy PDF `Richtlinie-ZV-Vordrucke-2016-DK_finale_Fassung_DK_Homepage.pdf` (DK Zahlungsverkehrsvordrucke):
+- Auto-converted by `doc_convert` in 0.6s
+- 44 chunks via `source_file` mode at 3500 chars
+- **430 triples extracted in 950s** (~9.8 triples/chunk, 4 errors)
+- Predicate distribution: 191 requires, 55 cites, 53 permits, 33 forbids, 30 defines, 23 condition, 8 applies_to, 7 exception, 3 penalty, 2 supersedes, 1 effective_from
+- ~2% off-vocab predicate leakage
+- Source-language preserved: `(Mittelfeld) requires (prüfzahlgesicherte Kunden-Referenznummer gemäß ISO/CD-1164911)`, `(Vordrucke) forbids (Werbetexte oder -motive)`, `(Richtlinien 2016) supersedes (die bisherige Fassung)`
+
 ## Cost Tracking & Rate Limiting
 
 - **`CostTracker`** logs every LLM call to `costs.db` (tokens, model, provider, estimated cost). Rates from `_cost_rates` defaults + per-model `cost_input`/`cost_output`

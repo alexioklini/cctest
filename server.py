@@ -2713,6 +2713,17 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_mempalace_session_turns()
         elif path.startswith("/v1/mempalace/drawers"):
             self._handle_mempalace_drawers()
+        # --- Knowledge graph GET routes ---
+        elif path == "/v1/mempalace/kg/stats":
+            self._handle_kg_stats_global()
+        elif path == "/v1/mempalace/kg/wing":
+            self._handle_kg_wing_detail(self._kg_qs())
+        elif path == "/v1/mempalace/kg/entity":
+            self._handle_kg_entity_detail(self._kg_qs())
+        elif path == "/v1/mempalace/kg/extraction-log":
+            self._handle_kg_extraction_log(self._kg_qs())
+        elif path == "/v1/mempalace/kg/config":
+            self._handle_kg_config_get()
         # --- MCP GET routes ---
         elif path == "/v1/mcp/connections":
             self._handle_mcp_list()
@@ -2918,6 +2929,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_server_config()
         elif path == "/v1/mempalace/classifier":
             self._handle_mempalace_classifier_save()
+        elif path == "/v1/mempalace/kg/config":
+            self._handle_kg_config_save()
+        elif path == "/v1/mempalace/kg/reextract":
+            self._handle_kg_reextract()
         elif path == "/v1/quotas/config":
             self._handle_quota_config_save()
         elif path == "/v1/cache/clear":
@@ -8891,6 +8906,526 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
+    # ── Knowledge-graph endpoints ─────────────────────────────────────────
+    #
+    # Project-scoped KG produced by kg_extract.run_kg_post_pass during the
+    # project-sync daemon cycle. All wing access is gated by
+    # _project_access_check; the global stats endpoint filters by accessible
+    # projects when called by a non-admin.
+
+    def _kg_qs(self) -> dict:
+        """Flatten URL query string to a single-value dict for KG endpoints."""
+        from urllib.parse import parse_qs, urlparse
+        raw = parse_qs(urlparse(self.path).query)
+        return {k: (v[0] if v else "") for k, v in raw.items()}
+
+    def _kg_resolve_project_from_query(self, params):
+        """Pull (agent_id, proj_name, project, prefixes, palace_path) from
+        ?agent_id=X&project=Y query params. Sends 400/404/403 on miss and
+        returns None. `project` carries the loaded project dict.
+        """
+        agent_id = (params.get("agent_id") or "").strip()
+        proj_name = (params.get("project") or "").strip()
+        if not agent_id or not proj_name:
+            self._send_json({"error": "agent_id and project required"}, 400)
+            return None
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return None
+        pid = project.get("id") or ""
+        if not pid:
+            self._send_json({"error": "project has no id (run a sync first)"}, 400)
+            return None
+        mcfg = engine._load_mempalace_config()
+        palace_path = mcfg.get("palace_path", "")
+        if not palace_path or not os.path.isdir(palace_path):
+            self._send_json({"error": "MemPalace palace_path missing"}, 503)
+            return None
+        # Collect every source_file prefix that belongs to this project.
+        pdir = project.get("dir") or os.path.join(
+            engine.AGENTS_DIR, agent_id, "projects", proj_name)
+        def _norm(p: str) -> str:
+            # Resolve symlinks (macOS /tmp → /private/tmp etc.) so prefix
+            # filters match what the miner stored.
+            try:
+                r = os.path.realpath(p)
+            except OSError:
+                r = p
+            if r and not r.endswith(os.sep):
+                r += os.sep
+            return r
+        prefixes = [_norm(pdir)]
+        for entry in (project.get("input_folders") or []):
+            fp = (entry.get("path") or "").strip()
+            if fp:
+                prefixes.append(_norm(fp))
+        return {
+            "agent_id": agent_id,
+            "proj_name": proj_name,
+            "project": project,
+            "wing": _project_wing(pid),
+            "prefixes": prefixes,
+            "palace_path": palace_path,
+            "chats_db_path": os.path.join(engine.AGENTS_DIR, "main", "chats.db"),
+        }
+
+    def _handle_kg_stats_global(self):
+        """GET /v1/mempalace/kg/stats — aggregate across all accessible
+        projects. Admins see everything; non-admins see only projects they
+        can access (per _project_access_check)."""
+        user = self._require_auth()
+        if user is None:
+            return
+        try:
+            import kg_extract
+        except Exception as e:
+            self._send_json({"error": f"kg_extract unavailable: {e}"}, 500)
+            return
+        mcfg = engine._load_mempalace_config()
+        if not mcfg.get("enabled", True):
+            self._send_json({"enabled": False, "projects": []})
+            return
+        palace_path = mcfg.get("palace_path", "")
+        if not palace_path or not os.path.isdir(palace_path):
+            self._send_json({"error": "palace_path missing"}, 503)
+            return
+        kg_cfg = mcfg.get("kg") or {}
+
+        agg_entities = 0
+        agg_triples = 0
+        per_project = []
+        try:
+            for agent_id in sorted(os.listdir(engine.AGENTS_DIR)):
+                proj_root = os.path.join(engine.AGENTS_DIR, agent_id, "projects")
+                if not os.path.isdir(proj_root):
+                    continue
+                for proj_name in sorted(os.listdir(proj_root)):
+                    if proj_name.startswith("."):
+                        continue
+                    project = engine.ProjectManager.get_project(agent_id, proj_name)
+                    if not project or project.get("status") == "archived":
+                        continue
+                    if not _auth_mod.can_access_project(user, project):
+                        continue
+                    pid = project.get("id") or ""
+                    if not pid:
+                        continue
+                    pdir = project.get("dir") or os.path.join(
+                        proj_root, proj_name)
+                    def _norm_p(p: str) -> str:
+                        try:
+                            r = os.path.realpath(p)
+                        except OSError:
+                            r = p
+                        if r and not r.endswith(os.sep):
+                            r += os.sep
+                        return r
+                    prefixes = [_norm_p(pdir)]
+                    for entry in (project.get("input_folders") or []):
+                        fp = (entry.get("path") or "").strip()
+                        if fp:
+                            prefixes.append(_norm_p(fp))
+                    proj_entities = 0
+                    proj_triples = 0
+                    proj_top_predicates = {}
+                    for prefix in prefixes:
+                        try:
+                            s = kg_extract.kg_stats_for_wing(
+                                palace_path=palace_path,
+                                source_prefix=prefix,
+                                adapter_name="brain-project-kg")
+                        except Exception:
+                            continue
+                        proj_entities += int(s.get("entities", 0))
+                        proj_triples += int(s.get("triples", 0))
+                        for p in s.get("top_predicates", []) or []:
+                            k = p.get("predicate", "") or ""
+                            if k:
+                                proj_top_predicates[k] = (
+                                    proj_top_predicates.get(k, 0)
+                                    + int(p.get("count", 0)))
+                    per_project.append({
+                        "agent_id": agent_id,
+                        "project": proj_name,
+                        "project_id": pid,
+                        "wing": _project_wing(pid),
+                        "entities": proj_entities,
+                        "triples": proj_triples,
+                        "top_predicates": [
+                            {"predicate": k, "count": v}
+                            for k, v in sorted(proj_top_predicates.items(),
+                                               key=lambda kv: -kv[1])[:10]
+                        ],
+                    })
+                    agg_entities += proj_entities
+                    agg_triples += proj_triples
+        except Exception as e:
+            self._send_json({"error": f"enumerate failed: {e}"}, 500)
+            return
+        self._send_json({
+            "enabled": kg_cfg.get("enabled", True),
+            "extraction_model": kg_cfg.get("extraction_model", ""),
+            "profile": kg_cfg.get("profile", "normative"),
+            "entities": agg_entities,
+            "triples": agg_triples,
+            "projects": sorted(per_project,
+                               key=lambda p: -p["triples"]),
+        })
+
+    def _handle_kg_wing_detail(self, params):
+        """GET /v1/mempalace/kg/wing?agent_id=X&project=Y — per-project
+        stats + sample triples + recent extraction log."""
+        ctx = self._kg_resolve_project_from_query(params)
+        if ctx is None:
+            return
+        try:
+            import kg_extract
+        except Exception as e:
+            self._send_json({"error": f"kg_extract unavailable: {e}"}, 500)
+            return
+        # Aggregate across every prefix belonging to the project.
+        agg_entities = 0
+        agg_triples = 0
+        agg_predicates: dict[str, int] = {}
+        agg_entities_list: dict[str, dict] = {}
+        for prefix in ctx["prefixes"]:
+            try:
+                s = kg_extract.kg_stats_for_wing(
+                    palace_path=ctx["palace_path"],
+                    source_prefix=prefix,
+                    adapter_name="brain-project-kg")
+            except Exception:
+                continue
+            agg_entities += int(s.get("entities", 0))
+            agg_triples += int(s.get("triples", 0))
+            for p in s.get("top_predicates", []) or []:
+                k = p.get("predicate", "") or ""
+                if k:
+                    agg_predicates[k] = agg_predicates.get(k, 0) + int(p.get("count", 0))
+            for e in s.get("top_entities", []) or []:
+                eid = e.get("id", "") or ""
+                if not eid:
+                    continue
+                cur = agg_entities_list.get(eid)
+                if cur is None:
+                    agg_entities_list[eid] = dict(e)
+                else:
+                    cur["degree"] = int(cur.get("degree", 0)) + int(e.get("degree", 0))
+
+        # Sample triples — pull a small slice for the UI's "recent triples" list.
+        sample_triples = self._kg_sample_triples(
+            ctx["palace_path"], ctx["prefixes"], limit=50)
+
+        # Extraction-log rows for this wing.
+        try:
+            log = kg_extract.list_kg_extraction_log(
+                ctx["chats_db_path"], wing=ctx["wing"], limit=25)
+        except Exception:
+            log = []
+
+        self._send_json({
+            "agent_id": ctx["agent_id"],
+            "project": ctx["proj_name"],
+            "wing": ctx["wing"],
+            "prefixes": ctx["prefixes"],
+            "entities": agg_entities,
+            "triples": agg_triples,
+            "top_predicates": [
+                {"predicate": k, "count": v}
+                for k, v in sorted(agg_predicates.items(),
+                                   key=lambda kv: -kv[1])[:30]
+            ],
+            "top_entities": sorted(agg_entities_list.values(),
+                                   key=lambda e: -int(e.get("degree", 0)))[:30],
+            "sample_triples": sample_triples,
+            "extraction_log": log,
+        })
+
+    def _kg_sample_triples(self, palace_path: str, prefixes: list,
+                           limit: int = 50) -> list:
+        """Pull a small sample of triples (highest-confidence first) for any
+        of the project's prefixes. Used by the UI as a quick spot-check."""
+        kg_path = os.path.join(palace_path, "knowledge_graph.sqlite3")
+        if not os.path.isfile(kg_path):
+            return []
+        import sqlite3 as _sql
+        conn = _sql.connect(kg_path, timeout=5, check_same_thread=False)
+        conn.row_factory = _sql.Row
+        try:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(triples)")}
+            has_adapter = "adapter_name" in cols
+            has_drawer = "source_drawer_id" in cols
+            scope_clause = " OR ".join(
+                ["source_file LIKE ? || '%'"] * len(prefixes))
+            params: list = list(prefixes)
+            adapter_clause = " AND adapter_name = ? " if has_adapter else " "
+            if has_adapter:
+                params.append("brain-project-kg")
+            sql = (
+                "SELECT t.subject AS sub_id, e1.name AS sub_name, "
+                "       t.predicate, "
+                "       t.object AS obj_id, e2.name AS obj_name, "
+                "       t.confidence, t.source_file, t.valid_from, "
+                f"       {'t.source_drawer_id' if has_drawer else 'NULL'} AS source_drawer_id "
+                "FROM triples t "
+                "LEFT JOIN entities e1 ON t.subject = e1.id "
+                "LEFT JOIN entities e2 ON t.object = e2.id "
+                f"WHERE ({scope_clause}){adapter_clause}"
+                "AND t.valid_to IS NULL "
+                "ORDER BY t.confidence DESC, t.extracted_at DESC LIMIT ?"
+            )
+            params.append(int(limit))
+            rows = conn.execute(sql, params).fetchall()
+        finally:
+            conn.close()
+        return [{
+            "subject": r["sub_name"] or r["sub_id"],
+            "predicate": r["predicate"],
+            "object": r["obj_name"] or r["obj_id"],
+            "confidence": r["confidence"],
+            "source_file": r["source_file"] or "",
+            "source_drawer_id": r["source_drawer_id"] or "",
+            "valid_from": r["valid_from"] or "",
+        } for r in rows]
+
+    def _handle_kg_entity_detail(self, params):
+        """GET /v1/mempalace/kg/entity?agent_id=X&project=Y&name=Z —
+        neighborhood for one entity, project-scoped."""
+        ctx = self._kg_resolve_project_from_query(params)
+        if ctx is None:
+            return
+        name = (params.get("name") or "").strip()
+        if not name:
+            self._send_json({"error": "name required"}, 400)
+            return
+        try:
+            from mempalace.knowledge_graph import KnowledgeGraph
+        except Exception as e:
+            self._send_json({"error": f"KG import: {e}"}, 500)
+            return
+        kg_path = os.path.join(ctx["palace_path"], "knowledge_graph.sqlite3")
+        if not os.path.isfile(kg_path):
+            self._send_json({"error": "knowledge_graph.sqlite3 missing"}, 404)
+            return
+        kg = KnowledgeGraph(db_path=kg_path)
+        try:
+            triples = kg.query_entity(name, direction="both") or []
+        except Exception as e:
+            self._send_json({"error": f"query_entity: {e}"}, 500)
+            return
+        finally:
+            try: kg.close()
+            except Exception: pass
+        prefixes = ctx["prefixes"]
+        in_scope = []
+        for t in triples:
+            if not isinstance(t, dict):
+                continue
+            sf = t.get("source_file", "") or ""
+            if not sf:
+                continue
+            if any(sf.startswith(p) for p in prefixes):
+                in_scope.append(t)
+        self._send_json({
+            "entity": name,
+            "project": ctx["proj_name"],
+            "wing": ctx["wing"],
+            "count": len(in_scope),
+            "total_in_kg": len(triples),
+            "triples": in_scope,
+        })
+
+    def _handle_kg_extraction_log(self, params):
+        """GET /v1/mempalace/kg/extraction-log?agent_id=X&project=Y&limit=N
+        — recent run log for the project's wing."""
+        ctx = self._kg_resolve_project_from_query(params)
+        if ctx is None:
+            return
+        try:
+            import kg_extract
+        except Exception as e:
+            self._send_json({"error": f"kg_extract unavailable: {e}"}, 500)
+            return
+        try:
+            limit = max(1, min(500, int(params.get("limit") or 50)))
+        except (TypeError, ValueError):
+            limit = 50
+        rows = kg_extract.list_kg_extraction_log(
+            ctx["chats_db_path"], wing=ctx["wing"], limit=limit)
+        self._send_json({
+            "wing": ctx["wing"],
+            "project": ctx["proj_name"],
+            "count": len(rows),
+            "rows": rows,
+        })
+
+    def _handle_kg_config_get(self):
+        """GET /v1/mempalace/kg/config — current KG settings."""
+        if self._require_auth() is None:
+            return
+        mcfg = engine._load_mempalace_config()
+        kg_cfg = mcfg.get("kg") or {}
+        self._send_json({
+            "enabled": kg_cfg.get("enabled", True),
+            "extraction_model": kg_cfg.get("extraction_model", ""),
+            "profile": kg_cfg.get("profile", "normative"),
+            "scopes": kg_cfg.get("scopes") or ["projects"],
+            "max_triples_per_drawer": kg_cfg.get("max_triples_per_drawer", 12),
+            "min_confidence": kg_cfg.get("min_confidence", 0.5),
+            "max_drawer_chars": kg_cfg.get("max_drawer_chars", 6000),
+            "regenerate_closets": bool(kg_cfg.get("regenerate_closets", False)),
+        })
+
+    def _handle_kg_config_save(self):
+        """POST /v1/mempalace/kg/config — save KG settings (admin)."""
+        user = self._require_role("admin")
+        if user is None:
+            return
+        body = self._read_json() or {}
+        config_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "config.json")
+        try:
+            cfg_disk = {}
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    cfg_disk = json.load(f)
+            mp = cfg_disk.setdefault("mempalace", {})
+            kg = mp.setdefault("kg", {})
+            if "enabled" in body:
+                kg["enabled"] = bool(body["enabled"])
+            if "extraction_model" in body:
+                m = str(body["extraction_model"] or "").strip()
+                # Validate against known models if non-empty.
+                if m:
+                    models = cfg_disk.get("models") or {}
+                    if m not in models:
+                        self._send_json(
+                            {"error": f"unknown model id: {m}"}, 400)
+                        return
+                kg["extraction_model"] = m
+            if "profile" in body:
+                p = str(body["profile"] or "").strip()
+                if p not in ("normative", "generic"):
+                    self._send_json({"error": f"unknown profile: {p}"}, 400)
+                    return
+                kg["profile"] = p
+            if "max_triples_per_drawer" in body:
+                kg["max_triples_per_drawer"] = max(
+                    1, min(50, int(body["max_triples_per_drawer"])))
+            if "min_confidence" in body:
+                kg["min_confidence"] = max(
+                    0.0, min(1.0, float(body["min_confidence"])))
+            if "max_drawer_chars" in body:
+                kg["max_drawer_chars"] = max(
+                    500, min(20000, int(body["max_drawer_chars"])))
+            if "scopes" in body:
+                scopes = list(body["scopes"] or [])
+                allowed = {"projects", "scheduled", "chats"}
+                kg["scopes"] = [s for s in scopes if s in allowed] or ["projects"]
+            if "regenerate_closets" in body:
+                kg["regenerate_closets"] = bool(body["regenerate_closets"])
+            with open(config_path, "w") as f:
+                json.dump(cfg_disk, f, indent=2)
+            engine._mempalace_config_cache = None
+            self._send_json({"status": "saved", "kg": kg})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_kg_reextract(self):
+        """POST /v1/mempalace/kg/reextract — purge a project's triples and
+        kick the daemon to rebuild. Body: {agent_id, project, source_prefix?}.
+        Admin or project owner."""
+        user = self._require_auth()
+        if user is None:
+            return
+        body = self._read_json() or {}
+        agent_id = (body.get("agent_id") or "").strip()
+        proj_name = (body.get("project") or "").strip()
+        if not agent_id or not proj_name:
+            self._send_json({"error": "agent_id and project required"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name,
+                                             require_manage=True)
+        if project is None:
+            return
+        try:
+            import kg_extract
+        except Exception as e:
+            self._send_json({"error": f"kg_extract unavailable: {e}"}, 500)
+            return
+        mcfg = engine._load_mempalace_config()
+        palace_path = mcfg.get("palace_path", "")
+        chats_db_path = os.path.join(engine.AGENTS_DIR, "main", "chats.db")
+        pid = project.get("id") or ""
+        if not pid:
+            self._send_json({"error": "project missing id"}, 400)
+            return
+        wing = _project_wing(pid)
+        # Prefix(es) to purge: either the explicit one from the body, or the
+        # union of project_dir + every input_folder. Resolve symlinks so the
+        # purge matches what the miner actually stored in source_file
+        # (macOS /tmp → /private/tmp, etc.).
+        def _norm_p(p: str) -> str:
+            try:
+                r = os.path.realpath(p)
+            except OSError:
+                r = p
+            if r and not r.endswith(os.sep):
+                r += os.sep
+            return r
+        explicit_prefix = (body.get("source_prefix") or "").strip()
+        if explicit_prefix:
+            prefixes = [_norm_p(explicit_prefix)]
+        else:
+            pdir = project.get("dir") or os.path.join(
+                engine.AGENTS_DIR, agent_id, "projects", proj_name)
+            prefixes = [_norm_p(pdir)]
+            for entry in (project.get("input_folders") or []):
+                fp = (entry.get("path") or "").strip()
+                if fp:
+                    prefixes.append(_norm_p(fp))
+
+        total_triples = 0
+        total_progress = 0
+        for prefix in prefixes:
+            try:
+                res = kg_extract.kg_purge_for_scope(
+                    palace_path=palace_path,
+                    source_prefix=prefix,
+                    adapter_name="brain-project-kg",
+                    chats_db_path=chats_db_path,
+                    wing=wing,
+                )
+                total_triples += int(res.get("triples_deleted", 0))
+                total_progress += int(res.get("progress_deleted", 0))
+            except Exception as e:
+                self._send_json({"error": f"purge {prefix} failed: {e}"}, 500)
+                return
+        # Kick the project-sync daemon to rebuild.
+        try:
+            with _project_sync_lock:
+                _project_sync_requests.add((agent_id, proj_name))
+            _project_sync_wakeup.set()
+        except Exception:
+            pass
+        # Audit-log the manual reextract trigger.
+        try:
+            _audit_log.log_action(  # type: ignore[name-defined]
+                user_id=user.get("user_id", ""),
+                action_type="kg_reextract",
+                tool_name="mempalace_kg",
+                args_summary=f"{agent_id}/{proj_name} prefixes={len(prefixes)}",
+                source="api",
+            )
+        except Exception:
+            pass
+        self._send_json({
+            "status": "purged_and_queued",
+            "triples_deleted": total_triples,
+            "progress_deleted": total_progress,
+            "prefixes": prefixes,
+        })
+
     def _handle_mempalace_stats(self):
         """GET /v1/mempalace/stats — palace overview for admin dashboard."""
         mcfg = engine._load_mempalace_config()
@@ -12357,7 +12892,152 @@ def main():
             print(f"[project-sync] import failed: {e}", flush=True)
             return
 
+        # KG post-pass module — optional; tolerate import failure (the drawer
+        # mining cycle still works). Loaded once per daemon start; if disabled
+        # in config the helper short-circuits per call.
+        try:
+            import kg_extract  # noqa: F401
+        except Exception as e:
+            kg_extract = None  # type: ignore[assignment]
+            print(f"[project-sync] kg_extract import failed: "
+                  f"{type(e).__name__}: {e}", flush=True)
+
+        # Document conversion module — converts .pdf/.docx into companion
+        # .md files under <folder>/.brain-extracted/ before the miner runs.
+        # The miner itself only reads .md/.txt/code extensions; without this
+        # pass, PDFs dropped into an input folder are silently ignored.
+        try:
+            import doc_convert  # noqa: F401
+        except Exception as e:
+            doc_convert = None  # type: ignore[assignment]
+            print(f"[project-sync] doc_convert import failed: "
+                  f"{type(e).__name__}: {e}", flush=True)
+
         palace_path = mcfg.get("palace_path", "")
+        chats_db_path = os.path.join(engine.AGENTS_DIR, "main", "chats.db")
+
+        def _run_kg_for(wing: str, source_prefix: str, item_set_fn,
+                        item_kind: str, item_id: str):
+            """Run the KG extraction post-pass scoped to (wing, source_prefix).
+            Updates the per-item dict via `item_set_fn(kind, id, **fields)` so
+            the UI sees triples_extracted + kg_state alongside drawers_filed.
+            Refuses (safely) if kg_extract isn't loaded or KG is disabled.
+            """
+            if kg_extract is None:
+                return
+            kg_cfg = (engine._load_mempalace_config().get("kg") or {})
+            if not kg_cfg.get("enabled", True):
+                return
+            scopes = kg_cfg.get("scopes") or ["projects"]
+            if "projects" not in scopes:
+                return
+            # Resolve symlinks so the prefix matches what the miner stored in
+            # drawer source_file (macOS /tmp → /private/tmp, /var → /private/var,
+            # plus user-managed symlinks). Without this, every drawer-mining
+            # cycle stores absolute resolved paths but our prefix filter uses
+            # the un-resolved one and matches nothing.
+            try:
+                resolved_prefix = os.path.realpath(source_prefix) if source_prefix else source_prefix
+            except OSError:
+                resolved_prefix = source_prefix
+            if resolved_prefix and not resolved_prefix.endswith(os.sep) \
+                    and source_prefix.endswith(os.sep):
+                resolved_prefix += os.sep
+            model = kg_cfg.get("extraction_model", "") or ""
+            profile_name = kg_cfg.get("profile", "normative") or "normative"
+            max_triples = int(kg_cfg.get("max_triples_per_drawer", 12))
+            max_drawer_chars = int(kg_cfg.get("max_drawer_chars", 6000))
+            min_conf = float(kg_cfg.get("min_confidence", 0.5))
+            chunk_mode = (kg_cfg.get("chunking_mode") or "source_file").strip()
+            if chunk_mode not in ("source_file", "per_drawer"):
+                chunk_mode = "source_file"
+            source_chunk_chars = int(kg_cfg.get("source_chunk_chars", 3500))
+            try:
+                item_set_fn(item_kind, item_id, kg_state="extracting")
+                res = kg_extract.run_kg_post_pass(
+                    palace_path=palace_path, wing=wing,
+                    source_prefix=resolved_prefix,
+                    adapter_name="brain-project-kg",
+                    profile_name=profile_name, model=model,
+                    chats_db_path=chats_db_path,
+                    max_triples_per_drawer=max_triples,
+                    max_drawer_chars=max_drawer_chars,
+                    min_confidence=min_conf, skip_code=True,
+                    chunking_mode=chunk_mode,
+                    source_chunk_chars=source_chunk_chars,
+                    log_prefix="[project-sync.kg]",
+                )
+                item_set_fn(item_kind, item_id,
+                    kg_state=("error" if res.errors and not res.triples_extracted
+                              else "idle"),
+                    triples_extracted=int(res.triples_extracted),
+                    kg_drawers_processed=int(res.drawers_processed),
+                    kg_last_error=res.error_msg or "",
+                    kg_elapsed_s=round(res.elapsed_s, 1))
+            except Exception as e:
+                item_set_fn(item_kind, item_id,
+                    kg_state="error",
+                    kg_last_error=f"{type(e).__name__}: {e}")
+                print(f"[project-sync.kg] wing={wing} prefix={source_prefix} "
+                      f"failed: {type(e).__name__}: {e}", flush=True)
+
+        def _run_closet_regen_for(wing: str):
+            """Regenerate LLM-augmented closets for the wing using the same
+            model the user selected for KG extraction. Closets boost the
+            ranking of vector retrieval (mempalace_query) — this swaps
+            MemPalace's regex-based closet generation for an LLM pass that
+            captures implicit topics, foreign-language content, and
+            contextual references the regex misses.
+
+            Opt-in via mempalace.kg.regenerate_closets — daemon load profile
+            adds ~1 LLM call per source file in the wing. Cheap (one call
+            per file, content concatenated) but not free; default off.
+            """
+            kg_cfg = (engine._load_mempalace_config().get("kg") or {})
+            if not kg_cfg.get("regenerate_closets"):
+                return
+            model = kg_cfg.get("extraction_model", "") or ""
+            if not model:
+                return
+            try:
+                # Resolve the KG model's provider so we can hand closet_llm
+                # the OpenAI-compatible endpoint + key directly. Reuses the
+                # same plumbing the chat / KG paths use, so a single config
+                # change in the GUI applies here too.
+                prov = engine.resolve_provider_for_model(model)
+                api_model = engine.get_api_model_id(model)
+                endpoint = prov.get("base_url", "")
+                api_key = prov.get("api_key", "")
+                if not endpoint or not api_model:
+                    print(f"[project-sync.closet] {wing}: cannot resolve "
+                          f"provider for {model!r} — skipping", flush=True)
+                    return
+                from mempalace.closet_llm import (
+                    LLMConfig as _ClosetLLMConfig,
+                    regenerate_closets as _regen_closets,
+                )
+                cfg = _ClosetLLMConfig(
+                    endpoint=endpoint, key=api_key, model=api_model)
+                t0 = time.time()
+                # Suppress chatty progress output; closet_llm prints per-source
+                # progress lines that would flood server.log.
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    out = _regen_closets(
+                        palace_path=palace_path, wing=wing, cfg=cfg)
+                dt = time.time() - t0
+                processed = (out or {}).get("processed", 0)
+                err = (out or {}).get("error", "")
+                if err:
+                    print(f"[project-sync.closet] {wing}: error={err} "
+                          f"elapsed={dt:.1f}s", flush=True)
+                else:
+                    print(f"[project-sync.closet] {wing}: "
+                          f"sources={processed} elapsed={dt:.1f}s "
+                          f"model={api_model}", flush=True)
+            except Exception as e:
+                print(f"[project-sync.closet] {wing}: failed: "
+                      f"{type(e).__name__}: {e}", flush=True)
 
         def _count_wing_drawers_by_source(wing: str, source_prefix: str) -> int:
             """Authoritative count of drawers in `wing` whose source_file
@@ -12577,6 +13257,23 @@ def main():
                                 state="syncing",
                                 last_run_started=started_at)
                         if _ensure_mempalace_yaml(ingested_dir, wing):
+                            # PDF/DOCX → .md pre-mine pass. The /ingested
+                            # upload flow normally pre-chunks PDFs already,
+                            # but covering this branch makes the daemon
+                            # robust to direct file drops here too.
+                            if doc_convert is not None:
+                                try:
+                                    doc_convert.sweep_stale(
+                                        ingested_dir,
+                                        log_prefix="[project-sync.conv]")
+                                    doc_convert.convert_folder(
+                                        ingested_dir,
+                                        log_prefix="[project-sync.conv]")
+                                except Exception as e:
+                                    print(f"[project-sync.conv] "
+                                          f"{ingested_dir}: "
+                                          f"{type(e).__name__}: {e}",
+                                          flush=True)
                             ingest_filed = 0
                             ingest_err = ""
                             buf = io.StringIO()
@@ -12621,6 +13318,19 @@ def main():
                                     last_run_finished=finished_at_attach,
                                     drawers_filed=cnt,
                                     error=ingest_err)
+                            # KG extraction post-pass for each ingested
+                            # attachment hash. Drawers carry source_file
+                            # like .../ingested/ingest-<hash>-<idx>.md, so
+                            # we can scope precisely per attachment.
+                            for h in hashes:
+                                if ingest_err:
+                                    continue
+                                _run_kg_for(
+                                    wing=wing,
+                                    source_prefix=os.path.join(
+                                        ingested_dir, f"ingest-{h}-"),
+                                    item_set_fn=_set_item,
+                                    item_kind="attachment", item_id=h)
                         else:
                             for h in hashes:
                                 _set_item("attachment", h,
@@ -12672,6 +13382,22 @@ def main():
                             continue
                         folder_filed = 0
                         folder_err = ""
+                        # PDF/DOCX → .md pre-mine pass. Without this the
+                        # MemPalace miner silently skips binary documents
+                        # (its READABLE_EXTENSIONS list is text-only).
+                        # Idempotent — only re-converts when source mtime+size
+                        # changes. Failures don't abort the cycle; per-file
+                        # errors are logged and the rest of the folder still
+                        # mines.
+                        if doc_convert is not None:
+                            try:
+                                doc_convert.sweep_stale(
+                                    fpath, log_prefix="[project-sync.conv]")
+                                doc_convert.convert_folder(
+                                    fpath, log_prefix="[project-sync.conv]")
+                            except Exception as e:
+                                print(f"[project-sync.conv] {fpath}: "
+                                      f"{type(e).__name__}: {e}", flush=True)
                         buf = io.StringIO()
                         try:
                             with contextlib.redirect_stdout(buf):
@@ -12709,18 +13435,69 @@ def main():
                                 datetime.timezone.utc).isoformat(),
                             drawers_filed=cum,
                             error=folder_err)
+                        # KG extraction post-pass for this input folder.
+                        # source_prefix is the absolute folder path; the
+                        # extractor's per-drawer cursor makes re-runs cheap
+                        # (already-processed drawers skipped in O(1)).
+                        if not folder_err:
+                            _run_kg_for(
+                                wing=wing, source_prefix=fpath,
+                                item_set_fn=_set_item,
+                                item_kind="folder", item_id=fpath)
+
+                    # Optional: regenerate closets via LLM for richer ranking.
+                    # Runs once per project cycle after all folders are mined
+                    # and KG-extracted. Opt-in via mempalace.kg.regenerate_closets;
+                    # reuses the KG model so a single GUI choice covers both.
+                    _run_closet_regen_for(wing)
 
                     finished_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
                     final_state = "error" if last_error and files_filed == 0 else "idle"
                     # Authoritative total: query MemPalace for everything in
                     # the project's wing. Survives dedup-only cycles unchanged.
                     total_indexed = _count_wing_drawers_total(wing)
+                    # Authoritative total triples for this project (sum across
+                    # all input folders in the wing). Cheap SQL — one COUNT
+                    # over a prefix-scoped slice of the KG.
+                    total_triples = 0
+                    if kg_extract is not None:
+                        def _norm_p2(p):
+                            try:
+                                r = os.path.realpath(p)
+                            except OSError:
+                                r = p
+                            if r and not r.endswith(os.sep):
+                                r += os.sep
+                            return r
+                        try:
+                            stats = kg_extract.kg_stats_for_wing(
+                                palace_path=palace_path,
+                                source_prefix=_norm_p2(pdir),
+                                adapter_name="brain-project-kg")
+                            total_triples = int(stats.get("triples", 0))
+                            # Also accumulate triples reached via input-folder
+                            # source files outside pdir.
+                            pdir_real = _norm_p2(pdir)
+                            for entry in (project.get("input_folders") or []):
+                                fp = entry.get("path") or ""
+                                fp_real = _norm_p2(fp) if fp else ""
+                                if fp_real and not fp_real.startswith(pdir_real):
+                                    s2 = kg_extract.kg_stats_for_wing(
+                                        palace_path=palace_path,
+                                        source_prefix=fp_real,
+                                        adapter_name="brain-project-kg")
+                                    total_triples += int(s2.get("triples", 0))
+                        except Exception as e:
+                            print(f"[project-sync] kg stats failed "
+                                  f"{agent_id}/{proj_name}: "
+                                  f"{type(e).__name__}: {e}", flush=True)
                     sync_row = {
                         "state": final_state,
                         "last_run_started": started_at,
                         "last_run_finished": finished_at,
                         "last_files_filed": files_filed,  # delta this cycle
                         "total_indexed": total_indexed,    # cumulative
+                        "total_triples": total_triples,    # KG triples in wing
                         "last_folders_seen": folders_seen,
                         "last_error": last_error,
                         "items": item_states,
