@@ -11867,7 +11867,18 @@ async function switchAgentTab(agentId, tab, btn) {
         <div style="display:flex;flex-direction:column;height:100%;padding:16px;overflow:hidden">
           <div style="font-size:12px;color:var(--text-400);margin-bottom:6px">System prompt — defines agent personality and behavior</div>
           <textarea id="agent-soul-editor" class="form-textarea" style="flex:3 1 0;min-height:80px;font-size:13px;overflow-y:auto">${esc(soul)}</textarea>
-          <div style="display:flex;justify-content:flex-end;gap:8px;margin:6px 0">
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin:6px 0;align-items:center">
+            <button type="button" id="agent-soul-editor-refine"
+              onclick="refineAgentSoul('${esc(agentId)}')"
+              title="Polish the soul with AI (preserves second-person voice and Markdown structure)"
+              class="btn-secondary"
+              style="font-size:12px;padding:4px 10px;display:inline-flex;align-items:center;gap:4px">
+              <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" style="flex-shrink:0">
+                <path d="M12 2l1.5 4.5L18 8l-4.5 1.5L12 14l-1.5-4.5L6 8l4.5-1.5L12 2z"/>
+                <path d="M19 14l.75 2.25L22 17l-2.25.75L19 20l-.75-2.25L16 17l2.25-.75L19 14z"/>
+              </svg>
+              <span id="agent-soul-editor-refine-label">Refine with AI</span>
+            </button>
             <button class="btn-primary" onclick="saveAgentSoul('${esc(agentId)}')">Save Soul</button>
           </div>
           <div style="border-top:1px solid var(--border);padding-top:6px;display:flex;flex-direction:column;flex:2 1 0;min-height:60px;overflow:hidden">
@@ -12136,7 +12147,10 @@ async function switchAgentTab(agentId, tab, btn) {
             </div>
           </div>
           <div>
-            <label style="font-size:11px;color:var(--text-400)">Prompt / Task</label>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+              <label style="font-size:11px;color:var(--text-400);margin:0">Prompt / Task</label>
+              ${_schedRefineControls('sched-f-task')}
+            </div>
             <textarea id="sched-f-task" class="form-input" rows="3" placeholder="What should the agent do..." style="font-size:12px;resize:vertical"></textarea>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
@@ -13101,6 +13115,76 @@ function _schedShowForm() {
   if (f) f.style.display = 'block';
 }
 
+// Inline AI refinement controls for scheduled-task prompt textareas.
+// Caveman picker lives here because a scheduled task has no chat-level
+// caveman toggle to inherit from — the picker IS the equivalent setting
+// for that task's prompt. Anywhere else (profile fields, long-form
+// profile editor) the chat composer's caveman is the single setting.
+function _schedRefineControls(textareaId) {
+  return `
+    <span style="display:inline-flex;align-items:center;gap:6px">
+      ${_refineCavemanButton(textareaId)}
+      <button type="button" id="${textareaId}-refine"
+        onclick="refineSchedPrompt('${textareaId}')"
+        title="Refine this scheduled-task prompt with AI"
+        style="background:none;border:1px solid var(--border-light);border-radius:4px;padding:2px 8px;font-size:11px;color:var(--text-300);cursor:pointer;display:inline-flex;align-items:center;gap:4px">
+        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" style="flex-shrink:0">
+          <path d="M12 2l1.5 4.5L18 8l-4.5 1.5L12 14l-1.5-4.5L6 8l4.5-1.5L12 2z"/>
+          <path d="M19 14l.75 2.25L22 17l-2.25.75L19 20l-.75-2.25L16 17l2.25-.75L19 14z"/>
+        </svg>
+        <span id="${textareaId}-refine-label">Refine with AI</span>
+      </button>
+    </span>`;
+}
+
+async function refineSchedPrompt(textareaId) {
+  const ta = document.getElementById(textareaId);
+  if (!ta) return;
+  const text = (ta.value || '').replace(/^\s+|\s+$/g, '');
+  if (!text) { showToast('Type the prompt first', true); return; }
+  const btn = document.getElementById(textareaId + '-refine');
+  const lbl = document.getElementById(textareaId + '-refine-label');
+  const caveman = _refineCavemanValue(textareaId);
+  const origLabel = lbl?.textContent || 'Refine with AI';
+  if (btn) btn.disabled = true;
+  if (lbl) lbl.textContent = 'Refining…';
+  ta.disabled = true;
+  const original = ta.value;
+  try {
+    // Default purpose=chat_prompt — same rewrite rules as the composer
+    // refine button, since a scheduled task prompt is a chat-style prompt
+    // the agent will execute. No session_id (no history context).
+    const result = await API.post('/v1/refine', { text, caveman });
+    if (result && result.refined && result.refined !== text) {
+      ta.value = result.refined;
+      if (lbl) lbl.textContent = 'Undo';
+      if (btn) {
+        btn.disabled = false;
+        const undoHandler = (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          ta.value = original;
+          if (lbl) lbl.textContent = origLabel;
+          btn.removeEventListener('click', undoHandler);
+          btn.onclick = () => refineSchedPrompt(textareaId);
+        };
+        btn.onclick = undoHandler;
+      }
+      showToast('Refined — click Undo to revert');
+    } else {
+      showToast('Already clean — no change');
+      if (lbl) lbl.textContent = origLabel;
+      if (btn) btn.disabled = false;
+    }
+  } catch (e) {
+    showToast('Refine failed: ' + (e.message || e), true);
+    if (lbl) lbl.textContent = origLabel;
+    if (btn) btn.disabled = false;
+  } finally {
+    ta.disabled = false;
+  }
+}
+
 async function _schedAdd() {
   const agentId = window._schedAgentId;
   if (!agentId) return;
@@ -13547,7 +13631,10 @@ async function _schedViewEdit(name) {
       <input id="sched-edit-newname" value="${esc(task.name || '')}">
     </div>
     <div class="sched-form-group">
-      <label>Prompt</label>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <label style="margin:0">Prompt</label>
+        ${_schedRefineControls('sched-edit-prompt')}
+      </div>
       <textarea id="sched-edit-prompt">${esc(task.task || '')}</textarea>
     </div>
     <div class="sched-form-row">
@@ -13661,7 +13748,10 @@ function showCreateScheduledModal() {
       <input id="sched-new-name" placeholder="e.g. Daily PR review">
     </div>
     <div class="sched-form-group">
-      <label>Prompt</label>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <label style="margin:0">Prompt</label>
+        ${_schedRefineControls('sched-new-prompt')}
+      </div>
       <textarea id="sched-new-prompt" placeholder="What should the agent do?"></textarea>
     </div>
     <div class="sched-form-row">
@@ -13909,6 +13999,56 @@ async function saveAgentSoul(agentId) {
     showToast('Soul saved');
   } catch(e) {
     showToast('Save failed: ' + e.message, true);
+  }
+}
+
+async function refineAgentSoul(agentId) {
+  const ta = document.getElementById('agent-soul-editor');
+  if (!ta) return;
+  const text = (ta.value || '').replace(/^\s+|\s+$/g, '');
+  if (!text) { showToast('Write something first', true); return; }
+  const btn = document.getElementById('agent-soul-editor-refine');
+  const lbl = document.getElementById('agent-soul-editor-refine-label');
+  const origLabel = lbl?.textContent || 'Refine with AI';
+  if (btn) btn.disabled = true;
+  if (lbl) lbl.textContent = 'Refining…';
+  ta.disabled = true;
+  const original = ta.value;
+  // No caveman here — caveman_system on the agent's model already
+  // compresses the soul dynamically at request time (see
+  // _build_system_prompt). Compressing the saved soul.md too would
+  // double-apply and lock the user into a level they can't reverse.
+  try {
+    const result = await API.post('/v1/refine', {
+      text, purpose: 'soul', field_label: agentId,
+    });
+    if (result && result.refined && result.refined !== text) {
+      ta.value = result.refined;
+      if (lbl) lbl.textContent = 'Undo';
+      if (btn) {
+        btn.disabled = false;
+        const undoHandler = (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          ta.value = original;
+          if (lbl) lbl.textContent = origLabel;
+          btn.removeEventListener('click', undoHandler);
+          btn.onclick = () => refineAgentSoul(agentId);
+        };
+        btn.onclick = undoHandler;
+      }
+      showToast('Refined — review and click Save Soul, or Undo');
+    } else {
+      showToast('Already clean — no change');
+      if (lbl) lbl.textContent = origLabel;
+      if (btn) btn.disabled = false;
+    }
+  } catch (e) {
+    showToast('Refine failed: ' + (e.message || e), true);
+    if (lbl) lbl.textContent = origLabel;
+    if (btn) btn.disabled = false;
+  } finally {
+    ta.disabled = false;
   }
 }
 
@@ -15608,9 +15748,13 @@ async function refineInput() {
     if (btn) btn.style.opacity = '0.4';
     showToast('Refining...');
 
+    // Mirror the chat's caveman setting into the refiner so a caveman-mode
+    // chat gets caveman-style rewrites instead of polished prose that
+    // contradicts the response style we'll then ask the model to use.
     const result = await API.post("/v1/refine", {
       text: text,
       session_id: state.activeChat?.sessionId || null,
+      caveman: parseInt(state.activeChat?.cavemanMode || 0, 10) || 0,
     });
 
     if (result.refined) {
@@ -15689,6 +15833,62 @@ async function toggleSaveToMemory() {
 
 // Caveman mode icon set — one per level. Metaphor: off = fastest/modern
 // (spaceship), down through car, horse, to campfire = primitive.
+// Shared icon-toggle button used by every refine-with-AI surface
+// (profile fields, scheduled-task prompts, long-form profile editor).
+// Same spaceship→car→horse→campfire glyphs as the chat composer's
+// btn-caveman so users see one visual vocabulary across the app.
+// Click cycles 0→1→2→3→0; tooltip names the level. Persists to
+// localStorage('refine-caveman:<textareaId>'); dependants read the
+// current value via _refineCavemanValue(textareaId).
+function _refineCavemanLabel(mode) {
+  return ['off (spaceship)', 'lite (car)', 'full (horse)', 'ultra (campfire)'][mode] || 'off';
+}
+function _refineCavemanButton(textareaId) {
+  let cur = 0;
+  try { cur = parseInt(localStorage.getItem('refine-caveman:' + textareaId) || '0', 10) || 0; }
+  catch(e) {}
+  if (![0,1,2,3].includes(cur)) cur = 0;
+  return `<button type="button" id="${textareaId}-refine-caveman"
+    data-caveman="${cur}"
+    onclick="_refineCavemanCycle('${textareaId}')"
+    title="Refiner caveman: ${_refineCavemanLabel(cur)} — click to cycle"
+    style="background:transparent;border:1px solid var(--border-light);border-radius:4px;width:24px;height:24px;padding:2px;color:var(--text-300);cursor:pointer;display:inline-flex;align-items:center;justify-content:center">${_sizedCavemanSvg(cur)}</button>`;
+}
+
+// cavemanIconFor() returns SVGs without width/height attributes (sized by
+// .composer-btn svg CSS in the chat). The refine button has no such rule —
+// stamp explicit 16×16 dimensions onto the <svg> tag so it renders at a
+// visible size regardless of stylesheet context.
+function _sizedCavemanSvg(mode) {
+  return cavemanIconFor(mode).replace('<svg ', '<svg width="16" height="16" ');
+}
+function _refineCavemanCycle(textareaId) {
+  const btn = document.getElementById(textareaId + '-refine-caveman');
+  if (!btn) return;
+  const cur = parseInt(btn.dataset.caveman || '0', 10) || 0;
+  const next = (cur + 1) % 4;
+  btn.dataset.caveman = String(next);
+  btn.innerHTML = _sizedCavemanSvg(next);
+  btn.title = `Refiner caveman: ${_refineCavemanLabel(next)} — click to cycle`;
+  try { localStorage.setItem('refine-caveman:' + textareaId, String(next)); }
+  catch(e) {}
+}
+function _refineCavemanValue(textareaId) {
+  const btn = document.getElementById(textareaId + '-refine-caveman');
+  if (btn && btn.dataset && btn.dataset.caveman != null) {
+    const v = parseInt(btn.dataset.caveman, 10);
+    if ([0,1,2,3].includes(v)) return v;
+  }
+  // Back-compat: a legacy <select> may still exist if something forgot to
+  // re-render. Read its value if so.
+  const sel = document.getElementById(textareaId + '-refine-caveman');
+  if (sel && 'value' in sel) {
+    const v = parseInt(sel.value, 10);
+    if ([0,1,2,3].includes(v)) return v;
+  }
+  return 0;
+}
+
 function cavemanIconFor(mode) {
   const common = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"';
   if (mode === 1) {
@@ -16568,7 +16768,9 @@ function _us_textarea(label, id, val, help = '', placeholder = '', opts = {}) {
   // Optional inline AI polish button — same /v1/refine endpoint as the chat
   // composer, but with purpose=profile_field so the system prompt switches
   // to "polish, don't rewrite as a question". Disabled visually (no button)
-  // when opts.refinable is falsy.
+  // when opts.refinable is falsy. Caveman is NOT a refine-time setting:
+  // the chat composer's caveman toggle is the single source of truth and
+  // applies to the outgoing message, not to the polish step.
   const refineBtn = opts.refinable ? `
     <button type="button" id="${id}-refine"
       onclick="refineProfileField('${id}', ${JSON.stringify(opts.fieldLabel || label).replace(/"/g, '&quot;')})"
@@ -16592,6 +16794,25 @@ function _us_textarea(label, id, val, help = '', placeholder = '', opts = {}) {
     </div>`;
 }
 
+// Inline AI refinement control for the long-form user-profile editor in
+// the Memory tab. Single Refine-with-AI button — no caveman picker:
+// the on-disk profile is always clean prose; the chat composer's caveman
+// toggle compresses it dynamically at injection time.
+function _userProfileRefineControls(textareaId) {
+  return `
+    <button type="button" id="${textareaId}-refine"
+      onclick="refineProfileField('${textareaId}', 'Your profile (long-form Markdown with ## Heading sections; keep third-person voice and section headings intact)')"
+      title="Polish your profile with AI"
+      class="btn-secondary"
+      style="font-size:11px;padding:4px 10px;display:inline-flex;align-items:center;gap:4px">
+      <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" style="flex-shrink:0">
+        <path d="M12 2l1.5 4.5L18 8l-4.5 1.5L12 14l-1.5-4.5L6 8l4.5-1.5L12 2z"/>
+        <path d="M19 14l.75 2.25L22 17l-2.25.75L19 20l-.75-2.25L16 17l2.25-.75L19 14z"/>
+      </svg>
+      <span id="${textareaId}-refine-label">Refine with AI</span>
+    </button>`;
+}
+
 async function refineProfileField(textareaId, fieldLabel) {
   const ta = document.getElementById(textareaId);
   if (!ta) return;
@@ -16606,6 +16827,10 @@ async function refineProfileField(textareaId, fieldLabel) {
   // Stash original so the user can undo a bad refinement
   const original = ta.value;
   try {
+    // No caveman on profile-field refinement — the on-disk profile stays
+    // clean prose, and the chat composer's caveman toggle compresses it
+    // dynamically at injection time. Refining with caveman would also
+    // double-apply at chat time.
     const result = await API.post('/v1/refine', {
       text,
       purpose: 'profile_field',
@@ -16767,7 +16992,7 @@ function renderUserSettingsMemory(body) {
         Brain reads your chats and maintains a single profile describing your work, interests, and what's currently on your mind. The agent loads this on the first turn of every chat.
       </div>
       ${_us_checkbox('Maintain user profile from chat history', 'us-daily-enabled', !!prefs.daily_summary_enabled,
-        'Runs once per day around the chosen hour. The profile lives at agents/main/user_profiles/&lt;you&gt;.md and mirrors per-section drawers into MemPalace.')}
+        "Runs once per day around the chosen hour. The profile lives at agents/main/user_profiles/&lt;you&gt;.md and mirrors per-section drawers into MemPalace. The on-disk file is always clean prose; the chat's caveman mode compresses it on the fly when injected as context.")}
       ${_us_select('Update at', 'us-daily-hour', String(prefs.daily_summary_hour_local ?? 6), hourOpts)}
       <div style="display:flex;gap:8px;margin-top:14px;align-items:center">
         <button class="btn-primary" onclick="saveUserSettingsMemory()">Save memory settings</button>
@@ -16775,9 +17000,10 @@ function renderUserSettingsMemory(body) {
       </div>
 
       <div id="us-profile-doc-section" style="margin-top:20px">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap">
           <label for="us-profile-doc" style="font-size:13px;font-weight:500;color:var(--text-200)">Your profile</label>
-          <div style="display:flex;gap:6px">
+          <div style="display:flex;gap:6px;align-items:center">
+            ${_userProfileRefineControls('us-profile-doc')}
             <button id="us-profile-update-btn" class="btn-secondary" style="font-size:11px;padding:4px 10px" onclick="userProfileUpdateNow()">Update now</button>
             <button id="us-profile-reset-btn" class="btn-secondary" style="font-size:11px;padding:4px 10px;color:var(--error,#dc2626)" onclick="userProfileReset()">Reset</button>
           </div>

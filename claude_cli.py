@@ -19461,10 +19461,17 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
     session_id = getattr(_thread_local, 'current_session_id', None) or ""
     caveman_chat = getattr(_thread_local, 'caveman_chat', 0) or 0
     caveman_system = getattr(_thread_local, 'caveman_system', 0) or 0
-    cache_key = f"{session_id}:{include_memory_summary}:{caveman_chat}:{caveman_system}"
+    plan_mode = bool(getattr(_thread_local, 'plan_mode', False))
+    # Cache key covers ONLY things that change the disk-read prose. Caveman
+    # levels and plan mode are deterministic string post-processing applied
+    # after the cache lookup — keeping them out of the key means flipping
+    # caveman or plan mode mid-session reuses the cached base prose instead
+    # of triggering a fresh read of soul.md / skills / scheduler / MCP / etc.
+    cache_key = f"{session_id}:{include_memory_summary}"
     cached = _system_prompt_cache.get(cache_key)
     if cached and (_time.time() - cached[1]) < _SYSTEM_PROMPT_CACHE_TTL:
-        return cached[0]
+        return _apply_system_prompt_postprocess(
+            cached[0], caveman_system, caveman_chat, plan_mode)
     import platform
     from datetime import datetime as _dt
 
@@ -19619,17 +19626,10 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
 
     if tools_guide and tcfg.get("include_tools_guide", True):
         system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
-    # Apply system-level caveman compression (from model config)
-    if caveman_system and caveman_system in CAVEMAN_SYSTEM_PROMPTS:
-        system_instruction = CAVEMAN_SYSTEM_PROMPTS[caveman_system] + _caveman_compress_text(system_instruction, caveman_system)
-    # Append chat-level caveman mode instruction (from session toggle)
-    if caveman_chat and caveman_chat in CAVEMAN_CHAT_PROMPTS:
-        system_instruction += CAVEMAN_CHAT_PROMPTS[caveman_chat]
-    # Append plan mode prompt if active
-    if getattr(_thread_local, 'plan_mode', False):
-        system_instruction += PLAN_MODE_PROMPT
 
-    # Cache for reuse during tool loop iterations
+    # Cache the BASE prose (no caveman, no plan suffix). Post-processing
+    # is applied below so the cached value is reusable across caveman/plan
+    # toggles within the same session.
     import time as _time
     _system_prompt_cache[cache_key] = (system_instruction, _time.time())
     # Evict stale entries (keep cache small)
@@ -19639,7 +19639,27 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
             if _system_prompt_cache[k][1] < cutoff:
                 del _system_prompt_cache[k]
 
-    return system_instruction
+    return _apply_system_prompt_postprocess(
+        system_instruction, caveman_system, caveman_chat, plan_mode)
+
+
+def _apply_system_prompt_postprocess(base: str, caveman_system: int,
+                                      caveman_chat: int,
+                                      plan_mode: bool) -> str:
+    """Apply caveman compression + plan-mode suffix to a cached base prose.
+
+    Pure string transform; runs in microseconds. Kept out of the cache key
+    so a session that flips caveman levels or plan mode mid-stream reuses
+    the cached base instead of triggering a fresh disk read.
+    """
+    out = base
+    if caveman_system and caveman_system in CAVEMAN_SYSTEM_PROMPTS:
+        out = CAVEMAN_SYSTEM_PROMPTS[caveman_system] + _caveman_compress_text(out, caveman_system)
+    if caveman_chat and caveman_chat in CAVEMAN_CHAT_PROMPTS:
+        out += CAVEMAN_CHAT_PROMPTS[caveman_chat]
+    if plan_mode:
+        out += PLAN_MODE_PROMPT
+    return out
 
 
 def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
@@ -19708,6 +19728,10 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                     _commprefs = (_prefs.get("communication_preferences") or "").strip()
                     # Long-form auto-maintained profile (agents/main/user_profiles/<uid>.md).
                     # Loaded once on round 0; capped at 4KB so it can't blow up the prompt.
+                    # The on-disk file is always clean prose. When the chat is in
+                    # caveman mode, compress at read-time so the profile preamble
+                    # matches the rest of the prompt — single source of truth is
+                    # the chat composer's caveman toggle.
                     _profile_doc = ""
                     try:
                         _safe_uid = "".join(c for c in _greeting_uid if c.isalnum() or c in "-_")
@@ -19720,6 +19744,10 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                                 _profile_doc = _profile_doc[:4096] + "\n…[truncated]"
                     except Exception:
                         _profile_doc = ""
+                    if _profile_doc:
+                        _pp_cav = getattr(_thread_local, 'caveman_chat', 0) or 0
+                        if _pp_cav in (1, 2, 3):
+                            _profile_doc = _caveman_compress_text(_profile_doc, _pp_cav)
                     # Build the preamble. Skip entirely if there's nothing
                     # interesting (no name AND no about-me fields AND no profile).
                     _preamble_lines: list[str] = []

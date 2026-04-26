@@ -2315,9 +2315,14 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         "/v1/skills/remove",
         "/v1/skills/claude-code",
         "/v1/skills/claude-code/install",
-        # Command/refine tooling that writes to agent config
+        # Command tooling that writes to agent config
         "/v1/commands/expand",
-        "/v1/refine",
+        # NOTE: /v1/refine is intentionally NOT here — it's a stateless
+        # one-shot LLM call that returns refined text and writes nothing.
+        # Used by every authenticated user for: composer chat-prompt
+        # rewriting, profile-field polishing (job description, comm prefs,
+        # long-form profile), and scheduled-task prompt refinement. Quota
+        # gating in send_message handles cost; auth gate covers identity.
         # Nodes management (remote workers config)
         "/v1/nodes",
         # Client-hosted local model manifest (admin CRUD). Manifest reads and
@@ -3754,10 +3759,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             s = sessions.get(sid)
             if s:
                 s.caveman_mode = mode
-            # Invalidate system prompt cache for this session
-            for k in list(engine._system_prompt_cache):
-                if k.startswith(sid):
-                    del engine._system_prompt_cache[k]
+            # Cache invalidation no longer needed: caveman level lives outside
+            # the cache key as post-processing on the cached base prose.
             self._send_json({"status": "ok", "caveman_mode": mode, "session_id": sid})
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)
@@ -7729,6 +7732,16 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         context = body.get("context", "general")
         purpose = (body.get("purpose") or "").strip().lower()
         field_label = (body.get("field_label") or "").strip()
+        # Optional caveman compression for the *refine LLM call itself*
+        # (0 off / 1 lite / 2 full / 3 ultra). Compresses the polish system
+        # prompt + appends the chat-style suffix so the refiner produces
+        # tighter output without us touching its rules.
+        try:
+            caveman = int(body.get("caveman") or 0)
+        except (TypeError, ValueError):
+            caveman = 0
+        if caveman not in (0, 1, 2, 3):
+            caveman = 0
         if not text:
             self._send_json({"error": "No text provided"}, 400)
             return
@@ -7812,7 +7825,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             # is describing themselves, not asking the AI a question, so
             # we keep first-person voice and don't re-frame as a request.
             label_hint = f" The field is: {field_label}." if field_label else ""
-            system_prompt = (
+            instructions = (
                 "You are a TEXT POLISHER for a user profile field." + label_hint + " "
                 "The user is describing themselves or their preferences. "
                 "Your job is to lightly polish what they wrote.\n"
@@ -7827,15 +7840,52 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "- If the input is already clean, return it unchanged.\n"
                 "- No markdown headings, no bullet rewrites unless the input had them."
             )
-            messages = [{
-                "role": "user",
-                "content": (
-                    "Polish this profile text (output ONLY the polished "
-                    "version, preserve line breaks):\n\n" + text
-                ),
-            }]
+            request_line = (
+                "Polish this profile text (output ONLY the polished "
+                "version, preserve line breaks):\n\n" + text
+            )
+        elif purpose == "soul":
+            # Polish an agent's soul.md — its system prompt that defines
+            # personality, role, and behavioural rules. Different rules
+            # again: this is *imperative second-person* prose addressed to
+            # the agent ("You are …", "Your job is …"). We must NOT flip
+            # it into first or third person, must NOT change the agent's
+            # name/role/tools, and must preserve any embedded code/command
+            # examples and section structure.
+            instructions = (
+                "You are a TEXT POLISHER for an AI agent's soul.md "
+                "(its system prompt). The soul defines the agent's "
+                "identity, role, and behavioural rules — it is written in "
+                "second person ('You are …', 'Your job is …'). Your job "
+                "is to lightly polish what the user wrote without "
+                "changing meaning.\n"
+                "CRITICAL RULES:\n"
+                "- Output ONLY the polished soul, nothing else.\n"
+                "- Keep second-person voice ('You are …', 'Your job …'). "
+                "Do NOT switch to first or third person.\n"
+                "- Do NOT change the agent's name, role, or capabilities.\n"
+                "- Do NOT add new behaviours, tools, or rules. Do NOT "
+                "remove existing rules.\n"
+                "- Do NOT answer or respond — just clean up what's there.\n"
+                "- Fix grammar, spelling, punctuation, awkward phrasing, "
+                "redundancy.\n"
+                "- Preserve Markdown structure: headings (#, ##, ###), "
+                "bullet lists, numbered lists, blockquotes, horizontal "
+                "rules — keep them all.\n"
+                "- Preserve code blocks and inline `code` exactly. Do not "
+                "rewrite commands, paths, tool names, or examples.\n"
+                "- Preserve line breaks and paragraph structure.\n"
+                "- Keep the existing tone (terse / verbose / playful / "
+                "formal) — do not normalise it.\n"
+                "- If the input is already clean, return it unchanged."
+            )
+            request_line = (
+                "Polish this soul.md (output ONLY the polished version, "
+                "preserve all Markdown structure and code blocks):\n\n"
+                + text
+            )
         else:
-            system_prompt = (
+            instructions = (
                 "You are a PROMPT REWRITER for an AI chat system. "
                 "The user will give you a draft prompt/message they want to send to an AI assistant. "
                 "Your job is to rewrite it into a better, clearer version of the SAME request. "
@@ -7851,7 +7901,23 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 "Example: Input: 'whats weather vienna' → Output: 'What is the weather like in Vienna today?'"
                 + context_block
             )
-            messages = [{"role": "user", "content": f"Rewrite this prompt (output ONLY the rewritten version):\n\n{text}"}]
+            request_line = f"Rewrite this prompt (output ONLY the rewritten version):\n\n{text}"
+
+        # Caveman compression — applied only to the *instructions* block,
+        # never to the user's text being polished/rewritten (we don't want
+        # to mangle their content). Prepends the system-style compression
+        # banner + appends the chat-style suffix so the refiner produces
+        # a tighter, more telegraphic rewrite.
+        if caveman in (1, 2, 3):
+            sys_banner = engine.CAVEMAN_SYSTEM_PROMPTS.get(caveman, "")
+            chat_suffix = engine.CAVEMAN_CHAT_PROMPTS.get(caveman, "")
+            instructions = (
+                sys_banner + engine._caveman_compress_text(instructions, caveman) + chat_suffix
+            )
+        # Build the wire-level messages: prepend the (possibly compressed)
+        # instructions to the user's request-line, since /v1/refine doesn't
+        # use _build_system_prompt — the rules HAVE to ride in the user msg.
+        messages = [{"role": "user", "content": instructions + "\n\n" + request_line}]
 
         try:
             result = engine.send_message(
@@ -7859,7 +7925,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 provider["base_url"],
                 silent=True, tools=False,
             )
-            self._send_json({"refined": result or text, "model": refine_model})
+            self._send_json({"refined": result or text, "model": refine_model,
+                             "caveman": caveman})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
@@ -10510,7 +10577,12 @@ def _gather_user_chat_samples(uid: str, since_ts: float, *,
 def _user_profile_run_llm(uid: str, prior_profile: str, samples: list[str],
                           greeting_name: str = "") -> str | None:
     """Call the LLM to (re)build the profile. Returns the new content, or
-    None on hard failure (caller falls back to prior_profile)."""
+    None on hard failure (caller falls back to prior_profile).
+
+    The daily build is never caveman-compressed — the on-disk profile is
+    always clean prose. Compression happens at read-time in send_message
+    when the preamble is injected (driven by profile_preamble_caveman).
+    """
     if not samples:
         return None
     model = _profile_pick_model()
@@ -10598,7 +10670,8 @@ def _profile_run_synchronous(user: dict, since_ts: float, now: float):
     greeting = (prefs.get("greeting_name") or "").strip() \
                or (user.get("display_name") or "").strip() \
                or (user.get("username") or "")
-    new_profile = _user_profile_run_llm(uid, prior, samples, greeting_name=greeting)
+    new_profile = _user_profile_run_llm(uid, prior, samples,
+                                         greeting_name=greeting)
     if not new_profile:
         _auth_mod.AuthDB.set_daily_summary_cursor(uid, now, "error:llm_no_output", "")
         return {"status": "error", "error": "LLM produced no output"}
