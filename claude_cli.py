@@ -7792,10 +7792,21 @@ def generate_next_prompt_suggestion(session) -> str | None:
             return None
 
         max_words = max(3, min(40, cfg.get("max_words", 15)))
+        # Match the user's caveman mode so the suggestion fits the style they're
+        # already writing in. Refine-with-AI uses the same signal for the same
+        # reason — suggestion + refined draft should land in the same register.
+        cm = int(getattr(session, "caveman_mode", 0) or 0)
+        style_hint = ""
+        if cm == 1:
+            style_hint = " Drop filler words and hedging; keep grammar intact."
+        elif cm == 2:
+            style_hint = " Telegraphic style: drop articles, filler, hedging; fragments OK; substance only."
+        elif cm == 3:
+            style_hint = " Ultra-telegraphic: max compression; no articles/filler/hedging; symbols (→ = > &) ok; no full sentences."
         instruction = (
             "Based on the conversation above, predict the user's most likely "
             f"next message. Respond with ONLY that message text (no quotes, no preamble, "
-            f"no explanation). Keep it under {max_words} words. If nothing plausible "
+            f"no explanation). Keep it under {max_words} words.{style_hint} If nothing plausible "
             "comes to mind, respond with the single token: NONE"
         )
 

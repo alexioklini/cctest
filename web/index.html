@@ -595,10 +595,13 @@ textarea { resize: none; }
   0%, 100% { transform: scale(1); filter: drop-shadow(0 0 0 rgba(59,130,246,0)); }
   50%      { transform: scale(1.12); filter: drop-shadow(0 0 6px rgba(59,130,246,0.7)); }
 }
-#btn-save-to-memory.mp-storing svg    { animation: mp-pulse-store    1.1s ease-in-out infinite; color: #22c55e; }
-#btn-save-to-memory.mp-retrieving svg { animation: mp-pulse-retrieve 1.1s ease-in-out infinite; color: #3b82f6; }
+#btn-save-to-memory.mp-storing svg,
+#welcome-btn-save-to-memory.mp-storing svg    { animation: mp-pulse-store    1.1s ease-in-out infinite; color: #22c55e; }
+#btn-save-to-memory.mp-retrieving svg,
+#welcome-btn-save-to-memory.mp-retrieving svg { animation: mp-pulse-retrieve 1.1s ease-in-out infinite; color: #3b82f6; }
 /* When both active, retrieve wins visually (blue) with a slightly faster pulse */
-#btn-save-to-memory.mp-storing.mp-retrieving svg { animation-duration: 0.8s; color: #3b82f6; }
+#btn-save-to-memory.mp-storing.mp-retrieving svg,
+#welcome-btn-save-to-memory.mp-storing.mp-retrieving svg { animation-duration: 0.8s; color: #3b82f6; }
 
 /* Model selector in composer */
 .model-selector-btn {
@@ -3532,6 +3535,21 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           <div class="composer-footer-left">
             <button class="composer-btn" onclick="triggerFileUpload()" title="Attach files">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
+            <button class="composer-btn" id="welcome-btn-thinking" onclick="cycleThinkingLevel()" title="Thinking level">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/><line x1="9" y1="21" x2="15" y2="21"/></svg>
+            </button>
+            <button class="composer-btn" id="welcome-btn-refine" onclick="refineInput()" title="Refine your message before sending">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            </button>
+            <button class="composer-btn" id="welcome-btn-toggle-tools" onclick="toggleToolDisplay()" title="Toggle tool calls">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+            </button>
+            <button class="composer-btn" id="welcome-btn-save-to-memory" onclick="toggleSaveToMemory()" title="Save to memory: off">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10l9-6 9 6v1H3z" fill="currentColor" fill-opacity="0.15"/><line x1="3" y1="11" x2="21" y2="11"/><line x1="3" y1="21" x2="21" y2="21"/><line x1="5" y1="11" x2="5" y2="21"/><line x1="9" y1="11" x2="9" y2="21"/><line x1="15" y1="11" x2="15" y2="21"/><line x1="19" y1="11" x2="19" y2="21"/><line x1="2" y1="21" x2="22" y2="21"/></svg>
+            </button>
+            <button class="composer-btn" id="welcome-btn-caveman" onclick="toggleCavemanMode()" title="Caveman: off (spaceship) — click to cycle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c3 3 5 7 5 12v3l-5-2-5 2v-3c0-5 2-9 5-12z" fill="currentColor" fill-opacity="0.15"/><circle cx="12" cy="10" r="1.5"/><path d="M7 15l-3 3v3l4-2M17 15l3 3v3l-4-2"/><path d="M10 19l2 3 2-3"/></svg>
             </button>
           </div>
           <div class="composer-footer-right">
@@ -8595,9 +8613,10 @@ function updateStatusBar() {
   if (execModeEl) execModeEl.style.display = ClientProxy.enabled ? '' : 'none';
 
   // Save-to-memory toggle: green=on, amber=auto, grey=off
-  const memBtn = document.getElementById('btn-save-to-memory');
-  if (memBtn) {
-    const mode = chat.memoryMode || (chat.saveToMemory ? 'on' : 'off');
+  // Mirror the same state to both chat- and welcome-screen composers.
+  const mode = chat.memoryMode || (chat.saveToMemory ? 'on' : 'off');
+  for (const memBtn of [document.getElementById('btn-save-to-memory'), document.getElementById('welcome-btn-save-to-memory')]) {
+    if (!memBtn) continue;
     if (mode === 'on') {
       memBtn.style.color = 'var(--success, #22c55e)';
       memBtn.title = 'Memory: on (all messages saved) — click to cycle';
@@ -8615,16 +8634,17 @@ function updateStatusBar() {
   }
 
   // Caveman mode toggle: icon per level (off=spaceship, lite=car, full=horse, ultra=campfire)
-  const cavBtn = document.getElementById('btn-caveman');
-  if (cavBtn) {
-    const cm = chat.cavemanMode || 0;
+  const cm = chat.cavemanMode || 0;
+  const cavTitle = {
+    0: 'Caveman: off (spaceship) — click to cycle',
+    1: 'Caveman: lite (car) — click to cycle',
+    2: 'Caveman: full (horse) — click to cycle',
+    3: 'Caveman: ultra (campfire) — click to cycle',
+  }[cm];
+  for (const cavBtn of [document.getElementById('btn-caveman'), document.getElementById('welcome-btn-caveman')]) {
+    if (!cavBtn) continue;
     cavBtn.innerHTML = cavemanIconFor(cm);
-    cavBtn.title = {
-      0: 'Caveman: off (spaceship) — click to cycle',
-      1: 'Caveman: lite (car) — click to cycle',
-      2: 'Caveman: full (horse) — click to cycle',
-      3: 'Caveman: ultra (campfire) — click to cycle',
-    }[cm];
+    cavBtn.title = cavTitle;
     cavBtn.style.color = '';
   }
 
@@ -15715,23 +15735,50 @@ function cycleThinkingLevel() {
   showToast(`Thinking: ${state.thinkingLevel}`);
 }
 
+// Bulb glyph that grows brighter and more filled with the thinking level.
+// Same outline at every level (so the user can read it as the same icon),
+// but the fill height + glow inside the bulb step up: off=empty, low=1/3,
+// medium=2/3, high=full. Color is applied via the button's CSS color so
+// stroke + fill inherit cleanly.
+let _thinkingIconSeq = 0;
+function thinkingIconFor(level) {
+  const bulbStroke = `<path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/><line x1="9" y1="21" x2="15" y2="21"/>`;
+  let innerFill = '';
+  if (level === 'low')         innerFill = `<rect x="5" y="13" width="14" height="4"  fill="currentColor" fill-opacity="0.35"/>`;
+  else if (level === 'medium') innerFill = `<rect x="5" y="9"  width="14" height="8"  fill="currentColor" fill-opacity="0.55"/>`;
+  else if (level === 'high')   innerFill = `<rect x="5" y="4"  width="14" height="13" fill="currentColor" fill-opacity="0.75"/>`;
+  // Unique clipPath id per render — SVG ids are document-global and we may
+  // have two thinking buttons (welcome + chat) mounted simultaneously.
+  const cid = `tbc-${++_thinkingIconSeq}`;
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+    <defs><clipPath id="${cid}"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/></clipPath></defs>
+    <g clip-path="url(#${cid})">${innerFill}</g>
+    ${bulbStroke}
+  </svg>`;
+}
+
 function refreshThinkingButton() {
-  const btn = document.getElementById('btn-thinking');
-  if (!btn) return;
   const fmt = getActiveThinkingFormat();
   const supported = fmt !== 'none';
-  if (!supported) {
-    btn.classList.add('disabled');
-    btn.style.color = '';
-    btn.style.opacity = '0.35';
-    btn.style.cursor = 'not-allowed';
-    btn.title = "Model doesn't support thinking";
-  } else {
-    btn.classList.remove('disabled');
-    btn.style.opacity = '';
-    btn.style.cursor = '';
-    btn.style.color = state.thinkingLevel !== 'none' ? 'var(--accent-brand)' : '';
-    btn.title = `Thinking: ${state.thinkingLevel} (${fmt})`;
+  // Per-level color ramp: off=neutral grey, low=amber, medium=orange, high=red.
+  const colorMap = { none: '', low: '#f59e0b', medium: '#f97316', high: '#ef4444' };
+  const level = state.thinkingLevel || 'none';
+  for (const btn of [document.getElementById('btn-thinking'), document.getElementById('welcome-btn-thinking')]) {
+    if (!btn) continue;
+    btn.innerHTML = thinkingIconFor(level);
+    if (!supported) {
+      btn.classList.add('disabled');
+      btn.style.color = '';
+      btn.style.opacity = '0.35';
+      btn.style.cursor = 'not-allowed';
+      btn.title = "Model doesn't support thinking";
+    } else {
+      btn.classList.remove('disabled');
+      btn.style.opacity = '';
+      btn.style.cursor = '';
+      btn.style.color = colorMap[level] || '';
+      btn.title = `Thinking: ${level} (${fmt})`;
+    }
   }
 }
 
@@ -15743,9 +15790,9 @@ async function refineInput() {
   const text = input?.value?.trim();
   if (!text) { showToast('Type a message first', true); return; }
 
+  const refineBtns = [document.getElementById('btn-refine'), document.getElementById('welcome-btn-refine')].filter(Boolean);
   try {
-    const btn = document.getElementById('btn-refine');
-    if (btn) btn.style.opacity = '0.4';
+    for (const btn of refineBtns) btn.style.opacity = '0.4';
     showToast('Refining...');
 
     // Mirror the chat's caveman setting into the refiner so a caveman-mode
@@ -15763,11 +15810,10 @@ async function refineInput() {
       updateSendButton();
       showToast('Message refined');
     }
-    if (btn) btn.style.opacity = '';
+    for (const btn of refineBtns) btn.style.opacity = '';
   } catch(e) {
     showToast('Refine failed: ' + e.message, true);
-    const btn = document.getElementById('btn-refine');
-    if (btn) btn.style.opacity = '';
+    for (const btn of refineBtns) btn.style.opacity = '';
   }
 }
 
@@ -15775,8 +15821,8 @@ function toggleToolDisplay() {
   state.showToolCalls = !state.showToolCalls;
   localStorage.setItem('showToolCalls', state.showToolCalls);
 
-  const btn = document.getElementById('btn-toggle-tools');
-  if (btn) {
+  for (const btn of [document.getElementById('btn-toggle-tools'), document.getElementById('welcome-btn-toggle-tools')]) {
+    if (!btn) continue;
     btn.style.color = state.showToolCalls ? 'var(--accent-brand)' : '';
     btn.title = state.showToolCalls ? 'Tool calls: visible' : 'Tool calls: hidden';
   }
@@ -15787,7 +15833,13 @@ function toggleToolDisplay() {
 
 async function toggleSaveToMemory() {
   const chat = state.activeChat;
-  if (!chat || !chat.sessionId) return;
+  if (!chat) return;
+  // Welcome screen: session may not be created yet — wait for it. ensureSession is
+  // fire-and-forget kicked off by newChat(), so this just awaits the same promise.
+  if (!chat.sessionId) {
+    try { await ensureSession(chat); } catch { return; }
+    if (!chat.sessionId) return;
+  }
   // Three states: on → auto → off → on (DB: 1=on, 2=auto, 0=off)
   const cur = chat.memoryMode || (chat.saveToMemory ? 'on' : 'off');
   const next = cur === 'on' ? 'auto' : cur === 'auto' ? 'off' : 'on';
@@ -15795,8 +15847,10 @@ async function toggleSaveToMemory() {
 
   // When turning off after the chat was being memorised, ask whether to purge
   // previously filed drawers from MemPalace or just stop filing new turns.
+  // Skip the prompt on an empty chat — there's nothing to have been memorised yet.
   let purge = false;
-  if (next === 'off' && (cur === 'on' || cur === 'auto')) {
+  const hasHistory = (chat.messages || []).some(m => m.role === 'user' || m.role === 'assistant');
+  if (next === 'off' && (cur === 'on' || cur === 'auto') && hasHistory) {
     const choice = confirm(
       'Memory turned off for this chat.\n\n' +
       'Also delete previously stored memories of this chat from MemPalace?\n\n' +
@@ -15909,7 +15963,12 @@ function cavemanIconFor(mode) {
 
 async function toggleCavemanMode() {
   const chat = state.activeChat;
-  if (!chat || !chat.sessionId) return;
+  if (!chat) return;
+  // Welcome screen: session may not be created yet — wait for it.
+  if (!chat.sessionId) {
+    try { await ensureSession(chat); } catch { return; }
+    if (!chat.sessionId) return;
+  }
   const next = ((chat.cavemanMode || 0) + 1) % 4;
   try {
     await API.post('/v1/sessions/manage', {
@@ -17327,8 +17386,8 @@ const MempalaceActivityMonitor = {
   },
 
   async _check() {
-    const btn = document.getElementById('btn-save-to-memory');
-    if (!btn || !state.connected) return;
+    const btns = [document.getElementById('btn-save-to-memory'), document.getElementById('welcome-btn-save-to-memory')].filter(Boolean);
+    if (!btns.length || !state.connected) return;
     try {
       const resp = await fetch(`${BASE_URL}/v1/mempalace/activity`, {
         method: 'GET',
@@ -17340,11 +17399,11 @@ const MempalaceActivityMonitor = {
       const nextStore = !!data.store_active;
       const nextRetrieve = !!data.retrieve_active;
       if (nextStore !== this._storeActive) {
-        btn.classList.toggle('mp-storing', nextStore);
+        for (const b of btns) b.classList.toggle('mp-storing', nextStore);
         this._storeActive = nextStore;
       }
       if (nextRetrieve !== this._retrieveActive) {
-        btn.classList.toggle('mp-retrieving', nextRetrieve);
+        for (const b of btns) b.classList.toggle('mp-retrieving', nextRetrieve);
         this._retrieveActive = nextRetrieve;
       }
     } catch {}
@@ -18068,8 +18127,8 @@ async function init() {
   }
 
   // Init button states from stored preferences
-  const toolBtn = document.getElementById('btn-toggle-tools');
-  if (toolBtn) {
+  for (const toolBtn of [document.getElementById('btn-toggle-tools'), document.getElementById('welcome-btn-toggle-tools')]) {
+    if (!toolBtn) continue;
     toolBtn.style.color = state.showToolCalls ? 'var(--accent-brand)' : '';
     toolBtn.title = state.showToolCalls ? 'Tool calls: visible' : 'Tool calls: hidden';
   }
