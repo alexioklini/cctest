@@ -8522,13 +8522,11 @@ function renderStreamingMessage(chat) {
 
   let html = '<div class="msg-turn msg-turn-assistant msg-streaming">';
 
-  // Show the thinking panel during streaming so the user can read the reasoning
-  // as it arrives. Auto-expands when text hasn't started yet; collapses once the
-  // answer begins streaming (same visual as the finalized panel).
+  // Show the thinking panel during streaming. Default collapsed — header shows
+  // "Thinking..." progress, click to peek at the chain-of-thought as it arrives.
   if (chat.thinkingText) {
-    const openClass = chat.streamingText ? '' : ' open';
     html += `
-      <div class="thinking-block${openClass}" onclick="this.classList.toggle('open')">
+      <div class="thinking-block" onclick="this.classList.toggle('open')">
         <div class="thinking-block-header">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/></svg>
           ${chat.streamingText ? 'Thinking' : 'Thinking...'}
