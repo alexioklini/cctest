@@ -596,12 +596,15 @@ textarea { resize: none; }
   50%      { transform: scale(1.12); filter: drop-shadow(0 0 6px rgba(59,130,246,0.7)); }
 }
 #btn-save-to-memory.mp-storing svg,
-#welcome-btn-save-to-memory.mp-storing svg    { animation: mp-pulse-store    1.1s ease-in-out infinite; color: #22c55e; }
+#welcome-btn-save-to-memory.mp-storing svg,
+#project-btn-save-to-memory.mp-storing svg    { animation: mp-pulse-store    1.1s ease-in-out infinite; color: #22c55e; }
 #btn-save-to-memory.mp-retrieving svg,
-#welcome-btn-save-to-memory.mp-retrieving svg { animation: mp-pulse-retrieve 1.1s ease-in-out infinite; color: #3b82f6; }
+#welcome-btn-save-to-memory.mp-retrieving svg,
+#project-btn-save-to-memory.mp-retrieving svg { animation: mp-pulse-retrieve 1.1s ease-in-out infinite; color: #3b82f6; }
 /* When both active, retrieve wins visually (blue) with a slightly faster pulse */
 #btn-save-to-memory.mp-storing.mp-retrieving svg,
-#welcome-btn-save-to-memory.mp-storing.mp-retrieving svg { animation-duration: 0.8s; color: #3b82f6; }
+#welcome-btn-save-to-memory.mp-storing.mp-retrieving svg,
+#project-btn-save-to-memory.mp-storing.mp-retrieving svg { animation-duration: 0.8s; color: #3b82f6; }
 
 /* Model selector in composer */
 .model-selector-btn {
@@ -1949,49 +1952,10 @@ textarea { resize: none; }
 
 .project-detail-composer {
   padding: 24px;
-  max-width: 700px;
+  max-width: 760px;
   margin: 0 auto;
   width: 100%;
 }
-.project-detail-composer textarea {
-  width: 100%;
-  min-height: 56px;
-  max-height: 200px;
-  padding: 14px 48px 14px 16px;
-  border-radius: 16px;
-  border: 1px solid var(--border-200);
-  background: var(--bg-000);
-  font-size: 15px;
-  font-family: var(--font-ui);
-  color: var(--text-100);
-  resize: none;
-  outline: none;
-  box-shadow: var(--shadow-input);
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-.project-detail-composer textarea:focus {
-  border-color: var(--accent-brand);
-  box-shadow: var(--shadow-input-focus);
-}
-.project-detail-composer textarea::placeholder { color: var(--text-400); }
-.project-detail-composer-wrapper {
-  position: relative;
-}
-.project-detail-composer-send {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: var(--text-000);
-  color: var(--bg-000);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: opacity 0.15s;
-}
-.project-detail-composer-send:hover { opacity: 0.85; }
 .project-detail-prompt-hint {
   text-align: center;
   font-size: 14px;
@@ -1999,8 +1963,46 @@ textarea { resize: none; }
   margin-bottom: 16px;
 }
 
-.project-detail-chats {
+.project-detail-chats-wrap {
   padding: 0 24px 24px;
+  max-width: 760px;
+  margin: 0 auto;
+  width: 100%;
+}
+.project-chats-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-100);
+}
+.project-chats-tabs {
+  display: flex;
+  gap: 4px;
+}
+.project-chats-tab {
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-400);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  transition: color 0.1s, background 0.1s;
+}
+.project-chats-tab:hover { color: var(--text-200); background: var(--sidebar-hover); }
+.project-chats-tab.active {
+  color: var(--text-000);
+  background: var(--bg-200);
+}
+.project-chats-bulk {
+  display: flex;
+  gap: 6px;
+}
+.project-detail-chats {
+  padding: 0;
 }
 .project-detail-chats-title {
   font-size: 13px;
@@ -3708,15 +3710,62 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       </div>
       <div class="project-detail-composer">
         <div class="project-detail-prompt-hint">How can I help you today?</div>
-        <div class="project-detail-composer-wrapper">
-          <textarea id="project-detail-input" placeholder="Write your message to Claude" rows="1" onkeydown="handleProjectComposerKey(event)" oninput="autoResizeProjectInput()"></textarea>
-          <button class="project-detail-composer-send" onclick="startProjectChat()">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg>
-          </button>
+        <div class="composer-box" id="project-composer">
+          <textarea class="composer-input" id="project-input" placeholder="Write your message to Claude" rows="1" oninput="autoResizeInput(this); updateSendButton(); schedulePIIBadgeUpdate()"></textarea>
+          <div class="image-preview-area" id="project-image-preview"></div>
+          <div class="slash-popup" id="project-slash-popup"></div>
+          <div class="composer-footer">
+            <div class="composer-footer-left">
+              <button class="composer-btn" onclick="triggerFileUpload()" title="Attach files">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+              <button class="composer-btn" id="project-btn-thinking" onclick="cycleThinkingLevel()" title="Thinking level">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/><line x1="9" y1="21" x2="15" y2="21"/></svg>
+              </button>
+              <button class="composer-btn" id="project-btn-refine" onclick="refineInput()" title="Refine your message before sending">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+              </button>
+              <button class="composer-btn" id="project-btn-toggle-tools" onclick="toggleToolDisplay()" title="Toggle tool calls">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+              </button>
+              <button class="composer-btn" id="project-btn-save-to-memory" onclick="toggleSaveToMemory()" title="Save to memory: off">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10l9-6 9 6v1H3z" fill="currentColor" fill-opacity="0.15"/><line x1="3" y1="11" x2="21" y2="11"/><line x1="3" y1="21" x2="21" y2="21"/><line x1="5" y1="11" x2="5" y2="21"/><line x1="9" y1="11" x2="9" y2="21"/><line x1="15" y1="11" x2="15" y2="21"/><line x1="19" y1="11" x2="19" y2="21"/><line x1="2" y1="21" x2="22" y2="21"/></svg>
+              </button>
+              <button class="composer-btn" id="project-btn-caveman" onclick="toggleCavemanMode()" title="Caveman: off (spaceship) — click to cycle">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c3 3 5 7 5 12v3l-5-2-5 2v-3c0-5 2-9 5-12z" fill="currentColor" fill-opacity="0.15"/><circle cx="12" cy="10" r="1.5"/><path d="M7 15l-3 3v3l4-2M17 15l3 3v3l-4-2"/><path d="M10 19l2 3 2-3"/></svg>
+              </button>
+            </div>
+            <div class="composer-footer-right">
+              <span id="project-local-inference-chip" class="local-inference-chip" style="display:none" title="This turn will run on your own computer (client-hosted inference)">local</span>
+              <span class="model-selector-btn" id="project-model-selector" onclick="toggleModelDropdown(event)">
+                <span class="warmup-dot" id="project-warmup-dot" style="display:none;margin-right:4px"></span>
+                <span class="model-name" id="project-model-name">Sonnet 4.6</span>
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+              </span>
+              <button class="composer-send-btn" id="project-send-btn" onclick="sendMessage()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              </button>
+              <button class="composer-stop-btn hidden" id="project-stop-btn" onclick="stopGeneration()">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
-      <div class="project-detail-chats" id="project-detail-chats">
-        <!-- Project conversations list -->
+      <div class="project-detail-chats-wrap">
+        <div class="project-chats-header">
+          <div class="project-chats-tabs">
+            <button class="project-chats-tab active" data-pcfilter="active" onclick="setProjectChatsFilter('active')">Chats</button>
+            <button class="project-chats-tab" data-pcfilter="archived" onclick="setProjectChatsFilter('archived')">Archived</button>
+          </div>
+          <div class="project-chats-bulk" id="project-chats-bulk">
+            <button class="btn-secondary" style="padding:3px 10px;font-size:11px" onclick="archiveAllProjectChats()">Archive All</button>
+            <button class="btn-secondary" style="padding:3px 10px;font-size:11px;color:var(--error)" onclick="deleteAllProjectChats()">Delete All</button>
+          </div>
+        </div>
+        <div class="project-detail-chats" id="project-detail-chats">
+          <!-- Project conversations list -->
+        </div>
       </div>
     </div>
     <div class="project-detail-panel">
@@ -4727,17 +4776,38 @@ function autoResizeInput(el) {
   el.style.height = Math.min(el.scrollHeight, 200) + 'px';
 }
 
-function updateSendButton() {
-  const welcomeBtn = document.getElementById('welcome-send-btn');
-  const chatBtn = document.getElementById('chat-send-btn');
-  const welcomeInput = document.getElementById('welcome-input');
-  const chatInput = document.getElementById('chat-input');
+// Returns the textarea for the currently active composer view. The project-
+// detail view now hosts a full composer (same toggles as chat), so it picks
+// `project-input`; welcome/chat keep their existing ids.
+function _composerInputEl() {
+  if (state.currentView === 'welcome')        return document.getElementById('welcome-input');
+  if (state.currentView === 'project-detail') return document.getElementById('project-input');
+  return document.getElementById('chat-input');
+}
 
-  if (welcomeBtn) {
-    welcomeBtn.classList.toggle('active', (welcomeInput?.value?.trim().length > 0) || state._pendingImages.length > 0 || state._pendingFiles.length > 0);
-  }
-  if (chatBtn) {
-    chatBtn.classList.toggle('active', (chatInput?.value?.trim().length > 0) || state._pendingImages.length > 0 || state._pendingFiles.length > 0);
+// Returns the toggle/button DOM peers for a given suffix across all three
+// composers (welcome / chat / project-detail). Used by refresh helpers that
+// keep button state mirrored.
+function _composerToggleEls(suffix) {
+  return [
+    document.getElementById(suffix),                // chat (e.g. btn-thinking)
+    document.getElementById('welcome-' + suffix),   // welcome
+    document.getElementById('project-' + suffix),   // project-detail
+  ].filter(Boolean);
+}
+
+function updateSendButton() {
+  const hasFiles = state._pendingImages.length > 0 || state._pendingFiles.length > 0;
+  const pairs = [
+    ['welcome-send-btn', 'welcome-input'],
+    ['chat-send-btn',    'chat-input'],
+    ['project-send-btn', 'project-input'],
+  ];
+  for (const [btnId, inputId] of pairs) {
+    const btn = document.getElementById(btnId);
+    if (!btn) continue;
+    const inp = document.getElementById(inputId);
+    btn.classList.toggle('active', (inp?.value?.trim().length > 0) || hasFiles);
   }
 }
 
@@ -5649,6 +5719,16 @@ function navigateTo(view, opts) {
       if (opts?.agentId && opts?.projectName) {
         loadProjectDetail(opts.agentId, opts.projectName);
       }
+      // Refresh composer toggles so the project composer mirrors chat state
+      // (model selector, thinking, save-to-memory, caveman, local chip).
+      try {
+        if (state.activeChat?.model) updateModelSelectorDisplay(state.activeChat.model);
+        refreshThinkingButton();
+        updateStatusBar();
+        updateSendButton();
+        renderFilePreviews();
+        schedulePIIBadgeUpdate();
+      } catch(_) {}
       break;
 
     case 'artifacts':
@@ -5754,9 +5834,10 @@ async function loadAgentProjects(agentId) {
    ═══════════════════════════════════════════════════════════ */
 function updateModelSelectorDisplay(modelId) {
   const name = modelShortName(modelId);
-  document.getElementById('model-selector-name').textContent = name;
-  document.getElementById('chat-model-name').textContent = name;
-  document.getElementById('status-model').textContent = name;
+  for (const id of ['model-selector-name', 'chat-model-name', 'project-model-name', 'status-model']) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = name;
+  }
   refreshThinkingButton();
   refreshLocalInferenceChip(modelId);
 }
@@ -5772,10 +5853,10 @@ function refreshLocalInferenceChip(modelId) {
     if (entry && (li.families || []).includes(entry.family)) show = true;
   }
   const style = show ? '' : 'display:none';
-  const e1 = document.getElementById('welcome-local-inference-chip');
-  const e2 = document.getElementById('chat-local-inference-chip');
-  if (e1) e1.style.cssText = style;
-  if (e2) e2.style.cssText = style;
+  for (const id of ['welcome-local-inference-chip', 'chat-local-inference-chip', 'project-local-inference-chip']) {
+    const el = document.getElementById(id);
+    if (el) el.style.cssText = style;
+  }
 }
 
 // Model locality helper — prefers the server-derived is_local flag exposed via
@@ -6052,9 +6133,7 @@ function piiBlockActive(chat) {
   chat = chat || state.activeChat;
   if (!chat) return false;
   if (sessionStorage.getItem('pii-suppress:' + (chat.sessionId || '_new'))) return false;
-  const input = state.currentView === 'welcome'
-    ? document.getElementById('welcome-input')
-    : document.getElementById('chat-input');
+  const input = _composerInputEl();
   const text = input?.value || '';
   const draftScan = PIIScanner.scanPayload(text, state._pendingFiles || []);
   if (draftScan.worstAction === 'block') return true;
@@ -6390,6 +6469,14 @@ function renderRecentChats() {
     renderRecentScheduledRuns(container);
     return;
   }
+  // In any project view (list, detail), the sidebar shows chats that belong to
+  // a project the current user has access to — across all such projects, not
+  // just the one currently open. Project access is gated server-side: the
+  // /v1/projects endpoint per agent only returns projects this user can see.
+  if (state.currentView === 'project-detail' || state.currentView === 'projects') {
+    renderRecentProjectChats(container);
+    return;
+  }
   if (!state.activeAgentId) {
     // Show recent across all agents
     let allSessions = [];
@@ -6441,6 +6528,82 @@ function renderSessionsList(container, sessions) {
     div.onclick = () => openSession(sid, sagent);
     container.appendChild(div);
   }
+}
+
+// Sidebar renderer for project views. Shows chats whose (agentId, project)
+// pair appears in the current user's accessible-projects map. The map is
+// populated by loadProjectsList(); we lazy-load it on first use here.
+async function renderRecentProjectChats(container) {
+  if (!container) return;
+  container.dataset.mode = 'project-chats';
+
+  // Lazy-fill state.agentProjects so this works on direct deep-link to a
+  // project view without first visiting the projects list.
+  const needsLoad = !state.agentProjects || !Object.keys(state.agentProjects).length;
+  if (needsLoad) {
+    container.innerHTML = '<div class="sb-session-item" style="opacity:.6;cursor:default">Loading projects…</div>';
+    try { await loadProjectsList(); } catch(_) {}
+  }
+
+  // Build the access set: "<agentId>::<projectName>" → true for every project
+  // the server returned for this user across all agents.
+  const accessSet = new Set();
+  for (const [aid, plist] of Object.entries(state.agentProjects || {})) {
+    for (const p of (plist || [])) {
+      if (p?.name) accessSet.add(aid + '::' + p.name);
+    }
+  }
+  if (!accessSet.size) {
+    container.innerHTML = '<div class="sb-session-item" style="opacity:.6;cursor:default">No projects yet</div>';
+    return;
+  }
+
+  // Pull sessions across all agents we have cached, filter to those whose
+  // (agent, project) is in the access set, sort by recency. agentSessions is
+  // populated incrementally as the user navigates; trigger a refresh for
+  // agents we haven't seen yet so a new browser tab still shows results.
+  const knownAgents = new Set(Object.keys(state.agentSessions || {}));
+  const projectAgents = new Set();
+  for (const key of accessSet) projectAgents.add(key.split('::', 1)[0]);
+  const missing = [...projectAgents].filter(a => !knownAgents.has(a));
+  if (missing.length) {
+    await Promise.all(missing.map(async aid => {
+      try {
+        const data = await API.getSessionsForAgent(aid);
+        state.agentSessions[aid] = data;
+      } catch(_) {}
+    }));
+  }
+
+  // In project-detail view, the main area already lists THIS project's chats.
+  // Suppress them in the sidebar to avoid visual duplication; show only
+  // chats from other accessible projects.
+  const currentKey = (state.currentView === 'project-detail'
+    && state._projectDetailAgent && state._projectDetailName)
+    ? state._projectDetailAgent + '::' + state._projectDetailName
+    : '';
+
+  let sessions = [];
+  for (const [agentId, data] of Object.entries(state.agentSessions || {})) {
+    for (const s of (data?.sessions || [])) {
+      if (s.status === 'archived' || s.status === 'code') continue;
+      if ((s.message_count || 0) === 0) continue;
+      const proj = s.project || '';
+      if (!proj) continue;
+      const key = agentId + '::' + proj;
+      if (!accessSet.has(key)) continue;
+      if (currentKey && key === currentKey) continue;
+      sessions.push({...s, agentId});
+    }
+  }
+  sessions.sort((a, b) => new Date(b.last_active || 0) - new Date(a.last_active || 0));
+  sessions = sessions.slice(0, 30);
+
+  if (!sessions.length) {
+    container.innerHTML = '<div class="sb-session-item" style="opacity:.6;cursor:default">No project chats yet</div>';
+    return;
+  }
+  renderSessionsList(container, sessions);
 }
 
 async function renderRecentScheduledRuns(container) {
@@ -6626,6 +6789,12 @@ async function openSession(sessionId, agentId) {
     const memVal = parseInt(data.save_to_memory) || 0;
     chat.saveToMemory = memVal === 1;
     chat.memoryMode = memVal === 1 ? 'on' : memVal === 2 ? 'auto' : 'off';
+    // Sync state.currentProject to the loaded chat's project. Without this,
+    // sticky values from a previous project-detail visit leak into chats
+    // opened from the chats list (and vice versa) — every outgoing turn
+    // would carry a wrong body.project.
+    chat.project = data.project || '';
+    state.currentProject = chat.project || null;
 
     // Reconstruct tool blocks from metadata and extract per-message fields.
     // Order requirement: thinking(round N) → tools_of_round(N) → thinking(N+1) → ... → assistant.
@@ -6784,6 +6953,13 @@ function newChat() {
   chat._piiHistoryScanLen = -1;
   chat._piiHistoryHas = false;
   chat._piiHistoryCounts = {};
+  // Drop project binding when starting a fresh chat outside the project-detail
+  // flow. The project-detail composer's sendMessage branch sets currentProject
+  // again before this call returns, so its turns still get tagged.
+  if (state.currentView !== 'project-detail') {
+    state.currentProject = null;
+    chat.project = '';
+  }
   stopWarmupPoll(chat);
   closeRightPanel();
   navigateTo('welcome');
@@ -6816,6 +6992,12 @@ async function deleteSession(sessionId) {
     }
     showToast('Session deleted');
     loadAgentSessions(state.activeAgentId);
+    // If we're inside a project, refresh that project's list too.
+    const agentId = state._projectDetailAgent;
+    const projectName = state._projectDetailName;
+    if (state.currentView === 'project-detail' && agentId && projectName) {
+      loadProjectChats(agentId, projectName);
+    }
   } catch(e) { showToast('Delete failed', true); }
 }
 
@@ -6847,9 +7029,7 @@ async function deleteAllChats() {
    MESSAGE SENDING & STREAMING
    ═══════════════════════════════════════════════════════════ */
 async function sendMessage() {
-  const input = state.currentView === 'welcome'
-    ? document.getElementById('welcome-input')
-    : document.getElementById('chat-input');
+  const input = _composerInputEl();
 
   // If composer is empty but a ghost-text suggestion is active, accept it and use that
   if (NextPrompt.active() && !(input?.value?.trim())) {
@@ -6868,10 +7048,21 @@ async function sendMessage() {
     else { showToast('No agents available', true); return; }
   }
 
+  // From project-detail: bind to the project's agent, start a fresh chat for
+  // this turn (so the project context applies), then drop into the chat view.
+  // state.currentProject is already set by openProjectDetail.
+  if (state.currentView === 'project-detail') {
+    const projAgent = state._projectDetailAgent;
+    if (projAgent && projAgent !== state.activeAgentId) {
+      selectAgent(projAgent);
+    }
+    newChat();
+  }
+
   const chat = state.ensureAgentChat(state.activeAgentId);
 
-  // If on welcome screen, switch to chat view
-  if (state.currentView === 'welcome') {
+  // If on welcome or project-detail screen, switch to chat view
+  if (state.currentView === 'welcome' || state.currentView === 'project-detail') {
     navigateTo('chat');
   }
 
@@ -8638,8 +8829,7 @@ function updateStatusBar() {
   // Save-to-memory toggle: green=on, amber=auto, grey=off
   // Mirror the same state to both chat- and welcome-screen composers.
   const mode = chat.memoryMode || (chat.saveToMemory ? 'on' : 'off');
-  for (const memBtn of [document.getElementById('btn-save-to-memory'), document.getElementById('welcome-btn-save-to-memory')]) {
-    if (!memBtn) continue;
+  for (const memBtn of _composerToggleEls('btn-save-to-memory')) {
     if (mode === 'on') {
       memBtn.style.color = 'var(--success, #22c55e)';
       memBtn.title = 'Memory: on (all messages saved) — click to cycle';
@@ -8664,8 +8854,7 @@ function updateStatusBar() {
     2: 'Caveman: full (horse) — click to cycle',
     3: 'Caveman: ultra (campfire) — click to cycle',
   }[cm];
-  for (const cavBtn of [document.getElementById('btn-caveman'), document.getElementById('welcome-btn-caveman')]) {
-    if (!cavBtn) continue;
+  for (const cavBtn of _composerToggleEls('btn-caveman')) {
     cavBtn.innerHTML = cavemanIconFor(cm);
     cavBtn.title = cavTitle;
     cavBtn.style.color = '';
@@ -8987,7 +9176,9 @@ function confirmPIIBeforeSend(scan, chat) {
 // above the composer if PII is present in the current draft, attachments,
 // or the loaded conversation history.
 function updatePIIBadge() {
-  const host = state.currentView === 'welcome' ? 'welcome-composer' : 'chat-composer';
+  const host = state.currentView === 'welcome'        ? 'welcome-composer'
+             : state.currentView === 'project-detail' ? 'project-composer'
+             : 'chat-composer';
   const composer = document.getElementById(host);
   if (!composer) return;
   let badge = document.getElementById('pii-inline-badge');
@@ -8995,9 +9186,7 @@ function updatePIIBadge() {
     badge?.remove();
     return;
   }
-  const input = state.currentView === 'welcome'
-    ? document.getElementById('welcome-input')
-    : document.getElementById('chat-input');
+  const input = _composerInputEl();
   const text = input?.value || '';
   const draftScan = PIIScanner.scanPayload(text, state._pendingFiles);
   const chat = state.activeChat;
@@ -9279,6 +9468,11 @@ function openProject(agentId, projectName) {
   state.currentProject = projectName;
   state._projectDetailAgent = agentId;
   state._projectDetailName = projectName;
+  // Default to the Active tab on entry; the tab UI also resets visually below.
+  state._projectChatsFilter = 'active';
+  document.querySelectorAll('.project-chats-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.pcfilter === 'active');
+  });
   navigateTo('project-detail', { agentId, projectName });
 }
 
@@ -9414,29 +9608,43 @@ async function deleteProjectFile(agentId, projectName, sourceHash) {
 
 async function loadProjectChats(agentId, projectName) {
   const container = document.getElementById('project-detail-chats');
+  const filter = state._projectChatsFilter || 'active';
   try {
-    const data = await API.get(`/v1/sessions?agent=${encodeURIComponent(agentId)}&project=${encodeURIComponent(projectName)}&status=active`);
+    const data = await API.get(`/v1/sessions?agent=${encodeURIComponent(agentId)}&project=${encodeURIComponent(projectName)}&status=${filter}`);
     const sessions = data.sessions || [];
     container.innerHTML = '';
     if (!sessions.length) {
-      return; // No chats yet — just show empty
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding:18px 8px;color:var(--text-400);font-size:13px;text-align:center';
+      empty.textContent = filter === 'archived' ? 'No archived chats' : 'No chats yet';
+      container.appendChild(empty);
+      return;
     }
     for (const s of sessions) {
       const item = document.createElement('div');
       item.className = 'project-chat-item';
       const ago = s.last_active ? formatTimeAgo(new Date(s.last_active * 1000)) : '';
+      const isArchived = filter === 'archived' || s.status === 'archived';
+      // Stash status flag for the menu (avoids a second fetch).
+      item.dataset.archived = isArchived ? '1' : '0';
       item.innerHTML = `
         <span class="project-chat-item-title">${esc(s.title || 'Untitled')}</span>
         <span class="project-chat-item-meta">${ago ? 'Last message ' + ago : ''}</span>
         <span class="project-chat-item-actions">
-          <button style="color:var(--text-400);padding:4px" onclick="event.stopPropagation(); showProjectChatMenu(event, '${esc(s.id)}')" title="More options">
+          <button style="color:var(--text-400);padding:4px" onclick="event.stopPropagation(); showProjectChatMenu(event, '${esc(s.id)}', ${isArchived ? 'true' : 'false'})" title="More options">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
           </button>
         </span>
       `;
+      // Pass the session's own agent_id (sessions can be re-homed; never
+      // assume state.activeAgentId is correct). Without this, openSession's
+      // selectAgent(undefined) corrupts the active chat context and the
+      // session loads against the wrong chat object — looks like "reload
+      // doesn't work" / "continue chat is broken".
+      const sAgent = s.agent_id || s.agent || agentId;
       item.onclick = () => {
-        openSession(s.id);
-        navigateTo('chat');
+        openSession(s.id, sAgent);
+        // openSession already navigates to chat; no second navigateTo needed.
       };
       container.appendChild(item);
     }
@@ -9445,44 +9653,79 @@ async function loadProjectChats(agentId, projectName) {
   }
 }
 
-function handleProjectComposerKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    startProjectChat();
-  }
+// Switch active/archived tab and reload list. Server filters by status, so
+// the same loadProjectChats path works for both.
+function setProjectChatsFilter(filter) {
+  state._projectChatsFilter = filter;
+  document.querySelectorAll('.project-chats-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.pcfilter === filter);
+  });
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (agentId && projectName) loadProjectChats(agentId, projectName);
 }
 
-function autoResizeProjectInput() {
-  const input = document.getElementById('project-detail-input');
-  if (!input) return;
-  input.style.height = 'auto';
-  input.style.height = Math.min(input.scrollHeight, 200) + 'px';
-}
-
-async function startProjectChat() {
-  const input = document.getElementById('project-detail-input');
-  const text = input?.value?.trim();
-  if (!text) return;
+async function archiveAllProjectChats() {
   const agentId = state._projectDetailAgent;
   const projectName = state._projectDetailName;
   if (!agentId || !projectName) return;
-
-  selectAgent(agentId);
-  state.currentProject = projectName;
-  newChat();
-
-  // Set the message text into the main composer and send
-  const mainInput = document.getElementById('chat-input');
-  if (mainInput) {
-    mainInput.value = text;
-    autoResizeInput(mainInput);
+  const filter = state._projectChatsFilter || 'active';
+  // On the Active tab → archive all active in this project.
+  // On the Archived tab → unarchive all archived in this project.
+  if (filter === 'archived') {
+    if (!confirm(`Unarchive all archived chats in "${projectName}"?`)) return;
+    try {
+      await API.manageSession({ action: 'unarchive_all', agent: agentId, project: projectName });
+      showToast('All chats unarchived');
+      loadProjectChats(agentId, projectName);
+      loadAgentSessions(agentId);
+    } catch(e) { showToast('Unarchive all failed', true); }
+    return;
   }
-  input.value = '';
+  if (!confirm(`Archive all active chats in "${projectName}"?`)) return;
+  try {
+    await API.manageSession({ action: 'archive_all', agent: agentId, project: projectName });
+    showToast('All chats archived');
+    loadProjectChats(agentId, projectName);
+    loadAgentSessions(agentId);
+  } catch(e) { showToast('Archive all failed', true); }
+}
 
-  navigateTo('chat');
+async function deleteAllProjectChats() {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  const filter = state._projectChatsFilter || 'active';
+  const archivedOnly = filter === 'archived';
+  const label = archivedOnly ? 'archived chats' : 'ALL chats';
+  if (!confirm(`Permanently delete ${label} in "${projectName}"? This cannot be undone.`)) return;
+  try {
+    const r = await API.manageSession({
+      action: 'delete_all', agent: agentId, project: projectName, archived_only: archivedOnly,
+    });
+    showToast(`Deleted ${r.count || 'all'} chats`);
+    // If the active chat was inside this project, reset the view.
+    if (state.activeChat?.sessionId && state.currentProject === projectName) {
+      newChat();
+    }
+    loadProjectChats(agentId, projectName);
+    loadAgentSessions(agentId);
+  } catch(e) { showToast('Delete all failed', true); }
+}
 
-  // Trigger send after a tick to let view switch complete
-  setTimeout(() => sendMessage(), 50);
+// Per-session unarchive helper used by the project chat menu and (eventually)
+// the global chats list. Uses manageSession action 'unarchive'.
+async function unarchiveSession(sessionId) {
+  try {
+    await API.manageSession({ action: 'unarchive', session_id: sessionId });
+    showToast('Chat unarchived');
+    const agentId = state._projectDetailAgent;
+    const projectName = state._projectDetailName;
+    if (state.currentView === 'project-detail' && agentId && projectName) {
+      loadProjectChats(agentId, projectName);
+    }
+    loadAgentSessions(state.activeAgentId);
+  } catch(e) { showToast('Unarchive failed', true); }
 }
 
 function editProjectInstructions() {
@@ -9812,14 +10055,20 @@ function showProjectMenu(event) {
   showProjectListMenu(event, agentId, projectName);
 }
 
-function showProjectChatMenu(event, sessionId) {
+function showProjectChatMenu(event, sessionId, isArchived) {
   event.stopPropagation();
   document.querySelectorAll('.ctx-menu').forEach(m => m.remove());
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.cssText = `position:fixed;z-index:10000;background:var(--bg-000);border:1px solid var(--border-200);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);padding:4px;min-width:120px`;
-  menu.innerHTML = `
-    <div style="padding:8px 12px;cursor:pointer;border-radius:6px;font-size:13px;color:var(--text-200)" onmouseover="this.style.background='var(--sidebar-hover)'" onmouseout="this.style.background=''" onclick="archiveSession('${esc(sessionId)}'); this.closest('.ctx-menu').remove()">Archive</div>
+  menu.style.cssText = `position:fixed;z-index:10000;background:var(--bg-000);border:1px solid var(--border-200);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);padding:4px;min-width:140px`;
+  const itemStyle = `padding:8px 12px;cursor:pointer;border-radius:6px;font-size:13px;color:var(--text-200)`;
+  const dangerStyle = itemStyle + ';color:var(--error)';
+  const sid = esc(sessionId);
+  const toggleAction = isArchived
+    ? `<div style="${itemStyle}" onmouseover="this.style.background='var(--sidebar-hover)'" onmouseout="this.style.background=''" onclick="unarchiveSession('${sid}'); this.closest('.ctx-menu').remove()">Unarchive</div>`
+    : `<div style="${itemStyle}" onmouseover="this.style.background='var(--sidebar-hover)'" onmouseout="this.style.background=''" onclick="archiveSession('${sid}'); this.closest('.ctx-menu').remove()">Archive</div>`;
+  menu.innerHTML = toggleAction + `
+    <div style="${dangerStyle}" onmouseover="this.style.background='var(--sidebar-hover)'" onmouseout="this.style.background=''" onclick="deleteSession('${sid}'); this.closest('.ctx-menu').remove()">Delete</div>
   `;
   document.body.appendChild(menu);
   const r = event.target.closest('button')?.getBoundingClientRect() || { left: event.clientX, bottom: event.clientY };
@@ -14852,7 +15101,7 @@ function removePendingImage(idx) {
 }
 
 function renderFilePreviews() {
-  const containers = ['welcome-image-preview', 'chat-image-preview'];
+  const containers = ['welcome-image-preview', 'chat-image-preview', 'project-image-preview'];
   for (const id of containers) {
     const el = document.getElementById(id);
     if (!el) continue;
@@ -16381,8 +16630,7 @@ function refreshThinkingButton() {
   // Per-level color ramp: off=neutral grey, low=amber, medium=orange, high=red.
   const colorMap = { none: '', low: '#f59e0b', medium: '#f97316', high: '#ef4444' };
   const level = state.thinkingLevel || 'none';
-  for (const btn of [document.getElementById('btn-thinking'), document.getElementById('welcome-btn-thinking')]) {
-    if (!btn) continue;
+  for (const btn of _composerToggleEls('btn-thinking')) {
     btn.innerHTML = thinkingIconFor(level);
     if (!supported) {
       btn.classList.add('disabled');
@@ -16408,11 +16656,14 @@ function refreshThinkingButton() {
    REFINE & TOOL TOGGLE
    ═══════════════════════════════════════════════════════════ */
 async function refineInput() {
-  const input = document.getElementById('chat-input') || document.getElementById('welcome-input');
+  const input = _composerInputEl()
+    || document.getElementById('chat-input')
+    || document.getElementById('welcome-input')
+    || document.getElementById('project-input');
   const text = input?.value?.trim();
   if (!text) { showToast('Type a message first', true); return; }
 
-  const refineBtns = [document.getElementById('btn-refine'), document.getElementById('welcome-btn-refine')].filter(Boolean);
+  const refineBtns = _composerToggleEls('btn-refine');
   try {
     for (const btn of refineBtns) btn.style.opacity = '0.4';
     showToast('Refining...');
@@ -16443,8 +16694,7 @@ function toggleToolDisplay() {
   state.showToolCalls = !state.showToolCalls;
   localStorage.setItem('showToolCalls', state.showToolCalls);
 
-  for (const btn of [document.getElementById('btn-toggle-tools'), document.getElementById('welcome-btn-toggle-tools')]) {
-    if (!btn) continue;
+  for (const btn of _composerToggleEls('btn-toggle-tools')) {
     btn.style.color = state.showToolCalls ? 'var(--accent-brand)' : '';
     btn.title = state.showToolCalls ? 'Tool calls: visible' : 'Tool calls: hidden';
   }
@@ -16635,7 +16885,7 @@ document.addEventListener('keydown', (e) => {
   // Enter to send (in composer)
   if (e.key === 'Enter' && !e.shiftKey) {
     const active = document.activeElement;
-    if (active?.id === 'welcome-input' || active?.id === 'chat-input') {
+    if (active?.id === 'welcome-input' || active?.id === 'chat-input' || active?.id === 'project-input') {
       e.preventDefault();
       sendMessage();
     }
@@ -16649,7 +16899,7 @@ document.addEventListener('keydown', (e) => {
 
   // Slash commands
   const active = document.activeElement;
-  if ((active?.id === 'welcome-input' || active?.id === 'chat-input') && active.value === '/') {
+  if ((active?.id === 'welcome-input' || active?.id === 'chat-input' || active?.id === 'project-input') && active.value === '/') {
     showSlashPopup(active);
   }
 });
@@ -16676,7 +16926,7 @@ document.addEventListener('keydown', function(e) {
 }, true);
 
 // Input event for slash popup
-['welcome-input', 'chat-input'].forEach(id => {
+['welcome-input', 'chat-input', 'project-input'].forEach(id => {
   const el = document.getElementById(id);
   if (!el) return;
   el.addEventListener('input', function() {
@@ -16749,7 +16999,9 @@ const slashCommands = [
 ];
 
 function showSlashPopup(inputEl) {
-  const popupId = inputEl.id === 'welcome-input' ? 'welcome-slash-popup' : 'chat-slash-popup';
+  const popupId = inputEl.id === 'welcome-input' ? 'welcome-slash-popup'
+                : inputEl.id === 'project-input' ? 'project-slash-popup'
+                : 'chat-slash-popup';
   const popup = document.getElementById(popupId);
   if (!popup) return;
 
@@ -18021,7 +18273,7 @@ const MempalaceActivityMonitor = {
   },
 
   async _check() {
-    const btns = [document.getElementById('btn-save-to-memory'), document.getElementById('welcome-btn-save-to-memory')].filter(Boolean);
+    const btns = _composerToggleEls('btn-save-to-memory');
     if (!btns.length || !state.connected) return;
     try {
       const resp = await fetch(`${BASE_URL}/v1/mempalace/activity`, {
@@ -18219,6 +18471,7 @@ const WarmupMonitor = {
       || '';
     this._applyComposerDot('welcome-warmup-dot', activeModel);
     this._applyComposerDot('chat-warmup-dot', activeModel);
+    this._applyComposerDot('project-warmup-dot', activeModel);
     // Models tab row dots
     document.querySelectorAll('[data-model-dot]').forEach(el => {
       const mid = el.dataset.modelDot;
@@ -18767,8 +19020,7 @@ async function init() {
   }
 
   // Init button states from stored preferences
-  for (const toolBtn of [document.getElementById('btn-toggle-tools'), document.getElementById('welcome-btn-toggle-tools')]) {
-    if (!toolBtn) continue;
+  for (const toolBtn of _composerToggleEls('btn-toggle-tools')) {
     toolBtn.style.color = state.showToolCalls ? 'var(--accent-brand)' : '';
     toolBtn.title = state.showToolCalls ? 'Tool calls: visible' : 'Tool calls: hidden';
   }

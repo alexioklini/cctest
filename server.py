@@ -1109,17 +1109,39 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=None)
-    def archive_all(agent_id=None):
+    def archive_all(agent_id=None, project=None):
         with _db_conn() as conn:
+            conditions = ["status = 'active'"]
+            params = []
             if agent_id:
-                conn.execute("UPDATE sessions SET status = 'archived' WHERE agent_id = ? AND status = 'active'", (agent_id,))
-            else:
-                conn.execute("UPDATE sessions SET status = 'archived' WHERE status = 'active'")
+                conditions.append("agent_id = ?")
+                params.append(agent_id)
+            if project is not None:
+                conditions.append("project = ?")
+                params.append(project)
+            where = " WHERE " + " AND ".join(conditions)
+            conn.execute(f"UPDATE sessions SET status = 'archived'{where}", params)
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def unarchive_all(agent_id=None, project=None):
+        with _db_conn() as conn:
+            conditions = ["status = 'archived'"]
+            params = []
+            if agent_id:
+                conditions.append("agent_id = ?")
+                params.append(agent_id)
+            if project is not None:
+                conditions.append("project = ?")
+                params.append(project)
+            where = " WHERE " + " AND ".join(conditions)
+            conn.execute(f"UPDATE sessions SET status = 'active'{where}", params)
             conn.commit()
 
     @staticmethod
     @_db_safe(default=[])
-    def delete_all(agent_id=None, archived_only=False):
+    def delete_all(agent_id=None, archived_only=False, project=None):
         """Delete all sessions (optionally filtered). Returns list of deleted session IDs."""
         with _db_conn() as conn:
             conditions = []
@@ -1129,6 +1151,9 @@ class ChatDB:
                 params.append(agent_id)
             if archived_only:
                 conditions.append("status = 'archived'")
+            if project is not None:
+                conditions.append("project = ?")
+                params.append(project)
             where = " WHERE " + " AND ".join(conditions) if conditions else ""
             rows = conn.execute(f"SELECT id FROM sessions{where}", params).fetchall()
             sids = [r[0] for r in rows]
@@ -3197,6 +3222,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             resp["title"] = session.title or ""
             resp["caveman_mode"] = session.caveman_mode
             resp["save_to_memory"] = int(getattr(session, "save_to_memory", 0) or 0)
+            resp["project"] = session.project or ""
         else:
             info = ChatDB.get_session_info(sid)
             if info:
@@ -3204,6 +3230,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 resp["title"] = info.get("title", "")
                 resp["caveman_mode"] = int(info.get("caveman_mode", 0) or 0)
                 resp["save_to_memory"] = int(info.get("save_to_memory", 0) or 0)
+                resp["project"] = info.get("project", "") or ""
         self._send_json(resp)
 
     def _handle_next_prompt_suggestion(self, path):
@@ -3661,12 +3688,19 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                              "artifacts_deleted": len(artifact_ids_to_delete)})
         elif action == "archive_all":
             agent = body.get("agent")
-            ChatDB.archive_all(agent)
+            project = body.get("project")
+            ChatDB.archive_all(agent, project=project if project is not None else None)
             self._send_json({"status": "archived_all"})
+        elif action == "unarchive_all":
+            agent = body.get("agent")
+            project = body.get("project")
+            ChatDB.unarchive_all(agent, project=project if project is not None else None)
+            self._send_json({"status": "unarchived_all"})
         elif action == "delete_all":
             agent = body.get("agent")
             archived_only = body.get("archived_only", False)
-            sids = ChatDB.delete_all(agent, archived_only)
+            project = body.get("project")
+            sids = ChatDB.delete_all(agent, archived_only, project=project if project is not None else None)
             for sid in (sids or []):
                 sessions.delete(sid)
                 if agent:
