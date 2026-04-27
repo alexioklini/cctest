@@ -8423,9 +8423,19 @@ function renderAssistantMessage(msg, idx) {
   if (msgRefs.length > 0) {
     refsHtml = '<div class="msg-references">';
     for (const ref of msgRefs) {
+      const isProject = ref.domain === 'project';
+      const tipPath = isProject ? ref.link : ref.link;
+      const ext = (ref.title || '').split('.').pop().toLowerCase();
+      const iconBg = isProject ? ({
+        pdf: '#d33', docx: '#2b579a', pptx: '#d24726',
+        xlsx: '#217346', eml: '#0072c6', msg: '#0072c6',
+      }[ext] || 'var(--accent-brand)') : '';
+      const iconChip = isProject
+        ? `<span class="ref-badge-icon" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:3px;background:${iconBg};color:#fff;font-size:8px;font-weight:700;letter-spacing:0.02em">${esc(ext || 'F')}</span>`
+        : `<img src="${esc(ref.favicon)}" onerror="this.style.display='none'" alt="">`;
       refsHtml += `
-        <div class="ref-badge" onclick="openReferencesPanel('${esc(ref.link)}')" title="${esc(ref.link)}">
-          <img src="${esc(ref.favicon)}" onerror="this.style.display='none'" alt="">
+        <div class="ref-badge" onclick="openReferencesPanel('${esc(ref.link)}')" title="${esc(tipPath)}">
+          ${iconChip}
           <span class="ref-badge-text">${esc(ref.title || ref.domain)}</span>
         </div>
       `;
@@ -16230,29 +16240,80 @@ function renderReferencesPane() {
   const container = document.getElementById('refs-content');
   if (!container) return;
   if (!refs.length) {
-    container.innerHTML = '<div class="attach-empty">No web sources in this chat</div>';
+    container.innerHTML = '<div class="attach-empty">No sources in this chat</div>';
     return;
   }
   let html = '';
   for (const ref of refs) {
     const snippetHtml = ref.snippet ? `<div class="ref-card-snippet">${esc(ref.snippet)}</div>` : '';
-    const thumbUrl = `https://api.microlink.io/?url=${encodeURIComponent(ref.link)}&screenshot=true&meta=false&embed=screenshot.url`;
+    const isProject = ref.domain === 'project';
+    // Project refs open the original document via the auth-gated
+    // /v1/files/download endpoint (PDFs render inline, others download).
+    // Web refs keep the legacy plain window.open behavior.
+    const clickHandler = isProject
+      ? `openProjectSource(this.dataset.link)`
+      : `window.open('${esc(ref.link)}', '_blank')`;
+    // Per-document type icon for project refs (PDF/DOCX/PPTX/XLSX/...).
+    const ext = (ref.title || '').split('.').pop().toLowerCase();
+    const iconBg = isProject ? {
+      pdf: '#d33', docx: '#2b579a', pptx: '#d24726',
+      xlsx: '#217346', eml: '#0072c6', msg: '#0072c6',
+      md: 'var(--text-400)', txt: 'var(--text-400)',
+    }[ext] || 'var(--accent-brand)' : '';
+    const previewHtml = isProject
+      ? `<div class="ref-thumb-placeholder" style="display:flex;align-items:center;justify-content:center;background:${iconBg};color:#fff;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em">${esc(ext || 'file')}</div>`
+      : `<img class="ref-thumb" src="${esc(`https://api.microlink.io/?url=${encodeURIComponent(ref.link)}&screenshot=true&meta=false&embed=screenshot.url`)}" onerror="this.parentElement.innerHTML='<div class=\\'ref-thumb-placeholder\\'><svg viewBox=\\'0 0 24 24\\' width=\\'32\\' height=\\'32\\' fill=\\'none\\' stroke=\\'var(--text-400)\\' stroke-width=\\'1\\' opacity=\\'0.3\\'><path d=\\'M12 2a10 10 0 110 20 10 10 0 010-20z\\'/><path d=\\'M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z\\'/></svg></div>'" loading="lazy" alt="">`;
+    const faviconHtml = isProject
+      ? ''
+      : `<img class="ref-favicon" src="${esc(ref.favicon)}" onerror="this.style.display='none'" alt="">`;
+    const domainLabel = isProject ? 'Project source' : esc(ref.domain);
     html += `
-      <div class="ref-card" data-link="${esc(ref.link)}" onclick="window.open('${esc(ref.link)}', '_blank')">
+      <div class="ref-card" data-link="${esc(ref.link)}" onclick="${clickHandler}">
         <div class="ref-card-preview">
-          <img class="ref-favicon" src="${esc(ref.favicon)}" onerror="this.style.display='none'" alt="">
-          <img class="ref-thumb" src="${esc(thumbUrl)}" onerror="this.parentElement.innerHTML='<div class=\\'ref-thumb-placeholder\\'><svg viewBox=\\'0 0 24 24\\' width=\\'32\\' height=\\'32\\' fill=\\'none\\' stroke=\\'var(--text-400)\\' stroke-width=\\'1\\' opacity=\\'0.3\\'><path d=\\'M12 2a10 10 0 110 20 10 10 0 010-20z\\'/><path d=\\'M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z\\'/></svg></div>'" loading="lazy" alt="">
-          <span class="ref-domain-pill">${esc(ref.domain)}</span>
+          ${faviconHtml}
+          ${previewHtml}
+          <span class="ref-domain-pill">${domainLabel}</span>
         </div>
         <div class="ref-card-body">
           <div class="ref-card-title">${esc(ref.title)}</div>
           ${snippetHtml}
-          <div class="ref-card-url">${esc(ref.link)}</div>
+          <div class="ref-card-url" style="word-break:break-all">${esc(ref.link)}</div>
         </div>
       </div>
     `;
   }
   container.innerHTML = html;
+}
+
+// Open a project document (PDF/DOCX/PPTX/XLSX/EML/.md/...) in a new tab.
+// PDFs render inline in the browser via the application/pdf MIME from the
+// download endpoint; everything else triggers a normal save-as. We fetch
+// with the auth-token header and pipe to a blob URL because the download
+// endpoint is auth-gated and we can't put the JWT on a query string safely.
+async function openProjectSource(absPath) {
+  if (!absPath) return;
+  try {
+    const url = `${BASE_URL}/v1/files/download?path=${encodeURIComponent(absPath)}`;
+    const resp = await fetch(url, {
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth-token') || '') },
+    });
+    if (!resp.ok) {
+      const err = await resp.text().catch(() => '');
+      showToast(`Cannot open ${absPath.split('/').pop()}: ${resp.status} ${err.slice(0, 80)}`, true);
+      return;
+    }
+    const blob = await resp.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    // Open in new tab. The browser uses the response's Content-Type to
+    // decide inline-render vs download. PDFs render inline; binaries
+    // (.docx, .xlsx, .pptx) download.
+    window.open(blobUrl, '_blank');
+    // Revoke after a delay so the new tab has time to load. 60s is
+    // arbitrary but long enough; the browser keeps a reference.
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+  } catch (e) {
+    showToast(`Failed to open: ${e.message || e}`, true);
+  }
 }
 
 // Legacy compat
@@ -16396,11 +16457,84 @@ function closeArtifactPanel() {
    ═══════════════════════════════════════════════════════════ */
 
 function extractReferencesFromToolResult(msg) {
-  // Extract web references from tool_result messages
+  // Extract references from tool_result messages.
+  // Web tools (exa_search, web_fetch) yield URL refs.
+  // Project-knowledge tools (mempalace_query, mempalace_kg_*) yield
+  // file-path refs that the right-side panel renders as clickable cards
+  // opening the original document.
   if (msg.role !== 'tool_result' || !msg.result) return [];
-  if (msg.name !== 'exa_search' && msg.name !== 'web_fetch') return [];
+  const isWebTool = msg.name === 'exa_search' || msg.name === 'web_fetch';
+  const isProjectTool = msg.name === 'mempalace_query'
+                     || msg.name === 'mempalace_kg_query'
+                     || msg.name === 'mempalace_kg_search'
+                     || msg.name === 'mempalace_kg_neighbors';
+  if (!isWebTool && !isProjectTool) return [];
   const refs = [];
   const resultStr = typeof msg.result === 'string' ? msg.result : JSON.stringify(msg.result);
+
+  // ── Project-knowledge tools: surface source_file as clickable refs ──
+  // mempalace_query returns {drawers: [{source_file, snippet, ...}]}.
+  // mempalace_kg_* return {triples: [{source_file, source_drawer_id, ...}]}.
+  // We dedupe by source_file, render basename as title, link = the
+  // original-binary path (resolving .brain-extracted/foo.pdf.md → foo.pdf
+  // via the converter's naming convention).
+  if (isProjectTool) {
+    let parsed = null;
+    try { parsed = JSON.parse(resultStr); } catch(e) { parsed = null; }
+    const items = parsed
+      ? [...(parsed.drawers || []),
+         ...(parsed.triples || []),
+         ...(parsed.edges || [])]
+      : [];
+    const seen = new Set();
+    const resolveOriginal = (sf) => {
+      // .brain-extracted/<name>.<ext>.md → <name>.<ext> in the parent dir
+      const m = sf && sf.match(/^(.+)\/\.brain-extracted\/(.+)\.md$/);
+      return m ? `${m[1]}/${m[2]}` : sf;
+    };
+    for (const it of items) {
+      const sf = it && it.source_file;
+      if (!sf || seen.has(sf)) continue;
+      seen.add(sf);
+      const original = resolveOriginal(sf);
+      const basename = original.split('/').pop() || original;
+      // Use the snippet from a drawer if present; otherwise format the
+      // triple/edge. Keeps each ref card informative without bloat.
+      let snippet = '';
+      if (it.snippet) snippet = String(it.snippet).slice(0, 280);
+      else if (it.subject && it.predicate && it.object) {
+        snippet = `(${it.subject}) — [${it.predicate}] → (${it.object})`.slice(0, 280);
+      } else if (it.text) snippet = String(it.text).slice(0, 280);
+      refs.push({
+        title: basename,
+        link: original,           // absolute path to the original binary
+        snippet: snippet,
+        domain: 'project',        // marker so the panel can render differently
+        favicon: '',
+        source_file: sf,          // raw drawer/triple source for debugging
+      });
+    }
+    // If JSON parse failed (truncated tool output), regex-fallback on
+    // source_file fields. Tool results are capped, but the references
+    // panel already does this for exa_search.
+    if (!refs.length) {
+      const sfMatches = [...resultStr.matchAll(/"source_file"\s*:\s*"([^"]+)"/g)];
+      const seen2 = new Set();
+      for (const m of sfMatches) {
+        const sf = m[1];
+        if (!sf || seen2.has(sf)) continue;
+        seen2.add(sf);
+        const original = resolveOriginal(sf);
+        const basename = original.split('/').pop() || original;
+        refs.push({
+          title: basename, link: original, snippet: '',
+          domain: 'project', favicon: '', source_file: sf,
+        });
+      }
+    }
+    return refs;
+  }
+
 
   // Worker-subagent envelope: the raw result is stored as an artifact and only
   // a summary + pre-extracted `references` array reach the client. Prefer that
@@ -16536,7 +16670,7 @@ function getReferencesForMessage(idx) {
 
 function openReferencesPanel(highlightLink) {
   const refs = collectChatReferences();
-  if (!refs.length) { showToast('No web sources in this chat'); return; }
+  if (!refs.length) { showToast('No sources in this chat'); return; }
   openRightPanel('references');
   if (highlightLink) {
     setTimeout(() => {
