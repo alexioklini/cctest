@@ -16631,12 +16631,26 @@ function collectChatReferences() {
 
   const refs = [];
   const seen = new Set();
+  // Walk all messages: pick up live tool_result rows (during streaming) AND
+  // assistant.metadata.tools[] (after reload from DB). Both feed the same
+  // extractor — a synthetic tool_result-shaped object lets us reuse the
+  // parser.
   for (const msg of chat.messages) {
-    const extracted = extractReferencesFromToolResult(msg);
-    for (const ref of extracted) {
-      if (!seen.has(ref.link)) {
-        seen.add(ref.link);
-        refs.push(ref);
+    const candidates = [];
+    if (msg.role === 'tool_result') candidates.push(msg);
+    if (msg.role === 'assistant' && msg.metadata && Array.isArray(msg.metadata.tools)) {
+      for (const t of msg.metadata.tools) {
+        if (!t || !t.name) continue;
+        candidates.push({ role: 'tool_result', name: t.name, result: t.result });
+      }
+    }
+    for (const c of candidates) {
+      const extracted = extractReferencesFromToolResult(c);
+      for (const ref of extracted) {
+        if (!seen.has(ref.link)) {
+          seen.add(ref.link);
+          refs.push(ref);
+        }
       }
     }
   }
@@ -16656,22 +16670,35 @@ function addChatReference(ref) {
 }
 
 function getReferencesForMessage(idx) {
-  // Look backward from this assistant message for tool_result messages
+  // Look backward from this assistant message for tool data — either live
+  // tool_result rows (during streaming) or this very assistant message's
+  // own metadata.tools[] array (after reload from DB). Stops at the
+  // previous user/human message.
   const chat = state.activeChat;
   if (!chat) return [];
   const refs = [];
   const seen = new Set();
+  const ingest = (synth) => {
+    for (const ref of extractReferencesFromToolResult(synth)) {
+      if (!seen.has(ref.link)) {
+        seen.add(ref.link);
+        refs.push(ref);
+      }
+    }
+  };
+  // First: this assistant message's own metadata.tools[] (the post-reload path)
+  const self = chat.messages[idx];
+  if (self && self.role === 'assistant' && self.metadata && Array.isArray(self.metadata.tools)) {
+    for (const t of self.metadata.tools) {
+      if (!t || !t.name) continue;
+      ingest({ role: 'tool_result', name: t.name, result: t.result });
+    }
+  }
+  // Then walk back for any live tool_result rows (the streaming path)
   for (let j = idx - 1; j >= 0; j--) {
     const m = chat.messages[j];
     if (m.role === 'user' || m.role === 'human') break;
-    if (m.role === 'tool_result') {
-      for (const ref of extractReferencesFromToolResult(m)) {
-        if (!seen.has(ref.link)) {
-          seen.add(ref.link);
-          refs.push(ref);
-        }
-      }
-    }
+    if (m.role === 'tool_result') ingest(m);
   }
   return refs;
 }

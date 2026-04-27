@@ -10584,12 +10584,83 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             pass
         return None
 
+    def _resolve_project_basename(self, raw_path):
+        """Best-effort lookup: given a bare basename or relative path
+        (the shape MemPalace drawers carry as `source_file`), find a
+        matching file under any project input_folders[] the authenticated
+        user can see. Strips a trailing `.md` companion suffix
+        automatically. Returns the absolute path of the first match, or
+        None. First match wins; if multiple projects have a same-named
+        file the user gets one of them — better than nothing, and the
+        right-panel card already shows the basename so the user can tell.
+        """
+        if not raw_path or "/" in raw_path[:1]:
+            return None
+        # Normalise the lookup name: a) strip trailing .md if it sits on
+        # top of a known binary extension; b) keep the raw name as-is
+        # otherwise (e.g. .md sources are first-class).
+        candidates = [raw_path]
+        m = re.match(r"^(.+\.(pdf|docx|pptx|xlsx|xlsm|eml|msg))\.md$", raw_path, re.IGNORECASE)
+        if m:
+            candidates.insert(0, m.group(1))  # try original binary first
+        try:
+            auth_user = getattr(self, '_auth_user', None) or _auth_mod.SYNTHETIC_ADMIN
+            uid = auth_user.get("id", "")
+            team_ids = []
+            if uid and uid != "__system__":
+                try:
+                    team_ids = [t["id"] for t in _auth_mod.AuthDB.get_user_teams(uid)]
+                except Exception:
+                    pass
+            roots = []
+            for agent_id in os.listdir(engine.AGENTS_DIR):
+                projects = engine.ProjectManager.list_projects(
+                    agent_id, user_id=uid or None, user_team_ids=team_ids,
+                )
+                for proj in projects:
+                    for folder in (proj.get("input_folders") or []):
+                        p = (folder or {}).get("path", "").strip()
+                        if p:
+                            roots.append(os.path.realpath(os.path.expanduser(p)))
+            roots = list(dict.fromkeys(roots))  # dedupe, keep order
+            for root in roots:
+                if not os.path.isdir(root):
+                    continue
+                for cand in candidates:
+                    base = os.path.basename(cand)
+                    # First: cheap top-level glob
+                    direct = os.path.join(root, cand)
+                    if os.path.isfile(direct):
+                        return os.path.realpath(direct)
+                    # Then: recursive basename walk (capped to avoid runaway
+                    # scans on misconfigured roots).
+                    scanned = 0
+                    for dirpath, _dirs, files in os.walk(root):
+                        if base in files:
+                            return os.path.realpath(os.path.join(dirpath, base))
+                        scanned += 1
+                        if scanned > 5000:  # safety
+                            break
+        except Exception:
+            return None
+        return None
+
     def _handle_file_download(self):
         """GET /v1/files/download?path=<absolute_path> — serve a file for download."""
         from urllib.parse import urlparse, parse_qs
         qs = parse_qs(urlparse(self.path).query)
         file_path = qs.get("path", [""])[0]
         resolved = self._validate_file_path(file_path)
+        # If the validator rejected (None) OR returned a path that doesn't
+        # exist on disk (because the input was relative + got resolved
+        # against the server's CWD into the cctest tree), try
+        # project-input-folder basename resolution. MemPalace drawers
+        # store `source_file` as a relative path (sometimes the bare
+        # basename of a binary that's deeper in a project input folder).
+        if not resolved or not os.path.isfile(resolved):
+            looked_up = self._resolve_project_basename(file_path)
+            if looked_up and os.path.isfile(looked_up):
+                resolved = looked_up
         if not resolved:
             self._send_json({"error": "Invalid or disallowed file path"}, 403)
             return
