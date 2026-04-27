@@ -311,6 +311,23 @@ def _team_wing(team_id: str) -> str:
     return f"team__{team_id}"
 
 
+def _project_id_for_name(agent_id: str, project_name: str) -> str:
+    """Resolve agent_id + project directory name → stable project_id (uuid4
+    hex[:12] from project.json). Returns "" if the project isn't found.
+    Used by session-create + session-list endpoints to translate the legacy
+    name parameter into the canonical id used by the `sessions.project_id`
+    filter. Cheap: ProjectManager.get_project() is a JSON read."""
+    if not project_name:
+        return ""
+    try:
+        proj = engine.ProjectManager.get_project(agent_id or "main", project_name)
+        if proj and proj.get("id"):
+            return proj["id"]
+    except Exception:
+        pass
+    return ""
+
+
 def _resolve_session_wing(info: dict) -> str:
     """Pick the MemPalace wing for a given session row. ID-only scheme.
 
@@ -532,7 +549,17 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN visibility TEXT DEFAULT 'user'")
             except sqlite3.OperationalError:
                 pass
+            try:
+                # project_id: stable uuid4 hex[:12] from project.json. Replaces the
+                # display-name `project` column as the join key. Storing both
+                # because the name still drives breadcrumbs / sidebar labels;
+                # the id is the source of truth for filtering. Backfilled at
+                # startup from agents/<id>/projects/<name>/project.json.
+                conn.execute("ALTER TABLE sessions ADD COLUMN project_id TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             conn.execute("CREATE INDEX IF NOT EXISTS idx_session_team ON sessions(team_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_session_project_id ON sessions(project_id)")
             # ── MemPalace chat-sync cursor ──
             # Tracks which messages have already been mirrored into MemPalace,
             # per session. `last_message_id` is the highest messages.id filed so far.
@@ -737,18 +764,25 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=None)
-    def save_session(sid, agent_id, model, title, status, created_at, last_active, project="", summary="", user_id=""):
+    def save_session(sid, agent_id, model, title, status, created_at, last_active, project="", summary="", user_id="", project_id=""):
+        # `project` is the legacy directory-name column (kept for back-compat
+        # display + summaries elsewhere). `project_id` is the canonical filter
+        # column — uuid4 hex[:12] from project.json. Resolve here when caller
+        # only passed a name so every save normalises both columns.
+        if project and not project_id:
+            project_id = _project_id_for_name(agent_id, project)
         with _db_conn() as conn:
             conn.execute("""
-                INSERT INTO sessions (id, agent_id, model, title, status, created_at, last_active, project, summary, user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO sessions (id, agent_id, model, title, status, created_at, last_active, project, project_id, summary, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     agent_id=excluded.agent_id, model=excluded.model, title=excluded.title,
                     status=excluded.status, created_at=excluded.created_at, last_active=excluded.last_active,
                     project=excluded.project,
+                    project_id=CASE WHEN excluded.project_id != '' THEN excluded.project_id ELSE sessions.project_id END,
                     summary=CASE WHEN excluded.summary != '' THEN excluded.summary ELSE sessions.summary END,
                     user_id=CASE WHEN excluded.user_id != '' THEN excluded.user_id ELSE sessions.user_id END
-            """, (sid, agent_id, model, title, status, created_at, last_active, project or "", summary or "", user_id or ""))
+            """, (sid, agent_id, model, title, status, created_at, last_active, project or "", project_id or "", summary or "", user_id or ""))
             conn.commit()
 
     @staticmethod
@@ -952,7 +986,7 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=list)
-    def list_sessions(agent_id=None, status=None, project=None, visible_user_ids=None, visible_team_ids=None):
+    def list_sessions(agent_id=None, status=None, project=None, visible_user_ids=None, visible_team_ids=None, project_id=None):
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
             q = ("SELECT s.*, "
@@ -980,7 +1014,14 @@ class ChatDB:
             if agent_id:
                 q += " AND s.agent_id = ?"
                 params.append(agent_id)
-            if project:
+            # Filter by stable project_id when available (handler resolves
+            # name → id once), fall back to legacy `project` (name) for
+            # callers that haven't been updated yet. Once project_id is
+            # populated everywhere the legacy branch can be dropped.
+            if project_id:
+                q += " AND s.project_id = ?"
+                params.append(project_id)
+            elif project:
                 q += " AND s.project = ?"
                 params.append(project)
             if status:
@@ -1153,14 +1194,17 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=None)
-    def archive_all(agent_id=None, project=None):
+    def archive_all(agent_id=None, project=None, project_id=None):
         with _db_conn() as conn:
             conditions = ["status = 'active'"]
             params = []
             if agent_id:
                 conditions.append("agent_id = ?")
                 params.append(agent_id)
-            if project is not None:
+            if project_id:
+                conditions.append("project_id = ?")
+                params.append(project_id)
+            elif project is not None:
                 conditions.append("project = ?")
                 params.append(project)
             where = " WHERE " + " AND ".join(conditions)
@@ -1169,14 +1213,17 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=None)
-    def unarchive_all(agent_id=None, project=None):
+    def unarchive_all(agent_id=None, project=None, project_id=None):
         with _db_conn() as conn:
             conditions = ["status = 'archived'"]
             params = []
             if agent_id:
                 conditions.append("agent_id = ?")
                 params.append(agent_id)
-            if project is not None:
+            if project_id:
+                conditions.append("project_id = ?")
+                params.append(project_id)
+            elif project is not None:
                 conditions.append("project = ?")
                 params.append(project)
             where = " WHERE " + " AND ".join(conditions)
@@ -1185,7 +1232,7 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=[])
-    def delete_all(agent_id=None, archived_only=False, project=None):
+    def delete_all(agent_id=None, archived_only=False, project=None, project_id=None):
         """Delete all sessions (optionally filtered). Returns list of deleted session IDs."""
         with _db_conn() as conn:
             conditions = []
@@ -1195,7 +1242,10 @@ class ChatDB:
                 params.append(agent_id)
             if archived_only:
                 conditions.append("status = 'archived'")
-            if project is not None:
+            if project_id:
+                conditions.append("project_id = ?")
+                params.append(project_id)
+            elif project is not None:
                 conditions.append("project = ?")
                 params.append(project)
             where = " WHERE " + " AND ".join(conditions) if conditions else ""
@@ -3300,7 +3350,12 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             vteam = [t["id"] for t in _auth_mod.AuthDB.get_user_teams(auth_user["id"])]
         if agent or project:
             if project:
-                all_sessions = ChatDB.list_sessions(agent_id=agent or None, status=status or None, project=project,
+                # Resolve name → id once. New sessions filter by id; legacy
+                # sessions (created before the project_id column existed) are
+                # backfilled at startup, so id-only filtering is correct.
+                pid = _project_id_for_name(agent or "main", project)
+                all_sessions = ChatDB.list_sessions(agent_id=agent or None, status=status or None,
+                                                   project=project, project_id=pid or None,
                                                    visible_user_ids=visible, visible_team_ids=vteam)
                 self._send_json({"sessions": all_sessions})
             else:
@@ -3793,18 +3848,25 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         elif action == "archive_all":
             agent = body.get("agent")
             project = body.get("project")
-            ChatDB.archive_all(agent, project=project if project is not None else None)
+            pid = _project_id_for_name(agent or "main", project) if project else ""
+            ChatDB.archive_all(agent, project=project if project is not None else None,
+                              project_id=pid or None)
             self._send_json({"status": "archived_all"})
         elif action == "unarchive_all":
             agent = body.get("agent")
             project = body.get("project")
-            ChatDB.unarchive_all(agent, project=project if project is not None else None)
+            pid = _project_id_for_name(agent or "main", project) if project else ""
+            ChatDB.unarchive_all(agent, project=project if project is not None else None,
+                                project_id=pid or None)
             self._send_json({"status": "unarchived_all"})
         elif action == "delete_all":
             agent = body.get("agent")
             archived_only = body.get("archived_only", False)
             project = body.get("project")
-            sids = ChatDB.delete_all(agent, archived_only, project=project if project is not None else None)
+            pid = _project_id_for_name(agent or "main", project) if project else ""
+            sids = ChatDB.delete_all(agent, archived_only,
+                                    project=project if project is not None else None,
+                                    project_id=pid or None)
             for sid in (sids or []):
                 sessions.delete(sid)
                 if agent:
@@ -11759,6 +11821,36 @@ def main():
                 print(f"[startup-purge] dropped {n} orphan empty session(s)", flush=True)
     except Exception as e:
         print(f"[startup-purge] empty-session purge failed: {type(e).__name__}: {e}", flush=True)
+
+    # One-shot startup: backfill `sessions.project_id` from the legacy
+    # `sessions.project` (directory name) column. Resolves each unique
+    # (agent_id, project_name) pair to the project.json `id` field via
+    # ProjectManager.get_project (which mints an id if the file is
+    # missing one). Idempotent — only updates rows with empty project_id.
+    try:
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT agent_id, project FROM sessions "
+                "WHERE project IS NOT NULL AND project != '' "
+                "AND (project_id IS NULL OR project_id = '')"
+            ).fetchall()
+            updated = 0
+            for agent_id, proj_name in rows:
+                pid = _project_id_for_name(agent_id, proj_name)
+                if not pid:
+                    continue
+                cur = conn.execute(
+                    "UPDATE sessions SET project_id = ? "
+                    "WHERE agent_id = ? AND project = ? "
+                    "AND (project_id IS NULL OR project_id = '')",
+                    (pid, agent_id, proj_name),
+                )
+                updated += cur.rowcount or 0
+            if updated:
+                conn.commit()
+                print(f"[startup-backfill] sessions.project_id: filled {updated} row(s)", flush=True)
+    except Exception as e:
+        print(f"[startup-backfill] project_id backfill failed: {type(e).__name__}: {e}", flush=True)
 
     # Backfill: index any unindexed chat transcripts (runs once at startup)
     def _cleanup_orphaned_chat_indexes():
