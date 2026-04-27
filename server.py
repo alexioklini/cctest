@@ -12967,10 +12967,26 @@ def main():
                     source_chunk_chars=source_chunk_chars,
                     log_prefix="[project-sync.kg]",
                 )
+                # Cumulative triple count for this source prefix, queried
+                # straight from the KG. `res.triples_extracted` is the per-
+                # cycle delta — fine to log, wrong for the UI's "M triples"
+                # pill which should stay positive across cursor-skip cycles.
+                # Cheap SQL: COUNT() over a prefix-scoped slice with the
+                # adapter_name filter (3.3.3 schema).
+                triples_cumulative = int(res.triples_extracted)
+                try:
+                    cum_stats = kg_extract.kg_stats_for_wing(
+                        palace_path=palace_path,
+                        source_prefix=resolved_prefix,
+                        adapter_name="brain-project-kg")
+                    triples_cumulative = int(cum_stats.get("triples", 0))
+                except Exception:
+                    pass
                 item_set_fn(item_kind, item_id,
                     kg_state=("error" if res.errors and not res.triples_extracted
                               else "idle"),
-                    triples_extracted=int(res.triples_extracted),
+                    triples_extracted=triples_cumulative,
+                    triples_last_cycle=int(res.triples_extracted),
                     kg_drawers_processed=int(res.drawers_processed),
                     kg_last_error=res.error_msg or "",
                     kg_elapsed_s=round(res.elapsed_s, 1))

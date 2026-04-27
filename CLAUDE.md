@@ -529,6 +529,7 @@ Runs on port 8420 (configurable). **Source of truth**: grep `@app.route` / `self
 - Server: launchd daemon (`com.brain-agent.server.plist`)
 - Telegram: in-process thread (no separate daemon)
 - Public: Cloudflare Zero Trust tunnel → `brain.alexklinsky.dev` (tunnel `itrmp` on 192.168.4.65)
+- **Log files (debugging gotcha)**: the plist binds `StandardOutPath=~/.brain-agent/server.log` and `StandardErrorPath=~/.brain-agent/server.error.log`, but launchd's FD reassignment behavior on macOS routes **both fd1 and fd2 to `server.error.log`** in practice (verified via `lsof -p <pid>`). All daemon `print()` output (including `[project-sync.kg]`, `[project-sync.conv]`, `[warmup-keeper]`, `[mempalace-miner]`, audit + cost logs) lands in **`server.error.log`**, not `server.log`. The latter file gets the startup banner once per launch and then stays dormant. Always tail `~/.brain-agent/server.error.log` for live debugging — `server.log` looks frozen because it is. Don't waste 20 minutes chasing "missing" log lines. (Cursor + log tables in chats.db are the authoritative records anyway: `kg_extraction_log` for KG cycles, `closet_regen_progress` for closet regen, `audit.db` for security events.)
 
 ## Concurrency & Thread Safety
 
