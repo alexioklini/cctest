@@ -16488,9 +16488,17 @@ function extractReferencesFromToolResult(msg) {
       : [];
     const seen = new Set();
     const resolveOriginal = (sf) => {
-      // .brain-extracted/<name>.<ext>.md → <name>.<ext> in the parent dir
-      const m = sf && sf.match(/^(.+)\/\.brain-extracted\/(.+)\.md$/);
-      return m ? `${m[1]}/${m[2]}` : sf;
+      if (!sf) return sf;
+      // Case 1: .brain-extracted/<name>.<ext>.md → <name>.<ext> in the parent dir
+      const m = sf.match(/^(.+)\/\.brain-extracted\/(.+)\.md$/);
+      if (m) return `${m[1]}/${m[2]}`;
+      // Case 2: defensive — any path ending in `.<binext>.md` where binext is
+      // a known binary doc-convert format. Catches cases where the agent
+      // cited the .md companion in plain text without the .brain-extracted
+      // prefix, or where a future doc_convert layout drops the prefix.
+      const m2 = sf.match(/^(.+\.(pdf|docx|pptx|xlsx|xlsm|eml|msg))\.md$/i);
+      if (m2) return m2[1];
+      return sf;
     };
     for (const it of items) {
       const sf = it && it.source_file;
