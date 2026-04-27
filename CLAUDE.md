@@ -615,7 +615,7 @@ Sessions are now created lazily on the first send instead of pre-emptively on ev
 - **Server** (`list_sessions`): SQL `WHERE` clause now hides any session with 0 messages older than 60 seconds. Fresh-but-empty sessions (the one being typed into right now) still show.
 - **Server startup**: one-shot purge in `main()` deletes empty sessions older than 5 minutes. Idempotent, runs on every start. Cleared 551 historical orphans on the install where the bug was found.
 
-## Project Knowledge Graph (v8.19.0)
+## Project Knowledge Graph (v8.19.0, validated v8.19.1)
 
 LLM-driven document → triples extraction over project input folders + manual attachments. Builds on the existing project-sync daemon: drawer mining stays unchanged, a follow-up post-pass calls a configurable LLM to extract `(subject, predicate, object)` triples and writes them to MemPalace's KG (`<palace_path>/knowledge_graph.sqlite3`). Step 1 = projects only.
 
@@ -709,13 +709,31 @@ Project header chip now reads `Memory: N indexed · M triples` and pulses purple
 
 ### Validation
 
-End-to-end on the German bank-policy PDF `Richtlinie-ZV-Vordrucke-2016-DK_finale_Fassung_DK_Homepage.pdf` (DK Zahlungsverkehrsvordrucke):
-- Auto-converted by `doc_convert` in 0.6s
-- 44 chunks via `source_file` mode at 3500 chars
-- **430 triples extracted in 950s** (~9.8 triples/chunk, 4 errors)
-- Predicate distribution: 191 requires, 55 cites, 53 permits, 33 forbids, 30 defines, 23 condition, 8 applies_to, 7 exception, 3 penalty, 2 supersedes, 1 effective_from
-- ~2% off-vocab predicate leakage
-- Source-language preserved: `(Mittelfeld) requires (prüfzahlgesicherte Kunden-Referenznummer gemäß ISO/CD-1164911)`, `(Vordrucke) forbids (Werbetexte oder -motive)`, `(Richtlinien 2016) supersedes (die bisherige Fassung)`
+Two end-to-end runs on the German bank-policy PDF `Richtlinie-ZV-Vordrucke-2016-DK_finale_Fassung_DK_Homepage.pdf` (DK Zahlungsverkehrsvordrucke), default model `gemini-2.5-flash`, `chunking_mode: source_file`, 3500 chars/chunk:
+
+| Run | Chunks | Triples | Errors | Elapsed | Notes |
+|---|---|---|---|---|---|
+| 8.19.0 first run | 44 | 430 | 4 | 950s | initial validation |
+| 8.19.1 post-stabilisation | 46 | 457 | 2 | 971.9s | oMLX `max_concurrent=1`, 26B `warmup=false`, no GPU contention |
+
+Aggregate KG state across the test project after the 8.19.1 run: **812 triples across 6 source files** (PDF + qb folder content). Predicate distribution from the PDF (8.19.1): 317 requires, 91 permits, 81 cites, 57 forbids, 53 defines, 39 condition, 13 applies_to, 11 exception, 7 penalty, 4 effective_from. ~98% controlled-vocab compliance; off-vocab leakage `~2%` — model invents predicates like `requires_pre_coding` or `is_intended_for` when the controlled set doesn't quite fit, harmless.
+
+Source-language preserved: `(Mittelfeld) requires (prüfzahlgesicherte Kunden-Referenznummer gemäß ISO/CD-1164911)`, `(Vordrucke) forbids (Werbetexte oder -motive)`, `(Richtlinien 2016) supersedes (die bisherige Fassung)`, `(Codierungen) requires (Druckfarben gemäß DIN 66223-1)`, `(Mitarbeiter) requires (Schutz vor Beschädigung und Verschmutzung)`.
+
+### Operational tuning (8.19.1 — config-side, gitignored)
+
+When running the local extraction model alongside the chat warmpool, two `config.json` knobs avoid `HTTP 507 Insufficient Storage` from oMLX:
+
+```json
+{
+  "providers": { "omlx": { "max_concurrent": 1 } },
+  "models": { "gemma-4-26B-A4B-it-MLX-4bit": { "warmup": false } }
+}
+```
+
+Why: oMLX has a process memory cap of 25.6GB by default; 26B (~22GB resident with KV cache) + e4b (~5GB) doesn't fit. With `max_concurrent=1` requests serialise so only one model is GPU-resident at a time, and `warmup=false` prevents the keeper from re-pinning 26B every 30s. e4b loads on demand for extraction, evicting 26B; the next chat turn pays a ~3-5s cold-load penalty to bring 26B back. The cloud default (`extraction_model: gemini-2.5-flash`) bypasses this entirely — recommended unless you need to keep documents on-prem.
+
+If you do want local extraction without paying the chat cold-load tax, the alternative is host-side: raise oMLX's process memory limit above 30GB (Apple Silicon with 32GB+ unified memory only).
 
 ## Cost Tracking & Rate Limiting
 
