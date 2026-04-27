@@ -10540,7 +10540,13 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             print(f"Failed to save channel config: {e}", flush=True)
 
     def _validate_file_path(self, file_path):
-        """Validate that a file path is within allowed directories. Returns resolved path or None."""
+        """Validate that a file path is within allowed directories. Returns resolved path or None.
+        Allows the cctest tree, agents/, cwd, AND any path under a project's
+        input_folders[]. Project input folders are the user-explicit set of
+        paths the project has been told to mine, so it's safe to serve files
+        from there back to the same authenticated user via /v1/files/download
+        — citations from `mempalace_query` / `mempalace_kg_*` resolve to
+        absolute paths under those roots."""
         if not file_path:
             return None
         file_path = os.path.expanduser(file_path)
@@ -10551,6 +10557,31 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         allowed = [base, agents_dir, cwd]
         if any(resolved.startswith(d) for d in allowed):
             return resolved
+        # Project input folders — symlink-resolved, deduped. Any project
+        # this user can see contributes its input_folder roots.
+        try:
+            auth_user = getattr(self, '_auth_user', None) or _auth_mod.SYNTHETIC_ADMIN
+            uid = auth_user.get("id", "")
+            team_ids = []
+            if uid and uid != "__system__":
+                try:
+                    team_ids = [t["id"] for t in _auth_mod.AuthDB.get_user_teams(uid)]
+                except Exception:
+                    pass
+            for agent_id in os.listdir(engine.AGENTS_DIR):
+                projects = engine.ProjectManager.list_projects(
+                    agent_id, user_id=uid or None, user_team_ids=team_ids,
+                )
+                for proj in projects:
+                    for folder in (proj.get("input_folders") or []):
+                        p = (folder or {}).get("path", "").strip()
+                        if not p:
+                            continue
+                        root = os.path.realpath(os.path.expanduser(p))
+                        if resolved.startswith(root):
+                            return resolved
+        except Exception:
+            pass
         return None
 
     def _handle_file_download(self):
@@ -10578,13 +10609,27 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         }
         ct = content_types.get(ext, "application/octet-stream")
         filename = os.path.basename(resolved)
+        # Render PDFs and images inline so the browser opens them in a new
+        # tab instead of force-downloading. Office-binary types stay
+        # `attachment` because browsers can't render them — they'd just
+        # download with a confusing blob:// URL otherwise.
+        inline_exts = {"pdf", "png", "jpg", "jpeg", "gif", "svg",
+                       "txt", "md", "html", "json", "csv"}
+        disposition = "inline" if ext in inline_exts else "attachment"
         try:
             with open(resolved, "rb") as f:
                 data = f.read()
             self.send_response(200)
             self.send_header("Content-Type", ct)
             self.send_header("Content-Length", len(data))
-            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            # Quote-escape the filename so non-ASCII (German umlauts) and
+            # spaces don't break the header. RFC 5987 filename* takes a
+            # UTF-8-encoded value.
+            from urllib.parse import quote as _urlq
+            self.send_header(
+                "Content-Disposition",
+                f"{disposition}; filename*=UTF-8''{_urlq(filename)}",
+            )
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(data)
