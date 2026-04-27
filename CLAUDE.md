@@ -615,7 +615,7 @@ Sessions are now created lazily on the first send instead of pre-emptively on ev
 - **Server** (`list_sessions`): SQL `WHERE` clause now hides any session with 0 messages older than 60 seconds. Fresh-but-empty sessions (the one being typed into right now) still show.
 - **Server startup**: one-shot purge in `main()` deletes empty sessions older than 5 minutes. Idempotent, runs on every start. Cleared 551 historical orphans on the install where the bug was found.
 
-## Project Knowledge Graph (v8.19.0, validated v8.19.1)
+## Project Knowledge Graph (v8.19.0, validated v8.19.1, daemon hygiene v8.20.0)
 
 LLM-driven document → triples extraction over project input folders + manual attachments. Builds on the existing project-sync daemon: drawer mining stays unchanged, a follow-up post-pass calls a configurable LLM to extract `(subject, predicate, object)` triples and writes them to MemPalace's KG (`<palace_path>/knowledge_graph.sqlite3`). Step 1 = projects only.
 
@@ -636,7 +636,7 @@ Twelve controlled English predicates: `requires`, `forbids`, `permits`, `defines
 3. Updates per-item state: `triples_extracted`, `kg_state` (idle/extracting/error), `kg_drawers_processed`, `kg_last_error`, `kg_elapsed_s`.
 4. Project-level `sync_status.total_triples` rollup runs at end-of-cycle (one COUNT per prefix-scoped slice).
 
-End-of-project: optional `_run_closet_regen_for(wing)` runs `mempalace.closet_llm.regenerate_closets` using the same model selected for KG extraction (no separate model picker). Boosts `mempalace_query` ranking by replacing MemPalace's regex closets with LLM-generated topic lines that capture implicit topics, foreign-language content, contextual references. One LLM call per source file. Opt-in via `mempalace.kg.regenerate_closets`, default off — adds load to every cycle.
+End-of-project: optional `_run_closet_regen_for(wing, source_prefix)` runs `mempalace.closet_llm.regenerate_closets` using the same model selected for KG extraction (no separate model picker). Boosts `mempalace_query` ranking by replacing MemPalace's regex closets with LLM-generated topic lines that capture implicit topics, foreign-language content, contextual references. **Incremental as of v8.20.0**: the daemon goes through `kg_extract.run_closet_regen_incremental(...)` which gates the wing-wide regen on per-source `(mtime, size)` change detection via `closet_regen_progress` cursor in chats.db. With 400 unchanged PDFs the wrapper costs ms instead of 400 LLM calls/cycle. Triggers full upstream regen only when at least one source changed (since `regenerate_closets` doesn't accept per-file filters). Opt-in via `mempalace.kg.regenerate_closets`, default off.
 
 ### Schema (chats.db, idempotent)
 
@@ -655,6 +655,22 @@ CREATE TABLE kg_extraction_log (
     id, palace_wing, adapter_name, source_prefix, profile, model,
     started_at, finished_at,
     drawers_seen, drawers_processed, drawers_skipped, triples_extracted, errors, error_msg
+);
+-- v8.20.0: per-source (mtime, size) cursor for change detection.
+-- When stats shift between cycles the daemon purges old triples + chunk
+-- progress for that source_file before re-extracting (orphan prevention).
+CREATE TABLE kg_extraction_source_state (
+    palace_wing  TEXT, source_file TEXT,
+    mtime        INTEGER, size INTEGER, updated_at REAL,
+    PRIMARY KEY (palace_wing, source_file)
+);
+-- v8.20.0: per-source (mtime, size) cursor for incremental closet regen.
+-- Gates the wing-wide upstream regenerate_closets call on "did anything
+-- change?" so unchanged content costs ms instead of N LLM calls/cycle.
+CREATE TABLE closet_regen_progress (
+    palace_wing  TEXT, source_file TEXT,
+    mtime        INTEGER, size INTEGER, processed_at REAL, error TEXT,
+    PRIMARY KEY (palace_wing, source_file)
 );
 ```
 
@@ -719,6 +735,16 @@ Two end-to-end runs on the German bank-policy PDF `Richtlinie-ZV-Vordrucke-2016-
 Aggregate KG state across the test project after the 8.19.1 run: **812 triples across 6 source files** (PDF + qb folder content). Predicate distribution from the PDF (8.19.1): 317 requires, 91 permits, 81 cites, 57 forbids, 53 defines, 39 condition, 13 applies_to, 11 exception, 7 penalty, 4 effective_from. ~98% controlled-vocab compliance; off-vocab leakage `~2%` — model invents predicates like `requires_pre_coding` or `is_intended_for` when the controlled set doesn't quite fit, harmless.
 
 Source-language preserved: `(Mittelfeld) requires (prüfzahlgesicherte Kunden-Referenznummer gemäß ISO/CD-1164911)`, `(Vordrucke) forbids (Werbetexte oder -motive)`, `(Richtlinien 2016) supersedes (die bisherige Fassung)`, `(Codierungen) requires (Druckfarben gemäß DIN 66223-1)`, `(Mitarbeiter) requires (Schutz vor Beschädigung und Verschmutzung)`.
+
+### Daemon hygiene (v8.20.0)
+
+Three coordinated changes that make the project-sync daemon truly idempotent + cheap on unchanged content:
+
+1. **Incremental closet regen** — `kg_extract.run_closet_regen_incremental(palace_path, wing, source_prefix, chats_db_path, endpoint, api_key, api_model)` walks the wing's source files, reads each `(mtime, size)`, compares to `closet_regen_progress` cursor; runs upstream `regenerate_closets` only when at least one source changed (or first cycle). Wing-wide upstream rebuild remains the granularity (no per-file filter exists yet); the wrapper just gates whether to call it. With 400 unchanged PDFs the wrapper short-circuits in milliseconds instead of 400 LLM calls.
+
+2. **Source-change KG invalidation** — `run_kg_post_pass(chunking_mode='source_file')` snapshots `kg_extraction_source_state` at start; for each source iterated, compares on-disk `(mtime, size)` against the cursor. On diff, calls `_invalidate_source_in_kg(...)` which DELETEs `triples` rows matching that exact `source_file` (with `adapter_name` filter when KG schema is 3.3.3+) and `kg_extraction_progress` rows for that source — orphan-entity sweep follows. The in-memory `already` set is shrunk so re-extraction proceeds. First-cycle entries record cursor without invalidating. Without this, an edited PDF would accumulate stale triples whose `source_drawer_id` no longer matched any drawer but whose `source_file` still pointed at the existing path — queries then returned mixed-version results. EXACT match (not LIKE prefix) so siblings in the same folder aren't accidentally invalidated.
+
+3. **6-hour cycle interval** — `mempalace.project_sync.interval_seconds` default bumped from `1800` (30 min) to `21600` (6h). Steady-state work is incremental at every layer (`doc_convert` mtime/size, `mp_miner` content-hash, `kg_extract` cursor, `closet_regen` cursor) so 30-min walks were wasted overhead. Manual "Sync now" still triggers immediately. Existing installs with custom `interval_seconds` in config.json are untouched (default only applies when missing).
 
 ### Operational tuning (8.19.1 — config-side, gitignored)
 

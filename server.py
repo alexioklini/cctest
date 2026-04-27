@@ -12981,7 +12981,7 @@ def main():
                 print(f"[project-sync.kg] wing={wing} prefix={source_prefix} "
                       f"failed: {type(e).__name__}: {e}", flush=True)
 
-        def _run_closet_regen_for(wing: str):
+        def _run_closet_regen_for(wing: str, source_prefix: str = ""):
             """Regenerate LLM-augmented closets for the wing using the same
             model the user selected for KG extraction. Closets boost the
             ranking of vector retrieval (mempalace_query) — this swaps
@@ -12989,10 +12989,19 @@ def main():
             captures implicit topics, foreign-language content, and
             contextual references the regex misses.
 
-            Opt-in via mempalace.kg.regenerate_closets — daemon load profile
-            adds ~1 LLM call per source file in the wing. Cheap (one call
-            per file, content concatenated) but not free; default off.
+            Opt-in via mempalace.kg.regenerate_closets. The wrapper is
+            **incremental** (kg_extract.run_closet_regen_incremental):
+            walks the wing's source files, compares each file's (mtime,
+            size) against the closet_regen_progress cursor in chats.db,
+            and only triggers the upstream wing-wide rebuild when at
+            least one source has changed since the last cycle. With 400
+            unchanged PDFs the wrapper short-circuits in milliseconds;
+            with one edited PDF it runs the full wing rebuild (upstream
+            doesn't accept per-file filters yet) and refreshes every
+            cursor row.
             """
+            if kg_extract is None:
+                return
             kg_cfg = (engine._load_mempalace_config().get("kg") or {})
             if not kg_cfg.get("regenerate_closets"):
                 return
@@ -13012,29 +13021,21 @@ def main():
                     print(f"[project-sync.closet] {wing}: cannot resolve "
                           f"provider for {model!r} — skipping", flush=True)
                     return
-                from mempalace.closet_llm import (
-                    LLMConfig as _ClosetLLMConfig,
-                    regenerate_closets as _regen_closets,
-                )
-                cfg = _ClosetLLMConfig(
-                    endpoint=endpoint, key=api_key, model=api_model)
-                t0 = time.time()
-                # Suppress chatty progress output; closet_llm prints per-source
-                # progress lines that would flood server.log.
+                # Suppress chatty progress output from upstream regen;
+                # the incremental wrapper logs its own one-line summary.
                 buf = io.StringIO()
                 with contextlib.redirect_stdout(buf):
-                    out = _regen_closets(
-                        palace_path=palace_path, wing=wing, cfg=cfg)
-                dt = time.time() - t0
-                processed = (out or {}).get("processed", 0)
-                err = (out or {}).get("error", "")
-                if err:
-                    print(f"[project-sync.closet] {wing}: error={err} "
-                          f"elapsed={dt:.1f}s", flush=True)
-                else:
-                    print(f"[project-sync.closet] {wing}: "
-                          f"sources={processed} elapsed={dt:.1f}s "
-                          f"model={api_model}", flush=True)
+                    out = kg_extract.run_closet_regen_incremental(
+                        palace_path=palace_path, wing=wing,
+                        source_prefix=source_prefix or "",
+                        chats_db_path=chats_db_path,
+                        endpoint=endpoint, api_key=api_key,
+                        api_model=api_model,
+                        log_prefix="[project-sync.closet]",
+                    )
+                if isinstance(out, dict) and out.get("error"):
+                    print(f"[project-sync.closet] {wing}: error="
+                          f"{out['error']}", flush=True)
             except Exception as e:
                 print(f"[project-sync.closet] {wing}: failed: "
                       f"{type(e).__name__}: {e}", flush=True)
@@ -13144,7 +13145,12 @@ def main():
                 if not ps_cfg.get("enabled", True):
                     time.sleep(60)
                     continue
-                interval = int(ps_cfg.get("interval_seconds", 1800))
+                # Default interval is 6 hours (21600s). Steady-state work is
+                # incremental (doc_convert mtime/size, mp_miner content-hash
+                # dedup, kg_extract cursor, closet_regen cursor) so re-running
+                # every 30 min was wasted walks. Manual "Sync now" still works
+                # on demand for instant re-mine after a file drop.
+                interval = int(ps_cfg.get("interval_seconds", 21600))
                 max_files_per_folder = int(ps_cfg.get("max_files_per_folder", 5000))
 
                 # Drain manual "Sync now" requests first.
@@ -13518,9 +13524,12 @@ def main():
             except Exception as e:
                 print(f"[project-sync] cycle error: {type(e).__name__}: {e}", flush=True)
 
-            # Wait for the next interval, but wake up on demand.
+            # Wait for the next interval, but wake up on demand. Default
+            # is 6 hours (21600s) — incremental layers (doc_convert,
+            # mp_miner, kg_extract, closet_regen) all cursor-skip on
+            # unchanged content, so frequent walks were wasted overhead.
             wait_for = max(60, int(((engine._load_mempalace_config().get(
-                "project_sync") or {}).get("interval_seconds", 1800))))
+                "project_sync") or {}).get("interval_seconds", 21600))))
             woken = _project_sync_wakeup.wait(timeout=wait_for)
             if woken:
                 _project_sync_wakeup.clear()

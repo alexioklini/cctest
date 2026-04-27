@@ -300,6 +300,22 @@ def init_kg_progress_schema(db_path: str) -> None:
                 );
                 CREATE INDEX IF NOT EXISTS idx_kg_log_wing
                     ON kg_extraction_log(palace_wing, started_at);
+
+                -- Per-source mtime/size cursor used to detect file changes
+                -- between cycles. When (mtime, size) shifts, the daemon
+                -- purges old triples + chunk-progress rows for that
+                -- source_file before re-extracting (otherwise old triples
+                -- remain orphaned with stale source_drawer_ids).
+                CREATE TABLE IF NOT EXISTS kg_extraction_source_state (
+                    palace_wing   TEXT NOT NULL,
+                    source_file   TEXT NOT NULL,
+                    mtime         INTEGER NOT NULL DEFAULT 0,
+                    size          INTEGER NOT NULL DEFAULT 0,
+                    updated_at    REAL NOT NULL,
+                    PRIMARY KEY (palace_wing, source_file)
+                );
+                CREATE INDEX IF NOT EXISTS idx_kg_src_state_wing
+                    ON kg_extraction_source_state(palace_wing);
             """)
             conn.commit()
         finally:
@@ -335,6 +351,86 @@ def _progress_record(db_path: str, palace_wing: str, drawer_id: str,
         conn.commit()
     finally:
         conn.close()
+
+
+def _source_state_get(db_path: str, palace_wing: str
+                       ) -> dict[str, tuple[int, int]]:
+    """Return {source_file: (mtime, size)} cursor for the wing."""
+    init_kg_progress_schema(db_path)
+    conn = sqlite3.connect(db_path, timeout=10, check_same_thread=False)
+    try:
+        rows = conn.execute(
+            "SELECT source_file, mtime, size FROM kg_extraction_source_state "
+            "WHERE palace_wing = ?", (palace_wing,)).fetchall()
+        return {r[0]: (int(r[1] or 0), int(r[2] or 0)) for r in rows if r[0]}
+    finally:
+        conn.close()
+
+
+def _source_state_record(db_path: str, palace_wing: str, source_file: str,
+                          mtime: int, size: int) -> None:
+    init_kg_progress_schema(db_path)
+    conn = sqlite3.connect(db_path, timeout=10, check_same_thread=False)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO kg_extraction_source_state "
+            "(palace_wing, source_file, mtime, size, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (palace_wing, source_file, int(mtime), int(size), time.time()))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _invalidate_source_in_kg(palace_path: str, chats_db_path: str,
+                              palace_wing: str, source_file: str,
+                              adapter_name: str) -> tuple[int, int]:
+    """Purge KG triples + extraction-progress rows for one source_file.
+    Used when (mtime, size) changes between cycles — old triples carry
+    stale source_drawer_ids and would orphan otherwise. Returns (triples,
+    progress) deleted counts.
+
+    Uses an EXACT source_file match (not LIKE prefix) so we don't
+    accidentally invalidate sibling files in the same folder. If the KG
+    schema has `adapter_name` (3.3.3+) we additionally filter by it.
+    """
+    if not source_file:
+        return 0, 0
+    triples_deleted = 0
+    kg_path = os.path.join(palace_path, "knowledge_graph.sqlite3")
+    if os.path.isfile(kg_path):
+        conn = sqlite3.connect(kg_path, timeout=10, check_same_thread=False)
+        try:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(triples)")}
+            params: list = [source_file]
+            sql = "DELETE FROM triples WHERE source_file = ?"
+            if "adapter_name" in cols and adapter_name:
+                sql += " AND adapter_name = ?"
+                params.append(adapter_name)
+            cur = conn.execute(sql, params)
+            triples_deleted = cur.rowcount or 0
+            conn.commit()
+            # Orphan entity cleanup.
+            conn.execute(
+                "DELETE FROM entities WHERE id NOT IN "
+                "(SELECT subject FROM triples UNION SELECT object FROM triples)")
+            conn.commit()
+        finally:
+            conn.close()
+
+    progress_deleted = 0
+    init_kg_progress_schema(chats_db_path)
+    conn = sqlite3.connect(chats_db_path, timeout=10, check_same_thread=False)
+    try:
+        cur = conn.execute(
+            "DELETE FROM kg_extraction_progress "
+            "WHERE palace_wing = ? AND source_file = ?",
+            (palace_wing, source_file))
+        progress_deleted = cur.rowcount or 0
+        conn.commit()
+    finally:
+        conn.close()
+    return triples_deleted, progress_deleted
 
 
 def _log_start(db_path: str, palace_wing: str, adapter_name: str,
@@ -696,6 +792,18 @@ def run_kg_post_pass(
                 last_error = f"add_triple: {type(e).__name__}: {e}"
         return written
 
+    # Snapshot the per-source (mtime, size) cursor for change detection.
+    # When a source file's stats shift between cycles, mp_miner already
+    # files new drawers (different content hashes → new drawer ids) but
+    # the OLD triples in the KG still carry the now-orphan drawer id +
+    # source_file. Without invalidation those orphans accumulate forever.
+    source_state_cursor: dict[str, tuple[int, int]] = {}
+    if chunking_mode == "source_file":
+        try:
+            source_state_cursor = _source_state_get(chats_db_path, wing)
+        except Exception:
+            source_state_cursor = {}
+
     try:
         if chunking_mode == "source_file":
             # Iterate distinct source files, read each from disk, paragraph-
@@ -719,6 +827,50 @@ def run_kg_post_pass(
                                          error="skipped: code")
                     result.drawers_skipped += len(src["drawer_ids"])
                     continue
+
+                # Source-change detection. If on-disk (mtime, size) differs
+                # from what we recorded last cycle, the file was edited —
+                # purge old triples for this source AND drop chunk-progress
+                # rows so re-extraction targets the new content. Sources we
+                # can't stat (drawer's source_file isn't an absolute path,
+                # e.g. chat-sync mirror drawers) skip this check.
+                cur_mt = cur_sz = 0
+                if sf and os.path.isfile(sf):
+                    try:
+                        st = os.stat(sf)
+                        cur_mt = int(st.st_mtime)
+                        cur_sz = int(st.st_size)
+                    except OSError:
+                        cur_mt = cur_sz = 0
+                prev = source_state_cursor.get(sf)
+                if cur_mt and (prev is None or prev != (cur_mt, cur_sz)):
+                    # First-cycle ever for this source: prev is None — no
+                    # invalidation needed (nothing to purge), just record.
+                    # Subsequent cycles with a real diff: invalidate before
+                    # re-extracting.
+                    if prev is not None:
+                        try:
+                            t_del, p_del = _invalidate_source_in_kg(
+                                palace_path, chats_db_path, wing, sf,
+                                adapter_name)
+                            if t_del or p_del:
+                                print(f"{log_prefix} invalidated source "
+                                      f"{sf}: triples={t_del} "
+                                      f"progress={p_del}", flush=True)
+                            # Drop chunk entries from the in-memory `already`
+                            # set so this cycle re-extracts the new content.
+                            stale_keys = {k for k in already
+                                          if k.startswith(rep_did + "#")}
+                            already -= stale_keys
+                        except Exception as e:
+                            print(f"{log_prefix} invalidate {sf} failed: "
+                                  f"{type(e).__name__}: {e}", flush=True)
+                    # Record/update cursor so next cycle compares correctly.
+                    try:
+                        _source_state_record(chats_db_path, wing, sf,
+                                             cur_mt, cur_sz)
+                    except Exception:
+                        pass
 
                 # Read the source file from disk. If absent (e.g. user
                 # removed an input folder mid-cycle), fall back to per-drawer
@@ -1096,3 +1248,244 @@ def kg_purge_for_scope(palace_path: str, *, source_prefix: str = "",
 
     return {"triples_deleted": triples_deleted,
             "progress_deleted": progress_deleted}
+
+
+# ── Incremental closet regeneration wrapper ──────────────────────────────────
+#
+# MemPalace's `closet_llm.regenerate_closets(palace_path, wing=...)` does a
+# wing-wide rebuild: every source file in the wing gets re-LLMed every time
+# it's called, even if nothing changed. For a 400-PDF project that's 400
+# LLM calls per daemon cycle forever — daemon-hostile.
+#
+# This wrapper gates the wing-wide call on "did any source file in the wing
+# actually change?" using a (palace_wing, source_file) cursor that records
+# (mtime, size). If everything's unchanged, we short-circuit. If even one
+# source changed, we run the full rebuild and re-record the cursor — finer-
+# grained per-file regen would need an upstream `source_files=[...]` filter
+# on `regenerate_closets`, which doesn't exist today.
+#
+# Cursor key:
+#   (palace_wing, source_file) → (mtime_ns, size_bytes, processed_at, error)
+#
+# Sources whose source_file isn't a real on-disk path (e.g. drawers from
+# the chat-sync mirror) get skipped entirely — they're handled by the
+# chat-sync daemon's own closet rebuild path, not by us.
+
+_CLOSET_SCHEMA_INITIALIZED: set[str] = set()
+
+
+def init_closet_regen_schema(db_path: str) -> None:
+    """Idempotent CREATE TABLE for the closet_regen_progress cursor."""
+    with _SCHEMA_LOCK:
+        if db_path in _CLOSET_SCHEMA_INITIALIZED:
+            return
+        conn = sqlite3.connect(db_path, timeout=10, check_same_thread=False)
+        try:
+            conn.execute("PRAGMA busy_timeout = 5000")
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS closet_regen_progress (
+                    palace_wing   TEXT NOT NULL,
+                    source_file   TEXT NOT NULL,
+                    mtime         INTEGER NOT NULL DEFAULT 0,
+                    size          INTEGER NOT NULL DEFAULT 0,
+                    processed_at  REAL NOT NULL,
+                    error         TEXT DEFAULT '',
+                    PRIMARY KEY (palace_wing, source_file)
+                );
+                CREATE INDEX IF NOT EXISTS idx_closet_regen_wing
+                    ON closet_regen_progress(palace_wing);
+            """)
+            conn.commit()
+        finally:
+            conn.close()
+        _CLOSET_SCHEMA_INITIALIZED.add(db_path)
+
+
+def _closet_progress_get(db_path: str, palace_wing: str
+                          ) -> dict[str, tuple[int, int]]:
+    """Return {source_file: (mtime, size)} for everything we already
+    regenerated for this wing. Empty dict on cold start."""
+    init_closet_regen_schema(db_path)
+    conn = sqlite3.connect(db_path, timeout=10, check_same_thread=False)
+    try:
+        rows = conn.execute(
+            "SELECT source_file, mtime, size FROM closet_regen_progress "
+            "WHERE palace_wing = ?", (palace_wing,)).fetchall()
+        return {r[0]: (int(r[1] or 0), int(r[2] or 0)) for r in rows if r[0]}
+    finally:
+        conn.close()
+
+
+def _closet_progress_record(db_path: str, palace_wing: str,
+                             source_file: str, mtime: int, size: int,
+                             error: str = "") -> None:
+    init_closet_regen_schema(db_path)
+    conn = sqlite3.connect(db_path, timeout=10, check_same_thread=False)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO closet_regen_progress "
+            "(palace_wing, source_file, mtime, size, processed_at, error) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (palace_wing, source_file, int(mtime), int(size),
+             time.time(), error or ""))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _file_stat_or_zero(path: str) -> tuple[int, int]:
+    """Return (mtime, size) for `path` or (0, 0) if it doesn't exist /
+    isn't a real on-disk file. Sources with (0, 0) are skipped — they're
+    not user files we own."""
+    if not path or not os.path.isfile(path):
+        return 0, 0
+    try:
+        st = os.stat(path)
+        return int(st.st_mtime), int(st.st_size)
+    except OSError:
+        return 0, 0
+
+
+def run_closet_regen_incremental(
+    *,
+    palace_path: str,
+    wing: str,
+    source_prefix: str,
+    chats_db_path: str,
+    endpoint: str,
+    api_key: str,
+    api_model: str,
+    log_prefix: str = "[closet-regen]",
+) -> dict:
+    """Wing-wide LLM closet regen, gated on "did any source change?".
+
+    Returns a small summary dict:
+        {sources_seen, sources_stale, regen_triggered, elapsed_s, error?}
+
+    If `regen_triggered` is False, no LLM calls were made. If True, upstream
+    `regenerate_closets` was called once for the whole wing (it doesn't
+    accept per-file filters today) and every stale source was recorded in
+    the cursor with its current (mtime, size). Even unchanged sources get
+    their cursor refreshed because upstream rebuilt them too.
+    """
+    if not palace_path or not os.path.isdir(palace_path):
+        return {"error": "palace_path missing", "regen_triggered": False}
+    if not wing:
+        return {"error": "wing required", "regen_triggered": False}
+    if not endpoint or not api_model:
+        return {"error": "endpoint and api_model required",
+                "regen_triggered": False}
+
+    t0 = time.time()
+    seen = 0
+    stale_sources: list[str] = []
+    skipped_no_disk = 0
+
+    # Snapshot what we already regenerated for this wing.
+    cursor = _closet_progress_get(chats_db_path, wing)
+
+    # Walk distinct source_files in the wing matching prefix.
+    fresh_stats: dict[str, tuple[int, int]] = {}
+    try:
+        for src in _iter_wing_source_files(palace_path, wing, source_prefix):
+            sf = src["source_file"]
+            seen += 1
+            mt, sz = _file_stat_or_zero(sf)
+            if mt == 0 and sz == 0:
+                # Drawer doesn't trace back to a real file — skip from
+                # incremental tracking. (Chat-sync mirror drawers, etc.)
+                skipped_no_disk += 1
+                continue
+            fresh_stats[sf] = (mt, sz)
+            prev = cursor.get(sf)
+            if prev is None or prev != (mt, sz):
+                stale_sources.append(sf)
+    except Exception as e:
+        return {"error": f"iter_wing_source_files: {type(e).__name__}: {e}",
+                "regen_triggered": False, "elapsed_s": time.time() - t0}
+
+    if not stale_sources:
+        # All cached sources unchanged — short-circuit.
+        return {
+            "sources_seen": seen,
+            "sources_stale": 0,
+            "skipped_no_disk": skipped_no_disk,
+            "regen_triggered": False,
+            "elapsed_s": time.time() - t0,
+        }
+
+    # Run the wing-wide regen. Upstream rebuilds every source in the wing,
+    # not just the stale ones — but at least we only pay this when something
+    # actually changed.
+    try:
+        from mempalace.closet_llm import (
+            LLMConfig as _ClosetLLMConfig,
+            regenerate_closets as _regen,
+        )
+    except Exception as e:
+        return {"error": f"closet_llm import: {type(e).__name__}: {e}",
+                "regen_triggered": False, "elapsed_s": time.time() - t0}
+
+    cfg = _ClosetLLMConfig(endpoint=endpoint, key=api_key, model=api_model)
+    try:
+        out = _regen(palace_path=palace_path, wing=wing, cfg=cfg) or {}
+    except Exception as e:
+        return {"error": f"regen: {type(e).__name__}: {e}",
+                "regen_triggered": False,
+                "sources_seen": seen,
+                "sources_stale": len(stale_sources),
+                "elapsed_s": time.time() - t0}
+
+    # Record cursor for every source we observed this round (upstream
+    # regenerated them all, so every cursor row is now fresh).
+    for sf, (mt, sz) in fresh_stats.items():
+        _closet_progress_record(chats_db_path, wing, sf, mt, sz)
+
+    err = (out or {}).get("error", "")
+    processed = (out or {}).get("processed", 0)
+    elapsed = time.time() - t0
+    print(
+        f"{log_prefix} wing={wing} prefix={source_prefix} "
+        f"sources_seen={seen} stale_pre_call={len(stale_sources)} "
+        f"upstream_processed={processed} skipped_no_disk={skipped_no_disk} "
+        f"elapsed={elapsed:.1f}s model={api_model} "
+        f"{('err=' + err) if err else 'ok'}",
+        flush=True,
+    )
+    return {
+        "sources_seen": seen,
+        "sources_stale": len(stale_sources),
+        "skipped_no_disk": skipped_no_disk,
+        "upstream_processed": int(processed) if processed else 0,
+        "regen_triggered": True,
+        "elapsed_s": elapsed,
+        "error": err,
+    }
+
+
+def closet_regen_purge_for_scope(*, chats_db_path: str, palace_wing: str,
+                                  source_prefix: str = "") -> int:
+    """Drop closet_regen_progress rows for a wing, optionally filtered by
+    source_file prefix. Returns count deleted. Used by the project sync
+    daemon when triples / drawers are purged so a re-extract round also
+    re-runs closets."""
+    if not palace_wing:
+        return 0
+    init_closet_regen_schema(chats_db_path)
+    conn = sqlite3.connect(chats_db_path, timeout=10, check_same_thread=False)
+    try:
+        if source_prefix:
+            cur = conn.execute(
+                "DELETE FROM closet_regen_progress "
+                "WHERE palace_wing = ? AND source_file LIKE ? || '%'",
+                (palace_wing, source_prefix))
+        else:
+            cur = conn.execute(
+                "DELETE FROM closet_regen_progress WHERE palace_wing = ?",
+                (palace_wing,))
+        n = cur.rowcount or 0
+        conn.commit()
+        return n
+    finally:
+        conn.close()
