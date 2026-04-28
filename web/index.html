@@ -2164,17 +2164,49 @@ textarea { resize: none; }
   align-items: center;
   gap: 6px;
   padding: 3px 10px;
-  margin-top: 6px;
   border-radius: 12px;
   background: var(--bg-200);
   border: 1px solid var(--border-200);
   font-size: 12px;
   color: var(--text-400);
+  transition: all 0.15s;
+  /* Chip is informational only — clicks are unreliable for triggering
+   * actions (one user-reported bug had double-click stop firing) so the
+   * surface is cursor:default. Real actions live on the buttons next to it. */
+  cursor: default;
+}
+/* Row that hosts the Memory chip + the project actions buttons. */
+.project-detail-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+.project-detail-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--bg-200);
+  border: 1px solid var(--border-200);
+  color: var(--text-200);
   cursor: pointer;
   transition: all 0.15s;
-  width: fit-content;
 }
-.project-sync-chip:hover { background: var(--bg-300); border-color: var(--border-300); }
+.project-detail-action-btn:hover {
+  background: var(--bg-300);
+  border-color: var(--border-300);
+  color: var(--text-100);
+}
+.project-detail-action-btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.project-detail-action-btn svg { flex-shrink: 0; }
 .project-sync-dot {
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--text-500);
@@ -3904,9 +3936,22 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           </button>
         </div>
         <div class="project-detail-desc" id="project-detail-desc"></div>
-        <div id="project-sync-chip" class="project-sync-chip" style="display:none" onclick="projectSyncNow()" title="Click to run sync now">
-          <span class="project-sync-dot" id="project-sync-dot"></span>
-          <span id="project-sync-label">Memory: idle</span>
+        <div class="project-detail-actions">
+          <div id="project-sync-chip" class="project-sync-chip" style="display:none">
+            <span class="project-sync-dot" id="project-sync-dot"></span>
+            <span id="project-sync-label">Memory: idle</span>
+          </div>
+          <button class="project-detail-action-btn" id="project-action-sync" onclick="projectSyncNow()" title="Run a memory sync now">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            Sync now
+          </button>
+          <!-- Admin-only — refreshProjectSyncStatus reveals it for admins on
+               every project open. Hidden by default to prevent a flash for
+               non-admins between view-mount and first refresh. -->
+          <button class="project-detail-action-btn" id="project-action-kg" onclick="projectOpenKnowledgeGraph()" title="Open knowledge graph drilldown" style="display:none">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="7.7" y1="7.5" x2="10.3" y2="16.5"/><line x1="16.3" y1="7.5" x2="13.7" y2="16.5"/><line x1="8.5" y1="6" x2="15.5" y2="6"/></svg>
+            Knowledge graph
+          </button>
         </div>
       </div>
       <div class="project-detail-composer">
@@ -8544,6 +8589,9 @@ function renderAssistantMessage(msg, idx) {
         <button class="msg-action-btn" onclick="retryMessage(${idx})" title="Retry">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
         </button>
+        ${messageUsedKnowledge(idx) ? `<button class="msg-action-btn" onclick="openUsedMemoryGraph(${idx})" title="Show used Memory and Relationships">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="7.7" y1="7.5" x2="10.3" y2="16.5"/><line x1="16.3" y1="7.5" x2="13.7" y2="16.5"/><line x1="8.5" y1="6" x2="15.5" y2="6"/></svg>
+        </button>` : ''}
         <button class="msg-action-btn" onclick="toggleMsgEditMenu(event, ${idx})" title="Edit history">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
         </button>
@@ -10070,6 +10118,24 @@ async function _pifEditSave() {
   }
 }
 
+// Bridge from the "Knowledge graph" project header button to the existing
+// kgOpenProject drilldown modal. Uses the project ids stashed on the
+// project-detail state so it works regardless of whether the chip has
+// finished its first refresh.
+function projectOpenKnowledgeGraph() {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) {
+    showToast('No project in scope', true);
+    return;
+  }
+  if (typeof kgOpenProject !== 'function') {
+    showToast('Knowledge graph viewer not available', true);
+    return;
+  }
+  kgOpenProject(agentId, projectName);
+}
+
 async function projectSyncNow() {
   const agentId = state._projectDetailAgent;
   const projectName = state._projectDetailName;
@@ -10150,10 +10216,10 @@ async function refreshProjectSyncStatus(agentId, projectName) {
       }
       const cur = st.current_folder ? ` (${st.current_folder.split('/').pop()})` : '';
       label = `Memory: syncing${progress} files${eta}${cur}`;
-      chip.title = 'Sync in progress — click is a no-op until it finishes';
+      chip.title = 'Sync in progress';
     } else if (live === 'error') {
       label = 'Memory: error';
-      chip.title = st.last_error || 'Sync failed — click to retry';
+      chip.title = st.last_error || 'Sync failed — use Sync now to retry';
     } else {
       // Idle: lead with files (the unit users care about), then triples,
       // then "next sync in Xh". Last-synced timestamp moves to the tooltip
@@ -10167,9 +10233,7 @@ async function refreshProjectSyncStatus(agentId, projectName) {
       const ageBit = last ? `Last synced ${humanAgo(last)} ago — ` : '';
       const drawerHint = (totalFiles != null && totalDrawers)
         ? `${totalDrawers} drawer${totalDrawers === 1 ? '' : 's'} · ` : '';
-      chip.title = (triples != null && triples > 0)
-        ? `${drawerHint}${ageBit}click to sync now · double-click to open Knowledge Graph`
-        : `${drawerHint}${ageBit}click to sync now`;
+      chip.title = `${drawerHint}${ageBit}use the buttons on the right to sync or open the knowledge graph`;
     }
     // KG is currently extracting on any item? pulse purple.
     let kgWorking = false;
@@ -10181,17 +10245,35 @@ async function refreshProjectSyncStatus(agentId, projectName) {
     }
     chip.dataset.kgState = kgWorking ? 'extracting' : (kgError ? 'error' : '');
     labelEl.textContent = label;
-    // Stash project ids on the chip so a double-click can open the KG modal.
-    chip.dataset.agentId = agentId;
-    chip.dataset.projectName = projectName;
-    if (!chip._kgDblbound) {
-      chip.addEventListener('dblclick', (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        if (typeof kgOpenProject === 'function')
-          kgOpenProject(chip.dataset.agentId, chip.dataset.projectName);
-      });
-      chip._kgDblbound = true;
+    // Knowledge-graph button: admin-only. The drilldown is a debug /
+    // operations surface (predicate distribution, sample triples,
+    // extraction-log, admin re-extract) — useful for verifying extraction
+    // quality and auditing the corpus, not for end users. Hidden entirely
+    // for non-admins. When admin: enabled if there are any relations to
+    // show, greyed otherwise.
+    const kgBtn = document.getElementById('project-action-kg');
+    if (kgBtn) {
+      const isAdmin = state.authUser && state.authUser.role === 'admin';
+      if (!isAdmin) {
+        kgBtn.style.display = 'none';
+      } else {
+        kgBtn.style.display = '';
+        const hasRelations = (st.total_triples || 0) > 0;
+        kgBtn.disabled = !hasRelations;
+        kgBtn.title = hasRelations
+          ? `Open the knowledge graph drilldown (${st.total_triples} relations)`
+          : 'No relations extracted yet — sync this project first';
+      }
+    }
+    const syncBtn = document.getElementById('project-action-sync');
+    if (syncBtn) {
+      // Disable while a sync is in flight to make the state obvious; the
+      // button re-enables on the next refresh after state flips back to
+      // idle / error.
+      syncBtn.disabled = (live === 'syncing');
+      syncBtn.title = live === 'syncing'
+        ? 'Sync already in progress'
+        : 'Run a memory sync now';
     }
     // Re-paint per-item pills without re-fetching the underlying lists.
     paintProjectItemPills();
@@ -12924,7 +13006,7 @@ function _kgShowInfo(title, htmlBody) {
   m.id = modalId;
   m.className = 'modal-overlay';
   m.style.zIndex = '12001';
-  m.innerHTML = `<div class="modal" style="max-width:780px;width:80vw;max-height:80vh;display:flex;flex-direction:column">
+  m.innerHTML = `<div class="modal-content" style="max-width:780px;width:80vw;max-height:80vh;display:flex;flex-direction:column">
     <div class="modal-header" style="display:flex;align-items:center;gap:10px">
       <span style="font-weight:600">${esc(title)}</span>
       <button class="btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 10px" onclick="document.getElementById('${modalId}').remove()">Close</button>
@@ -12963,7 +13045,7 @@ async function kgOpenProject(agentId, projectName) {
   m.id = modalId;
   m.className = 'modal-overlay';
   m.style.zIndex = '12000';
-  m.innerHTML = `<div class="modal" style="max-width:980px;width:90vw;max-height:90vh;display:flex;flex-direction:column">
+  m.innerHTML = `<div class="modal-content" style="max-width:980px;width:90vw;max-height:90vh;display:flex;flex-direction:column">
     <div class="modal-header" style="display:flex;align-items:center;gap:10px">
       <span style="font-weight:600">Knowledge Graph &mdash; ${esc(projectName)}</span>
       <span style="font-size:11px;color:var(--text-400);font-family:var(--font-mono)">${esc(agentId)}</span>
@@ -13038,7 +13120,7 @@ async function kgOpenProject(agentId, projectName) {
     body.innerHTML = `
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
         ${STAT((data.entities||0).toLocaleString(),'Entities')}
-        ${STAT((data.triples||0).toLocaleString(),'Triples')}
+        ${STAT((data.triples||0).toLocaleString(),'Relations')}
         ${STAT((data.top_predicates||[]).length,'Predicates seen')}
         ${STAT((data.extraction_log||[]).length,'Runs logged')}
       </div>
@@ -17065,6 +17147,384 @@ function closeReferencesPanel() {
 }
 
 function initRefsResizeHandle() { /* no-op — merged into initRightPanelResize */ }
+
+/* ═══════════════════════════════════════════════════════════
+   USED-MEMORY GRAPH MODAL
+   For an assistant message that called any project-knowledge tool
+   (mempalace_query / mempalace_kg_*), this surfaces what the model
+   actually retrieved: drawers (text snippets) and triples
+   (subject — predicate → object), in a graph view that lets the
+   user audit the answer.
+   ═══════════════════════════════════════════════════════════ */
+
+// Cheap check: did this assistant message use any of the project-knowledge
+// tools? Used to gate the inline action button so it only appears when
+// there's something meaningful to show.
+function messageUsedKnowledge(idx) {
+  const chat = state.activeChat;
+  if (!chat) return false;
+  const m = chat.messages[idx];
+  if (!m || m.role !== 'assistant') return false;
+  const KG_TOOLS = new Set(['mempalace_query', 'mempalace_kg_query',
+                            'mempalace_kg_search', 'mempalace_kg_neighbors']);
+  // Post-reload path: tools live in metadata.tools[]
+  if (m.metadata && Array.isArray(m.metadata.tools)) {
+    if (m.metadata.tools.some(t => t && KG_TOOLS.has(t.name))) return true;
+  }
+  // Live path: tool_result rows between this message and the previous user msg
+  for (let j = idx - 1; j >= 0; j--) {
+    const prev = chat.messages[j];
+    if (prev.role === 'user' || prev.role === 'human') break;
+    if (prev.role === 'tool_result' && KG_TOOLS.has(prev.name)) return true;
+  }
+  return false;
+}
+
+// Pull every drawer + triple the message saw across all four tools.
+// Returns {drawers: [...], triples: [...]} deduped by content.
+function _collectKnowledgeForMessage(idx) {
+  const chat = state.activeChat;
+  if (!chat) return { drawers: [], triples: [] };
+  const KG_TOOLS = new Set(['mempalace_query', 'mempalace_kg_query',
+                            'mempalace_kg_search', 'mempalace_kg_neighbors']);
+  const tools = [];
+  const m = chat.messages[idx];
+  if (m && m.metadata && Array.isArray(m.metadata.tools)) {
+    for (const t of m.metadata.tools) {
+      if (t && KG_TOOLS.has(t.name)) tools.push(t);
+    }
+  }
+  // Live tool_result rows fall back when metadata.tools[] is empty (mid-stream).
+  if (!tools.length) {
+    for (let j = idx - 1; j >= 0; j--) {
+      const prev = chat.messages[j];
+      if (prev.role === 'user' || prev.role === 'human') break;
+      if (prev.role === 'tool_result' && KG_TOOLS.has(prev.name)) {
+        tools.push({ name: prev.name, result: prev.result });
+      }
+    }
+  }
+  const drawers = [];
+  const drawerSeen = new Set();
+  const triples = [];
+  const tripleSeen = new Set();
+  for (const t of tools) {
+    let parsed = null;
+    const raw = typeof t.result === 'string' ? t.result : JSON.stringify(t.result || '');
+    try { parsed = JSON.parse(raw); } catch(_) { continue; }
+    if (!parsed) continue;
+    for (const d of (parsed.drawers || [])) {
+      const key = d.id || `${d.source_file}#${(d.text||d.snippet||'').slice(0,40)}`;
+      if (drawerSeen.has(key)) continue;
+      drawerSeen.add(key);
+      drawers.push(d);
+    }
+    for (const tr of (parsed.triples || parsed.edges || [])) {
+      if (!tr || !tr.subject || !tr.predicate || !tr.object) continue;
+      const key = `${tr.subject}|${tr.predicate}|${tr.object}`;
+      if (tripleSeen.has(key)) continue;
+      tripleSeen.add(key);
+      triples.push(tr);
+    }
+  }
+  return { drawers, triples };
+}
+
+// Build SVG graph from drawers + triples. Layout is "document → subject →
+// object" reading left-to-right — matches how the user reads a triple in
+// the relations list ("policy.pdf says: subject — predicate → object") and
+// keeps doc circles meaningfully connected instead of orphaned.
+//
+// Sizing is dataset-aware: height grows with row count so labels never
+// overlap, columns are hidden entirely when empty (a docless query
+// renders 2 columns instead of forcing a tiny 3rd column with whitespace).
+function _renderKnowledgeGraphSvg(drawers, triples, opts) {
+  opts = opts || {};
+  const W = opts.width || 880;
+  // Node radii / spacing. Pick wider rectangles (rounded) instead of pure
+  // circles — entity names like "Änderungen an den Berechtigungen" don't
+  // fit in a 14px circle. Pills have width based on content with a sane
+  // cap, height fixed.
+  const PILL_H = 28;
+  const ROW_GAP = 22;        // vertical gap between adjacent rows in a column
+  const SIDE_PAD = 24;
+  const TOP_PAD = 28;
+
+  // Build node maps + edges. Same id can serve as subject AND object across
+  // triples; we still render it once and route both edges to/from it.
+  const nodes = new Map();   // id → {id, label, kind, sources:Set}
+  const edges = [];          // {from, to, label, source_file}
+  const ensureNode = (id, label, kind) => {
+    if (!nodes.has(id)) nodes.set(id, { id, label: label || id, kind, sources: new Set() });
+    return nodes.get(id);
+  };
+  // Triples first so we know which entities exist before docs.
+  for (const tr of triples) {
+    const s = ensureNode('e:' + tr.subject, tr.subject, 'subject');
+    const o = ensureNode('e:' + tr.object,  tr.object,  'object');
+    if (tr.source_file) { s.sources.add(tr.source_file); o.sources.add(tr.source_file); }
+    edges.push({ from: s.id, to: o.id, label: tr.predicate, source_file: tr.source_file || '' });
+  }
+  // Mark dual-role entities (appear as both subject and object). They
+  // render in a centre column to avoid double-drawing.
+  for (const tr of triples) {
+    const s = nodes.get('e:' + tr.subject);
+    const o = nodes.get('e:' + tr.object);
+    if (s && o && tr.subject === tr.object) continue;
+  }
+  // Document name normaliser — strip the trailing `.md` companion suffix
+  // (`policy.pdf.md` → `policy.pdf`) and the binary ext for display so the
+  // pill reads "policy" not "policy.pdf.md". Used for both the node id
+  // (so drawers and triples that reference the same source merge) and the
+  // visible label.
+  const _binExt = /\.(pdf|docx|pptx|xlsx|xlsm|eml|msg)$/i;
+  const docKeyOf = (sf) => {
+    if (!sf) return '';
+    const base = sf.split('/').pop().replace(/\.md$/, '');
+    return base.toLowerCase();   // case-insensitive match across drawer/triple paths
+  };
+  const docLabelOf = (sf) => {
+    if (!sf) return 'unknown';
+    return sf.split('/').pop().replace(/\.md$/, '').replace(_binExt, '');
+  };
+
+  // Doc nodes from drawers AND from any triple's source_file. Without the
+  // triple-derived nodes the user can't see which document each relation
+  // came from when the agent extracted facts without fetching that doc's
+  // drawer (common: KG search returns triples by predicate, doesn't pull
+  // the underlying chunk).
+  for (const d of drawers) {
+    const sf = d.source_file;
+    if (!sf) continue;
+    const id = 'doc:' + docKeyOf(sf);
+    ensureNode(id, docLabelOf(sf), 'doc');
+  }
+  for (const tr of triples) {
+    const sf = tr.source_file;
+    if (!sf) continue;
+    const id = 'doc:' + docKeyOf(sf);
+    ensureNode(id, docLabelOf(sf), 'doc');
+  }
+
+  // Doc → subject edges: dotted "this fact came from that document" link.
+  // Resolved by basename so a drawer with bare-name source_file lines up
+  // with a triple carrying the same name's full path.
+  const docEdgeKeys = new Set();
+  for (const tr of triples) {
+    if (!tr.source_file) continue;
+    const docId = 'doc:' + docKeyOf(tr.source_file);
+    const subjId = 'e:' + tr.subject;
+    if (!nodes.has(docId)) continue;
+    const k = docId + '|' + subjId;
+    if (docEdgeKeys.has(k)) continue;
+    docEdgeKeys.add(k);
+    edges.unshift({ from: docId, to: subjId, label: '', source_file: tr.source_file, dotted: true });
+  }
+
+  // Column buckets. Subject column = entities that appear as a subject
+  // somewhere; object column = those that appear ONLY as an object.
+  // Anything in BOTH stays in the subject column (where the relation
+  // arrows fan out from).
+  const subjects = new Set();
+  const objects  = new Set();
+  for (const tr of triples) { subjects.add('e:' + tr.subject); objects.add('e:' + tr.object); }
+  const docNodes = [...nodes.values()].filter(n => n.kind === 'doc');
+  const subjNodes = [...nodes.values()].filter(n => subjects.has(n.id));
+  const objNodes  = [...nodes.values()].filter(n => !subjects.has(n.id) && objects.has(n.id));
+
+  // Column geometry — only allocate a column when it has content.
+  const cols = [];
+  if (docNodes.length)  cols.push({ key: 'doc',  list: docNodes,  pillW: 200 });
+  if (subjNodes.length) cols.push({ key: 'subj', list: subjNodes, pillW: 220 });
+  if (objNodes.length)  cols.push({ key: 'obj',  list: objNodes,  pillW: 220 });
+  // Distribute X across actual columns. With 1 column we centre it; with
+  // 2 we space them nicely; with 3 we evenly distribute.
+  const innerW = W - 2*SIDE_PAD;
+  cols.forEach((col, i) => {
+    if (cols.length === 1) col.x = W / 2;
+    else col.x = SIDE_PAD + col.pillW/2 + (innerW - col.pillW) * (i / (cols.length - 1));
+  });
+  // Rows: tallest column drives height. Each pill takes PILL_H + ROW_GAP.
+  const maxRows = Math.max(1, ...cols.map(c => c.list.length));
+  const H = TOP_PAD * 2 + maxRows * PILL_H + Math.max(0, maxRows - 1) * ROW_GAP;
+  // Place every node by walking each column top-to-bottom, vertically
+  // centred so short columns don't sit at the top.
+  for (const col of cols) {
+    const totalH = col.list.length * PILL_H + Math.max(0, col.list.length - 1) * ROW_GAP;
+    const yStart = (H - totalH) / 2 + PILL_H / 2;
+    col.list.forEach((node, i) => {
+      node.x = col.x;
+      node.y = yStart + i * (PILL_H + ROW_GAP);
+      node.pillW = col.pillW;
+    });
+  }
+
+  // Helpers for label fit. Approx 6.5px per character at 11px font is
+  // close enough for sans-serif; truncate when overflowing.
+  const fitLabel = (s, pxWidth) => {
+    const maxChars = Math.max(6, Math.floor(pxWidth / 6.8));
+    return s.length > maxChars ? s.slice(0, maxChars - 1) + '…' : s;
+  };
+
+  // Compose SVG. Edges below nodes; arrowhead marker for direction.
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="background:var(--bg-100);border-radius:8px;border:1px solid var(--border-100);max-height:62vh;display:block" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="kg-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--accent-brand)" opacity="0.85"/>
+      </marker>
+    </defs>`;
+
+  // Edges as cubic Béziers — straighter when columns are close, more
+  // bowed when far. Label rides along the curve at 50% via textPath
+  // anchored to a unique <path> per edge, so labels never overlap nodes.
+  edges.forEach((e, idx) => {
+    const a = nodes.get(e.from);
+    const b = nodes.get(e.to);
+    if (!a || !b) return;
+    // Connect at the right edge of `a` and left edge of `b` so arrows
+    // don't pierce the pill rectangles.
+    const ax = a.x + a.pillW / 2;
+    const bx = b.x - b.pillW / 2;
+    const dx = bx - ax;
+    // Bezier control points pulled toward the midline horizontally; this
+    // gives a gentle S-curve when src/dst rows differ in y.
+    const c1x = ax + dx * 0.45;
+    const c1y = a.y;
+    const c2x = bx - dx * 0.45;
+    const c2y = b.y;
+    const pathId = `kg-edge-${idx}`;
+    const dotted = e.dotted ? 'stroke-dasharray="3 4" stroke-opacity="0.35"' : 'stroke-opacity="0.6"';
+    svg += `<path id="${pathId}" d="M ${ax} ${a.y} C ${c1x} ${c1y} ${c2x} ${c2y} ${bx} ${b.y}"
+                  fill="none" stroke="var(--accent-brand)" ${dotted} stroke-width="1.4"
+                  ${e.dotted ? '' : 'marker-end="url(#kg-arrow)"'}/>`;
+    if (e.label) {
+      svg += `<text font-family="var(--font-mono)" font-size="10" fill="var(--text-300)"
+                    style="paint-order:stroke;stroke:var(--bg-100);stroke-width:3px">
+                <textPath href="#${pathId}" startOffset="50%" text-anchor="middle">${esc(e.label)}</textPath>
+              </text>`;
+    }
+  });
+
+  // Nodes as rounded rectangles ("pills") with text inside — fits long
+  // German entity names that the previous circle layout truncated to
+  // unrecognisable stubs.
+  for (const n of nodes.values()) {
+    const fill = n.kind === 'doc' ? '#d97706' : '#2563eb';
+    const x = n.x - n.pillW / 2;
+    const y = n.y - PILL_H / 2;
+    const label = fitLabel(n.label, n.pillW - 16);
+    svg += `<g data-node-id="${esc(n.id)}">
+      <rect x="${x}" y="${y}" width="${n.pillW}" height="${PILL_H}" rx="14" ry="14"
+            fill="${fill}" fill-opacity="0.14" stroke="${fill}" stroke-width="1.5"/>
+      <text x="${n.x}" y="${n.y + 4}" font-size="11" fill="var(--text-100)"
+            text-anchor="middle" font-family="var(--font-sans, system-ui)">${esc(label)}</text>
+      <title>${esc(n.label)}</title>
+    </g>`;
+  }
+
+  // Column headers — small, faded, only when there's a doc column to
+  // disambiguate. Two-column subject/object layouts are obvious from
+  // arrow direction.
+  if (cols.length >= 2 && docNodes.length) {
+    const headerLabel = (key) => key === 'doc' ? 'Documents'
+                                : key === 'subj' ? 'Subjects' : 'Objects';
+    cols.forEach(col => {
+      svg += `<text x="${col.x}" y="14" font-size="10" fill="var(--text-400)"
+                    text-anchor="middle" font-family="var(--font-sans, system-ui)"
+                    style="text-transform:uppercase;letter-spacing:0.05em">${headerLabel(col.key)}</text>`;
+    });
+  }
+
+  svg += '</svg>';
+  return svg;
+}
+
+function openUsedMemoryGraph(idx) {
+  const { drawers, triples } = _collectKnowledgeForMessage(idx);
+  if (!drawers.length && !triples.length) {
+    showToast('This response did not pull from project memory');
+    return;
+  }
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.zIndex = '12000';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  const svg = _renderKnowledgeGraphSvg(drawers, triples);
+  // Drawer list: each card shows source file + snippet, click scrolls
+  // (and a click could later open the source — reuses openProjectSource
+  // when available).
+  const drawerCards = drawers.length
+    ? drawers.map(d => {
+        const sf = d.source_file || 'unknown';
+        const base = sf.split('/').pop().replace(/\.md$/, '');
+        const text = (d.snippet || d.text || '').slice(0, 320);
+        return `<div style="border:1px solid var(--border-100);border-radius:6px;padding:8px 10px;margin-bottom:6px;font-size:12px;background:var(--bg-100)">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:3px;background:#d97706;color:#fff;font-size:8px;font-weight:700">DOC</span>
+            <span style="font-weight:500;color:var(--text-100);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(base)}</span>
+            ${typeof d.similarity === 'number' ? `<span style="font-family:var(--font-mono);font-size:10px;color:var(--text-400)">sim ${d.similarity.toFixed(2)}</span>` : ''}
+          </div>
+          <div style="color:var(--text-300);line-height:1.4;white-space:pre-wrap">${esc(text)}</div>
+        </div>`;
+      }).join('')
+    : '<div style="color:var(--text-400);font-size:12px;padding:8px">No drawers retrieved.</div>';
+  // Triples list: subject — predicate → object, grouped to keep the panel
+  // scannable when extraction returns dozens.
+  const tripleRows = triples.length
+    ? triples.map(t => {
+        const sf = (t.source_file || '').split('/').pop().replace(/\.md$/, '');
+        const conf = typeof t.confidence === 'number' ? t.confidence.toFixed(2) : '';
+        return `<div style="font-size:12px;padding:6px 8px;border-bottom:1px dotted var(--border-100)">
+          <div style="display:flex;gap:6px;align-items:flex-start">
+            <span style="color:var(--text-100);flex:1">${esc(t.subject)}</span>
+            <span style="font-family:var(--font-mono);color:var(--accent-brand);font-size:11px">— ${esc(t.predicate)} →</span>
+            <span style="color:var(--text-100);flex:1">${esc(t.object)}</span>
+          </div>
+          <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-400);margin-top:2px">${esc(sf)}${conf ? ` · c=${conf}` : ''}</div>
+        </div>`;
+      }).join('')
+    : '<div style="color:var(--text-400);font-size:12px;padding:8px">No relations extracted.</div>';
+  // Tagline tells the user, in plain English, what the panel contains —
+  // the header alone leaves users guessing what "drawers" and "relations"
+  // mean in context.
+  const tagline = `<div style="font-size:12px;color:var(--text-400);line-height:1.5;padding:10px 14px;background:var(--bg-100);border:1px solid var(--border-100);border-radius:8px;margin-bottom:12px">
+    These are the document chunks (drawers) and extracted facts (relations) that the agent retrieved from this project's memory before composing its answer. Use them to verify which sources were consulted and what specific claims were drawn from them.
+  </div>`;
+
+  overlay.innerHTML = `<div class="modal-content" style="max-width:1180px;width:94vw;max-height:90vh;display:flex;flex-direction:column">
+    <div class="modal-header" style="display:flex;align-items:center;gap:10px">
+      <span style="font-weight:600">Memory & Relations used in this response</span>
+      <span style="font-size:11px;color:var(--text-400)">${drawers.length} drawer${drawers.length===1?'':'s'} · ${triples.length} relation${triples.length===1?'':'s'}</span>
+      <button class="modal-close" style="margin-left:auto" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;overflow:auto;flex:1;padding:16px 20px">
+      ${tagline}
+      <div style="display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:16px;align-items:start">
+        <div style="min-width:0;display:flex;flex-direction:column;gap:8px">
+          <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em">Graph view</div>
+          <div>${svg}</div>
+          <div style="display:flex;gap:14px;font-size:11px;color:var(--text-400);align-items:center;flex-wrap:wrap;padding:4px 0 0">
+            <span style="display:inline-flex;align-items:center;gap:5px"><span style="display:inline-block;width:18px;height:10px;border-radius:5px;background:#d9770624;border:1.5px solid #d97706"></span> Document</span>
+            <span style="display:inline-flex;align-items:center;gap:5px"><span style="display:inline-block;width:18px;height:10px;border-radius:5px;background:#2563eb24;border:1.5px solid #2563eb"></span> Entity</span>
+            <span style="display:inline-flex;align-items:center;gap:5px"><span style="display:inline-block;width:18px;border-top:1.5px solid var(--accent-brand)"></span> Relation</span>
+            <span style="display:inline-flex;align-items:center;gap:5px"><span style="display:inline-block;width:18px;border-top:1.5px dashed var(--accent-brand);opacity:0.6"></span> Source link</span>
+          </div>
+        </div>
+        <div style="min-width:0;display:flex;flex-direction:column;gap:14px">
+          <div>
+            <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">Drawers (${drawers.length})</div>
+            <div>${drawerCards}</div>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">Relations (${triples.length})</div>
+            <div>${tripleRows}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
 
 // Filter state for the right-panel artifact list. 'output' hides
 // intermediate files (scripts, json data dumps) so the panel surfaces the
