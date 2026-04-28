@@ -5906,7 +5906,10 @@ function navigateTo(view, opts) {
     case 'welcome':
       document.getElementById('welcome-view').style.display = '';
       updatePageHeader('Brain Agent');
-      document.getElementById('status-bar').style.display = '';
+      // Hide per-chat status bar — welcome is the new-chat landing screen,
+      // there's no active session, so showing the previous chat's session
+      // id / model / tokens / cost is misleading.
+      document.getElementById('status-bar').style.display = 'none';
       break;
 
     case 'chat':
@@ -5925,23 +5928,30 @@ function navigateTo(view, opts) {
     case 'projects':
       document.getElementById('projects-view').classList.add('active');
       updatePageHeader('Projects');
-      document.getElementById('status-bar').style.display = '';
+      // Hide per-chat status bar — same reason as project-detail: no chat
+      // in scope, the bar would otherwise show stale session data.
+      document.getElementById('status-bar').style.display = 'none';
       loadProjectsList();
       break;
 
     case 'project-detail':
       document.getElementById('project-detail-view').classList.add('active');
       updatePageHeader(opts?.projectName || 'Project');
-      document.getElementById('status-bar').style.display = '';
+      // Hide the per-chat status bar — there's no chat in scope on this view,
+      // so the bar would otherwise leak the previous chat's session id /
+      // model / tokens / cost / context fill, which the user reads as
+      // "current state" and isn't.
+      document.getElementById('status-bar').style.display = 'none';
       if (opts?.agentId && opts?.projectName) {
         loadProjectDetail(opts.agentId, opts.projectName);
       }
       // Refresh composer toggles so the project composer mirrors chat state
       // (model selector, thinking, save-to-memory, caveman, local chip).
+      // updateStatusBar deliberately skipped — the bar is hidden here and
+      // calling it would still read state.activeChat from the prior chat.
       try {
         if (state.activeChat?.model) updateModelSelectorDisplay(state.activeChat.model);
         refreshThinkingButton();
-        updateStatusBar();
         updateSendButton();
         renderFilePreviews();
         schedulePIIBadgeUpdate();
@@ -5951,14 +5961,20 @@ function navigateTo(view, opts) {
     case 'artifacts':
       document.getElementById('artifacts-view').classList.add('active');
       updatePageHeader('Artifacts');
-      document.getElementById('status-bar').style.display = '';
+      // Hide per-chat status bar — artifacts overview is a cross-session
+      // grid; no chat in scope, so the bar would otherwise show stale
+      // session data from whichever chat the user was last viewing.
+      document.getElementById('status-bar').style.display = 'none';
       loadArtifactsBrowse();
       break;
 
     case 'scheduled':
       document.getElementById('scheduled-view').classList.add('active');
       updatePageHeader('Scheduled');
-      document.getElementById('status-bar').style.display = '';
+      // Hide per-chat status bar — scheduled is a list view with no chat
+      // in scope. Once a run is opened (openScheduledArtifact → chat view)
+      // the bar comes back with that run's actual data.
+      document.getElementById('status-bar').style.display = 'none';
       loadScheduledView();
       renderRecentChats(); // dispatches to renderRecentScheduledRuns when view==='scheduled'
       break;
@@ -7893,6 +7909,17 @@ async function sendMessage() {
 async function openInspectModal() {
   const sessionId = state.activeChat?.sessionId;
   if (!sessionId) { showToast('No active session', true); return; }
+  // For scheduled-run chats the session id has the shape `sched-<run_id>` —
+  // there's a much richer per-run modal already (timeline + tool spans +
+  // artifacts + result text) so route there instead of the generic per-turn
+  // inspector. Keeps one modal as the single source of truth for "what
+  // happened on this run" whether the user enters from history table or
+  // from the read-only chat view's status-bar inspector button.
+  const m = /^sched-(\d+)$/.exec(sessionId);
+  if (m && typeof _schedViewRunDetail === 'function') {
+    _schedViewRunDetail(parseInt(m[1], 10));
+    return;
+  }
 
   // Create modal overlay
   const overlay = document.createElement('div');
