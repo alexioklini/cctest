@@ -2053,6 +2053,25 @@ textarea { resize: none; }
   padding: 24px 20px;
   background: var(--bg-100);
   flex-shrink: 0;
+  position: relative;
+}
+/* Same resize-handle pattern as #right-panel — sits on the left edge of the
+ * project-detail-panel and dispatches col-resize. Width persisted via JS. */
+.project-detail-panel-resize-handle {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 10;
+  transition: background 0.15s;
+}
+.project-detail-panel-resize-handle:hover,
+.project-detail-panel-resize-handle.dragging {
+  background: var(--accent-brand);
+  opacity: 0.3;
+  border-radius: 3px;
 }
 .project-panel-section {
   margin-bottom: 24px;
@@ -2182,43 +2201,84 @@ textarea { resize: none; }
 }
 
 /* Input folder rows */
+/* Two-line row: top line = folder name + edit/delete actions; second line =
+ * full absolute path (mono, ellipsised); third line = badges (recursive,
+ * auto-sync, sync state, KG). Block layout instead of single-row flex
+ * — single-row caused badges to overlap the path on narrow panes. */
 .project-input-folder-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  display: block;
+  padding: 8px 10px;
   border-radius: 6px;
   font-size: 13px;
   color: var(--text-300);
+  margin-bottom: 6px;
+  border: 1px solid var(--border-100);
+  background: var(--bg-100);
 }
 .project-input-folder-row:hover { background: var(--bg-200); }
+.project-input-folder-row .pif-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
 .project-input-folder-row .pif-icon {
   flex-shrink: 0;
   color: var(--text-400);
 }
-.project-input-folder-row .pif-path {
+.project-input-folder-row .pif-name {
   flex: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--text-100);
+  font-size: 13px;
+}
+.project-input-folder-row .pif-path {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
+  color: var(--text-400);
+  margin-bottom: 6px;
+  direction: rtl;  /* keep tail visible on truncation */
+  text-align: left;
+}
+.project-input-folder-row .pif-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
 }
 .project-input-folder-row .pif-flag {
-  font-size: 11px;
+  font-size: 10px;
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: 10px;
   background: var(--bg-300);
   color: var(--text-400);
   flex-shrink: 0;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--border-200);
 }
-.project-input-folder-row .pif-remove {
+.project-input-folder-row .pif-flag[data-flag="paused"] {
+  background: rgba(170,140,60,0.12);
+  color: #8a6a1f;
+  border-color: rgba(170,140,60,0.3);
+}
+.project-input-folder-row .pif-action-btn {
   cursor: pointer;
+  background: transparent;
+  border: none;
+  padding: 2px 4px;
   color: var(--text-500);
-  padding: 2px 6px;
-  font-size: 14px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
 }
-.project-input-folder-row .pif-remove:hover { color: #d33; }
+.project-input-folder-row .pif-action-btn:hover { color: var(--text-200); background: var(--bg-300); }
+.project-input-folder-row .pif-action-btn.pif-delete:hover { color: #d33; }
 
 /* Per-item sync state pill — appears next to each attachment + input folder. */
 .project-item-pill {
@@ -3909,14 +3969,15 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         </div>
       </div>
     </div>
-    <div class="project-detail-panel">
+    <div class="project-detail-panel" id="project-detail-panel">
+      <div class="project-detail-panel-resize-handle" id="project-detail-panel-resize-handle"></div>
       <div class="project-panel-section">
         <div class="project-panel-section-header">
           <span class="project-panel-section-title">Instructions</span>
           <span class="project-panel-section-action" onclick="editProjectInstructions()">Edit</span>
         </div>
         <div class="project-panel-section-body" id="project-panel-instructions">
-          <span class="project-panel-placeholder">Add instructions to customize Claude's responses</span>
+          <span class="project-panel-placeholder">Add instructions to customize Brain Agent's responses</span>
         </div>
       </div>
       <div class="project-panel-section">
@@ -9665,6 +9726,9 @@ function openProject(agentId, projectName) {
     t.classList.toggle('active', t.dataset.pcfilter === 'active');
   });
   navigateTo('project-detail', { agentId, projectName });
+  // Wire the right-pane resize handle once the view is on screen. Idempotent
+  // — repeat calls are short-circuited via the handle's _bound flag.
+  initProjectDetailPanelResize();
 }
 
 async function loadProjectDetail(agentId, projectName) {
@@ -9700,7 +9764,15 @@ async function loadProjectDetail(agentId, projectName) {
       instrEl.textContent = project.instructions;
       instrEl.classList.remove('project-panel-placeholder');
     } else {
-      instrEl.innerHTML = '<span class="project-panel-placeholder">Add instructions to customize Claude\'s responses</span>';
+      instrEl.innerHTML = '<span class="project-panel-placeholder">Add instructions to customize Brain Agent\'s responses</span>';
+    }
+
+    // Personalise the composer placeholder with the project name. Falls back
+    // to the routing slug when the display name is missing.
+    const composerInput = document.getElementById('project-input');
+    if (composerInput) {
+      const displayName = project.name || projectName;
+      composerInput.placeholder = `Write your message to ${displayName}`;
     }
 
     // Load project files
@@ -9725,19 +9797,39 @@ async function loadProjectInputFolders(agentId, projectName) {
   try {
     const data = await API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/input-folders`);
     const folders = data.folders || [];
+    // Stash for the edit modal so it doesn't need to refetch.
+    state._projectInputFolders = folders;
     if (!folders.length) {
       container.innerHTML = '<span class="project-panel-placeholder">Add folders on disk to ingest into this project\'s memory. Files are scanned every 30 minutes and indexed for semantic search.</span>';
       return;
     }
-    container.innerHTML = folders.map((f, idx) => `
+    container.innerHTML = folders.map((f, idx) => {
+      const fullPath = f.path || '';
+      // Folder name = last path segment (or full path if there is no separator).
+      const nameMatch = fullPath.replace(/\/+$/, '').split('/').filter(Boolean);
+      const name = nameMatch.length ? nameMatch[nameMatch.length - 1] : fullPath;
+      const recursive = f.recursive !== false;
+      const autoSync = f.auto_sync !== false;  // default true for legacy entries
+      return `
       <div class="project-input-folder-row">
-        <svg class="pif-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-        <span class="pif-path" title="${esc(f.path)}">${esc(f.path)}</span>
-        ${f.recursive ? '<span class="pif-flag">recursive</span>' : '<span class="pif-flag">top-level</span>'}
-        <span data-pif-pill data-pif-kind="folder" data-pif-id="${esc(f.path)}">${projectItemPillHtml('folder', f.path)}</span>
-        <span class="pif-remove" onclick="removeProjectInputFolder(${idx})" title="Remove">×</span>
+        <div class="pif-row-head">
+          <svg class="pif-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <span class="pif-name" title="${esc(fullPath)}">${esc(name)}</span>
+          <button class="pif-action-btn" onclick="editProjectInputFolder(${idx})" title="Edit folder settings" aria-label="Edit">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+          </button>
+          <button class="pif-action-btn pif-delete" onclick="removeProjectInputFolder(${idx})" title="Remove folder" aria-label="Remove">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+          </button>
+        </div>
+        <div class="pif-path" dir="ltr" title="${esc(fullPath)}">${esc(fullPath)}</div>
+        <div class="pif-badges">
+          <span class="pif-flag">${recursive ? 'recursive' : 'top-level'}</span>
+          ${autoSync ? '' : '<span class="pif-flag" data-flag="paused" title="Excluded from automatic sync cycles — runs only on manual Sync now">auto-sync off</span>'}
+          <span data-pif-pill data-pif-kind="folder" data-pif-id="${esc(fullPath)}">${projectItemPillHtml('folder', fullPath)}</span>
+        </div>
       </div>
-    `).join('');
+    `;}).join('');
   } catch(e) {
     container.innerHTML = '<span class="project-panel-placeholder">Failed to load input folders.</span>';
   }
@@ -9756,12 +9848,17 @@ function addProjectInputFolder() {
   overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
   overlay.innerHTML = `<div class="sched-modal" style="max-width:600px">
     <h2>Add input folder</h2>
-    <div style="font-size:12px;color:var(--text-400);margin-bottom:8px">Pick a folder on disk. Files are scanned every 30 minutes and indexed into this project's memory.</div>
+    <div style="font-size:12px;color:var(--text-400);margin-bottom:8px">Pick a folder on disk. Files are scanned periodically and indexed into this project's memory.</div>
     <div id="pif-picker-crumbs" style="font-family:var(--font-mono);font-size:12px;color:var(--text-300);padding:6px 10px;background:var(--bg-100);border-radius:6px;margin-bottom:8px;word-break:break-all">…</div>
     <div id="pif-picker-list" style="max-height:340px;overflow-y:auto;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100)"></div>
     <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--text-300);cursor:pointer">
       <input type="checkbox" id="pif-picker-recursive" checked>
       Scan recursively (include all subfolders)
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px;color:var(--text-300);cursor:pointer">
+      <input type="checkbox" id="pif-picker-auto-sync" checked>
+      Include in automatic sync cycles
+      <span style="color:var(--text-400);font-size:12px">— uncheck to only sync manually</span>
     </label>
     <div class="sched-modal-actions">
       <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Cancel</button>
@@ -9808,12 +9905,13 @@ async function _pifPickerSelect() {
   const path = window._pifPickerPath || '';
   if (!path) { showToast('No folder selected', true); return; }
   const recursive = document.getElementById('pif-picker-recursive')?.checked ?? true;
+  const autoSync = document.getElementById('pif-picker-auto-sync')?.checked ?? true;
   const agentId = state._projectDetailAgent;
   const projectName = state._projectDetailName;
   if (!agentId || !projectName) return;
   try {
     const res = await API.post(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/input-folders`,
-      { path, recursive });
+      { path, recursive, auto_sync: autoSync });
     if (res?.error) {
       showToast(res.error);
       return;
@@ -9821,23 +9919,127 @@ async function _pifPickerSelect() {
     showToast('Folder added — first scan running');
     document.querySelector('.sched-modal-overlay')?.remove();
     loadProjectInputFolders(agentId, projectName);
-    // Trigger a sync now so the user sees activity immediately.
+    // Trigger a sync now so the user sees activity immediately, even if
+    // auto_sync is off — the user just opted in to a one-shot index.
     projectSyncNow();
   } catch(e) {
     showToast('Failed to add folder: ' + (e?.message || e));
   }
 }
 
-async function removeProjectInputFolder(idx) {
+function removeProjectInputFolder(idx) {
   const agentId = state._projectDetailAgent;
   const projectName = state._projectDetailName;
   if (!agentId || !projectName) return;
-  if (!confirm('Remove this folder from project memory?\n\n(Already-indexed content stays in memory until the project is purged.)')) return;
+  const folders = state._projectInputFolders || [];
+  const folder = folders[idx];
+  if (!folder) return;
+  // Warning modal — replaces the legacy confirm() so the destructive action
+  // is gated by a clearly red button instead of a system dialog the user
+  // can dismiss with Enter.
+  const overlay = document.createElement('div');
+  overlay.className = 'sched-modal-overlay';
+  overlay.style.zIndex = '10001';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div class="sched-modal" style="max-width:520px">
+    <h2 style="display:flex;align-items:center;gap:8px">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#d33" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      Remove input folder?
+    </h2>
+    <div style="font-size:13px;color:var(--text-300);line-height:1.5;margin:8px 0 16px">
+      <div style="font-family:var(--font-mono);font-size:12px;background:var(--bg-100);padding:8px 10px;border-radius:6px;border:1px solid var(--border-100);word-break:break-all;margin-bottom:10px">${esc(folder.path || '')}</div>
+      This folder will no longer be scanned. Already-indexed content stays in this project's memory until the project is purged.
+    </div>
+    <div class="sched-modal-actions">
+      <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Cancel</button>
+      <button class="sched-create-btn" style="background:#d33;border-color:#d33" onclick="_pifConfirmDelete(${idx})">Remove folder</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function _pifConfirmDelete(idx) {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  document.querySelector('.sched-modal-overlay')?.remove();
   try {
     await API.del(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/input-folders/${idx}`);
     loadProjectInputFolders(agentId, projectName);
+    showToast('Folder removed');
   } catch(e) {
     showToast('Failed to remove folder');
+  }
+}
+
+function editProjectInputFolder(idx) {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  const folder = (state._projectInputFolders || [])[idx];
+  if (!folder) return;
+  // Edit modal — same picker shell as add, but pre-loaded at the existing
+  // path, with recursive + auto_sync prefilled. Save button is wired to
+  // _pifEditSave (not _pifPickerSelect) which PATCHes via POST /input-folders/<idx>.
+  window._pifEditingIdx = idx;
+  const overlay = document.createElement('div');
+  overlay.className = 'sched-modal-overlay';
+  overlay.style.zIndex = '10001';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  const recChecked = folder.recursive !== false ? 'checked' : '';
+  const autoChecked = folder.auto_sync !== false ? 'checked' : '';
+  overlay.innerHTML = `<div class="sched-modal" style="max-width:600px">
+    <h2>Edit input folder</h2>
+    <div style="font-size:12px;color:var(--text-400);margin-bottom:8px">Change the path or how this folder is scanned.</div>
+    <div id="pif-picker-crumbs" style="font-family:var(--font-mono);font-size:12px;color:var(--text-300);padding:6px 10px;background:var(--bg-100);border-radius:6px;margin-bottom:8px;word-break:break-all">…</div>
+    <div id="pif-picker-list" style="max-height:340px;overflow-y:auto;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100)"></div>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--text-300);cursor:pointer">
+      <input type="checkbox" id="pif-picker-recursive" ${recChecked}>
+      Scan recursively (include all subfolders)
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px;color:var(--text-300);cursor:pointer">
+      <input type="checkbox" id="pif-picker-auto-sync" ${autoChecked}>
+      Include in automatic sync cycles
+      <span style="color:var(--text-400);font-size:12px">— uncheck to only sync manually</span>
+    </label>
+    <div class="sched-modal-actions">
+      <button class="sched-cancel-btn" onclick="this.closest('.sched-modal-overlay').remove()">Cancel</button>
+      <button class="sched-create-btn" onclick="_pifEditSave()">Save changes</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  // Open the picker at the parent of the current path so the user can either
+  // keep the current path (just toggle flags + Save) or navigate elsewhere.
+  const cur = folder.path || '';
+  const parent = cur.replace(/\/[^\/]+\/?$/, '') || '/';
+  _pifLoadFolder(parent);
+  // Pre-set picker path to the current folder so a no-navigate Save keeps it.
+  window._pifPickerPath = cur;
+}
+
+async function _pifEditSave() {
+  const idx = window._pifEditingIdx;
+  if (idx == null) return;
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  const folder = (state._projectInputFolders || [])[idx] || {};
+  const path = window._pifPickerPath || folder.path || '';
+  const recursive = document.getElementById('pif-picker-recursive')?.checked ?? true;
+  const autoSync = document.getElementById('pif-picker-auto-sync')?.checked ?? true;
+  const body = { recursive, auto_sync: autoSync };
+  // Only send path when it actually changed — saves a realpath round-trip
+  // server-side and skips the "folder already added" dedup against itself.
+  if (path && path !== folder.path) body.path = path;
+  try {
+    const res = await API.post(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/input-folders/${idx}`, body);
+    if (res?.error) { showToast(res.error); return; }
+    showToast('Folder updated');
+    document.querySelector('.sched-modal-overlay')?.remove();
+    window._pifEditingIdx = null;
+    loadProjectInputFolders(agentId, projectName);
+  } catch(e) {
+    showToast('Failed to update folder: ' + (e?.message || e));
   }
 }
 
@@ -9884,26 +10086,63 @@ async function refreshProjectSyncStatus(agentId, projectName) {
     const live = st.state || 'idle';
     chip.style.display = '';
     chip.dataset.state = live;
+    // Pull the headline numbers once — used by both syncing and idle labels.
+    // total_files = distinct source files (what users count); total_indexed
+    // = drawer count (internal storage detail, kept in tooltip).
+    const totalFiles = st.total_files != null ? st.total_files : null;
+    const totalDrawers = st.total_indexed != null ? st.total_indexed : (st.last_files_filed || 0);
+    const triples = st.total_triples;
+    // Renamed for non-technical users: a (subject, predicate, object) triple
+    // doesn't mean anything outside the KG world. "Relation" reads as "fact
+    // we extracted" in plain English.
+    const tripleStr = (triples != null && triples > 0) ? ` · ${triples} relations` : '';
     let label = 'Memory: idle';
     if (live === 'syncing') {
+      // Live progress: P/T file count + ETA from elapsed-rate. cycle_total_files
+      // is from a cheap pre-walk and may overshoot the miner's filtered file
+      // count — that's deliberate (better than the bar getting stuck at 100%).
+      const proc = Number(st.cycle_processed_files || 0);
+      const tot = Number(st.cycle_total_files || 0);
+      let progress = '';
+      if (tot > 0) progress = ` ${proc}/${tot}`;
+      // ETA: extrapolate from elapsed wall time and processed share. Only
+      // show once we've made meaningful progress (>=5%) so an early 0/N
+      // doesn't claim "ETA 12 days".
+      let eta = '';
+      const startedAt = st.started_at || st.last_run_started || '';
+      if (startedAt && proc > 0 && tot > 0 && proc / tot >= 0.05) {
+        const elapsedMs = Math.max(0, Date.now() - new Date(startedAt).getTime());
+        const remainMs = elapsedMs * (tot - proc) / proc;
+        if (remainMs > 1000 && remainMs < 1000 * 60 * 60 * 48) {
+          const remainSec = Math.floor(remainMs / 1000);
+          const etaStr = remainSec < 60 ? `${remainSec}s`
+                       : remainSec < 3600 ? `${Math.floor(remainSec / 60)}m`
+                       : `${Math.floor(remainSec / 3600)}h`;
+          eta = ` · ETA ${etaStr}`;
+        }
+      }
       const cur = st.current_folder ? ` (${st.current_folder.split('/').pop()})` : '';
-      label = `Memory: syncing${cur}`;
+      label = `Memory: syncing${progress} files${eta}${cur}`;
+      chip.title = 'Sync in progress — click is a no-op until it finishes';
     } else if (live === 'error') {
       label = 'Memory: error';
       chip.title = st.last_error || 'Sync failed — click to retry';
     } else {
-      // total_indexed is cumulative authoritative count from MemPalace;
-      // last_files_filed is the delta from the most recent cycle (often 0
-      // after the first run — re-mining the same content dedups by hash).
-      const total = st.total_indexed != null ? st.total_indexed : (st.last_files_filed || 0);
+      // Idle: lead with files (the unit users care about), then triples,
+      // then "next sync in Xh". Last-synced timestamp moves to the tooltip
+      // so the chip stays scannable.
+      const filesStr = totalFiles != null
+        ? `${totalFiles} file${totalFiles === 1 ? '' : 's'}`
+        : `${totalDrawers} indexed`;
+      const next = data.next_run_at ? ` · next sync in ${humanIn(data.next_run_at)}` : '';
+      label = `Memory: ${filesStr}${tripleStr}${next}`;
       const last = st.last_run_finished || data.last_scan || '';
-      const ago = last ? ` · ${humanAgo(last)} ago` : '';
-      const triples = st.total_triples;
-      const tripleStr = (triples != null && triples > 0) ? ` · ${triples} triples` : '';
-      label = `Memory: ${total} indexed${tripleStr}${ago}`;
+      const ageBit = last ? `Last synced ${humanAgo(last)} ago — ` : '';
+      const drawerHint = (totalFiles != null && totalDrawers)
+        ? `${totalDrawers} drawer${totalDrawers === 1 ? '' : 's'} · ` : '';
       chip.title = (triples != null && triples > 0)
-        ? 'Click to sync now · double-click to open Knowledge Graph'
-        : 'Click to sync now';
+        ? `${drawerHint}${ageBit}click to sync now · double-click to open Knowledge Graph`
+        : `${drawerHint}${ageBit}click to sync now`;
     }
     // KG is currently extracting on any item? pulse purple.
     let kgWorking = false;
@@ -9963,7 +10202,9 @@ function projectItemPillHtml(kind, ident) {
     const kgErr = it.kg_last_error || 'KG extraction failed';
     kgBadge = ` <span class="project-item-pill" data-kg="error" title="${esc(kgErr)}">KG !</span>`;
   } else if (typeof triples === 'number' && triples > 0) {
-    kgBadge = ` <span class="project-item-pill" data-kg="ok" title="Knowledge graph triples extracted">${triples} triples</span>`;
+    // Per-folder pill in the right pane — same renaming as the project chip
+    // ("triples" is jargon, "relations" is what's been extracted).
+    kgBadge = ` <span class="project-item-pill" data-kg="ok" title="Knowledge graph relations extracted from this folder">${triples} relations</span>`;
   }
   return `<span class="project-item-pill" data-state="${stateName}" title="${esc(tip)}">${esc(label)}</span>${kgBadge}`;
 }
@@ -9985,6 +10226,20 @@ function humanAgo(iso) {
   if (!t) return '';
   const sec = Math.max(0, (Date.now() - t) / 1000);
   if (sec < 60) return Math.floor(sec) + 's';
+  if (sec < 3600) return Math.floor(sec / 60) + 'm';
+  if (sec < 86400) return Math.floor(sec / 3600) + 'h';
+  return Math.floor(sec / 86400) + 'd';
+}
+
+// Human "in 4h" / "in 12m" — counterpart to humanAgo for future timestamps.
+// Returns 'now' if the target is in the past or within a minute (so a stale
+// next-run doesn't read as "in 0s"; the user just sees the cycle is due).
+function humanIn(iso) {
+  if (!iso) return '';
+  const t = new Date(iso).getTime();
+  if (!t) return '';
+  const sec = (t - Date.now()) / 1000;
+  if (sec < 60) return 'now';
   if (sec < 3600) return Math.floor(sec / 60) + 'm';
   if (sec < 86400) return Math.floor(sec / 3600) + 'h';
   return Math.floor(sec / 86400) + 'd';
@@ -10251,7 +10506,7 @@ async function saveProjectInstructions() {
       instrEl.textContent = instructions;
       instrEl.classList.remove('project-panel-placeholder');
     } else {
-      instrEl.innerHTML = '<span class="project-panel-placeholder">Add instructions to customize Claude\'s responses</span>';
+      instrEl.innerHTML = '<span class="project-panel-placeholder">Add instructions to customize Brain Agent\'s responses</span>';
     }
     if (state._projectDetail) state._projectDetail.instructions = instructions;
   } catch(e) {
@@ -16042,6 +16297,43 @@ async function previewFile(path) {
 
 /* ═══ Unified Right Panel Functions ═══ */
 
+// Project right-pane resize — same pattern as #right-panel. Idempotent;
+// the bound flag prevents double-binding when openProject() reruns.
+function initProjectDetailPanelResize() {
+  const handle = document.getElementById('project-detail-panel-resize-handle');
+  const panel = document.getElementById('project-detail-panel');
+  if (!handle || !panel) return;
+  // Restore persisted width on every init (cheap, idempotent).
+  const saved = localStorage.getItem('project-detail-panel-width');
+  if (saved) panel.style.width = saved;
+  if (handle._bound) return;
+  handle._bound = true;
+  handle.addEventListener('mousedown', (e) => {
+    const startX = e.clientX;
+    const startW = panel.offsetWidth;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    const onMove = (ev) => {
+      // Drag direction: handle is on the LEFT edge of the panel, so moving
+      // the cursor LEFT widens the panel. Match #right-panel's math.
+      const newW = Math.min(640, Math.max(240, startW + (startX - ev.clientX)));
+      panel.style.width = newW + 'px';
+    };
+    const onUp = () => {
+      handle.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      localStorage.setItem('project-detail-panel-width', panel.style.width);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    e.preventDefault();
+  });
+}
+
 function initRightPanelResize() {
   const handle = document.getElementById('right-panel-resize-handle');
   const panel = document.getElementById('right-panel');
@@ -16503,6 +16795,14 @@ function extractReferencesFromToolResult(msg) {
     for (const it of items) {
       const sf = it && it.source_file;
       if (!sf || seen.has(sf)) continue;
+      // Skip chat-derived drawers (room=chat | chat_summary | chat_attachment).
+      // They aren't documents — they're past conversation fragments and
+      // their source_file (e.g. bare turn-id "3247" from MemPalace's
+      // basename strip) isn't a clickable file path.
+      const room = (it.room || '');
+      if (room === 'chat' || room === 'chat_summary' || room === 'chat_attachment') {
+        continue;
+      }
       seen.add(sf);
       const original = resolveOriginal(sf);
       const basename = original.split('/').pop() || original;
@@ -16522,16 +16822,26 @@ function extractReferencesFromToolResult(msg) {
         source_file: sf,          // raw drawer/triple source for debugging
       });
     }
-    // If JSON parse failed (truncated tool output), regex-fallback on
-    // source_file fields. Tool results are capped, but the references
-    // panel already does this for exa_search.
-    if (!refs.length) {
+    // Regex top-up — always runs, not just when JSON parse failed. Even
+    // when JSON.parse succeeds, the persisted `metadata.tools[i].result`
+    // may be truncated past the first drawer (capped at ~4KB on the
+    // server), so the JSON object is well-formed but only contains the
+    // drawers that fit. Sweep the raw string for any `"source_file": "..."`
+    // tokens, skip ones already in `seen`, and add the rest as refs with
+    // an empty snippet. Without this top-up, reload of a multi-source
+    // answer loses every reference past the first.
+    {
       const sfMatches = [...resultStr.matchAll(/"source_file"\s*:\s*"([^"]+)"/g)];
-      const seen2 = new Set();
       for (const m of sfMatches) {
         const sf = m[1];
-        if (!sf || seen2.has(sf)) continue;
-        seen2.add(sf);
+        if (!sf || seen.has(sf)) continue;
+        // Defensive skip — bare-numeric source_files are chat-turn ids
+        // (MemPalace's searcher returns Path(source).name on a drawer
+        // stored as `session/<sid>#turn/<id>`). They aren't documents.
+        if (/^\d+$/.test(sf)) continue;
+        // Also skip the `<sid>#summary` shape from chat_summary drawers.
+        if (/^[a-f0-9]+#summary$/i.test(sf)) continue;
+        seen.add(sf);
         const original = resolveOriginal(sf);
         const basename = original.split('/').pop() || original;
         refs.push({

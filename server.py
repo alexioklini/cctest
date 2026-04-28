@@ -295,12 +295,26 @@ def _purge_mempalace_turns(session_id: str, turn_ids: list[int]):
 
 
 def _project_wing(project_id: str) -> str:
-    """Wing name for project-scoped memory. ID-only — no agent, no name.
+    """Wing name for project KNOWLEDGE memory. ID-only — no agent, no name.
+    This wing holds ONLY mined input-folder content and ingested attachments.
+    Chat-derived drawers go to `_project_chat_wing()` instead, so wrong answers
+    in past chats never rank above the underlying source documents.
     Project IDs are globally unique (uuid4 hex[:12]) so collisions across
     agents are impossible. Renaming a project doesn't strand its drawers.
     """
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", project_id or "")
     return f"project__{safe}"
+
+
+def _project_chat_wing(project_id: str) -> str:
+    """Wing name for chat content originating in a project session. Separate
+    from `_project_wing()` so `mempalace_query` reads of project knowledge
+    never surface conversational drawers (chat turns, summaries, attachment
+    metadata, tool-result references). The user's per-turn "Memorise this"
+    action and the chat-sync daemon both write here.
+    """
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", project_id or "")
+    return f"project_chat__{safe}"
 
 
 def _user_wing(user_id: str) -> str:
@@ -329,13 +343,19 @@ def _project_id_for_name(agent_id: str, project_name: str) -> str:
 
 
 def _resolve_session_wing(info: dict) -> str:
-    """Pick the MemPalace wing for a given session row. ID-only scheme.
+    """Pick the MemPalace wing for chat-derived content from a session.
+    ID-only scheme.
 
     Priority:
-      1. Project-scoped session (project set)              → `project__{project_id}`
+      1. Project-scoped session (project set)              → `project_chat__{project_id}`
       2. Team-scoped session (visibility='team' + team_id) → `team__{team_id}`
       3. User-owned session (user_id)                      → `user__{user_id}`
       4. Legacy anonymous                                  → empty (skip)
+
+    Note: project chats land in `project_chat__<id>`, NOT `project__<id>`.
+    The latter is reserved for mined project knowledge (input folders +
+    ingested attachments) so retrieval of project documents is never
+    contaminated by past conversation turns or summaries.
     """
     project = info.get("project", "") or ""
     if project:
@@ -344,7 +364,7 @@ def _resolve_session_wing(info: dict) -> str:
         agent_id = info.get("agent_id", "main") or "main"
         proj = engine.ProjectManager.get_project(agent_id, project)
         if proj and proj.get("id"):
-            return _project_wing(proj["id"])
+            return _project_chat_wing(proj["id"])
         # Project lookup failed — fall through to user/team to avoid
         # silently writing into a wing the model can't query.
     visibility = info.get("visibility", "user")
@@ -3039,6 +3059,8 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._handle_notes(path, "POST")
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/input-folders"):
             self._handle_project_input_folders_add(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/input-folders/" in path:
+            self._handle_project_input_folders_update(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/sync-now"):
             self._handle_project_sync_now(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/ingest" in path:
@@ -4575,10 +4597,23 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         entry["tool_round"] = tr
                     _partial_tools.append(entry)
             elif event_type == "tool_result":
-                # Attach result to the last matching tool
-                # Web tools get higher cap to preserve reference URLs
+                # Attach result to the last matching tool. The cap controls
+                # how much of the tool's stringified result we persist into
+                # `metadata.tools[i].result` for chat reload — too low and
+                # the UI can't reconstruct references from a truncated JSON
+                # blob; too high and the chat's metadata column bloats.
+                # Tools that surface clickable references (web fetches AND
+                # project-knowledge queries) get a higher cap so the JSON
+                # stays parseable; other tools keep the original 500 cap.
                 tool_name = data.get("name", "")
-                cap = 2000 if tool_name in ("exa_search", "web_fetch") else 500
+                if tool_name in ("exa_search", "web_fetch",
+                                 "mempalace_query",
+                                 "mempalace_kg_query",
+                                 "mempalace_kg_search",
+                                 "mempalace_kg_neighbors"):
+                    cap = 4000
+                else:
+                    cap = 500
                 for t in reversed(_partial_tools):
                     if t["name"] == tool_name and "result" not in t:
                         t["result"] = str(data.get("result", ""))[:cap]
@@ -6412,6 +6447,10 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
             self._send_json({"error": err}, 400)
             return
         recursive = bool(body.get("recursive", True))
+        # auto_sync gates whether the scheduled daemon picks this folder up;
+        # default true preserves prior behavior. Folders with auto_sync=false
+        # still run on explicit "Sync now" so the user can refresh on demand.
+        auto_sync = bool(body.get("auto_sync", True))
         folders = list(project.get("input_folders") or [])
         # Dedup by resolved path
         for entry in folders:
@@ -6421,6 +6460,7 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         folders.append({
             "path": resolved,
             "recursive": recursive,
+            "auto_sync": auto_sync,
             "added_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         })
         engine.ProjectManager.update_project(agent_id, proj_name, {
@@ -6459,6 +6499,55 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         })
         self._send_json({"status": "removed", "folder": removed, "folders": folders})
 
+    def _handle_project_input_folders_update(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/input-folders/{idx}
+        Body: {path?: str, recursive?: bool, auto_sync?: bool}
+        Partial update — only fields present in the body are touched. Path
+        change goes through the same validation as add, so dedup against
+        other entries is enforced."""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return
+        try:
+            idx = int(path.rstrip("/").rsplit("/", 1)[-1])
+        except (ValueError, IndexError):
+            self._send_json({"error": "Invalid folder index"}, 400)
+            return
+        folders = list(project.get("input_folders") or [])
+        if idx < 0 or idx >= len(folders):
+            self._send_json({"error": "Folder index out of range"}, 404)
+            return
+        body = self._read_json() or {}
+        entry = dict(folders[idx])
+        # Path change is the only field that can fail validation; do it first
+        # so we don't write a half-updated row on error.
+        if "path" in body:
+            resolved, err = self._project_input_folder_validate(body.get("path", ""))
+            if err:
+                self._send_json({"error": err}, 400)
+                return
+            for j, other in enumerate(folders):
+                if j == idx:
+                    continue
+                if os.path.realpath(other.get("path", "")) == resolved:
+                    self._send_json({"error": "Folder already added"}, 400)
+                    return
+            entry["path"] = resolved
+        if "recursive" in body:
+            entry["recursive"] = bool(body.get("recursive"))
+        if "auto_sync" in body:
+            entry["auto_sync"] = bool(body.get("auto_sync"))
+        folders[idx] = entry
+        engine.ProjectManager.update_project(agent_id, proj_name, {
+            "input_folders": folders,
+        })
+        self._send_json({"status": "updated", "folder": entry, "folders": folders})
+
     def _handle_project_sync_status(self, path: str):
         """GET /v1/agents/{id}/projects/{name}/sync-status"""
         agent_id = self._parse_agent_from_path(path)
@@ -6475,11 +6564,32 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         live = _project_sync_live_status(agent_id, proj_name)
         if live:
             st = {**st, **live}
+        # Surface the daemon's polling interval + a derived next-run timestamp
+        # so the chip can show "next sync in 4h" without a second config fetch.
+        # next_run_at is best-effort: if last_run_finished is missing (project
+        # never synced) we leave it empty and the UI shows "soon".
+        try:
+            interval_s = int((((engine._load_mempalace_config() or {}).get(
+                "project_sync") or {}).get("interval_seconds", 21600)))
+        except Exception:
+            interval_s = 21600
+        next_run_at = ""
+        last_finished = st.get("last_run_finished") or ""
+        if last_finished:
+            try:
+                # Stored as ISO with timezone; parse, add interval, re-emit.
+                dt = datetime.datetime.fromisoformat(last_finished)
+                next_run_at = (dt + datetime.timedelta(
+                    seconds=interval_s)).isoformat()
+            except Exception:
+                next_run_at = ""
         self._send_json({
             "agent": agent_id,
             "project": proj_name,
             "status": st,
             "last_scan": project.get("input_folders_last_scan", ""),
+            "interval_seconds": interval_s,
+            "next_run_at": next_run_at,
         })
 
     def _handle_project_sync_now(self, path: str):
@@ -12824,7 +12934,8 @@ def main():
                         continue
 
                     # Wing resolution (ID-only):
-                    #   project session → project__<project_id>
+                    #   project session → project_chat__<project_id>
+                    #     (NOT project__<id> — that's reserved for mined docs)
                     #   team session    → team__<team_id>
                     #   user session    → user__<user_id>
                     #   anonymous       → "" (skipped)
@@ -13297,6 +13408,25 @@ def main():
             except Exception:
                 return 0
 
+        def _count_wing_files_total(wing: str) -> int:
+            """Distinct source_file count in `wing`. One file produces many
+            drawers (chunks), so this is what the user actually means when
+            they ask "how many files are indexed?" — drawer count is an
+            internal storage detail."""
+            try:
+                col = _get_drawers_col(palace_path, create=False)
+                if not col:
+                    return 0
+                got = col.get(where={"wing": wing}, include=["metadatas"])
+                seen: set = set()
+                for m in (got.get("metadatas") or []):
+                    sf = (m or {}).get("source_file") or ""
+                    if sf:
+                        seen.add(sf)
+                return len(seen)
+            except Exception:
+                return 0
+
         # One-shot startup wipe of every project-scoped wing. The wing scheme
         # changed in 8.18.2 from `project__<name>--<agent_id>` (mixed separator,
         # name-keyed) to `project__<id>` (ID-only). Old drawers in the old
@@ -13311,11 +13441,16 @@ def main():
                 stale_ids = []
                 for did, meta in zip(got.get("ids") or [], got.get("metadatas") or []):
                     w = (meta or {}).get("wing", "")
-                    # Match every wing whose name is project-related: both
-                    # the new `project__<id>` (re-mineable, dropping is fine
-                    # for the dev-phase reset the user asked for) and the
-                    # legacy `project__<name>--<agent>`.
-                    if w.startswith("project__"):
+                    # Match the project KNOWLEDGE wing only (mined documents
+                    # + ingested attachments). Chat-derived drawers live in
+                    # `project_chat__<id>` and must NOT be wiped on startup —
+                    # the daemon rebuilds knowledge from disk, but chat
+                    # content can't be reconstructed once dropped.
+                    # Catches the new `project__<id>`, the legacy
+                    # `project__<name>--<agent>`, and (deliberately) any
+                    # leftover chat-room rows still living in the knowledge
+                    # wing from before the project_chat__ split.
+                    if w.startswith("project__") and not w.startswith("project_chat__"):
                         stale_ids.append(did)
                 # Also drop any closets pointing at those wings.
                 if stale_ids:
@@ -13329,6 +13464,31 @@ def main():
                                   f"{type(e).__name__}: {e}", flush=True)
                     print(f"[project-sync] startup wipe: dropped "
                           f"{len(stale_ids)} project drawer(s)", flush=True)
+                    # Closets in the same project knowledge wings.
+                    try:
+                        from mempalace.palace import get_closets_collection
+                        ccol = get_closets_collection(palace_path, create=False)
+                        if ccol is not None:
+                            cgot = ccol.get(include=["metadatas"])
+                            stale_cids = []
+                            for cid, cmeta in zip(cgot.get("ids") or [],
+                                                  cgot.get("metadatas") or []):
+                                cw = (cmeta or {}).get("wing", "")
+                                if cw.startswith("project__") and \
+                                        not cw.startswith("project_chat__"):
+                                    stale_cids.append(cid)
+                            for i in range(0, len(stale_cids), BATCH):
+                                try:
+                                    ccol.delete(ids=stale_cids[i:i+BATCH])
+                                except Exception:
+                                    pass
+                            if stale_cids:
+                                print(f"[project-sync] startup wipe: dropped "
+                                      f"{len(stale_cids)} project closet(s)",
+                                      flush=True)
+                    except Exception as ce:
+                        print(f"[project-sync] startup wipe closets failed: "
+                              f"{type(ce).__name__}: {ce}", flush=True)
                 else:
                     print("[project-sync] startup wipe: no project drawers found", flush=True)
                 # Clear persisted sync_status on every project so the UI
@@ -13408,6 +13568,10 @@ def main():
 
                 cycle_filed = 0
                 for agent_id, proj_name in ordered:
+                    # Manual "Sync now" overrides per-folder auto_sync gating —
+                    # the user is explicitly asking, so skipping their non-auto
+                    # folders would be confusing.
+                    is_manual = (agent_id, proj_name) in requested
                     project = engine.ProjectManager.get_project(agent_id, proj_name)
                     if not project:
                         continue
@@ -13449,8 +13613,68 @@ def main():
                     prior_total_indexed = int(
                         (project.get("sync_status") or {}).get("total_indexed") or 0)
 
+                    # Pre-scan to estimate cycle work for live progress / ETA.
+                    # Cheap: just os.walk the ingested + input folders and count
+                    # files (no hashing, no parsing). Counts every regular file;
+                    # the miner's gitignore + ext filter will narrow this down,
+                    # so the displayed P/T overshoots T slightly — that's fine,
+                    # the ETA is approximate by design and overshoot beats
+                    # undershoot (progress bar never appears stuck at 100%).
+                    cycle_total_files = 0
+                    cycle_processed_files = 0
+                    cycle_folder_file_counts: dict[str, int] = {}
+                    cycle_ingested_file_count = 0
+                    ingested_dir_pre = os.path.join(pdir, "ingested")
+                    if os.path.isdir(ingested_dir_pre):
+                        try:
+                            # Count distinct source uploads (hash count), not
+                            # chunk count, so the progress P/T reflects "files
+                            # the user uploaded" rather than internal chunks.
+                            seen_hashes: set = set()
+                            for fn in os.listdir(ingested_dir_pre):
+                                if fn.startswith("ingest-") and fn.endswith(".md"):
+                                    parts_fn = fn.split("-", 2)
+                                    if len(parts_fn) >= 2:
+                                        seen_hashes.add(parts_fn[1])
+                            cycle_ingested_file_count = len(seen_hashes)
+                            cycle_total_files += cycle_ingested_file_count
+                        except OSError:
+                            pass
+                    for entry_pre in (project.get("input_folders") or []):
+                        fp_pre = entry_pre.get("path") or ""
+                        if not fp_pre or not os.path.isdir(fp_pre):
+                            continue
+                        # Skip auto_sync=false folders unless the project is in
+                        # the manual-trigger set. They still get a 0-count entry
+                        # so the folder-loop later can render the "paused" state.
+                        if not is_manual and entry_pre.get("auto_sync", True) is False:
+                            cycle_folder_file_counts[fp_pre] = 0
+                            continue
+                        rec = bool(entry_pre.get("recursive", True))
+                        cnt = 0
+                        try:
+                            if rec:
+                                for _root, _dirs, _files in os.walk(fp_pre):
+                                    cnt += len(_files)
+                            else:
+                                cnt = sum(
+                                    1 for e in os.scandir(fp_pre) if e.is_file())
+                        except OSError:
+                            cnt = 0
+                        cycle_folder_file_counts[fp_pre] = cnt
+                        cycle_total_files += cnt
+                    _project_sync_set_live(agent_id, proj_name,
+                        cycle_total_files=cycle_total_files,
+                        cycle_processed_files=0)
+
                     def _item_key(kind: str, ident: str) -> str:
                         return f"{kind}:{ident}"
+
+                    def _bump_processed(n: int):
+                        nonlocal cycle_processed_files
+                        cycle_processed_files += int(n or 0)
+                        _project_sync_set_live(agent_id, proj_name,
+                            cycle_processed_files=cycle_processed_files)
 
                     def _set_item(kind: str, ident: str, **fields):
                         k = _item_key(kind, ident)
@@ -13463,7 +13687,9 @@ def main():
                         items_live[k] = dict(cur)
                         _project_sync_set_live(agent_id, proj_name,
                             state="syncing", items=items_live,
-                            files_filed=files_filed)
+                            files_filed=files_filed,
+                            cycle_total_files=cycle_total_files,
+                            cycle_processed_files=cycle_processed_files)
 
                     # 1. Manual attachments — `ingested/` mined into project wing.
                     #    Each chunk file is named ingest-<src_hash>-<idx>.md;
@@ -13548,6 +13774,10 @@ def main():
                                     last_run_finished=finished_at_attach,
                                     drawers_filed=cnt,
                                     error=ingest_err)
+                            # Mark every uploaded source as processed in the
+                            # cycle progress. Done as a batch since the miner
+                            # call covers them all in one pass.
+                            _bump_processed(len(hashes))
                             # KG extraction post-pass for each ingested
                             # attachment hash. Drawers carry source_file
                             # like .../ingested/ingest-<hash>-<idx>.md, so
@@ -13566,6 +13796,7 @@ def main():
                                 _set_item("attachment", h,
                                     state="error",
                                     error="failed to write mempalace.yaml")
+                            _bump_processed(len(hashes))
 
                     # 2. User-specified input folders — each entry has its own
                     #    mempalace.yaml, scanned recursively or top-level only.
@@ -13574,11 +13805,24 @@ def main():
                         fpath = entry.get("path", "")
                         if not fpath:
                             continue
+                        # Honor the per-folder auto_sync gate on scheduled cycles.
+                        # Manual "Sync now" overrides — the user is asking
+                        # explicitly. Update the item row so the UI shows the
+                        # paused state instead of a stale "syncing".
+                        if not is_manual and entry.get("auto_sync", True) is False:
+                            existing_drawers = (item_states.get(
+                                _item_key("folder", fpath)) or {}).get("drawers_filed", 0)
+                            _set_item("folder", fpath,
+                                state="paused",
+                                drawers_filed=existing_drawers,
+                                error="")
+                            continue
                         if not os.path.isdir(fpath):
                             _set_item("folder", fpath,
                                 state="error",
                                 error="folder not found",
                                 last_run_started=started_at)
+                            _bump_processed(cycle_folder_file_counts.get(fpath, 0))
                             continue
                         _set_item("folder", fpath,
                             state="syncing",
@@ -13592,6 +13836,7 @@ def main():
                             _set_item("folder", fpath,
                                 state="error",
                                 error="failed to write mempalace.yaml")
+                            _bump_processed(cycle_folder_file_counts.get(fpath, 0))
                             continue
                         # Cap the number of top-level entries to avoid runaway
                         # walks on accidentally-pointed-at home dirs etc.
@@ -13605,10 +13850,12 @@ def main():
                                     state="error", error=msg)
                                 print(f"[project-sync] {agent_id}/{proj_name} "
                                       f"{fpath}: {msg}", flush=True)
+                                _bump_processed(cycle_folder_file_counts.get(fpath, 0))
                                 continue
                         except OSError as e:
                             _set_item("folder", fpath,
                                 state="error", error=str(e))
+                            _bump_processed(cycle_folder_file_counts.get(fpath, 0))
                             continue
                         folder_filed = 0
                         folder_err = ""
@@ -13665,6 +13912,10 @@ def main():
                                 datetime.timezone.utc).isoformat(),
                             drawers_filed=cum,
                             error=folder_err)
+                        # Bump cycle progress by the file count we pre-scanned
+                        # for this folder. Slight overshoot is fine — see
+                        # pre-scan comment.
+                        _bump_processed(cycle_folder_file_counts.get(fpath, 0))
                         # KG extraction post-pass for this input folder.
                         # source_prefix is the absolute folder path; the
                         # extractor's per-drawer cursor makes re-runs cheap
@@ -13686,6 +13937,10 @@ def main():
                     # Authoritative total: query MemPalace for everything in
                     # the project's wing. Survives dedup-only cycles unchanged.
                     total_indexed = _count_wing_drawers_total(wing)
+                    # Distinct source-file count — what the user reads as
+                    # "how many files are indexed?" (a single PDF chunks into
+                    # many drawers, so total_indexed alone is misleading).
+                    total_files = _count_wing_files_total(wing)
                     # Authoritative total triples for this project (sum across
                     # all input folders in the wing). Cheap SQL — one COUNT
                     # over a prefix-scoped slice of the KG.
@@ -13726,7 +13981,8 @@ def main():
                         "last_run_started": started_at,
                         "last_run_finished": finished_at,
                         "last_files_filed": files_filed,  # delta this cycle
-                        "total_indexed": total_indexed,    # cumulative
+                        "total_indexed": total_indexed,    # cumulative drawers
+                        "total_files": total_files,        # cumulative files
                         "total_triples": total_triples,    # KG triples in wing
                         "last_folders_seen": folders_seen,
                         "last_error": last_error,

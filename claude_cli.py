@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.20.6"
-VERSION_DATE = "2026-04-27"
+VERSION = "8.21.4"
+VERSION_DATE = "2026-04-28"
 CHANGELOG = [
+    ("8.21.4", "2026-04-28", "Project right-pane UX overhaul. Six coordinated changes addressing user feedback on the project detail view. (1) **Memory chip rebuilt around what users actually count**: idle label now reads `Memory: N files · M relations · next sync in Xh` instead of `N indexed`. `total_files` is a new server-tracked distinct-source-file count (was only drawer count before, which conflates 800-char chunks with files); `next_run_at` is derived from `last_run_finished + interval_seconds` and exposed in the `/sync-status` response so the chip computes its countdown without a second config fetch. **Live progress during sync**: chip flips to `Memory: syncing P/T files · ETA Xm (current folder)` — daemon does a cheap pre-walk at cycle start to compute `cycle_total_files`, then bumps `cycle_processed_files` after each attachment batch / folder finishes (incl. error-skip paths so the bar never stalls below total). ETA is elapsed-extrapolated from wall time and progress share, gated to ≥5% completion so an early 0/N doesn't claim '12 days remaining'. Tooltip carries the technical drawer count + last-synced timestamp. (2) **'triples' → 'relations'** in every user-facing surface: chip label, per-folder pill, KG sub-badges. The KG concept is too jargony for end users — 'relations' reads as 'facts we extracted' in plain English. Settings → Knowledge Graph admin tab kept the technical term since that audience needs it. (3) **Input-folder rows redesigned**: was a single overflow-prone flex row with overlapping badges on narrow panes; now a 3-line block (folder name bold + edit/delete actions on top; full absolute path in mono with RTL ellipsis to keep the tail visible; badges wrap-flex on a third line). Added auto-sync state badge, made delete/edit affordances explicit SVG buttons. (4) **Edit-folder modal**: pencil button on each row opens a modal with the same picker shell as Add, prefilled with the current path/recursive/auto_sync. Backed by new `POST /v1/agents/{id}/projects/{name}/input-folders/{idx}` for partial update (path / recursive / auto_sync); path-change goes through the same validation as add so dedup against other entries is enforced. PATCH wasn't dispatched by the HTTP server, so the update lives on POST under the indexed sub-path. (5) **Auto-sync gate per folder**: new `auto_sync` field (default true) on input_folders entries. Daemon honors `auto_sync=false` on scheduled cycles — these folders show a `paused` row state and contribute 0 to `cycle_total_files`. Manual 'Sync now' overrides the gate so the user can still trigger an on-demand pass. Add modal grew an 'Include in automatic sync cycles' checkbox (defaults to checked); same checkbox in the edit modal. (6) **Delete-confirm modal** replaces the bare `confirm()`: amber warning icon + path readout + red 'Remove folder' button. Auth still gates on `_project_access_check(require_manage=True)` for the underlying DELETE. (7) **Draggable right pane**: added a `col-resize` handle on the left edge of `.project-detail-panel`, mirrors the `#right-panel` pattern. Width persisted to `localStorage('project-detail-panel-width')`, clamped 240-640px. (8) **Project composer placeholder + instructions branding**: composer textarea placeholder now reads `Write your message to <ProjectName>` (set dynamically in `loadProjectDetail` from `project.name`, falling back to slug); the static `placeholder=\"Write your message to Claude\"` was misleading on a Brain Agent install. Instructions empty-state placeholder updated from 'customize Claude\\'s responses' to 'customize Brain Agent\\'s responses' in all three rendering paths."),
+    ("8.21.3", "2026-04-28", "Hydration substitution applies outside project context too. The v8.21.2 substitute path was gated on `current_project`, so user-wing / team-wing / shared `brain_code` searches still got duplicate-frontmatter hits when their content had a repeating-title document. The gate was a refactor leftover — none of the substitute logic actually requires a project, only the input-folder probe does. Now: dedup runs unconditionally; substitute runs whenever palace_path is set, with the input-folder probe applied only if we happen to be project-pinned. Outside projects we skip straight to the last-resort wildcard metadata scan (one Chroma read; only fires for hits where the searcher's text didn't already include the user's rare query terms). Chat-attachment scenarios specifically: non-project chat attachments are NOT mined into MemPalace today (only filename+mime+size go in via the `attachment_metadata_drawer` path); the agent reads them through `read_document` against /tmp/brain-attachments/<sid>/. So this fix doesn't change anything for raw uploaded content — that gap is a separate design question. It DOES help past-chat-memory hits in the user wing when chat-sync filed a long Q+A turn whose first chunk is mostly the question header."),
+    ("8.21.2", "2026-04-28", "MemPalace search hydration substitution — fixes 'agent says topic isn't in the doc when it actually is.' Symptom on real bank-policy corpus: query 'SPAM Malwareschutz' returned 7 high-similarity hits all pointing at `ANW_20_2_9_Malwareschutz.pdf.md` (sim 0.97 / 0.89 / 0.76 / ...) — but every hit's text was the IDENTICAL 1452 chars of the doc's frontmatter + title page. The agent saw 'no spam content here' and reported the policy doesn't cover the topic, while in reality chunk 6 of the doc has 'Anti-Spam Filter zur Blockade verdächtiger Emails ...'. Root cause is in MemPalace's searcher.py (drawer-grep enrichment, line 472-491): for every closet-boosted hit on a multi-chunk source, it re-runs the SAME logic — pull all chunks for the source, score by `set(query_tokens) & set(chunk_tokens)` membership (dedup count, NOT frequency), pick the chunk with the highest count and return [best-1, best, best+1] joined. Because the doc title `Malwareschutz` appears in EVERY chunk's heading + brain-source frontmatter, every chunk scores 1 on the set scorer; ties resolve by iteration order so chunk 0 wins for every hit. Fix lives in Brain (not upstream — touching the venv'd MemPalace package gets clobbered on reinstall): `tool_mempalace_query` now (a) dedupes by source_file (keeping highest-similarity hit per source — 7 identical Malwareschutz hits → 1), (b) when the kept hit's text doesn't mention the 'rare' query tokens (those NOT present in the source filename — for our query, `spam` is rare since the filename has `Malwareschutz` but not `Spam`), scans the source's other chunks via Chroma `where={source_file=...}` and substitutes the chunk with the highest **count** (not set-membership) of rare-term hits. matched_via stamped `drawer+keyword-substitute` so it's traceable. Probes likely paths first (project input_folders + their `.brain-extracted/` companions) before falling back to a metadata scan, so hot-path cost is one Chroma `get` per substituted hit. Without rare-term substitution the bug is structural for every German policy doc whose title repeats in chunk frontmatter — Steuer-/HR-/IT-policies all hit it equally."),
+    ("8.21.1", "2026-04-28", "Reference badges survived only for the first cited document. Two coordinated bugs cropped up after v8.21.0 in a multi-source answer (one drawer cited a Malwareschutz policy, second drawer cited an Internet/E-Mail policy — only the second showed in the inline badges, and after reload both vanished from the right panel). (1) **Server cap**: `_handle_chat`'s tool_result handler in server.py truncates the persisted `metadata.tools[i].result` to 500 chars for every tool except `exa_search`/`web_fetch`. `mempalace_query` and the three KG tools also surface clickable references but were on the 500-char path — enough for the first drawer's metadata + ~200 chars of text, then JSON cuts mid-string. After reload the truncated string fails JSON.parse entirely, the regex fallback finds only the first complete `\"source_file\": \"...\"` token, second reference disappears. Added the four project-knowledge tools to the higher-cap list and bumped to 4000 chars (~5 drawers fit comfortably). (2) **UI regex top-up**: `extractReferencesFromToolResult`'s regex fallback only fired when JSON.parse returned zero refs, so a partial-but-valid JSON object (first drawer parses, rest cut off) produced one ref and skipped the rest. Reworked so the regex sweep always runs and dedupes against the JSON-parsed set — covers any future cap edge case without depending on the JSON being whole. Bare-numeric and `<sid>#summary` skips from v8.21.0 preserved."),
+    ("8.21.0", "2026-04-28", "Project chats split off into their own MemPalace wing — `project__<id>` is now strictly mined documents + ingested attachments; chat turns/summaries/attachment metadata go to a new `project_chat__<id>` wing. Two coordinated bugs fixed. (1) **Chat content was poisoning project knowledge retrieval.** When `save_to_memory` was on or auto, every project chat turn (and its session summary) landed in the same wing as the indexed PDFs. Wrong answers from earlier turns then ranked ABOVE the underlying source on later queries because chat-summary and Q-A pairs share more lexical/semantic surface with the user's question than a single 800-char policy chunk does. Reproduced live: a wrong 'TAMBAS not in project knowledge' answer self-reinforced for the rest of the chat while the actual policy chunk (sim 0.50) sat below the chat-derived 'TAMBAS not found' summary (sim 0.68). Fix: `_resolve_session_wing` now returns `project_chat__<id>` for project sessions; `tool_mempalace_query` while project-pinned reads from `project__<id>` only. New optional `include_chat_history=true` flag on the tool flips the read to the chat wing for explicit 'remember when we said' questions. (2) **`source_file: '3247'` clickable refs that opened nothing.** MemPalace's `searcher.py:416` returns `Path(source_file).name`, which strips `session/<sid>#turn/` off chat drawers down to the bare turn-id. The web UI's `extractReferencesFromToolResult` then treated those as document paths, rendering 'broken' clickable cards. Fix: the JSON-parse path skips drawers with `room ∈ {chat, chat_summary, chat_attachment}`; the regex-fallback path defensively skips bare-numeric source_files and `<sid>#summary` shapes. Visibility filter in `tool_mempalace_query` extended so cross-wing searches also exclude `project_chat__*` (project chat is private to the project). System-prompt PROJECT MEMORY block updated to call out the new boundary and tell the model to use `include_chat_history=true` only when the user is explicitly asking about earlier chat turns. Startup wipe in the project-sync daemon tightened to match `project__` but NOT `project_chat__` (the previous prefix match would've nuked chat content on every restart); same scope applied to the closet wipe. KV-cache invariant preserved (the system-prompt block is per-project; warm-pool slots only seed for agent=main, project='')."),
     ("8.20.6", "2026-04-27", "Project source reference clicks: extract from metadata + resolve bare basenames. Two further fixes after v8.20.5 that unblock the actual user flow. (1) **Web extractor walks `metadata.tools[]`**: `collectChatReferences` and `getReferencesForMessage` previously only looked at live `tool_result` rows, which only exist during streaming. After page reload the tool data lives in the assistant message's `metadata.tools[]` array — so old chats had zero refs in the right panel. Both functions now iterate `metadata.tools[]` too, building synthetic `tool_result`-shaped objects fed to the same `extractReferencesFromToolResult` parser. (2) **Server-side bare-basename resolution**: MemPalace drawers carry `source_file` as a relative path or even just the bare basename (e.g. `20_2_2_0_ARL_IT-Endbenutzerrichtlinie.pdf.md`), not as an absolute path. `_validate_file_path` was happily resolving that against the server's CWD into the cctest tree, then the `os.path.isfile` check failed with a misleading 404. New `_resolve_project_basename` helper does basename lookup under any project input_folders[] the authenticated user can see (capped recursive walk, also strips trailing `.<binext>.md` suffix to find the original binary), and `_handle_file_download` now falls through to it when the validator's first pass returns a non-existent path. Verified end-to-end: bare basename, `.pdf.md` companion, and absolute path inputs all return the same 19-page PDF with `Content-Type: application/pdf` and `Content-Disposition: inline`."),
     ("8.20.5", "2026-04-27", "Project source download: allow project input_folders + render PDFs inline. Two server-side fixes that made `openProjectSource` fail even after v8.20.4 stripped the `.md` suffix correctly. (1) `_validate_file_path` only allowed cctest/, agents/, and cwd — but project sources live wherever the admin pointed input_folders[] (e.g. /private/tmp/kg-real-policies/), so every download 403'd. Validator now also accepts paths under any project's input_folders[] for projects the authenticated user can see (resolved via `engine.ProjectManager.list_projects` with the user's id + team ids). Symlink-resolved per-root prefix match. (2) `_handle_file_download` always sent `Content-Disposition: attachment`, so even if the path were allowed the PDF would force-download with a confusing blob:// filename instead of rendering in a new tab. Switched to `inline` for browser-renderable types (pdf/png/jpg/jpeg/gif/svg/txt/md/html/json/csv); office binaries (docx/xlsx/pptx) stay `attachment` since browsers can't render them. Filename now uses RFC 5987 `filename*=UTF-8''<urlquoted>` so German umlauts and spaces don't break the header. Verified end-to-end: 200 OK, application/pdf, inline disposition, valid PDF bytes."),
     ("8.20.4", "2026-04-27", "Citation discipline: strip `.md` companion suffix. The agent was citing project sources verbatim from drawer `source_file` values, so users saw `[Quelle: policy.pdf.md]` in answers and clicking the inline ref-badge tried to open the `.brain-extracted/policy.pdf.md` companion — which doesn't render as a PDF in the browser, producing a 'cannot open' error. Two coordinated fixes. (1) System prompt CITATION DISCIPLINE block in `_build_system_prompt` (claude_cli.py) gets an explicit STRIP rule: when a drawer's source_file ends in `.brain-extracted/<name>.<ext>.md`, cite the ORIGINAL binary's name (`policy.pdf`), never the `.md` companion. Worked example shows the input → output. (2) Defensive fallback in `resolveOriginal` (web/index.html) inside `extractReferencesFromToolResult`: also strip a trailing `.md` from any path ending in `.<binext>.md` where binext is pdf|docx|pptx|xlsx|xlsm|eml|msg, even when the path is NOT under `.brain-extracted/`. Catches cases where the agent's citation skipped the prefix in plain text and the model's text path picks them up. KV-cache invariant preserved (the project block is per-project; warm-pool slots only seed for agent=main, project='')."),
@@ -564,6 +569,17 @@ TOOL_DEFINITIONS = [
                     "description": "Max drawers to return (default 5, max 25).",
                     "minimum": 1,
                     "maximum": 25,
+                },
+                "include_chat_history": {
+                    "type": "boolean",
+                    "description": (
+                        "Project-pinned only. Default false. When true, search "
+                        "the project's CHAT memory (past turns, summaries, "
+                        "attachment metadata) instead of the project KNOWLEDGE "
+                        "wing (mined documents + ingested files). Use when the "
+                        "user asks 'what did we discuss earlier' / 'remember "
+                        "when I said'. Outside a project this flag is ignored."
+                    ),
                 },
             },
             "required": ["query"],
@@ -3545,13 +3561,20 @@ def tool_mempalace_query(args: dict) -> str:
     current_agent_id = getattr(_ag, "agent_id", None) or (
         _ag if isinstance(_ag, str) else "main") or "main"
     project_pinned = False
+    # Optional: when project-pinned, the model can ask explicitly for
+    # past chat memory in this project by setting include_chat_history=true.
+    # Default behaviour pins to the project KNOWLEDGE wing only, so wrong
+    # answers in past chats can't outrank the underlying source documents.
+    include_chat_history = bool(args.get("include_chat_history") or False)
     if current_project:
         # Resolve project name → id (uuid hex). Without an id we refuse to
         # search rather than leak across projects.
         proj_cfg = ProjectManager.get_project(current_agent_id, current_project)
         proj_id = (proj_cfg or {}).get("id") or ""
         if proj_id:
-            wing = f"project__{re.sub(r'[^A-Za-z0-9_.-]', '_', proj_id)}"
+            safe_pid = re.sub(r"[^A-Za-z0-9_.-]", "_", proj_id)
+            wing = (f"project_chat__{safe_pid}" if include_chat_history
+                    else f"project__{safe_pid}")
             project_pinned = True
         else:
             return _err("mempalace_query: project has no id (run a sync first)")
@@ -3607,8 +3630,9 @@ def tool_mempalace_query(args: dict) -> str:
         def _visible(r):
             w = r.get("wing", "")
             # Project wings are always private — never returned in
-            # cross-wing searches.
-            if w.startswith("project__"):
+            # cross-wing searches. Both knowledge (`project__`) and chat
+            # (`project_chat__`) are scoped to the project's own context.
+            if w.startswith("project__") or w.startswith("project_chat__"):
                 return False
             if w.startswith("user__"):
                 return w == own_user
@@ -3618,8 +3642,131 @@ def tool_mempalace_query(args: dict) -> str:
             return True
         raw_results = [r for r in raw_results if isinstance(r, dict) and _visible(r)]
 
+    # Dedupe by source_file: MemPalace's searcher hydration step can return
+    # the same chunk text for every hit on a closet-boosted source (the
+    # keyword-best chunk is computed identically each time, since query +
+    # source_file are the same). Without dedup, an agent asking about
+    # "SPAM Malwareschutz" sees 7 identical hits showing only the document's
+    # frontmatter + title page (because every chunk in the doc contains the
+    # word "Malwareschutz" but only one chunk contains "Spam", and the
+    # set-based scorer ties them all at score 1 → first chunk wins). The
+    # agent then concludes the doc has no info on the subject when it
+    # actually does. Keeping the highest-similarity hit per source — and
+    # then trying to substitute a chunk whose text actually mentions the
+    # rarer query terms — gives the model a better signal.
+    by_source = {}
+    for r in raw_results:
+        if not isinstance(r, dict):
+            continue
+        sf = r.get("source_file") or ""
+        prev = by_source.get(sf)
+        if prev is None or (r.get("similarity") or 0) > (prev.get("similarity") or 0):
+            by_source[sf] = r
+    deduped = sorted(by_source.values(),
+                     key=lambda x: -(x.get("similarity") or 0))
+
+    # Substitute chunks: when the hit's text is dominated by document-title
+    # repetition (frontmatter + first-page noise common in `.brain-extracted/
+    # *.pdf.md` companions) but the source has other chunks with rarer query
+    # terms, pull one of those instead. We look for query tokens NOT present
+    # in the source filename — those are the user's real subject keywords.
+    try:
+        if deduped and palace_path:
+            from mempalace.palace import get_collection as _gc
+            _qtokens = re.findall(r"\w{2,}", query.lower(), flags=re.UNICODE)
+            for hit in deduped:
+                full_sf = hit.get("source_file") or ""
+                hit_text = hit.get("text") or ""
+                # Tokens not present in the filename are the "rare" subject
+                # words (e.g. for "SPAM Malwareschutz" with file
+                # ANW_20_2_9_Malwareschutz.pdf.md, rare = {spam}).
+                fname_lower = full_sf.lower()
+                rare = [t for t in set(_qtokens) if t not in fname_lower]
+                if not rare:
+                    continue
+                # If the current hit text already contains a rare term,
+                # leave it alone — the searcher picked well.
+                if any(t in hit_text.lower() for t in rare):
+                    continue
+                # Otherwise scan all chunks for this source and pick the
+                # one with the highest count of rare terms.
+                try:
+                    _col = _gc(palace_path, create=False)
+                    if _col is None:
+                        continue
+                    # The searcher returns basename in source_file; the
+                    # actual stored value in Chroma is the absolute path.
+                    # Try the most likely candidates first (project input
+                    # folders + their `.brain-extracted` companions when
+                    # we're in a project), avoiding the full-palace
+                    # metadata scan unless we have to.
+                    bn = full_sf.split("/")[-1]
+                    candidate_paths = [full_sf]
+                    if current_project:
+                        proj_cfg2 = ProjectManager.get_project(
+                            current_agent_id, current_project) or {}
+                        for entry in (proj_cfg2.get("input_folders") or []):
+                            root = (entry or {}).get("path", "").strip()
+                            if not root:
+                                continue
+                            # `.brain-extracted` is where doc_convert puts
+                            # the markdown companions; original folder
+                            # layout is mirrored under it.
+                            candidate_paths.append(
+                                f"{root}/.brain-extracted/{bn}")
+                            candidate_paths.append(f"{root}/{bn}")
+                    src_drawers = None
+                    for cand in candidate_paths:
+                        try:
+                            res = _col.get(
+                                where={"source_file": cand},
+                                include=["documents", "metadatas"])
+                            if (res.get("documents") or []):
+                                src_drawers = res
+                                break
+                        except Exception:
+                            continue
+                    # Last-resort wildcard: scan metadata to find the row.
+                    # Only runs when input-folder candidates miss (e.g.
+                    # nested subdirectory).
+                    if src_drawers is None:
+                        _all_meta = _col.get(include=["metadatas"])
+                        candidate_full = None
+                        for m in _all_meta.get("metadatas") or []:
+                            sf2 = (m or {}).get("source_file") or ""
+                            if sf2.endswith("/" + bn) or sf2 == bn:
+                                candidate_full = sf2
+                                break
+                        if not candidate_full:
+                            continue
+                        src_drawers = _col.get(
+                            where={"source_file": candidate_full},
+                            include=["documents", "metadatas"])
+                    docs = src_drawers.get("documents") or []
+                    metas = src_drawers.get("metadatas") or []
+                    if not docs:
+                        continue
+                    # Score each chunk by COUNT (not set membership) of
+                    # rare-term occurrences — this breaks the title-frequency
+                    # tie that lands every hit on chunk 0.
+                    best_doc, best_score = None, 0
+                    for d in docs:
+                        if not isinstance(d, str):
+                            continue
+                        dl = d.lower()
+                        s = sum(dl.count(t) for t in rare)
+                        if s > best_score:
+                            best_score, best_doc = s, d
+                    if best_doc and best_score > 0:
+                        hit["text"] = best_doc
+                        hit["matched_via"] = "drawer+keyword-substitute"
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
     drawers = []
-    for r in raw_results[:n_results]:
+    for r in deduped[:n_results]:
         if not isinstance(r, dict):
             continue
         drawers.append({
@@ -20198,8 +20345,15 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
                 "This project has a dedicated, isolated memory store. It contains "
                 f"{_proj_total_drawers} indexed chunks from "
                 f"{attachment_count} manual attachment(s) and "
-                f"{len(input_folders)} input folder(s) on disk, plus prior "
-                "chats inside this project.\n"
+                f"{len(input_folders)} input folder(s) on disk. By default, "
+                "`mempalace_query` searches ONLY this knowledge layer (mined "
+                "documents) — it does NOT include past chat turns or chat "
+                "summaries. This is deliberate: a wrong answer in an earlier "
+                "turn must never outrank the underlying source document. If "
+                "the user explicitly asks about something said earlier in this "
+                "project's chats ('what did we discuss', 'remember when I "
+                "said'), call `mempalace_query` again with "
+                "`include_chat_history=true` to search the chat layer.\n"
                 "BEFORE answering ANY question that could draw on project "
                 "knowledge — the user's documents, files in their input folders, "
                 "facts they previously told you, project decisions — you MUST "
