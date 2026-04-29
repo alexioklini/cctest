@@ -1230,13 +1230,67 @@ textarea { resize: none; }
   text-overflow: ellipsis;
 }
 /* Reference badges in messages */
+.msg-references-wrap {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-100);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.msg-references-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+details.msg-references-row { display: block; }
+.msg-references-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 11px;
+  color: var(--text-300);
+  list-style: none;
+  padding: 2px 0;
+}
+.msg-references-summary::-webkit-details-marker { display: none; }
+.msg-references-disclosure {
+  display: inline-block;
+  font-size: 9px;
+  transition: transform 0.15s ease;
+  color: var(--text-400);
+}
+details.msg-references-row[open] .msg-references-disclosure { transform: rotate(90deg); }
+.msg-references-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-300);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+  padding-top: 5px;
+}
+details.msg-references-row .msg-references-label {
+  padding-top: 0;
+}
+.msg-references-count {
+  font-size: 10px;
+  color: var(--text-400);
+  background: var(--bg-200);
+  padding: 1px 6px;
+  border-radius: 8px;
+}
 .msg-references {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border-100);
+  flex: 1;
+}
+details.msg-references-row[open] .msg-references {
+  margin-top: 6px;
 }
 .ref-badge {
   display: inline-flex;
@@ -1255,6 +1309,56 @@ textarea { resize: none; }
 .ref-badge:hover { background: var(--bg-200); border-color: var(--accent-brand); }
 .ref-badge img { width: 14px; height: 14px; border-radius: 3px; }
 .ref-badge-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Reference panel sections (right pane) */
+.refs-section {
+  margin-bottom: 16px;
+}
+.refs-section + .refs-section { margin-top: 4px; }
+.refs-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-300);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  list-style: none;
+  cursor: default;
+  border-bottom: 1px solid var(--border-100);
+  margin-bottom: 8px;
+}
+details.refs-section > .refs-section-header {
+  cursor: pointer;
+  user-select: none;
+}
+details.refs-section > .refs-section-header::-webkit-details-marker { display: none; }
+.refs-section-disclosure {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--text-400);
+  transition: transform 0.15s ease;
+}
+details.refs-section[open] > .refs-section-header .refs-section-disclosure {
+  transform: rotate(90deg);
+}
+.refs-section-count {
+  font-size: 10px;
+  color: var(--text-400);
+  background: var(--bg-200);
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.refs-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 
 /* Thinking block */
 .thinking-block {
@@ -7537,14 +7641,18 @@ async function sendMessage() {
         console.log('[SSE] tool_result:', d.name, 'hasResult:', !!d.result);
         const toolMsg = { role: 'tool_result', name: d.name, result: d.result, _ts: Date.now() };
         chat.messages.push(toolMsg);
-        // Add references scoped to this chat's session (not state.activeChat)
+        // Add references scoped to this chat's session (not state.activeChat).
+        // Live refs always seed the searched bucket — the cited/searched split
+        // is recomputed from the assistant message text after stream end via
+        // invalidateChatReferences().
         const refs = extractReferencesFromToolResult(toolMsg);
         if (refs.length && chat.sessionId) {
-          if (!state.chatReferences[chat.sessionId]) state.chatReferences[chat.sessionId] = [];
-          const existing = state.chatReferences[chat.sessionId];
+          if (!state.chatReferences[chat.sessionId]) state.chatReferences[chat.sessionId] = { cited: [], searched: [] };
+          const cache = state.chatReferences[chat.sessionId];
+          const allLinks = new Set([...cache.cited.map(r => r.link), ...cache.searched.map(r => r.link)]);
           let newRefAdded = false;
           for (const ref of refs) {
-            if (!existing.some(r => r.link === ref.link)) { existing.push(ref); newRefAdded = true; }
+            if (!allLinks.has(ref.link)) { cache.searched.push(ref); allLinks.add(ref.link); newRefAdded = true; }
           }
           if (newRefAdded && isActive()) {
             openRightPanel('references');
@@ -7868,6 +7976,11 @@ async function sendMessage() {
         // model-dropdown filter picks up any PII the assistant may have
         // surfaced or the user just sent.
         chat._piiHistoryScanLen = -1;
+
+        // Refs cache was seeded as searched-only during streaming; the
+        // assistant text now exists, so re-split into cited/searched on
+        // next read.
+        invalidateChatReferences(chat.sessionId);
 
         // Only update DOM if this chat is still visible
         if (isActive()) {
@@ -8550,28 +8663,51 @@ function renderAssistantMessage(msg, idx) {
     filesHtml += '</div>';
   }
 
-  // Reference badges
+  // Reference badges — split into Zitiert (always visible) and Durchsucht
+  // (collapsed via <details>). Zitiert pulls from `[Quelle: <basename>...]`
+  // markers in this assistant message's text; Durchsucht is the rest of the
+  // mempalace_query results that didn't make it into a citation.
   let refsHtml = '';
-  const msgRefs = getReferencesForMessage(idx);
-  if (msgRefs.length > 0) {
-    refsHtml = '<div class="msg-references">';
-    for (const ref of msgRefs) {
-      const isProject = ref.domain === 'project';
-      const tipPath = isProject ? ref.link : ref.link;
-      const ext = (ref.title || '').split('.').pop().toLowerCase();
-      const iconBg = isProject ? ({
-        pdf: '#d33', docx: '#2b579a', pptx: '#d24726',
-        xlsx: '#217346', eml: '#0072c6', msg: '#0072c6',
-      }[ext] || 'var(--accent-brand)') : '';
-      const iconChip = isProject
-        ? `<span class="ref-badge-icon" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:3px;background:${iconBg};color:#fff;font-size:8px;font-weight:700;letter-spacing:0.02em">${esc(ext || 'F')}</span>`
-        : `<img src="${esc(ref.favicon)}" onerror="this.style.display='none'" alt="">`;
+  const { cited: citedMsgRefs, searched: searchedMsgRefs } = getReferencesForMessage(idx);
+  const renderBadge = (ref) => {
+    const isProject = ref.domain === 'project';
+    const tipPath = ref.link;
+    const ext = (ref.title || '').split('.').pop().toLowerCase();
+    const iconBg = isProject ? ({
+      pdf: '#d33', docx: '#2b579a', pptx: '#d24726',
+      xlsx: '#217346', eml: '#0072c6', msg: '#0072c6',
+    }[ext] || 'var(--accent-brand)') : '';
+    const iconChip = isProject
+      ? `<span class="ref-badge-icon" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:3px;background:${iconBg};color:#fff;font-size:8px;font-weight:700;letter-spacing:0.02em">${esc(ext || 'F')}</span>`
+      : `<img src="${esc(ref.favicon)}" onerror="this.style.display='none'" alt="">`;
+    return `
+      <div class="ref-badge" onclick="openReferencesPanel('${esc(ref.link)}')" title="${esc(tipPath)}">
+        ${iconChip}
+        <span class="ref-badge-text">${esc(ref.title || ref.domain)}</span>
+      </div>
+    `;
+  };
+  if (citedMsgRefs.length > 0 || searchedMsgRefs.length > 0) {
+    refsHtml = '<div class="msg-references-wrap">';
+    if (citedMsgRefs.length > 0) {
       refsHtml += `
-        <div class="ref-badge" onclick="openReferencesPanel('${esc(ref.link)}')" title="${esc(tipPath)}">
-          ${iconChip}
-          <span class="ref-badge-text">${esc(ref.title || ref.domain)}</span>
-        </div>
-      `;
+        <div class="msg-references-row">
+          <span class="msg-references-label">Zitiert</span>
+          <div class="msg-references">${citedMsgRefs.map(renderBadge).join('')}</div>
+        </div>`;
+    }
+    if (searchedMsgRefs.length > 0) {
+      // Collapsed by default unless there are no cited refs.
+      const open = citedMsgRefs.length === 0 ? 'open' : '';
+      refsHtml += `
+        <details class="msg-references-row msg-references-searched" ${open}>
+          <summary class="msg-references-summary">
+            <span class="msg-references-disclosure">▸</span>
+            <span class="msg-references-label">Durchsucht</span>
+            <span class="msg-references-count">${searchedMsgRefs.length}</span>
+          </summary>
+          <div class="msg-references">${searchedMsgRefs.map(renderBadge).join('')}</div>
+        </details>`;
     }
     refsHtml += '</div>';
   }
@@ -16527,8 +16663,9 @@ function updateRightPanelBadges() {
   const attachCount = collectChatAttachments().length;
   const attachBadge = document.getElementById('tab-badge-attachments');
   if (attachBadge) attachBadge.textContent = attachCount || '0';
-  // References count
-  const refsCount = collectChatReferences().length;
+  // References count (cited + searched)
+  const _refs = collectChatReferences();
+  const refsCount = _refs.cited.length + _refs.searched.length;
   const refsBadge = document.getElementById('tab-badge-references');
   if (refsBadge) refsBadge.textContent = refsCount || '0';
   // Artifacts count
@@ -16636,52 +16773,78 @@ function showAttachmentFullview(index) {
   `;
 }
 
+function _refCardHtml(ref) {
+  const snippetHtml = ref.snippet ? `<div class="ref-card-snippet">${esc(ref.snippet)}</div>` : '';
+  const isProject = ref.domain === 'project';
+  const clickHandler = isProject
+    ? `openProjectSource(this.dataset.link)`
+    : `window.open('${esc(ref.link)}', '_blank')`;
+  const ext = (ref.title || '').split('.').pop().toLowerCase();
+  const iconBg = isProject ? {
+    pdf: '#d33', docx: '#2b579a', pptx: '#d24726',
+    xlsx: '#217346', eml: '#0072c6', msg: '#0072c6',
+    md: 'var(--text-400)', txt: 'var(--text-400)',
+  }[ext] || 'var(--accent-brand)' : '';
+  const previewHtml = isProject
+    ? `<div class="ref-thumb-placeholder" style="display:flex;align-items:center;justify-content:center;background:${iconBg};color:#fff;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em">${esc(ext || 'file')}</div>`
+    : `<img class="ref-thumb" src="${esc(`https://api.microlink.io/?url=${encodeURIComponent(ref.link)}&screenshot=true&meta=false&embed=screenshot.url`)}" onerror="this.parentElement.innerHTML='<div class=\\'ref-thumb-placeholder\\'><svg viewBox=\\'0 0 24 24\\' width=\\'32\\' height=\\'32\\' fill=\\'none\\' stroke=\\'var(--text-400)\\' stroke-width=\\'1\\' opacity=\\'0.3\\'><path d=\\'M12 2a10 10 0 110 20 10 10 0 010-20z\\'/><path d=\\'M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z\\'/></svg></div>'" loading="lazy" alt="">`;
+  const faviconHtml = isProject
+    ? ''
+    : `<img class="ref-favicon" src="${esc(ref.favicon)}" onerror="this.style.display='none'" alt="">`;
+  const domainLabel = isProject ? 'Project source' : esc(ref.domain);
+  return `
+    <div class="ref-card" data-link="${esc(ref.link)}" onclick="${clickHandler}">
+      <div class="ref-card-preview">
+        ${faviconHtml}
+        ${previewHtml}
+        <span class="ref-domain-pill">${domainLabel}</span>
+      </div>
+      <div class="ref-card-body">
+        <div class="ref-card-title">${esc(ref.title)}</div>
+        ${snippetHtml}
+        <div class="ref-card-url" style="word-break:break-all">${esc(ref.link)}</div>
+      </div>
+    </div>
+  `;
+}
+
 function renderReferencesPane() {
-  const refs = collectChatReferences();
+  const { cited, searched } = collectChatReferences();
   const container = document.getElementById('refs-content');
   if (!container) return;
-  if (!refs.length) {
+  if (!cited.length && !searched.length) {
     container.innerHTML = '<div class="attach-empty">No sources in this chat</div>';
     return;
   }
   let html = '';
-  for (const ref of refs) {
-    const snippetHtml = ref.snippet ? `<div class="ref-card-snippet">${esc(ref.snippet)}</div>` : '';
-    const isProject = ref.domain === 'project';
-    // Project refs open the original document via the auth-gated
-    // /v1/files/download endpoint (PDFs render inline, others download).
-    // Web refs keep the legacy plain window.open behavior.
-    const clickHandler = isProject
-      ? `openProjectSource(this.dataset.link)`
-      : `window.open('${esc(ref.link)}', '_blank')`;
-    // Per-document type icon for project refs (PDF/DOCX/PPTX/XLSX/...).
-    const ext = (ref.title || '').split('.').pop().toLowerCase();
-    const iconBg = isProject ? {
-      pdf: '#d33', docx: '#2b579a', pptx: '#d24726',
-      xlsx: '#217346', eml: '#0072c6', msg: '#0072c6',
-      md: 'var(--text-400)', txt: 'var(--text-400)',
-    }[ext] || 'var(--accent-brand)' : '';
-    const previewHtml = isProject
-      ? `<div class="ref-thumb-placeholder" style="display:flex;align-items:center;justify-content:center;background:${iconBg};color:#fff;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em">${esc(ext || 'file')}</div>`
-      : `<img class="ref-thumb" src="${esc(`https://api.microlink.io/?url=${encodeURIComponent(ref.link)}&screenshot=true&meta=false&embed=screenshot.url`)}" onerror="this.parentElement.innerHTML='<div class=\\'ref-thumb-placeholder\\'><svg viewBox=\\'0 0 24 24\\' width=\\'32\\' height=\\'32\\' fill=\\'none\\' stroke=\\'var(--text-400)\\' stroke-width=\\'1\\' opacity=\\'0.3\\'><path d=\\'M12 2a10 10 0 110 20 10 10 0 010-20z\\'/><path d=\\'M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z\\'/></svg></div>'" loading="lazy" alt="">`;
-    const faviconHtml = isProject
-      ? ''
-      : `<img class="ref-favicon" src="${esc(ref.favicon)}" onerror="this.style.display='none'" alt="">`;
-    const domainLabel = isProject ? 'Project source' : esc(ref.domain);
+  if (cited.length) {
     html += `
-      <div class="ref-card" data-link="${esc(ref.link)}" onclick="${clickHandler}">
-        <div class="ref-card-preview">
-          ${faviconHtml}
-          ${previewHtml}
-          <span class="ref-domain-pill">${domainLabel}</span>
+      <div class="refs-section">
+        <div class="refs-section-header">
+          <span class="refs-section-label">Zitiert</span>
+          <span class="refs-section-count">${cited.length}</span>
         </div>
-        <div class="ref-card-body">
-          <div class="ref-card-title">${esc(ref.title)}</div>
-          ${snippetHtml}
-          <div class="ref-card-url" style="word-break:break-all">${esc(ref.link)}</div>
+        <div class="refs-section-body">
+          ${cited.map(_refCardHtml).join('')}
         </div>
-      </div>
-    `;
+      </div>`;
+  }
+  if (searched.length) {
+    // Default-collapsed via <details>. If there are NO cited refs (e.g.
+    // a refusal / no-source answer), open the searched section by default
+    // so the user isn't staring at an empty pane.
+    const open = cited.length === 0 ? 'open' : '';
+    html += `
+      <details class="refs-section refs-section-searched" ${open}>
+        <summary class="refs-section-header">
+          <span class="refs-section-disclosure">▸</span>
+          <span class="refs-section-label">Durchsucht</span>
+          <span class="refs-section-count">${searched.length}</span>
+        </summary>
+        <div class="refs-section-body">
+          ${searched.map(_refCardHtml).join('')}
+        </div>
+      </details>`;
   }
   container.innerHTML = html;
 }
@@ -17041,14 +17204,62 @@ function extractReferencesFromToolResult(msg) {
   return refs;
 }
 
+// Pull `[Quelle: <basename> — "..."]` and `[source: <basename>]` markers
+// out of an assistant message's rendered content. Returns a Set of
+// normalised basenames (lowercased, .md companion suffix stripped) so
+// `policy.pdf` and `policy.pdf.md` and `Policy.PDF` all collapse to the
+// same key. Used to split refs into cited-vs-searched sections.
+function extractCitedBasenamesFromText(text) {
+  const set = new Set();
+  if (!text || typeof text !== 'string') return set;
+  // Match both `[Quelle: foo.pdf — "..."]` and `[source: foo.pdf]` and
+  // `[Quelle: foo.pdf §3.2]`. Capture the basename only (everything up to
+  // the first em-dash, en-dash, hyphen-with-spaces, §, or closing bracket).
+  // Em-dash variants: U+2014 (—), U+2013 (–), ASCII " - " with spaces.
+  const re = /\[(?:Quelle|source|Source|QUELLE):\s*([^\]—–§]+?)(?:\s*[—–]|\s+-\s+|\s+§|\])/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const raw = (m[1] || '').trim();
+    if (!raw) continue;
+    set.add(normaliseCitationBasename(raw));
+  }
+  return set;
+}
+
+function normaliseCitationBasename(s) {
+  let n = String(s || '').trim().toLowerCase();
+  // Strip path prefix if present
+  const slash = n.lastIndexOf('/');
+  if (slash >= 0) n = n.substring(slash + 1);
+  // Strip trailing .md companion suffix when on a known binary
+  const m = n.match(/^(.+\.(pdf|docx|pptx|xlsx|xlsm|eml|msg))\.md$/);
+  if (m) n = m[1];
+  return n;
+}
+
+function refBasenameKey(ref) {
+  return normaliseCitationBasename(ref.title || ref.link || '');
+}
+
 function collectChatReferences() {
   const chat = state.activeChat;
-  if (!chat) return [];
+  if (!chat) return { cited: [], searched: [] };
   const sessionId = chat.sessionId;
   // Use cached if available
   if (state.chatReferences[sessionId]) return state.chatReferences[sessionId];
 
-  const refs = [];
+  // Build the union of cited basenames across every assistant turn in the
+  // chat. A ref is "cited" if any assistant message text contains a
+  // `[Quelle: <basename>...]` marker matching its basename.
+  const citedBasenames = new Set();
+  for (const msg of chat.messages) {
+    if (msg.role === 'assistant' && msg.content) {
+      for (const k of extractCitedBasenamesFromText(msg.content)) citedBasenames.add(k);
+    }
+  }
+
+  const cited = [];
+  const searched = [];
   const seen = new Set();
   // Walk all messages: pick up live tool_result rows (during streaming) AND
   // assistant.metadata.tools[] (after reload from DB). Both feed the same
@@ -17068,23 +17279,36 @@ function collectChatReferences() {
       for (const ref of extracted) {
         if (!seen.has(ref.link)) {
           seen.add(ref.link);
-          refs.push(ref);
+          if (citedBasenames.has(refBasenameKey(ref))) cited.push(ref);
+          else searched.push(ref);
         }
       }
     }
   }
-  state.chatReferences[sessionId] = refs;
-  return refs;
+  const out = { cited, searched };
+  state.chatReferences[sessionId] = out;
+  return out;
 }
 
 function addChatReference(ref) {
   const chat = state.activeChat;
   if (!chat) return;
   const sessionId = chat.sessionId;
-  if (!state.chatReferences[sessionId]) state.chatReferences[sessionId] = [];
-  const refs = state.chatReferences[sessionId];
-  if (!refs.some(r => r.link === ref.link)) {
-    refs.push(ref);
+  // Live refs always go to "searched" — the cited/searched split is
+  // determined by the assistant message text, which doesn't yet exist
+  // when streaming starts. After stream end, the cache is invalidated
+  // (see invalidateChatReferences) and re-split lazily on the next read.
+  if (!state.chatReferences[sessionId]) state.chatReferences[sessionId] = { cited: [], searched: [] };
+  const cache = state.chatReferences[sessionId];
+  const allRefs = cache.cited.concat(cache.searched);
+  if (!allRefs.some(r => r.link === ref.link)) {
+    cache.searched.push(ref);
+  }
+}
+
+function invalidateChatReferences(sessionId) {
+  if (sessionId && state.chatReferences[sessionId]) {
+    delete state.chatReferences[sessionId];
   }
 }
 
@@ -17093,20 +17317,29 @@ function getReferencesForMessage(idx) {
   // tool_result rows (during streaming) or this very assistant message's
   // own metadata.tools[] array (after reload from DB). Stops at the
   // previous user/human message.
+  // Returns {cited, searched}: refs whose basename matches a `[Quelle:...]`
+  // marker in this assistant message's text go into cited; the rest go
+  // into searched (still loaded into MemPalace, just not actually used in
+  // the answer).
   const chat = state.activeChat;
-  if (!chat) return [];
-  const refs = [];
+  if (!chat) return { cited: [], searched: [] };
+  const self = chat.messages[idx];
+  const citedBasenames = (self && self.role === 'assistant')
+    ? extractCitedBasenamesFromText(self.content || '')
+    : new Set();
+  const cited = [];
+  const searched = [];
   const seen = new Set();
   const ingest = (synth) => {
     for (const ref of extractReferencesFromToolResult(synth)) {
       if (!seen.has(ref.link)) {
         seen.add(ref.link);
-        refs.push(ref);
+        if (citedBasenames.has(refBasenameKey(ref))) cited.push(ref);
+        else searched.push(ref);
       }
     }
   };
   // First: this assistant message's own metadata.tools[] (the post-reload path)
-  const self = chat.messages[idx];
   if (self && self.role === 'assistant' && self.metadata && Array.isArray(self.metadata.tools)) {
     for (const t of self.metadata.tools) {
       if (!t || !t.name) continue;
@@ -17119,12 +17352,12 @@ function getReferencesForMessage(idx) {
     if (m.role === 'user' || m.role === 'human') break;
     if (m.role === 'tool_result') ingest(m);
   }
-  return refs;
+  return { cited, searched };
 }
 
 function openReferencesPanel(highlightLink) {
-  const refs = collectChatReferences();
-  if (!refs.length) { showToast('No sources in this chat'); return; }
+  const { cited, searched } = collectChatReferences();
+  if (!cited.length && !searched.length) { showToast('No sources in this chat'); return; }
   openRightPanel('references');
   if (highlightLink) {
     setTimeout(() => {
