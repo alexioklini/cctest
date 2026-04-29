@@ -127,12 +127,67 @@ def _source_for_md(root: str, md_path: str) -> str:
     return os.path.join(root, rel)
 
 
-def _frontmatter(source_path: str, mtime: int, size: int) -> str:
-    return (
-        f"<!-- brain-source: {source_path} -->\n"
-        f"<!-- brain-source-mtime: {mtime} -->\n"
-        f"<!-- brain-source-size: {size} -->\n\n"
-    )
+def _frontmatter(source_path: str, mtime: int, size: int,
+                 backend: str = "") -> str:
+    parts = [
+        f"<!-- brain-source: {source_path} -->\n",
+        f"<!-- brain-source-mtime: {mtime} -->\n",
+        f"<!-- brain-source-size: {size} -->\n",
+    ]
+    if backend:
+        parts.append(f"<!-- brain-converter: {backend} -->\n")
+    parts.append("\n")
+    return "".join(parts)
+
+
+# ── Markitdown wrapper (preferred backend when available) ────────────────────
+#
+# Microsoft markitdown produces materially better markdown for LLM consumption
+# than fitz/python-docx/python-pptx — preserves table structure, heading
+# hierarchy, OCR fallback, and bullet semantics. Wired via subprocess (the
+# CLI is at /opt/homebrew/bin/markitdown installed under its own python; we
+# avoid importing the package because its python and ours may not match).
+#
+# Used as the preferred backend for .pdf/.docx/.pptx/.xlsx; falls through
+# to per-format extractors on:
+#   - subprocess error / non-zero exit
+#   - empty stdout (e.g. binary too damaged for markitdown to handle)
+#   - markitdown not on PATH (degraded but functional)
+#
+# Toggleable via config.json -> conversion.use_markitdown (default true when
+# detected on PATH).
+import shutil
+import subprocess
+
+_MARKITDOWN_BIN = shutil.which("markitdown")
+_MARKITDOWN_TIMEOUT_SECS = 120
+_MARKITDOWN_EXTS = {".pdf", ".docx", ".pptx", ".xlsx"}
+
+
+def _extract_with_markitdown(path: str) -> tuple[str, str | None]:
+    """Returns (markdown_text, error_msg or None). On non-zero exit or
+    timeout returns ("", "<reason>") so the caller can fall through to the
+    legacy per-format extractor."""
+    if not _MARKITDOWN_BIN:
+        return "", "markitdown not on PATH"
+    try:
+        proc = subprocess.run(
+            [_MARKITDOWN_BIN, path],
+            capture_output=True,
+            timeout=_MARKITDOWN_TIMEOUT_SECS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return "", f"markitdown timeout after {_MARKITDOWN_TIMEOUT_SECS}s"
+    except OSError as e:
+        return "", f"markitdown spawn failed: {type(e).__name__}: {e}"
+    if proc.returncode != 0:
+        err = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
+        return "", f"markitdown exit {proc.returncode}: {err[:200]}"
+    text = (proc.stdout or b"").decode("utf-8", errors="replace").strip()
+    if not text:
+        return "", "markitdown empty output"
+    return text + "\n", None
 
 
 # ── Per-format extractors ────────────────────────────────────────────────────
@@ -456,15 +511,23 @@ def _iter_source_files(root: str) -> Iterable[str]:
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
-def convert_folder(root: str, *, log_prefix: str = "[doc-convert]") -> ConvertResult:
+def convert_folder(root: str, *, log_prefix: str = "[doc-convert]",
+                   use_markitdown: bool = True) -> ConvertResult:
     """Walk `root` for supported binary docs, write `.md` siblings under
     `<root>/.brain-extracted/<rel>.md`. Idempotent via (mtime, size) hash.
     Returns a result summary; does not raise on per-file failures.
+
+    When `use_markitdown` is true and the markitdown CLI is on PATH, prefer
+    it for .pdf/.docx/.pptx/.xlsx (better table + heading fidelity for LLM
+    retrieval). Falls through to the per-format extractor on any failure.
     """
     res = ConvertResult()
     if not root or not os.path.isdir(root):
         return res
     t0 = time.time()
+    md_enabled = bool(use_markitdown and _MARKITDOWN_BIN)
+    md_used = 0
+    md_fallback = 0
     extract_root = os.path.join(root, EXTRACT_SUBDIR)
     for src in _iter_source_files(root):
         res.seen_total += 1
@@ -489,16 +552,31 @@ def convert_folder(root: str, *, log_prefix: str = "[doc-convert]") -> ConvertRe
             res.failed += 1
             res.failures.append(f"{src}: mkdir failed {e}")
             continue
-        try:
-            text, err = extractor(src)
-        except Exception as e:
-            res.failed += 1
-            res.failures.append(f"{src}: {type(e).__name__}: {e}")
-            continue
-        if err:
-            res.failed += 1
-            res.failures.append(f"{src}: {err}")
-            continue
+        text = ""
+        err: str | None = None
+        backend = ""
+        if md_enabled and ext in _MARKITDOWN_EXTS:
+            text, err = _extract_with_markitdown(src)
+            if err or not text:
+                md_fallback += 1
+                text = ""
+                err = None
+            else:
+                backend = "markitdown"
+                md_used += 1
+        if not text:
+            try:
+                text, err = extractor(src)
+            except Exception as e:
+                res.failed += 1
+                res.failures.append(f"{src}: {type(e).__name__}: {e}")
+                continue
+            if err:
+                res.failed += 1
+                res.failures.append(f"{src}: {err}")
+                continue
+            if text:
+                backend = backend or "fitz/legacy"
         if not text:
             # Empty after extraction — e.g. scanned PDF. Write a marker file
             # so we don't retry every cycle, but keep it small enough that the
@@ -507,7 +585,8 @@ def convert_folder(root: str, *, log_prefix: str = "[doc-convert]") -> ConvertRe
                 "# " + os.path.splitext(os.path.basename(src))[0] + "\n\n"
                 "_(no extractable text — possibly a scanned image; OCR not run)_\n"
             )
-        body = _frontmatter(src, cur_mt, cur_sz) + text
+            backend = backend or "empty"
+        body = _frontmatter(src, cur_mt, cur_sz, backend=backend) + text
         try:
             tmp_path = md_path + ".tmp"
             with open(tmp_path, "w", encoding="utf-8") as f:
@@ -521,10 +600,15 @@ def convert_folder(root: str, *, log_prefix: str = "[doc-convert]") -> ConvertRe
 
     res.elapsed_s = time.time() - t0
     if res.converted or res.failed:
+        md_note = ""
+        if md_enabled:
+            md_note = f" markitdown={md_used} fallback={md_fallback}"
+        elif use_markitdown and not _MARKITDOWN_BIN:
+            md_note = " markitdown=unavailable"
         print(
             f"{log_prefix} {root}: converted={res.converted} "
             f"unchanged={res.skipped_unchanged} failed={res.failed} "
-            f"seen={res.seen_total} elapsed={res.elapsed_s:.1f}s",
+            f"seen={res.seen_total} elapsed={res.elapsed_s:.1f}s{md_note}",
             flush=True)
     return res
 

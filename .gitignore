@@ -19,11 +19,22 @@ desktop/icons/icon.iconset/
 # Runtime/ephemeral state
 config.json.bak-*
 *.bak-*
+*.bak
+*.bak2
+.claude/
 agents/*/artifacts/
 agents/*/chats-indexed/
 agents/*/user_profiles/
 agents/*/scheduled_attachments/
+agents/*/projects/
+agents/.trash/
 agents/test-*/
+
+# User's local scratch — research reports, test PDFs
+AI_Development_*.md
+Mistral_AI_*.md
+agentic_trends_report_*.md
+Richtlinie-*.pdf
 
 # Downloaded docs / scratch files
 *MemPalace.html

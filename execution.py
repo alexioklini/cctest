@@ -33,8 +33,11 @@ DEFAULT_PROFILES: dict[str, dict] = {
     "python_exec":            {"heavy": True,  "timeout_seconds": 300},
     "execute_command":        {"heavy": True,  "timeout_seconds": 300},
     "read_file":              {"heavy": False},
+    "read_document":          {"heavy": False},
     "write_file":             {"heavy": False},
     "edit_file":              {"heavy": False},
+    "write_document":         {"heavy": False},
+    "edit_document":          {"heavy": False},
     "list_directory":         {"heavy": False},
     "mempalace_query":        {"heavy": False},
     "save_chat_to_memory":    {"heavy": False},
@@ -837,7 +840,7 @@ def maybe_retroactive_isolate(tool_name: str, args: dict, result: str) -> str:
         tool_name, args, result, session_id, tool_use_id
     )
 
-    summary, sections = _summarise_tool_result(
+    summary, sections, _summariser_usage = _summarise_tool_result(
         tool_name, args, result, artifact_meta, session_id
     )
 

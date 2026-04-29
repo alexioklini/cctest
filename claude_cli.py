@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.21.6"
-VERSION_DATE = "2026-04-28"
+VERSION = "8.22.0"
+VERSION_DATE = "2026-04-29"
 CHANGELOG = [
+    ("8.22.0", "2026-04-29", "Anti-hallucination retrieval stack + sampling + citation discipline. End-to-end stabilisation pass on the German bank-policy corpus after a day of validation runs that exposed a chain of three independent bugs masquerading as 'the model hallucinates'. (1) **PRECISION DISCIPLINE block** added between REFUSAL and CITATION DISCIPLINE in `_build_system_prompt`'s PROJECT MEMORY scope: bans plausible-sounding filler ('regelmäßig', 'häufig', 'sofort', 'kürzer', 'mindestens X Zeichen', 'alle 12 Monate', 'mindestens jährlich'), requires `nicht spezifiziert` when the source gives no concrete value, and gates every qualifying adverb/comparative on an immediately-following wörtliches Zitat from the read_document output. ISO-27001-typical phrasing from training data is explicitly NOT a source. (2) **CITATION DISCIPLINE rewritten** to mandate verbatim 10-25-word quotes inside the bracket — `[Quelle: <basename> — \"<wörtliches Zitat>\"]` — instead of the old `§N` style. The `.md` companions don't preserve the original document's paragraph numbering, so any `§N` the model wrote was fabricated; switching to verbatim quotes makes citations self-verifiable (user can Cmd+F the original PDF). Locator additions (`Page N` for PDF, `Slide N` for PPTX, `Sheet \"Name\"` for XLSX) are allowed only when genuinely visible in the read_document text. Worked example uses a real Multilogin sentence so the model has a concrete pattern to copy. (3) **Validated sampling defaults** for Mistral Small 3 on policy-reproduction: `temperature: 0.2` + `top_p: 0.85`. Captured operationally — across six measured runs on the same canary the combination dropped fabricated formulae, fabricated paragraph numbers, fabricated intervals, and fabricated thresholds while preserving correct retrieval and citations. `temperature: 0` was tested and rejected (Mistral provider rejected the request) and `temperature: 0.1` showed no measurable improvement over 0.2. The combination is now the user-set default in config.json (gitignored); CLAUDE.md notes the validation. (4) **Anti-room-name-guessing** — the `mempalace_query` tool's `room` parameter description was a permissive list of speculative example rooms ('document', 'documentation', etc.) which the model used as valid vocabulary, returning zero drawers and producing false 'not in the documents' answers. Description rewritten to enumerate the actual rooms Brain's miner uses (`general` for policy/document content, `artifacts`, `chat`/`chat_summary`/`chat_attachment`, `reference`) and explicitly forbid guessing. Validated on the canary against `9775bba7` → `a82327b7`: same model, same query, same retrieval, output dropped from 3850 chars (multiple fabricated sections incl. `§154–176`, 'alle 12 Monate', 'mindestens 20 Zeichen') to 1037 chars with a single inline blockquote, a single citation carrying the verbatim source text, and three paraphrase bullets — every claim backed by the read_document output. The day's other infrastructure fixes (markitdown wrapper preferred over fitz/python-docx for materially better markdown, read_document plain-text pagination respecting `offset`/`limit` instead of hard-capping at 500 lines, drawer.read_path / read_path_original carried through tool_mempalace_query, doc_convert frontmatter `brain-converter` stamp for backend traceability, KG disabled in default config because vanilla MemPalace+Claude Code outperformed Brain's KG-augmented stack on the IT-risk-score canary, _summarise_tool_result 3-tuple unpack fix in maybe_retroactive_isolate that was crashing every >65KB read_document call and being misread as hallucination, project__-wing startup wipe scoped to knowledge wing only — chat content preserved) ship with this version, plus matching memory notes (project_chroma_direct_search_fix, project_read_document_truncation_fix, project_drawer_path_resolution_fix, project_kg_disabled_markitdown_swap, bug_summarise_tool_result_unpack, project_brain_canary_55_of_7, project_vanilla_mcp_gap_analysis, project_drilldown_tools_added)."),
     ("8.21.6", "2026-04-28", "Project actions buttons + per-response Memory & Relations graph. Six coordinated UI changes. (1) **Project header gets explicit action buttons** — `Sync now` and `Knowledge graph` (admin-only). The chip itself is now informational (cursor:default, no onclick); double-click to open KG was unreliable (one user-reported bug had it stop firing) so the surface was demoted. Sync button disables while `state==='syncing'`; KG button disables when there are zero relations and is hidden entirely for non-admin roles since the modal is debug/audit territory (predicate distribution, sample triples, extraction log, admin re-extract — useful for verifying corpus quality and audit prep, not end-user reading). (2) **KG modal was visually transparent** — `kgOpenProject` and `_kgShowInfo` rendered the inner card with `class=\"modal\"` but the styled rule is `.modal-content`; class typo meant no background, no shadow, no rounding so the modal looked like floating text on the page underneath. Fixed both. (3) **Inline 'Show used Memory and Relationships' button per assistant response** — appears only on assistant turns that actually called `mempalace_query` / `mempalace_kg_*`, gated by new `messageUsedKnowledge(idx)` helper that reads metadata.tools[] post-reload + tool_result rows live. (4) **Memory & Relations graph modal** — opens from the inline button; renders a 3-column SVG (Documents → Subjects → Objects, left-to-right) with rounded pill nodes that fit long German entity names instead of truncating to unrecognisable stubs. Predicate labels ride along cubic-Bezier edges via SVG textPath so they never overlap nodes. Height auto-sizes to dataset (no more empty top half on small retrievals). Empty columns hidden entirely (a docless KG-only retrieval renders 2 columns instead of forcing a tiny 3rd). Side panel lists every drawer with similarity score + snippet, plus every relation with source file + confidence so the user can audit which document each fact came from. (5) **Source-link dotted edges**: when a triple's `source_file` matches a doc node by basename (case-insensitive, .md companion stripped, full-path vs bare-name normalised) a dashed edge connects them — visually answers 'which document produced this fact?' even when MemPalace returned a triple without fetching that doc's drawer. Doc nodes auto-created from triples too, not just drawers, so the graph shows every source the answer used. (6) **Plain-English tagline** above the graph explains what drawers/relations are and why the user might want to look — replaces having to learn the vocabulary from the docs."),
     ("8.21.5", "2026-04-28", "Status-bar hidden on chatless views + scheduled-run inspector reroute. Two coordinated UI fixes after the v8.21.4 ship. (1) **Status bar leaked the previous chat's data on every view that has no active session in scope**: the per-chat status bar (session id, model, tokens, cost, context fill, warmup dot) was rendered with `display: ''` on welcome / projects / project-detail / scheduled / artifacts. `updateStatusBar()` reads `state.activeChat`, so when the user navigated away from a chat the bar kept showing that prior chat's numbers — read by users as 'current state' which it isn't. Now hidden on every view that doesn't have a chat in scope: welcome, projects, project-detail, scheduled, artifacts. Bar still shows on `chat` and `chats`. project-detail also drops the `updateStatusBar()` call from its post-navigate refresh block since the bar is hidden. (2) **Status-bar inspector button on scheduled-run chat view routed to the generic Session Inspector** instead of the scheduled-run details modal — but scheduled runs already have a much richer per-run modal (`_schedViewRunDetail`: timeline + tool spans + artifacts + result text) that the History table's 'Details' button uses, plus the run banner's 'Details' button. The generic inspector is per-turn / per-round LLM-call detail, geared toward debugging a live chat — not what the user wants when looking back at a completed scheduled run. `openInspectModal()` now detects `sessionId` matching `^sched-(\\d+)$` and routes to `_schedViewRunDetail(runId)` instead. Non-scheduled (`uuid` session id) chats fall through to the existing per-turn inspector unchanged. Single source of truth for 'what happened on this run' regardless of whether the user enters from the history table, the run banner, or the status-bar magnifying glass."),
     ("8.21.4", "2026-04-28", "Project right-pane UX overhaul. Six coordinated changes addressing user feedback on the project detail view. (1) **Memory chip rebuilt around what users actually count**: idle label now reads `Memory: N files · M relations · next sync in Xh` instead of `N indexed`. `total_files` is a new server-tracked distinct-source-file count (was only drawer count before, which conflates 800-char chunks with files); `next_run_at` is derived from `last_run_finished + interval_seconds` and exposed in the `/sync-status` response so the chip computes its countdown without a second config fetch. **Live progress during sync**: chip flips to `Memory: syncing P/T files · ETA Xm (current folder)` — daemon does a cheap pre-walk at cycle start to compute `cycle_total_files`, then bumps `cycle_processed_files` after each attachment batch / folder finishes (incl. error-skip paths so the bar never stalls below total). ETA is elapsed-extrapolated from wall time and progress share, gated to ≥5% completion so an early 0/N doesn't claim '12 days remaining'. Tooltip carries the technical drawer count + last-synced timestamp. (2) **'triples' → 'relations'** in every user-facing surface: chip label, per-folder pill, KG sub-badges. The KG concept is too jargony for end users — 'relations' reads as 'facts we extracted' in plain English. Settings → Knowledge Graph admin tab kept the technical term since that audience needs it. (3) **Input-folder rows redesigned**: was a single overflow-prone flex row with overlapping badges on narrow panes; now a 3-line block (folder name bold + edit/delete actions on top; full absolute path in mono with RTL ellipsis to keep the tail visible; badges wrap-flex on a third line). Added auto-sync state badge, made delete/edit affordances explicit SVG buttons. (4) **Edit-folder modal**: pencil button on each row opens a modal with the same picker shell as Add, prefilled with the current path/recursive/auto_sync. Backed by new `POST /v1/agents/{id}/projects/{name}/input-folders/{idx}` for partial update (path / recursive / auto_sync); path-change goes through the same validation as add so dedup against other entries is enforced. PATCH wasn't dispatched by the HTTP server, so the update lives on POST under the indexed sub-path. (5) **Auto-sync gate per folder**: new `auto_sync` field (default true) on input_folders entries. Daemon honors `auto_sync=false` on scheduled cycles — these folders show a `paused` row state and contribute 0 to `cycle_total_files`. Manual 'Sync now' overrides the gate so the user can still trigger an on-demand pass. Add modal grew an 'Include in automatic sync cycles' checkbox (defaults to checked); same checkbox in the edit modal. (6) **Delete-confirm modal** replaces the bare `confirm()`: amber warning icon + path readout + red 'Remove folder' button. Auth still gates on `_project_access_check(require_manage=True)` for the underlying DELETE. (7) **Draggable right pane**: added a `col-resize` handle on the left edge of `.project-detail-panel`, mirrors the `#right-panel` pattern. Width persisted to `localStorage('project-detail-panel-width')`, clamped 240-640px. (8) **Project composer placeholder + instructions branding**: composer textarea placeholder now reads `Write your message to <ProjectName>` (set dynamically in `loadProjectDetail` from `project.name`, falling back to slug); the static `placeholder=\"Write your message to Claude\"` was misleading on a Brain Agent install. Instructions empty-state placeholder updated from 'customize Claude\\'s responses' to 'customize Brain Agent\\'s responses' in all three rendering paths."),
@@ -561,9 +562,17 @@ TOOL_DEFINITIONS = [
                 "room": {
                     "type": "string",
                     "description": (
-                        "Optional room filter: chat, chat_summary, chat_attachment, "
-                        "reference, document, artifacts, or any other configured room. "
-                        "Omit to search all rooms in the wing."
+                        "Optional room filter. Brain's project miner files all "
+                        "policy/document content under room='general' and "
+                        "auto-promoted artifacts under room='artifacts'. "
+                        "Chat content (when chat-sync is on) uses 'chat', "
+                        "'chat_summary', 'chat_attachment'. Web/search "
+                        "references use 'reference'. **DO NOT GUESS room "
+                        "names** — invented values like 'document' or "
+                        "'documentation' return zero drawers and produce "
+                        "false 'no information found' answers. Omit this "
+                        "argument unless you have a verified room name "
+                        "from a prior result."
                     ),
                 },
                 "n_results": {
@@ -2115,11 +2124,28 @@ def _parse_pptx_from_bytes(raw_bytes: bytes) -> str:
 
 def tool_read_document(args: dict) -> str:
     """Format-aware document reader."""
-    path = args.get("path", "")
+    # Accept legacy / drawer-vocab synonyms — drawers from mempalace_query
+    # carry the field as `source_file`, and the model frequently passes that
+    # name verbatim. Treating an empty `path` as CWD silently expanded into
+    # "Is a directory" errors that the model then ignored.
+    path = args.get("path", "") or args.get("source_file", "") or args.get("file", "")
+    if not path or not str(path).strip():
+        return _err(
+            "read_document: 'path' is required (got empty). When following up "
+            "on a mempalace_query drawer, take its `source_file` value and "
+            "pass it as the `path` argument — JOIN with the input-folder "
+            "absolute path if `source_file` is relative.")
+    path = str(path).strip()
     try:
         path = os.path.expanduser(path)
         if not os.path.isabs(path):
             path = os.path.abspath(path)
+        if os.path.isdir(path):
+            return _err(
+                f"read_document: '{path}' is a directory, not a file. The "
+                "model commonly passes a base path here when it meant to "
+                "pass a specific document — re-issue the call with the full "
+                "file path including extension.")
         if not os.path.exists(path):
             return _err(f"File not found: {path}")
         ext = os.path.splitext(path)[1].lower()
@@ -2304,17 +2330,31 @@ def tool_read_document(args: dict) -> str:
             return _ok({"path": path, "format": fmt, "content": result.text_content})
 
         else:
-            # Fallback to plain text read (same as read_file)
+            # Plain-text / markdown / unknown-extension read. Honor explicit
+            # offset+limit when the model paginates; otherwise read the whole
+            # file. The previous hard-cap at 500 lines truncated mid-document
+            # silently — on the kg-real-policies ISMS Handbuch (1903 lines)
+            # the section 2.13 percent-to-score table sits at line 1267,
+            # WAY past line 500, so the model never saw the table even when
+            # it correctly chose read_document on the .md companion. The
+            # tool_result_char_limit middleware will compact downstream if
+            # the content is too large for the round budget.
+            offset = int(args.get("offset", 1) or 1)
+            limit = args.get("limit")
             with open(path, "r", errors="replace") as f:
                 lines = f.readlines()
             total = len(lines)
-            limit = 500
-            selected = lines[:limit]
+            start = max(0, offset - 1)
+            end = start + int(limit) if limit else total
+            selected = lines[start:end]
             numbered = []
-            for i, line in enumerate(selected, start=1):
+            for i, line in enumerate(selected, start=start + 1):
                 numbered.append(f"{i:>6}\t{line.rstrip()}")
             content = "\n".join(numbered)
-            return _ok({"path": path, "format": "text", "total_lines": total, "content": content})
+            shown = f"{start+1}-{min(end, total)}"
+            return _ok({"path": path, "format": "text",
+                        "total_lines": total, "showing": shown,
+                        "content": content})
     except ImportError as e:
         return _err(str(e))
     except Exception as e:
@@ -3597,26 +3637,52 @@ def tool_mempalace_query(args: dict) -> str:
     _needs_user_filter = bool(current_user_id and not wing and not project_pinned)
     fetch_n = n_results * 4 if _needs_user_filter else n_results
 
+    # Use direct Chroma query (mirrors `mempalace search` CLI's `search()`
+    # function) instead of the higher-level `search_memories()`. The latter
+    # runs a closet-boost + drawer-grep-enrichment pass that produces the
+    # "all 19 hits are the document's frontmatter" pathology on closet-
+    # boosted multi-chunk sources (see CLAUDE.md v8.21.2 for the deep dive).
+    # Vanilla MemPalace CLI's `search` skips that pass and returns the raw
+    # Chroma vector hits — which actually diversify across the document
+    # because Chroma's distances are per-chunk. That's why `mempalace search
+    # "IT-Risk Score Berechnung"` from a vanilla install returns 5 distinct
+    # chunks (TOC, frontmatter, section 2.13 body, ...) while Brain's
+    # `search_memories()` call returned 19 byte-identical frontmatter blobs
+    # plus 1 unrelated chunk.
     mempalace_activity.retrieve_begin()
     try:
         try:
-            from mempalace.searcher import search_memories
-            results = None
-            for _attempt in range(2):
-                try:
-                    results = search_memories(
-                        query=query,
-                        palace_path=palace_path,
-                        wing=wing,
-                        room=room,
-                        n_results=fetch_n,
-                    )
-                    if results is not None:
-                        break
-                except (AttributeError, TypeError):
-                    import time as _t; _t.sleep(0.2)
-            if results is None:
-                results = {}
+            from mempalace.palace import get_collection as _gc_query
+            from mempalace.searcher import build_where_filter as _build_where
+            col = _gc_query(palace_path, create=False)
+            if col is None:
+                return _err(f"mempalace_query: palace collection not found at {palace_path}")
+            where_filter = _build_where(wing, room)
+            kwargs = {
+                "query_texts": [query],
+                "n_results": fetch_n,
+                "include": ["documents", "metadatas", "distances"],
+            }
+            if where_filter:
+                kwargs["where"] = where_filter
+            chroma_res = col.query(**kwargs)
+            # Chroma returns lists-of-lists keyed by query; we ran one query.
+            docs = (chroma_res.get("documents") or [[]])[0]
+            metas = (chroma_res.get("metadatas") or [[]])[0]
+            dists = (chroma_res.get("distances") or [[]])[0]
+            raw = []
+            for doc, meta, dist in zip(docs, metas, dists):
+                meta = meta or {}
+                similarity = max(0.0, 1.0 - float(dist or 0.0))
+                raw.append({
+                    "wing": meta.get("wing", ""),
+                    "room": meta.get("room", ""),
+                    "source_file": meta.get("source_file", ""),
+                    "similarity": round(similarity, 3),
+                    "matched_via": "chroma-vector",
+                    "text": doc or "",
+                })
+            results = {"results": raw, "total_before_filter": len(raw)}
         except Exception as e:
             return _err(f"mempalace_query: {type(e).__name__}: {e}")
     finally:
@@ -3644,28 +3710,48 @@ def tool_mempalace_query(args: dict) -> str:
             return True
         raw_results = [r for r in raw_results if isinstance(r, dict) and _visible(r)]
 
-    # Dedupe by source_file: MemPalace's searcher hydration step can return
-    # the same chunk text for every hit on a closet-boosted source (the
-    # keyword-best chunk is computed identically each time, since query +
-    # source_file are the same). Without dedup, an agent asking about
-    # "SPAM Malwareschutz" sees 7 identical hits showing only the document's
-    # frontmatter + title page (because every chunk in the doc contains the
-    # word "Malwareschutz" but only one chunk contains "Spam", and the
-    # set-based scorer ties them all at score 1 → first chunk wins). The
-    # agent then concludes the doc has no info on the subject when it
-    # actually does. Keeping the highest-similarity hit per source — and
-    # then trying to substitute a chunk whose text actually mentions the
-    # rarer query terms — gives the model a better signal.
-    by_source = {}
+    # Dedupe by (source_file, chunk_text_hash): MemPalace's searcher hydration
+    # step can return the same chunk text for every hit on a closet-boosted
+    # source (the keyword-best chunk is computed identically each time, since
+    # query + source_file are the same). Earlier versions deduplicated by
+    # source_file alone, which collapsed e.g. 19 identical-text hits down to
+    # 1 — but ALSO threw away genuinely different chunks of the same file
+    # that happened to rank lower. On the kg-real-policies "IT-Risk Score
+    # Berechnung" query, vanilla MemPalace returns 5 distinct hits with 3 of
+    # them showing 3 different chunks of the ISMS Handbuch (TOC, frontmatter,
+    # and the actual section 2.13 text). Brain's old per-source dedupe kept
+    # only the title-frontmatter hit and dropped the section-2.13 hit
+    # entirely, since the latter had a lower closet-boosted similarity.
+    #
+    # Now: dedupe by (source, content-fingerprint) so we keep multiple hits
+    # per file as long as they're showing DIFFERENT text. Cap per-source at
+    # `max_per_source` so a doc that genuinely has many distinct relevant
+    # chunks doesn't crowd out other sources entirely.
+    max_per_source = 4
+    seen_fingerprints: set[tuple[str, str]] = set()
+    per_source_count: dict[str, int] = {}
+    deduped: list[dict] = []
+    # raw_results is already sorted by similarity desc by the searcher;
+    # iterate in that order so the highest-sim variant wins on a fingerprint
+    # collision.
     for r in raw_results:
         if not isinstance(r, dict):
             continue
-        sf = r.get("source_file") or ""
-        prev = by_source.get(sf)
-        if prev is None or (r.get("similarity") or 0) > (prev.get("similarity") or 0):
-            by_source[sf] = r
-    deduped = sorted(by_source.values(),
-                     key=lambda x: -(x.get("similarity") or 0))
+        sf = (r.get("source_file") or "").strip()
+        text = (r.get("text") or "").strip()
+        # Fingerprint: first 200 chars of text, normalised. Cheap and stable
+        # for the "identical hydration" symptom (which produces byte-identical
+        # text across ranks) without false-collapsing genuinely-different
+        # chunks that happen to start with the same heading.
+        fp = (sf, " ".join(text[:200].split()))
+        if fp in seen_fingerprints:
+            continue
+        if per_source_count.get(sf, 0) >= max_per_source:
+            continue
+        seen_fingerprints.add(fp)
+        per_source_count[sf] = per_source_count.get(sf, 0) + 1
+        deduped.append(r)
+    # Order is already similarity-desc; nothing else to sort.
 
     # Substitute chunks: when the hit's text is dominated by document-title
     # repetition (frontmatter + first-page noise common in `.brain-extracted/
@@ -3675,20 +3761,33 @@ def tool_mempalace_query(args: dict) -> str:
     try:
         if deduped and palace_path:
             from mempalace.palace import get_collection as _gc
-            _qtokens = re.findall(r"\w{2,}", query.lower(), flags=re.UNICODE)
+            _qtokens = re.findall(r"\w{3,}", query.lower(), flags=re.UNICODE)
+            # German-compound-aware "rare" detection: a query token is "rare"
+            # if it doesn't appear as a WORD in the filename (substring match
+            # is too lax for German — `risk` ⊂ `Risikomanagement` would
+            # falsely classify "risk" as already-in-filename for an "IT-Risk
+            # Score" query about a `Risikomanagement_Handbuch.pdf` source).
+            # Use \b word-boundary matching so compounds don't swallow short
+            # tokens.
+            def _word_in(token: str, text: str) -> bool:
+                return re.search(r"\b" + re.escape(token) + r"\b",
+                                 text, flags=re.IGNORECASE | re.UNICODE) is not None
             for hit in deduped:
                 full_sf = hit.get("source_file") or ""
                 hit_text = hit.get("text") or ""
-                # Tokens not present in the filename are the "rare" subject
-                # words (e.g. for "SPAM Malwareschutz" with file
-                # ANW_20_2_9_Malwareschutz.pdf.md, rare = {spam}).
                 fname_lower = full_sf.lower()
-                rare = [t for t in set(_qtokens) if t not in fname_lower]
+                rare = [t for t in set(_qtokens)
+                        if not _word_in(t, fname_lower)]
+                # If no token is structurally "rare" (every query token is in
+                # the filename), fall back to ALL query tokens so the
+                # substitute scan still has a signal to score chunks by — the
+                # query terms are ALWAYS what the user wants chunks about,
+                # filename match or not.
                 if not rare:
-                    continue
-                # If the current hit text already contains a rare term,
-                # leave it alone — the searcher picked well.
-                if any(t in hit_text.lower() for t in rare):
+                    rare = list(set(_qtokens))
+                # If the current hit text already contains a rare term as a
+                # word, leave it alone — the searcher picked well.
+                if any(_word_in(t, hit_text) for t in rare):
                     continue
                 # Otherwise scan all chunks for this source and pick the
                 # one with the highest count of rare terms.
@@ -3767,14 +3866,66 @@ def tool_mempalace_query(args: dict) -> str:
     except Exception:
         pass
 
+    # Resolve each drawer's basename `source_file` back to the absolute
+    # on-disk path the miner stored in Chroma metadata. The MemPalace searcher
+    # strips paths to basename (`Path(source_file).name`), so without this
+    # the model only sees `policy.pdf.md` and has to guess the subfolder
+    # when calling `read_document` — guesswork that has caused live
+    # hallucinations on this corpus (session ba3b33b8, 2026-04-29). Build
+    # one basename→full-path map per query via Chroma `where={wing: ...}`
+    # so the lookup costs O(1) per drawer (one hash lookup, not one round
+    # trip per drawer).
+    basename_to_full: dict[str, str] = {}
+    md_to_original: dict[str, str] = {}
+    if drawers_to_serialize := deduped[:n_results]:
+        try:
+            from mempalace.palace import get_collection as _gc2
+            _col2 = _gc2(palace_path, create=False)
+            if _col2 is not None and wing:
+                _meta = _col2.get(where={"wing": wing}, include=["metadatas"])
+                for m in (_meta.get("metadatas") or []):
+                    sf = ((m or {}).get("source_file") or "").strip()
+                    if not sf or "/" not in sf:
+                        continue
+                    bn = sf.rsplit("/", 1)[-1]
+                    # Keep first-wins; if multiple subdirs share a basename
+                    # the caller can disambiguate from drawer text.
+                    basename_to_full.setdefault(bn, sf)
+                    # Map the .md companion to its original binary if the
+                    # binary lives next to the .brain-extracted/ folder.
+                    if "/.brain-extracted/" in sf and sf.endswith(".md"):
+                        # /a/b/.brain-extracted/sub/foo.pdf.md → /a/b/sub/foo.pdf
+                        without_ext = sf[:-3]  # drop .md
+                        original = without_ext.replace(
+                            "/.brain-extracted/", "/", 1)
+                        md_to_original[sf] = original
+        except Exception:
+            pass
+
     drawers = []
     for r in deduped[:n_results]:
         if not isinstance(r, dict):
             continue
+        sf_in = r.get("source_file", "") or ""
+        # If the searcher already gave us a path, prefer it; else look up by
+        # basename.
+        if "/" in sf_in:
+            full_path = sf_in
+        else:
+            full_path = basename_to_full.get(sf_in, sf_in)
+        original_binary = md_to_original.get(full_path, "")
         drawers.append({
             "wing": r.get("wing", ""),
             "room": r.get("room", ""),
-            "source_file": r.get("source_file", ""),
+            "source_file": sf_in,
+            # Absolute path to pass directly to `read_document(path=...)`.
+            # Always populated when we could resolve; equal to source_file
+            # when the path was already absolute. For .brain-extracted/.md
+            # companions we ALSO surface `read_path_original` pointing at
+            # the underlying PDF/DOCX/etc — read_document handles those
+            # natively and gives higher-fidelity output (tables, layout).
+            "read_path": full_path,
+            "read_path_original": original_binary,
             "similarity": r.get("similarity"),
             "matched_via": r.get("matched_via", "drawer"),
             "text": (r.get("text") or "")[:2000],
@@ -3787,6 +3938,16 @@ def tool_mempalace_query(args: dict) -> str:
         "count": len(drawers),
         "total_before_filter": (results or {}).get("total_before_filter"),
         "drawers": drawers,
+        # Hint to the model: every drawer has a `read_path` field that's a
+        # ready-to-use absolute path for read_document — no string-joining
+        # required.
+        "read_hint": (
+            "To follow up on a drawer, call "
+            "`read_document(path=<drawer.read_path>)` — or "
+            "`read_document(path=<drawer.read_path_original>)` for the "
+            "original PDF/DOCX/etc. if you need formula/table fidelity. "
+            "Both paths are absolute and ready to use as-is; do NOT join "
+            "with input-folder paths."),
     })
 
 
@@ -3807,6 +3968,12 @@ def _kg_resolve_project_scope() -> tuple[str, list[str], str | None]:
     cfg = _load_mempalace_config()
     if not cfg.get("enabled", True):
         return "", [], "mempalace: disabled in config.json"
+    if not (cfg.get("kg") or {}).get("enabled", True):
+        return "", [], (
+            "mempalace_kg: knowledge-graph extraction is disabled in "
+            "config.json (mempalace.kg.enabled=false). Use mempalace_query "
+            "to retrieve drawers and read_document on the source files for "
+            "verbatim policy text instead.")
     palace_path = cfg.get("palace_path", "")
     if not palace_path or not os.path.isdir(palace_path):
         return "", [], f"mempalace: palace_path missing: {palace_path}"
@@ -20342,6 +20509,12 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
                     (proj_cfg.get("sync_status") or {}).get("total_indexed") or 0)
             except (TypeError, ValueError):
                 _proj_total_drawers = 0
+            try:
+                _kg_enabled_for_prompt = bool(
+                    (_load_mempalace_config().get("kg") or {}).get(
+                        "enabled", True))
+            except Exception:
+                _kg_enabled_for_prompt = True
             system_instruction += (
                 "\nPROJECT MEMORY — IMPORTANT:\n"
                 "This project has a dedicated, isolated memory store. It contains "
@@ -20362,40 +20535,108 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
                 "consult the project's memory tools first. Do not guess or rely "
                 "on general knowledge when the project may have specifics.\n"
                 "\n"
-                "TWO TOOLS AVAILABLE — pick the right one:\n"
-                "  1. `mempalace_query` — vector + lexical retrieval; returns "
-                "verbatim text chunks (drawers). Best for: 'what does the "
-                "document say about X', 'find me the passage on Y', "
-                "summarisation, narrative questions, anything where you need "
-                "the actual phrasing.\n"
-                "  2. `mempalace_kg_search` — structured triple search by "
-                "predicate. Best for: 'which laws are cited' "
-                "(predicate=cites), 'who is responsible for X' "
-                "(predicate=responsible_party), 'what does X require' "
-                "(predicate=requires), contradiction-detection ('all "
-                "requires-triples about retention'), coverage analysis, "
-                "responsibility matrices. Use this when the question is "
-                "structural rather than narrative.\n"
-                "  3. `mempalace_kg_query` — entity neighbourhood. Best for: "
-                "'what do we say about <specific entity>', 'all triples "
-                "involving <role/system/document>'.\n"
-                "Examples:\n"
-                "  • 'Was steht in der Richtlinie zu X?' → `mempalace_query`\n"
-                "  • 'Welche Gesetze werden zitiert?' → "
-                "`mempalace_kg_search(predicate='cites')`\n"
-                "  • 'Wer ist verantwortlich für IT-Security?' → "
-                "`mempalace_kg_search(predicate='responsible_party', "
-                "object_contains='Security')`\n"
-                "  • 'Welche Verbote gibt es zu Datenweitergabe?' → "
-                "`mempalace_kg_search(predicate='forbids', "
-                "subject_contains='Daten')`\n"
-                "Do NOT pass a `wing` argument — it is set automatically to "
-                "this project's private wing.\n"
-                "\n"
+                "**MANDATORY 3-STEP FLOW for every project-knowledge question**:\n"
+                "  Step 1: Call `mempalace_query` with the user's question (or "
+                "rephrased terms). This returns drawers — short ~800-char "
+                "search-result snippets, NOT the full document. Drawer text "
+                "is for ranking and pointing you at the right file; it is "
+                "NEVER sufficient to answer from on its own.\n"
+                "  Step 2: For EACH top-ranked drawer that looks relevant, "
+                "call `read_document` to load the FULL converted markdown "
+                "of the underlying document. Read enough of it to actually "
+                "find the information — formulas, tables, full paragraphs.\n"
+                "    **HOW TO CALL READ_DOCUMENT**: every drawer carries a "
+                "`read_path` field — absolute path to the curated "
+                "`.brain-extracted/<name>.<ext>.md` companion. Pass it "
+                "verbatim as `path`. Do NOT pass `source_file=...` (wrong "
+                "parameter name; call silently fails). Do NOT construct "
+                "paths from basenames + input-folder roots (the file may "
+                "live in a subfolder you don't know about).\n"
+                "    **Always prefer `read_path` (the .md)** over "
+                "`read_path_original` (the binary). The .md is what "
+                "Microsoft markitdown produced from the binary — better "
+                "table structure, heading hierarchy, OCR — and it's the "
+                "exact text the drawer search ranked. Reading the original "
+                "PDF re-extracts with a different (worse) extractor; "
+                "you'd lose the curation. Use `read_path_original` only as "
+                "a fallback when `read_path` errors or is empty.\n"
+                "    Worked example: drawer returns "
+                "`read_path=\"/private/tmp/kg-real-policies/.../.brain-extracted/"
+                "20_2 Informationssicherheit/20_2_1_2_ARL_ISMS "
+                "Risikomanagement Handbuch.pdf.md\"`. Call: "
+                "`read_document(path=\"<that read_path>\")` verbatim. The "
+                "result is the full curated markdown, ready to read end-"
+                "to-end for formulas, tables, full sections.\n"
+                "  Step 3: Answer ONLY from what you read in Step 2. The "
+                "drawer snippet from Step 1 is a pointer, not a quotation. "
+                "If `read_document` errors (file not found, wrong path, etc.) "
+                "do NOT answer from training data — re-issue the call with "
+                "the corrected path, or refuse cleanly per REFUSAL "
+                "DISCIPLINE below. **An errored read is a missing answer, "
+                "not an invitation to fall back to general knowledge.** "
+                "Every measured hallucination on this corpus has been "
+                "either: (a) answering from drawer text alone, or (b) "
+                "answering from training data after a read_document error.\n"
+                "Skipping Step 2 — or proceeding past a Step 2 error — is "
+                "the documented cause of wrong answers on this project.\n"
+                "\n")
+            if _kg_enabled_for_prompt:
+                system_instruction += (
+                    "OPTIONAL STRUCTURED LOOKUP (knowledge graph):\n"
+                    "  `mempalace_kg_search` — structured triple search by "
+                    "predicate. Useful for: 'which laws are cited' "
+                    "(predicate=cites), 'who is responsible for X' "
+                    "(predicate=responsible_party), 'what does X require' "
+                    "(predicate=requires), contradiction-detection ('all "
+                    "requires-triples about retention'), coverage analysis, "
+                    "responsibility matrices.\n"
+                    "  `mempalace_kg_query` — entity neighbourhood. Useful "
+                    "for 'what do we say about <specific entity>'.\n"
+                    "Use these ONLY for structural / list questions where the "
+                    "answer is a flat enumeration of facts the KG already "
+                    "captures. For narrative or 'how is X calculated' / "
+                    "'what does the policy say about X' questions, ALWAYS "
+                    "use the 3-step flow above (`mempalace_query` then "
+                    "`read_document`) — KG triples are abstractions and lack "
+                    "the surrounding context the user needs.\n"
+                    "Examples:\n"
+                    "  • 'Was steht in der Richtlinie zu X?' → 3-step flow "
+                    "(mempalace_query → read_document)\n"
+                    "  • 'Wie wird X berechnet?' → 3-step flow (the formula "
+                    "lives in the document, not in triples)\n"
+                    "  • 'Welche Gesetze werden zitiert?' → "
+                    "`mempalace_kg_search(predicate='cites')` is fine\n"
+                    "  • 'Wer ist verantwortlich für IT-Security?' → "
+                    "`mempalace_kg_search(predicate='responsible_party')`\n"
+                    "Do NOT pass a `wing` argument — it is set automatically.\n"
+                    "Do NOT pass a `room` argument either, unless you have "
+                    "verified the exact room name from a previous successful "
+                    "result. Brain's project miner uses room='general' for "
+                    "all policy/document content; invented values like "
+                    "'document' or 'documentation' silently return zero "
+                    "drawers and lead to fabricated 'not in the documents' "
+                    "answers. The default (no room filter) searches "
+                    "everything in the wing — that is what you want.\n"
+                    "Do NOT pass `include_chat_history=true` for "
+                    "'how is X calculated' / 'what does the policy say' "
+                    "questions — that flag switches the search to the "
+                    "PROJECT CHAT wing (past conversations) instead of the "
+                    "PROJECT KNOWLEDGE wing (the actual indexed documents). "
+                    "Use it ONLY when the user explicitly references prior "
+                    "chat ('what did we discuss about X', 'remember when I "
+                    "said Y').\n"
+                    "\n")
+            else:
+                system_instruction += (
+                    "(The knowledge graph is currently disabled for this "
+                    "deployment; only `mempalace_query` + `read_document` "
+                    "are available for project knowledge.)\n\n")
+            system_instruction += (
                 "**REFUSAL DISCIPLINE — read carefully**:\n"
-                "If `mempalace_query` returns 0 relevant drawers AND any "
-                "`mempalace_kg_*` calls return 0 triples, the project does NOT "
-                "contain information on this topic. You MUST then answer:\n"
+                "If `mempalace_query` returns 0 relevant drawers (and after "
+                "you've read the top drawers' source files in full and "
+                "confirmed they don't contain the information), the project "
+                "does NOT contain it. You MUST then answer:\n"
                 "  'Diese Information ist im aktuellen Projektwissen nicht "
                 "enthalten. Bitte fügen Sie das relevante Dokument zum "
                 "Projekt hinzu oder konsultieren Sie eine andere Quelle.'\n"
@@ -20407,28 +20648,47 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
                 "Try at most 2-3 query rephrasings before refusing; do not "
                 "spin on retrieval forever.\n"
                 "\n"
+                "**PRECISION DISCIPLINE — no plausible-sounding filler**:\n"
+                "When the source does not give a concrete value (interval, "
+                "frequency, threshold, count, deadline, length, duration), "
+                "write `nicht spezifiziert` — never substitute a plausible "
+                "default like 'regelmäßig', 'häufig', 'sofort', 'kürzer', "
+                "'mindestens X Zeichen', 'alle 12 Monate', 'mindestens "
+                "jährlich'. If you use any qualifying adverb or comparative "
+                "('regelmäßig', 'häufiger', 'kürzer', 'sofort', 'zeitnah', "
+                "'angemessen'), the very next characters must be a wörtliches "
+                "Zitat (`> \"...\"`) from the read_document output proving the "
+                "source actually says that. No quote → drop the qualifier. "
+                "ISO-27001-typical phrasing from training data is NOT a source.\n"
+                "\n"
                 "**CITATION DISCIPLINE**:\n"
-                "Every factual claim in your answer that came from the project "
-                "must be paired with a `source_file` reference in the form "
-                "[source: <basename>] OR [Quelle: <basename>] right after the "
-                "claim. The UI parses these and renders them as clickable "
-                "cards in the right-side References panel — the user clicks "
-                "to open the source PDF. So write:\n"
-                "  'Mitarbeiter sind verpflichtet, Daten zu löschen "
-                "[Quelle: 4_0_0_ARL_IKT Strategie.pdf §3.2].'\n"
-                "Use the basename only (the filename, e.g. "
-                "`4_0_0_ARL_IKT Strategie.pdf` — not the full absolute path). "
-                "**CRITICAL — STRIP THE `.md` COMPANION SUFFIX**: when a "
-                "drawer's `source_file` ends in `.brain-extracted/<name>.<ext>.md` "
-                "(the auto-generated text preview of a binary), cite the "
-                "ORIGINAL binary's name, NOT the `.md` companion. So "
-                "`source_file=.brain-extracted/policy.pdf.md` → cite as "
-                "`[Quelle: policy.pdf]`, never `[Quelle: policy.pdf.md]`. The UI "
-                "links each citation to the original PDF/DOCX/XLSX; citing "
-                "the `.md` file produces a broken link. "
-                "Add the section/page if visible in the drawer (`§3.2`, "
-                "`Page 4`, `Slide 2`). Multiple sources for one claim → list "
-                "them all: [Quelle: A.pdf §1, B.docx §3].\n\n"
+                "Every factual claim from the project must be paired with a "
+                "[Quelle: <basename> — \"<wörtliches Zitat>\"] reference right "
+                "after the claim. The verbatim quote (10-25 words, copied "
+                "exactly from the read_document output) is mandatory — it "
+                "lets the user search the original PDF with Cmd+F and verify "
+                "the claim. Without a quote, the citation is unverifiable.\n"
+                "Example:\n"
+                "  'Multilogin-Berechtigungen müssen vom Datenowner genehmigt "
+                "werden [Quelle: 4_1_0_ARL_Systemberechtigungen.pdf — "
+                "\"Berechtigungen können ferner angeben, ob es sich um eine "
+                "Berechtigung handelt, wo die Zugangsdaten nicht einer "
+                "einzelnen Person zugewiesen werden kann\"].'\n"
+                "Use the basename only (e.g. `4_0_0_ARL_IKT Strategie.pdf` — "
+                "not the full path). **STRIP THE `.md` COMPANION SUFFIX**: "
+                "when a drawer's `source_file` ends in "
+                "`.brain-extracted/<name>.<ext>.md`, cite the ORIGINAL "
+                "binary's name (e.g. `policy.pdf`, NOT `policy.pdf.md`). "
+                "**DO NOT invent paragraph numbers like `§164` or `§3.2`** — "
+                "the `.md` companions do NOT preserve the original "
+                "document's paragraph numbering; any `§N` you write will be "
+                "fabricated. Only add a locator if it is genuinely present "
+                "in the read_document text: `Page N` for PDFs (markitdown "
+                "marks page boundaries), `Slide N` for PPTX, `Sheet \"Name\"` "
+                "for XLSX. If no clean locator exists, the verbatim quote "
+                "alone is sufficient.\n"
+                "Multiple sources → repeat the bracket: "
+                "[Quelle: A.pdf — \"...\"] [Quelle: B.docx — \"...\"].\n\n"
             )
             if input_folders:
                 folder_lines = []

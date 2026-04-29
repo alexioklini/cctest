@@ -13232,6 +13232,19 @@ def main():
             print(f"[project-sync] doc_convert import failed: "
                   f"{type(e).__name__}: {e}", flush=True)
 
+        # Conversion preferences — markitdown vs legacy fitz/python-docx.
+        # markitdown produces materially better markdown for LLM retrieval
+        # (table structure, heading hierarchy, OCR fallback). Falls through
+        # to legacy per-format extractors on any failure.
+        def _conv_use_markitdown() -> bool:
+            try:
+                with open(engine.CONFIG_PATH) as f:
+                    top = json.load(f)
+                conv = (top.get("conversion") or {})
+                return bool(conv.get("use_markitdown", True))
+            except Exception:
+                return True
+
         palace_path = mcfg.get("palace_path", "")
         chats_db_path = os.path.join(engine.AGENTS_DIR, "main", "chats.db")
 
@@ -13427,95 +13440,17 @@ def main():
             except Exception:
                 return 0
 
-        # One-shot startup wipe of every project-scoped wing. The wing scheme
-        # changed in 8.18.2 from `project__<name>--<agent_id>` (mixed separator,
-        # name-keyed) to `project__<id>` (ID-only). Old drawers in the old
-        # scheme would never be queried by the new mempalace_query (different
-        # wing string) — they'd just orphan. Cleanup is one-shot at startup;
-        # the daemon then rebuilds from input_folders + ingested/ on its first
-        # cycle.
-        try:
-            col = _get_drawers_col(palace_path, create=False)
-            if col is not None:
-                got = col.get(include=["metadatas"])
-                stale_ids = []
-                for did, meta in zip(got.get("ids") or [], got.get("metadatas") or []):
-                    w = (meta or {}).get("wing", "")
-                    # Match the project KNOWLEDGE wing only (mined documents
-                    # + ingested attachments). Chat-derived drawers live in
-                    # `project_chat__<id>` and must NOT be wiped on startup —
-                    # the daemon rebuilds knowledge from disk, but chat
-                    # content can't be reconstructed once dropped.
-                    # Catches the new `project__<id>`, the legacy
-                    # `project__<name>--<agent>`, and (deliberately) any
-                    # leftover chat-room rows still living in the knowledge
-                    # wing from before the project_chat__ split.
-                    if w.startswith("project__") and not w.startswith("project_chat__"):
-                        stale_ids.append(did)
-                # Also drop any closets pointing at those wings.
-                if stale_ids:
-                    # Chroma allows deleting in batches.
-                    BATCH = 500
-                    for i in range(0, len(stale_ids), BATCH):
-                        try:
-                            col.delete(ids=stale_ids[i:i+BATCH])
-                        except Exception as e:
-                            print(f"[project-sync] startup wipe batch failed: "
-                                  f"{type(e).__name__}: {e}", flush=True)
-                    print(f"[project-sync] startup wipe: dropped "
-                          f"{len(stale_ids)} project drawer(s)", flush=True)
-                    # Closets in the same project knowledge wings.
-                    try:
-                        from mempalace.palace import get_closets_collection
-                        ccol = get_closets_collection(palace_path, create=False)
-                        if ccol is not None:
-                            cgot = ccol.get(include=["metadatas"])
-                            stale_cids = []
-                            for cid, cmeta in zip(cgot.get("ids") or [],
-                                                  cgot.get("metadatas") or []):
-                                cw = (cmeta or {}).get("wing", "")
-                                if cw.startswith("project__") and \
-                                        not cw.startswith("project_chat__"):
-                                    stale_cids.append(cid)
-                            for i in range(0, len(stale_cids), BATCH):
-                                try:
-                                    ccol.delete(ids=stale_cids[i:i+BATCH])
-                                except Exception:
-                                    pass
-                            if stale_cids:
-                                print(f"[project-sync] startup wipe: dropped "
-                                      f"{len(stale_cids)} project closet(s)",
-                                      flush=True)
-                    except Exception as ce:
-                        print(f"[project-sync] startup wipe closets failed: "
-                              f"{type(ce).__name__}: {ce}", flush=True)
-                else:
-                    print("[project-sync] startup wipe: no project drawers found", flush=True)
-                # Clear persisted sync_status on every project so the UI
-                # reflects "0 indexed" until the daemon's first rebuild cycle.
-                try:
-                    for agent_id in sorted(os.listdir(engine.AGENTS_DIR)):
-                        proj_root = os.path.join(engine.AGENTS_DIR, agent_id, "projects")
-                        if not os.path.isdir(proj_root):
-                            continue
-                        for proj_name in sorted(os.listdir(proj_root)):
-                            cfg_path = os.path.join(proj_root, proj_name, "project.json")
-                            if not os.path.isfile(cfg_path):
-                                continue
-                            try:
-                                with open(cfg_path, "r") as f:
-                                    cfg = json.load(f)
-                                if cfg.get("sync_status") or cfg.get("input_folders_last_scan"):
-                                    cfg["sync_status"] = {}
-                                    cfg["input_folders_last_scan"] = ""
-                                    with open(cfg_path, "w") as f:
-                                        json.dump(cfg, f, indent=2)
-                            except (OSError, json.JSONDecodeError):
-                                continue
-                except OSError:
-                    pass
-        except Exception as e:
-            print(f"[project-sync] startup wipe failed: {type(e).__name__}: {e}", flush=True)
+        # NOTE: A startup-wipe block lived here through 2026-04-28. It was
+        # added in 8.18.2 to clean up drawers tagged with the legacy
+        # `project__<name>--<agent_id>` wing scheme after the rename to the
+        # ID-only `project__<id>` scheme, but had no idempotency gate and
+        # silently re-wiped + re-mined every project on every restart for
+        # weeks. Removed entirely. If a future migration needs a similar
+        # one-time cleanup, build it as an explicit admin endpoint
+        # (`POST /v1/mempalace/migrate`) or `brain.py` subcommand — not as
+        # implicit boot-time behavior. The migration this block was for has
+        # been complete on every live install for weeks; there is nothing
+        # left to clean up.
 
         # Small startup delay so we don't compete with the other two daemons.
         time.sleep(25)
@@ -13724,7 +13659,8 @@ def main():
                                         log_prefix="[project-sync.conv]")
                                     doc_convert.convert_folder(
                                         ingested_dir,
-                                        log_prefix="[project-sync.conv]")
+                                        log_prefix="[project-sync.conv]",
+                                        use_markitdown=_conv_use_markitdown())
                                 except Exception as e:
                                     print(f"[project-sync.conv] "
                                           f"{ingested_dir}: "
@@ -13871,7 +13807,8 @@ def main():
                                 doc_convert.sweep_stale(
                                     fpath, log_prefix="[project-sync.conv]")
                                 doc_convert.convert_folder(
-                                    fpath, log_prefix="[project-sync.conv]")
+                                    fpath, log_prefix="[project-sync.conv]",
+                                    use_markitdown=_conv_use_markitdown())
                             except Exception as e:
                                 print(f"[project-sync.conv] {fpath}: "
                                       f"{type(e).__name__}: {e}", flush=True)
