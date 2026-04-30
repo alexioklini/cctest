@@ -733,6 +733,81 @@ textarea { resize: none; }
 }
 .msg-turn + .msg-turn { border-top: none; }
 
+/* Turn group — wraps one user message and its assistant reply chain */
+.turn-group { position: relative; }
+.turn-group-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 4px;
+  user-select: none;
+}
+.turn-group-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px 5px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-brand) 14%, transparent);
+  color: var(--accent-brand);
+  border: 1px solid color-mix(in srgb, var(--accent-brand) 28%, transparent);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.15s;
+}
+.turn-group-badge:hover {
+  background: color-mix(in srgb, var(--accent-brand) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent-brand) 42%, transparent);
+}
+.turn-group-badge:active { transform: translateY(1px); }
+.turn-group-badge svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.15s;
+}
+.turn-group.collapsed .turn-group-badge svg { transform: rotate(-90deg); }
+.turn-group-collapsed-hint {
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: 1.4;
+  color: var(--text-300);
+  display: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.turn-group.collapsed .turn-group-collapsed-hint { display: inline-block; }
+.turn-group.collapsed .turn-body { display: none; }
+
+/* Turn-nav dropdown — wider than other dropdowns to fit question previews */
+.msg-edit-dropdown.turn-nav-dropdown {
+  min-width: 320px;
+  max-width: 420px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.turn-nav-dropdown .msg-edit-dropdown-item .turn-nav-num {
+  font-weight: 600;
+  color: var(--text-200);
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+.turn-nav-dropdown .msg-edit-dropdown-item .turn-nav-q {
+  color: var(--text-300);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
 /* User message */
 .msg-user {
   font-family: var(--font-ui);
@@ -1309,6 +1384,62 @@ details.msg-references-row[open] .msg-references {
 .ref-badge:hover { background: var(--bg-200); border-color: var(--accent-brand); }
 .ref-badge img { width: 14px; height: 14px; border-radius: 3px; }
 .ref-badge-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Inline citation badge — replaces `[Quelle: file.pdf — "quote"]` markers
+   in assistant text. Multi-line capable (quote can be long). */
+.citation-badge {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 10px 6px 8px;
+  margin: 1px 0;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent-brand) 28%, transparent);
+  background: color-mix(in srgb, var(--accent-brand) 8%, transparent);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-200);
+  vertical-align: baseline;
+  max-width: 100%;
+  text-decoration: none;
+}
+.citation-badge:hover {
+  background: color-mix(in srgb, var(--accent-brand) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent-brand) 48%, transparent);
+}
+.citation-badge-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  color: var(--accent-brand);
+}
+.citation-badge-icon svg { width: 100%; height: 100%; display: block; }
+.citation-badge-body {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.citation-badge-file {
+  font-weight: 700;
+  color: var(--accent-brand);
+  word-break: break-word;
+}
+.citation-badge-locator {
+  font-weight: 600;
+  color: var(--text-300);
+  font-size: 12px;
+}
+.citation-badge-quote {
+  font-weight: 400;
+  color: var(--text-200);
+  font-style: italic;
+}
+.citation-badge-quote::before { content: '„'; opacity: 0.7; margin-right: 1px; }
+.citation-badge-quote::after { content: '“'; opacity: 0.7; margin-left: 1px; }
 
 /* Reference panel sections (right pane) */
 .refs-section {
@@ -8593,10 +8724,43 @@ function renderMessages() {
   const chat = state.activeChat;
   if (!chat) { container.innerHTML = ''; return; }
 
-  let html = '';
+  if (!chat._collapsedTurns) chat._collapsedTurns = new Set();
+
+  // Group flat messages[] into turns. A turn opens at every user/human role
+  // and closes at the next one. Pre-user messages (rare) become turn 0.
+  const turns = []; // { turnNum, userIdx, userMsg, memberIdxs: [...] }
+  let cur = null;
+  let nextTurnNum = 1;
   for (let i = 0; i < chat.messages.length; i++) {
-    const msg = chat.messages[i];
-    html += renderMessage(msg, i);
+    const m = chat.messages[i];
+    if (m.role === 'user' || m.role === 'human') {
+      if (cur) turns.push(cur);
+      cur = { turnNum: nextTurnNum++, userIdx: i, userMsg: m, memberIdxs: [i] };
+    } else {
+      if (!cur) cur = { turnNum: 0, userIdx: -1, userMsg: null, memberIdxs: [] };
+      cur.memberIdxs.push(i);
+    }
+  }
+  if (cur) turns.push(cur);
+
+  let html = '';
+  for (const t of turns) {
+    const isCollapsed = chat._collapsedTurns.has(t.turnNum);
+    const cls = isCollapsed ? 'turn-group collapsed' : 'turn-group';
+    const badge = t.turnNum > 0
+      ? `<div class="turn-group-header">
+           <span class="turn-group-badge" onclick="toggleTurnCollapse(${t.turnNum})" title="Klick zum ${isCollapsed ? 'Aufklappen' : 'Zuklappen'} dieser Anfrage">
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+             Anfrage ${t.turnNum}
+           </span>
+           <span class="turn-group-collapsed-hint">${esc(turnQuestionPreview(t.userMsg, 80))}</span>
+         </div>`
+      : '';
+    let body = '';
+    for (const idx of t.memberIdxs) {
+      body += renderMessage(chat.messages[idx], idx);
+    }
+    html += `<div class="${cls}" data-turn="${t.turnNum}">${badge}<div class="turn-body">${body}</div></div>`;
   }
 
   container.innerHTML = html;
@@ -8608,6 +8772,175 @@ function renderMessages() {
 
   // Update right panel badges (attachment/reference/artifact counts)
   if (typeof updateRightPanelBadges === 'function') updateRightPanelBadges();
+}
+
+// --- Turn collapse/nav helpers ---
+function turnQuestionPreview(msg, maxChars) {
+  if (!msg) return '';
+  let txt = '';
+  if (typeof msg.content === 'string') txt = msg.content;
+  else if (Array.isArray(msg.content)) {
+    for (const b of msg.content) if (b?.type === 'text') txt += (b.text || '');
+  }
+  txt = txt.replace(/\s+/g, ' ').trim();
+  if (txt.length > maxChars) txt = txt.slice(0, maxChars - 1) + '…';
+  return txt;
+}
+
+function listTurns() {
+  const chat = state.activeChat;
+  if (!chat?.messages) return [];
+  const out = [];
+  let n = 0;
+  for (let i = 0; i < chat.messages.length; i++) {
+    const m = chat.messages[i];
+    if (m.role === 'user' || m.role === 'human') {
+      n++;
+      out.push({ turnNum: n, userIdx: i, userMsg: m });
+    }
+  }
+  return out;
+}
+
+function turnNumForMessageIdx(idx) {
+  const chat = state.activeChat;
+  if (!chat?.messages) return 0;
+  let n = 0;
+  for (let i = 0; i <= idx && i < chat.messages.length; i++) {
+    const m = chat.messages[i];
+    if (m.role === 'user' || m.role === 'human') n++;
+  }
+  return n;
+}
+
+function toggleTurnCollapse(turnNum) {
+  const chat = state.activeChat;
+  if (!chat) return;
+  if (!chat._collapsedTurns) chat._collapsedTurns = new Set();
+  if (chat._collapsedTurns.has(turnNum)) chat._collapsedTurns.delete(turnNum);
+  else chat._collapsedTurns.add(turnNum);
+  renderMessages();
+}
+
+function setAllTurnsCollapsed(collapsed) {
+  const chat = state.activeChat;
+  if (!chat) return;
+  if (!chat._collapsedTurns) chat._collapsedTurns = new Set();
+  if (collapsed) {
+    for (const t of listTurns()) chat._collapsedTurns.add(t.turnNum);
+  } else {
+    chat._collapsedTurns.clear();
+  }
+  renderMessages();
+}
+
+function setTurnsCollapsedRelativeTo(anchorMsgIdx, direction, collapsed) {
+  // direction: 'above' | 'below' | 'self'
+  const chat = state.activeChat;
+  if (!chat) return;
+  if (!chat._collapsedTurns) chat._collapsedTurns = new Set();
+  const anchorTurn = turnNumForMessageIdx(anchorMsgIdx);
+  for (const t of listTurns()) {
+    let match = false;
+    if (direction === 'self') match = t.turnNum === anchorTurn;
+    else if (direction === 'above') match = t.turnNum < anchorTurn;
+    else if (direction === 'below') match = t.turnNum > anchorTurn;
+    if (!match) continue;
+    if (collapsed) chat._collapsedTurns.add(t.turnNum);
+    else chat._collapsedTurns.delete(t.turnNum);
+  }
+  renderMessages();
+}
+
+function jumpToTurn(turnNum) {
+  const chat = state.activeChat;
+  if (!chat) return;
+  if (chat._collapsedTurns) chat._collapsedTurns.delete(turnNum);
+  renderMessages();
+  // Scroll the turn header into view
+  requestAnimationFrame(() => {
+    const el = document.querySelector(`.turn-group[data-turn="${turnNum}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      // Brief flash
+      el.style.transition = 'background 0.4s';
+      el.style.background = 'rgba(255,200,80,0.18)';
+      setTimeout(() => { el.style.background = ''; }, 900);
+    }
+  });
+  // Close any open dropdowns
+  document.querySelectorAll('.msg-edit-dropdown.open').forEach(d => d.classList.remove('open'));
+}
+
+function renderTurnNavMenuItems(anchorMsgIdx) {
+  const turns = listTurns();
+  const anchorTurn = turnNumForMessageIdx(anchorMsgIdx);
+  const chat = state.activeChat;
+  const collapsed = chat?._collapsedTurns || new Set();
+  const thisCollapsed = collapsed.has(anchorTurn);
+
+  // Decide bulk actions: if everything (above/below/all) is currently collapsed, offer expand; else offer collapse.
+  const above = turns.filter(t => t.turnNum < anchorTurn);
+  const below = turns.filter(t => t.turnNum > anchorTurn);
+  const allCollapsed = turns.length > 0 && turns.every(t => collapsed.has(t.turnNum));
+  const aboveAllCollapsed = above.length > 0 && above.every(t => collapsed.has(t.turnNum));
+  const belowAllCollapsed = below.length > 0 && below.every(t => collapsed.has(t.turnNum));
+
+  const caretDown = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="6 9 12 15 18 9"/></svg>';
+  const caretUp = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="18 15 12 9 6 15"/></svg>';
+
+  let html = '';
+  html += `<div class="msg-edit-dropdown-section-label">Diese Anfrage</div>`;
+  html += `<div class="msg-edit-dropdown-item" onclick="setTurnsCollapsedRelativeTo(${anchorMsgIdx}, 'self', ${!thisCollapsed})">
+    ${thisCollapsed ? caretDown : caretUp}
+    ${thisCollapsed ? 'Diese Anfrage aufklappen' : 'Diese Anfrage zuklappen'}
+  </div>`;
+
+  html += `<hr>`;
+  html += `<div class="msg-edit-dropdown-section-label">Alle Anfragen</div>`;
+  html += `<div class="msg-edit-dropdown-item" onclick="setAllTurnsCollapsed(${!allCollapsed})">
+    ${allCollapsed ? caretDown : caretUp}
+    ${allCollapsed ? 'Alle aufklappen' : 'Alle zuklappen'}
+  </div>`;
+  if (above.length > 0) {
+    html += `<div class="msg-edit-dropdown-item" onclick="setTurnsCollapsedRelativeTo(${anchorMsgIdx}, 'above', ${!aboveAllCollapsed})">
+      ${aboveAllCollapsed ? caretDown : caretUp}
+      ${aboveAllCollapsed ? 'Alle oberhalb aufklappen' : 'Alle oberhalb zuklappen'} (${above.length})
+    </div>`;
+  }
+  if (below.length > 0) {
+    html += `<div class="msg-edit-dropdown-item" onclick="setTurnsCollapsedRelativeTo(${anchorMsgIdx}, 'below', ${!belowAllCollapsed})">
+      ${belowAllCollapsed ? caretDown : caretUp}
+      ${belowAllCollapsed ? 'Alle unterhalb aufklappen' : 'Alle unterhalb zuklappen'} (${below.length})
+    </div>`;
+  }
+
+  if (turns.length > 0) {
+    html += `<hr>`;
+    html += `<div class="msg-edit-dropdown-section-label">Zu Anfrage springen</div>`;
+    for (const t of turns) {
+      const q = esc(turnQuestionPreview(t.userMsg, 60) || '(empty)');
+      const isHere = t.turnNum === anchorTurn ? ' style="background:var(--bg-200)"' : '';
+      html += `<div class="msg-edit-dropdown-item"${isHere} onclick="jumpToTurn(${t.turnNum})">
+        <span class="turn-nav-num">${t.turnNum}.</span>
+        <span class="turn-nav-q">${q}</span>
+      </div>`;
+    }
+  }
+  return html;
+}
+
+function toggleTurnNavMenu(ev, idx) {
+  ev.stopPropagation();
+  const all = document.querySelectorAll('.msg-edit-dropdown');
+  const target = document.getElementById('turn-nav-menu-' + idx);
+  all.forEach(d => { if (d !== target) d.classList.remove('open'); });
+  if (target) {
+    if (!target.classList.contains('open')) {
+      target.innerHTML = renderTurnNavMenuItems(idx);
+    }
+    target.classList.toggle('open');
+  }
 }
 
 function renderMessage(msg, idx) {
@@ -8859,6 +9192,10 @@ function renderAssistantMessage(msg, idx) {
         ${messageUsedKnowledge(idx) ? `<button class="msg-action-btn" onclick="openUsedMemoryGraph(${idx})" title="Show used Memory and Relationships">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="7.7" y1="7.5" x2="10.3" y2="16.5"/><line x1="16.3" y1="7.5" x2="13.7" y2="16.5"/><line x1="8.5" y1="6" x2="15.5" y2="6"/></svg>
         </button>` : ''}
+        <button class="msg-action-btn" onclick="toggleTurnNavMenu(event, ${idx})" title="Anfragen: zuklappen / springen">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        </button>
+        <div class="msg-edit-dropdown turn-nav-dropdown" id="turn-nav-menu-${idx}"></div>
         <button class="msg-action-btn" onclick="toggleMsgEditMenu(event, ${idx})" title="Edit history">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
         </button>
@@ -9278,6 +9615,11 @@ function renderStreamingMessage(chat) {
   const existing = container.querySelector('.msg-streaming');
   if (existing) existing.remove();
 
+  // Inject inside the last turn-body if present so the streaming bubble belongs
+  // to the active turn (same collapse behaviour as the rest of the turn).
+  const turnBodies = container.querySelectorAll('.turn-group .turn-body');
+  const injectTarget = turnBodies.length ? turnBodies[turnBodies.length - 1] : container;
+
   // Queue-wait banner: show before any tokens arrive if the provider queued us.
   const q = chat.queueStatus;
   if (q && q.state === 'waiting' && !chat.thinkingText && !chat.streamingText) {
@@ -9295,7 +9637,7 @@ function renderStreamingMessage(chat) {
         Waiting in queue${provTxt} — ${posTxt}${activeTxt} · ${waitSec}s
       </div>
     </div>`;
-    container.insertAdjacentHTML('beforeend', html);
+    injectTarget.insertAdjacentHTML('beforeend', html);
     return;
   }
 
@@ -9324,7 +9666,7 @@ function renderStreamingMessage(chat) {
 
   html += '</div>';
 
-  container.insertAdjacentHTML('beforeend', html);
+  injectTarget.insertAdjacentHTML('beforeend', html);
 
   // Highlight code in streaming content
   container.querySelectorAll('.msg-streaming pre code').forEach(block => {
@@ -9351,10 +9693,109 @@ function renderMarkdown(text) {
       return `<div class="code-block-header"><span>${esc(langLabel)}</span><button class="code-copy-btn" onclick="copyCodeBlock(this)">Copy</button></div><pre><code${cls || ''}>`;
     });
 
+    // Replace `[Quelle: file.ext — "quote"]` (and source/Source variants) with
+    // a styled citation badge. Only replace inside text nodes so we don't
+    // mangle attribute values inside <a href> / <code> blocks.
+    html = renderCitationBadgesInHtml(html);
+
     return html;
   } catch(e) {
     return esc(text);
   }
+}
+
+// Walks the HTML string token by token, replacing `[Quelle: ...]` markers in
+// text-level segments only. Skips content inside <code>, <pre>, and tag
+// attributes so URLs / inline code / fenced blocks stay untouched.
+function renderCitationBadgesInHtml(html) {
+  if (!html || html.indexOf('[') === -1) return html;
+  // Tokenize: walk through characters, switching between "text" and "tag"
+  // mode. Inside <pre>/<code>/<a> blocks we also stay in passthrough mode.
+  const out = [];
+  const skipBlocks = ['pre', 'code', 'a'];
+  let i = 0;
+  let skipDepth = 0; // > 0 when inside one of skipBlocks
+  while (i < html.length) {
+    if (html[i] === '<') {
+      // Take a full tag through the next '>'
+      const end = html.indexOf('>', i);
+      if (end === -1) { out.push(html.substring(i)); break; }
+      const tag = html.substring(i, end + 1);
+      out.push(tag);
+      // Track entering/leaving skip blocks
+      const m = tag.match(/^<\s*(\/?)([a-zA-Z][a-zA-Z0-9]*)/);
+      if (m) {
+        const isClose = m[1] === '/';
+        const name = m[2].toLowerCase();
+        const selfClose = tag.endsWith('/>');
+        if (skipBlocks.includes(name) && !selfClose) {
+          skipDepth += isClose ? -1 : 1;
+          if (skipDepth < 0) skipDepth = 0;
+        }
+      }
+      i = end + 1;
+      continue;
+    }
+    // Text run until next '<'
+    const next = html.indexOf('<', i);
+    const chunk = next === -1 ? html.substring(i) : html.substring(i, next);
+    if (skipDepth > 0 || chunk.indexOf('[') === -1) {
+      out.push(chunk);
+    } else {
+      out.push(replaceCitationMarkersInText(chunk));
+    }
+    if (next === -1) break;
+    i = next;
+  }
+  return out.join('');
+}
+
+function replaceCitationMarkersInText(text) {
+  // Greedy across the whole bracket content; capture {body}.
+  // Bodies can span multiple sentences and contain quotes — we only need to
+  // stop at the matching closing bracket. Disallow `[` inside to avoid
+  // swallowing too much when nesting goes wrong.
+  const re = /\[(?:Quelle|QUELLE|source|Source|SOURCE):\s*([^\[\]]+?)\]/g;
+  return text.replace(re, (full, body) => {
+    const parsed = parseCitationBody(body);
+    if (!parsed) return full;
+    return renderCitationBadge(parsed);
+  });
+}
+
+function parseCitationBody(body) {
+  if (!body) return null;
+  let s = body.trim();
+  // Quote can be in straight ", curly “ ”, or German „ “
+  let quote = '';
+  const qMatch = s.match(/[„"“]([^„"“”]+)[“"”]\s*$/);
+  if (qMatch) {
+    quote = qMatch[1].trim();
+    s = s.substring(0, s.length - qMatch[0].length).trim();
+    // Strip trailing em/en-dash separator left over from "<file> — <quote>"
+    s = s.replace(/\s*[—–-]\s*$/, '').trim();
+  }
+  // Remaining s = "<filename>" or "<filename> <locator>"
+  // Locators we recognise: "Page N", "Slide N", "Sheet \"X\"", "§...".
+  let file = s;
+  let locator = '';
+  const locRe = /\s+(Page\s+\S+|Slide\s+\S+|Sheet\s+["“„][^"“”]+["“”]|§\s*\S+.*)$/;
+  const lMatch = s.match(locRe);
+  if (lMatch) {
+    locator = lMatch[1].trim();
+    file = s.substring(0, s.length - lMatch[0].length).trim();
+  }
+  // If after splitting, file is empty, fall back to original body.
+  if (!file) file = body.trim();
+  return { file, locator, quote };
+}
+
+function renderCitationBadge({ file, locator, quote }) {
+  const icon = `<span class="citation-badge-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg></span>`;
+  const fileSpan = `<span class="citation-badge-file">${esc(file)}</span>`;
+  const locSpan = locator ? `<span class="citation-badge-locator">${esc(locator)}</span>` : '';
+  const quoteSpan = quote ? `<span class="citation-badge-quote">${esc(quote)}</span>` : '';
+  return `<span class="citation-badge" title="${esc(file)}${locator ? ' · ' + esc(locator) : ''}">${icon}<span class="citation-badge-body">${fileSpan}${locSpan}${quoteSpan}</span></span>`;
 }
 
 /* ═══════════════════════════════════════════════════════════
