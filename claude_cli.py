@@ -238,6 +238,30 @@ PLAN_MODE_PROMPT = (
 # the binary→.md companion explanation, the KG hint block) STAY in the system
 # prompt because they are infrastructure facts that don't change per project.
 DEFAULT_PROJECT_INSTRUCTIONS = (
+    "**QUERY DISCIPLINE — keep mempalace_query short and content-bearing**:\n"
+    "Queries are matched by vector similarity. Long, verbose queries with "
+    "filler tokens drag the embedding toward generic chunks and HIDE the "
+    "documents that perfectly match on filename or topic. Use 2-4 "
+    "content-bearing keywords — the actual subject of the question — and "
+    "drop everything else. Do not write the user's full question into the "
+    "query.\n"
+    "DROP these filler/generic tokens: 'Regelung', 'Regelungen', 'Policy', "
+    "'Richtlinie', 'Vorschrift', 'Verantwortliche', 'durchführen', "
+    "'Tätigkeiten', 'Aufgaben', 'Beschreibung', 'Übersicht', 'Definition', "
+    "'allgemein', 'bank', 'Unternehmen', 'IT-Policy', 'wie', 'was', 'welche'.\n"
+    "KEEP the rare, specific subject keywords — these are what discriminates "
+    "documents.\n"
+    "Examples (user question → good query):\n"
+    "  • 'Wie ist die Datensicherung und Archivierung geregelt?' → "
+    "`Datensicherung Archivierung`\n"
+    "  • 'Welche Tätigkeiten werden im IT-Morgencheck durchgeführt und von "
+    "wem?' → `IT-Morgencheck` (and as a second try: `Morgencheck Prozess`)\n"
+    "  • 'Wie werden TAMBAS-Daten gesichert?' → `TAMBAS Sicherung` (NOT "
+    "'TAMBAS Datensicherung Backup Sicherung Kernbankensystem' — synonym "
+    "stuffing dilutes the signal).\n"
+    "If the first short query yields nothing matching, try a different "
+    "rare keyword pair, NOT a longer version of the same query.\n"
+    "\n"
     "**REFUSAL DISCIPLINE — read carefully**:\n"
     "If `mempalace_query` returns 0 relevant drawers (and after you've read "
     "the top drawers' source files in full and confirmed they don't contain "
@@ -1931,6 +1955,19 @@ def tool_read_file(args: dict) -> str:
             _stub = _read_doc_cache_lookup(path)
             if _stub is not None:
                 return _stub
+        if not os.path.exists(path):
+            return _err(
+                f"File not found: {path}. "
+                "Do NOT retry with the same path — the file does not exist on disk. "
+                "Hallucinated paths are a frequent cause: the path was inferred "
+                "from the project's folder structure or filename schema rather "
+                "than copied from a real source. "
+                "USE ONLY paths returned in `read_path` (or `read_path_original` "
+                "as fallback) of a prior `mempalace_query` drawer. "
+                "If no drawer pointed at this content, the project does not "
+                "contain it — refuse per REFUSAL DISCIPLINE instead of guessing "
+                "another path."
+            )
         with open(path, "r", errors="replace") as f:
             lines = f.readlines()
         total = len(lines)
@@ -2262,7 +2299,18 @@ def tool_read_document(args: dict) -> str:
                 "pass a specific document — re-issue the call with the full "
                 "file path including extension.")
         if not os.path.exists(path):
-            return _err(f"File not found: {path}")
+            return _err(
+                f"File not found: {path}. "
+                "Do NOT retry with the same path — the file does not exist on disk. "
+                "Hallucinated paths are a frequent cause: the path was inferred "
+                "from the project's folder structure or filename schema rather "
+                "than copied from a real source. "
+                "USE ONLY paths returned in `read_path` (or `read_path_original` "
+                "as fallback) of a prior `mempalace_query` drawer. "
+                "If no drawer pointed at this content, the project does not "
+                "contain it — refuse per REFUSAL DISCIPLINE instead of guessing "
+                "another path."
+            )
 
         # Per-session cache: a previous turn already read this exact file,
         # mtime+size unchanged → return a stub instead of re-streaming all
@@ -3849,6 +3897,146 @@ def tool_mempalace_query(args: dict) -> str:
             # Anything without a typed prefix is treated as shared.
             return True
         raw_results = [r for r in raw_results if isinstance(r, dict) and _visible(r)]
+
+    # Filename-token boost: lexical re-rank that promotes drawers whose source
+    # filename literally contains query tokens. Pure-vector retrieval scores
+    # filename-matching files surprisingly low when the query is verbose
+    # ("Archivierung Datensicherung Regelung bank IT-Policy" pushes
+    # `ARL_4_4_Archivierung und Datensicherung.pdf` from rank 1 to outside
+    # top 8 even though it's a perfect filename match — the generic Filler
+    # tokens drag the embedding toward IKT-Strategie / DOR-Strategie chunks).
+    # We award +0.10 per query token (≥3 chars) that appears as a word in
+    # the basename, capped at +0.30. Word-boundary match avoids the German-
+    # compound trap (`risk` ⊂ `Risikomanagement` would otherwise count).
+    # Also bumps `matched_via` to `chroma-vector+filename` for traceability.
+    try:
+        # Tokenise the query the same way as a filename so a query token like
+        # "Morgencheck" matches a filename containing "MorgenCheck" — and so
+        # "IT-Morgencheck" splits into ["it", "morgencheck"] AND ["morgen",
+        # "check"] (we keep both forms so either form on the filename side
+        # matches). Also adds the original \w{3,}-tokens so multi-letter
+        # German compounds aren't accidentally split.
+        def _tokenise_for_match(text: str) -> set[str]:
+            base = set(re.findall(r"\w{3,}", text.lower(), flags=re.UNICODE))
+            cs_split = re.sub(r"(?<=[a-zäöü])(?=[A-ZÄÖÜ])", " ", text)
+            sep_split = re.sub(r"[^A-Za-zÄÖÜäöüß]+", " ", cs_split).lower()
+            base |= set(t for t in sep_split.split() if len(t) >= 3)
+            return base
+
+        _qtoks_boost = _tokenise_for_match(query)
+        if _qtoks_boost:
+            def _normalise_filename(name: str) -> set[str]:
+                """Filename → set of lowercase tokens (single + adjacent-pair forms).
+
+                We emit BOTH split tokens AND adjacent concatenations:
+                  - `MorgenCheck.pdf` → {"morgen", "check", "morgencheck"}
+                  - `IT_Morgen_Check_Prozessbeschreibung.pdf` → adds the pair
+                    "morgencheck" so a query token "morgencheck" matches.
+                Without the concat-pair the CamelCase split would dilute the
+                signal — query "Morgencheck" would never match a filename that
+                spelled it as `Morgen_Check`.
+                """
+                name = re.sub(r"\.(pdf|docx|pptx|xlsx|xlsm|eml|msg)\.md$", r".\1",
+                              name, flags=re.IGNORECASE)
+                name = re.sub(r"(?<=[a-zäöü])(?=[A-ZÄÖÜ])", " ", name)
+                name = name.lower()
+                name = re.sub(r"[^a-zäöüß]+", " ", name)
+                parts = [p for p in name.split() if len(p) >= 2]
+                tokens = set(p for p in parts if len(p) >= 3)
+                # Adjacent-pair concatenations for compound matching
+                for i in range(len(parts) - 1):
+                    pair = parts[i] + parts[i + 1]
+                    if len(pair) >= 3:
+                        tokens.add(pair)
+                # Triplet too — helps match e.g. "informationssicherheit"
+                # against "Informations Sicherheit Management"-style splits.
+                for i in range(len(parts) - 2):
+                    tri = parts[i] + parts[i + 1] + parts[i + 2]
+                    if len(tri) >= 3:
+                        tokens.add(tri)
+                return tokens
+
+            for r in raw_results:
+                if not isinstance(r, dict):
+                    continue
+                sf = (r.get("source_file") or "")
+                bn = sf.split("/")[-1] if sf else ""
+                if not bn:
+                    continue
+                fn_tokens = _normalise_filename(bn)
+                if not fn_tokens:
+                    continue
+                # Count distinct query tokens that appear in the filename's
+                # token set. Set intersection naturally dedups.
+                matched = _qtoks_boost & fn_tokens
+                hits = len(matched)
+                if hits == 0:
+                    continue
+                bonus = min(0.30, hits * 0.10)
+                old_sim = float(r.get("similarity") or 0.0)
+                new_sim = min(1.0, old_sim + bonus)
+                r["similarity"] = round(new_sim, 3)
+                r["filename_boost"] = round(bonus, 3)
+                r["filename_match_tokens"] = hits
+                # Append to matched_via without breaking downstream "chroma-vector"
+                # exact-match expectations.
+                mv = r.get("matched_via") or "chroma-vector"
+                if "filename" not in mv:
+                    r["matched_via"] = f"{mv}+filename"
+            # Re-sort by boosted similarity so dedup + downstream see the new order.
+            raw_results.sort(key=lambda x: float((x or {}).get("similarity") or 0.0), reverse=True)
+    except Exception:
+        # Boost failures must not break the query — fall back to unboosted order.
+        pass
+
+    # Cross-encoder reranking: when enabled in config, run a multilingual
+    # cross-encoder over the top-N drawer snippets. Cross-encoders read
+    # (query, passage) pairs jointly and score relevance directly — much
+    # more accurate than the bi-encoder vector retrieval, but only as a
+    # re-ordering pass (it can't pull in drawers that vector missed).
+    #
+    # Skip-gate: when the top hit got a strong filename-boost (≥0.20, =
+    # 2+ filename token matches), trust the lexical signal and skip the
+    # reranker. Empirically the reranker scores low-content snippets
+    # (frontmatter / TOC / cover page) lower than content-rich snippets
+    # from less-relevant files, which can demote correct files when the
+    # filename was the only reliable signal.
+    try:
+        _rr_cfg = (cfg.get("reranker") or {}) if isinstance(cfg, dict) else {}
+        _rr_enabled = bool(_rr_cfg.get("enabled", False))
+        if _rr_enabled and raw_results:
+            top_boost = float((raw_results[0] or {}).get("filename_boost") or 0)
+            if top_boost < 0.20:
+                _rr_model = _get_reranker_model(
+                    _rr_cfg.get("model", "BAAI/bge-reranker-v2-m3"),
+                    _rr_cfg.get("device", "auto"),
+                )
+                if _rr_model is not None:
+                    _rr_in = max(8, min(80, int(_rr_cfg.get("top_k_in", 40))))
+                    _rr_max_chars = max(500, min(4000, int(_rr_cfg.get("max_chars_per_passage", 1500))))
+                    pool = raw_results[:_rr_in]
+                    pairs = [(query, (r.get("text") or "")[:_rr_max_chars]) for r in pool]
+                    if pairs:
+                        try:
+                            scores = _rr_model.predict(
+                                pairs,
+                                batch_size=int(_rr_cfg.get("batch_size", 16)),
+                                show_progress_bar=False,
+                            )
+                            for r, s in zip(pool, scores):
+                                r["rerank_score"] = round(float(s), 4)
+                                mv = r.get("matched_via") or "chroma-vector"
+                                if "rerank" not in mv:
+                                    r["matched_via"] = f"{mv}+rerank"
+                            # Re-order pool by rerank_score; tail (drawers
+                            # not reranked) keeps original order. Dedup
+                            # downstream still sees similarity for tie-breaks.
+                            pool.sort(key=lambda x: float((x or {}).get("rerank_score") or 0.0), reverse=True)
+                            raw_results = pool + raw_results[_rr_in:]
+                        except Exception:
+                            pass
+    except Exception:
+        pass
 
     # Dedupe by (source_file, chunk_text_hash): MemPalace's searcher hydration
     # step can return the same chunk text for every hit on a closet-boosted
@@ -19578,6 +19766,70 @@ _read_doc_cache_lock = threading.Lock()
 _read_doc_cache: dict[str, dict[str, dict]] = {}  # sid -> path -> entry
 _READ_DOC_CACHE_TTL = 3600  # drop sessions untouched this long
 _READ_DOC_CACHE_MAX_PER_SESSION = 64
+
+# --- Cross-encoder reranker (lazy, process-wide) -------------------------
+# Loaded on first mempalace_query when reranker.enabled=true; held in memory
+# afterwards. Default model BAAI/bge-reranker-v2-m3 is multilingual (100+
+# languages incl. German), 560M params, MIT license, fits comfortably in
+# a few hundred MB on Apple Silicon MPS. Loading takes ~5-8s the first
+# time (incl. HF hub download on cold start), <1s on subsequent process
+# starts (HF cache hit).
+_reranker_lock = threading.Lock()
+_reranker_cache: dict[tuple[str, str], object] = {}
+
+
+def _get_reranker_model(model_id: str, device_pref: str = "auto"):
+    """Return a CrossEncoder instance, loading lazily and caching by
+    (model_id, resolved_device). Returns None if sentence-transformers
+    isn't installed or device resolution fails — caller falls back to
+    unreranked order."""
+    if not model_id:
+        return None
+    # Resolve device preference. "auto" → mps on Apple Silicon, cuda on
+    # NVIDIA, cpu otherwise. Caller can pin via config.
+    if device_pref == "auto":
+        try:
+            import torch
+            if torch.backends.mps.is_available():
+                device = "mps"
+            elif torch.cuda.is_available():
+                device = "cuda"
+            else:
+                device = "cpu"
+        except Exception:
+            device = "cpu"
+    else:
+        device = device_pref
+    key = (model_id, device)
+    with _reranker_lock:
+        m = _reranker_cache.get(key)
+        if m is not None:
+            return m
+        # Make sure the mempalace venv site-packages is on sys.path so we
+        # find sentence_transformers / torch (we install it there to keep
+        # all heavy ML deps in one place).
+        ok, _err = _ensure_mempalace_importable()
+        if not ok:
+            return None
+        try:
+            from sentence_transformers import CrossEncoder
+        except Exception:
+            return None
+        try:
+            t0 = time.time()
+            m = CrossEncoder(model_id, device=device, max_length=512)
+            try:
+                logging.info(f"[reranker] loaded {model_id} on {device} in {time.time()-t0:.1f}s")
+            except Exception:
+                pass
+            _reranker_cache[key] = m
+            return m
+        except Exception as e:
+            try:
+                logging.warning(f"[reranker] failed to load {model_id} on {device}: {e}")
+            except Exception:
+                pass
+            return None
 
 
 def _read_doc_cache_sid() -> str:
