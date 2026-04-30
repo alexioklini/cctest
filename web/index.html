@@ -1390,15 +1390,15 @@ details.msg-references-row[open] .msg-references {
 .citation-badge {
   display: inline-flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 6px 10px 6px 8px;
+  gap: 7px;
+  padding: 5px 9px 5px 7px;
   margin: 1px 0;
-  border-radius: 8px;
+  border-radius: 7px;
   border: 1px solid color-mix(in srgb, var(--accent-brand) 28%, transparent);
   background: color-mix(in srgb, var(--accent-brand) 8%, transparent);
   font-family: var(--font-ui);
-  font-size: 13px;
-  line-height: 1.45;
+  font-size: 12px;
+  line-height: 1.4;
   color: var(--text-200);
   vertical-align: baseline;
   max-width: 100%;
@@ -1410,8 +1410,8 @@ details.msg-references-row[open] .msg-references {
 }
 .citation-badge-icon {
   flex-shrink: 0;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   margin-top: 1px;
   color: var(--accent-brand);
 }
@@ -1429,17 +1429,17 @@ details.msg-references-row[open] .msg-references {
   word-break: break-word;
 }
 .citation-badge-locator {
-  font-weight: 600;
+  font-weight: 400;
   color: var(--text-300);
-  font-size: 12px;
+  font-size: 11px;
 }
 .citation-badge-quote {
   font-weight: 400;
   color: var(--text-200);
   font-style: italic;
 }
-.citation-badge-quote::before { content: '„'; opacity: 0.7; margin-right: 1px; }
-.citation-badge-quote::after { content: '“'; opacity: 0.7; margin-left: 1px; }
+.citation-badge-quote::before { content: '"'; opacity: 0.7; margin-right: 1px; }
+.citation-badge-quote::after { content: '"'; opacity: 0.7; margin-left: 1px; }
 
 /* Reference panel sections (right pane) */
 .refs-section {
@@ -9765,7 +9765,9 @@ function replaceCitationMarkersInText(text) {
 
 function parseCitationBody(body) {
   if (!body) return null;
-  let s = body.trim();
+  // marked.parse() runs before us and HTML-escapes " → &quot;, & → &amp;, etc.
+  // Decode so quote-detection regexes see the raw characters the model emitted.
+  let s = decodeHtmlEntities(body).trim();
   // Quote can be in straight ", curly “ ”, or German „ “
   let quote = '';
   const qMatch = s.match(/[„"“]([^„"“”]+)[“"”]\s*$/);
@@ -9786,8 +9788,21 @@ function parseCitationBody(body) {
     file = s.substring(0, s.length - lMatch[0].length).trim();
   }
   // If after splitting, file is empty, fall back to original body.
-  if (!file) file = body.trim();
+  if (!file) file = decodeHtmlEntities(body).trim();
   return { file, locator, quote };
+}
+
+function decodeHtmlEntities(s) {
+  if (!s || s.indexOf('&') === -1) return s;
+  return s
+    .replace(/&quot;/g, '"')
+    .replace(/&#34;/g, '"')
+    .replace(/&#x22;/gi, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
 }
 
 function renderCitationBadge({ file, locator, quote }) {
