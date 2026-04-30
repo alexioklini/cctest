@@ -2800,6 +2800,20 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
         elif path == "/v1/mcp/registry":
             self._handle_mcp_registry()
         # --- Projects & Ingestion GET routes ---
+        elif path == "/v1/projects/default-instructions":
+            # Returns the Brain-default project Instructions text. Used by the
+            # web UI's project Instructions editor: a "Load default" button
+            # pre-fills the textarea with this content for projects that want
+            # to start from the v8.22.0 retrieval disciplines and customise.
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "instructions": engine.DEFAULT_PROJECT_INSTRUCTIONS,
+                }).encode("utf-8"))
+            except Exception as _e:
+                self.send_error(500, str(_e))
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/notes" in path:
             self._handle_notes(path, "GET")
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/docs" in path:

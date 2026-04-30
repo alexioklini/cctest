@@ -595,9 +595,11 @@ Things that aren't visible from reading the code but will bite if broken:
 - **Notes**: `NoteManager` CRUD. AI editing uses `write_file`/`edit_file` (not `EDIT_NOTE` tags). Auto-reload on filesystem changes. Note-AI sessions use `status: note_chat`, hidden from project chat list, persistent per note via localStorage
 - Project panel auto-refresh: 5s polling detects filesystem changes from any source
 
-## Anti-Hallucination Discipline (v8.22.0)
+## Anti-Hallucination Discipline (v8.22.0, refactored to project Instructions in v8.23.0)
 
-Three-layer system inside the project-pinned `_build_system_prompt` block, designed against the failure modes empirically observed on the German bank-policy corpus over a day of validation runs. Targets the Mistral Small 3 / `mistral-small-2603` cloud model specifically — but the disciplines are model-agnostic and apply to any project chat.
+Three-layer system designed against the failure modes empirically observed on the German bank-policy corpus over a day of validation runs. Targets the Mistral Small 3 / `mistral-small-2603` cloud model specifically — but the disciplines are model-agnostic and apply to any project chat.
+
+**v8.23.0 location change**: the three discipline blocks now live in module-level `DEFAULT_PROJECT_INSTRUCTIONS` (claude_cli.py) instead of being hard-coded inside `_build_system_prompt`'s project block. They surface via the project Instructions injection at the bottom of the project-prompt section — the constant is the FALLBACK when `project.json.instructions` is empty. Project owners can replace any/all disciplines by writing their own text in the right-pane Instructions editor; override REPLACES the default rather than appending. New endpoint `GET /v1/projects/default-instructions` + a "Load default" button in the editor pre-fill the textarea so owners can start from the disciplines and customise. Brain mechanics (the 3-step retrieval flow, `read_path` vs `read_path_original`, binary→.md companion explanation, KG hint block) STAY in the system prompt because those are infrastructure facts not editable behavior.
 
 - **REFUSAL DISCIPLINE**: when `mempalace_query` returns 0 relevant drawers AND a follow-up `read_document` of the top-ranked source confirms the information isn't there, refuse with the canonical German sentence ("Diese Information ist im aktuellen Projektwissen nicht enthalten…") — never fall back to general knowledge in project chats. Cap query rephrasings at 2-3.
 - **PRECISION DISCIPLINE**: bans plausible-sounding ISO-27001-style filler. Words like *regelmäßig*, *häufig*, *sofort*, *kürzer*, *zeitnah*, *angemessen* are gated on an immediately-following wörtliches Zitat (`> "..."`) from the read_document output. If the source gives no concrete value (interval, frequency, threshold, count, deadline, length, duration), the model must write `nicht spezifiziert` — never substitute a plausible default like "alle 12 Monate", "mindestens 20 Zeichen", "mindestens jährlich". ISO-27001-typical phrasing from training data is explicitly NOT a source.
@@ -610,6 +612,40 @@ Three-layer system inside the project-pinned `_build_system_prompt` block, desig
 **Validation result on the canary** (`9775bba7` → `a82327b7`, same model, same query, same retrieval path): output dropped from 3850 chars (multiple fabricated sections incl. erfundene `§154–176`, "alle 12 Monate", "mindestens 20 Zeichen", erfundene Verantwortungs-Tabelle) to 1037 chars with a single inline blockquote, a single citation carrying the verbatim source text, and three paraphrase bullets — every claim backed by the read_document output. Tradeoff acknowledged: less content, but every line is verifiable. Future external comparison: PI Coding Agent + Mistral via MemPalace as an MCP server — to test whether the disciplines are doing the heavy lifting or whether minimal-system-prompt agents can match this with the same retrieval backend.
 
 **Composition tendency** (model limitation, not a bug): even with all three disciplines plus the sampling caps, Mistral Small still has a residual tendency to add a "wie üblich in solchen Richtlinien"-style closing paragraph when `read_document` doesn't fully cover a topic. Larger frontier models (Sonnet 4.6 / Opus) self-suppress this. For high-stakes policy reproduction the residual gap is bridged by switching model, not by tightening the prompt further (already at the bloat point — `feedback_prompt_bloat_regression.md` documented an earlier overcorrection).
+
+## Token Optimisations (v8.23.0)
+
+Two targeted token-savers shipped after a real-workflow measurement on the DSGVO chat (`78beef49`) revealed the dominant per-turn growth driver was the model re-reading the same `.md` companion each turn while answering follow-up questions. Real-workflow validation: yesterday's 4-turn conversation used 335,683 input tokens; today's reproduction with the changes shipped used 277,579 (−17%) DESPITE the model variation reading 3× more source files per turn. Apples-to-apples (1-source workflow today vs 1-source workflow yesterday) the saving is closer to 30%.
+
+### Per-session read_document / read_file cache (A1+)
+
+`_read_doc_cache` in `claude_cli.py` keyed by `(session_id, abs_path)` with `(mtime, size, turn_first_read, content_hash)` value. On a repeat full-shape read of the same file in the same chat, the tool returns a compact stub `{cached:true, first_read_in_turn:N, content_hash:..., note:"Bereits in Turn N gelesen — Inhalt unverändert (mtime+size match). Nutze den vorigen tool_result..."}` instead of streaming the file content back into the model's context.
+
+- **Invalidation**: every lookup `os.stat()`s the file and compares `(mtime, size)` to the cached entry. Mismatch → drop entry, return None, caller proceeds with the real read. `_after_file_write()` invalidates the entry explicitly when the model writes/edits the same path so a follow-up read in the same chat sees fresh content (the `stat()` check would catch it too — explicit invalidation just avoids one wasted full read).
+- **Pagination bypass**: any of `offset`/`limit`/`pages`/`sheet`/`slides` on `read_document` skips the cache entirely (model wants a specific window, not the whole file). For `read_file`, the cache only fires when caller asked for the whole file (default `offset=1` AND no explicit `limit` override).
+- **Dedup interaction**: `read_document` + `read_file` added to `_DEDUP_EXEMPT` in `_check_tool_dedup` so the bare-string dedup (which raises `TaskCancelled` after 2 dupes) doesn't kill legitimate cache-hit calls. The cache is the smarter dedup.
+- **Turn-attribution**: `_thread_local.tool_round` is set in `_execute_tools_batch` so the stub's `first_read_in_turn` field names the right turn for the user's debug visibility.
+- **Bounds**: TTL 1h per session bucket; max 64 entries per session (LRU-by-turn eviction drops oldest 25% when full).
+- **Helpers**: `_read_doc_cache_lookup(path)`, `_read_doc_cache_store(path, content, tool_round)`, `_read_doc_cache_invalidate(path)` — all module-level so future tools (e.g. `read_url`) can opt in.
+
+### Per-session project preamble (B1)
+
+Dynamic project state — drawer count + attachment count + input-folder list (with absolute paths) + path-join example — moved out of `_build_system_prompt` into a per-session preamble injected at round 0 on the first user message. New helper `_project_preamble_text(agent_id, project_name)` builds the `[Project context (this session): …]` block. Sibling to the user-greeting + auto-maintained-profile preambles already injected at round 0.
+
+- **Why**: counts + folder paths were a per-project varying string in the system prompt that broke KV-prefix reuse on warm-pool slots and across project chats. On Cloud providers without prompt cache (Mistral API et al.), the ~1KB block was paid on every request. Now: system prompt stays project-agnostic in shape; per-project bytes only live in the user message → better prefix reuse in steady state, ~1KB saved per request on no-cache providers.
+- **Anonymous sessions**: the round-0 preamble injection block was hoisted out of the `if _greeting_uid:` guard so projects accessed without auth still get the absolute paths needed to resolve relative drawer source_files.
+- **Brain mechanics stay**: the 3-step retrieval flow, `read_path` vs `read_path_original`, binary-companion `.brain-extracted/` rule, and KG hint block remain inline in `_build_system_prompt`'s project block. Those are project-agnostic invariants of how Brain's pipeline works, not per-project state — stable across all project chats.
+
+### Validation + measurement notes
+
+- Per-round growth on Turn 2 of the DSGVO reproduction dropped from yesterday's +2,605 (round 0 → round 1) to today's +655 with three `read_document`s in flight, all hitting cache.
+- A1+ does NOT help within a single turn — the first read of each file goes to disk. The win is on follow-up turns asking about the same source.
+- The −17% number is a noisy real-world comparison (model chose 3 sources today vs 1 yesterday); the user's normalised estimate is ~30% on a 1-source workflow.
+- See memory: `project_token_savings_and_instructions_refactor.md`, `project_token_optimizations_validated.md`.
+
+### Backlog: lift response disciplines org-wide
+
+User raised the architectural idea (2026-04-30) that REFUSAL/PRECISION/CITATION are actually two layers conflated: generic response discipline (applies to project chats AND normal chats AND scheduled tasks) vs project-specific tone (the actual reason the per-project Instructions field exists). Captured in `backlog_global_response_disciplines.md` — explicitly deferred ("lass mal"), don't apply prematurely. When revisited: lift the disciplines to a new org-wide settings tab, strip them from `DEFAULT_PROJECT_INSTRUCTIONS`, leave the project Instructions field for project-specific overlays.
 
 ### Project Input Folders + Sync (v8.18.2)
 

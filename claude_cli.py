@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.22.2"
-VERSION_DATE = "2026-04-29"
+VERSION = "8.23.0"
+VERSION_DATE = "2026-04-30"
 CHANGELOG = [
+    ("8.23.0", "2026-04-30", "Token-saving optimisations + project Instructions refactor + Instructions UI polish. Three coordinated changes targeting per-turn token consumption + owner-editable response disciplines + better readability of the Instructions panel. (1) **A1+ per-session read_document / read_file cache** — `_read_doc_cache` in claude_cli.py keyed by `(session_id, abs_path)` with `(mtime, size, turn_first_read, content_hash)` value. On a repeat full-shape read of the same file in the same chat, returns a compact stub `{cached:true, first_read_in_turn:N, content_hash:..., note:'Bereits in Turn N gelesen — Inhalt unverändert'}` instead of streaming the file content back into the model's context. mtime+size check on every lookup invalidates if the file changed externally; `_after_file_write` invalidates the entry explicitly when the model writes/edits the same path so a follow-up read sees fresh content. Pagination args (offset / limit / pages / sheet / slides; explicit `limit` on read_file) bypass the cache entirely. read_document and read_file are added to `_DEDUP_EXEMPT` so the bare-string dedup (which kills the loop after 2 dupes) doesn't fire on legitimate cache-hit calls — the cache is the smarter dedup. `_thread_local.tool_round` set in `_execute_tools_batch` so the stub names the right turn. TTL 1h, max 64 entries per session. Validated on a real workflow: yesterday's 4-turn DSGVO chat (78beef49) used 335,683 input tokens reading the same Datenschutzhandbuch.pdf.md three times across turns; today's reproduction (1e7478d9) used 277,579 tokens — a measured −17% reduction DESPITE the model choosing to read 3× more source files per turn (3 .md companions instead of 1). User estimate normalised to a 1-source workflow comes out around −30%; without A1+ the 3-source variation alone would have inflated tokens far above yesterday's number. Per-round growth on Turn 2 dropped from yesterday's +2,605 (round 0 → 1) to today's +655 with three read_documents in flight, all hitting cache. (2) **B1 project preamble** — moved dynamic project state (drawer count, attachment count, input-folder list with absolute paths, path-join example) out of `_build_system_prompt` into a per-session preamble injected at round 0 on the first user message. New helper `_project_preamble_text(agent_id, project_name)` builds the `[Project context (this session): …]` block. Injection block hoisted out of the `_greeting_uid` guard so anonymous (auth-off) sessions in projects also get the absolute paths needed to resolve relative drawer source_files. KV-cache stability win: system prompt stays project-agnostic in shape, the per-project bytes only live in the user message — better prefix reuse on warm-pool slots and across project chats; saves ~1KB per request on Cloud providers without prompt cache. (3) **DEFAULT_PROJECT_INSTRUCTIONS constant + project Instructions refactor** — REFUSAL + PRECISION + CITATION discipline blocks (the v8.22.0 anti-hallucination rules) moved out of `_build_system_prompt`'s static text into a new module-level `DEFAULT_PROJECT_INSTRUCTIONS` constant (4081 chars). Used as the FALLBACK when `project.json.instructions` is empty so every project still gets the disciplines for free with no migration. Project owners can replace the default by writing their own text in the right-pane Instructions editor; override REPLACES the default rather than appending (an owner can opt out of the citation requirement by writing simpler instructions). New endpoint `GET /v1/projects/default-instructions` returns the constant; the editor modal grows a `Load default` button that pre-fills the textarea so owners can start from the disciplines and customise. Brain mechanics (the 3-step retrieval flow, `read_path` vs `read_path_original`, binary→.md companion explanation, KG hint block) STAY in the system prompt because those are infrastructure facts not editable behavior. (4) **Instructions UI polish** — the right-panel Instructions section now renders the saved instructions text as full markdown (headings / bullets / code / blockquotes / strong) via the existing renderMarkdown(). Section is height-capped at 200px with vertical scroll so long defaults (4KB markdown) don't push Files + Input-Folders sections below the fold. Editor modal grows Edit/Preview tabs above the textarea: Edit shows raw markdown (existing textarea, min-height bumped to 320px), Preview renders the current textarea content via the same renderer with up to 480px scrollable height. Switching tabs preserves the raw text; Save always reads from the textarea regardless of which tab is active. Load default refreshes the Preview if it's currently visible. Save path now also re-renders the right-panel block as markdown to match loadProjectDetail (was raw textContent before). (5) **Token-optimization memory captured** — three new memory notes documenting A1+/B1 mechanics, the validated −17% measurement, and a backlog item for lifting REFUSAL/PRECISION/CITATION into an org-wide setting (the user explicitly said 'lass mal' on that — don't apply prematurely)."),
     ("8.22.2", "2026-04-29", "References UI split into Zitiert + Durchsucht. The right-side References panel and the inline ref-badges under each assistant message previously rendered EVERY drawer that came back from `mempalace_query` — typically 5-10 results, of which the model only quotes 1-3 in `[Quelle: …]` markers. Visual noise made it hard to tell which sources were actually used. New split: refs whose basename matches a `[Quelle: <basename>]` marker in the assistant message text land in the Zitiert section (always visible); the rest land in Durchsucht (collapsed by default via `<details>`). When an answer cites no sources (refusals, no-source answers), Durchsucht opens by default so the pane isn't empty. Implementation: new `extractCitedBasenamesFromText` regex parses both `[Quelle:…]` and `[source:…]` markers (em-dash, en-dash, ASCII-hyphen-with-spaces, `§`, or closing-bracket all valid terminators); `normaliseCitationBasename` lowercases + strips path prefix + strips `.md` companion suffix on known binary extensions (pdf|docx|pptx|xlsx|xlsm|eml|msg) so `policy.pdf`, `policy.pdf.md`, and `Policy.PDF` collapse to the same key. `collectChatReferences()` and `getReferencesForMessage(idx)` return `{cited, searched}` instead of a flat array. Live-streaming refs always seed the searched bucket; cache is invalidated on `done` event so the next read re-splits using the now-final assistant text. Two new render paths share a single `_refCardHtml` helper; CSS for `msg-references-wrap` (per-message inline) + `refs-section` (right pane) wrap each section with a header label + count pill and `<details>`-driven disclosure on the collapsed surface."),
     ("8.22.1", "2026-04-29", "CITATION DISCIPLINE tightened: per-claim instead of per-block. Follow-up to v8.22.0 after the canary `a82327b7` showed the model still ending bullet lists with three uncited paraphrase bullets after a single inline blockquote — exactly where drift and fabrication slip in (the user can't tell which bullet came from which source). Reworked the CITATION DISCIPLINE block to mandate that EVERY sentence AND EVERY bullet carry its OWN `[Quelle: <basename> — \"<verbatim quote>\"]` reference, not just one at the end. Added explicit guidance: if no verbatim quote can be found for a bullet, DELETE the bullet — shorter fully-cited answer beats longer answer with uncited bullets. Two worked examples (single-sentence claim + bullet list with per-bullet quotes plus an explicit '(kein dritter Bullet, weil keine weitere Aussage im read_document gefunden — lieber weglassen als raten)' line so the model sees the deletion pattern modelled, not just told)."),
     ("8.22.0", "2026-04-29", "Anti-hallucination retrieval stack + sampling + citation discipline. End-to-end stabilisation pass on the German bank-policy corpus after a day of validation runs that exposed a chain of three independent bugs masquerading as 'the model hallucinates'. (1) **PRECISION DISCIPLINE block** added between REFUSAL and CITATION DISCIPLINE in `_build_system_prompt`'s PROJECT MEMORY scope: bans plausible-sounding filler ('regelmäßig', 'häufig', 'sofort', 'kürzer', 'mindestens X Zeichen', 'alle 12 Monate', 'mindestens jährlich'), requires `nicht spezifiziert` when the source gives no concrete value, and gates every qualifying adverb/comparative on an immediately-following wörtliches Zitat from the read_document output. ISO-27001-typical phrasing from training data is explicitly NOT a source. (2) **CITATION DISCIPLINE rewritten** to mandate verbatim 10-25-word quotes inside the bracket — `[Quelle: <basename> — \"<wörtliches Zitat>\"]` — instead of the old `§N` style. The `.md` companions don't preserve the original document's paragraph numbering, so any `§N` the model wrote was fabricated; switching to verbatim quotes makes citations self-verifiable (user can Cmd+F the original PDF). Locator additions (`Page N` for PDF, `Slide N` for PPTX, `Sheet \"Name\"` for XLSX) are allowed only when genuinely visible in the read_document text. Worked example uses a real Multilogin sentence so the model has a concrete pattern to copy. (3) **Validated sampling defaults** for Mistral Small 3 on policy-reproduction: `temperature: 0.2` + `top_p: 0.85`. Captured operationally — across six measured runs on the same canary the combination dropped fabricated formulae, fabricated paragraph numbers, fabricated intervals, and fabricated thresholds while preserving correct retrieval and citations. `temperature: 0` was tested and rejected (Mistral provider rejected the request) and `temperature: 0.1` showed no measurable improvement over 0.2. The combination is now the user-set default in config.json (gitignored); CLAUDE.md notes the validation. (4) **Anti-room-name-guessing** — the `mempalace_query` tool's `room` parameter description was a permissive list of speculative example rooms ('document', 'documentation', etc.) which the model used as valid vocabulary, returning zero drawers and producing false 'not in the documents' answers. Description rewritten to enumerate the actual rooms Brain's miner uses (`general` for policy/document content, `artifacts`, `chat`/`chat_summary`/`chat_attachment`, `reference`) and explicitly forbid guessing. Validated on the canary against `9775bba7` → `a82327b7`: same model, same query, same retrieval, output dropped from 3850 chars (multiple fabricated sections incl. `§154–176`, 'alle 12 Monate', 'mindestens 20 Zeichen') to 1037 chars with a single inline blockquote, a single citation carrying the verbatim source text, and three paraphrase bullets — every claim backed by the read_document output. The day's other infrastructure fixes (markitdown wrapper preferred over fitz/python-docx for materially better markdown, read_document plain-text pagination respecting `offset`/`limit` instead of hard-capping at 500 lines, drawer.read_path / read_path_original carried through tool_mempalace_query, doc_convert frontmatter `brain-converter` stamp for backend traceability, KG disabled in default config because vanilla MemPalace+Claude Code outperformed Brain's KG-augmented stack on the IT-risk-score canary, _summarise_tool_result 3-tuple unpack fix in maybe_retroactive_isolate that was crashing every >65KB read_document call and being misread as hallucination, project__-wing startup wipe scoped to knowledge wing only — chat content preserved) ship with this version, plus matching memory notes (project_chroma_direct_search_fix, project_read_document_truncation_fix, project_drawer_path_resolution_fix, project_kg_disabled_markitdown_swap, bug_summarise_tool_result_unpack, project_brain_canary_55_of_7, project_vanilla_mcp_gap_analysis, project_drilldown_tools_added)."),
@@ -117,6 +118,7 @@ import datetime
 import fnmatch
 import logging
 import glob as globmod
+import hashlib
 import json
 import os
 import queue
@@ -212,6 +214,102 @@ PLAN_MODE_PROMPT = (
     "Do NOT attempt to write files, execute commands, store memory, send emails, "
     "or delegate tasks. Instead, describe a detailed plan of what you WOULD do, "
     "including specific file paths, commands, and steps.\n"
+)
+
+# Default body for the per-project Instructions field. Used when project.json
+# has no `instructions` value set — the v8.22.0 anti-hallucination disciplines
+# ship as the out-of-the-box content so every project gets sane defaults
+# without the owner having to know about them. Project owners can replace,
+# tighten, or remove any rule via the project Instructions textarea in the
+# right panel; the literal text below is what they will see pre-filled when
+# they first open the editor (see `_get_project_instructions`).
+#
+# Why these belong here, not in the system prompt:
+# - Disciplines are about the PROJECT'S desired answer style (refuse vs guess;
+#   cite verbatim vs paraphrase; "nicht spezifiziert" vs plausible filler).
+#   That's tenant policy, not Brain mechanics.
+# - Different projects need different disciplines (a brainstorming project
+#   doesn't want refusal-on-empty-retrieval; a marketing project may not need
+#   verbatim citations).
+# - Owner-editable means the user can tune behavior per project without
+#   touching code.
+#
+# Brain mechanics (the 3-step retrieval flow, `read_path` vs `read_path_original`,
+# the binary→.md companion explanation, the KG hint block) STAY in the system
+# prompt because they are infrastructure facts that don't change per project.
+DEFAULT_PROJECT_INSTRUCTIONS = (
+    "**REFUSAL DISCIPLINE — read carefully**:\n"
+    "If `mempalace_query` returns 0 relevant drawers (and after you've read "
+    "the top drawers' source files in full and confirmed they don't contain "
+    "the information), the project does NOT contain it. You MUST then answer:\n"
+    "  'Diese Information ist im aktuellen Projektwissen nicht enthalten. "
+    "Bitte fügen Sie das relevante Dokument zum Projekt hinzu oder "
+    "konsultieren Sie eine andere Quelle.'\n"
+    "Do NOT substitute general knowledge for indexed-document knowledge in "
+    "project chats. Even if you know the topic well from training data — "
+    "for compliance/policy/audit work, an answer that doesn't match an "
+    "actual document on file is a compliance hazard. Refuse cleanly and "
+    "say what's missing.\n"
+    "Try at most 2-3 query rephrasings before refusing; do not spin on "
+    "retrieval forever.\n"
+    "\n"
+    "**PRECISION DISCIPLINE — no plausible-sounding filler**:\n"
+    "When the source does not give a concrete value (interval, frequency, "
+    "threshold, count, deadline, length, duration), write `nicht "
+    "spezifiziert` — never substitute a plausible default like "
+    "'regelmäßig', 'häufig', 'sofort', 'kürzer', 'mindestens X Zeichen', "
+    "'alle 12 Monate', 'mindestens jährlich'. If you use any qualifying "
+    "adverb or comparative ('regelmäßig', 'häufiger', 'kürzer', 'sofort', "
+    "'zeitnah', 'angemessen'), the very next characters must be a "
+    "wörtliches Zitat (`> \"...\"`) from the read_document output proving "
+    "the source actually says that. No quote → drop the qualifier. "
+    "ISO-27001-typical phrasing from training data is NOT a source.\n"
+    "\n"
+    "**CITATION DISCIPLINE — per-claim, not per-block**:\n"
+    "EVERY factual sentence and EVERY bullet point that came from the "
+    "project must carry its OWN [Quelle: <basename> — \"<wörtliches Zitat "
+    "10-25 Wörter>\"] reference right after the claim. One citation at "
+    "the end of a 5-bullet list is INSUFFICIENT — the reader cannot tell "
+    "which bullet came from which source, and bullets without an explicit "
+    "citation are where paraphrase drift and fabrication slip in. Treat "
+    "each bullet as an independent claim that must stand on its own with "
+    "its own quote.\n"
+    "If you cannot find a verbatim quote in the read_document output that "
+    "supports a specific bullet — DELETE that bullet. Do not write claims "
+    "you cannot cite. A shorter, fully-cited answer is always preferable "
+    "to a longer answer with uncited bullets.\n"
+    "The verbatim quote (10-25 words, copied EXACTLY from the read_document "
+    "output) is mandatory — it lets the user search the original PDF with "
+    "Cmd+F and verify the claim. Without a quote, the citation is "
+    "unverifiable.\n"
+    "Two correct examples:\n"
+    "  • Single-sentence claim:\n"
+    "    'Multilogin-Berechtigungen müssen vom Datenowner genehmigt werden "
+    "[Quelle: 4_1_0_ARL_Systemberechtigungen.pdf — \"Berechtigungen können "
+    "ferner angeben, ob es sich um eine Berechtigung handelt, wo die "
+    "Zugangsdaten nicht einer einzelnen Person zugewiesen werden kann\"].'\n"
+    "  • Bullet list (each bullet has its own quote):\n"
+    "    - Multilogin = nicht zuordenbar [Quelle: "
+    "4_1_0_ARL_Systemberechtigungen.pdf — \"Zugangsdaten nicht einer "
+    "einzelnen Person zugewiesen werden\"].\n"
+    "    - Genehmigung durch Datenowner [Quelle: "
+    "4_1_0_ARL_Systemberechtigungen.pdf — \"Vor Veränderungen ist eine "
+    "Zustimmung des jeweiligen Datenowners einzuholen\"].\n"
+    "    - (kein dritter Bullet, weil keine weitere Aussage im "
+    "read_document gefunden — lieber weglassen als raten.)\n"
+    "Use the basename only (e.g. `4_0_0_ARL_IKT Strategie.pdf` — not the "
+    "full path). **STRIP THE `.md` COMPANION SUFFIX**: when a drawer's "
+    "`source_file` ends in `.brain-extracted/<name>.<ext>.md`, cite the "
+    "ORIGINAL binary's name (e.g. `policy.pdf`, NOT `policy.pdf.md`). "
+    "**DO NOT invent paragraph numbers like `§164` or `§3.2`** — the `.md` "
+    "companions do NOT preserve the original document's paragraph "
+    "numbering; any `§N` you write will be fabricated. Only add a locator "
+    "if it is genuinely present in the read_document text: `Page N` for "
+    "PDFs (markitdown marks page boundaries), `Slide N` for PPTX, "
+    "`Sheet \"Name\"` for XLSX. If no clean locator exists, the verbatim "
+    "quote alone is sufficient.\n"
+    "Multiple sources for one claim → repeat the bracket: [Quelle: "
+    "A.pdf — \"...\"] [Quelle: B.docx — \"...\"]."
 )
 
 CAVEMAN_CHAT_PROMPTS = {
@@ -1824,6 +1922,15 @@ def tool_read_file(args: dict) -> str:
         path = os.path.expanduser(path)
         if not os.path.isabs(path):
             path = os.path.abspath(path)
+        # Cache hit only when caller asked for the whole file (default offset=1
+        # AND no explicit limit override — i.e. they accepted the default 400).
+        # If the model is paginating, always re-read on disk so it gets the
+        # window it asked for.
+        _full_read = (int(offset or 1) == 1 and ("limit" not in args))
+        if _full_read and os.path.exists(path):
+            _stub = _read_doc_cache_lookup(path)
+            if _stub is not None:
+                return _stub
         with open(path, "r", errors="replace") as f:
             lines = f.readlines()
         total = len(lines)
@@ -1835,6 +1942,12 @@ def tool_read_file(args: dict) -> str:
         for i, line in enumerate(selected, start=start + 1):
             numbered.append(f"{i:>6}\t{line.rstrip()}")
         content = "\n".join(numbered)
+        if _full_read and end >= total:
+            try:
+                _round = int(getattr(_thread_local, "tool_round", 0) or 0)
+            except Exception:
+                _round = 0
+            _read_doc_cache_store(path, content, tool_round=_round)
         return _ok({"path": path, "total_lines": total, "showing": f"{start+1}-{min(end, total)}", "content": content})
     except Exception as e:
         return _err(f"read_file: {e}")
@@ -2150,6 +2263,31 @@ def tool_read_document(args: dict) -> str:
                 "file path including extension.")
         if not os.path.exists(path):
             return _err(f"File not found: {path}")
+
+        # Per-session cache: a previous turn already read this exact file,
+        # mtime+size unchanged → return a stub instead of re-streaming all
+        # bytes back into the model's context. Skip the cache if the model
+        # is paginating (offset / limit / pages / sheet / slides) — those
+        # signal it wants a specific window, not the whole file.
+        _is_paginated = any(
+            args.get(k) for k in ("offset", "limit", "pages", "sheet", "slides")
+        )
+        if not _is_paginated:
+            _stub = _read_doc_cache_lookup(path)
+            if _stub is not None:
+                return _stub
+
+        def _ok_and_cache(payload: dict) -> str:
+            # Cache only the full-file shape so subsequent paginated reads
+            # always hit disk; that's what _is_paginated already gates above.
+            if not _is_paginated:
+                try:
+                    _round = int(getattr(_thread_local, "tool_round", 0) or 0)
+                except Exception:
+                    _round = 0
+                _read_doc_cache_store(path, str(payload.get("content", "") or ""), tool_round=_round)
+            return _ok(payload)
+
         ext = os.path.splitext(path)[1].lower()
 
         if ext == ".pdf":
@@ -2231,7 +2369,7 @@ def tool_read_document(args: dict) -> str:
                 content = "\n\n".join(page_texts) + tables_note
 
             meta_str = "\n".join(f"**{k}:** {v}" for k, v in meta.items() if v)
-            return _ok({"path": path, "format": "pdf", "metadata": meta_str, "content": content})
+            return _ok_and_cache({"path": path, "format": "pdf", "metadata": meta_str, "content": content})
 
         elif ext == ".docx":
             try:
@@ -2269,21 +2407,21 @@ def tool_read_document(args: dict) -> str:
                         table_lines.append("| " + " | ".join(r) + " |")
                     paragraphs.append("\n".join(table_lines))
             content = "\n\n".join(paragraphs)
-            return _ok({"path": path, "format": "docx", "content": content})
+            return _ok_and_cache({"path": path, "format": "docx", "content": content})
 
         elif ext in (".xlsx", ".xls"):
             sheet = args.get("sheet")
             content = DocumentParser.parse_xlsx(path, sheet=sheet)
-            return _ok({"path": path, "format": "xlsx", "content": content})
+            return _ok_and_cache({"path": path, "format": "xlsx", "content": content})
 
         elif ext == ".pptx":
             slides = args.get("slides")
             content = DocumentParser.parse_pptx(path, slides=slides)
-            return _ok({"path": path, "format": "pptx", "content": content})
+            return _ok_and_cache({"path": path, "format": "pptx", "content": content})
 
         elif ext in (".csv", ".tsv"):
             content = DocumentParser.parse_csv(path)
-            return _ok({"path": path, "format": "csv", "content": content})
+            return _ok_and_cache({"path": path, "format": "csv", "content": content})
 
         elif ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"):
             meta_text = DocumentParser.parse_image(path)
@@ -2292,7 +2430,7 @@ def tool_read_document(args: dict) -> str:
 
         elif ext == ".svg":
             content = DocumentParser.parse_svg(path)
-            return _ok({"path": path, "format": "svg", "content": content})
+            return _ok_and_cache({"path": path, "format": "svg", "content": content})
 
         elif ext == ".eml":
             import email
@@ -2315,7 +2453,7 @@ def tool_read_document(args: dict) -> str:
             meta_str = "\n".join(f"**{k}:** {v}" for k, v in headers.items() if v)
             if attachments:
                 meta_str += f"\n**attachments:** {', '.join(attachments)}"
-            return _ok({"path": path, "format": "eml", "content": f"{meta_str}\n\n{body}"})
+            return _ok_and_cache({"path": path, "format": "eml", "content": f"{meta_str}\n\n{body}"})
 
         elif ext in (".msg", ".epub", ".zip"):
             try:
@@ -2329,7 +2467,7 @@ def tool_read_document(args: dict) -> str:
             md = MarkItDown()
             result = md.convert(path)
             fmt = ext.lstrip(".")
-            return _ok({"path": path, "format": fmt, "content": result.text_content})
+            return _ok_and_cache({"path": path, "format": fmt, "content": result.text_content})
 
         else:
             # Plain-text / markdown / unknown-extension read. Honor explicit
@@ -2354,7 +2492,7 @@ def tool_read_document(args: dict) -> str:
                 numbered.append(f"{i:>6}\t{line.rstrip()}")
             content = "\n".join(numbered)
             shown = f"{start+1}-{min(end, total)}"
-            return _ok({"path": path, "format": "text",
+            return _ok_and_cache({"path": path, "format": "text",
                         "total_lines": total, "showing": shown,
                         "content": content})
     except ImportError as e:
@@ -19382,7 +19520,12 @@ def _check_tool_dedup(name: str, args: dict) -> str | None:
     fresh, empty dedup set and miss every duplicate.
     """
     _DEDUP_EXEMPT = {"memory_recall", "memory_shared", "delegate_task", "task_status",
-                     "schedule_list", "schedule_history"}
+                     "schedule_list", "schedule_history",
+                     # read_document / read_file have their own per-session
+                     # cache that returns a "already read in turn N, unchanged"
+                     # stub on duplicate calls — the bare-string dedup would
+                     # otherwise abort the loop on the second cache-hit case.
+                     "read_document", "read_file"}
     if name in _DEDUP_EXEMPT:
         return None
 
@@ -19414,6 +19557,121 @@ def reset_tool_dedup():
     with _tool_dedup_lock:
         _tool_dedup.pop(sid, None)
         _dedup_gc_locked()
+
+
+# --- Per-session read_document / read_file cache (token-saver) ---
+#
+# Same chat session, same file, same call shape (no pagination args) → second
+# call returns a stub instead of the full content. Cuts the "model re-reads
+# the same .md companion every turn" cost which is the dominant driver of
+# token growth on policy-Q&A sessions where mempalace_query keeps returning
+# the same drawer pointing at the same source.
+#
+# Cache key: (sid, abs_path). Value: (mtime, size, turn_first_read, content_hash).
+# On hit: stat() the file, compare mtime+size. Match → emit stub. Diff → bypass
+# cache, refresh entry with new content, return fresh result. Cache is
+# invalidated explicitly by _after_file_write() when the agent writes/edits the
+# same path in-session (the inotify-style fast path; mtime check would catch it
+# anyway but explicit invalidation avoids one wasted read on the model's next
+# turn).
+_read_doc_cache_lock = threading.Lock()
+_read_doc_cache: dict[str, dict[str, dict]] = {}  # sid -> path -> entry
+_READ_DOC_CACHE_TTL = 3600  # drop sessions untouched this long
+_READ_DOC_CACHE_MAX_PER_SESSION = 64
+
+
+def _read_doc_cache_sid() -> str:
+    sid = getattr(_thread_local, 'current_session_id', None)
+    if sid:
+        return sid
+    return f"_thread:{threading.get_ident()}"
+
+
+def _read_doc_cache_gc_locked() -> None:
+    now = time.time()
+    stale = [k for k, v in _read_doc_cache.items() if v.get("_last_touch", 0) < now - _READ_DOC_CACHE_TTL]
+    for k in stale:
+        _read_doc_cache.pop(k, None)
+
+
+def _read_doc_cache_lookup(path: str) -> str | None:
+    """Return a stub tool_result if a prior turn read this exact file with the
+    same on-disk identity (mtime+size). Otherwise None — caller proceeds with
+    the real read.
+    """
+    sid = _read_doc_cache_sid()
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    with _read_doc_cache_lock:
+        bucket = _read_doc_cache.get(sid)
+        if not bucket:
+            return None
+        entry = bucket.get(path)
+        if not entry:
+            return None
+        if entry.get("mtime") != st.st_mtime or entry.get("size") != st.st_size:
+            # File changed since last read in this session — drop and miss.
+            bucket.pop(path, None)
+            return None
+        bucket["_last_touch"] = time.time()
+        turn = entry.get("turn", 0)
+        chash = entry.get("content_hash", "")
+    return _ok({
+        "path": path,
+        "cached": True,
+        "first_read_in_turn": turn,
+        "content_hash": chash,
+        "note": (
+            f"Bereits in Turn {turn} dieser Sitzung vollständig gelesen — "
+            "Inhalt ist seitdem unverändert (mtime+size match). Nutze den "
+            "vorigen tool_result. Falls du explizit eine andere Stelle der "
+            "Datei brauchst, rufe read_document mit offset/limit/pages auf "
+            "(seitenweises Lesen umgeht den Cache)."
+        ),
+    })
+
+
+def _read_doc_cache_store(path: str, content: str, tool_round: int = 0) -> None:
+    sid = _read_doc_cache_sid()
+    try:
+        st = os.stat(path)
+    except OSError:
+        return
+    chash = hashlib.sha256((content or "").encode("utf-8", errors="replace")).hexdigest()[:16]
+    with _read_doc_cache_lock:
+        bucket = _read_doc_cache.get(sid)
+        if bucket is None:
+            bucket = {"_last_touch": time.time()}
+            _read_doc_cache[sid] = bucket
+            _read_doc_cache_gc_locked()
+        # Bound per-session size; drop oldest by turn.
+        if len([k for k in bucket if not k.startswith("_")]) >= _READ_DOC_CACHE_MAX_PER_SESSION:
+            kept = [(k, v) for k, v in bucket.items() if not k.startswith("_")]
+            kept.sort(key=lambda kv: kv[1].get("turn", 0))
+            for k, _ in kept[:max(1, len(kept) // 4)]:
+                bucket.pop(k, None)
+        bucket[path] = {
+            "mtime": st.st_mtime,
+            "size": st.st_size,
+            "turn": tool_round,
+            "content_hash": chash,
+        }
+        bucket["_last_touch"] = time.time()
+
+
+def _read_doc_cache_invalidate(path: str) -> None:
+    """Drop one path from every session's cache. Called by _after_file_write so
+    a follow-up read in the same session always re-reads after the model
+    writes/edits the file."""
+    try:
+        abs_path = os.path.abspath(os.path.expanduser(path))
+    except Exception:
+        return
+    with _read_doc_cache_lock:
+        for bucket in _read_doc_cache.values():
+            bucket.pop(abs_path, None)
 
 
 # --- Hook Runner ---
@@ -19645,6 +19903,9 @@ def _register_artifact_version(path: str, action: str, agent_id: str):
 def _after_file_write(path: str, action: str = "created", agent_id: str = ""):
     """Centralized post-file-write pipeline. Called from tool_write_file and tool_edit_file.
     Replaces scattered _maybe_qmd_reindex(), _extract_entities(), file_created calls."""
+    # Invalidate any cached read for this file so the model's next read in this
+    # session fetches the just-written content instead of a stale stub.
+    _read_doc_cache_invalidate(path)
     is_artifact = _is_artifact_path(path)
 
     # MemPalace migration: QMD reindex + entity extraction + KG update removed.
@@ -19724,6 +19985,12 @@ def _execute_tools_batch(tool_calls: list[dict], event_callback=None, tool_round
     """
     if not tool_calls:
         return []
+    # Surface the round number to tools that want to attribute "first read"
+    # turns in cache stubs (read_document / read_file).
+    try:
+        _thread_local.tool_round = tool_round
+    except Exception:
+        pass
 
     # Partition into batches: [(is_concurrent, [tool_calls...])]
     batches = []
@@ -20504,25 +20771,20 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
             )
             if proj_desc:
                 system_instruction += f" {proj_desc}"
-            input_folders = proj_cfg.get("input_folders") or []
-            attachment_count = int(proj_cfg.get("chunks") or 0)
-            try:
-                _proj_total_drawers = int(
-                    (proj_cfg.get("sync_status") or {}).get("total_indexed") or 0)
-            except (TypeError, ValueError):
-                _proj_total_drawers = 0
             try:
                 _kg_enabled_for_prompt = bool(
                     (_load_mempalace_config().get("kg") or {}).get(
                         "enabled", True))
             except Exception:
                 _kg_enabled_for_prompt = True
+            # The dynamic counts + the on-disk input-folder list moved out
+            # of the system prompt into a per-session first-user-turn preamble
+            # (see _project_preamble_text() called from send_message round 0).
+            # Keeps this block KV-cache-stable across warm-pool sessions and
+            # avoids re-billing the index on every fresh project chat.
             system_instruction += (
                 "\nPROJECT MEMORY — IMPORTANT:\n"
-                "This project has a dedicated, isolated memory store. It contains "
-                f"{_proj_total_drawers} indexed chunks from "
-                f"{attachment_count} manual attachment(s) and "
-                f"{len(input_folders)} input folder(s) on disk. By default, "
+                "This project has a dedicated, isolated memory store. By default, "
                 "`mempalace_query` searches ONLY this knowledge layer (mined "
                 "documents) — it does NOT include past chat turns or chat "
                 "summaries. This is deliberate: a wrong answer in an earlier "
@@ -20633,128 +20895,49 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
                     "(The knowledge graph is currently disabled for this "
                     "deployment; only `mempalace_query` + `read_document` "
                     "are available for project knowledge.)\n\n")
+            # REFUSAL + PRECISION + CITATION discipline blocks moved into the
+            # per-project Instructions field (see DEFAULT_PROJECT_INSTRUCTIONS).
+            # They surface again below via the proj_instructions branch — the
+            # default kicks in for projects that haven't customised the field,
+            # and project owners can edit them in the right-pane Instructions
+            # textarea to tune behavior per project.
+            #
+            # PROJECT INPUT FOLDERS list + path-join example moved into the
+            # per-session preamble (see _project_preamble_text). Static
+            # binary-companion guidance stays here because it doesn't depend
+            # on which folders the project has, only on Brain's pipeline.
             system_instruction += (
-                "**REFUSAL DISCIPLINE — read carefully**:\n"
-                "If `mempalace_query` returns 0 relevant drawers (and after "
-                "you've read the top drawers' source files in full and "
-                "confirmed they don't contain the information), the project "
-                "does NOT contain it. You MUST then answer:\n"
-                "  'Diese Information ist im aktuellen Projektwissen nicht "
-                "enthalten. Bitte fügen Sie das relevante Dokument zum "
-                "Projekt hinzu oder konsultieren Sie eine andere Quelle.'\n"
-                "Do NOT substitute general knowledge for indexed-document "
-                "knowledge in project chats. Even if you know the topic well "
-                "from training data — for compliance/policy/audit work, an "
-                "answer that doesn't match an actual document on file is a "
-                "compliance hazard. Refuse cleanly and say what's missing.\n"
-                "Try at most 2-3 query rephrasings before refusing; do not "
-                "spin on retrieval forever.\n"
-                "\n"
-                "**PRECISION DISCIPLINE — no plausible-sounding filler**:\n"
-                "When the source does not give a concrete value (interval, "
-                "frequency, threshold, count, deadline, length, duration), "
-                "write `nicht spezifiziert` — never substitute a plausible "
-                "default like 'regelmäßig', 'häufig', 'sofort', 'kürzer', "
-                "'mindestens X Zeichen', 'alle 12 Monate', 'mindestens "
-                "jährlich'. If you use any qualifying adverb or comparative "
-                "('regelmäßig', 'häufiger', 'kürzer', 'sofort', 'zeitnah', "
-                "'angemessen'), the very next characters must be a wörtliches "
-                "Zitat (`> \"...\"`) from the read_document output proving the "
-                "source actually says that. No quote → drop the qualifier. "
-                "ISO-27001-typical phrasing from training data is NOT a source.\n"
-                "\n"
-                "**CITATION DISCIPLINE — per-claim, not per-block**:\n"
-                "EVERY factual sentence and EVERY bullet point that came "
-                "from the project must carry its OWN [Quelle: <basename> — "
-                "\"<wörtliches Zitat 10-25 Wörter>\"] reference right after "
-                "the claim. One citation at the end of a 5-bullet list is "
-                "INSUFFICIENT — the reader cannot tell which bullet came "
-                "from which source, and bullets without an explicit citation "
-                "are where paraphrase drift and fabrication slip in. Treat "
-                "each bullet as an independent claim that must stand on its "
-                "own with its own quote.\n"
-                "If you cannot find a verbatim quote in the read_document "
-                "output that supports a specific bullet — DELETE that "
-                "bullet. Do not write claims you cannot cite. A shorter, "
-                "fully-cited answer is always preferable to a longer "
-                "answer with uncited bullets.\n"
-                "The verbatim quote (10-25 words, copied EXACTLY from the "
-                "read_document output) is mandatory — it lets the user "
-                "search the original PDF with Cmd+F and verify the claim. "
-                "Without a quote, the citation is unverifiable.\n"
-                "Two correct examples:\n"
-                "  • Single-sentence claim:\n"
-                "    'Multilogin-Berechtigungen müssen vom Datenowner "
-                "genehmigt werden [Quelle: 4_1_0_ARL_Systemberechtigungen.pdf "
-                "— \"Berechtigungen können ferner angeben, ob es sich um "
-                "eine Berechtigung handelt, wo die Zugangsdaten nicht einer "
-                "einzelnen Person zugewiesen werden kann\"].'\n"
-                "  • Bullet list (each bullet has its own quote):\n"
-                "    - Multilogin = nicht zuordenbar [Quelle: 4_1_0_ARL_"
-                "Systemberechtigungen.pdf — \"Zugangsdaten nicht einer "
-                "einzelnen Person zugewiesen werden\"].\n"
-                "    - Genehmigung durch Datenowner [Quelle: 4_1_0_ARL_"
-                "Systemberechtigungen.pdf — \"Vor Veränderungen ist eine "
-                "Zustimmung des jeweiligen Datenowners einzuholen\"].\n"
-                "    - (kein dritter Bullet, weil keine weitere Aussage im "
-                "read_document gefunden — lieber weglassen als raten.)\n"
-                "Use the basename only (e.g. `4_0_0_ARL_IKT Strategie.pdf` — "
-                "not the full path). **STRIP THE `.md` COMPANION SUFFIX**: "
-                "when a drawer's `source_file` ends in "
-                "`.brain-extracted/<name>.<ext>.md`, cite the ORIGINAL "
-                "binary's name (e.g. `policy.pdf`, NOT `policy.pdf.md`). "
-                "**DO NOT invent paragraph numbers like `§164` or `§3.2`** — "
-                "the `.md` companions do NOT preserve the original "
-                "document's paragraph numbering; any `§N` you write will be "
-                "fabricated. Only add a locator if it is genuinely present "
-                "in the read_document text: `Page N` for PDFs (markitdown "
-                "marks page boundaries), `Slide N` for PPTX, `Sheet \"Name\"` "
-                "for XLSX. If no clean locator exists, the verbatim quote "
-                "alone is sufficient.\n"
-                "Multiple sources for one claim → repeat the bracket: "
-                "[Quelle: A.pdf — \"...\"] [Quelle: B.docx — \"...\"].\n\n"
+                "BINARY DOCUMENTS (PDF, DOCX, PPTX, XLSX, EML, MSG) in project "
+                "input folders are auto-converted into companion `.md` files "
+                "under the hidden `.brain-extracted/` subdirectory before "
+                "mining. So a drawer with `source_file` like "
+                "`.brain-extracted/policy.pdf.md` actually came from "
+                "`policy.pdf` in the same folder — open the ORIGINAL binary "
+                "with read_document for full fidelity (tables, page layout, "
+                "complete spreadsheet rows beyond the preview). The `.md` is "
+                "a text preview optimised for retrieval and triple "
+                "extraction; use it only when you don't need the original "
+                "layout.\n\n"
             )
-            if input_folders:
-                folder_lines = []
-                for entry in input_folders:
-                    p = (entry or {}).get("path", "").strip()
-                    if not p:
-                        continue
-                    rec = " (recursive)" if entry.get("recursive", True) else " (top-level only)"
-                    folder_lines.append(f"  • {p}{rec}")
-                if folder_lines:
-                    system_instruction += (
-                        "PROJECT INPUT FOLDERS (on-disk, indexed into project memory):\n"
-                        + "\n".join(folder_lines) + "\n"
-                        "When mempalace_query returns a drawer with `source_file` "
-                        "that is a RELATIVE path (e.g. `screen.py` or `docs/api.md`), "
-                        "that path is relative to ONE of the folders listed above. "
-                        "To open the file with read_file or read_document, JOIN the "
-                        "input folder's absolute path with the source_file — do NOT "
-                        "use the current working directory. Example: source_file "
-                        "`screen.py` from a drawer mined under "
-                        f"`{input_folders[0].get('path','')}` becomes "
-                        f"`{os.path.join(input_folders[0].get('path',''), 'screen.py')}`.\n"
-                        "BINARY DOCUMENTS (PDF, DOCX, PPTX, XLSX, EML, MSG) "
-                        "in input folders are auto-converted into companion "
-                        "`.md` files under the hidden `.brain-extracted/` "
-                        "subdirectory before mining. So a drawer with "
-                        "`source_file` like `.brain-extracted/policy.pdf.md` "
-                        "actually came from `policy.pdf` in the same folder — "
-                        "open the ORIGINAL binary with read_document for full "
-                        "fidelity (tables, page layout, complete spreadsheet "
-                        "rows beyond the preview). The `.md` is a text "
-                        "preview optimised for retrieval and triple "
-                        "extraction; use it only when you don't need the "
-                        "original layout.\n\n"
-                    )
-            # Inject project custom instructions
-            proj_instructions = proj_cfg.get("instructions", "")
-            if proj_instructions:
-                system_instruction += (
-                    f"PROJECT INSTRUCTIONS (set by the user for this project):\n"
-                    f"{proj_instructions}\n\n"
+            # Inject project Instructions. When the project hasn't set the
+            # field, fall back to DEFAULT_PROJECT_INSTRUCTIONS (the v8.22.0
+            # REFUSAL + PRECISION + CITATION disciplines) so every project
+            # gets sane defaults out of the box. Owners can override by
+            # writing their own text in the right-pane Instructions editor —
+            # the override REPLACES the default rather than appending, so a
+            # project owner can opt out of the citation requirement entirely
+            # by setting their own (shorter or different) instructions.
+            proj_instructions = (proj_cfg.get("instructions") or "").strip()
+            if not proj_instructions:
+                proj_instructions = DEFAULT_PROJECT_INSTRUCTIONS
+                _instr_label = (
+                    "PROJECT INSTRUCTIONS (Brain default; the project owner "
+                    "can replace these by editing the project's Instructions "
+                    "field):"
                 )
+            else:
+                _instr_label = "PROJECT INSTRUCTIONS (set by the user for this project):"
+            system_instruction += f"{_instr_label}\n{proj_instructions}\n\n"
     # Inject note context for AI-assisted note editing
     note_context = getattr(_thread_local, 'note_context', None)
     if note_context:
@@ -20871,6 +21054,79 @@ def _apply_system_prompt_postprocess(base: str, caveman_system: int,
     return out
 
 
+def _project_preamble_text(agent_id: str, project_name: str) -> str:
+    """Build the per-session project preamble injected on the first user
+    message. Carries the project's dynamic state — drawer count, attachment
+    count, list of input folders, path-join example — that used to live in
+    `_build_system_prompt`. Moving it here keeps the system prompt
+    project-agnostic in shape (KV-cache stable across project chats and warm
+    pool) while still giving the model the concrete absolute paths it needs
+    to resolve relative drawer source_files.
+
+    Returns "" when the project doesn't exist or has no useful state to
+    report — the preamble is then skipped entirely and no extra block
+    appears in the user message.
+    """
+    try:
+        proj_cfg = ProjectManager.get_project(agent_id, project_name)
+    except Exception:
+        proj_cfg = None
+    if not proj_cfg:
+        return ""
+    input_folders = proj_cfg.get("input_folders") or []
+    try:
+        attachment_count = int(proj_cfg.get("chunks") or 0)
+    except (TypeError, ValueError):
+        attachment_count = 0
+    try:
+        total_drawers = int(
+            (proj_cfg.get("sync_status") or {}).get("total_indexed") or 0)
+    except (TypeError, ValueError):
+        total_drawers = 0
+    try:
+        total_files = int(
+            (proj_cfg.get("sync_status") or {}).get("total_files") or 0)
+    except (TypeError, ValueError):
+        total_files = 0
+    lines: list[str] = []
+    # State summary — gives the model a sense of how much is indexed.
+    state_bits = []
+    if total_drawers:
+        state_bits.append(f"{total_drawers} indexed chunks")
+    if total_files:
+        state_bits.append(f"{total_files} source files")
+    if attachment_count:
+        state_bits.append(f"{attachment_count} manual attachment(s)")
+    if input_folders:
+        state_bits.append(f"{len(input_folders)} input folder(s)")
+    if state_bits:
+        lines.append("Project memory state: " + ", ".join(state_bits) + ".")
+    # Folder list with the path-join example. This is the part that
+    # genuinely depends on absolute paths the model can't otherwise see.
+    folder_lines: list[str] = []
+    for entry in input_folders:
+        p = (entry or {}).get("path", "").strip()
+        if not p:
+            continue
+        rec = " (recursive)" if entry.get("recursive", True) else " (top-level only)"
+        folder_lines.append(f"  • {p}{rec}")
+    if folder_lines:
+        lines.append("Input folders on disk:")
+        lines.extend(folder_lines)
+        first_root = (input_folders[0] or {}).get("path", "") or ""
+        if first_root:
+            lines.append(
+                "When a mempalace_query drawer's `source_file` is a relative "
+                "path, JOIN it with one of the absolute folder roots above "
+                "before calling read_document. Example: source_file "
+                f"`screen.py` mined under `{first_root}` becomes "
+                f"`{os.path.join(first_root, 'screen.py')}`."
+            )
+    if not lines:
+        return ""
+    return "[Project context (this session):\n- " + "\n- ".join(lines) + "]"
+
+
 def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                  silent: bool = False,
                  tools: bool = True,
@@ -20921,6 +21177,24 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         except Exception:
             _has_assistant = True
         if not _has_assistant:
+            # Three preamble blocks may attach to the first user message of a
+            # session, in this order: project context (B1) → user greeting +
+            # comm prefs → long-form auto-maintained user profile. The
+            # project block is computed unconditionally (anonymous sessions
+            # in projects still need the absolute paths), the user blocks
+            # only fire when an authenticated user is on the request.
+            _project_pre = ""
+            try:
+                _proj_name_pre = getattr(_thread_local, 'project', None) or ""
+                _agent_pre_obj = getattr(_thread_local, 'current_agent', None)
+                _agent_id_pre = getattr(_agent_pre_obj, 'agent_id', "") or ""
+                if _proj_name_pre and _agent_id_pre:
+                    _project_pre = _project_preamble_text(_agent_id_pre, _proj_name_pre)
+            except Exception:
+                _project_pre = ""
+
+            _preamble_lines: list[str] = []
+            _profile_doc = ""
             _greeting_uid = getattr(_thread_local, 'current_user_id', "") or ""
             if _greeting_uid:
                 try:
@@ -20941,7 +21215,6 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                     # caveman mode, compress at read-time so the profile preamble
                     # matches the rest of the prompt — single source of truth is
                     # the chat composer's caveman toggle.
-                    _profile_doc = ""
                     try:
                         _safe_uid = "".join(c for c in _greeting_uid if c.isalnum() or c in "-_")
                         _profile_path = os.path.join(
@@ -20957,9 +21230,6 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                         _pp_cav = getattr(_thread_local, 'caveman_chat', 0) or 0
                         if _pp_cav in (1, 2, 3):
                             _profile_doc = _caveman_compress_text(_profile_doc, _pp_cav)
-                    # Build the preamble. Skip entirely if there's nothing
-                    # interesting (no name AND no about-me fields AND no profile).
-                    _preamble_lines: list[str] = []
                     if _greet:
                         _preamble_lines.append(
                             f"You are talking to {_greet}. Address them by "
@@ -20969,38 +21239,40 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                         _preamble_lines.append(f"Their role: {_job}")
                     if _commprefs:
                         _preamble_lines.append(f"How they like to communicate: {_commprefs}")
-                    if _preamble_lines or _profile_doc:
-                        for _idx, _m in enumerate(messages):
-                            if _m.get("role") != "user":
-                                continue
-                            if _m.get("_greeting_injected"):
-                                break
-                            _bits: list[str] = []
-                            if _preamble_lines:
-                                _bits.append(
-                                    "[Context about this user:\n- "
-                                    + "\n- ".join(_preamble_lines)
-                                    + "]"
-                                )
-                            if _profile_doc:
-                                # The auto-maintained profile is its own block
-                                # so the model can tell user-set comm prefs
-                                # apart from inferred long-form context.
-                                _bits.append(
-                                    "[Auto-maintained user profile (from chat "
-                                    "history; treat as background context, "
-                                    "not as ground truth for the current "
-                                    "request):\n" + _profile_doc + "]"
-                                )
-                            _preamble = "\n\n".join(_bits) + "\n\n"
-                            _content = _m.get("content")
-                            if isinstance(_content, str):
-                                _m["content"] = _preamble + _content
-                            elif isinstance(_content, list):
-                                _m["content"] = ([{"type": "text", "text": _preamble}]
-                                                  + _content)
-                            _m["_greeting_injected"] = True
-                            break
+            if _preamble_lines or _profile_doc or _project_pre:
+                for _idx, _m in enumerate(messages):
+                    if _m.get("role") != "user":
+                        continue
+                    if _m.get("_greeting_injected"):
+                        break
+                    _bits: list[str] = []
+                    if _project_pre:
+                        _bits.append(_project_pre)
+                    if _preamble_lines:
+                        _bits.append(
+                            "[Context about this user:\n- "
+                            + "\n- ".join(_preamble_lines)
+                            + "]"
+                        )
+                    if _profile_doc:
+                        # The auto-maintained profile is its own block
+                        # so the model can tell user-set comm prefs
+                        # apart from inferred long-form context.
+                        _bits.append(
+                            "[Auto-maintained user profile (from chat "
+                            "history; treat as background context, "
+                            "not as ground truth for the current "
+                            "request):\n" + _profile_doc + "]"
+                        )
+                    _preamble = "\n\n".join(_bits) + "\n\n"
+                    _content = _m.get("content")
+                    if isinstance(_content, str):
+                        _m["content"] = _preamble + _content
+                    elif isinstance(_content, list):
+                        _m["content"] = ([{"type": "text", "text": _preamble}]
+                                          + _content)
+                    _m["_greeting_injected"] = True
+                    break
 
         # GDPR/PII scan on first round only. Assistant/tool rounds reuse the
         # same user content, so re-scanning every round is wasted work.

@@ -2210,6 +2210,60 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   font-style: italic;
 }
 
+/* Instructions section — capped height with vertical scroll so long
+   default disciplines (~4KB markdown) don't push attachments + input
+   folders below the fold. Markdown rendered via renderMarkdown(). */
+.project-panel-instructions-rendered {
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: var(--bg-200);
+  border: 1px solid var(--border-100);
+  border-radius: 6px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-200);
+}
+.project-panel-instructions-rendered h1,
+.project-panel-instructions-rendered h2,
+.project-panel-instructions-rendered h3,
+.project-panel-instructions-rendered h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-000);
+  margin: 8px 0 4px;
+}
+.project-panel-instructions-rendered h1:first-child,
+.project-panel-instructions-rendered h2:first-child,
+.project-panel-instructions-rendered h3:first-child,
+.project-panel-instructions-rendered p:first-child,
+.project-panel-instructions-rendered ul:first-child,
+.project-panel-instructions-rendered ol:first-child { margin-top: 0; }
+.project-panel-instructions-rendered p { margin: 4px 0; }
+.project-panel-instructions-rendered ul,
+.project-panel-instructions-rendered ol { margin: 4px 0; padding-left: 20px; }
+.project-panel-instructions-rendered li { margin: 2px 0; }
+.project-panel-instructions-rendered code {
+  background: var(--bg-300);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11.5px;
+}
+.project-panel-instructions-rendered pre {
+  background: var(--bg-300);
+  padding: 6px 8px;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 4px 0;
+}
+.project-panel-instructions-rendered strong { color: var(--text-000); }
+.project-panel-instructions-rendered blockquote {
+  border-left: 2px solid var(--border-200);
+  padding-left: 8px;
+  margin: 4px 0;
+  color: var(--text-300);
+}
+
 .project-file-item {
   display: flex;
   align-items: center;
@@ -2475,7 +2529,7 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 /* ── Project Instructions Modal ── */
 .project-instructions-editor {
   width: 100%;
-  min-height: 150px;
+  min-height: 320px;
   padding: 12px;
   border-radius: 8px;
   border: 1px solid var(--border-200);
@@ -2485,8 +2539,85 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   color: var(--text-100);
   resize: vertical;
   outline: none;
+  box-sizing: border-box;
 }
 .project-instructions-editor:focus { border-color: var(--accent-brand); }
+
+/* Edit/Preview tab strip on the project Instructions modal. */
+.instr-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-100);
+  margin-bottom: 10px;
+}
+.instr-tab {
+  padding: 6px 14px;
+  font-size: 13px;
+  color: var(--text-300);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-family: var(--font-ui);
+  margin-bottom: -1px;
+}
+.instr-tab:hover { color: var(--text-100); }
+.instr-tab.active {
+  color: var(--text-000);
+  border-bottom-color: var(--accent-brand);
+  font-weight: 500;
+}
+.instr-preview-pane {
+  width: 100%;
+  min-height: 320px;
+  max-height: 480px;
+  overflow-y: auto;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-200);
+  background: var(--bg-000);
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text-200);
+  box-sizing: border-box;
+}
+.instr-preview-pane h1, .instr-preview-pane h2,
+.instr-preview-pane h3, .instr-preview-pane h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-000);
+  margin: 10px 0 6px;
+}
+.instr-preview-pane h1:first-child, .instr-preview-pane h2:first-child,
+.instr-preview-pane h3:first-child, .instr-preview-pane p:first-child,
+.instr-preview-pane ul:first-child { margin-top: 0; }
+.instr-preview-pane p { margin: 6px 0; }
+.instr-preview-pane ul, .instr-preview-pane ol { margin: 6px 0; padding-left: 22px; }
+.instr-preview-pane li { margin: 3px 0; }
+.instr-preview-pane code {
+  background: var(--bg-300);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12.5px;
+}
+.instr-preview-pane pre {
+  background: var(--bg-300);
+  padding: 8px 10px;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+.instr-preview-pane strong { color: var(--text-000); }
+.instr-preview-pane blockquote {
+  border-left: 3px solid var(--border-200);
+  padding-left: 10px;
+  margin: 6px 0;
+  color: var(--text-300);
+}
+.instr-preview-empty {
+  color: var(--text-400);
+  font-style: italic;
+}
 
 /* ── Create/Edit Project Modal ── */
 .project-modal-field {
@@ -9969,10 +10100,12 @@ async function loadProjectDetail(agentId, projectName) {
       descEl.innerHTML = '<span style="color:var(--text-400);font-style:italic">No description</span>';
     }
 
-    // Render instructions panel
+    // Render instructions panel — markdown rendered, capped height with
+    // vertical scroll so long default disciplines don't push attachments
+    // + input folders below the fold.
     const instrEl = document.getElementById('project-panel-instructions');
     if (project.instructions) {
-      instrEl.textContent = project.instructions;
+      instrEl.innerHTML = `<div class="project-panel-instructions-rendered">${renderMarkdown(project.instructions)}</div>`;
       instrEl.classList.remove('project-panel-placeholder');
     } else {
       instrEl.innerHTML = '<span class="project-panel-placeholder">Add instructions to customize Brain Agent\'s responses</span>';
@@ -10717,21 +10850,89 @@ function editProjectInstructions() {
     </div>
     <div class="modal-body" style="padding:16px">
       <p style="font-size:13px;color:var(--text-400);margin-bottom:12px">
-        Add instructions to customize how Claude responds within this project.
-        These instructions will be included in every conversation.
+        Add instructions to customize how Brain Agent responds within this project.
+        These instructions will be included in every conversation. Markdown is
+        supported — use the Preview tab to see how it will render.
+        <br><br>
+        Leave this empty to use the Brain default — strict retrieval discipline
+        with verbatim citations, refusal on missing sources, and no plausible-sounding
+        filler. Click <em>Load default</em> below to start from the default and
+        edit it, or write your own from scratch.
       </p>
+      <div class="instr-tabs" role="tablist">
+        <button class="instr-tab active" id="instr-tab-edit" role="tab" onclick="switchInstrTab('edit')">Edit</button>
+        <button class="instr-tab" id="instr-tab-preview" role="tab" onclick="switchInstrTab('preview')">Preview</button>
+      </div>
       <textarea class="project-instructions-editor" id="project-instructions-textarea"
         placeholder="e.g. You are a helpful assistant for our marketing team. Always respond in a professional tone..."
       >${esc(project?.instructions || '')}</textarea>
+      <div class="instr-preview-pane" id="project-instructions-preview" style="display:none"></div>
     </div>
-    <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--border-100)">
-      <button class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-      <button class="btn-primary" onclick="saveProjectInstructions()">Save</button>
+    <div style="display:flex;justify-content:space-between;gap:8px;padding:12px 16px;border-top:1px solid var(--border-100)">
+      <button class="btn-secondary" onclick="loadProjectInstructionsDefault()" title="Replace the textarea content with Brain's default retrieval-discipline instructions">Load default</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+        <button class="btn-primary" onclick="saveProjectInstructions()">Save</button>
+      </div>
     </div>
   `;
   overlay.appendChild(content);
   document.body.appendChild(overlay);
   setTimeout(() => document.getElementById('project-instructions-textarea')?.focus(), 100);
+}
+
+function switchInstrTab(mode) {
+  const editTab = document.getElementById('instr-tab-edit');
+  const previewTab = document.getElementById('instr-tab-preview');
+  const textarea = document.getElementById('project-instructions-textarea');
+  const preview = document.getElementById('project-instructions-preview');
+  if (!editTab || !previewTab || !textarea || !preview) return;
+  if (mode === 'preview') {
+    editTab.classList.remove('active');
+    previewTab.classList.add('active');
+    const raw = textarea.value || '';
+    if (raw.trim()) {
+      preview.innerHTML = renderMarkdown(raw);
+    } else {
+      preview.innerHTML = '<span class="instr-preview-empty">Nothing to preview yet — write some instructions in the Edit tab.</span>';
+    }
+    textarea.style.display = 'none';
+    preview.style.display = 'block';
+  } else {
+    previewTab.classList.remove('active');
+    editTab.classList.add('active');
+    preview.style.display = 'none';
+    textarea.style.display = '';
+    setTimeout(() => textarea.focus(), 0);
+  }
+}
+
+async function loadProjectInstructionsDefault() {
+  const textarea = document.getElementById('project-instructions-textarea');
+  if (!textarea) return;
+  // Confirm overwrite when the textarea already has user content.
+  if (textarea.value.trim()) {
+    if (!confirm('Replace the current instructions with the Brain default? Your edits will be lost.')) return;
+  }
+  try {
+    const r = await fetch(`${BASE_URL}/v1/projects/default-instructions`, {
+      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth-token') || '') }
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    textarea.value = data.instructions || '';
+    // If the user is currently on the Preview tab, refresh the rendered
+    // pane so they immediately see the loaded default. Otherwise focus
+    // the textarea.
+    const previewTab = document.getElementById('instr-tab-preview');
+    if (previewTab && previewTab.classList.contains('active')) {
+      switchInstrTab('preview');
+    } else {
+      textarea.focus();
+    }
+  } catch (e) {
+    showToast('Could not load default instructions', true);
+  }
 }
 
 async function saveProjectInstructions() {
@@ -10745,10 +10946,10 @@ async function saveProjectInstructions() {
     await API.updateProject(agentId, projectName, { instructions });
     showToast('Instructions saved');
     document.querySelector('.modal-overlay')?.remove();
-    // Update panel display
+    // Update panel display — render as markdown to match loadProjectDetail.
     const instrEl = document.getElementById('project-panel-instructions');
     if (instructions) {
-      instrEl.textContent = instructions;
+      instrEl.innerHTML = `<div class="project-panel-instructions-rendered">${renderMarkdown(instructions)}</div>`;
       instrEl.classList.remove('project-panel-placeholder');
     } else {
       instrEl.innerHTML = '<span class="project-panel-placeholder">Add instructions to customize Brain Agent\'s responses</span>';
