@@ -1073,8 +1073,63 @@ textarea { resize: none; }
 .tool-args-val { padding: 4px 0; color: var(--text-200); word-break: break-word; }
 .tool-args-val pre { margin: 0; white-space: pre-wrap; font-family: var(--font-mono); font-size: 12px; }
 .tool-result-section { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-100); }
-.tool-result-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-400); margin-bottom: 4px; }
-.tool-result-pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: 12px; color: var(--text-200); max-height: 250px; overflow-y: auto; }
+.tool-result-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.tool-result-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-400); }
+.tool-result-lang { font-size: 10px; font-family: var(--font-mono); color: var(--text-400); padding: 1px 5px; border: 1px solid var(--border-100); border-radius: 3px; }
+.tool-result-actions { margin-left: auto; display: flex; gap: 4px; }
+.tool-result-btn { font-size: 10px; font-family: var(--font-ui); color: var(--text-300); background: transparent; border: 1px solid var(--border-100); border-radius: 4px; padding: 2px 7px; cursor: pointer; transition: all 0.12s; }
+.tool-result-btn:hover { background: var(--bg-200); color: var(--text-100); border-color: var(--border-200); }
+.tool-result-btn.copied { color: var(--success, #10b981); border-color: currentColor; }
+.tool-result-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  overflow-x: hidden;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: #f0f6fc;
+  background: #11161d;
+  border: 1px solid #1e252e;
+  border-radius: 6px;
+  padding: 10px 12px;
+  max-height: 110px;            /* ~5 lines collapsed; scroll for more */
+  tab-size: 2;
+  transition: max-height 0.2s ease;
+}
+.tool-result-pre.expanded { max-height: 600px; }
+.tool-result-pre code { background: transparent; padding: 0; font-size: inherit; color: inherit; font-family: inherit; white-space: inherit; word-break: inherit; overflow-wrap: inherit; }
+.tool-result-pre code.hljs { background: transparent; padding: 0; }
+.tool-result-pre.terminal { background: #0a0e14; color: #cbd5e1; }
+.tool-result-pre.terminal code { color: inherit; }
+/* Brighter palette for highlighted tokens on dark background */
+.tool-result-pre .hljs-attr { color: #79c0ff; }              /* JSON keys */
+.tool-result-pre .hljs-string { color: #a5d6ff; }
+.tool-result-pre .hljs-number { color: #ffa657; }
+.tool-result-pre .hljs-literal { color: #ff7b72; }           /* true/false/null */
+.tool-result-pre .hljs-keyword { color: #ff7b72; }
+.tool-result-pre .hljs-built_in { color: #ffa657; }
+.tool-result-pre .hljs-comment { color: #8b949e; font-style: italic; }
+.tool-result-pre .hljs-punctuation { color: #c9d1d9; }
+.tool-result-pre .hljs-title { color: #d2a8ff; }
+.tool-result-pre .hljs-variable { color: #ffa657; }
+/* Markdown tokens */
+.tool-result-pre .hljs-section { color: #79c0ff; font-weight: 600; }      /* headings */
+.tool-result-pre .hljs-strong { color: #f0f6fc; font-weight: 700; }
+.tool-result-pre .hljs-emphasis { color: #f0f6fc; font-style: italic; }
+.tool-result-pre .hljs-bullet { color: #ff7b72; }                         /* list markers */
+.tool-result-pre .hljs-quote { color: #8b949e; font-style: italic; }      /* blockquotes */
+.tool-result-pre .hljs-link { color: #a5d6ff; text-decoration: underline; }
+.tool-result-pre .hljs-symbol { color: #79c0ff; }                         /* link targets */
+.tool-result-pre .hljs-code { color: #ffa657; background: rgba(255,255,255,0.06); padding: 0 3px; border-radius: 3px; }
+.tool-result-pre .hljs-formula { color: #d2a8ff; }
+.tool-result-pre .hljs-meta { color: #79c0ff; }                           /* frontmatter */
+.tool-result-pre .hljs-tag { color: #7ee787; }                            /* HTML in MD */
+.tool-result-pre .hljs-name { color: #7ee787; }
+.tool-result-pre .hljs-attribute { color: #79c0ff; }
+.tool-result-truncated-note { font-size: 10px; color: var(--text-400); margin-top: 4px; font-style: italic; }
 
 /* Worker flow */
 .worker-flow { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-100); }
@@ -8765,8 +8820,8 @@ function renderMessages() {
 
   container.innerHTML = html;
 
-  // Syntax highlight code blocks
-  container.querySelectorAll('pre code').forEach(block => {
+  // Syntax highlight code blocks (skip tool-result blocks — pre-highlighted inline)
+  container.querySelectorAll('pre:not(.tool-result-pre) code').forEach(block => {
     try { hljs.highlightElement(block); } catch(e) {}
   });
 
@@ -9519,6 +9574,170 @@ function renderWorkerFlow(wf) {
   </div>`;
 }
 
+// --- Tool result rendering helpers (syntax highlight + expand + copy) ---
+const TOOL_RESULT_INITIAL_CHARS = 8000;
+const TOOL_RESULT_MAX_RENDER = 200000;
+const _toolResultStore = new Map(); // id -> { full, lang, terminal }
+let _toolResultSeq = 0;
+
+// Per-tool default language hint for highlight.js. 'shell' = terminal styling.
+const TOOL_LANG_HINTS = {
+  execute_command: 'shell',
+  python_exec: 'shell',
+  read_file: null,        // inferred from args.path extension
+  read_document: null,
+  edit_file: null,
+  write_file: null,
+  search_files: 'shell',
+  list_directory: 'shell',
+  git_command: 'shell',
+  exa_search: 'json',
+  web_fetch: null,
+  context_search: 'json',
+  context_detail: 'json',
+  context_recall: 'json',
+  mempalace_query: 'json',
+  mempalace_get_drawer: 'json',
+  mempalace_list_drawers: 'json',
+  mempalace_kg_query: 'json',
+  mempalace_kg_search: 'json',
+  mempalace_kg_neighbors: 'json',
+  schedule_list: 'json',
+  schedule_history: 'json',
+  task_status: 'json',
+  code_graph_query: 'json',
+  list_nodes: 'json',
+};
+
+const EXT_TO_LANG = {
+  py: 'python', js: 'javascript', ts: 'typescript', tsx: 'tsx', jsx: 'jsx',
+  go: 'go', rs: 'rust', java: 'java', c: 'c', h: 'c', cpp: 'cpp', cc: 'cpp', hpp: 'cpp',
+  cs: 'csharp', rb: 'ruby', php: 'php', swift: 'swift', kt: 'kotlin',
+  sh: 'bash', bash: 'bash', zsh: 'bash',
+  json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml', ini: 'ini',
+  xml: 'xml', html: 'xml', css: 'css', scss: 'scss',
+  md: 'markdown', sql: 'sql', dockerfile: 'dockerfile',
+};
+
+function detectToolResultLang(toolName, args, body) {
+  const hint = TOOL_LANG_HINTS[toolName];
+  if (hint !== undefined && hint !== null) return hint;
+  // Filename-based inference
+  const path = (args && (args.path || args.file_path || args.file)) || '';
+  if (path) {
+    const m = String(path).toLowerCase().match(/\.([a-z0-9]+)$/);
+    if (m && EXT_TO_LANG[m[1]]) return EXT_TO_LANG[m[1]];
+    if (/dockerfile$/i.test(path)) return 'dockerfile';
+  }
+  // Body-shape inference
+  const head = (body || '').slice(0, 200).trim();
+  if (head.startsWith('{') || head.startsWith('[')) {
+    try { JSON.parse(body); return 'json'; } catch(e) {}
+  }
+  return null; // plaintext
+}
+
+function highlightToolResult(text, lang) {
+  if (!text || typeof hljs === 'undefined') return esc(text || '');
+  if (!lang || lang === 'plaintext') return esc(text);
+  try {
+    if (lang === 'shell') {
+      // Shell output isn't a language per se; use bash for the few highlight cues
+      // (paths, quoted strings) without forcing structure on free-form stdout.
+      return hljs.highlight(text, { language: 'bash', ignoreIllegals: true }).value;
+    }
+    if (hljs.getLanguage(lang)) {
+      return hljs.highlight(text, { language: lang, ignoreIllegals: true }).value;
+    }
+  } catch(e) {}
+  return esc(text);
+}
+
+function buildToolResultBlock(toolName, args, resultStr) {
+  if (!resultStr) return '';
+  const fullLen = resultStr.length;
+  const lang = detectToolResultLang(toolName, args, resultStr);
+  const terminal = lang === 'shell';
+  const id = `tres-${++_toolResultSeq}`;
+  // Cap actual rendering at MAX so a 5MB blob doesn't lock the browser; copy
+  // still gets the full string.
+  const renderable = fullLen > TOOL_RESULT_MAX_RENDER
+    ? resultStr.substring(0, TOOL_RESULT_MAX_RENDER)
+    : resultStr;
+  const truncatedAtRender = fullLen > TOOL_RESULT_MAX_RENDER;
+  const truncatedInitial = renderable.length > TOOL_RESULT_INITIAL_CHARS;
+  const initial = truncatedInitial
+    ? renderable.substring(0, TOOL_RESULT_INITIAL_CHARS)
+    : renderable;
+  _toolResultStore.set(id, { full: renderable, lang, terminal, fullLen, truncatedAtRender });
+  const langBadge = lang ? `<span class="tool-result-lang">${esc(lang)}</span>` : '';
+  const sizeBadge = `<span class="tool-result-lang">${formatBytes(fullLen)}</span>`;
+  const expandLabel = truncatedInitial ? 'Show full' : 'Expand';
+  const expandBtn = `<button type="button" class="tool-result-btn" data-tres-expand="${id}" onclick="event.stopPropagation(); expandToolResult('${id}', this)">${expandLabel}</button>`;
+  const copyBtn = `<button type="button" class="tool-result-btn" onclick="event.stopPropagation(); copyToolResult('${id}', this)">Copy</button>`;
+  const highlighted = highlightToolResult(initial, lang);
+  const langCls = lang ? ` language-${lang}` : '';
+  const termCls = terminal ? ' terminal' : '';
+  const truncNote = truncatedAtRender
+    ? `<div class="tool-result-truncated-note">Output exceeds ${formatBytes(TOOL_RESULT_MAX_RENDER)}; rendering capped. Copy still returns the rendered slice.</div>`
+    : '';
+  return `<div class="tool-result-section">
+    <div class="tool-result-header">
+      <span class="tool-result-label">Response</span>
+      ${langBadge}
+      ${sizeBadge}
+      <span class="tool-result-actions">${expandBtn}${copyBtn}</span>
+    </div>
+    <pre class="tool-result-pre${termCls}" data-tres-id="${id}"><code class="hljs${langCls}">${highlighted}</code></pre>
+    ${truncNote}
+  </div>`;
+}
+
+function formatBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function expandToolResult(id, btn) {
+  const entry = _toolResultStore.get(id);
+  if (!entry) return;
+  const pre = document.querySelector(`pre[data-tres-id="${id}"]`);
+  if (!pre) return;
+  const code = pre.querySelector('code');
+  if (code) code.innerHTML = highlightToolResult(entry.full, entry.lang);
+  pre.classList.add('expanded');
+  if (btn) btn.remove();
+}
+
+function copyToolResult(id, btn) {
+  const entry = _toolResultStore.get(id);
+  if (!entry) return;
+  const text = entry.full;
+  const done = () => {
+    if (!btn) return;
+    const orig = btn.textContent;
+    btn.textContent = 'Copied';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1200);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+  } else {
+    fallbackCopy(text, done);
+  }
+}
+
+function fallbackCopy(text, cb) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed'; ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); cb && cb(); } catch(e) {}
+  document.body.removeChild(ta);
+}
+
 function renderToolCall(msg, idx) {
   if (!state.showToolCalls) return '';
   // Look ahead for matching tool_result
@@ -9557,8 +9776,7 @@ function renderToolCall(msg, idx) {
     } else {
       try { const rj = JSON.parse(resultStr); if (rj && rj.worker) isWorker = true; } catch(e) {}
     }
-    const truncated = resultStr.length > 800 ? resultStr.substring(0, 800) + '...' : resultStr;
-    bodyHtml += `<div class="tool-result-section"><div class="tool-result-label">Response</div><pre class="tool-result-pre">${esc(truncated)}</pre></div>`;
+    bodyHtml += buildToolResultBlock(msg.name, args, resultStr);
   }
   // Worker flow: shown when the tool ran (or is running) via a worker
   if (isWorker || isRunningWorker) {
@@ -9595,8 +9813,8 @@ function renderToolResult(msg, idx) {
   }
   // Standalone result (no matching call found)
   const resultStr = typeof msg.result === 'string' ? msg.result : JSON.stringify(msg.result, null, 2);
-  const truncated = resultStr.length > 800 ? resultStr.substring(0, 800) + '...' : resultStr;
   const desc = toolDescribe(msg.name, {});
+  const block = buildToolResultBlock(msg.name, {}, resultStr);
   return `
     <div class="tool-block has-result" onclick="this.classList.toggle('open')">
       <div class="tool-block-header">
@@ -9604,7 +9822,7 @@ function renderToolResult(msg, idx) {
         <span class="tool-name">${desc}</span>
         <span class="tool-chevron">&#9656;</span>
       </div>
-      <div class="tool-block-body"><div class="tool-result-section"><div class="tool-result-label">Response</div><pre class="tool-result-pre">${esc(truncated)}</pre></div></div>
+      <div class="tool-block-body">${block}</div>
     </div>
   `;
 }

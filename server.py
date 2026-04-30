@@ -4614,20 +4614,27 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                 # Attach result to the last matching tool. The cap controls
                 # how much of the tool's stringified result we persist into
                 # `metadata.tools[i].result` for chat reload — too low and
-                # the UI can't reconstruct references from a truncated JSON
-                # blob; too high and the chat's metadata column bloats.
-                # Tools that surface clickable references (web fetches AND
-                # project-knowledge queries) get a higher cap so the JSON
-                # stays parseable; other tools keep the original 500 cap.
+                # the UI can't show the user what the tool actually produced;
+                # too high and the chat's metadata column bloats.
+                # Tiering: file-content tools get a generous cap so users can
+                # scroll the actual content in the chat UI; reference-emitting
+                # tools (web + project knowledge) need enough to keep their
+                # JSON parseable for the references panel; everything else
+                # gets a moderate cap that survives most short results.
                 tool_name = data.get("name", "")
-                if tool_name in ("exa_search", "web_fetch",
-                                 "mempalace_query",
-                                 "mempalace_kg_query",
-                                 "mempalace_kg_search",
-                                 "mempalace_kg_neighbors"):
+                if tool_name in ("read_document", "read_file",
+                                 "read_path", "read_path_original"):
+                    cap = 50000
+                elif tool_name in ("exa_search", "web_fetch",
+                                   "mempalace_query",
+                                   "mempalace_get_drawer",
+                                   "mempalace_list_drawers",
+                                   "mempalace_kg_query",
+                                   "mempalace_kg_search",
+                                   "mempalace_kg_neighbors"):
                     cap = 4000
                 else:
-                    cap = 500
+                    cap = 5000
                 for t in reversed(_partial_tools):
                     if t["name"] == tool_name and "result" not in t:
                         t["result"] = str(data.get("result", ""))[:cap]
