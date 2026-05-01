@@ -13,7 +13,7 @@ PyMuPDF
 pdfplumber
 networkx
 PyYAML
-mempalace==3.3.0
+mempalace==3.3.4
 # markitdown[outlook]: adds .msg/.epub/.zip support to read_document.
 # Excluded on mac because magika's onnxruntime floor (1.25.0) only ships a
 # macosx_14_0_arm64 wheel, while the bundled python-build-standalone targets

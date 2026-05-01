@@ -19926,6 +19926,339 @@ def _read_doc_cache_invalidate(path: str) -> None:
             bucket.pop(abs_path, None)
 
 
+def _read_doc_cache_session_paths(session_id: str | None = None) -> list[str]:
+    """Return the list of absolute paths the given session has read via
+    `read_document` / `read_file`. Used by the citation validator to know
+    which files to grep verbatim quotes against."""
+    sid = session_id or _read_doc_cache_sid()
+    out: list[str] = []
+    with _read_doc_cache_lock:
+        bucket = _read_doc_cache.get(sid)
+        if not bucket:
+            return out
+        for k in bucket:
+            if not k.startswith("_"):
+                out.append(k)
+    return out
+
+
+# --- Citation Validator (Phase 1: validate + annotate, no re-round) ---
+# Scans an assistant response for `[Quelle: <basename> — "<verbatim quote>"]`
+# brackets and verifies each quote actually appears in a file the session has
+# read. Counts factual sentences/bullets that lack any bracket. Emits an
+# annotation block appended to the response when discipline issues are found,
+# so the user can see how reliable the citations are.
+
+_CITATION_BRACKET_RE = re.compile(
+    # Match [Quelle: <basename> — "<quote>"] tolerantly:
+    #   • allow em-dash, en-dash, or hyphen as separator
+    #   • allow straight or smart quotes around the quote
+    #   • basename is everything up to the separator (lazy)
+    #   • quote spans across the closing bracket boundaries with non-greedy
+    r'\[\s*Quelle:\s*([^—\-–"\]]+?)\s*[—\-–]\s*[\"“»]([^\"”«\]]+?)[\"”«]\s*\]',
+)
+_CITATION_BARE_RE = re.compile(r'\[\s*Quelle:\s*([^\]]+?)\]')
+
+# Sentence-with-claim heuristic: lines that look like they make a factual
+# statement but contain no [Quelle: …] bracket. Used to count uncited
+# claims. Bullet markers and numbered list markers count as separate items.
+_BULLET_RE = re.compile(r'^\s*(?:[-*•·]|\d+\.|[a-z]\))\s+', re.MULTILINE)
+
+
+def _normalize_quote(s: str) -> str:
+    """Whitespace + punctuation lenient match for verifying quotes are in source."""
+    s = s.replace("„", "\"").replace("“", "\"").replace("”", "\"").replace("«", "\"").replace("»", "\"")
+    s = s.replace("‚", "'").replace("‘", "'").replace("’", "'")
+    s = re.sub(r"\s+", " ", s).strip()
+    s = s.lower()
+    return s
+
+
+def _strip_md_companion_suffix(basename: str) -> str:
+    """`policy.pdf.md` → `policy.pdf`; `something.md` (no dotted-ext before .md) is left alone."""
+    if basename.endswith(".md"):
+        stem = basename[:-3]
+        # Only strip if there's a "real" extension before .md (e.g. .pdf, .docx)
+        if "." in stem:
+            return stem
+    return basename
+
+
+def _find_source_path_by_basename(basename: str, session_paths: list[str]) -> str | None:
+    """Best-match a citation basename against paths the session has read.
+    Tries: exact basename match, .md-suffixed match, prefix substring."""
+    target = _strip_md_companion_suffix(basename.strip()).lower()
+    candidates = []
+    for p in session_paths:
+        bn = os.path.basename(p)
+        bn_stripped = _strip_md_companion_suffix(bn).lower()
+        if bn_stripped == target:
+            return p
+        if target in bn_stripped or bn_stripped in target:
+            candidates.append(p)
+    return candidates[0] if candidates else None
+
+
+def _read_file_cached_for_validation(path: str, _vcache: dict) -> str | None:
+    """Lazy read with per-call cache (one validation pass)."""
+    if path in _vcache:
+        return _vcache[path]
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+    except OSError:
+        _vcache[path] = None
+        return None
+    _vcache[path] = content
+    return content
+
+
+def validate_citations_in_response(text: str, session_id: str | None = None,
+                                   max_quote_len: int = 400) -> dict:
+    """Scan an assistant response for citation brackets and verify each quote
+    against the corresponding source file the session read.
+
+    Returns a dict:
+      {
+        "verified": int,        # brackets where quote was found in source
+        "unverified": list,     # [(basename, quote_excerpt, reason), ...]
+        "uncited_claims": int,  # bulleted/sentence claims with no bracket
+        "claim_total": int,     # total bullets + claim-like sentences detected
+        "total_brackets": int,
+        "annotation": str | None,  # markdown block to append to the response
+      }
+
+    No re-round, no rewriting of `text`. Caller decides whether to append
+    `annotation` to the message.
+    """
+    out = {"verified": 0, "unverified": [], "uncited_claims": 0,
+           "claim_total": 0, "total_brackets": 0, "annotation": None}
+    if not text or not text.strip():
+        return out
+
+    session_paths = _read_doc_cache_session_paths(session_id)
+    _vcache: dict = {}
+
+    # 1. Find every [Quelle: X — "Y"] bracket and verify Y appears in X.
+    matches = list(_CITATION_BRACKET_RE.finditer(text))
+    bare_matches = list(_CITATION_BARE_RE.finditer(text))
+    out["total_brackets"] = len(bare_matches)
+    parsed_basenames = set()
+    for m in matches:
+        bn_raw, quote = m.group(1), m.group(2)
+        parsed_basenames.add(bn_raw.strip())
+        path = _find_source_path_by_basename(bn_raw, session_paths) if session_paths else None
+        if not path:
+            out["unverified"].append((bn_raw.strip(), quote[:120],
+                                      "source not in session reads"))
+            continue
+        content = _read_file_cached_for_validation(path, _vcache)
+        if content is None:
+            out["unverified"].append((bn_raw.strip(), quote[:120],
+                                      f"could not read {path}"))
+            continue
+        if _normalize_quote(quote) in _normalize_quote(content):
+            out["verified"] += 1
+        else:
+            out["unverified"].append((bn_raw.strip(), quote[:120],
+                                      "quote not found in source"))
+
+    # 2. Count brackets that didn't match the verbatim-quote shape (bare
+    # `[Quelle: …]` without a quote part) — these are partial citations.
+    bare_only = max(0, len(bare_matches) - len(matches))
+
+    # 3. Count claim-like items (bullets + numbered list items + standalone
+    # sentences) that have no bracket on the same logical line/bullet. This
+    # is a heuristic — bullets are easy to count; standalone-sentence claim
+    # detection is intentionally conservative to avoid false positives on
+    # connector text.
+    bullets = list(_BULLET_RE.finditer(text))
+    out["claim_total"] = len(bullets)
+    if bullets:
+        # Build line-level bullet ranges
+        for i, mb in enumerate(bullets):
+            start = mb.end()
+            end = bullets[i + 1].start() if i + 1 < len(bullets) else len(text)
+            chunk = text[start:end]
+            if "[Quelle:" not in chunk:
+                # Probably a connector ("Zusammenfassend:", a heading…) if
+                # it has < 8 words AND no period; skip those.
+                words = len(re.findall(r"\w+", chunk))
+                has_period = "." in chunk or "!" in chunk or ":" in chunk
+                if words >= 8 or has_period:
+                    out["uncited_claims"] += 1
+
+    # 4. Build human-readable annotation if there's anything to flag.
+    if out["unverified"] or out["uncited_claims"] > 0 or bare_only > 0:
+        lines = ["", "---", "**🛈 Citation-Validation:**"]
+        if out["verified"] or out["unverified"]:
+            lines.append(
+                f"- {out['verified']} von {out['verified'] + len(out['unverified'])} "
+                f"Zitat-Quotes konnten gegen die gelesenen Quelldateien verifiziert werden."
+            )
+        if out["unverified"]:
+            lines.append("- ⚠ **Nicht verifizierte Zitate:**")
+            for bn, q, reason in out["unverified"][:5]:
+                excerpt = (q[:80] + "…") if len(q) > 80 else q
+                lines.append(f"  - `{bn}` — \"{excerpt}\" *({reason})*")
+            if len(out["unverified"]) > 5:
+                lines.append(f"  - … und {len(out['unverified']) - 5} weitere.")
+        if bare_only > 0:
+            lines.append(
+                f"- ⚠ {bare_only} Zitate ohne wörtliches Zitat (Form `[Quelle: X]` "
+                f"statt `[Quelle: X — \"...\"]`) — pro CITATION DISCIPLINE bitte ergänzen."
+            )
+        if out["uncited_claims"] > 0:
+            lines.append(
+                f"- ⚠ {out['uncited_claims']} von {out['claim_total']} Bullet-Points / "
+                f"Behauptungen ohne `[Quelle: ...]`-Citation — pro Project-Instructions "
+                f"sollte jeder faktische Claim sein eigenes Zitat tragen."
+            )
+        out["annotation"] = "\n".join(lines)
+    return out
+
+
+# Public message-cleanup helper used by both send_message's main path and
+# the citation re-round helper. Mirrors the inline filter used at line ~22061.
+_CLEAN_MSG_ALLOWED_KEYS = {"role", "content", "tool_calls", "tool_call_id", "name"}
+_CLEAN_MSG_INTERNAL_ROLES = {"thinking"}
+
+
+def clean_messages_for_api(messages: list) -> list:
+    """Return a wire-safe copy of `messages`: internal roles dropped, only
+    OpenAI-protocol fields kept. Used for both main send_message and
+    out-of-band helpers (citation re-round, etc.) so they share one filter."""
+    out = []
+    for msg in messages:
+        if msg.get("role") in _CLEAN_MSG_INTERNAL_ROLES:
+            continue
+        out.append({k: v for k, v in msg.items() if k in _CLEAN_MSG_ALLOWED_KEYS})
+    return out
+
+
+def citation_reround_needed(validation: dict,
+                            uncited_ratio_threshold: float = 0.30,
+                            unverified_threshold: int = 2) -> bool:
+    """Decide whether the validation result warrants a re-round.
+
+    Fires when EITHER:
+      - more than `uncited_ratio_threshold` of detected bullet/claim items
+        carry no [Quelle: ...] bracket (default 30%); OR
+      - at least `unverified_threshold` quote brackets failed to verify
+        against the read source files (default 2).
+
+    Returns False if `claim_total == 0` and no unverified — nothing actionable.
+    """
+    if not validation:
+        return False
+    claim_total = int(validation.get("claim_total") or 0)
+    uncited = int(validation.get("uncited_claims") or 0)
+    unverified = len(validation.get("unverified") or [])
+    if unverified >= unverified_threshold:
+        return True
+    if claim_total > 0 and (uncited / claim_total) > uncited_ratio_threshold:
+        return True
+    return False
+
+
+def build_citation_reround_feedback(validation: dict, original_reply: str) -> str:
+    """Build the user-message that gets injected for a citation re-round.
+
+    Tells the model exactly what failed and how to fix it. The injected
+    message references the model's previous answer (already in the message
+    history at this point) so the model can rewrite it directly."""
+    parts = ["Deine letzte Antwort verletzt die CITATION DISCIPLINE des Projekts. Korrigiere sie."]
+
+    claim_total = int(validation.get("claim_total") or 0)
+    uncited = int(validation.get("uncited_claims") or 0)
+    unverified = validation.get("unverified") or []
+
+    if claim_total > 0 and uncited > 0:
+        parts.append(
+            f"\n**{uncited} von {claim_total} Bullet-Points / Behauptungen** in "
+            f"deiner Antwort haben keine `[Quelle: <basename> — \"<wörtliches Zitat>\"]`-"
+            f"Citation. Jede faktische Aussage muss ihre eigene Citation tragen."
+        )
+
+    if unverified:
+        parts.append(f"\n**{len(unverified)} Zitat(e) konnten nicht in der Quelldatei verifiziert werden:**")
+        for bn, quote, reason in unverified[:5]:
+            excerpt = (quote[:100] + "…") if len(quote) > 100 else quote
+            parts.append(f"- `{bn}` — \"{excerpt}\" *({reason})*")
+        parts.append(
+            "Stelle sicher dass jedes Zitat WÖRTLICH aus dem `read_document`-Output "
+            "kopiert ist, character-by-character. Paraphrasen sind keine Citations."
+        )
+
+    parts.append(
+        "\n**Anweisung**: Schreibe die Antwort nochmal. Behalte den richtigen Inhalt, "
+        "ergänze fehlende Citations mit verbatim Quotes aus dem `read_document`-Output. "
+        "Wenn du für eine Behauptung keine verbatim-Quote findest — **lösche die Behauptung**. "
+        "Eine kürzere, vollständig zitierte Antwort ist besser als eine lange Antwort mit "
+        "nicht-zitierten Aussagen. Antworte nur mit dem korrigierten Antworttext, keine Meta-Kommentare."
+    )
+    return "\n".join(parts)
+
+
+def run_citation_reround(messages: list, original_reply: str, validation: dict,
+                         model: str, api_key: str, base_url: str,
+                         temperature: float = 0.2, top_p: float = 0.85,
+                         timeout: float = 180.0) -> tuple[str, dict]:
+    """Single non-streaming retry to fix citation discipline. Returns
+    (corrected_reply, retry_validation). On any error, returns (original_reply, {})
+    so the caller can fall back gracefully.
+
+    `messages` should be the full conversation INCLUDING the assistant's
+    original reply (not yet persisted). We append a synthetic user-message
+    with the validator feedback and ask for a corrected answer.
+    """
+    import urllib.request
+    import urllib.error
+
+    feedback = build_citation_reround_feedback(validation, original_reply)
+    # Build a clean message list: original convo + the assistant's first
+    # answer + our feedback as a new user turn. The model sees: question,
+    # tool-call rounds (with results), original answer, our feedback.
+    new_messages = list(messages)  # copy
+    # Make sure the assistant's latest answer is in the list (callers vary).
+    if not new_messages or new_messages[-1].get("role") != "assistant":
+        new_messages.append({"role": "assistant", "content": original_reply})
+    new_messages.append({"role": "user", "content": feedback})
+
+    body = {
+        "model": get_api_model_id(model),
+        "messages": new_messages,
+        "temperature": temperature,
+        "top_p": top_p,
+        "max_tokens": 4096,
+        # Intentionally NO tools — re-round is composition-only, the model
+        # already has all retrieval results in the message history.
+    }
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(base_url.rstrip("/") + "/chat/completions",
+                                 data=data, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", f"Bearer {api_key}")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            outer = json.loads(resp.read().decode("utf-8"))
+        choices = outer.get("choices") or []
+        if not choices:
+            return original_reply, {}
+        content = ((choices[0].get("message") or {}).get("content") or "").strip()
+        if not content:
+            return original_reply, {}
+        # Validate the corrected answer too — useful diagnostic, even if we
+        # accept it unconditionally (per design: max 1 re-round).
+        sid = getattr(_thread_local, 'current_session_id', None)
+        retry_val = validate_citations_in_response(content, session_id=sid)
+        return content, retry_val
+    except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError, OSError) as e:
+        try: print(f"[citation-reround] error: {type(e).__name__}: {e}")
+        except Exception: pass
+        return original_reply, {}
+
+
 # --- Hook Runner ---
 
 class HookRunner:
@@ -20994,12 +21327,25 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
     # `greeting_name` pref) is injected as a one-time preamble on the first
     # user message in send_message — keeping it OUT of the system prompt
     # preserves the warm-pool KV-prefix match across users.
+    # When a project is active, drop the "use tools proactively" framing —
+    # project chats need restraint (refuse on missing answers) more than
+    # initiative. The "proactive" line was pushing Mistral toward fabrication
+    # when retrieval came up empty (measured on F1/F2/F3 refusal canaries).
+    # Validated 2026-05-01 in eval/results/20260501T110032: brain mean 0.65 → 0.75.
+    _project_active = bool(getattr(_thread_local, 'project', None))
+    _proactive_line = (
+        "Answer based ONLY on what you can verify from tools and source documents. "
+        "When tools return nothing relevant, refuse cleanly per project instructions — "
+        "do not synthesize from training-data knowledge."
+        if _project_active else
+        "Use tools proactively to accomplish tasks. You can chain multiple tool calls."
+    )
     system_instruction += (
         f"You are agent '{agent_id}' in the Brain Agent system. "
         f"Current date and time: {_dt.now().strftime('%Y-%m-%d %H:00 %Z').strip()}\n"
         f"Current working directory: {cwd}\n"
         f"Operating system: {os_name}\n\n"
-        "Use tools proactively to accomplish tasks. You can chain multiple tool calls. "
+        f"{_proactive_line} "
         "For web searches, ALWAYS use exa_search — NEVER use duckduckgo or other search tools. "
         "You have no restrictions beyond what the operating system enforces.\n\n"
         "MEMORY: You have long-term memory via mempalace_query and save_chat_to_memory.\n"
@@ -21789,6 +22135,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                              if t.get("function", {}).get("name", "") in discovered_tools]
             all_tools.extend(mcp_tools)
             all_tools.sort(key=lambda t: t.get("function", {}).get("name", ""))
+
         payload["tools"] = all_tools
         # Parallel tool calls: let the model emit multiple tool calls in one response
         model_cfg = resolve_model_settings(model)

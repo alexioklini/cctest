@@ -4843,6 +4843,72 @@ class BrainAgentHandler(BaseHTTPRequestHandler):
                         msg_metadata["caveman_chat"] = _cav_chat
                     if _cav_sys:
                         msg_metadata["caveman_system"] = _cav_sys
+                    # --- Citation validator (Phase 1+2: validate + optional re-round) ---
+                    # Phase 1: scans reply for [Quelle: X — "Y"] brackets, verifies each
+                    # quote against the actual source files, counts uncited claims.
+                    # Phase 2: when a project chat's reply violates the citation
+                    # threshold (>30% uncited bullets OR ≥2 unverified quotes), fire ONE
+                    # synchronous re-round with feedback — the corrected text replaces
+                    # `reply` before persistence and the `done` SSE event. Max 1 re-round
+                    # per turn. Gated by mempalace.citation_reround.enabled in config.
+                    if getattr(engine._thread_local, 'project', None) and reply:
+                        try:
+                            _val = engine.validate_citations_in_response(reply, session_id=sid)
+                            _cv_meta = {
+                                "verified": _val.get("verified", 0),
+                                "unverified_count": len(_val.get("unverified", []) or []),
+                                "unverified_samples": [
+                                    {"basename": bn, "quote_excerpt": q[:120], "reason": r}
+                                    for (bn, q, r) in (_val.get("unverified") or [])[:5]
+                                ],
+                                "uncited_claims": _val.get("uncited_claims", 0),
+                                "claim_total": _val.get("claim_total", 0),
+                                "total_brackets": _val.get("total_brackets", 0),
+                            }
+
+                            # Phase 2 — synchronous re-round on threshold violation
+                            _mp_cfg = engine._load_mempalace_config()
+                            _rr_cfg = (_mp_cfg.get("citation_reround") or {}) if isinstance(_mp_cfg, dict) else {}
+                            _rr_enabled = bool(_rr_cfg.get("enabled", False))
+                            if _rr_enabled and engine.citation_reround_needed(_val):
+                                try:
+                                    _clean_msgs = engine.clean_messages_for_api(session.messages)
+                                    _new_reply, _retry_val = engine.run_citation_reround(
+                                        _clean_msgs, reply, _val,
+                                        model=session.model,
+                                        api_key=session.api_key,
+                                        base_url=session.base_url,
+                                        temperature=float(_rr_cfg.get("temperature", 0.2)),
+                                        top_p=float(_rr_cfg.get("top_p", 0.85)),
+                                        timeout=float(_rr_cfg.get("timeout_seconds", 180)),
+                                    )
+                                    if _new_reply and _new_reply != reply:
+                                        _cv_meta["reround_fired"] = True
+                                        _cv_meta["reround_original_reply"] = reply
+                                        _cv_meta["reround_retry_validation"] = {
+                                            "verified": _retry_val.get("verified", 0),
+                                            "unverified_count": len(_retry_val.get("unverified", []) or []),
+                                            "uncited_claims": _retry_val.get("uncited_claims", 0),
+                                            "claim_total": _retry_val.get("claim_total", 0),
+                                            "total_brackets": _retry_val.get("total_brackets", 0),
+                                        }
+                                        try: print(f"[citation-reround] fired: original={len(reply)}c -> corrected={len(_new_reply)}c")
+                                        except Exception: pass
+                                        reply = _new_reply
+                                    else:
+                                        _cv_meta["reround_fired"] = False
+                                        _cv_meta["reround_skipped_reason"] = "no_change_or_empty"
+                                except Exception as _e_rr:
+                                    _cv_meta["reround_fired"] = False
+                                    _cv_meta["reround_error"] = f"{type(_e_rr).__name__}: {_e_rr}"
+                                    try: print(f"[citation-reround] error: {_e_rr}")
+                                    except Exception: pass
+
+                            msg_metadata["citation_validation"] = _cv_meta
+                        except Exception as _e:
+                            # Validation must never crash the response; log and continue.
+                            try: print(f"[citation-validator] error: {_e}")
+                            except Exception: pass
                     session.add_message("assistant", reply, metadata=msg_metadata or None)
                     done_data = {
                         "text": reply,

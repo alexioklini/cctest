@@ -1440,61 +1440,96 @@ details.msg-references-row[open] .msg-references {
 .ref-badge img { width: 14px; height: 14px; border-radius: 3px; }
 .ref-badge-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* Inline citation badge — replaces `[Quelle: file.pdf — "quote"]` markers
-   in assistant text. Multi-line capable (quote can be long). */
-.citation-badge {
+/* Citation pin — replaces `[Quelle: file.pdf — "quote"]` markers with a
+   compact inline "open book" symbol that doesn't interrupt the text flow.
+   Click reveals the full citation (file / locator / quote) in a popover. */
+.citation-pin {
   display: inline-flex;
-  align-items: flex-start;
-  gap: 7px;
-  padding: 5px 9px 5px 7px;
-  margin: 1px 0;
-  border-radius: 7px;
-  border: 1px solid color-mix(in srgb, var(--accent-brand) 28%, transparent);
-  background: color-mix(in srgb, var(--accent-brand) 8%, transparent);
-  font-family: var(--font-ui);
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--text-200);
-  vertical-align: baseline;
-  max-width: 100%;
-  text-decoration: none;
-}
-.citation-badge:hover {
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin: 0 2px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
   background: color-mix(in srgb, var(--accent-brand) 14%, transparent);
-  border-color: color-mix(in srgb, var(--accent-brand) 48%, transparent);
-}
-.citation-badge-icon {
-  flex-shrink: 0;
-  width: 14px;
-  height: 14px;
-  margin-top: 1px;
   color: var(--accent-brand);
+  font: inherit;
+  cursor: pointer;
+  vertical-align: text-bottom;
+  transition: background 0.12s ease, transform 0.12s ease;
 }
-.citation-badge-icon svg { width: 100%; height: 100%; display: block; }
-.citation-badge-body {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
+.citation-pin:hover,
+.citation-pin:focus-visible {
+  background: color-mix(in srgb, var(--accent-brand) 30%, transparent);
+  transform: scale(1.1);
+  outline: none;
 }
-.citation-badge-file {
+.citation-pin svg {
+  width: 11px;
+  height: 11px;
+  display: block;
+}
+/* Citation popover — anchored to the clicked pin */
+.citation-popover {
+  position: fixed;
+  z-index: 9999;
+  max-width: 460px;
+  min-width: 220px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--bg-100);
+  color: var(--text-200);
+  border: 1px solid var(--border-200);
+  box-shadow: 0 10px 32px rgba(0,0,0,0.18);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.citation-popover-file {
   font-weight: 700;
   color: var(--accent-brand);
   word-break: break-word;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
-.citation-badge-locator {
+.citation-popover-file svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.citation-popover-locator {
+  font-size: 11px;
   font-weight: 400;
   color: var(--text-300);
-  font-size: 11px;
+  margin-bottom: 6px;
 }
-.citation-badge-quote {
-  font-weight: 400;
-  color: var(--text-200);
+.citation-popover-quote {
   font-style: italic;
+  color: var(--text-200);
+  margin-top: 4px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--accent-brand) 6%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--accent-brand) 40%, transparent);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
-.citation-badge-quote::before { content: '"'; opacity: 0.7; margin-right: 1px; }
-.citation-badge-quote::after { content: '"'; opacity: 0.7; margin-left: 1px; }
+.citation-popover-quote::before { content: '"'; opacity: 0.7; margin-right: 1px; }
+.citation-popover-quote::after { content: '"'; opacity: 0.7; margin-left: 1px; }
+.citation-popover-arrow {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: var(--bg-100);
+  border-left: 1px solid var(--border-200);
+  border-top: 1px solid var(--border-200);
+  transform: rotate(45deg);
+  top: -6px;
+}
 
 /* Reference panel sections (right pane) */
 .refs-section {
@@ -9903,7 +9938,15 @@ function renderMarkdown(text) {
       mangle: false,
     });
 
-    let html = marked.parse(text);
+    // Citation extraction MUST happen BEFORE marked.parse, because the model
+    // often emits the verbatim quote inside markdown italics (`*"..."*`),
+    // which marked converts to <em>"..."</em> and then breaks the
+    // `[Quelle: ... — *"..."*]` outer-bracket match. Pre-extract the brackets
+    // from the raw text, replace each with a non-markdown sentinel, run
+    // marked, then swap sentinels for pin buttons.
+    const { stripped, citations } = extractCitationsFromRaw(text);
+
+    let html = marked.parse(stripped);
 
     // Add copy buttons to code blocks
     html = html.replace(/<pre><code( class="language-(\w+)")?>/g, (match, cls, lang) => {
@@ -9911,10 +9954,8 @@ function renderMarkdown(text) {
       return `<div class="code-block-header"><span>${esc(langLabel)}</span><button class="code-copy-btn" onclick="copyCodeBlock(this)">Copy</button></div><pre><code${cls || ''}>`;
     });
 
-    // Replace `[Quelle: file.ext — "quote"]` (and source/Source variants) with
-    // a styled citation badge. Only replace inside text nodes so we don't
-    // mangle attribute values inside <a href> / <code> blocks.
-    html = renderCitationBadgesInHtml(html);
+    // Restore citations as compact pin buttons (don't disrupt text flow)
+    html = restoreCitationPins(html, citations);
 
     return html;
   } catch(e) {
@@ -9922,9 +9963,164 @@ function renderMarkdown(text) {
   }
 }
 
-// Walks the HTML string token by token, replacing `[Quelle: ...]` markers in
-// text-level segments only. Skips content inside <code>, <pre>, and tag
-// attributes so URLs / inline code / fenced blocks stay untouched.
+// Sentinel markers — single chars unlikely to appear in normal text and
+// not touched by marked's tokenizer (it preserves them verbatim).
+const CITATION_SENTINEL_OPEN = '⁣CIT⁣';   // U+2063 INVISIBLE SEPARATOR
+const CITATION_SENTINEL_CLOSE = '⁣/CIT⁣';
+
+function extractCitationsFromRaw(text) {
+  // Pull citation brackets up onto the previous line so the pin renders
+  // INLINE at the end of the claim sentence, not as its own paragraph.
+  // The model often emits the bracket on its own line:
+  //
+  //   "Bewahrung der Schutzziele:\n[Quelle: ... — \"...\"]"
+  //
+  // marked would render this as two stacked paragraphs (or an unwanted
+  // soft-break with breaks:true). We lift the bracket onto the prior line
+  // with a single space separator. We do this for ALL standalone bracket
+  // lines — the bracket is a citation marker for the claim above it, so
+  // joining is always the right behavior.
+  text = text.replace(/([^\n])[ \t]*\n[ \t]*(\[(?:Quelle|QUELLE|source|Source|SOURCE):\s*[^\[\]]+?\])/g, '$1 $2');
+  // Bracket regex: `[Quelle: ...]` or `[source: ...]` etc. Greedy across the
+  // bracket content — disallows `[` inside to avoid runaway nesting.
+  const re = /\[(?:Quelle|QUELLE|source|Source|SOURCE):\s*([^\[\]]+?)\]/g;
+  const citations = [];
+  const stripped = text.replace(re, (_full, body) => {
+    const parsed = parseCitationBodyRaw(body);
+    if (!parsed) return _full; // leave malformed citations alone
+    const id = citations.length;
+    citations.push(parsed);
+    return CITATION_SENTINEL_OPEN + id + CITATION_SENTINEL_CLOSE;
+  });
+  return { stripped, citations };
+}
+
+function parseCitationBodyRaw(body) {
+  if (!body) return null;
+  let s = body.trim();
+  // Quote can be in straight ", curly “ ”, German „ “, or wrapped in
+  // markdown italics (*"..."*). Strip optional surrounding `*` first.
+  let quote = '';
+  // Try with markdown italic markers first: *"..."*
+  let qMatch = s.match(/\*\s*[„"“]([^„"“”]+)[“"”]\s*\*\s*$/);
+  if (!qMatch) {
+    qMatch = s.match(/[„"“]([^„"“”]+)[“"”]\s*$/);
+  }
+  if (qMatch) {
+    quote = qMatch[1].trim();
+    s = s.substring(0, s.length - qMatch[0].length).trim();
+    // Strip trailing em/en-dash separator left over from "<file> — <quote>"
+    s = s.replace(/\s*[—–-]\s*$/, '').trim();
+  }
+  // Remaining s = "<filename>" or "<filename> <locator>"
+  let file = s;
+  let locator = '';
+  const locRe = /\s+(Page\s+\S+|Slide\s+\S+|Sheet\s+["“„][^"“”]+["“”]|§\s*\S+.*|Zeile[n]?\s*\d+[\d\s\-–]*)$/;
+  const lMatch = s.match(locRe);
+  if (lMatch) {
+    locator = lMatch[1].trim();
+    file = s.substring(0, s.length - lMatch[0].length).trim();
+  }
+  if (!file) file = body.trim();
+  // Drop the trailing .md companion suffix when citing original binary
+  file = file.replace(/\.(pdf|docx|pptx|xlsx|xlsm|eml|msg)\.md$/i, '.$1');
+  return { file, locator, quote };
+}
+
+function restoreCitationPins(html, citations) {
+  if (!citations.length) return html;
+  // Sentinels survived marked.parse intact (they're invisible chars). Replace
+  // every occurrence with a pin button. Each pin carries its citation data
+  // as an attribute so the popover handler can read it.
+  const re = new RegExp(CITATION_SENTINEL_OPEN + '(\\d+)' + CITATION_SENTINEL_CLOSE, 'g');
+  return html.replace(re, (_match, idStr) => {
+    const c = citations[parseInt(idStr, 10)];
+    if (!c) return '';
+    return renderCitationPin(c);
+  });
+}
+
+function renderCitationPin({ file, locator, quote }) {
+  // Compact "book" icon — Lucide-style open book. Doesn't break text flow.
+  const data = encodeURIComponent(JSON.stringify({ file, locator, quote }));
+  const tip = quote ? `${file}${locator ? ' · ' + locator : ''}\n\n"${quote}"` : file;
+  const bookSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>`;
+  return `<button type="button" class="citation-pin" data-citation="${esc(data)}" title="${esc(tip)}" onclick="openCitationPopover(this, event)" aria-label="Citation: ${esc(file)}">${bookSvg}</button>`;
+}
+
+// Click handler: open a popover anchored to the pin showing file + locator + quote.
+let _activeCitationPopover = null;
+function closeCitationPopover() {
+  if (_activeCitationPopover) {
+    _activeCitationPopover.remove();
+    _activeCitationPopover = null;
+  }
+  document.removeEventListener('click', _citationPopoverOutsideHandler, true);
+  document.removeEventListener('keydown', _citationPopoverEscHandler);
+}
+function _citationPopoverOutsideHandler(e) {
+  if (_activeCitationPopover && !_activeCitationPopover.contains(e.target) && !e.target.closest('.citation-pin')) {
+    closeCitationPopover();
+  }
+}
+function _citationPopoverEscHandler(e) {
+  if (e.key === 'Escape') closeCitationPopover();
+}
+function openCitationPopover(pinBtn, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  closeCitationPopover();
+  let data = {};
+  try { data = JSON.parse(decodeURIComponent(pinBtn.getAttribute('data-citation') || '')); } catch (e) {}
+  if (!data.file && !data.quote) return;
+
+  const pop = document.createElement('div');
+  pop.className = 'citation-popover';
+  const fileIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+  const fileLine = `<div class="citation-popover-file">${fileIcon}<span>${esc(data.file || '')}</span></div>`;
+  const locLine = data.locator ? `<div class="citation-popover-locator">${esc(data.locator)}</div>` : '';
+  const quoteLine = data.quote ? `<div class="citation-popover-quote">${esc(data.quote)}</div>` : '';
+  pop.innerHTML = `<div class="citation-popover-arrow"></div>${fileLine}${locLine}${quoteLine}`;
+  document.body.appendChild(pop);
+
+  // Position: prefer below pin, flip above if not enough room
+  const pinRect = pinBtn.getBoundingClientRect();
+  const popRect = pop.getBoundingClientRect();
+  const vh = window.innerHeight;
+  const vw = window.innerWidth;
+  let top = pinRect.bottom + 10;
+  let arrowSide = 'top';
+  if (top + popRect.height + 12 > vh && pinRect.top - popRect.height - 12 > 0) {
+    top = pinRect.top - popRect.height - 10;
+    arrowSide = 'bottom';
+  }
+  let left = Math.max(8, Math.min(vw - popRect.width - 8, pinRect.left + pinRect.width / 2 - popRect.width / 2));
+  pop.style.top = top + 'px';
+  pop.style.left = left + 'px';
+  // Position arrow to point at the pin
+  const arrow = pop.querySelector('.citation-popover-arrow');
+  if (arrow) {
+    const arrowLeft = Math.max(8, Math.min(popRect.width - 18, pinRect.left + pinRect.width / 2 - left - 5));
+    arrow.style.left = arrowLeft + 'px';
+    if (arrowSide === 'bottom') {
+      arrow.style.top = '';
+      arrow.style.bottom = '-6px';
+      arrow.style.transform = 'rotate(225deg)';
+    }
+  }
+
+  _activeCitationPopover = pop;
+  // Defer outside-click handler to next tick so the same click that opened us
+  // doesn't immediately close it.
+  setTimeout(() => {
+    document.addEventListener('click', _citationPopoverOutsideHandler, true);
+    document.addEventListener('keydown', _citationPopoverEscHandler);
+  }, 0);
+}
+
+// LEGACY (no longer called) — replaced by extractCitationsFromRaw +
+// restoreCitationPins which run BEFORE marked.parse so markdown italics
+// (*"..."*) inside the verbatim quote don't break the bracket match.
+// Kept for reference / fallback only.
 function renderCitationBadgesInHtml(html) {
   if (!html || html.indexOf('[') === -1) return html;
   // Tokenize: walk through characters, switching between "text" and "tag"
