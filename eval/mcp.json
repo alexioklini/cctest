@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mempalace": {
+      "command": "/Users/alexander/.mempalace/venv/bin/mempalace-mcp",
+      "args": ["--palace", "/Users/alexander/.mempalace/brain"]
+    }
+  }
+}

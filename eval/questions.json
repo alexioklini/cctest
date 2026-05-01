@@ -1,0 +1,125 @@
+{
+  "_comment": "15-question canary set for the Brain-vs-Opus eval. Buckets: retrieval (R), precision (P), multi-doc (M), refusal (F), citation (C). 'expected_docs' is a hint for grading retrieval — empty list for refusal questions. 'expected_refuse' marks questions whose corpus does NOT contain the answer. Edit freely; the runner reads this file fresh each invocation.",
+  "questions": [
+    {
+      "id": "R1_multilogin",
+      "bucket": "retrieval",
+      "question": "Wie ist der Umgang mit Multilogin-Berechtigungen geregelt? Wer muss zustimmen?",
+      "expected_docs": ["4_1_0_ARL_Systemberechtigungen.pdf"],
+      "expected_refuse": false,
+      "notes": "The Multilogin canary used during v8.22.0 validation. Datenowner approval is the key fact."
+    },
+    {
+      "id": "R2_morgencheck",
+      "bucket": "retrieval",
+      "question": "Welche Tätigkeiten werden im IT-Morgencheck durchgeführt und von wem?",
+      "expected_docs": ["PB_4_4a_IT_MorgenCheck_Prozessbeschreibung.pdf"],
+      "expected_refuse": false,
+      "notes": "Single-doc, process description. Tests whether short query 'IT-Morgencheck' beats verbose multi-keyword."
+    },
+    {
+      "id": "R3_kryptographie",
+      "bucket": "retrieval",
+      "question": "Wie wird der Einsatz von Kryptographie in der Bank geregelt?",
+      "expected_docs": ["20_2_7_ANW_Einsatz von Kryptographie.pdf"],
+      "expected_refuse": false,
+      "notes": "Filename token 'Kryptographie' is unique — tests filename-token boost from v8.x retrieval changes."
+    },
+    {
+      "id": "P1_password_length",
+      "bucket": "precision",
+      "question": "Welche Mindestlänge gilt für Passwörter und wie oft müssen Passwörter geändert werden?",
+      "expected_docs": ["20_2_1_2_ARL_ISMS Risikomanagement Handbuch.pdf", "20_2_2_0_ARL_IT-Endbenutzerrichtlinie.pdf", "4_1_0_ARL_Systemberechtigungen.pdf"],
+      "expected_refuse": false,
+      "notes": "Classic precision trap — model loves to invent 'mindestens 12 Zeichen, alle 90 Tage'. Correct answer: report whatever the source actually says, or 'nicht spezifiziert'."
+    },
+    {
+      "id": "P2_archivierung_dauer",
+      "bucket": "precision",
+      "question": "Wie lange werden Datensicherungen aufbewahrt? Was ist die Aufbewahrungsfrist?",
+      "expected_docs": ["ARL_4_4_Archivierung und Datensicherung.pdf"],
+      "expected_refuse": false,
+      "notes": "Precision on retention period. Failure mode: model invents '7 Jahre' from training-data ISO/HGB priors."
+    },
+    {
+      "id": "P3_loeschfristen",
+      "bucket": "precision",
+      "question": "Welche konkreten Löschfristen gelten für Kundendaten?",
+      "expected_docs": ["20_1_8_ARL_Löschkonzept_012026.pdf", "20_1_6_ANW_Löschung_Kundendaten_012026.pdf"],
+      "expected_refuse": false,
+      "notes": "Tests whether the model reports SPECIFIC fristen from the Löschkonzept rather than generalising to 'gemäß DSGVO'."
+    },
+    {
+      "id": "M1_data_breach_flow",
+      "bucket": "multi_doc",
+      "question": "Was ist der vollständige Prozess bei einem Data Breach — wer wird wann benachrichtigt (Behörde und Betroffene)?",
+      "expected_docs": ["20_1_0_ARL Data Breach_072025.pdf", "20_1_1_Data Breach Notification_Behoerede_072025.pdf", "20_1_2_Data Breach Notification_Betroffene_Person_072025.pdf"],
+      "expected_refuse": false,
+      "notes": "Three-doc synthesis: ARL + Behörde notification + Betroffene notification."
+    },
+    {
+      "id": "M2_neuer_mitarbeiter",
+      "bucket": "multi_doc",
+      "question": "Welche IT-Schritte sind beim Eintritt eines neuen Mitarbeiters durchzuführen, einschließlich Berechtigungen und Schulungen?",
+      "expected_docs": ["4_1_5_IT-Vorlage_MA-Eintritt.pdf", "4_1_0_ARL_Systemberechtigungen.pdf", "20_2_2_1_Bestätigung_IT-Benutzerrichtlinien.pdf"],
+      "expected_refuse": false,
+      "notes": "Multi-doc: onboarding template + Systemberechtigungen ARL + Benutzerrichtlinien-Bestätigung."
+    },
+    {
+      "id": "M3_cloud_drittparteien",
+      "bucket": "multi_doc",
+      "question": "Welche Anforderungen gelten für den Einsatz von Cloud-Systemen und für die Auswahl von Cloud-Lieferanten?",
+      "expected_docs": ["20_2_11 ARL Einsatz von Cloudsystemen.pdf", "20_2_4_1_ARL_Lieferanten und Drittparteien.pdf"],
+      "expected_refuse": false,
+      "notes": "Two-doc synthesis where cloud and supplier policies overlap."
+    },
+    {
+      "id": "F1_geldwaesche",
+      "bucket": "refusal",
+      "question": "Was sagt unsere Richtlinie zur Geldwäscheprävention? Welche Schwellenwerte gelten für Verdachtsmeldungen nach GwG?",
+      "expected_docs": [],
+      "expected_refuse": true,
+      "notes": "GwG/AML is NOT in this 58-PDF corpus. Failure mode: model fabricates a complete fake AMLD4/GwG policy. Must refuse cleanly."
+    },
+    {
+      "id": "F2_kreditvergabe",
+      "bucket": "refusal",
+      "question": "Welche Kreditvergaberichtlinien gelten und welche Bonitätsprüfungen sind durchzuführen?",
+      "expected_docs": [],
+      "expected_refuse": true,
+      "notes": "Credit/lending policies are NOT in this IT-policy-only corpus. Tests refusal on a topic adjacent to banking but outside the indexed scope."
+    },
+    {
+      "id": "F3_arbeitszeit",
+      "bucket": "refusal",
+      "question": "Wie sind die Arbeitszeiten und Überstundenregelungen für Mitarbeiter geregelt?",
+      "expected_docs": [],
+      "expected_refuse": true,
+      "notes": "HR/working-time policy is NOT in this corpus. Tests refusal on a clearly out-of-scope HR topic."
+    },
+    {
+      "id": "C1_ki_policy_bullets",
+      "bucket": "citation",
+      "question": "Was sind die wichtigsten Regelungen unserer KI-Policy? Bitte als Aufzählung mit den fünf wichtigsten Punkten.",
+      "expected_docs": ["20_1_10_ARL KI Policy_07052025.pdf"],
+      "expected_refuse": false,
+      "notes": "Bullet-list trap: each bullet must carry its own [Quelle: ... — \"<Zitat>\"]. Failure mode is one citation at the end of a 5-bullet block."
+    },
+    {
+      "id": "C2_passwort_zitat",
+      "bucket": "citation",
+      "question": "Welche konkreten Regeln zur Bildschirmsperre und zum Verhalten am Arbeitsplatz gelten?",
+      "expected_docs": ["20_2_2_4_ARL_Arbeitsplatz Richtlinie.pdf"],
+      "expected_refuse": false,
+      "notes": "Tests verbatim quoting from the Arbeitsplatz-Richtlinie. Generic 'clean desk policy' answers without quotes should score low on citation."
+    },
+    {
+      "id": "C3_isms_ziele",
+      "bucket": "citation",
+      "question": "Was sind die definierten Ziele unseres Informationssicherheitsmanagements?",
+      "expected_docs": ["20_2_1_3_ARL_Ziele der Informationssicherheit.pdf", "20_2_1_2_ARL_ISMS Risikomanagement Handbuch.pdf"],
+      "expected_refuse": false,
+      "notes": "Tests citation discipline on a list of objectives — each Ziel must carry its own quote, not a single trailing citation."
+    }
+  ]
+}
