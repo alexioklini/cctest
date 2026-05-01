@@ -9980,10 +9980,10 @@ function extractCitationsFromRaw(text) {
   // with a single space separator. We do this for ALL standalone bracket
   // lines — the bracket is a citation marker for the claim above it, so
   // joining is always the right behavior.
-  text = text.replace(/([^\n])[ \t]*\n[ \t]*(\[(?:Quelle|QUELLE|source|Source|SOURCE):\s*[^\[\]]+?\])/g, '$1 $2');
+  text = text.replace(/([^\n])[ \t]*\n[ \t]*(\[(?:Quelle|QUELLE|source|Source|SOURCE):\s*(?:[^\[\]]|\[\.{2,3}\])+?\])/g, '$1 $2');
   // Bracket regex: `[Quelle: ...]` or `[source: ...]` etc. Greedy across the
   // bracket content — disallows `[` inside to avoid runaway nesting.
-  const re = /\[(?:Quelle|QUELLE|source|Source|SOURCE):\s*([^\[\]]+?)\]/g;
+  const re = /\[(?:Quelle|QUELLE|source|Source|SOURCE):\s*((?:[^\[\]]|\[\.{2,3}\])+?)\]/g;
   const citations = [];
   const stripped = text.replace(re, (_full, body) => {
     const parsed = parseCitationBodyRaw(body);
@@ -10169,7 +10169,7 @@ function replaceCitationMarkersInText(text) {
   // Bodies can span multiple sentences and contain quotes — we only need to
   // stop at the matching closing bracket. Disallow `[` inside to avoid
   // swallowing too much when nesting goes wrong.
-  const re = /\[(?:Quelle|QUELLE|source|Source|SOURCE):\s*([^\[\]]+?)\]/g;
+  const re = /\[(?:Quelle|QUELLE|source|Source|SOURCE):\s*((?:[^\[\]]|\[\.{2,3}\])+?)\]/g;
   return text.replace(re, (full, body) => {
     const parsed = parseCitationBody(body);
     if (!parsed) return full;
