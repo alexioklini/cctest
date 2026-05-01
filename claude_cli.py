@@ -4692,17 +4692,22 @@ class MCPStdioClient:
         })
         if resp and resp.get("result"):
             content = resp["result"].get("content", [])
-            # Extract text from content blocks
             texts = []
+            images = []
             for block in content:
                 if isinstance(block, dict):
                     if block.get("type") == "text":
                         texts.append(block.get("text", ""))
+                    elif block.get("type") == "image":
+                        images.append(block)
                     else:
                         texts.append(json.dumps(block))
                 elif isinstance(block, str):
                     texts.append(block)
-            return json.dumps({"result": "\n".join(texts)})
+            payload = {"result": "\n".join(texts)}
+            if images:
+                payload["_mcp_images"] = images
+            return json.dumps(payload)
         elif resp and resp.get("error"):
             return json.dumps({"error": resp["error"].get("message", str(resp["error"]))})
         return json.dumps({"error": "No response from MCP server"})
@@ -4808,15 +4813,21 @@ class MCPSSEClient:
         if resp and resp.get("result"):
             content = resp["result"].get("content", [])
             texts = []
+            images = []
             for block in content:
                 if isinstance(block, dict):
                     if block.get("type") == "text":
                         texts.append(block.get("text", ""))
+                    elif block.get("type") == "image":
+                        images.append(block)
                     else:
                         texts.append(json.dumps(block))
                 elif isinstance(block, str):
                     texts.append(block)
-            return json.dumps({"result": "\n".join(texts)})
+            payload = {"result": "\n".join(texts)}
+            if images:
+                payload["_mcp_images"] = images
+            return json.dumps(payload)
         elif resp and resp.get("error"):
             return json.dumps({"error": resp["error"].get("message", str(resp["error"]))})
         return json.dumps({"error": "No response from MCP server"})
@@ -20544,6 +20555,93 @@ def _after_file_write(path: str, action: str = "created", agent_id: str = ""):
             pass
 
 
+_DATA_URI_RE = re.compile(r'data:([a-zA-Z0-9][a-zA-Z0-9!#$&\-^_]*/[a-zA-Z0-9][a-zA-Z0-9!#$&\-^_.+]*);base64,([A-Za-z0-9+/=]+)')
+
+_MIME_TO_EXT = {
+    "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png",
+    "image/gif": "gif", "image/webp": "webp", "image/svg+xml": "svg",
+    "audio/wav": "wav", "audio/wave": "wav", "audio/x-wav": "wav",
+    "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/ogg": "ogg",
+    "audio/flac": "flac", "audio/aac": "aac",
+    "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm",
+    "video/x-msvideo": "avi", "video/mpeg": "mpeg",
+    "application/pdf": "pdf", "application/zip": "zip",
+}
+
+def _mime_to_ext(mime: str) -> str:
+    return _MIME_TO_EXT.get(mime) or mime.split("/")[-1].split("+")[0].split(";")[0]
+
+
+def _extract_and_save_mcp_blobs_direct(raw_result: str, session_id: str) -> str:
+    """Extract any binary blobs from a tool result and save as artifacts.
+
+    Handles _mcp_images/_mcp_blobs structured blocks and data:<mime>;base64,...
+    URIs anywhere in the result text. Works for all MIME types.
+    Returns cleaned result string.
+    """
+    import base64 as _b64
+    try:
+        parsed = json.loads(raw_result)
+    except (json.JSONDecodeError, TypeError):
+        return raw_result
+    if not isinstance(parsed, dict):
+        return raw_result
+
+    _sid = session_id or getattr(_thread_local, 'current_session_id', None) or ""
+    _agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    _agent_id = _agent.agent_id if _agent else "main"
+    if not _sid or not _agent:
+        return raw_result
+
+    folder = _get_artifact_session_folder(_sid)
+    artifact_dir = os.path.join(AGENTS_DIR, _agent_id, "artifacts", folder)
+    os.makedirs(artifact_dir, exist_ok=True)
+
+    counter = [0]
+    saved_paths = []
+
+    def _save(mime: str, b64_data: str) -> str | None:
+        try:
+            ext = _mime_to_ext(mime)
+            raw_bytes = _b64.b64decode(b64_data)
+            counter[0] += 1
+            suffix = f"_{counter[0]}" if counter[0] > 1 else ""
+            hint = "mcp_screenshot" if mime.startswith("image/") else "mcp_output"
+            fname = f"{hint}{suffix}.{ext}"
+            fpath = os.path.join(artifact_dir, fname)
+            with open(fpath, "wb") as f:
+                f.write(raw_bytes)
+            _after_file_write(fpath, "created", _agent_id)
+            return fpath
+        except Exception as e:
+            return f"(blob save failed: {e})"
+
+    # Structured blob blocks from MCP clients
+    for key in ("_mcp_images", "_mcp_blobs"):
+        for blob in parsed.pop(key, []):
+            mime = blob.get("mimeType") or blob.get("media_type") or "application/octet-stream"
+            p = _save(mime, blob.get("data", ""))
+            if p:
+                saved_paths.append(p)
+
+    # data:<mime>;base64,<data> URIs anywhere in result text
+    result_text = parsed.get("result", "")
+    if ";base64," in result_text:
+        def _replace(m: re.Match) -> str:
+            p = _save(m.group(1), m.group(2))
+            if p:
+                saved_paths.append(p)
+                return f"[saved as artifact: {os.path.basename(p)}]"
+            return m.group(0)
+        parsed["result"] = _DATA_URI_RE.sub(_replace, result_text)
+
+    if saved_paths:
+        names = ", ".join(os.path.basename(p) for p in saved_paths)
+        parsed["result"] = (parsed.get("result") or "").rstrip() + f"\n\nSaved as artifact: {names}"
+
+    return json.dumps(parsed)
+
+
 # --- Concurrent Tool Execution (Phase 5) ---
 # Tools classified as concurrency-safe (read-only, no side effects)
 _CONCURRENT_SAFE_TOOLS = {
@@ -21000,6 +21098,20 @@ def _sanitize_tool_result(name: str, result: str) -> str:
     (especially MCP puppeteer screenshots) don't snowball the context on
     subsequent API calls.
     """
+    # MCP image results carry _mcp_images — preserve the base64 there so the
+    # caller can forward them as multimodal content blocks to the model.
+    # Only strip stray base64 blobs outside that key.
+    try:
+        parsed = json.loads(result)
+        if isinstance(parsed, dict) and "_mcp_images" in parsed:
+            # Sanitize only the text portion; leave _mcp_images intact
+            text_part = json.dumps({"result": parsed.get("result", "")})
+            text_part = _BASE64_DATA_RE.sub('"data": "[base64 image removed — already processed]"', text_part)
+            text_part = _BASE64_RAW_RE.sub('[base64 data removed]', text_part)
+            parsed["result"] = json.loads(text_part).get("result", "")
+            return json.dumps(parsed)
+    except (json.JSONDecodeError, TypeError):
+        pass
     # Replace base64 image blobs with placeholder
     result = _BASE64_DATA_RE.sub('"data": "[base64 image removed — already processed]"', result)
     result = _BASE64_RAW_RE.sub('[base64 data removed]', result)
@@ -22887,6 +22999,9 @@ def _handle_openai_response(response, payload, messages, model, api_key,
             next((bc["name"] for bc in batch_calls if bc["id"] == br["tool_use_id"]), ""),
             br["result"],
         )
+        # Extract MCP images (both _mcp_images blocks and data: URIs) → artifacts
+        sanitized = _extract_and_save_mcp_blobs_direct(sanitized, session_id)
+
         messages.append({
             "role": "tool",
             "tool_call_id": br["tool_use_id"],

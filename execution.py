@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import threading
 import time
 import uuid
@@ -381,6 +382,122 @@ def get_worker_registry() -> WorkerRegistry:
 
 # ---------- Artifact Storage ----------
 
+_DATA_URI_RE = re.compile(r'data:([a-zA-Z0-9][a-zA-Z0-9!#$&\-^_]*/[a-zA-Z0-9][a-zA-Z0-9!#$&\-^_.+]*);base64,([A-Za-z0-9+/=]+)')
+
+
+def _extract_and_save_mcp_images_no_worker(
+    raw_result: str,
+    session_id: str,
+    agent_id: str,
+) -> str:
+    """Like _extract_and_save_mcp_images but without a worker context (auto-isolate path)."""
+    return _extract_and_save_mcp_images(raw_result, session_id, agent_id, worker=None)
+
+
+def _extract_and_save_mcp_images(
+    raw_result: str,
+    session_id: str,
+    agent_id: str,
+    worker: "Worker | None",
+) -> str:
+    """Extract images from a raw MCP tool result and save as artifacts.
+
+    Handles two formats:
+    - _mcp_images key: list of {type, mimeType, data} blocks (standard MCP image blocks)
+    - data:image/...;base64,... URIs embedded in the result text (Puppeteer style)
+
+    Fires artifact_updated SSE for each saved image. Returns cleaned result.
+    """
+    try:
+        parsed = json.loads(raw_result)
+    except (json.JSONDecodeError, TypeError):
+        return raw_result
+
+    if not isinstance(parsed, dict):
+        return raw_result
+
+    from claude_cli import (
+        _get_artifact_session_folder, _after_file_write,
+        AGENTS_DIR,
+    )
+    import base64 as _b64
+
+    _MIME_TO_EXT = {
+        "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png",
+        "image/gif": "gif", "image/webp": "webp", "image/svg+xml": "svg",
+        "audio/wav": "wav", "audio/wave": "wav", "audio/x-wav": "wav",
+        "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/ogg": "ogg",
+        "audio/flac": "flac", "audio/aac": "aac",
+        "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm",
+        "video/x-msvideo": "avi", "video/mpeg": "mpeg",
+        "application/pdf": "pdf", "application/zip": "zip",
+        "application/json": "json",
+    }
+
+    def _mime_to_ext(mime: str) -> str:
+        if mime in _MIME_TO_EXT:
+            return _MIME_TO_EXT[mime]
+        # fallback: last part of subtype, strip +suffix
+        return mime.split("/")[-1].split("+")[0].split(";")[0]
+
+    folder = _get_artifact_session_folder(session_id)
+    artifact_dir = os.path.join(AGENTS_DIR, agent_id, "artifacts", folder)
+    os.makedirs(artifact_dir, exist_ok=True)
+
+    saved_paths = []
+    counter = [0]
+
+    def _save_blob(mime: str, b64_data: str, hint: str = "mcp_output") -> str | None:
+        try:
+            ext = _mime_to_ext(mime)
+            raw_bytes = _b64.b64decode(b64_data)
+            counter[0] += 1
+            suffix = f"_{counter[0]}" if counter[0] > 1 else ""
+            fname = f"{hint}{suffix}.{ext}"
+            fpath = os.path.join(artifact_dir, fname)
+            with open(fpath, "wb") as f:
+                f.write(raw_bytes)
+            _after_file_write(fpath, "created", agent_id)
+            if worker is not None:
+                _append_flow(worker, "artifact",
+                             artifact_id=fname, name=fname,
+                             artifact_kind=mime.split("/")[0],
+                             size_bytes=len(raw_bytes))
+            return fpath
+        except Exception as e:
+            return f"(blob save failed: {e})"
+
+    # 1. MCP structured blob blocks (_mcp_images legacy key + any _mcp_blobs)
+    for key in ("_mcp_images", "_mcp_blobs"):
+        for blob in parsed.pop(key, []):
+            mime = blob.get("mimeType") or blob.get("media_type") or "application/octet-stream"
+            data = blob.get("data", "")
+            hint = "mcp_screenshot" if mime.startswith("image/") else "mcp_output"
+            p = _save_blob(mime, data, hint)
+            if p:
+                saved_paths.append(p)
+
+    # 2. data:<mime>;base64,<data> URIs anywhere in the result text
+    result_text = parsed.get("result", "")
+    if ";base64," in result_text:
+        def _replace_data_uri(m: re.Match) -> str:
+            mime = m.group(1)
+            hint = "mcp_screenshot" if mime.startswith("image/") else "mcp_output"
+            p = _save_blob(mime, m.group(2), hint)
+            if p:
+                saved_paths.append(p)
+                return f"[saved as artifact: {os.path.basename(p)}]"
+            return m.group(0)
+        parsed["result"] = _DATA_URI_RE.sub(_replace_data_uri, result_text)
+
+    if saved_paths:
+        existing = parsed.get("result", "").rstrip()
+        names = ", ".join(os.path.basename(p) for p in saved_paths)
+        parsed["result"] = existing + f"\n\nSaved as artifact: {names}"
+
+    return json.dumps(parsed)
+
+
 def _store_worker_artifact(
     tool_name: str,
     args: dict,
@@ -391,7 +508,7 @@ def _store_worker_artifact(
     """Write the raw tool result to the agent's artifact folder. Returns
     artifact metadata dict."""
     from claude_cli import (
-        _get_artifact_session_folder, _register_artifact_version,
+        _get_artifact_session_folder, _after_file_write,
         AGENTS_DIR, _thread_local,
     )
 
@@ -418,7 +535,7 @@ def _store_worker_artifact(
         json.dump(payload, f, indent=2, default=str)
 
     try:
-        _register_artifact_version(artifact_path, "created", agent_id)
+        _after_file_write(artifact_path, "created", agent_id)
     except Exception:
         pass
 
@@ -743,6 +860,9 @@ def run_worker_subagent(tool_name: str, args: dict, inner_fn: Callable[[str, dic
         _worker_registry.update_state(worker_id, WorkerState.ABORTED,
                                        message=worker.abort_reason or "cancelled")
 
+    # Extract MCP image blobs before storing the JSON artifact
+    raw_result = _extract_and_save_mcp_images(raw_result, session_id, agent_id, worker)
+
     # Store artifact
     if worker.state == WorkerState.RUNNING:
         _worker_registry.update_state(worker_id, WorkerState.RUNNING,
@@ -835,6 +955,11 @@ def maybe_retroactive_isolate(tool_name: str, args: dict, result: str) -> str:
 
     session_id = getattr(_thread_local, 'current_session_id', None) or ""
     tool_use_id = getattr(_thread_local, 'tool_use_id', None) or f"auto_{uuid.uuid4().hex[:8]}"
+    agent_id = getattr(_thread_local, 'current_agent', None)
+    agent_id = agent_id.agent_id if agent_id else "main"
+
+    # Extract images before storing the JSON artifact
+    result = _extract_and_save_mcp_images_no_worker(result, session_id, agent_id)
 
     artifact_meta = _store_worker_artifact(
         tool_name, args, result, session_id, tool_use_id
