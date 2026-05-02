@@ -342,7 +342,11 @@ async function switchGeneralTab(tab, btn) {
     }
     const provKeys = Object.keys(byProvider).sort();
     // Sort models within each provider by display name
-    for (const pk of provKeys) byProvider[pk].sort((a, b) => (a[1].display_name || modelShortName(a[0], false)).localeCompare(b[1].display_name || modelShortName(b[0], false)));
+    for (const pk of provKeys) byProvider[pk].sort((a, b) => {
+      const ae = a[1].enabled ? 0 : 1, be = b[1].enabled ? 0 : 1;
+      if (ae !== be) return ae - be;
+      return (a[1].display_name || modelShortName(a[0], false)).localeCompare(b[1].display_name || modelShortName(b[0], false));
+    });
 
     // Helper: small labeled input for model detail panel
     const mdlInput = (cls, label, val, opts = {}) => {
@@ -367,7 +371,7 @@ async function switchGeneralTab(tab, btn) {
       const isOmlx = prov === 'omlx';
       html += `<div style="margin-bottom:6px;border:1px solid var(--border-100);border-radius:8px;overflow:hidden">
         <div style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:8px 12px;background:var(--bg-100)" onclick="const c=document.getElementById('${provId}');const open=c.style.display!=='none';c.style.display=open?'none':'block';this.querySelector('.mdl-arrow').textContent=open?'▶':'▼'">
-          <span class="mdl-arrow" style="font-size:10px;color:var(--text-400)">▼</span>
+          <span class="mdl-arrow" style="font-size:10px;color:var(--text-400)">▶</span>
           <span style="font-size:13px;font-weight:600;color:var(--text-100)">${esc(prov)}</span>
           <span style="font-size:11px;color:var(--text-400)">${models.length} model${models.length!==1?'s':''}</span>
           <span style="margin-left:auto;display:flex;gap:4px" onclick="event.stopPropagation()">
@@ -375,7 +379,7 @@ async function switchGeneralTab(tab, btn) {
             <button class="btn-secondary" style="padding:1px 6px;font-size:10px" onclick="document.querySelectorAll('#${provId} .mdl-enabled').forEach(c=>{c.checked=false;c.closest('.mdl-header-row').style.opacity=0.5})">None</button>
           </span>
         </div>
-        <div id="${provId}" style="padding:4px 8px">`;
+        <div id="${provId}" style="display:none;padding:4px 8px">`;
       for (const [mid, cfg] of models) {
         const inf = cfg.inference || {};
         const detId = `mdl-det-${mid.replace(/[^a-zA-Z0-9]/g,'_')}`;

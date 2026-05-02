@@ -18495,12 +18495,15 @@ def _detect_thinking_format(model_id: str, provider: str = "") -> str:
         if p in m:
             return "openai_opaque"
     # Mistral reasoning models — content-block array with nested thinking[]
-    # (magistral-* and mistral-small 2603+ with reasoning_effort set). Checked
-    # before the generic "magistral" branch in the inline_tags section so Mistral wins.
+    # (magistral-* and mistral-small 2603+ and mistral-medium 3.x+ with reasoning_effort set).
+    # Checked before the generic "magistral" branch in the inline_tags section so Mistral wins.
     if (
         "magistral" in m
         or "mistral-small-2603" in m
         or "mistral-small-latest" in m  # alias commonly resolves to the newest small
+        or "mistral-medium-3" in m      # mistral-medium-3.5 / mistral-medium-3-5 / mistral-medium-2604+
+        or "mistral-medium-latest" in m # latest alias may point to a reasoning-capable medium
+        or "mistral-medium-2604" in m
     ):
         return "mistral_blocks"
     # oMLX serves every reasoning-capable model via a unified API that exposes
