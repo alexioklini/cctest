@@ -13,7 +13,7 @@ DIST="$HERE/dist"
 APP="$DIST/BrainAgent.app"
 PY_TARBALL="$REPO/packaging/downloads/python-mac-arm64.tar.gz"
 REQS="$REPO/packaging/common/requirements.txt"
-VERSION="$(grep '^VERSION' "$REPO/claude_cli.py" | head -1 | cut -d'"' -f2)"
+VERSION="$(grep '^VERSION' "$REPO/brain.py" | head -1 | cut -d'"' -f2)"
 DMG_NAME="BrainAgent-${VERSION}-arm64.dmg"
 
 echo "==> Brain Agent v${VERSION} — macOS arm64 bundle"
@@ -94,9 +94,9 @@ cp -R "$BUILD/python" "$APP/Contents/Resources/python"
 echo "  -> Copying Brain source tree..."
 APP_OUT="$APP/Contents/Resources/app"
 # Python modules
-for f in server.py claude_cli.py auth.py client.py adapters.py \
+for f in server.py brain.py auth.py client.py adapters.py \
          notifications.py execution.py mcp_bridge.py telegram.py \
-         node.py tui.py brain.py tools.md tools_config.json; do
+         node.py tui.py launcher.py tools.md tools_config.json; do
   [[ -f "$REPO/$f" ]] && cp "$REPO/$f" "$APP_OUT/$f"
 done
 # Static trees

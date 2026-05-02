@@ -4,10 +4,10 @@ Guidance for Claude Code in this repo. **Non-obvious invariants only** — what'
 
 ## Repository Structure
 
-- `brain.py` — Gateway CLI (start/stop/restart, launch frontends)
+- `launcher.py` — Gateway CLI (start/stop/restart, launch frontends)
 - `server.py` — HTTP API daemon (launchd-managed, port 8420)
 - `client.py` — Shared HTTP/SSE client library
-- `claude_cli.py` — Core engine: tools, agents, MCP, scheduler, agentic loop
+- `brain.py` — Core engine: tools, agents, MCP, scheduler, agentic loop
 - `tui.py`, `telegram.py` — Terminal + Telegram frontends
 - `web/index.html` — Single-page web UI
 - `desktop/` — Electron shell (CORS-free IPC + lazy llama.cpp host)
@@ -18,11 +18,11 @@ Guidance for Claude Code in this repo. **Non-obvious invariants only** — what'
 ## Architecture
 
 ```
-brain.py → server.py (port 8420)
-              ├── claude_cli.py  # engine, native agentic loop, LCM
-              ├── /mcp endpoint  # JSON-RPC tools/list + tools/call
-              ├── SQLite         # chats, scheduler, context, costs, traces, audit, auth
-              └── MemPalace      # direct in-process, no MCP
+launcher.py → server.py (port 8420)
+                ├── brain.py  # engine, native agentic loop, LCM
+                ├── /mcp endpoint  # JSON-RPC tools/list + tools/call
+                ├── SQLite         # chats, scheduler, context, costs, traces, audit, auth
+                └── MemPalace      # direct in-process, no MCP
 ```
 
 All chat goes through the native Python agentic loop. No SDK sidecars. All providers OpenAI-compatible (Anthropic/Mistral handlers removed v7.2/7.3).
@@ -141,7 +141,7 @@ Per-agent `limits`: `max_tool_rounds` (soft cap, hard stop at 1.5×), `tool_resu
 
 71 regex detectors, client + server side. Zero external APIs.
 
-**Two mirrored implementations** (must stay in sync): `PIIScanner` in `web/index.html`; `_pii_rules()` + `_pii_scan_text()` + `_pii_scan_bare_identifiers()` in `claude_cli.py`.
+**Two mirrored implementations** (must stay in sync): `PIIScanner` in `web/index.html`; `_pii_rules()` + `_pii_scan_text()` + `_pii_scan_bare_identifiers()` in `brain.py`.
 
 **Three rule tiers** (first-match-wins, overlap suppression): cloud secrets/API keys → national IDs with checksums (~30 countries) → context-fallback + bare-identifier heuristic.
 
@@ -246,7 +246,7 @@ Scoping: `main` → heads + standalone (not members directly). Heads → their m
 
 ## Tools
 
-Source of truth: `TOOL_DEFINITIONS` in `claude_cli.py` (Anthropic flat shape; `TOOL_DEFINITIONS_OPENAI` derived). Groups: core, documents, code_graph, web, email, delegation, git, scheduler, mcp, skills, nodes, context, memory, code_exec.
+Source of truth: `TOOL_DEFINITIONS` in `brain.py` (Anthropic flat shape; `TOOL_DEFINITIONS_OPENAI` derived). Groups: core, documents, code_graph, web, email, delegation, git, scheduler, mcp, skills, nodes, context, memory, code_exec.
 
 **Constraints**:
 - `execute_command`: no TTY, no stdin, `TERM=dumb`. Banned commands in `tools.md`.
@@ -303,7 +303,7 @@ Tree-sitter AST parsing, SQLite in `code-graph.db`. 14 langs. Qualified names `{
 
 ### Project Instructions (response disciplines, default)
 
-`DEFAULT_PROJECT_INSTRUCTIONS` (claude_cli.py) is the FALLBACK when `project.json.instructions` is empty. Override REPLACES default rather than appending.
+`DEFAULT_PROJECT_INSTRUCTIONS` (brain.py) is the FALLBACK when `project.json.instructions` is empty. Override REPLACES default rather than appending.
 
 Three disciplines (designed against German bank-policy corpus failure modes; model-agnostic):
 - **REFUSAL**: when `mempalace_query` returns 0 relevant + follow-up `read_document` confirms absence, refuse with canonical sentence — never general-knowledge fallback. Cap rephrasings at 2-3.

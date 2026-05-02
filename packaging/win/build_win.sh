@@ -13,7 +13,7 @@ BUILD="$HERE/build"
 DIST="$HERE/dist"
 PY_TARBALL="$REPO/packaging/downloads/python-win-x64.tar.gz"
 REQS="$REPO/packaging/common/requirements.txt"
-VERSION="$(grep '^VERSION' "$REPO/claude_cli.py" | head -1 | cut -d'"' -f2)"
+VERSION="$(grep '^VERSION' "$REPO/brain.py" | head -1 | cut -d'"' -f2)"
 OUT_NAME="BrainAgent-${VERSION}-win-x64"
 OUT_DIR="$DIST/$OUT_NAME"
 
@@ -51,9 +51,9 @@ mkdir -p "$OUT_DIR/app"
 cp -R "$BUILD/python" "$OUT_DIR/python"
 
 # Brain source — allowlist
-for f in server.py claude_cli.py auth.py client.py adapters.py \
+for f in server.py brain.py auth.py client.py adapters.py \
          notifications.py execution.py mcp_bridge.py telegram.py \
-         node.py tui.py brain.py tools.md tools_config.json; do
+         node.py tui.py launcher.py tools.md tools_config.json; do
   [[ -f "$REPO/$f" ]] && cp "$REPO/$f" "$OUT_DIR/app/$f"
 done
 for d in web mcp-servers; do

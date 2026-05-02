@@ -37,6 +37,13 @@
       "main.js",
       "preload.js",
       "local-inference.js",
+      "settings.js",
+      "server-check.js",
+      "window.js",
+      "ipc-fetch.js",
+      "ipc-system.js",
+      "updater.js",
+      "tray.js",
       "icons/**"
     ],
     "publish": {

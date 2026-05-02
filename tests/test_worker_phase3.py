@@ -12,8 +12,8 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import execution
-from execution import WorkerState, WorkerRegistry, Worker, get_worker_registry, _TERMINAL_STATES
+from engine import execution
+from engine.execution import WorkerState, WorkerRegistry, Worker, get_worker_registry, _TERMINAL_STATES
 from claude_cli import _ok, _err, _thread_local
 
 

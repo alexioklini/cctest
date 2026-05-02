@@ -15,7 +15,7 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import execution
+from engine import execution
 from claude_cli import _ok, _err, _thread_local
 
 
