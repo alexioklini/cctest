@@ -1425,6 +1425,7 @@ function renderAssistantMessage(msg, idx) {
   if (msg._files?.length) {
     filesHtml = '<div class="msg-file-attachments">';
     for (const f of msg._files) {
+      if (f.artifact_role === 'intermediate') continue;
       const name = f.path ? f.path.split('/').pop() : 'file';
       const badge = f.action === 'created' ? '<span class="fa-badge created">new</span>' : f.action === 'modified' ? '<span class="fa-badge modified">edit</span>' : '';
       if (f.artifact_id) {

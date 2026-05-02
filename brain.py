@@ -20548,14 +20548,18 @@ def _after_file_write(path: str, action: str = "created", agent_id: str = ""):
                 art_result = _register_artifact_version(path, action, agent_id)
                 if art_result:
                     art_id, art_ver, art_type = art_result
+                    _name = os.path.basename(path)
+                    _ext = _name.rsplit(".", 1)[-1].lower() if "." in _name else ""
+                    _role = "intermediate" if _ext in _ARTIFACT_INTERMEDIATE_EXTS else "output"
                     ecb("artifact_updated", {
                         "path": path,
-                        "name": os.path.basename(path),
+                        "name": _name,
                         "size": os.path.getsize(path),
                         "action": action,
                         "artifact_id": art_id,
                         "artifact_version": art_ver,
                         "artifact_type": art_type,
+                        "artifact_role": _role,
                     })
                 else:
                     # Fallback to regular file event if artifact registration failed
