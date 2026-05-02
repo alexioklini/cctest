@@ -85,7 +85,7 @@ def _load_config() -> dict:
             "profiles": dict(DEFAULT_PROFILES),
         }
         try:
-            from claude_cli import CONFIG_PATH
+            from brain import CONFIG_PATH
             if os.path.exists(CONFIG_PATH):
                 with open(CONFIG_PATH) as f:
                     loaded = json.load(f)
@@ -117,7 +117,7 @@ def _resolve_heaviness(tool_name: str, args: dict) -> str:
 
     Resolution order: agent override > config profiles > DEFAULT_PROFILES > "auto".
     """
-    from claude_cli import _thread_local
+    from brain import _thread_local
     agent_overrides = getattr(_thread_local, 'execution_overrides', None) or {}
     if tool_name in agent_overrides:
         value = agent_overrides[tool_name]
@@ -416,7 +416,7 @@ def _extract_and_save_mcp_images(
     if not isinstance(parsed, dict):
         return raw_result
 
-    from claude_cli import (
+    from brain import (
         _get_artifact_session_folder, _after_file_write,
         AGENTS_DIR,
     )
@@ -507,7 +507,7 @@ def _store_worker_artifact(
 ) -> dict:
     """Write the raw tool result to the agent's artifact folder. Returns
     artifact metadata dict."""
-    from claude_cli import (
+    from brain import (
         _get_artifact_session_folder, _after_file_write,
         AGENTS_DIR, _thread_local,
     )
@@ -553,7 +553,7 @@ def _store_worker_artifact(
 def _emit_worker_event(event_type: str, payload: dict) -> None:
     """Emit an SSE event through the current session's event callback.
     No-op if no callback is registered."""
-    from claude_cli import _thread_local
+    from brain import _thread_local
     cb = getattr(_thread_local, 'event_callback', None)
     if cb:
         try:
@@ -608,7 +608,7 @@ def _summarise_tool_result(
     Returns (summary_text, sections_list, usage_dict).
     usage_dict has keys: tokens_in, tokens_out, model. Zeros on fallback.
     """
-    from claude_cli import (
+    from brain import (
         _thread_local, send_message_with_fallback,
         resolve_provider_for_model, gdpr_pick_model_for_background,
         GDPRBlockedError,
@@ -785,7 +785,7 @@ def run_worker_subagent(tool_name: str, args: dict, inner_fn: Callable[[str, dic
     Returns a JSON envelope with LLM-generated summary and artifact references.
     inner_fn is claude_cli._execute_tool_inner, passed to avoid circular import.
     """
-    from claude_cli import _thread_local, _err, _ok
+    from brain import _thread_local, _err, _ok
 
     session_id = getattr(_thread_local, 'current_session_id', None) or ""
     tool_use_id = getattr(_thread_local, 'tool_use_id', None) or f"local_{uuid.uuid4().hex[:8]}"
@@ -951,7 +951,7 @@ def maybe_retroactive_isolate(tool_name: str, args: dict, result: str) -> str:
     if len(result.encode("utf-8")) <= threshold:
         return result
 
-    from claude_cli import _thread_local, _ok
+    from brain import _thread_local, _ok
 
     session_id = getattr(_thread_local, 'current_session_id', None) or ""
     tool_use_id = getattr(_thread_local, 'tool_use_id', None) or f"auto_{uuid.uuid4().hex[:8]}"
@@ -995,7 +995,7 @@ def route_tool_execution(
     if not cfg["workers_enabled"]:
         return inner_fn(tool_name, args)
 
-    from claude_cli import _thread_local
+    from brain import _thread_local
     if getattr(_thread_local, 'in_worker_subagent', False):
         return inner_fn(tool_name, args)
 
