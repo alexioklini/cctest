@@ -8,8 +8,11 @@ Guidance for Claude Code in this repo. **Non-obvious invariants only** — what'
 - `server.py` — HTTP API daemon (launchd-managed, port 8420)
 - `client.py` — Shared HTTP/SSE client library
 - `brain.py` — Core engine: tools, agents, MCP, scheduler, agentic loop
+- `engine/` — Extracted engine modules (loop, provider, models, scheduler, tasks, tools, …) — see `engine/CLAUDE.md`
+- `handlers/` — HTTP handler modules extracted from server.py — see `handlers/CLAUDE.md`
+- `server_lib/` — DB, auth, sessions, notifications, profile helpers
 - `tui.py`, `telegram.py` — Terminal + Telegram frontends
-- `web/index.html` — Single-page web UI
+- `web/index.html` — Single-page web UI (`web/js/` split into api/chat/files/settings/… modules)
 - `desktop/` — Electron shell (CORS-free IPC + lazy llama.cpp host)
 - `tools.md` — Global tool-usage guide (loaded into system prompt)
 - `config.json` — Providers, server, Telegram (gitignored)
@@ -29,15 +32,12 @@ All chat goes through the native Python agentic loop. No SDK sidecars. All provi
 
 ## Agentic Loop
 
+Entry point in `engine/loop.py`. Full invariants in `engine/CLAUDE.md`. Summary:
+
 - Entry: `send_message_with_fallback` → `send_message` → `_handle_openai_response`
 - Middleware between rounds: `_middleware_cancel_check`, `_tool_result_budget`, `_microcompact`, `_compress_old`, `_compaction`, `_pyexec_hint`
 - Tool exec: built-in pre → external pre → execute → built-in post → external post → `_after_file_write`
 - `AskUserQuestion` blocks via `_pending_answers[session_id]` + `Event`; unblocked by `POST /v1/chat/answer`
-- Partial-response recovery: `_rollback_messages()` saves streamed text + tools on cancel/error
-
-**Diminishing-returns guard**: after round 3, if last 2 completion-token deltas are each <500, loop stops (`tools=False` + `tool_loop_stop` SSE).
-
-**Tool-call dedup**: session-scoped (1h TTL, 100 entries). 1 dup = error, 2 dups = `TaskCancelled`. `reset_tool_dedup()` runs at turn start. Exempt: `memory_recall`, `memory_shared`, `delegate_task`, `task_status`, `schedule_list`, `schedule_history`, `read_document`, `read_file`. Worker threads must inherit `current_session_id`, `current_agent`, `mcp_manager`, `current_user_id` via `_execute_tool_in_thread`.
 
 ## Multi-Provider Routing
 
@@ -172,44 +172,15 @@ Opt-in via `code_exec` in `tool_groups`. Subprocess isolation (`sys.executable`)
 
 ## Worker Subagents
 
-Heavy tools route through worker that writes raw output to artifact store and returns **compact envelope** with LLM-summary. Main context stays small.
-
-- Routing: `_execute_tool` → `route_tool_execution` → `run_worker_subagent` for `"heavy": true` profiles. `"heavy": "auto"` only wraps when output > `auto_threshold_bytes`.
-- Raw output in `agents/<id>/artifacts/<session_folder>/worker_<tool>_<uuid8>.json` — **never re-injected**
-- **Summariser**: `_summarise_tool_result` returns 3 values (summary, sections, usage) — callers must unpack 3, not 2. Tokens via `worker_usage` SSE → status bar reflects full spend.
-- **Idempotency**: per `(session_id, tool_use_id)` dedup
-- **Concurrency cap**: `execution.max_concurrent_workers_per_session` (default 3)
-
-## Session Inspector
-
-`request_payloads[]` in assistant `metadata`, one entry per `_tool_round` (populated by `request_payload` SSE). Real `tokens_in/out` attached via `usage` SSE per round. `_usage_totals` sums main-round + worker-side `worker_usage`.
-
-## Parallel Tool Calls
-
-`parallel_tool_calls: true` (per-model toggle, default on). `_execute_tools_batch()` partitions into batches: consecutive concurrent-safe tools run in `ThreadPoolExecutor`, unsafe sequentially.
-
-`_CONCURRENT_SAFE_TOOLS`: `read_file`, `list_directory`, `search_files`, `read_document`, `exa_search`, `web_fetch`, `code_graph_query`, `schedule_list`, `schedule_history`, `list_nodes`, `task_status`, `context_*`, `git_command` (read-only).
+Full invariants in `engine/CLAUDE.md`. Key gotcha: `_summarise_tool_result` returns **3 values** (summary, sections, usage) — callers must unpack 3, not 2.
 
 ## Provider Concurrency Queue
 
-`LocalProviderQueue` gates concurrent HTTP calls per provider via semaphore + FIFO waitlist.
-
-- **Opt-in per provider**: `providers.<name>.max_concurrent` (0 = unlimited). Seeded: `omlx=2`, `cliproxyapi=2`, cloud=0.
-- **oMLX continuous batching** (`gemma-4-26b`, Apple Silicon): batch=1 → 63 tok/s, 2.3s TTFT; batch=2 → 80 tok/s aggregate (40/req), 4.3s TTFT; batch=4 → 91 tok/s, 8.6s TTFT. **`2` is the sweet spot**. CLIProxyAPI does NOT batch — for it `max_concurrent` is pure parallelism cap.
-- **Scope HTTP-only**: slot held during urlopen + SSE drain. `_handle_openai_response` calls `release_slot()` before tool dispatch / recursive `send_message`.
-- **Wrapped sites**: `send_message`, `_run_delegate`, `run_model_warmup`, `classify_chat_for_memory`. Others transitive.
-- **Key invariant**: queue key is `provider_name`, not `base_url`. Re-evaluate if two providers share base_url.
+`LocalProviderQueue` in `engine/provider.py`. Key numbers: `omlx=2` (continuous batching sweet spot), `cliproxyapi=2` (serialized, no batching), cloud=0 (unlimited). Queue key is `provider_name`, not `base_url`.
 
 ## Warmup & Warm Session Pool
 
-Local models pre-primed so first-token latency drops ~15s → 2–3s. Opt in per model via `warmup: true`. Requires prompt-cache-capable providers.
-
-- **Modes**: `full` (system + tools + "." → primes KV prefix) vs `minimal` (1-token user, no system, no tools)
-- **KV-prefix stability rule**: warmup payload MUST match first-turn payload byte-for-byte. Critical: system prompt timestamp **rounded to hour** (not minutes), MCP tools attached via `_thread_local.mcp_manager`, tools merged/deduped/sorted, `stream=True` + `stream_options` passed
-- **Keeper**: failed primes bump `last_warmup_ts` so OOM-failing models don't starve others
-- **Warm pool** (`WarmSessionPool`): N pre-built Sessions per warmup-flagged model. Bound to `agent=main, status=warm_pool` (hidden). `claim()` only fires for `POST /v1/sessions` matching `{agent:main, project:'', status:'', note_context:''}` — anything else changes system prompt and invalidates prefix.
-- **Pool invalidation**: `_prefix_fields` = (warmup, warmup_mode, enabled, max_context, warmup_allow_cloud, parallel_tool_calls, caveman_system, provider, base_model_id, profile). Any change drops slots.
-- **Multi-model GPU tradeoff**: tight RAM = primed models evict each other. Either size host or set one to `minimal`.
+Full invariants in `engine/CLAUDE.md`. Key rule: warmup payload must match first-turn payload byte-for-byte — hour-rounded timestamp, same tools, same `stream_options`. `claim()` only fires for bare `{agent:main, project:'', status:'', note_context:''}` sessions.
 
 ## Client Execution Mode
 
@@ -267,10 +238,7 @@ Port 8420. Source of truth: grep `@app.route` / `self.path` dispatch in `server.
 
 - **`Session.lock`**: all field mutations under it
 - **`SessionManager.get()`**: `_LOADING_SENTINEL` + `Event` prevents duplicate Sessions for same id. `peek()` for cache-only reads.
-- **Thread-locals required** for every request/background thread: `current_agent`, `mcp_manager`, `current_session_id`, `current_user_id` (drives MemPalace per-user isolation). Never fall back to globals — concurrent requests bleed.
-- **MCPManager**: `clients`, `_tool_to_server` under `self._lock`; iteration via snapshot.
-- **Background threads** (`_generate_chat_summary`, scheduler, workflow engine, TaskRunner): set + clean thread-locals in try/finally.
-- **LLM JSON parsing**: `_extract_json_from_llm()` uses `json.JSONDecoder.raw_decode()` — handles nested objects, fences, surrounding text.
+- **Thread-locals required** for every request/background thread: `current_agent`, `mcp_manager`, `current_session_id`, `current_user_id`. Never fall back to globals — concurrent requests bleed.
 - **SQLite**: connections via `threading.local()` pools — **not** dict-keyed-by-ident (leaks FDs under `ThreadingMixIn`). All ChatDB methods wrapped with `@_db_safe`.
 - **Client proxy SSE**: line buffering carries incomplete lines across TCP chunks.
 
@@ -279,11 +247,8 @@ Port 8420. Source of truth: grep `@app.route` / `self.path` dispatch in `server.
 - `augmented_messages` strips metadata fields (only `role`+`content` to API) — prevents 400s
 - Lossless compaction: `compacted` column on messages — originals preserved for search, compacted set used for conversation
 - `_rollback_messages()` on cancel/error reverts intermediate tool-loop messages AND saves streamed text + tools
-- **Scheduled tasks**: configurable timeout (default 5min) via watchdog. Scheduler executes due tasks in *parallel*. `_run_delegate` uses thread-local `max_tool_rounds` override — no global mutation.
 - Provider fallback ordering: same provider first, then capabilities, then priority
 - Sidebar list polls after stream end until async LLM summary arrives (2s, 30s max)
-- Multipart upload: manual boundary parser (3.13+ removed `cgi`); preserves original filename
-- **Three-layer hooks**: tool pre/post (external subprocess), `after_file_write` (centralized), LLM-level (built-in middleware). External hook: timeout 5s, fail-open on crash, exit 1=block, exit 2=skip chain. `allowed_tools` restriction in workflows IS enforced (was dead code — don't let it regress).
 
 ## Lossless Context Manager
 
