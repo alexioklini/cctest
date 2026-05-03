@@ -297,7 +297,8 @@ def dispatch_tool(name: str, args: dict, palace_path: str, default_wing: str) ->
 # ---------- LLM call ----------
 
 def call_llm(base_url: str, api_key: str, model: str, messages: list,
-             temperature: float, top_p: float, timeout: float = 180.0) -> dict:
+             temperature: float, top_p: float, timeout: float = 180.0,
+             thinking: bool = False) -> dict:
     body = {
         "model": model,
         "messages": messages,
@@ -305,8 +306,10 @@ def call_llm(base_url: str, api_key: str, model: str, messages: list,
         "tool_choice": "auto",
         "temperature": temperature,
         "top_p": top_p,
-        "max_tokens": 4096,
+        "max_tokens": 16000,
     }
+    if thinking:
+        body["reasoning_effort"] = "high"
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(base_url + "/chat/completions", data=data, method="POST")
     req.add_header("Content-Type", "application/json")
@@ -323,7 +326,8 @@ def call_llm(base_url: str, api_key: str, model: str, messages: list,
 
 def run_loop(question: str, system_prompt: str, base_url: str, api_key: str,
              model: str, temperature: float, top_p: float, max_rounds: int,
-             palace_path: str, default_wing: str, verbose: bool = True) -> dict:
+             palace_path: str, default_wing: str, verbose: bool = True,
+             thinking: bool = False) -> dict:
     """Run a single Q&A through the agentic loop. Returns a transcript dict."""
     messages = [
         {"role": "system", "content": system_prompt},
@@ -335,6 +339,7 @@ def run_loop(question: str, system_prompt: str, base_url: str, api_key: str,
         "base_url": base_url,
         "temperature": temperature,
         "top_p": top_p,
+        "thinking": thinking,
         "system_prompt_chars": len(system_prompt),
         "rounds": [],
         "final_answer": "",
@@ -347,11 +352,19 @@ def run_loop(question: str, system_prompt: str, base_url: str, api_key: str,
         round_t0 = time.time()
         if verbose:
             print(f"\n=== round {r+1}/{max_rounds} ===")
-        resp = call_llm(base_url, api_key, model, messages, temperature, top_p)
+        resp = call_llm(base_url, api_key, model, messages, temperature, top_p, thinking=thinking)
         choice = (resp.get("choices") or [{}])[0]
         msg = choice.get("message", {})
         finish = choice.get("finish_reason", "")
-        content = msg.get("content") or ""
+        raw_content = msg.get("content") or ""
+        # Mistral thinking mode returns content as a list of blocks:
+        # [{type:"thinking",...}, {type:"text", text:"..."}]
+        if isinstance(raw_content, list):
+            text_parts = [b.get("text", "") for b in raw_content
+                          if isinstance(b, dict) and b.get("type") == "text"]
+            content = "\n".join(p for p in text_parts if p)
+        else:
+            content = raw_content
         tool_calls = msg.get("tool_calls") or []
         usage = resp.get("usage", {})
 
@@ -452,6 +465,8 @@ def main() -> int:
                     help="Default MemPalace wing for queries (KG-Real-Policies = project__f201b24ff6a2)")
     ap.add_argument("--output", help="Optional JSON output path (full transcript). Default: stdout summary only.")
     ap.add_argument("--quiet", action="store_true", help="Suppress per-round progress lines")
+    ap.add_argument("--thinking", action="store_true",
+                    help="Enable thinking mode (reasoning_effort=high, requires temperature=1.0)")
     args = ap.parse_args()
 
     if not args.api_key:
@@ -464,7 +479,8 @@ def main() -> int:
     with open(args.system_prompt, "r", encoding="utf-8") as f:
         system_prompt = f.read()
 
-    print(f"[harness] model={args.model}  T={args.temperature}  top_p={args.top_p}  max_rounds={args.max_rounds}")
+    thinking_str = "  thinking=ON (reasoning_effort=high)" if args.thinking else ""
+    print(f"[harness] model={args.model}  T={args.temperature}  top_p={args.top_p}  max_rounds={args.max_rounds}{thinking_str}")
     print(f"[harness] palace={args.palace_path}  wing={args.wing}")
     print(f"[harness] system_prompt={args.system_prompt} ({len(system_prompt)} chars)")
     print(f"[harness] question: {args.question}")
@@ -481,6 +497,7 @@ def main() -> int:
         palace_path=args.palace_path,
         default_wing=args.wing,
         verbose=not args.quiet,
+        thinking=args.thinking,
     )
 
     print("\n" + "=" * 70)

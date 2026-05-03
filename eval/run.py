@@ -86,11 +86,14 @@ def brain_create_session(base_url: str, token: str, agent: str, project: str, mo
     return resp["session_id"]
 
 
-def brain_chat(base_url: str, token: str, session_id: str, message: str, timeout: float) -> dict:
+def brain_chat(base_url: str, token: str, session_id: str, message: str, timeout: float,
+               thinking: str | None = None) -> dict:
     """POST /v1/chat and drain SSE until 'done'. Returns the done-event data plus
     a list of tool-call summaries lifted from 'tool_*' events."""
     url = base_url.rstrip("/") + "/v1/chat"
     body = {"session_id": session_id, "message": message}
+    if thinking and thinking != "none":
+        body["thinking"] = thinking
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")
     req.add_header("Content-Type", "application/json")
@@ -291,7 +294,7 @@ def run_judge(question_obj: dict, gold_text: str, brain_text: str,
         "-p",
         "--model", judge_model,
         "--output-format", "json",
-        "--max-turns", "1",
+        "--max-turns", "3",
         "--no-session-persistence",
         "--strict-mcp-config",
     ]
@@ -345,6 +348,10 @@ def main() -> int:
     ap.add_argument("--disciplines", choices=["none", "citation_only", "full"],
                     help="override claude_code.disciplines from config")
     ap.add_argument("--brain-model", help="override brain.model from config")
+    ap.add_argument("--thinking", choices=["none", "low", "medium", "high"], default=None,
+                    help="enable thinking for Brain chat requests (mistral_blocks format: only 'high' is valid)")
+    ap.add_argument("--judge-model", default=None,
+                    help="override judge model (e.g. claude-sonnet-4-6); provider=claude_code routes via claude -p")
     ap.add_argument("--label", default="", help="extra label appended to results dir name")
     ap.add_argument("--no-judge", action="store_true",
                     help="skip the Claude Code judge call; collect answers only. Use eval/judge_mistral.py to score afterwards.")
@@ -404,6 +411,8 @@ def main() -> int:
         "config": cfg,
         "discipline_mode": discipline_mode,
         "brain_model_override": brain_model,
+        "brain_thinking": args.thinking,
+        "judge_model_override": args.judge_model,
         "questions_run": [q["id"] for q in questions],
         "reuse_results": args.reuse_results,
     }
@@ -472,7 +481,8 @@ def main() -> int:
                                            brain_cfg["agent"], brain_cfg["project"],
                                            brain_model)
                 done = brain_chat(brain_cfg["base_url"], brain_token, sid,
-                                  q["question"], brain_cfg["timeout_seconds"])
+                                  q["question"], brain_cfg["timeout_seconds"],
+                                  thinking=args.thinking)
                 done["_session_id"] = sid
                 done["_elapsed_s"] = round(time.time() - t0, 2)
                 with open(brain_path, "w", encoding="utf-8") as f:
@@ -494,13 +504,17 @@ def main() -> int:
                      "brain_empty": not bool(brain_text.strip())}
         else:
             try:
+                effective_judge_model = args.judge_model or judge_cfg["model"]
                 judge_provider = (judge_cfg.get("provider") or "claude_code").lower()
+                # --judge-model always forces claude_code (claude -p) path
+                if args.judge_model:
+                    judge_provider = "claude_code"
                 if judge_provider == "mistral":
                     judge = run_judge_mistral(q, gold_text, brain_text, rubric,
-                                              judge_cfg["model"], judge_cfg["timeout_seconds"])
+                                              effective_judge_model, judge_cfg["timeout_seconds"])
                 else:
                     judge = run_judge(q, gold_text, brain_text, rubric,
-                                      judge_cfg["model"], judge_cfg["timeout_seconds"])
+                                      effective_judge_model, judge_cfg["timeout_seconds"])
                 print(f"  judge: gold={judge.get('gold',{}).get('total','?')} "
                       f"brain={judge.get('brain',{}).get('total','?')} "
                       f"winner={judge.get('comparison',{}).get('winner','?')}")

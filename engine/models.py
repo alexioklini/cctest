@@ -908,6 +908,9 @@ def _detect_thinking_format(model_id: str, provider: str = "") -> str:
         "magistral" in m
         or "mistral-small-2603" in m
         or "mistral-small-latest" in m  # alias commonly resolves to the newest small
+        or "mistral-medium-3" in m      # mistral-medium-3.5 / mistral-medium-2604+
+        or "mistral-medium-latest" in m
+        or "mistral-medium-2604" in m
     ):
         return "mistral_blocks"
     # oMLX serves every reasoning-capable model via a unified API that exposes

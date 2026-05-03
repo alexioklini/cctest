@@ -44,7 +44,7 @@ Are concrete values (intervals, thresholds, lengths, counts, deadlines) backed b
 
 ### citation (0–1)
 Does each factual claim carry its own verbatim quote in the bracket form `[Quelle: <basename> — "<wörtliches Zitat 10–25 Wörter>"]`?
-- 1.0: every claim or bullet has its own bracket with a verbatim quote, basename only (no .md suffix), no fabricated `§N`
+- 1.0: every claim or bullet has its own bracket with a verbatim quote, basename only, no fabricated `§N`. Accept `<name>.pdf.md` as equivalent to `<name>.pdf` — Brain reads markdown companions and the UI resolves back to the original PDF.
 - 0.5: SOME claims cited, OR citations present but quotes are paraphrased rather than verbatim, OR one trailing citation covers multiple bullets
 - 0.0: no citations, or only filenames without quotes, or fabricated paragraph numbers (`§154`, `§3.2`)
 - For **refusal questions**: score citation = 1.0 (refusals don't need citations); use refusal axis

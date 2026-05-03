@@ -2202,6 +2202,14 @@ const CITATION_SENTINEL_OPEN = '⁣CIT⁣';   // U+2063 INVISIBLE SEPARATOR
 const CITATION_SENTINEL_CLOSE = '⁣/CIT⁣';
 
 function extractCitationsFromRaw(text) {
+  // Strip backtick-wrapping around citation brackets — models sometimes emit
+  //   `[Quelle: file — "quote"]`  or  `[file — "quote"]`
+  // The backticks cause marked.parse to render them as <code> before we can
+  // extract them. Strip the surrounding backticks so the bracket is bare.
+  // Use a broad match: backtick + [ ... ] + backtick where the content starts
+  // with Quelle:/source: or contains an em-dash followed by a quote char.
+  text = text.replace(/`(\[[^\]]*?(?:(?:Quelle|QUELLE|source|Source|SOURCE):|[—–][^"]*[„""])[^\]]*?\])`/g, '$1');
+
   // Pull citation brackets up onto the previous line so the pin renders
   // INLINE at the end of the claim sentence, not as its own paragraph.
   // The model often emits the bracket on its own line:
@@ -2213,10 +2221,15 @@ function extractCitationsFromRaw(text) {
   // with a single space separator. We do this for ALL standalone bracket
   // lines — the bracket is a citation marker for the claim above it, so
   // joining is always the right behavior.
-  text = text.replace(/([^\n])[ \t]*\n[ \t]*(\[(?:Quelle|QUELLE|source|Source|SOURCE):\s*(?:[^\[\]]|\[\.{2,3}\])+?\])/g, '$1 $2');
-  // Bracket regex: `[Quelle: ...]` or `[source: ...]` etc. Greedy across the
-  // bracket content — disallows `[` inside to avoid runaway nesting.
-  const re = /\[(?:Quelle|QUELLE|source|Source|SOURCE):\s*((?:[^\[\]]|\[\.{2,3}\])+?)\]/g;
+  // Citation bracket pattern — two accepted forms:
+  //   [Quelle: file — "quote"]   (preferred, with Quelle:/source: prefix)
+  //   [file.pdf — "quote"]       (no-prefix form some models emit)
+  // The no-prefix form requires the em-dash + quote to avoid matching
+  // arbitrary markdown links like [text](url).
+  const _BRACKET_PAT = '(?:(?:Quelle|QUELLE|source|Source|SOURCE):\\s*(?:[^\\[\\]]|\\[\\.{2,3}\\])+?|[^\\[\\]\\n]+?\\s*[—–]\\s*[„""«][^„"""»\\]]+[„"""»][^\\[\\]]*?)';
+  text = text.replace(new RegExp('([^\\n])[ \\t]*\\n[ \\t]*(\\[' + _BRACKET_PAT + '\\])', 'g'), '$1 $2');
+  // Bracket regex for extraction
+  const re = new RegExp('\\[(' + _BRACKET_PAT + ')\\]', 'g');
   const citations = [];
   const stripped = text.replace(re, (_full, body) => {
     const parsed = parseCitationBodyRaw(body);
@@ -2231,6 +2244,8 @@ function extractCitationsFromRaw(text) {
 function parseCitationBodyRaw(body) {
   if (!body) return null;
   let s = body.trim();
+  // Strip optional "Quelle: " / "source: " prefix
+  s = s.replace(/^(?:Quelle|QUELLE|source|Source|SOURCE):\s*/i, '');
   // Quote can be in straight ", curly “ ”, German „ “, or wrapped in
   // markdown italics (*"..."*). Strip optional surrounding `*` first.
   let quote = '';
