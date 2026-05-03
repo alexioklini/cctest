@@ -153,6 +153,7 @@ async function sendMessage() {
             content: trimmed,
             tool_round: d?.tool_round ?? null,
           });
+          _activityAutoUpdate(chat, currentTurnNum(chat), 'add');
           if (isActive()) { renderMessages(); renderStreamingMessage(chat); }
         }
         // Reset the streaming buffer so the next round's thinking starts fresh
@@ -194,10 +195,12 @@ async function sendMessage() {
         // Always update data
         if (!state.showToolCalls) return;
         const last = chat.messages[chat.messages.length - 1];
-        if (last && last.role === 'tool_call' && last.name === d.name && d.args && Object.keys(d.args).length) {
-          last.args = d.args;
-        } else {
+        const isNewToolCall = !(last && last.role === 'tool_call' && last.name === d.name && d.args && Object.keys(d.args).length);
+        if (isNewToolCall) {
           chat.messages.push({ role: 'tool_call', name: d.name, args: d.args || {}, _ts: Date.now() });
+          _activityAutoUpdate(chat, currentTurnNum(chat), 'add');
+        } else {
+          last.args = d.args;
         }
         // renderMessages() wipes the container including the in-flight .msg-streaming div,
         // so re-render the streaming bubble right after. Without this, any partial assistant
@@ -547,6 +550,9 @@ async function sendMessage() {
         else if (chat.files.length) assistantMsg._files = chat.files;
         if (chat.thinkingText) assistantMsg._thinking = chat.thinkingText;
         if (chat.thinkingSummary) assistantMsg._thinkingSummary = chat.thinkingSummary;
+
+        // Auto-close activity summary now that the response is finalised
+        _activityAutoUpdate(chat, currentTurnNum(chat), 'response');
 
         chat.messages.push(assistantMsg);
         chat.streaming = false;
@@ -1078,10 +1084,7 @@ function renderMessages() {
            <span class="turn-group-collapsed-hint">${esc(turnQuestionPreview(t.userMsg, 80))}</span>
          </div>`
       : '';
-    let body = '';
-    for (const idx of t.memberIdxs) {
-      body += renderMessage(chat.messages[idx], idx);
-    }
+    let body = renderTurnBody(chat.messages, t.memberIdxs, t.turnNum, chat);
     html += `<div class="${cls}" data-turn="${t.turnNum}">${badge}<div class="turn-body">${body}</div></div>`;
   }
 
@@ -1265,6 +1268,205 @@ function toggleTurnNavMenu(ev, idx) {
   }
 }
 
+// Returns the 1-based turn number that a new message would belong to,
+// by counting user/human messages already in chat.messages.
+function currentTurnNum(chat) {
+  let n = 0;
+  for (const m of chat.messages) {
+    if (m.role === 'user' || m.role === 'human') n++;
+  }
+  return n;
+}
+
+// Renders all messages in a turn, wrapping pre-response activity (thinking +
+// tool calls) in a collapsed summary block once a final assistant response exists.
+// ── Activity summary state machine ─────────────────────────────────────────
+// Per-turn collapse state lives on chat._activityStates (Map<turnNum, str>).
+// Values: 'auto-open' | 'auto-closed' | 'user-open' | 'user-closed'
+// Absent key = no activity yet seen OR history load (always closed).
+//
+// Rules:
+//   add (new activity element during streaming):
+//     first element → 'auto-open'
+//     4th element   → 'auto-closed'  (only if not user-controlled)
+//   response (assistant response finalised):
+//     → 'auto-closed'  (only if not user-controlled)
+//   user toggle:
+//     → 'user-open' / 'user-closed'  (never overridden again)
+
+function _activityCount(messages, memberIdxs) {
+  let n = 0;
+  for (const idx of memberIdxs) {
+    const m = messages[idx];
+    if (m.role === 'thinking' || m.role === 'tool_call') n++;
+    // worker calls are tracked via tool_call with worker result — count the tool_call
+  }
+  return n;
+}
+
+function _activityAutoUpdate(chat, turnNum, event) {
+  if (!chat._activityStates) chat._activityStates = new Map();
+  const cur = chat._activityStates.get(turnNum);
+  const userControlled = cur === 'user-open' || cur === 'user-closed';
+  if (userControlled) return; // never touch user-controlled state
+
+  if (event === 'add') {
+    if (!cur) {
+      chat._activityStates.set(turnNum, 'auto-open');
+    } else if (cur === 'auto-open') {
+      // Count current activity elements — if reaching 4, close
+      const t = state.activeChat;
+      if (t) {
+        // Find this turn's memberIdxs
+        let memberIdxs = null;
+        let n = 0;
+        for (let i = 0; i < t.messages.length; i++) {
+          const m = t.messages[i];
+          if (m.role === 'user' || m.role === 'human') {
+            n++;
+            if (n === turnNum) { memberIdxs = []; }
+            else if (memberIdxs !== null) break;
+          } else if (memberIdxs !== null) {
+            memberIdxs.push(i);
+          }
+        }
+        if (memberIdxs && _activityCount(t.messages, memberIdxs) >= 4) {
+          chat._activityStates.set(turnNum, 'auto-closed');
+        }
+      }
+    }
+  } else if (event === 'response') {
+    chat._activityStates.set(turnNum, 'auto-closed');
+  }
+}
+
+function toggleActivitySummary(turnNum) {
+  const chat = state.activeChat;
+  if (!chat) return;
+  if (!chat._activityStates) chat._activityStates = new Map();
+  const cur = chat._activityStates.get(turnNum);
+  const isOpen = cur === 'auto-open' || cur === 'user-open';
+  chat._activityStates.set(turnNum, isOpen ? 'user-closed' : 'user-open');
+  // Re-render to apply the new state
+  renderMessages();
+}
+
+function renderTurnBody(messages, memberIdxs, turnNum, chat) {
+  const isActivity = (m) => m.role === 'thinking' || m.role === 'tool_call' || m.role === 'tool_result';
+  const isResponse = (m) => m.role === 'assistant' && (typeof m.content === 'string' ? m.content.trim() : '');
+
+  // Find the last assistant response with content in this turn.
+  let lastResponseMemberPos = -1;
+  for (let i = memberIdxs.length - 1; i >= 0; i--) {
+    if (isResponse(messages[memberIdxs[i]])) { lastResponseMemberPos = i; break; }
+  }
+
+  // Group activity before the response into rounds.
+  // A round is one thinking block + all tool_calls that share its tool_round.
+  // Tool_calls without a matching thinking (tool_round=null or no thinking) form a bare round.
+  const scanEnd = lastResponseMemberPos === -1 ? memberIdxs.length : lastResponseMemberPos;
+  let thinkCount = 0, toolCount = 0, workerCount = 0;
+
+  // Collect activity messages in order with their original idx
+  const activityItems = [];
+  for (let i = 0; i < scanEnd; i++) {
+    const idx = memberIdxs[i];
+    const m = messages[idx];
+    if (!isActivity(m)) continue;
+    if (m.role === 'thinking') thinkCount++;
+    if (m.role === 'tool_call') {
+      // Check if worker
+      let isWorker = false;
+      for (let j = i + 1; j < memberIdxs.length; j++) {
+        const next = messages[memberIdxs[j]];
+        if (next.role === 'tool_result' && next.name === m.name) {
+          const rs = typeof next.result === 'string' ? next.result : JSON.stringify(next.result);
+          isWorker = rs.includes('"worker": true') || rs.includes('"worker":true');
+          break;
+        }
+        if (next.role === 'tool_call' || next.role === 'assistant' || next.role === 'user') break;
+      }
+      if (isWorker) workerCount++; else toolCount++;
+    }
+    activityItems.push({ idx, m });
+  }
+
+  // Build rounds: each thinking msg starts a new round; tool_calls attach to current round
+  const rounds = []; // [{thinking: item|null, tools: [item,...]}]
+  let currentRound = null;
+  for (const item of activityItems) {
+    if (item.m.role === 'tool_result') continue; // rendered inside tool_call
+    if (item.m.role === 'thinking') {
+      currentRound = { thinking: item, tools: [] };
+      rounds.push(currentRound);
+    } else if (item.m.role === 'tool_call') {
+      if (!currentRound) { currentRound = { thinking: null, tools: [] }; rounds.push(currentRound); }
+      currentRound.tools.push(item);
+    }
+  }
+
+  // Render rounds into HTML
+  let activityHtml = '';
+  for (const round of rounds) {
+    let roundHtml = '';
+    if (round.thinking) {
+      roundHtml += `<div class="activity-item activity-thinking">${renderMessage(round.thinking.m, round.thinking.idx)}</div>`;
+    }
+    if (round.tools.length) {
+      const toolsHtml = round.tools.map(t =>
+        `<div class="activity-item activity-tool">${renderMessage(t.m, t.idx)}</div>`
+      ).join('');
+      roundHtml += `<div class="activity-tools-group${round.thinking ? ' activity-tools-indented' : ''}">${toolsHtml}</div>`;
+    }
+    activityHtml += `<div class="activity-round">${roundHtml}</div>`;
+  }
+
+  // Everything from lastResponseMemberPos onwards
+  let responseHtml = '';
+  if (lastResponseMemberPos !== -1) {
+    for (let i = lastResponseMemberPos; i < memberIdxs.length; i++) {
+      responseHtml += renderMessage(messages[memberIdxs[i]], memberIdxs[i]);
+    }
+  }
+
+  // No activity at all — render flat
+  if (thinkCount === 0 && toolCount === 0 && workerCount === 0) {
+    return activityHtml + responseHtml;
+  }
+
+  // Determine open/closed state
+  const stateVal = chat?._activityStates?.get(turnNum); // absent = history load = closed
+  const isOpen = stateVal === 'auto-open' || stateVal === 'user-open';
+
+  const parts = [];
+  if (thinkCount > 0) parts.push(thinkCount === 1 ? '1 mal nachgedacht' : `${thinkCount} mal nachgedacht`);
+  if (toolCount > 0) parts.push(toolCount === 1 ? '1 Tool-Aufruf' : `${toolCount} Tool-Aufrufe`);
+  if (workerCount > 0) parts.push(workerCount === 1 ? '1 Worker-Aufruf' : `${workerCount} Worker-Aufrufe`);
+  const label = parts.join(' · ');
+
+  const summaryEl = `<summary class="activity-summary-header" onclick="event.preventDefault();toggleActivitySummary(${turnNum})">
+        <svg class="activity-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        ${esc(label)}
+      </summary>`;
+
+  if (lastResponseMemberPos === -1) {
+    return `
+      <details class="activity-summary"${isOpen ? ' open' : ''}>
+        ${summaryEl}
+        <div class="activity-summary-body">${activityHtml}</div>
+      </details>
+    `;
+  }
+
+  return `
+    <details class="activity-summary"${isOpen ? ' open' : ''}>
+      ${summaryEl}
+      <div class="activity-summary-body">${activityHtml}</div>
+    </details>
+    ${responseHtml}
+  `;
+}
+
 function renderMessage(msg, idx) {
   if (msg.role === 'human' || msg.role === 'user') {
     return renderUserMessage(msg, idx);
@@ -1299,7 +1501,7 @@ function renderThinkingMessage(msg, idx) {
       <div class="thinking-block" onclick="this.classList.toggle('open')">
         <div class="thinking-block-header">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/></svg>
-          Thinking
+          Denke nach...
         </div>
         <div class="thinking-block-body msg-content">${renderMarkdown(text)}</div>
       </div>
@@ -1681,49 +1883,56 @@ async function runTurnMemoryAction(mode, scope, idx) {
 function toolDescribe(name, args) {
   const a = args || {};
   const descs = {
-    read_file: () => `Reading ${a.path || a.file_path || 'file'}`,
-    write_file: () => `Writing ${a.path || a.file_path || 'file'}`,
-    edit_file: () => `Editing ${a.path || a.file_path || 'file'}`,
-    list_directory: () => `Listing ${a.path || a.directory || 'directory'}`,
-    search_files: () => `Searching files for "${a.query || a.pattern || '...'}"`,
-    execute_command: () => `Running \`${(a.command || '').substring(0, 60)}${(a.command || '').length > 60 ? '...' : ''}\``,
-    python_exec: () => `Running Python (${(a.code || '').split('\n').length} lines)`,
-    web_fetch: () => { try { return `Fetching ${a.url ? new URL(a.url).hostname : 'web page'}`; } catch(e) { return `Fetching ${a.url || 'web page'}`; } },
-    exa_search: () => `Searching the web for "${a.query || '...'}"`,
-    gmail_inbox: () => 'Checking inbox',
-    gmail_read: () => `Reading email${a.id ? ' #' + a.id : ''}`,
-    gmail_search: () => `Searching email for "${a.query || '...'}"`,
-    gmail_send: () => `Sending email to ${a.to || '...'}`,
-    gmail_reply: () => `Replying to email${a.id ? ' #' + a.id : ''}`,
-    memory_store: () => `Storing memory "${a.name || a.title || '...'}"`,
-    memory_recall: () => `Recalling "${a.query || '...'}"`,
-    memory_shared: () => `Reading shared memory${a.scope ? ' (' + a.scope + ')' : ''}`,
-    memory_delete: () => `Deleting memory "${a.name || '...'}"`,
-    delegate_task: () => `Delegating to ${a.agent || a.agent_id || 'agent'}`,
-    task_status: () => `Checking task status`,
-    task_cancel: () => `Cancelling task`,
-    git_command: () => `Git ${a.subcommand || a.command || ''}`,
-    github_command: () => `GitHub ${a.subcommand || a.command || ''}`,
-    use_skill: () => `Using skill "${a.skill || a.name || '...'}"`,
-    code_graph_build: () => `Building code graph${a.path ? ' for ' + a.path : ''}`,
-    code_graph_query: () => `Querying code graph`,
-    code_graph_impact: () => `Analyzing impact`,
-    schedule_list: () => 'Listing schedules',
-    schedule_history: () => 'Checking schedule history',
-    context_search: () => `Searching context for "${a.query || '...'}"`,
-    context_detail: () => `Loading context detail`,
-    context_recall: () => `Recalling from context`,
-    read_document: () => `Reading document ${a.path || a.file_path || ''}`,
-    write_document: () => `Writing document ${a.path || a.file_path || ''}`,
-    edit_document: () => `Editing document ${a.path || a.file_path || ''}`,
-    list_nodes: () => 'Listing remote nodes',
-    get_artifact_detail: () => `Inspecting artifact ${a.artifact_id || ''}`,
-    worker_status: () => a.worker_id ? `Checking worker ${a.worker_id}` : 'Checking workers',
-    worker_abort: () => `Aborting worker ${a.worker_id || ''}`,
-    worker_pause: () => `Pausing worker ${a.worker_id || ''}`,
-    worker_resume: () => `Resuming worker ${a.worker_id || ''}`,
-    worker_send: () => `Sending to worker ${a.worker_id || ''}`,
-    worker_ask_user: () => `Worker asking: ${(a.question || '').substring(0, 50)}`,
+    read_file: () => `Datei lesen: ${a.path || a.file_path || '...'}`,
+    write_file: () => `Datei schreiben: ${a.path || a.file_path || '...'}`,
+    edit_file: () => `Datei bearbeiten: ${a.path || a.file_path || '...'}`,
+    list_directory: () => `Verzeichnis auflisten: ${a.path || a.directory || '...'}`,
+    search_files: () => `Dateien durchsuchen nach „${a.query || a.pattern || '...'}"`,
+    execute_command: () => `Befehl ausführen: \`${(a.command || '').substring(0, 60)}${(a.command || '').length > 60 ? '...' : ''}\``,
+    python_exec: () => `Python ausführen (${(a.code || '').split('\n').length} Zeilen)`,
+    web_fetch: () => { try { return `Webseite abrufen: ${a.url ? new URL(a.url).hostname : '...'}`; } catch(e) { return `Webseite abrufen: ${a.url || '...'}`; } },
+    exa_search: () => `Im Web suchen nach „${a.query || '...'}"`,
+    gmail_inbox: () => 'Posteingang prüfen',
+    gmail_read: () => `E-Mail lesen${a.id ? ' #' + a.id : ''}`,
+    gmail_search: () => `E-Mails suchen: „${a.query || '...'}"`,
+    gmail_send: () => `E-Mail senden an ${a.to || '...'}`,
+    gmail_reply: () => `E-Mail beantworten${a.id ? ' #' + a.id : ''}`,
+    memory_store: () => `Erinnerung speichern: „${a.name || a.title || '...'}"`,
+    memory_recall: () => `Erinnerung abrufen: „${a.query || '...'}"`,
+    memory_shared: () => `Geteilten Speicher lesen${a.scope ? ' (' + a.scope + ')' : ''}`,
+    memory_delete: () => `Erinnerung löschen: „${a.name || '...'}"`,
+    mempalace_query: () => `Hole Informationen aus Projektspeicher${a.query ? ': „' + String(a.query).substring(0, 60) + '"' : '...'}`,
+    mempalace_get_drawer: () => `Projektspeicher-Eintrag abrufen`,
+    mempalace_list_drawers: () => `Projektspeicher-Einträge auflisten`,
+    mempalace_kg_query: () => `Wissensgraph abfragen`,
+    mempalace_kg_search: () => `Wissensgraph durchsuchen`,
+    mempalace_kg_neighbors: () => `Wissensgraph-Nachbarn abrufen`,
+    save_chat_to_memory: () => `Chat in Speicher sichern`,
+    delegate_task: () => `Aufgabe delegieren an ${a.agent || a.agent_id || '...'}`,
+    task_status: () => `Aufgabenstatus prüfen`,
+    task_cancel: () => `Aufgabe abbrechen`,
+    git_command: () => `Git: ${a.subcommand || a.command || ''}`,
+    github_command: () => `GitHub: ${a.subcommand || a.command || ''}`,
+    use_skill: () => `Skill anwenden: „${a.skill || a.name || '...'}"`,
+    code_graph_build: () => `Code-Graph erstellen${a.path ? ' für ' + a.path : ''}`,
+    code_graph_query: () => `Code-Graph abfragen`,
+    code_graph_impact: () => `Auswirkungen analysieren`,
+    schedule_list: () => 'Zeitpläne auflisten',
+    schedule_history: () => 'Zeitplan-Verlauf prüfen',
+    context_search: () => `Kontext durchsuchen: „${a.query || '...'}"`,
+    context_detail: () => `Kontext-Detail laden`,
+    context_recall: () => `Kontext abrufen`,
+    read_document: () => `Dokument lesen: ${a.path || a.file_path || ''}`,
+    write_document: () => `Dokument schreiben: ${a.path || a.file_path || ''}`,
+    edit_document: () => `Dokument bearbeiten: ${a.path || a.file_path || ''}`,
+    list_nodes: () => 'Remote-Knoten auflisten',
+    get_artifact_detail: () => `Artefakt prüfen: ${a.artifact_id || ''}`,
+    worker_status: () => a.worker_id ? `Worker prüfen: ${a.worker_id}` : 'Worker-Status prüfen',
+    worker_abort: () => `Worker abbrechen: ${a.worker_id || ''}`,
+    worker_pause: () => `Worker pausieren: ${a.worker_id || ''}`,
+    worker_resume: () => `Worker fortsetzen: ${a.worker_id || ''}`,
+    worker_send: () => `An Worker senden: ${a.worker_id || ''}`,
+    worker_ask_user: () => `Worker fragt: ${(a.question || '').substring(0, 50)}`,
   };
   const fn = descs[name];
   return fn ? fn() : name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -2139,7 +2348,7 @@ function renderStreamingMessage(chat) {
       <div class="thinking-block" onclick="this.classList.toggle('open')">
         <div class="thinking-block-header">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/></svg>
-          ${chat.streamingText ? 'Thinking' : 'Thinking...'}
+          Denke nach...
         </div>
         <div class="thinking-block-body msg-content">${renderMarkdown(chat.thinkingText)}</div>
       </div>

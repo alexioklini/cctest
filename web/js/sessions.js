@@ -98,6 +98,7 @@ async function openSession(sessionId, agentId) {
   chat._tokensOut = 0;
   chat._lastSpeed = null;
   chat._lastApiIn = 0;
+  chat._activityStates = new Map();
   // Real chat open — drop any sticky scheduled-run selection.
   state.activeScheduledRunId = null;
 

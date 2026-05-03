@@ -1601,6 +1601,51 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 }
 .thinking-block.open .thinking-block-body { display: block; }
 
+/* Activity summary — collapsed wrapper for thinking + tool calls before a response */
+.activity-summary {
+  margin: 4px 0 8px 0;
+}
+.activity-summary > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-400);
+  border-radius: 6px;
+  user-select: none;
+  width: fit-content;
+}
+.activity-summary > summary::-webkit-details-marker { display: none; }
+.activity-summary > summary:hover { color: var(--text-300); background: var(--bg-100); }
+.activity-summary .activity-chevron { transition: transform 0.15s; flex-shrink: 0; }
+.activity-summary[open] .activity-chevron { transform: rotate(180deg); }
+.activity-summary-body {
+  padding-top: 2px;
+}
+.activity-summary-body .msg-turn { margin: 0; padding: 2px 0; }
+.activity-summary-body .thinking-block { margin: 2px 0; }
+.activity-summary-body .tool-block { margin: 2px 0; }
+
+/* Round grouping */
+.activity-round {
+  position: relative;
+}
+/* Thinking block sits at top of its round — no extra indent */
+.activity-thinking {
+  /* baseline, no connector needed */
+}
+/* Tool group after a thinking block: indented with L-connector from thinking */
+.activity-tools-group {
+  /* tools without thinking: no indent */
+}
+.activity-tools-group.activity-tools-indented {
+  margin-left: 20px;
+  position: relative;
+}
+
 /* File attachments in messages */
 .msg-file-attachments {
   margin-top: 12px;
@@ -3667,8 +3712,8 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 .dropdown-item .dd-label { flex: 1; }
 .dropdown-item .dd-meta { font-size: 12px; color: var(--text-400); }
 .dropdown-separator {
-  height: 1px;
-  background: var(--border-100);
+  height: 2px;
+  background: var(--border-200, var(--border-100));
   margin: 4px 8px;
 }
 
