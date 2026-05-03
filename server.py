@@ -5295,6 +5295,7 @@ def main():
                     triples_extracted=triples_cumulative,
                     triples_last_cycle=int(res.triples_extracted),
                     kg_drawers_processed=int(res.drawers_processed),
+                    kg_parse_errors=int(res.errors),
                     kg_last_error=res.error_msg or "",
                     kg_elapsed_s=round(res.elapsed_s, 1))
             except Exception as e:
@@ -5834,6 +5835,7 @@ def main():
                                         triples_this_cycle=_it_a.get("triples_last_cycle", 0),
                                         triples_total=_it_a.get("triples_extracted", 0),
                                         drawers_processed=_it_a.get("kg_drawers_processed", 0),
+                                        parse_errors=_it_a.get("kg_parse_errors", 0),
                                         elapsed_s=_it_a.get("kg_elapsed_s", 0),
                                         error=_it_a.get("kg_last_error", ""))
                         else:
@@ -6015,6 +6017,7 @@ def main():
                                     triples_this_cycle=_it.get("triples_last_cycle", 0),
                                     triples_total=_it.get("triples_extracted", 0),
                                     drawers_processed=_it.get("kg_drawers_processed", 0),
+                                    parse_errors=_it.get("kg_parse_errors", 0),
                                     elapsed_s=_it.get("kg_elapsed_s", 0),
                                     error=_it.get("kg_last_error", ""))
 

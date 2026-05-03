@@ -1283,15 +1283,19 @@ function projectItemPillHtml(kind, ident) {
   let kgBadge = '';
   const kgState = it.kg_state || '';
   const triples = it.triples_extracted;
+  const kgParseErrors = it.kg_parse_errors || 0;
   if (kgState === 'extracting') {
     kgBadge = ` <span class="project-item-pill" data-kg="extracting" title="Knowledge graph extraction running">KG…</span>`;
   } else if (kgState === 'error') {
     const kgErr = it.kg_last_error || 'KG extraction failed';
-    kgBadge = ` <span class="project-item-pill" data-kg="error" title="${esc(kgErr)}">KG !</span>`;
+    const triplesPart = (typeof triples === 'number' && triples > 0) ? `${triples} relations · ` : '';
+    kgBadge = ` <span class="project-item-pill" data-kg="error" title="${esc(kgErr)}">${triplesPart}KG !</span>`;
   } else if (typeof triples === 'number' && triples > 0) {
     // Per-folder pill in the right pane — same renaming as the project chip
     // ("triples" is jargon, "relations" is what's been extracted).
-    kgBadge = ` <span class="project-item-pill" data-kg="ok" title="Knowledge graph relations extracted from this folder">${triples} relations</span>`;
+    const warnPart = kgParseErrors > 0 ? ` · ${kgParseErrors} parse err` : '';
+    const warnTitle = kgParseErrors > 0 ? ` (${kgParseErrors} chunks returned invalid JSON — non-fatal)` : '';
+    kgBadge = ` <span class="project-item-pill" data-kg="${kgParseErrors > 0 ? 'warn' : 'ok'}" title="Knowledge graph relations extracted from this folder${warnTitle}">${triples} relations${warnPart}</span>`;
   }
   return `<span class="project-item-pill" data-state="${stateName}" title="${esc(tip)}">${esc(label)}</span>${kgBadge}`;
 }
@@ -4303,14 +4307,17 @@ function _syncRunDetailHtml(run, opts = {}) {
     // KG row
     if (kgSt.triples_this_cycle !== undefined || kgSt.triples_total !== undefined) {
       const kgErr = kgSt.error || '';
+      const kgParseErrs = kgSt.parse_errors || 0;
       const kgElapsed = kgSt.elapsed_s != null ? _fmtElapsed(kgSt.elapsed_s) : '';
-      const kgDetail = kgErr
-        ? `<span style="color:var(--error)">⚠ ${kgErr}</span>`
-        : [
-            kgSt.triples_this_cycle != null ? `+${kgSt.triples_this_cycle} triples` : null,
-            kgSt.triples_total != null      ? `(${kgSt.triples_total} total)` : null,
-            kgSt.drawers_processed != null  ? `${kgSt.drawers_processed} drawers processed` : null,
-          ].filter(Boolean).join(' ') || '✓';
+      const kgStats = [
+        kgSt.triples_this_cycle != null ? `+${kgSt.triples_this_cycle} triples` : null,
+        kgSt.triples_total != null      ? `(${kgSt.triples_total} total)` : null,
+        kgSt.drawers_processed != null  ? `${kgSt.drawers_processed} drawers processed` : null,
+      ].filter(Boolean).join(' ') || '✓';
+      const kgWarn = kgParseErrs > 0
+        ? ` <span style="color:var(--warning,#a06000)" title="${kgErr}">· ${kgParseErrs} parse err</span>`
+        : (kgErr ? ` <span style="color:var(--error)" title="${esc(kgErr)}">⚠ ${kgErr}</span>` : '');
+      const kgDetail = kgStats + kgWarn;
       tableRows += `<tr>
         <td style="${TD_LBL}">KG extraction</td>
         <td style="${TD_DET}">${kgDetail}</td>

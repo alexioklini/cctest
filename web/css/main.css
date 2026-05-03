@@ -2807,6 +2807,12 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   border-color: rgba(217,51,51,0.3);
   margin-left: 4px;
 }
+.project-item-pill[data-kg="warn"] {
+  background: rgba(200,140,0,0.10);
+  color: #8a5e00;
+  border-color: rgba(200,140,0,0.3);
+  margin-left: 4px;
+}
 @keyframes project-item-pulse {
   0%,100% { opacity: 1; }
   50% { opacity: 0.55; }
