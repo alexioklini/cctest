@@ -2,10 +2,16 @@
 import datetime
 import json
 import os
+import sys
 import tempfile
 
 from server_lib import auth as _auth_mod
 import brain as engine
+
+
+def _srv():
+    """Return the server module — works whether the process is __main__ or imported."""
+    return sys.modules.get("__main__") or sys.modules["server"]
 
 
 def _filter_known_user_ids(ids):
@@ -297,8 +303,7 @@ class ProjectsHandlerMixin:
         })
         # Wake the project-sync daemon so the user sees activity immediately.
         try:
-            from server import _project_sync_wakeup
-            _project_sync_wakeup.set()
+            _srv()._project_sync_wakeup.set()
         except Exception:
             pass
         self._send_json({"status": "added", "folders": folders})
@@ -328,8 +333,7 @@ class ProjectsHandlerMixin:
             "input_folders": folders,
         })
         try:
-            from server import _project_sync_wakeup
-            _project_sync_wakeup.set()
+            _srv()._project_sync_wakeup.set()
         except Exception:
             pass
         self._send_json({"status": "removed", "folder": removed, "folders": folders})
@@ -386,8 +390,7 @@ class ProjectsHandlerMixin:
             "input_folders": folders,
         })
         try:
-            from server import _project_sync_wakeup
-            _project_sync_wakeup.set()
+            _srv()._project_sync_wakeup.set()
         except Exception:
             pass
         self._send_json({"status": "updated", "folder": entry, "folders": folders})
@@ -406,8 +409,7 @@ class ProjectsHandlerMixin:
         # Layer in live state from the daemon (running flag) so the UI reflects
         # the actual sync currently happening, not just the last persisted row.
         try:
-            from server import _project_sync_live_status
-            live = _project_sync_live_status(agent_id, proj_name)
+            live = _srv()._project_sync_live_status(agent_id, proj_name)
             if live:
                 st = {**st, **live}
         except Exception:
@@ -453,11 +455,230 @@ class ProjectsHandlerMixin:
         if project is None:
             return
         try:
-            from server import _project_sync_request
-            _project_sync_request(agent_id, proj_name)
+            _srv()._project_sync_request(agent_id, proj_name)
         except Exception:
             pass
         self._send_json({"status": "queued", "agent": agent_id, "project": proj_name})
+
+    def _handle_project_full_resync(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/full-resync — wipe all
+        MemPalace drawers, KG triples, and all sync cursors for this project,
+        then queue a fresh sync. Admin only."""
+        user = self._require_role("admin")
+        if user is None:
+            return
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return
+        pid = project.get("id") or ""
+        if not pid:
+            self._send_json({"error": "Project missing id"}, 400)
+            return
+        wing = f"project__{pid}"
+        mcfg = engine._load_mempalace_config()
+        palace_path = mcfg.get("palace_path", "")
+        chats_db = os.path.join(engine.AGENTS_DIR, "main", "chats.db")
+
+        import time as _time
+        from engine import sync_log as _sync_log
+
+        result: dict = {}
+        purge_run_id = _sync_log.start_run(
+            chats_db, pid, triggered_by="full_resync_purge")
+        purge_actions: list[dict] = []
+
+        def _pa(action: str, **fields):
+            purge_actions.append({"action": action, "at": _time.time(), **fields})
+
+        try:
+            # 1. Wipe all drawers in the project wing.
+            t0 = _time.time()
+            try:
+                deleted = _srv()._mp.purge_by_prefix(wing=wing, prefix="")
+                result["drawers_deleted"] = deleted
+                _pa("drawers_purged", deleted=deleted,
+                    elapsed_s=round(_time.time() - t0, 2))
+            except Exception as e:
+                result["drawers_error"] = str(e)
+                _pa("drawers_purged", deleted=0, error=str(e),
+                    elapsed_s=round(_time.time() - t0, 2))
+
+            # 2. Wipe KG triples + extraction cursors for all prefixes.
+            try:
+                from engine import kg_extract
+                pdir = project.get("dir") or os.path.join(
+                    engine.AGENTS_DIR, agent_id, "projects", proj_name)
+                prefixes = []
+                for p in [pdir] + [
+                    (f.get("path") or "") for f in (project.get("input_folders") or [])
+                ]:
+                    if p:
+                        try:
+                            r = os.path.realpath(p)
+                        except OSError:
+                            r = p
+                        prefixes.append(r.rstrip(os.sep) + os.sep)
+                triples_del = 0
+                progress_del = 0
+                t0 = _time.time()
+                for prefix in prefixes:
+                    r = kg_extract.kg_purge_for_scope(
+                        palace_path=palace_path,
+                        source_prefix=prefix,
+                        adapter_name="brain-project-kg",
+                        chats_db_path=chats_db,
+                        wing=wing,
+                    )
+                    triples_del += int(r.get("triples_deleted", 0))
+                    progress_del += int(r.get("progress_deleted", 0))
+                result["triples_deleted"] = triples_del
+                result["kg_progress_deleted"] = progress_del
+                _pa("kg_triples_purged",
+                    triples_deleted=triples_del,
+                    progress_cursors_deleted=progress_del,
+                    prefixes_count=len(prefixes),
+                    elapsed_s=round(_time.time() - t0, 2))
+
+                # 3. Wipe closet regen cursor.
+                t0 = _time.time()
+                kg_extract.closet_regen_purge_for_scope(
+                    chats_db_path=chats_db,
+                    palace_wing=wing,
+                )
+                result["closet_cursor_cleared"] = True
+                _pa("closet_cursor_cleared",
+                    elapsed_s=round(_time.time() - t0, 2))
+
+                # 4. Wipe doc-convert mtime/size cache by clearing the
+                #    .brain-extracted dirs so everything is re-converted.
+                import shutil
+                converted_cleared = 0
+                cleared_files = 0
+                t0 = _time.time()
+                for entry in [pdir] + [
+                    (f.get("path") or "") for f in (project.get("input_folders") or [])
+                ]:
+                    if not entry:
+                        continue
+                    extracted = os.path.join(entry, ".brain-extracted")
+                    if os.path.isdir(extracted):
+                        try:
+                            for _root, _dirs, _files in os.walk(extracted):
+                                cleared_files += len(_files)
+                        except OSError:
+                            pass
+                        shutil.rmtree(extracted, ignore_errors=True)
+                        converted_cleared += 1
+                result["brain_extracted_cleared"] = converted_cleared
+                _pa("doc_convert_cache_cleared",
+                    dirs_removed=converted_cleared,
+                    files_removed=cleared_files,
+                    elapsed_s=round(_time.time() - t0, 2))
+
+            except Exception as e:
+                result["kg_error"] = str(e)
+                _pa("kg_purge_error", error=str(e))
+
+            # Persist all purge actions into the run log, then close it.
+            _sync_log.log_purge_actions(chats_db, purge_run_id, purge_actions)
+            _sync_log.finish_run(chats_db, purge_run_id, "idle", {
+                "drawers_deleted": result.get("drawers_deleted", 0),
+                "triples_deleted": result.get("triples_deleted", 0),
+                "kg_progress_deleted": result.get("kg_progress_deleted", 0),
+                "closet_cursor_cleared": result.get("closet_cursor_cleared", False),
+                "brain_extracted_cleared": result.get("brain_extracted_cleared", 0),
+                "errors": [v for k, v in result.items() if k.endswith("_error")],
+            })
+
+            # 5. Queue a fresh sync-now.
+            try:
+                _srv()._project_sync_request(agent_id, proj_name,
+                                             triggered_by="full_resync")
+                result["sync_queued"] = True
+            except Exception:
+                result["sync_queued"] = False
+
+        except Exception as e:
+            _sync_log.finish_run(chats_db, purge_run_id, "error", {"error": str(e)})
+            self._send_json({"error": str(e)}, 500)
+            return
+
+        self._send_json({"status": "full_resync_queued", **result})
+
+    def _handle_project_sync_runs(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/sync-runs?limit=20 — list runs."""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return
+        pid = project.get("id") or ""
+        if not pid:
+            self._send_json({"runs": []})
+            return
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(path).query)
+        limit = int((qs.get("limit") or ["20"])[0])
+        chats_db = os.path.join(engine.AGENTS_DIR, "main", "chats.db")
+        from engine import sync_log as _sync_log
+        runs = _sync_log.get_runs(chats_db, pid, limit=limit)
+        self._send_json({"runs": runs})
+
+    def _handle_project_sync_run_detail(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/sync-runs/{run_id}"""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return
+        # Extract run_id from path: .../sync-runs/<id>
+        parts = path.split("/sync-runs/", 1)
+        if len(parts) < 2:
+            self._send_json({"error": "Missing run id"}, 400)
+            return
+        try:
+            run_id = int(parts[1].split("?")[0].rstrip("/"))
+        except ValueError:
+            self._send_json({"error": "Invalid run id"}, 400)
+            return
+        chats_db = os.path.join(engine.AGENTS_DIR, "main", "chats.db")
+        from engine import sync_log as _sync_log
+        run = _sync_log.get_run(chats_db, run_id)
+        if not run:
+            self._send_json({"error": "Run not found"}, 404)
+            return
+        self._send_json({"run": run})
+
+    def _handle_project_sync_cancel(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/sync-cancel"""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return
+        pid = project.get("id") or ""
+        if not pid:
+            self._send_json({"error": "Project missing id"}, 400)
+            return
+        try:
+            _srv()._project_sync_cancel_request(pid)
+        except Exception:
+            pass
+        self._send_json({"status": "cancel_requested", "project_id": pid})
 
     def _handle_notes(self, path: str, method: str):
         """Handle notes CRUD: /v1/agents/{id}/projects/{name}/notes[/{path...}]"""

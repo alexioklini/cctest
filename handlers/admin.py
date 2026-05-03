@@ -2531,7 +2531,8 @@ class AdminHandlerMixin:
         })
 
     def _handle_kg_config_save(self):
-        """POST /v1/mempalace/kg/config — save KG settings (admin)."""
+        """POST /v1/mempalace/kg/config — save KG settings (admin).
+        Invalidates extraction and/or closet cursors when relevant fields change."""
         user = self._require_role("admin")
         if user is None:
             return
@@ -2544,12 +2545,12 @@ class AdminHandlerMixin:
                 with open(config_path) as f:
                     cfg_disk = json.load(f)
             mp = cfg_disk.setdefault("mempalace", {})
+            kg_old = dict(mp.get("kg") or {})
             kg = mp.setdefault("kg", {})
             if "enabled" in body:
                 kg["enabled"] = bool(body["enabled"])
             if "extraction_model" in body:
                 m = str(body["extraction_model"] or "").strip()
-                # Validate against known models if non-empty.
                 if m:
                     models = cfg_disk.get("models") or {}
                     if m not in models:
@@ -2581,7 +2582,65 @@ class AdminHandlerMixin:
             with open(config_path, "w") as f:
                 json.dump(cfg_disk, f, indent=2)
             engine._mempalace_config_cache = None
-            self._send_json({"status": "saved", "kg": kg})
+
+            # Invalidate cursors for fields that affect extraction quality.
+            # Fields that change what triples get extracted → purge KG cursors.
+            KG_FIELDS = {"extraction_model", "profile", "max_triples_per_drawer",
+                         "min_confidence", "max_drawer_chars", "chunking_mode",
+                         "source_chunk_chars"}
+            # Fields that affect closet generation → purge closet cursor.
+            CLOSET_FIELDS = {"extraction_model", "regenerate_closets"}
+            kg_changed = any(kg_old.get(k) != kg.get(k) for k in KG_FIELDS)
+            closet_changed = any(kg_old.get(k) != kg.get(k) for k in CLOSET_FIELDS)
+            invalidated = {}
+            if kg_changed or closet_changed:
+                try:
+                    from engine import kg_extract
+                    chats_db = os.path.join(engine.AGENTS_DIR, "main", "chats.db")
+                    palace_path = (mp.get("palace_path") or "")
+                    # Walk all project wings and purge the relevant cursors.
+                    for agent_dir in os.scandir(engine.AGENTS_DIR):
+                        if not agent_dir.is_dir():
+                            continue
+                        proj_root = os.path.join(agent_dir.path, "projects")
+                        if not os.path.isdir(proj_root):
+                            continue
+                        for pdir in os.scandir(proj_root):
+                            if not pdir.is_dir():
+                                continue
+                            pjson = os.path.join(pdir.path, "project.json")
+                            if not os.path.exists(pjson):
+                                continue
+                            try:
+                                with open(pjson) as f:
+                                    pdata = json.load(f)
+                                pid = pdata.get("id") or ""
+                                if not pid:
+                                    continue
+                                wing = f"project__{pid}"
+                                if kg_changed:
+                                    kg_extract.kg_purge_for_scope(
+                                        palace_path=palace_path,
+                                        source_prefix="",
+                                        adapter_name="brain-project-kg",
+                                        chats_db_path=chats_db,
+                                        wing=wing,
+                                    )
+                                if closet_changed:
+                                    kg_extract.closet_regen_purge_for_scope(
+                                        chats_db_path=chats_db,
+                                        palace_wing=wing,
+                                    )
+                            except Exception:
+                                pass
+                    invalidated = {
+                        "kg_cursors_cleared": kg_changed,
+                        "closet_cursors_cleared": closet_changed,
+                    }
+                except Exception as e:
+                    invalidated = {"invalidation_error": str(e)}
+
+            self._send_json({"status": "saved", "kg": kg, **invalidated})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 

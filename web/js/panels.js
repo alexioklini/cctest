@@ -1053,10 +1053,27 @@ async function projectSyncNow() {
   try {
     await API.post(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/sync-now`, {});
     showToast('Sync queued');
-    // Force an immediate status refresh so the chip flips to syncing.
     refreshProjectSyncStatus(agentId, projectName);
   } catch(e) {
     showToast('Failed to trigger sync');
+  }
+}
+
+async function projectFullResync() {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  if (!confirm(`Full Resync will wipe all memory, knowledge graph triples, and sync state for "${projectName}", then re-index everything from scratch.\n\nContinue?`)) return;
+  const btn = document.getElementById('project-action-full-resync');
+  if (btn) { btn.disabled = true; btn.textContent = 'Wiping…'; }
+  try {
+    await API.post(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/full-resync`, {});
+    showToast('Full resync queued — re-indexing from scratch');
+    refreshProjectSyncStatus(agentId, projectName);
+  } catch(e) {
+    showToast('Full resync failed', true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3"/></svg> Full Resync'; }
   }
 }
 
@@ -1127,23 +1144,36 @@ async function refreshProjectSyncStatus(agentId, projectName) {
       const cur = st.current_folder ? ` (${st.current_folder.split('/').pop()})` : '';
       label = `Memory: syncing${progress} files${eta}${cur}`;
       chip.title = 'Sync in progress';
+      const sublabelElSync = document.getElementById('project-sync-sublabel');
+      if (sublabelElSync) sublabelElSync.textContent = '';
     } else if (live === 'error') {
       label = 'Memory: error';
       chip.title = st.last_error || 'Sync failed — use Sync now to retry';
+      const sublabelElErr = document.getElementById('project-sync-sublabel');
+      if (sublabelElErr) sublabelElErr.textContent = '';
     } else {
       // Idle: lead with files (the unit users care about), then triples,
-      // then "next sync in Xh". Last-synced timestamp moves to the tooltip
-      // so the chip stays scannable.
+      // then "next sync in Xh". Last-synced timestamp and type shown in sub-label.
       const filesStr = totalFiles != null
         ? `${totalFiles} file${totalFiles === 1 ? '' : 's'}`
         : `${totalDrawers} indexed`;
       const next = data.next_run_at ? ` · next sync in ${humanIn(data.next_run_at)}` : '';
       label = `Memory: ${filesStr}${tripleStr}${next}`;
       const last = st.last_run_finished || data.last_scan || '';
-      const ageBit = last ? `Last synced ${humanAgo(last)} ago — ` : '';
       const drawerHint = (totalFiles != null && totalDrawers)
         ? `${totalDrawers} drawer${totalDrawers === 1 ? '' : 's'} · ` : '';
-      chip.title = `${drawerHint}${ageBit}use the buttons on the right to sync or open the knowledge graph`;
+      chip.title = `${drawerHint}${last ? 'Last synced ' + humanAgo(last) + ' ago — ' : ''}use the buttons on the right to sync or open the knowledge graph`;
+      // Sub-label: "synced Xh ago · Scheduled" or "synced Xh ago · Full Resync"
+      const sublabelEl = document.getElementById('project-sync-sublabel');
+      if (sublabelEl) {
+        if (last) {
+          const typeLabel = st.last_triggered_by === 'full_resync' ? 'Full Resync'
+                          : st.last_triggered_by === 'manual' ? 'Manual' : 'Scheduled';
+          sublabelEl.textContent = `synced ${humanAgo(last)} ago · ${typeLabel}`;
+        } else {
+          sublabelEl.textContent = '';
+        }
+      }
     }
     // KG is currently extracting on any item? pulse purple.
     let kgWorking = false;
@@ -1154,6 +1184,36 @@ async function refreshProjectSyncStatus(agentId, projectName) {
       if (it.kg_state === 'error') kgError = true;
     }
     chip.dataset.kgState = kgWorking ? 'extracting' : (kgError ? 'error' : '');
+    if (kgWorking) {
+      // Find the item currently extracting to get live progress.
+      let kgDone = 0, kgTotal = 0, kgStarted = 0, kgTriples = 0;
+      for (const k of Object.keys(state._projectSyncItems || {})) {
+        const it = state._projectSyncItems[k] || {};
+        if (it.kg_state === 'extracting') {
+          kgDone   = Number(it.kg_chunks_done  || 0);
+          kgTotal  = Number(it.kg_chunks_total || 0);
+          kgStarted = it.kg_started_at ? Number(it.kg_started_at) * 1000 : 0;
+          kgTriples = Number(it.kg_triples_live || it.triples_extracted || 0);
+          break;
+        }
+      }
+      let kgProgress = kgTotal > 0 ? ` ${kgDone}/${kgTotal} chunks` : (kgDone > 0 ? ` ${kgDone} chunks` : '');
+      let kgEta = '';
+      if (kgStarted && kgDone > 0 && kgTotal > 0 && kgDone / kgTotal >= 0.05) {
+        const elapsedMs = Math.max(0, Date.now() - kgStarted);
+        const remainMs = elapsedMs * (kgTotal - kgDone) / kgDone;
+        if (remainMs > 1000 && remainMs < 1000 * 60 * 60 * 4) {
+          const remainSec = Math.floor(remainMs / 1000);
+          const etaStr = remainSec < 60 ? `${remainSec}s` : `${Math.floor(remainSec / 60)}m`;
+          kgEta = ` · ETA ${etaStr}`;
+        }
+      }
+      const kgTriplesStr = kgTriples > 0 ? ` · ${kgTriples} so far` : '';
+      label = `Memory: KG extracting${kgProgress}${kgEta}${kgTriplesStr}`;
+      chip.title = 'Knowledge graph extraction in progress';
+      const sublabelElKg = document.getElementById('project-sync-sublabel');
+      if (sublabelElKg) sublabelElKg.textContent = '';
+    }
     labelEl.textContent = label;
     // Knowledge-graph button: admin-only. The drilldown is a debug /
     // operations surface (predicate distribution, sample triples,
@@ -1177,13 +1237,21 @@ async function refreshProjectSyncStatus(agentId, projectName) {
     }
     const syncBtn = document.getElementById('project-action-sync');
     if (syncBtn) {
-      // Disable while a sync is in flight to make the state obvious; the
-      // button re-enables on the next refresh after state flips back to
-      // idle / error.
       syncBtn.disabled = (live === 'syncing');
       syncBtn.title = live === 'syncing'
         ? 'Sync already in progress'
         : 'Run a memory sync now';
+    }
+    const fullResyncBtn = document.getElementById('project-action-full-resync');
+    if (fullResyncBtn) {
+      const isAdmin = state.authUser && state.authUser.role === 'admin';
+      fullResyncBtn.style.display = isAdmin ? '' : 'none';
+      fullResyncBtn.disabled = (live === 'syncing');
+    }
+    const historyBtn = document.getElementById('project-action-sync-history');
+    if (historyBtn) {
+      const isAdmin = state.authUser && state.authUser.role === 'admin';
+      historyBtn.style.display = isAdmin ? '' : 'none';
     }
     // Re-paint per-item pills without re-fetching the underlying lists.
     paintProjectItemPills();
@@ -3868,4 +3936,513 @@ function timeAgo(timestamp) {
   if (diff < 2592000) return `${Math.floor(diff / 86400)}d ago`;
   return `${Math.floor(diff / 2592000)}mo ago`;
 }
+
+// ─── Sync History Modal ──────────────────────────────────────────────────────
+
+let _syncHistoryPollHandles = {};
+
+async function projectSyncHistory() {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  const modal = document.getElementById('sync-history-modal');
+  const nameEl = document.getElementById('sync-history-project-name');
+  if (!modal) return;
+  if (nameEl) nameEl.textContent = projectName;
+  modal.style.display = 'flex';
+  await _loadSyncRuns(agentId, projectName);
+}
+
+function closeSyncHistoryModal() {
+  const modal = document.getElementById('sync-history-modal');
+  if (modal) modal.style.display = 'none';
+  Object.values(_syncHistoryPollHandles).forEach(clearInterval);
+  _syncHistoryPollHandles = {};
+}
+
+async function _loadSyncRuns(agentId, projectName) {
+  const loadingEl = document.getElementById('sync-history-loading');
+  const listEl = document.getElementById('sync-history-list');
+  if (loadingEl) loadingEl.style.display = '';
+  if (listEl) listEl.innerHTML = '';
+  try {
+    const data = await API.get(
+      `/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/sync-runs?limit=20`
+    );
+    if (loadingEl) loadingEl.style.display = 'none';
+    _renderSyncRuns(agentId, projectName, data.runs || []);
+  } catch(e) {
+    if (loadingEl) loadingEl.textContent = 'Failed to load history.';
+  }
+}
+
+function _renderSyncRuns(agentId, projectName, runs) {
+  const listEl = document.getElementById('sync-history-list');
+  if (!listEl) return;
+  if (!runs.length) {
+    listEl.innerHTML = '<p style="color:var(--text-400);font-size:.85rem">No sync runs recorded yet.</p>';
+    return;
+  }
+  // Pair purge runs with the full_resync run that follows immediately after.
+  // purge runs (triggered_by='full_resync_purge') are absorbed into the next
+  // full_resync row so the user sees one logical "Full Resync" entry, not two.
+  const paired = [];
+  for (let i = 0; i < runs.length; i++) {
+    const r = runs[i];
+    if (r.triggered_by === 'full_resync_purge') {
+      // Look behind for the full_resync that was queued right after this purge
+      const prev = paired.length ? paired[paired.length - 1] : null;
+      if (prev && prev._type === 'full_resync_pair') {
+        prev._purgeRun = r;
+      } else {
+        paired.push({ _type: 'full_resync_pair', _purgeRun: r, _resyncRun: null });
+      }
+    } else if (r.triggered_by === 'full_resync') {
+      const prev = paired.length ? paired[paired.length - 1] : null;
+      if (prev && prev._type === 'full_resync_pair' && !prev._resyncRun) {
+        prev._resyncRun = r;
+      } else {
+        paired.push({ _type: 'full_resync_pair', _purgeRun: null, _resyncRun: r });
+      }
+    } else {
+      paired.push({ _type: 'single', _run: r });
+    }
+  }
+
+  listEl.innerHTML = paired.map(entry => {
+    if (entry._type === 'single') return _syncRunRowHtml(entry._run);
+    return _syncRunPairHtml(entry._purgeRun, entry._resyncRun);
+  }).join('');
+
+  // Wire expand toggles — lazy-fetch full log on first expand
+  listEl.querySelectorAll('.sh-run-header').forEach(hdr => {
+    hdr.addEventListener('click', async () => {
+      const row = hdr.closest('.sh-run');
+      const wasExpanded = row.classList.contains('sh-expanded');
+      row.classList.toggle('sh-expanded');
+      if (!wasExpanded && !row.dataset.logLoaded) {
+        row.dataset.logLoaded = '1';
+        await _loadRunDetail(agentId, projectName, row);
+      }
+    });
+  });
+  // Wire cancel buttons
+  listEl.querySelectorAll('.sh-cancel-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      btn.disabled = true;
+      btn.textContent = 'Cancelling…';
+      try {
+        await API.post(
+          `/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/sync-cancel`, {}
+        );
+      } catch(_) {}
+    });
+  });
+  // Start polling for any running rows
+  runs.forEach(r => {
+    if (r.state === 'running') _startSyncRunPoll(agentId, projectName, r.id);
+  });
+}
+
+// Triggered-by → human label + colour hint
+function _triggerLabel(tb) {
+  return {
+    scheduled: { text: 'Scheduled', cls: '' },
+    manual:    { text: 'Manual',    cls: '' },
+    full_resync: { text: 'Full Resync', cls: 'accent' },
+    full_resync_purge: { text: 'Full Resync', cls: 'accent' },
+  }[tb] || { text: tb, cls: '' };
+}
+
+function _syncRunPairHtml(purgeRun, resyncRun) {
+  // Use the resync run as the primary for state/timing; fall back to purge run.
+  const primary = resyncRun || purgeRun;
+  const stateColors = {
+    running: 'var(--accent-blue)', idle: 'var(--success)',
+    error: 'var(--error)', cancelled: 'var(--text-400)',
+  };
+  const color = stateColors[primary.state] || 'var(--text-400)';
+  const isPulse = primary.state === 'running';
+  const startedAgo = primary.started_at ? timeAgo(primary.started_at) : '?';
+  const totalElapsed = (primary.finished_at && primary.started_at)
+    ? _fmtElapsed(primary.finished_at - primary.started_at) : (primary.state === 'running' ? '…' : '');
+
+  const rSum = resyncRun
+    ? (typeof resyncRun.summary === 'string' ? JSON.parse(resyncRun.summary) : resyncRun.summary) || {}
+    : {};
+  const pSum = purgeRun
+    ? (typeof purgeRun.summary === 'string' ? JSON.parse(purgeRun.summary) : purgeRun.summary) || {}
+    : {};
+
+  const statParts = [
+    rSum.total_files != null    ? `${rSum.total_files} files` : null,
+    rSum.total_indexed != null  ? `${rSum.total_indexed} drawers` : null,
+    rSum.total_triples != null  ? `${rSum.total_triples} triples` : null,
+  ].filter(Boolean).join(' · ');
+
+  const errStr = [...(rSum.errors || []), ...(pSum.errors || [])].filter(Boolean).join(', ');
+
+  const runId = primary.id;
+  const purgeAttr = purgeRun ? ` data-purge-run-id="${purgeRun.id}"` : '';
+  return `<div class="sh-run" data-run-id="${runId}"${purgeAttr}>
+    <div class="sh-run-header" style="display:flex;align-items:center;gap:10px;padding:9px 0;cursor:pointer;border-bottom:1px solid var(--border-200)">
+      <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0${isPulse ? ';animation:pulse 1.4s ease-in-out infinite' : ''}"></span>
+      <span style="font-size:.82rem;color:var(--text-400);min-width:70px">${startedAgo}</span>
+      <span style="font-size:.82rem;font-weight:500;flex:1">${statParts || (primary.state === 'running' ? 'Running…' : '—')}</span>
+      ${errStr ? `<span style="font-size:.75rem;color:var(--error);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${errStr}">⚠ ${errStr}</span>` : ''}
+      <span style="font-size:.75rem;padding:2px 7px;border-radius:4px;background:color-mix(in srgb,var(--accent-blue) 12%,transparent);color:var(--accent-blue)">Full Resync</span>
+      ${totalElapsed ? `<span style="font-size:.78rem;color:var(--text-400)">${totalElapsed}</span>` : ''}
+      ${primary.state === 'running' ? `<button class="sh-cancel-btn" style="font-size:.75rem;padding:2px 8px;background:color-mix(in srgb,var(--error) 12%,transparent);border:1px solid color-mix(in srgb,var(--error) 30%,transparent);border-radius:4px;color:var(--error);cursor:pointer">Cancel</button>` : ''}
+      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="sh-chevron" style="transition:transform .2s;flex-shrink:0"><polyline points="6 9 12 15 18 9"/></svg>
+    </div>
+    <div class="sh-run-detail" style="display:none;padding:10px 0 4px">
+      ${_syncRunPairDetailHtml(purgeRun, resyncRun)}
+    </div>
+  </div>`;
+}
+
+function _syncRunPairDetailHtml(purgeRun, resyncRun) {
+  let html = '';
+
+  // 1. Purge phase
+  if (purgeRun) {
+    const pLog = typeof purgeRun.log === 'string' ? JSON.parse(purgeRun.log) : (purgeRun.log || {});
+    const pSum = typeof purgeRun.summary === 'string' ? JSON.parse(purgeRun.summary) : (purgeRun.summary || {});
+    const purgeActions = pLog.purge_actions || [];
+    const purgeElapsed = (purgeRun.finished_at && purgeRun.started_at)
+      ? _fmtElapsed(purgeRun.finished_at - purgeRun.started_at) : '';
+
+    html += `<div style="font-size:.78rem;font-weight:600;margin-bottom:6px;color:var(--text-400);display:flex;align-items:center;gap:8px">
+      <span>Purge</span>${purgeElapsed ? `<span style="font-weight:400">${purgeElapsed}</span>` : ''}
+    </div>`;
+
+    const P_LBL  = 'width:160px;min-width:160px;padding:2px 10px 2px 0;color:var(--text-400);white-space:nowrap';
+    const P_DET  = 'padding:2px 0';
+    const P_TIME = 'width:44px;min-width:44px;padding:2px 0 2px 10px;text-align:right;color:var(--text-400);white-space:nowrap';
+    if (purgeActions.length) {
+      const actionLabels = {
+        drawers_purged: 'Drawers wiped',
+        kg_triples_purged: 'KG triples wiped',
+        closet_cursor_cleared: 'Closet cursor cleared',
+        doc_convert_cache_cleared: 'Doc-convert cache cleared',
+      };
+      html += `<table style="font-size:.78rem;border-collapse:collapse;width:100%;table-layout:fixed;margin-bottom:12px">`;
+      for (const a of purgeActions) {
+        const label = actionLabels[a.action] || a.action;
+        let detail = '';
+        if (a.action === 'drawers_purged') detail = `${a.deleted ?? 0} deleted`;
+        else if (a.action === 'kg_triples_purged') detail = `${a.triples_deleted ?? 0} triples, ${a.progress_cursors_deleted ?? 0} cursors`;
+        else if (a.action === 'doc_convert_cache_cleared') detail = `${a.dirs_removed ?? 0} dirs, ${a.files_removed ?? 0} files`;
+        else detail = '✓';
+        const errTxt = a.error ? ` <span style="color:var(--error)">⚠ ${a.error}</span>` : '';
+        const elTxt = a.elapsed_s > 0 ? _fmtElapsed(a.elapsed_s) : '';
+        html += `<tr>
+          <td style="${P_LBL}">${label}</td>
+          <td style="${P_DET}">${detail}${errTxt}</td>
+          <td style="${P_TIME}">${elTxt}</td>
+        </tr>`;
+      }
+      html += `</table>`;
+    } else {
+      // Fallback to summary fields if no purge_actions recorded
+      const rows = [
+        pSum.drawers_deleted != null ? ['Drawers wiped', `${pSum.drawers_deleted}`] : null,
+        pSum.triples_deleted != null ? ['KG triples wiped', `${pSum.triples_deleted}`] : null,
+        pSum.kg_progress_deleted != null ? ['KG cursors cleared', `${pSum.kg_progress_deleted}`] : null,
+        pSum.brain_extracted_cleared != null ? ['Doc-convert dirs cleared', `${pSum.brain_extracted_cleared}`] : null,
+      ].filter(Boolean);
+      if (rows.length) {
+        html += `<table style="font-size:.78rem;border-collapse:collapse;width:100%;table-layout:fixed;margin-bottom:12px">
+          ${rows.map(([k,v]) => `<tr><td style="${P_LBL}">${k}</td><td style="${P_DET}">${v}</td><td style="${P_TIME}"></td></tr>`).join('')}
+        </table>`;
+      }
+    }
+  }
+
+  // 2. Re-index phase
+  if (resyncRun) {
+    const rElapsed = (resyncRun.finished_at && resyncRun.started_at)
+      ? _fmtElapsed(resyncRun.finished_at - resyncRun.started_at) : (resyncRun.state === 'running' ? '…' : '');
+    html += `<div style="font-size:.78rem;font-weight:600;margin-bottom:6px;color:var(--text-400);display:flex;align-items:center;gap:8px">
+      <span>Re-index</span>${rElapsed ? `<span style="font-weight:400">${rElapsed}</span>` : ''}
+    </div>`;
+    html += _syncRunDetailHtml(resyncRun, { hideTitle: true });
+  }
+
+  return html || '<span style="color:var(--text-400);font-size:.78rem">No detail recorded.</span>';
+}
+
+function _syncRunRowHtml(run) {
+  const stateColors = {
+    running: 'var(--accent-blue)', idle: 'var(--success)',
+    error: 'var(--error)', cancelled: 'var(--text-400)',
+  };
+  const color = stateColors[run.state] || 'var(--text-400)';
+  const isPulse = run.state === 'running';
+  const startedAgo = run.started_at ? timeAgo(run.started_at) : '?';
+  const elapsed = (run.finished_at && run.started_at)
+    ? _fmtElapsed(run.finished_at - run.started_at) : (run.state === 'running' ? '…' : '');
+  const summary = run.summary ? (typeof run.summary === 'string' ? JSON.parse(run.summary) : run.summary) : {};
+
+  // Show current totals, not the per-cycle delta
+  const statParts = [
+    summary.total_files != null   ? `${summary.total_files} files` : null,
+    summary.total_indexed != null ? `${summary.total_indexed} drawers` : null,
+    summary.total_triples != null && summary.total_triples > 0 ? `${summary.total_triples} triples` : null,
+  ].filter(Boolean).join(' · ');
+
+  const errStr = (summary.errors || []).filter(Boolean).join(', ');
+  const trig = _triggerLabel(run.triggered_by);
+  const trigHtml = `<span style="font-size:.75rem;padding:2px 6px;border-radius:4px;background:var(--bg-200);color:var(--text-400)">${trig.text}</span>`;
+
+  return `<div class="sh-run" data-run-id="${run.id}">
+    <div class="sh-run-header" style="display:flex;align-items:center;gap:10px;padding:9px 0;cursor:pointer;border-bottom:1px solid var(--border-200)">
+      <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0${isPulse ? ';animation:pulse 1.4s ease-in-out infinite' : ''}"></span>
+      <span style="font-size:.82rem;color:var(--text-400);min-width:70px">${startedAgo}</span>
+      <span style="font-size:.82rem;font-weight:500;flex:1">${statParts || (run.state === 'running' ? 'Running…' : '—')}</span>
+      ${errStr ? `<span style="font-size:.75rem;color:var(--error);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${errStr}">⚠ ${errStr}</span>` : ''}
+      ${trigHtml}
+      ${elapsed ? `<span style="font-size:.78rem;color:var(--text-400)">${elapsed}</span>` : ''}
+      ${run.state === 'running' ? `<button class="sh-cancel-btn" style="font-size:.75rem;padding:2px 8px;background:color-mix(in srgb,var(--error) 12%,transparent);border:1px solid color-mix(in srgb,var(--error) 30%,transparent);border-radius:4px;color:var(--error);cursor:pointer">Cancel</button>` : ''}
+      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" class="sh-chevron" style="transition:transform .2s;flex-shrink:0"><polyline points="6 9 12 15 18 9"/></svg>
+    </div>
+    <div class="sh-run-detail" style="display:none;padding:10px 0 4px">
+      ${errStr ? `<div style="color:var(--error);font-size:.8rem;margin-bottom:8px">⚠ ${errStr}</div>` : ''}
+      ${_syncRunDetailHtml(run)}
+    </div>
+  </div>`;
+}
+
+function _syncRunDetailHtml(run, opts = {}) {
+  const log = run.log ? (typeof run.log === 'string' ? JSON.parse(run.log) : run.log) : {};
+  const summary = run.summary ? (typeof run.summary === 'string' ? JSON.parse(run.summary) : run.summary) : {};
+  const topSteps = log.steps || {};
+  const folders = log.folders || [];
+
+  let html = '';
+
+  // Summary totals row (skip for purge runs — they have their own layout)
+  if (!opts.hideTitle && run.triggered_by !== 'full_resync_purge') {
+    const summaryParts = [
+      summary.total_files != null   ? `${summary.total_files} files` : null,
+      summary.total_indexed != null ? `${summary.total_indexed} drawers` : null,
+      summary.total_triples > 0    ? `${summary.total_triples} triples` : null,
+      summary.folders_seen > 0     ? `${summary.folders_seen} folders` : null,
+    ].filter(Boolean).join('  ·  ');
+    if (summaryParts) {
+      html += `<div style="font-size:.78rem;color:var(--text-400);margin-bottom:10px">${summaryParts}</div>`;
+    }
+  }
+
+  // Per-folder phases + project-wide steps — rendered in one shared <table>
+  // so the three columns (label | detail | elapsed) align across all sections.
+  const LABEL_W = 'width:110px;min-width:110px';
+  const TIME_W  = 'width:44px;min-width:44px';
+  const TD_LBL  = `padding:2px 10px 2px 0;color:var(--text-400);white-space:nowrap;${LABEL_W}`;
+  const TD_DET  = 'padding:2px 0';
+  const TD_TIME = `padding:2px 0 2px 10px;text-align:right;color:var(--text-400);white-space:nowrap;${TIME_W}`;
+
+  let tableRows = '';
+
+  folders.forEach(f => {
+    const fsteps = f.steps || {};
+    const convSt  = fsteps.doc_convert || {};
+    const indexSt = fsteps.indexing    || {};
+    const kgSt    = fsteps.kg         || {};
+    const fname = (f.path || '').split('/').filter(Boolean).pop() || f.path;
+
+    // Section header row spanning all columns
+    tableRows += `<tr>
+      <td colspan="3" style="padding:8px 0 3px;font-size:.78rem;font-weight:600">
+        <span style="display:inline-flex;align-items:center;gap:5px">
+          <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;opacity:.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <span title="${f.path}">${fname}</span>
+        </span>
+      </td>
+    </tr>`;
+
+    // Doc convert row
+    if (convSt.started_at !== undefined || convSt.converted !== undefined) {
+      const convErr = (convSt.errors || []).filter(Boolean).join(', ');
+      const convElapsed = convSt.elapsed_s != null ? _fmtElapsed(convSt.elapsed_s)
+        : (convSt.started_at && convSt.finished_at) ? _fmtElapsed(convSt.finished_at - convSt.started_at) : '';
+      const convDetail = convErr
+        ? `<span style="color:var(--error)">⚠ ${convErr}</span>`
+        : [
+            convSt.converted > 0   ? `${convSt.converted} converted` : null,
+            convSt.unchanged > 0   ? `${convSt.unchanged} unchanged` : null,
+            convSt.failed > 0      ? `<span style="color:var(--error)">${convSt.failed} failed</span>` : null,
+            convSt.stale_removed > 0 ? `${convSt.stale_removed} stale removed` : null,
+            convSt.seen_total === 0 ? 'nothing to convert' : null,
+          ].filter(Boolean).join(', ') || '✓';
+      tableRows += `<tr>
+        <td style="${TD_LBL}">Doc convert</td>
+        <td style="${TD_DET}">${convDetail}</td>
+        <td style="${TD_TIME}">${convElapsed}</td>
+      </tr>`;
+    }
+
+    // Indexing row
+    if (indexSt.started_at !== undefined || indexSt.drawers_created !== undefined) {
+      const idxErr = (indexSt.errors || []).filter(Boolean).join(', ');
+      const idxElapsed = indexSt.elapsed_s != null ? _fmtElapsed(indexSt.elapsed_s)
+        : (indexSt.started_at && indexSt.finished_at) ? _fmtElapsed(indexSt.finished_at - indexSt.started_at) : '';
+      const idxDetail = idxErr
+        ? `<span style="color:var(--error)">⚠ ${idxErr}</span>`
+        : indexSt.drawers_created != null
+          ? `${indexSt.drawers_created} drawers added`
+          : '✓';
+      tableRows += `<tr>
+        <td style="${TD_LBL}">Indexing</td>
+        <td style="${TD_DET}">${idxDetail}</td>
+        <td style="${TD_TIME}">${idxElapsed}</td>
+      </tr>`;
+    }
+
+    // KG row
+    if (kgSt.triples_this_cycle !== undefined || kgSt.triples_total !== undefined) {
+      const kgErr = kgSt.error || '';
+      const kgElapsed = kgSt.elapsed_s != null ? _fmtElapsed(kgSt.elapsed_s) : '';
+      const kgDetail = kgErr
+        ? `<span style="color:var(--error)">⚠ ${kgErr}</span>`
+        : [
+            kgSt.triples_this_cycle != null ? `+${kgSt.triples_this_cycle} triples` : null,
+            kgSt.triples_total != null      ? `(${kgSt.triples_total} total)` : null,
+            kgSt.drawers_processed != null  ? `${kgSt.drawers_processed} drawers processed` : null,
+          ].filter(Boolean).join(' ') || '✓';
+      tableRows += `<tr>
+        <td style="${TD_LBL}">KG extraction</td>
+        <td style="${TD_DET}">${kgDetail}</td>
+        <td style="${TD_TIME}">${kgElapsed}</td>
+      </tr>`;
+    }
+  });
+
+  // Stale-path purge (top-level step, not per-folder)
+  const staleSt = topSteps.stale_path_purge;
+  if (staleSt && (staleSt.drawers_deleted > 0 || staleSt.closets_deleted > 0)) {
+    tableRows += `<tr>
+      <td style="${TD_LBL}">Stale purge</td>
+      <td style="${TD_DET}">${staleSt.drawers_deleted || 0} drawers, ${staleSt.closets_deleted || 0} closets removed</td>
+      <td style="${TD_TIME}"></td>
+    </tr>`;
+  }
+
+  // Closet rerank (project-wide, top-level)
+  const closetSt = topSteps.closet_rerank;
+  if (closetSt) {
+    const closetErr = (closetSt.errors || []).filter(Boolean).join(', ');
+    const closetElapsed = closetSt.elapsed_s != null ? _fmtElapsed(closetSt.elapsed_s)
+      : (closetSt.started_at && closetSt.finished_at) ? _fmtElapsed(closetSt.finished_at - closetSt.started_at) : '';
+    const closetDetail = closetErr
+      ? `<span style="color:var(--error)">⚠ ${closetErr}</span>`
+      : closetSt.regen_triggered
+        ? `rebuilt (${closetSt.sources_stale || 0}/${closetSt.sources_seen || 0} sources changed)`
+        : `skipped — ${closetSt.sources_seen || 0} sources unchanged`;
+    tableRows += `<tr>
+      <td style="${TD_LBL}">Closet rerank</td>
+      <td style="${TD_DET}">${closetDetail}</td>
+      <td style="${TD_TIME}">${closetElapsed}</td>
+    </tr>`;
+  }
+
+  if (tableRows) {
+    html += `<table style="font-size:.77rem;border-collapse:collapse;width:100%;table-layout:fixed">${tableRows}</table>`;
+  }
+
+  return html || '<span style="color:var(--text-400);font-size:.78rem">No detail recorded.</span>';
+}
+
+function _fmtElapsed(secs) {
+  if (secs < 1) return '<1s';
+  if (secs < 60) return `${Math.round(secs)}s`;
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ${Math.round(secs % 60)}s`;
+  return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
+}
+
+async function _loadRunDetail(agentId, projectName, rowEl) {
+  // rowEl is a .sh-run element — it may be a single run or a paired full-resync.
+  // For pairs, data-run-id is the primary (resync) run id; purge id is in data-purge-run-id.
+  const detailEl = rowEl.querySelector('.sh-run-detail');
+  if (!detailEl) return;
+  detailEl.innerHTML = '<span style="color:var(--text-400);font-size:.78rem">Loading…</span>';
+
+  try {
+    const primaryId = rowEl.dataset.runId;
+    const purgeId   = rowEl.dataset.purgeRunId;
+
+    const [primaryData, purgeData] = await Promise.all([
+      primaryId ? API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/sync-runs/${primaryId}`) : null,
+      purgeId   ? API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/sync-runs/${purgeId}`)   : null,
+    ]);
+
+    const primaryRun = primaryData?.run;
+    const purgeRun   = purgeData?.run;
+
+    if (!primaryRun) { detailEl.innerHTML = '<span style="color:var(--text-400);font-size:.78rem">No detail recorded.</span>'; return; }
+
+    let html = '';
+    if (purgeRun) {
+      // Paired full-resync: render purge + re-index sections
+      html = _syncRunPairDetailHtml(purgeRun, primaryRun);
+    } else {
+      const errStr = ((primaryRun.summary?.errors || []).filter(Boolean)).join(', ');
+      if (errStr) html += `<div style="color:var(--error);font-size:.8rem;margin-bottom:8px">⚠ ${errStr}</div>`;
+      html += _syncRunDetailHtml(primaryRun);
+    }
+    detailEl.innerHTML = html;
+  } catch(e) {
+    detailEl.innerHTML = `<span style="color:var(--error);font-size:.78rem">Failed to load detail.</span>`;
+  }
+}
+
+function _startSyncRunPoll(agentId, projectName, runId) {
+  if (_syncHistoryPollHandles[runId]) return;
+  _syncHistoryPollHandles[runId] = setInterval(async () => {
+    try {
+      const data = await API.get(
+        `/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/sync-runs/${runId}`
+      );
+      const run = data.run;
+      if (!run) return;
+      const rowEl = document.querySelector(`[data-run-id="${runId}"]`);
+      if (!rowEl) return;
+      rowEl.outerHTML = _syncRunRowHtml(run);
+      // Re-wire events for the new element
+      const newRow = document.querySelector(`[data-run-id="${runId}"]`);
+      if (newRow) {
+        newRow.querySelector('.sh-run-header')?.addEventListener('click', () => {
+          newRow.classList.toggle('sh-expanded');
+        });
+        newRow.querySelector('.sh-cancel-btn')?.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const btn = e.currentTarget;
+          btn.disabled = true; btn.textContent = 'Cancelling…';
+          try {
+            await API.post(
+              `/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/sync-cancel`, {}
+            );
+          } catch(_) {}
+        });
+      }
+      if (run.state !== 'running') {
+        clearInterval(_syncHistoryPollHandles[runId]);
+        delete _syncHistoryPollHandles[runId];
+      }
+    } catch(_) {}
+  }, 3000);
+}
+
+// Expand/collapse sh-run-detail on sh-expanded toggle (CSS-driven)
+document.addEventListener('click', (e) => {
+  const hdr = e.target.closest?.('.sh-run-header');
+  if (!hdr) return;
+  const run = hdr.closest('.sh-run');
+  if (!run) return;
+  const detail = run.querySelector('.sh-run-detail');
+  const chevron = hdr.querySelector('.sh-chevron');
+  if (detail) detail.style.display = run.classList.contains('sh-expanded') ? '' : 'none';
+  if (chevron) chevron.style.transform = run.classList.contains('sh-expanded') ? 'rotate(180deg)' : '';
+});
 

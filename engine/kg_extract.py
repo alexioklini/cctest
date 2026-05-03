@@ -38,6 +38,7 @@ on top of this layer.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import os
 import sqlite3
@@ -582,6 +583,11 @@ def extract_triples_from_drawer(
 
     parsed = cc._extract_json_from_llm(raw, expect_array=True)
     if not isinstance(parsed, list):
+        # Model returned prose instead of JSON (e.g. "No normative content").
+        # Treat as empty rather than an error so the chunk is marked done and
+        # doesn't show a red dot in the UI.
+        if isinstance(raw, str) and len(raw.strip()) < 500 and "[" not in raw:
+            return [], None
         return [], "no JSON array in response"
 
     triples = []
@@ -682,6 +688,45 @@ def _iter_wing_source_files(palace_path: str, wing: str, source_prefix: str
 
 # ── Run a post-pass over a wing ──────────────────────────────────────────────
 
+_KG_DEFAULT_CLOUD_WORKERS = 8
+
+
+def _kg_resolve_workers(model: str) -> int:
+    """Return the max parallel workers to use for KG extraction with `model`.
+
+    Resolution order:
+    1. config.json → mempalace.kg.parallel_workers  (explicit override)
+    2. config.json → providers.<name>.max_concurrent for the model's provider
+       (respects local/CLIProxy caps like oMLX=2, cliproxyapi=2)
+    3. _KG_DEFAULT_CLOUD_WORKERS (8) — cloud providers with no cap set
+    """
+    try:
+        cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        cfg = json.load(open(cfg_path))
+    except Exception:
+        return _KG_DEFAULT_CLOUD_WORKERS
+
+    # Explicit override wins.
+    explicit = cfg.get("mempalace", {}).get("kg", {}).get("parallel_workers", 0)
+    if explicit and int(explicit) > 0:
+        return int(explicit)
+
+    # Resolve provider for this model, then read its max_concurrent.
+    if model:
+        try:
+            import brain as _cc
+            resolved = _cc.resolve_provider_for_model(model)
+            provider_name = (resolved or {}).get("provider_name", "")
+        except Exception:
+            provider_name = ""
+        if provider_name:
+            prov_max = cfg.get("providers", {}).get(provider_name, {}).get("max_concurrent", 0)
+            if prov_max and int(prov_max) > 0:
+                return int(prov_max)
+
+    return _KG_DEFAULT_CLOUD_WORKERS
+
+
 @dataclass
 class RunResult:
     log_id: int
@@ -712,6 +757,7 @@ def run_kg_post_pass(
     progress_cb=None,
     cancel_token=None,
     log_prefix: str = "[kg-extract]",
+    max_workers: int = 0,
 ) -> RunResult:
     """Extract KG triples for content in `wing` whose source_file startswith
     `source_prefix`, write into MemPalace's KG, and record progress in chats.db.
@@ -762,10 +808,14 @@ def run_kg_post_pass(
     t0 = time.time()
     already = _progress_get(chats_db_path, wing)
     last_error = ""
+    _write_lock = threading.Lock()  # guards result counters, last_error, already
+
+    workers = max_workers if max_workers > 0 else _kg_resolve_workers(model)
 
     def _write_triples_to_kg(triples: list[dict], sf: str, did: str) -> int:
         """Write triples to MemPalace's KG with provenance, return count.
-        Falls back to legacy signature on MemPalace < 3.3.3."""
+        Falls back to legacy signature on MemPalace < 3.3.3.
+        KG has its own internal lock so concurrent calls are safe."""
         nonlocal last_error
         written = 0
         for t in triples:
@@ -775,6 +825,7 @@ def run_kg_post_pass(
                     obj=t["object"], confidence=t["confidence"],
                     source_closet=None, source_file=sf,
                     source_drawer_id=did, adapter_name=adapter_name,
+                    span=t.get("span") or None,
                 )
                 written += 1
             except TypeError:
@@ -786,10 +837,12 @@ def run_kg_post_pass(
                     )
                     written += 1
                 except Exception:
-                    result.errors += 1
+                    with _write_lock:
+                        result.errors += 1
             except Exception as e:
-                result.errors += 1
-                last_error = f"add_triple: {type(e).__name__}: {e}"
+                with _write_lock:
+                    result.errors += 1
+                    last_error = f"add_triple: {type(e).__name__}: {e}"
         return written
 
     # Snapshot the per-source (mtime, size) cursor for change detection.
@@ -804,205 +857,230 @@ def run_kg_post_pass(
         except Exception:
             source_state_cursor = {}
 
-    try:
-        if chunking_mode == "source_file":
-            # Iterate distinct source files, read each from disk, paragraph-
-            # chunk at source_chunk_chars, extract per chunk. Cursor key is
-            # encoded as <representative_drawer_id>#<chunk_index> so the
-            # existing schema works without migration.
-            for src in _iter_wing_source_files(palace_path, wing, source_prefix):
-                if cancel_token is not None and getattr(cancel_token, "is_set", lambda: False)():
-                    last_error = "cancelled"
-                    break
-                sf = src["source_file"]
-                rep_did = src["representative_drawer_id"]
+    def _process_source(src: dict, _already: set) -> None:
+        """Process one source file: read → chunk → extract → write.
+        Runs in a thread-pool worker; uses _write_lock for shared state.
+        _already is the shared progress set passed explicitly to avoid Python's
+        closure rule that treats any assigned name as local throughout."""
+        nonlocal last_error
+        if cancel_token is not None and getattr(cancel_token, "is_set", lambda: False)():
+            return
+        sf = src["source_file"]
+        rep_did = src["representative_drawer_id"]
 
-                if skip_code and _is_code_path(sf):
-                    # Skip the whole source. Record one cursor row keyed on
-                    # the rep drawer id so it's not retried.
-                    cursor_key = f"{rep_did}#0"
-                    if cursor_key not in already:
-                        _progress_record(chats_db_path, wing, cursor_key,
-                                         sf, adapter_name, 0,
-                                         error="skipped: code")
-                    result.drawers_skipped += len(src["drawer_ids"])
-                    continue
+        if skip_code and _is_code_path(sf):
+            cursor_key = f"{rep_did}#0"
+            with _write_lock:
+                if cursor_key not in _already:
+                    _progress_record(chats_db_path, wing, cursor_key,
+                                     sf, adapter_name, 0,
+                                     error="skipped: code")
+                    _already.add(cursor_key)
+                result.drawers_skipped += len(src["drawer_ids"])
+            return
 
-                # Source-change detection. If on-disk (mtime, size) differs
-                # from what we recorded last cycle, the file was edited —
-                # purge old triples for this source AND drop chunk-progress
-                # rows so re-extraction targets the new content. Sources we
-                # can't stat (drawer's source_file isn't an absolute path,
-                # e.g. chat-sync mirror drawers) skip this check.
+        # Source-change detection — single-threaded concern, lock for safety.
+        cur_mt = cur_sz = 0
+        if sf and os.path.isfile(sf):
+            try:
+                st = os.stat(sf)
+                cur_mt = int(st.st_mtime)
+                cur_sz = int(st.st_size)
+            except OSError:
                 cur_mt = cur_sz = 0
-                if sf and os.path.isfile(sf):
-                    try:
-                        st = os.stat(sf)
-                        cur_mt = int(st.st_mtime)
-                        cur_sz = int(st.st_size)
-                    except OSError:
-                        cur_mt = cur_sz = 0
-                prev = source_state_cursor.get(sf)
-                if cur_mt and (prev is None or prev != (cur_mt, cur_sz)):
-                    # First-cycle ever for this source: prev is None — no
-                    # invalidation needed (nothing to purge), just record.
-                    # Subsequent cycles with a real diff: invalidate before
-                    # re-extracting.
-                    if prev is not None:
-                        try:
-                            t_del, p_del = _invalidate_source_in_kg(
-                                palace_path, chats_db_path, wing, sf,
-                                adapter_name)
-                            if t_del or p_del:
-                                print(f"{log_prefix} invalidated source "
-                                      f"{sf}: triples={t_del} "
-                                      f"progress={p_del}", flush=True)
-                            # Drop chunk entries from the in-memory `already`
-                            # set so this cycle re-extracts the new content.
-                            stale_keys = {k for k in already
-                                          if k.startswith(rep_did + "#")}
-                            already -= stale_keys
-                        except Exception as e:
-                            print(f"{log_prefix} invalidate {sf} failed: "
-                                  f"{type(e).__name__}: {e}", flush=True)
-                    # Record/update cursor so next cycle compares correctly.
-                    try:
-                        _source_state_record(chats_db_path, wing, sf,
-                                             cur_mt, cur_sz)
-                    except Exception:
-                        pass
 
-                # Read the source file from disk. If absent (e.g. user
-                # removed an input folder mid-cycle), fall back to per-drawer
-                # for this source so we don't lose its triples entirely.
-                file_text = ""
-                read_err = ""
-                if sf and os.path.isfile(sf):
-                    try:
-                        with open(sf, "r", encoding="utf-8", errors="replace") as f:
-                            file_text = f.read()
-                    except OSError as e:
-                        read_err = f"read failed: {type(e).__name__}: {e}"
-                else:
-                    read_err = "source file not on disk"
+        # File no longer on disk — purge its triples and skip extraction.
+        if sf and not cur_mt:
+            try:
+                t_del, p_del = _invalidate_source_in_kg(
+                    palace_path, chats_db_path, wing, sf, adapter_name)
+                if t_del or p_del:
+                    print(f"{log_prefix} source gone, purged "
+                          f"{sf}: triples={t_del} progress={p_del}",
+                          flush=True)
+            except Exception:
+                pass
+            with _write_lock:
+                result.drawers_skipped += len(src["drawer_ids"])
+            return
 
-                # If we couldn't read the file, fall back to per-drawer for
-                # this source so we still get *some* triples.
-                if read_err:
-                    if progress_cb:
-                        try:
-                            progress_cb("source_unreadable", source_file=sf,
-                                        error=read_err)
-                        except Exception:
-                            pass
-                    for drawer in _iter_wing_drawers(palace_path, wing, sf):
-                        result.drawers_seen += 1
-                        did = drawer["id"]
-                        if did in already:
-                            result.drawers_skipped += 1
-                            continue
-                        content = drawer["content"]
-                        if not content.strip():
-                            _progress_record(chats_db_path, wing, did, sf,
-                                             adapter_name, 0,
-                                             error="skipped: empty")
-                            result.drawers_skipped += 1
-                            continue
-                        triples, err = extract_triples_from_drawer(
-                            content=content, source_file=sf, drawer_id=did,
-                            model=model, profile=profile,
-                            max_triples=max_triples_per_drawer,
-                            max_drawer_chars=max_drawer_chars,
-                            min_confidence=min_confidence,
-                            cancel_token=cancel_token)
-                        if err:
-                            result.errors += 1
-                            last_error = err
-                            _progress_record(chats_db_path, wing, did, sf,
-                                             adapter_name, 0,
-                                             error=err[:240])
-                            continue
-                        written = _write_triples_to_kg(triples, sf, did)
-                        result.drawers_processed += 1
-                        result.triples_extracted += written
-                        _progress_record(chats_db_path, wing, did, sf,
-                                         adapter_name, written, error="")
-                    continue
+        with _write_lock:
+            prev = source_state_cursor.get(sf)
+        if cur_mt and (prev is None or prev != (cur_mt, cur_sz)):
+            if prev is not None:
+                try:
+                    t_del, p_del = _invalidate_source_in_kg(
+                        palace_path, chats_db_path, wing, sf, adapter_name)
+                    if t_del or p_del:
+                        print(f"{log_prefix} invalidated source "
+                              f"{sf}: triples={t_del} "
+                              f"progress={p_del}", flush=True)
+                    with _write_lock:
+                        stale_keys = {k for k in _already
+                                      if k.startswith(rep_did + "#")}
+                        _already -= stale_keys
+                except Exception as e:
+                    print(f"{log_prefix} invalidate {sf} failed: "
+                          f"{type(e).__name__}: {e}", flush=True)
+            try:
+                _source_state_record(chats_db_path, wing, sf, cur_mt, cur_sz)
+                with _write_lock:
+                    source_state_cursor[sf] = (cur_mt, cur_sz)
+            except Exception:
+                pass
 
-                # Strip the converter's frontmatter so it doesn't dilute
-                # the LLM's attention.
-                file_text = _strip_brain_frontmatter(file_text)
-                chunks = _chunk_text_paragraphs(file_text, source_chunk_chars)
-                if not chunks:
-                    cursor_key = f"{rep_did}#0"
-                    _progress_record(chats_db_path, wing, cursor_key, sf,
-                                     adapter_name, 0,
-                                     error="skipped: empty after chunking")
-                    result.drawers_skipped += len(src["drawer_ids"])
-                    continue
+        # Read file from disk.
+        file_text = ""
+        read_err = ""
+        if sf and os.path.isfile(sf):
+            try:
+                with open(sf, "r", encoding="utf-8", errors="replace") as fh:
+                    file_text = fh.read()
+            except OSError as e:
+                read_err = f"read failed: {type(e).__name__}: {e}"
+        else:
+            read_err = "source file not on disk"
 
-                # Each drawer in this source counts as "seen" for the
-                # cycle stats (so the daemon log shows realistic numbers).
-                # We process by chunk-index, not by drawer.
-                result.drawers_seen += len(src["drawer_ids"])
-
-                for ci, chunk_text in enumerate(chunks):
-                    if cancel_token is not None and getattr(cancel_token, "is_set", lambda: False)():
-                        last_error = "cancelled"
-                        break
-                    cursor_key = f"{rep_did}#{ci}"
-                    if cursor_key in already:
+        # Fallback to per-drawer if file unreadable.
+        if read_err:
+            if progress_cb:
+                try:
+                    progress_cb("source_unreadable", source_file=sf,
+                                error=read_err)
+                except Exception:
+                    pass
+            for drawer in _iter_wing_drawers(palace_path, wing, sf):
+                with _write_lock:
+                    result.drawers_seen += 1
+                did = drawer["id"]
+                with _write_lock:
+                    if did in _already:
                         result.drawers_skipped += 1
                         continue
-                    if not chunk_text.strip():
-                        _progress_record(chats_db_path, wing, cursor_key, sf,
-                                         adapter_name, 0,
-                                         error="skipped: empty")
+                content = drawer["content"]
+                if not content.strip():
+                    _progress_record(chats_db_path, wing, did, sf,
+                                     adapter_name, 0, error="skipped: empty")
+                    with _write_lock:
+                        _already.add(did)
                         result.drawers_skipped += 1
-                        continue
-
-                    if progress_cb:
-                        try:
-                            progress_cb("extracting", drawer_id=cursor_key,
-                                        source_file=sf,
-                                        drawers_seen=result.drawers_seen)
-                        except Exception:
-                            pass
-
-                    triples, err = extract_triples_from_drawer(
-                        content=chunk_text, source_file=sf,
-                        drawer_id=rep_did,  # provenance attaches to rep
-                        model=model, profile=profile,
-                        max_triples=max_triples_per_drawer,
-                        max_drawer_chars=max_drawer_chars,
-                        min_confidence=min_confidence,
-                        cancel_token=cancel_token)
-
-                    if err:
+                    continue
+                triples, err = extract_triples_from_drawer(
+                    content=content, source_file=sf, drawer_id=did,
+                    model=model, profile=profile,
+                    max_triples=max_triples_per_drawer,
+                    max_drawer_chars=max_drawer_chars,
+                    min_confidence=min_confidence,
+                    cancel_token=cancel_token)
+                if err:
+                    with _write_lock:
                         result.errors += 1
                         last_error = err
-                        _progress_record(chats_db_path, wing, cursor_key, sf,
-                                         adapter_name, 0, error=err[:240])
-                        if progress_cb:
-                            try:
-                                progress_cb("error", drawer_id=cursor_key,
-                                            error=err)
-                            except Exception:
-                                pass
-                        continue
-
-                    written = _write_triples_to_kg(triples, sf, rep_did)
+                    _progress_record(chats_db_path, wing, did, sf,
+                                     adapter_name, 0, error=err[:240])
+                    continue
+                written = _write_triples_to_kg(triples, sf, did)
+                _progress_record(chats_db_path, wing, did, sf,
+                                 adapter_name, written, error="")
+                with _write_lock:
+                    _already.add(did)
                     result.drawers_processed += 1
                     result.triples_extracted += written
-                    _progress_record(chats_db_path, wing, cursor_key, sf,
-                                     adapter_name, written, error="")
-                    if progress_cb:
-                        try:
-                            progress_cb("processed", drawer_id=cursor_key,
-                                        triples=written,
-                                        running_total=result.triples_extracted)
-                        except Exception:
-                            pass
+            return
+
+        file_text = _strip_brain_frontmatter(file_text)
+        chunks = _chunk_text_paragraphs(file_text, source_chunk_chars)
+        if not chunks:
+            cursor_key = f"{rep_did}#0"
+            _progress_record(chats_db_path, wing, cursor_key, sf,
+                             adapter_name, 0,
+                             error="skipped: empty after chunking")
+            with _write_lock:
+                _already.add(cursor_key)
+                result.drawers_skipped += len(src["drawer_ids"])
+            return
+
+        with _write_lock:
+            result.drawers_seen += len(src["drawer_ids"])
+
+        for ci, chunk_text in enumerate(chunks):
+            if cancel_token is not None and getattr(cancel_token, "is_set", lambda: False)():
+                break
+            cursor_key = f"{rep_did}#{ci}"
+            with _write_lock:
+                if cursor_key in _already:
+                    result.drawers_skipped += 1
+                    continue
+            if not chunk_text.strip():
+                _progress_record(chats_db_path, wing, cursor_key, sf,
+                                 adapter_name, 0, error="skipped: empty")
+                with _write_lock:
+                    _already.add(cursor_key)
+                    result.drawers_skipped += 1
+                continue
+
+            if progress_cb:
+                try:
+                    progress_cb("extracting", drawer_id=cursor_key,
+                                source_file=sf,
+                                drawers_seen=result.drawers_seen)
+                except Exception:
+                    pass
+
+            triples, err = extract_triples_from_drawer(
+                content=chunk_text, source_file=sf,
+                drawer_id=rep_did,
+                model=model, profile=profile,
+                max_triples=max_triples_per_drawer,
+                max_drawer_chars=max_drawer_chars,
+                min_confidence=min_confidence,
+                cancel_token=cancel_token)
+
+            if err:
+                with _write_lock:
+                    result.errors += 1
+                    last_error = err
+                _progress_record(chats_db_path, wing, cursor_key, sf,
+                                 adapter_name, 0, error=err[:240])
+                if progress_cb:
+                    try:
+                        progress_cb("error", drawer_id=cursor_key, error=err)
+                    except Exception:
+                        pass
+                continue
+
+            written = _write_triples_to_kg(triples, sf, rep_did)
+            _progress_record(chats_db_path, wing, cursor_key, sf,
+                             adapter_name, written, error="")
+            with _write_lock:
+                _already.add(cursor_key)
+                result.drawers_processed += 1
+                result.triples_extracted += written
+            if progress_cb:
+                try:
+                    progress_cb("processed", drawer_id=cursor_key,
+                                triples=written,
+                                running_total=result.triples_extracted)
+                except Exception:
+                    pass
+
+    try:
+        if chunking_mode == "source_file":
+            sources = list(_iter_wing_source_files(palace_path, wing,
+                                                   source_prefix))
+            print(f"{log_prefix} {len(sources)} source files, "
+                  f"workers={workers}", flush=True)
+            with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=workers) as executor:
+                futs = {executor.submit(_process_source, src, already): src
+                        for src in sources}
+                for fut in concurrent.futures.as_completed(futs):
+                    try:
+                        fut.result()
+                    except Exception as e:
+                        with _write_lock:
+                            result.errors += 1
+                            last_error = f"worker: {type(e).__name__}: {e}"
         else:
             # Legacy per-drawer mode.
             for drawer in _iter_wing_drawers(palace_path, wing, source_prefix):
@@ -1014,6 +1092,14 @@ def run_kg_post_pass(
                 sf = drawer["source_file"]
 
                 if did in already:
+                    result.drawers_skipped += 1
+                    continue
+                if sf and not os.path.isfile(sf):
+                    try:
+                        _invalidate_source_in_kg(
+                            palace_path, chats_db_path, wing, sf, adapter_name)
+                    except Exception:
+                        pass
                     result.drawers_skipped += 1
                     continue
                 if skip_code and _is_code_path(sf):
@@ -1393,9 +1479,10 @@ def run_closet_regen_incremental(
             seen += 1
             mt, sz = _file_stat_or_zero(sf)
             if mt == 0 and sz == 0:
-                # Drawer doesn't trace back to a real file — skip from
-                # incremental tracking. (Chat-sync mirror drawers, etc.)
+                # File no longer on disk — treat as stale so closets that
+                # reference it get rebuilt (or removed by upstream regen).
                 skipped_no_disk += 1
+                stale_sources.append(sf)
                 continue
             fresh_stats[sf] = (mt, sz)
             prev = cursor.get(sf)

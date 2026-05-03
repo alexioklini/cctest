@@ -17,10 +17,12 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 import urllib.request
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -355,6 +357,8 @@ def main() -> int:
     ap.add_argument("--label", default="", help="extra label appended to results dir name")
     ap.add_argument("--no-judge", action="store_true",
                     help="skip the Claude Code judge call; collect answers only. Use eval/judge_mistral.py to score afterwards.")
+    ap.add_argument("--parallel", type=int, default=None,
+                    help="number of questions to run concurrently (default: config.parallel or 1)")
     args = ap.parse_args()
 
     cfg_path = os.path.join(REPO_ROOT, args.config) if not os.path.isabs(args.config) else args.config
@@ -426,28 +430,39 @@ def main() -> int:
     print("[eval] brain: login")
     brain_token = brain_login(brain_cfg["base_url"], user, pwd)
 
-    summary_rows: list[dict] = []
-    for i, q in enumerate(questions, 1):
+    parallel = args.parallel if args.parallel is not None else cfg.get("parallel", 1)
+    print(f"[eval] parallel = {parallel}")
+
+    _print_lock = threading.Lock()
+
+    def _log(qid: str, msg: str) -> None:
+        with _print_lock:
+            print(f"  [{qid}] {msg}")
+
+    def run_question(i: int, q: dict) -> dict:
         qid = q["id"]
         qdir = os.path.join(results_dir, qid)
         _ensure_dir(qdir)
-        print(f"\n[eval] [{i}/{len(questions)}] {qid} — {q['bucket']}")
+        with _print_lock:
+            print(f"\n[eval] [{i}/{len(questions)}] {qid} — {q['bucket']}")
 
         # Persist the question for human review
         with open(os.path.join(qdir, "question.json"), "w", encoding="utf-8") as f:
             json.dump(q, f, indent=2, ensure_ascii=False)
 
+        skip_gold = args.skip_gold
+
         # ----- Gold (Claude Code) -----
         gold_path = os.path.join(qdir, "gold.json")
-        if args.skip_gold and args.reuse_results:
+        if skip_gold and args.reuse_results:
             src = os.path.join(args.reuse_results, qid, "gold.json")
             if os.path.exists(src):
                 shutil.copy2(src, gold_path)
-                print(f"  gold: reused from {src}")
+                _log(qid, f"gold: reused from {src}")
             else:
-                print(f"  gold: --skip-gold but no source at {src}; running fresh")
-                args.skip_gold = False  # fall through this iteration only would be more correct, but simpler to just run
-        if not (args.skip_gold and os.path.exists(gold_path)):
+                _log(qid, f"gold: --skip-gold but no source at {src}; running fresh")
+                skip_gold = False
+        if not (skip_gold and os.path.exists(gold_path)):
             t0 = time.time()
             try:
                 gold_blob = run_claude_code_gold(
@@ -458,12 +473,12 @@ def main() -> int:
                 gold_blob["_elapsed_s"] = round(time.time() - t0, 2)
                 with open(gold_path, "w", encoding="utf-8") as f:
                     json.dump(gold_blob, f, indent=2, ensure_ascii=False)
-                print(f"  gold: ok ({gold_blob['_elapsed_s']}s)")
+                _log(qid, f"gold: ok ({gold_blob['_elapsed_s']}s)")
             except Exception as e:
                 err = {"error": str(e), "elapsed_s": round(time.time() - t0, 2)}
                 with open(gold_path, "w", encoding="utf-8") as f:
                     json.dump(err, f, indent=2, ensure_ascii=False)
-                print(f"  gold: FAILED — {e}")
+                _log(qid, f"gold: FAILED — {e}")
         gold_blob = _load_json(gold_path)
         gold_text = extract_text_from_claude_json(gold_blob) if "error" not in gold_blob else f"[GOLD ERROR: {gold_blob['error']}]"
 
@@ -473,7 +488,7 @@ def main() -> int:
             src = os.path.join(args.reuse_results, qid, "brain.json")
             if os.path.exists(src):
                 shutil.copy2(src, brain_path)
-                print(f"  brain: reused from {src}")
+                _log(qid, f"brain: reused from {src}")
         if not (args.skip_brain and os.path.exists(brain_path)):
             t0 = time.time()
             try:
@@ -487,18 +502,20 @@ def main() -> int:
                 done["_elapsed_s"] = round(time.time() - t0, 2)
                 with open(brain_path, "w", encoding="utf-8") as f:
                     json.dump(done, f, indent=2, ensure_ascii=False)
-                print(f"  brain: ok ({done['_elapsed_s']}s, model={done.get('model')})")
+                _log(qid, f"brain: ok ({done['_elapsed_s']}s, model={done.get('model')})")
             except Exception as e:
                 err = {"error": str(e), "elapsed_s": round(time.time() - t0, 2)}
                 with open(brain_path, "w", encoding="utf-8") as f:
                     json.dump(err, f, indent=2, ensure_ascii=False)
-                print(f"  brain: FAILED — {e}")
+                _log(qid, f"brain: FAILED — {e}")
         brain_blob = _load_json(brain_path)
         brain_text = brain_blob.get("text", "") if "error" not in brain_blob else f"[BRAIN ERROR: {brain_blob['error']}]"
 
         # ----- Judge -----
         judge_path = os.path.join(qdir, "judge.json")
-        if not gold_text.strip() or not brain_text.strip():
+        if args.no_judge:
+            judge = {"skipped": True}
+        elif not gold_text.strip() or not brain_text.strip():
             judge = {"error": "missing answers; skipping judge",
                      "gold_empty": not bool(gold_text.strip()),
                      "brain_empty": not bool(brain_text.strip())}
@@ -506,7 +523,6 @@ def main() -> int:
             try:
                 effective_judge_model = args.judge_model or judge_cfg["model"]
                 judge_provider = (judge_cfg.get("provider") or "claude_code").lower()
-                # --judge-model always forces claude_code (claude -p) path
                 if args.judge_model:
                     judge_provider = "claude_code"
                 if judge_provider == "mistral":
@@ -515,16 +531,16 @@ def main() -> int:
                 else:
                     judge = run_judge(q, gold_text, brain_text, rubric,
                                       effective_judge_model, judge_cfg["timeout_seconds"])
-                print(f"  judge: gold={judge.get('gold',{}).get('total','?')} "
-                      f"brain={judge.get('brain',{}).get('total','?')} "
-                      f"winner={judge.get('comparison',{}).get('winner','?')}")
+                _log(qid, f"judge: gold={judge.get('gold',{}).get('total','?')} "
+                          f"brain={judge.get('brain',{}).get('total','?')} "
+                          f"winner={judge.get('comparison',{}).get('winner','?')}")
             except Exception as e:
                 judge = {"error": str(e)}
-                print(f"  judge: FAILED — {e}")
+                _log(qid, f"judge: FAILED — {e}")
         with open(judge_path, "w", encoding="utf-8") as f:
             json.dump(judge, f, indent=2, ensure_ascii=False)
 
-        row = {
+        return {
             "id": qid,
             "bucket": q.get("bucket", ""),
             "expected_refuse": q.get("expected_refuse", False),
@@ -544,7 +560,26 @@ def main() -> int:
             "brain_composition": _g(judge, "brain.composition"),
             "judge_summary": _g(judge, "comparison.summary") or judge.get("error", ""),
         }
-        summary_rows.append(row)
+
+    # Run questions — parallel or sequential
+    q_index = {q["id"]: i for i, q in enumerate(questions)}
+    rows_by_id: dict[str, dict] = {}
+
+    if parallel > 1:
+        with ThreadPoolExecutor(max_workers=parallel) as ex:
+            futures = {ex.submit(run_question, i, q): q["id"] for i, q in enumerate(questions, 1)}
+            for fut in as_completed(futures):
+                qid = futures[fut]
+                try:
+                    rows_by_id[qid] = fut.result()
+                except Exception as e:
+                    with _print_lock:
+                        print(f"  [{qid}] UNCAUGHT — {e}")
+    else:
+        for i, q in enumerate(questions, 1):
+            rows_by_id[q["id"]] = run_question(i, q)
+
+    summary_rows = [rows_by_id[q["id"]] for q in questions if q["id"] in rows_by_id]
 
     # ----- Summary CSV + MD -----
     csv_path = os.path.join(results_dir, "summary.csv")

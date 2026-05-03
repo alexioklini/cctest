@@ -4392,6 +4392,29 @@ def _kg_has_adapter_column(palace_path: str) -> bool:
     return out
 
 
+def _kg_has_span_column(palace_path: str) -> bool:
+    """Cheap one-time PRAGMA check for span column. Cached on the module."""
+    cache_key = f"_kg_span_col_{palace_path}"
+    cached = globals().get(cache_key)
+    if cached is not None:
+        return cached
+    import sqlite3 as _sql
+    kg_path = os.path.join(palace_path, "knowledge_graph.sqlite3")
+    if not os.path.isfile(kg_path):
+        return False
+    try:
+        c = _sql.connect(kg_path, timeout=5, check_same_thread=False)
+        try:
+            cols = {r[1] for r in c.execute("PRAGMA table_info(triples)")}
+        finally:
+            c.close()
+        out = "span" in cols
+    except Exception:
+        out = False
+    globals()[cache_key] = out
+    return out
+
+
 def tool_mempalace_kg_query(args: dict) -> str:
     """Entity-first KG lookup, scoped to the caller's current project."""
     palace_path, prefixes, err = _kg_resolve_project_scope()
@@ -4460,6 +4483,7 @@ def tool_mempalace_kg_search(args: dict) -> str:
 
     import sqlite3 as _sql
     has_adapter = _kg_has_adapter_column(palace_path)
+    has_span = _kg_has_span_column(palace_path)
     conn = _sql.connect(kg_path, timeout=5, check_same_thread=False)
     conn.row_factory = _sql.Row
     try:
@@ -4473,6 +4497,7 @@ def tool_mempalace_kg_search(args: dict) -> str:
             "       t.confidence, t.source_file, "
             f"       {'t.source_drawer_id' if has_adapter else 'NULL'} AS source_drawer_id, "
             f"       {'t.adapter_name' if has_adapter else 'NULL'} AS adapter_name, "
+            f"       {'t.span' if has_span else 'NULL'} AS span, "
             "       t.valid_from, t.valid_to "
             "FROM triples t "
             "LEFT JOIN entities e1 ON t.subject = e1.id "
@@ -4501,6 +4526,7 @@ def tool_mempalace_kg_search(args: dict) -> str:
             "confidence": r["confidence"],
             "source_file": r["source_file"] or "",
             "source_drawer_id": r["source_drawer_id"] or "",
+            "span": r["span"] or "",
             "valid_from": r["valid_from"] or "",
         })
     return _ok({
@@ -4558,6 +4584,7 @@ def tool_mempalace_kg_neighbors(args: dict) -> str:
                         "object": t.get("object", ""),
                         "confidence": t.get("confidence"),
                         "source_file": t.get("source_file", "") or "",
+                        "span": t.get("span") or "",
                         "hop": hop + 1,
                     })
                     other = t.get("object") if t.get("subject") == ent \
@@ -21655,22 +21682,33 @@ def _build_system_prompt(include_memory_summary: bool = True,
                     "responsibility matrices.\n"
                     "  `mempalace_kg_query` — entity neighbourhood. Useful "
                     "for 'what do we say about <specific entity>'.\n"
-                    "Use these ONLY for structural / list questions where the "
-                    "answer is a flat enumeration of facts the KG already "
-                    "captures. For narrative or 'how is X calculated' / "
-                    "'what does the policy say about X' questions, ALWAYS "
-                    "use the 3-step flow above (`mempalace_query` then "
-                    "`read_document`) — KG triples are abstractions and lack "
-                    "the surrounding context the user needs.\n"
+                    "DECISION RULE — when to skip read_document:\n"
+                    "Each KG triple carries a `span` field: a short verbatim "
+                    "quote (≤200 chars) from the source document that the "
+                    "triple was extracted from. If `span` is non-empty, it IS "
+                    "your citation — you do NOT need read_document for that "
+                    "claim. Cite it as: [Quelle: <basename(source_file)> — "
+                    "\"<span>\"]\n"
+                    "Only call read_document when: (a) KG returns no results, "
+                    "(b) span is empty or too short to support the claim, or "
+                    "(c) the question asks for narrative context / calculations "
+                    "/ tables that a triple cannot capture.\n"
+                    "Preferred flow for factual policy questions:\n"
+                    "  1. mempalace_kg_search(predicate=requires/forbids/etc.) "
+                    "— if spans present → cite + answer, done\n"
+                    "  2. mempalace_query — if drawers present → read_document "
+                    "on source file for full context\n"
                     "Examples:\n"
-                    "  • 'Was steht in der Richtlinie zu X?' → 3-step flow "
-                    "(mempalace_query → read_document)\n"
-                    "  • 'Wie wird X berechnet?' → 3-step flow (the formula "
-                    "lives in the document, not in triples)\n"
+                    "  • 'Was muss X tun?' → kg_search(predicate=requires, "
+                    "subject_contains=X) first; span → cite directly\n"
+                    "  • 'Was ist verboten?' → kg_search(predicate=forbids); "
+                    "span → cite directly\n"
                     "  • 'Welche Gesetze werden zitiert?' → "
-                    "`mempalace_kg_search(predicate='cites')` is fine\n"
+                    "kg_search(predicate=cites)\n"
+                    "  • 'Wie wird X berechnet?' → 3-step flow (formula lives "
+                    "in document, not in triples)\n"
                     "  • 'Wer ist verantwortlich für IT-Security?' → "
-                    "`mempalace_kg_search(predicate='responsible_party')`\n"
+                    "kg_search(predicate=responsible_party)\n"
                     "Do NOT pass a `wing` argument — it is set automatically.\n"
                     "Do NOT pass a `room` argument either, unless you have "
                     "verified the exact room name from a previous successful "

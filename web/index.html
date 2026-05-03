@@ -309,7 +309,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <div class="project-detail-actions">
           <div id="project-sync-chip" class="project-sync-chip" style="display:none">
             <span class="project-sync-dot" id="project-sync-dot"></span>
-            <span id="project-sync-label">Memory: idle</span>
+            <span class="project-sync-text">
+              <span id="project-sync-label">Memory: idle</span>
+              <span id="project-sync-sublabel" class="project-sync-sublabel"></span>
+            </span>
           </div>
           <button class="project-detail-action-btn" id="project-action-sync" onclick="projectSyncNow()" title="Run a memory sync now">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
@@ -318,10 +321,34 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           <!-- Admin-only — refreshProjectSyncStatus reveals it for admins on
                every project open. Hidden by default to prevent a flash for
                non-admins between view-mount and first refresh. -->
+          <button class="project-detail-action-btn" id="project-action-full-resync" onclick="projectFullResync()" title="Wipe all memory and re-sync from scratch" style="display:none;color:var(--red,#d33)">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3"/></svg>
+            Full Resync
+          </button>
           <button class="project-detail-action-btn" id="project-action-kg" onclick="projectOpenKnowledgeGraph()" title="Open knowledge graph drilldown" style="display:none">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="7.7" y1="7.5" x2="10.3" y2="16.5"/><line x1="16.3" y1="7.5" x2="13.7" y2="16.5"/><line x1="8.5" y1="6" x2="15.5" y2="6"/></svg>
             Knowledge graph
           </button>
+          <button class="project-detail-action-btn" id="project-action-sync-history" onclick="projectSyncHistory()" title="View sync run history" style="display:none">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            History
+          </button>
+        </div>
+      </div>
+
+      <!-- Sync history modal -->
+      <div id="sync-history-modal" style="display:none;position:fixed;inset:0;z-index:9000;background:var(--modal-overlay);align-items:center;justify-content:center">
+        <div style="background:var(--modal-bg);border:1px solid var(--border-200);border-radius:10px;width:min(760px,96vw);max-height:85vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15)">
+          <div style="display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid var(--border-200);gap:10px">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span style="font-weight:600;font-size:.9rem">Sync Run History</span>
+            <span id="sync-history-project-name" style="font-size:.8rem;color:var(--text-400);flex:1"></span>
+            <button onclick="closeSyncHistoryModal()" style="background:none;border:none;color:var(--text-400);cursor:pointer;font-size:1.2rem;padding:2px 6px">&times;</button>
+          </div>
+          <div id="sync-history-body" style="overflow-y:auto;padding:14px 18px;flex:1;min-height:0">
+            <div id="sync-history-loading" style="color:var(--text-400);font-size:.85rem">Loading…</div>
+            <div id="sync-history-list"></div>
+          </div>
         </div>
       </div>
       <div class="project-detail-composer">

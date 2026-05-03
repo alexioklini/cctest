@@ -273,17 +273,23 @@ class MemPalaceClient:
         return self._tool_add_drawer(**kwargs)
 
     def purge_by_prefix(self, wing: str, prefix: str) -> int:
-        """Delete drawers + closets whose source_file starts with prefix.
-        Returns count of deleted drawers."""
+        """Delete drawers + closets in `wing` whose source_file starts with
+        prefix. Pass prefix='' to wipe the entire wing. Returns count deleted.
+        """
         self._refresh()
         if not self._ready or not self._get_collection:
             return 0
         pp = self._palace_path
         if not pp or not os.path.isdir(pp):
             return 0
+        deleted = 0
         try:
-            col = self._get_collection(pp, wing=wing, create=False)
-            results = col.get(where={"source_file": {"$gte": prefix}})
+            # get_collection takes (palace_path, collection_name, create) —
+            # no wing kwarg. Wing filtering must be done via metadata query.
+            col = self._get_collection(pp, create=False)
+            if col is None:
+                return 0
+            results = col.get(where={"wing": wing}, include=["metadatas"])
             ids_to_delete = [
                 r_id for r_id, meta in zip(
                     results.get("ids", []),
@@ -292,9 +298,27 @@ class MemPalaceClient:
             ]
             if ids_to_delete:
                 col.delete(ids=ids_to_delete)
-            return len(ids_to_delete)
-        except Exception:
-            return 0
+            deleted = len(ids_to_delete)
+        except Exception as e:
+            print(f"[MemPalaceClient] purge_by_prefix drawers failed "
+                  f"wing={wing}: {type(e).__name__}: {e}", flush=True)
+        # Also purge closets for this wing+prefix.
+        try:
+            ccol = self._get_closets_collection(pp, create=False)
+            if ccol is not None:
+                cres = ccol.get(where={"wing": wing}, include=["metadatas"])
+                cids = [
+                    cid for cid, meta in zip(
+                        cres.get("ids", []),
+                        cres.get("metadatas", []))
+                    if (meta or {}).get("source_file", "").startswith(prefix)
+                ]
+                if cids:
+                    ccol.delete(ids=cids)
+        except Exception as e:
+            print(f"[MemPalaceClient] purge_by_prefix closets failed "
+                  f"wing={wing}: {type(e).__name__}: {e}", flush=True)
+        return deleted
 
     def get_collection(self, wing: str = "", create: bool = False):
         self._refresh()
@@ -1626,14 +1650,33 @@ def _wake_warmup_keeper():
 #   live snapshot the daemon updates so /sync-status reflects in-flight work.
 _project_sync_wakeup = threading.Event()
 _project_sync_requests: set[tuple[str, str]] = set()
+_project_sync_request_triggers: dict[tuple[str, str], str] = {}
 _project_sync_live: dict[tuple[str, str], dict] = {}
 _project_sync_lock = threading.Lock()
+# project_id strings of projects the user wants to cancel mid-sync.
+_project_sync_cancel: set[str] = set()
 
 
-def _project_sync_request(agent_id: str, project_name: str):
+def _project_sync_request(agent_id: str, project_name: str,
+                          triggered_by: str = "manual"):
     with _project_sync_lock:
         _project_sync_requests.add((agent_id, project_name))
+        _project_sync_request_triggers[(agent_id, project_name)] = triggered_by
     _project_sync_wakeup.set()
+
+
+def _project_sync_cancel_request(project_id: str):
+    with _project_sync_lock:
+        _project_sync_cancel.add(project_id)
+
+
+def _project_sync_cancel_check(project_id: str) -> bool:
+    """Return True and consume the cancel signal if one is pending."""
+    with _project_sync_lock:
+        if project_id in _project_sync_cancel:
+            _project_sync_cancel.discard(project_id)
+            return True
+    return False
 
 
 def _project_sync_live_status(agent_id: str, project_name: str) -> dict:
@@ -2516,6 +2559,10 @@ class BrainAgentHandler(
             self._handle_project_input_folders_list(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/sync-status"):
             self._handle_project_sync_status(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/sync-runs"):
+            self._handle_project_sync_runs(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/sync-runs/" in path:
+            self._handle_project_sync_run_detail(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path:
             self._handle_project_get(path)
         elif path.startswith("/v1/agents/") and path.endswith("/projects"):
@@ -2762,6 +2809,10 @@ class BrainAgentHandler(
             self._handle_project_input_folders_update(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/sync-now"):
             self._handle_project_sync_now(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/full-resync"):
+            self._handle_project_full_resync(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/sync-cancel"):
+            self._handle_project_sync_cancel(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/ingest" in path:
             self._handle_project_ingest(path)
         elif path.startswith("/v1/agents/") and path.endswith("/projects"):
@@ -5095,6 +5146,7 @@ def main():
     # in the worst-case half hour. Overridable via mempalace.project_sync.
     # interval_seconds.
     def _project_sync_loop():
+        from engine import sync_log as _sync_log
         mcfg = engine._load_mempalace_config()
         if not mcfg.get("enabled", True):
             print("[project-sync] disabled (mempalace.enabled = false)", flush=True)
@@ -5185,7 +5237,28 @@ def main():
                 chunk_mode = "source_file"
             source_chunk_chars = int(kg_cfg.get("source_chunk_chars", 3500))
             try:
-                item_set_fn(item_kind, item_id, kg_state="extracting")
+                import time as _time
+                _kg_started_at = _time.time()
+                _kg_chunks_done = [0]  # mutable cell for closure
+                _kg_chunks_total = [0]
+
+                def _kg_progress_cb(stage, **info):
+                    if stage == "extracting":
+                        pass  # chunk started — total not yet known here
+                    elif stage in ("processed", "error"):
+                        _kg_chunks_done[0] += 1
+                        item_set_fn(item_kind, item_id,
+                            kg_chunks_done=_kg_chunks_done[0],
+                            kg_chunks_total=_kg_chunks_total[0],
+                            kg_started_at=_kg_started_at,
+                            kg_triples_live=info.get("running_total", 0))
+
+                item_set_fn(item_kind, item_id,
+                    kg_state="extracting",
+                    kg_chunks_done=0,
+                    kg_chunks_total=0,
+                    kg_started_at=_kg_started_at,
+                    kg_triples_live=0)
                 res = kg_extract.run_kg_post_pass(
                     palace_path=palace_path, wing=wing,
                     source_prefix=resolved_prefix,
@@ -5198,7 +5271,9 @@ def main():
                     chunking_mode=chunk_mode,
                     source_chunk_chars=source_chunk_chars,
                     log_prefix="[project-sync.kg]",
+                    progress_cb=_kg_progress_cb,
                 )
+                _kg_chunks_total[0] = res.drawers_processed + res.drawers_skipped
                 # Cumulative triple count for this source prefix, queried
                 # straight from the KG. `res.triples_extracted` is the per-
                 # cycle delta — fine to log, wrong for the UI's "M triples"
@@ -5284,9 +5359,11 @@ def main():
                 if isinstance(out, dict) and out.get("error"):
                     print(f"[project-sync.closet] {wing}: error="
                           f"{out['error']}", flush=True)
+                return out if isinstance(out, dict) else {}
             except Exception as e:
                 print(f"[project-sync.closet] {wing}: failed: "
                       f"{type(e).__name__}: {e}", flush=True)
+                return {"error": f"{type(e).__name__}: {e}"}
 
         def _count_wing_drawers_by_source(wing: str, source_prefix: str) -> int:
             """Authoritative count of drawers in `wing` whose source_file
@@ -5375,7 +5452,9 @@ def main():
                 # Drain manual "Sync now" requests first.
                 with _project_sync_lock:
                     requested = set(_project_sync_requests)
+                    req_triggers = dict(_project_sync_request_triggers)
                     _project_sync_requests.clear()
+                    _project_sync_request_triggers.clear()
 
                 # Enumerate all (agent, project) pairs by walking AGENTS_DIR.
                 pairs = []
@@ -5407,6 +5486,9 @@ def main():
                     # the user is explicitly asking, so skipping their non-auto
                     # folders would be confusing.
                     is_manual = (agent_id, proj_name) in requested
+                    _trigger = req_triggers.get(
+                        (agent_id, proj_name),
+                        "manual" if is_manual else "scheduled")
                     project = engine.ProjectManager.get_project(agent_id, proj_name)
                     if not project:
                         continue
@@ -5424,10 +5506,12 @@ def main():
                         continue
                     wing = _project_wing(project_id)
 
+                    _run_id = _sync_log.start_run(
+                        chats_db_path, project_id, triggered_by=_trigger)
                     started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
                     _project_sync_set_live(agent_id, proj_name,
                         state="syncing", started_at=started_at,
-                        files_filed=0, error="")
+                        files_filed=0, error="", run_id=_run_id)
                     files_filed = 0
                     folders_seen = 0
                     last_error = ""
@@ -5453,6 +5537,8 @@ def main():
                     # with a path that is no longer an input folder gets purged.
                     # This catches manual project.json edits, renames, and
                     # moves that bypass the API handler's built-in purge.
+                    _stale_drawers_purged = 0
+                    _stale_closets_purged = 0
                     try:
                         _current_folder_prefixes = set()
                         for _fe in (project.get("input_folders") or []):
@@ -5491,9 +5577,10 @@ def main():
                                     ]
                                     if _stale_ids:
                                         _col_sp.delete(ids=_stale_ids)
+                                        _stale_drawers_purged = len(_stale_ids)
                                         print(f"[project-sync] stale-path purge "
                                               f"{agent_id}/{proj_name}: "
-                                              f"deleted {len(_stale_ids)} drawer(s)",
+                                              f"deleted {_stale_drawers_purged} drawer(s)",
                                               flush=True)
                                 _ccol_sp = _get_ccol_sp(_palace_sp, create=False)
                                 if _ccol_sp:
@@ -5509,14 +5596,21 @@ def main():
                                     ]
                                     if _stale_cids:
                                         _ccol_sp.delete(ids=_stale_cids)
+                                        _stale_closets_purged = len(_stale_cids)
                                         print(f"[project-sync] stale-path purge "
                                               f"{agent_id}/{proj_name}: "
-                                              f"deleted {len(_stale_cids)} closet(s)",
+                                              f"deleted {_stale_closets_purged} closet(s)",
                                               flush=True)
                     except Exception as _e_sp:
                         print(f"[project-sync] stale-path purge error "
                               f"{agent_id}/{proj_name}: "
                               f"{type(_e_sp).__name__}: {_e_sp}", flush=True)
+                    if _run_id and (_stale_drawers_purged or _stale_closets_purged):
+                        _sync_log.step_update(
+                            chats_db_path, _run_id, "stale_path_purge",
+                            drawers_deleted=_stale_drawers_purged,
+                            closets_deleted=_stale_closets_purged,
+                            at=time.time())
 
                     # Pre-scan to estimate cycle work for live progress / ETA.
                     # Cheap: just os.walk the ingested + input folders and count
@@ -5623,21 +5717,47 @@ def main():
                             # but covering this branch makes the daemon
                             # robust to direct file drops here too.
                             if doc_convert is not None:
+                                if _run_id:
+                                    _sync_log.step_start(
+                                        chats_db_path, _run_id, "doc_convert",
+                                        folder=ingested_dir)
                                 try:
-                                    doc_convert.sweep_stale(
+                                    _stale_cnt = doc_convert.sweep_stale(
                                         ingested_dir,
                                         log_prefix="[project-sync.conv]")
-                                    doc_convert.convert_folder(
+                                    _conv_res = doc_convert.convert_folder(
                                         ingested_dir,
                                         log_prefix="[project-sync.conv]",
                                         use_markitdown=_conv_use_markitdown())
+                                    if _run_id:
+                                        _sync_log.step_finish(
+                                            chats_db_path, _run_id,
+                                            "doc_convert",
+                                            folder=ingested_dir,
+                                            converted=_conv_res.converted,
+                                            unchanged=_conv_res.skipped_unchanged,
+                                            failed=_conv_res.failed,
+                                            stale_removed=_stale_cnt,
+                                            seen_total=_conv_res.seen_total,
+                                            elapsed_s=round(_conv_res.elapsed_s, 2))
                                 except Exception as e:
                                     print(f"[project-sync.conv] "
                                           f"{ingested_dir}: "
                                           f"{type(e).__name__}: {e}",
                                           flush=True)
+                                    if _run_id:
+                                        _sync_log.step_finish(
+                                            chats_db_path, _run_id,
+                                            "doc_convert",
+                                            folder=ingested_dir,
+                                            errors=[str(e)])
                             ingest_filed = 0
                             ingest_err = ""
+                            if _run_id:
+                                _sync_log.step_start(
+                                    chats_db_path, _run_id, "indexing",
+                                    folder=ingested_dir)
+                            _index_t0 = time.time()
                             buf = io.StringIO()
                             try:
                                 with contextlib.redirect_stdout(buf):
@@ -5664,6 +5784,13 @@ def main():
                                 last_error = ingest_err
                                 print(f"[project-sync] {agent_id}/{proj_name} "
                                       f"ingested: {ingest_err}", flush=True)
+                            if _run_id:
+                                _sync_log.step_finish(
+                                    chats_db_path, _run_id, "indexing",
+                                    folder=ingested_dir,
+                                    drawers_created=ingest_filed,
+                                    elapsed_s=round(time.time() - _index_t0, 2),
+                                    errors=[ingest_err] if ingest_err else [])
                             files_filed += ingest_filed
                             finished_at_attach = datetime.datetime.now(
                                 datetime.timezone.utc).isoformat()
@@ -5697,6 +5824,18 @@ def main():
                                         ingested_dir, f"ingest-{h}-"),
                                     item_set_fn=_set_item,
                                     item_kind="attachment", item_id=h)
+                                if _run_id:
+                                    _it_a = item_states.get(
+                                        _item_key("attachment", h)) or {}
+                                    _sync_log.step_update(
+                                        chats_db_path, _run_id, "kg",
+                                        folder=ingested_dir,
+                                        attachment_hash=h,
+                                        triples_this_cycle=_it_a.get("triples_last_cycle", 0),
+                                        triples_total=_it_a.get("triples_extracted", 0),
+                                        drawers_processed=_it_a.get("kg_drawers_processed", 0),
+                                        elapsed_s=_it_a.get("kg_elapsed_s", 0),
+                                        error=_it_a.get("kg_last_error", ""))
                         else:
                             for h in hashes:
                                 _set_item("attachment", h,
@@ -5707,6 +5846,12 @@ def main():
                     # 2. User-specified input folders — each entry has its own
                     #    mempalace.yaml, scanned recursively or top-level only.
                     for entry in (project.get("input_folders") or []):
+                        # Cancel check between folders.
+                        if _project_sync_cancel_check(project_id):
+                            if _run_id:
+                                _sync_log.cancel_run(chats_db_path, _run_id)
+                            last_error = "cancelled"
+                            break
                         folders_seen += 1
                         fpath = entry.get("path", "")
                         if not fpath:
@@ -5773,15 +5918,38 @@ def main():
                         # errors are logged and the rest of the folder still
                         # mines.
                         if doc_convert is not None:
+                            if _run_id:
+                                _sync_log.step_start(
+                                    chats_db_path, _run_id, "doc_convert",
+                                    folder=fpath)
                             try:
-                                doc_convert.sweep_stale(
+                                _stale_cnt_f = doc_convert.sweep_stale(
                                     fpath, log_prefix="[project-sync.conv]")
-                                doc_convert.convert_folder(
+                                _conv_res_f = doc_convert.convert_folder(
                                     fpath, log_prefix="[project-sync.conv]",
                                     use_markitdown=_conv_use_markitdown())
+                                if _run_id:
+                                    _sync_log.step_finish(
+                                        chats_db_path, _run_id, "doc_convert",
+                                        folder=fpath,
+                                        converted=_conv_res_f.converted,
+                                        unchanged=_conv_res_f.skipped_unchanged,
+                                        failed=_conv_res_f.failed,
+                                        stale_removed=_stale_cnt_f,
+                                        seen_total=_conv_res_f.seen_total,
+                                        elapsed_s=round(_conv_res_f.elapsed_s, 2))
                             except Exception as e:
                                 print(f"[project-sync.conv] {fpath}: "
                                       f"{type(e).__name__}: {e}", flush=True)
+                                if _run_id:
+                                    _sync_log.step_finish(
+                                        chats_db_path, _run_id, "doc_convert",
+                                        folder=fpath, errors=[str(e)])
+                        if _run_id:
+                            _sync_log.step_start(
+                                chats_db_path, _run_id, "indexing",
+                                folder=fpath)
+                        _index_t0_f = time.time()
                         buf = io.StringIO()
                         try:
                             with contextlib.redirect_stdout(buf):
@@ -5808,6 +5976,13 @@ def main():
                             last_error = folder_err
                             print(f"[project-sync] {agent_id}/{proj_name} "
                                   f"{fpath}: {folder_err}", flush=True)
+                        if _run_id:
+                            _sync_log.step_finish(
+                                chats_db_path, _run_id, "indexing",
+                                folder=fpath,
+                                drawers_created=folder_filed,
+                                elapsed_s=round(time.time() - _index_t0_f, 2),
+                                errors=[folder_err] if folder_err else [])
                         files_filed += folder_filed
                         # Authoritative cumulative drawer count: source_file
                         # in the wing always startswith the absolute folder
@@ -5832,15 +6007,40 @@ def main():
                                 wing=wing, source_prefix=fpath,
                                 item_set_fn=_set_item,
                                 item_kind="folder", item_id=fpath)
+                            if _run_id:
+                                _it = item_states.get(_item_key("folder", fpath)) or {}
+                                _sync_log.step_update(
+                                    chats_db_path, _run_id, "kg",
+                                    folder=fpath,
+                                    triples_this_cycle=_it.get("triples_last_cycle", 0),
+                                    triples_total=_it.get("triples_extracted", 0),
+                                    drawers_processed=_it.get("kg_drawers_processed", 0),
+                                    elapsed_s=_it.get("kg_elapsed_s", 0),
+                                    error=_it.get("kg_last_error", ""))
 
                     # Optional: regenerate closets via LLM for richer ranking.
                     # Runs once per project cycle after all folders are mined
                     # and KG-extracted. Opt-in via mempalace.kg.regenerate_closets;
                     # reuses the KG model so a single GUI choice covers both.
-                    _run_closet_regen_for(wing)
+                    if last_error != "cancelled":
+                        if _run_id:
+                            _sync_log.step_start(
+                                chats_db_path, _run_id, "closet_rerank")
+                        _closet_out = _run_closet_regen_for(wing) or {}
+                        if _run_id:
+                            _sync_log.step_finish(
+                                chats_db_path, _run_id, "closet_rerank",
+                                sources_seen=_closet_out.get("sources_seen", 0),
+                                sources_stale=_closet_out.get("sources_stale", 0),
+                                regen_triggered=_closet_out.get("regen_triggered", False),
+                                elapsed_s=round(_closet_out.get("elapsed_s", 0), 2),
+                                errors=[_closet_out["error"]]
+                                    if _closet_out.get("error") else [])
 
                     finished_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                    final_state = "error" if last_error and files_filed == 0 else "idle"
+                    final_state = ("cancelled" if last_error == "cancelled"
+                                   else "error" if last_error and files_filed == 0
+                                   else "idle")
                     # Authoritative total: query MemPalace for everything in
                     # the project's wing. Survives dedup-only cycles unchanged.
                     total_indexed = _count_wing_drawers_total(wing)
@@ -5887,6 +6087,7 @@ def main():
                         "state": final_state,
                         "last_run_started": started_at,
                         "last_run_finished": finished_at,
+                        "last_triggered_by": _trigger,
                         "last_files_filed": files_filed,  # delta this cycle
                         "total_indexed": total_indexed,    # cumulative drawers
                         "total_files": total_files,        # cumulative files
@@ -5903,6 +6104,20 @@ def main():
                     except Exception as e:
                         print(f"[project-sync] persist failed {agent_id}/{proj_name}: "
                               f"{type(e).__name__}: {e}", flush=True)
+                    if _run_id and final_state != "cancelled":
+                        _sync_log.finish_run(chats_db_path, _run_id, final_state, {
+                            "total_files": total_files,
+                            "total_indexed": total_indexed,
+                            "total_triples": total_triples,
+                            "files_filed_this_cycle": files_filed,
+                            "folders_seen": folders_seen,
+                            "final_state": final_state,
+                            "elapsed_s": round(
+                                time.time() - (
+                                    _sync_log.get_run(chats_db_path, _run_id) or {}
+                                ).get("started_at", time.time()), 1),
+                            "errors": [last_error] if last_error else [],
+                        })
                     _project_sync_clear_live(agent_id, proj_name)
                     cycle_filed += files_filed
 
@@ -5911,6 +6126,12 @@ def main():
             except Exception as e:
                 print(f"[project-sync] cycle error: {type(e).__name__}: {e}", flush=True)
 
+            # If a new request arrived mid-cycle it's already in the set.
+            # Skip the sleep entirely so it runs immediately.
+            with _project_sync_lock:
+                has_pending = bool(_project_sync_requests)
+            if has_pending:
+                continue
             # Wait for the next interval, but wake up on demand. Default
             # is 6 hours (21600s) — incremental layers (doc_convert,
             # mp_miner, kg_extract, closet_regen) all cursor-skip on
