@@ -1542,6 +1542,7 @@ class Session:
                 self.user_id = info.get("user_id", "") or ""
                 self.save_to_memory = bool(info.get("save_to_memory", 0))
                 self.caveman_mode = int(info.get("caveman_mode", 0) or 0)
+                self.workflow_run_id = info.get("workflow_run_id", "") or ""
 
 
 class SessionManager:
