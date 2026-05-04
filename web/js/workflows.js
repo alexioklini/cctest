@@ -129,8 +129,28 @@ function wfHistoryRowHtml(r) {
 
 async function wfShowHistoryDetail(executionId) {
   try {
+    // Active executions live in-memory at /v1/workflows/executions/<id> with
+    // fresh steps; the /history row only finalises on completion. Try the
+    // live endpoint first; if the execution is still active, attach to it.
+    let liveData = null;
+    try {
+      const r = await API.get(`/v1/workflows/executions/${executionId}`);
+      if (r && !r.error) liveData = r;
+    } catch (_) { /* not live (404) — fall through to history */ }
+    if (liveData && (liveData.status === 'running' || liveData.status === 'pending' || liveData.status === 'waiting_approval')) {
+      // Active run — reattach to it: live polling + working Cancel button.
+      document.getElementById('wf-run-title').textContent = `Running: ${liveData.workflow_name || executionId}`;
+      document.getElementById('wf-run-steps').innerHTML = '';
+      document.getElementById('wf-run-prompt').classList.add('hidden');
+      document.getElementById('wf-run-result').classList.add('hidden');
+      document.getElementById('wf-run-cancel-btn').classList.remove('hidden');
+      wfState.currentExecId = executionId;
+      document.getElementById('wf-run-modal').classList.remove('hidden');
+      wfStartPolling();
+      return;
+    }
     const data = await API.get(`/v1/workflows/history/${executionId}`);
-    // Reuse the run modal for read-only viewing
+    // Terminal status (completed / failed / cancelled) — read-only history view.
     document.getElementById('wf-run-title').textContent = `History: ${data.workflow_name} (${executionId})`;
     document.getElementById('wf-run-status').textContent = `Status: ${data.status}` +
       (data.error ? ` — ${data.error}` : '') +
