@@ -1069,6 +1069,16 @@ function renderMessages() {
 
   if (!chat._collapsedTurns) chat._collapsedTurns = new Set();
 
+  // Active turn always expanded: while a stream is running, the most-
+  // recent turn (= the one receiving deltas) gets dropped from the
+  // collapsed set on every render. The user can collapse it mid-stream
+  // to peek elsewhere, but the very next delta re-opens it. Old
+  // completed turns keep their user-set collapsed state untouched.
+  if (chat.streaming) {
+    const _activeTurn = currentTurnNum(chat);
+    if (_activeTurn > 0) chat._collapsedTurns.delete(_activeTurn);
+  }
+
   // Group flat messages[] into turns. A turn opens at every user/human role
   // and closes at the next one. Pre-user messages (rare) become turn 0.
   const turns = []; // { turnNum, userIdx, userMsg, memberIdxs: [...] }
