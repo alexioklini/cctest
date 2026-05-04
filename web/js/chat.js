@@ -1370,6 +1370,19 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
   const isActivity = (m) => m.role === 'thinking' || m.role === 'tool_call' || m.role === 'tool_result';
   const isResponse = (m) => m.role === 'assistant' && (typeof m.content === 'string' ? m.content.trim() : '');
 
+  // The user message that opened this turn lives at memberIdxs[0] (per the
+  // grouping in renderMessages — every user/human message starts a new turn
+  // and becomes its memberIdxs[0]). The collapsed badge shows a one-line
+  // preview; when expanded we render the full message at the top of the
+  // body so the question stays visible above its answer.
+  let userMsgHtml = '';
+  if (memberIdxs.length) {
+    const firstMsg = messages[memberIdxs[0]];
+    if (firstMsg && (firstMsg.role === 'user' || firstMsg.role === 'human')) {
+      userMsgHtml = renderMessage(firstMsg, memberIdxs[0]);
+    }
+  }
+
   // Find the last assistant response with content in this turn.
   let lastResponseMemberPos = -1;
   for (let i = memberIdxs.length - 1; i >= 0; i--) {
@@ -1446,7 +1459,7 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
 
   // No activity at all — render flat
   if (thinkCount === 0 && toolCount === 0 && workerCount === 0) {
-    return activityHtml + responseHtml;
+    return userMsgHtml + activityHtml + responseHtml;
   }
 
   // Determine open/closed state
@@ -1466,6 +1479,7 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
 
   if (lastResponseMemberPos === -1) {
     return `
+      ${userMsgHtml}
       <details class="activity-summary"${isOpen ? ' open' : ''}>
         ${summaryEl}
         <div class="activity-summary-body">${activityHtml}</div>
@@ -1474,6 +1488,7 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
   }
 
   return `
+    ${userMsgHtml}
     <details class="activity-summary"${isOpen ? ' open' : ''}>
       ${summaryEl}
       <div class="activity-summary-body">${activityHtml}</div>
