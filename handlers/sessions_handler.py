@@ -58,6 +58,7 @@ class SessionsHandlerMixin:
             resp["caveman_mode"] = session.caveman_mode
             resp["save_to_memory"] = int(getattr(session, "save_to_memory", 0) or 0)
             resp["project"] = session.project or ""
+            resp["workflow_run_id"] = getattr(session, "workflow_run_id", "") or ""
         else:
             info = ChatDB.get_session_info(sid)
             if info:
@@ -66,6 +67,7 @@ class SessionsHandlerMixin:
                 resp["caveman_mode"] = int(info.get("caveman_mode", 0) or 0)
                 resp["save_to_memory"] = int(info.get("save_to_memory", 0) or 0)
                 resp["project"] = info.get("project", "") or ""
+                resp["workflow_run_id"] = info.get("workflow_run_id", "") or ""
         self._send_json(resp)
 
     def _handle_next_prompt_suggestion(self, path):

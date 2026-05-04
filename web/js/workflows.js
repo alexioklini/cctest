@@ -13,16 +13,6 @@ let wfState = {
   list: [],
   tools: [],            // tool palette
   currentName: null,    // editor: workflow currently being edited (null = new)
-  currentExecId: null,  // currently-open inline detail view
-  pollTimer: null,
-  // Inline detail view state. Populated by wfOpenDetail(); torn down by
-  // wfCloseDetail(). The follow-up session is created lazily on the first
-  // wfDetailSend() — read-only browsing of a run leaves no DB rows behind.
-  detailRun: null,            // last fetched run data (live or persisted)
-  detailFollowups: [],        // [{role:'user'|'assistant', text, streaming?}]
-  detailFollowupSid: null,    // hidden chat session bound to this run
-  detailFollowupStreaming: false,
-  detailPrevSubtab: 'list',   // restore on Back
 };
 
 /* ─── List view ─── */
@@ -798,148 +788,201 @@ async function wfRun(name) {
   }
 }
 
-/* ─── Inline workflow-run detail view ─── */
+/* ─── Workflow-run open: route through the regular chat view ───
+   The detail view is no longer a separate surface — the chat view itself
+   becomes the workflow-run view when the active chat is bound to a
+   workflow_run_id. Run-specific UI lives in the workflow-run-banner that
+   sits above #messages-container; the composer is the regular chat
+   composer (so file-attach, thinking levels, model selection, etc. all
+   work identically to a normal chat). */
 
 const WF_TERMINAL_STATUSES = new Set(['completed', 'succeeded', 'failed', 'cancelled']);
 const WF_LIVE_STATUSES = new Set(['running', 'pending', 'waiting_approval']);
 
+// Shared state for the active workflow-run banner. Reset whenever the
+// active chat is no longer workflow-bound. Polling timer fires while the
+// run is live so the banner reflects fresh steps + terminal transitions.
+const wfBanner = {
+  execId: null,        // active workflow_run_id
+  data: null,          // last fetched run data (live or persisted)
+  pollTimer: null,
+  traceCollapsed: true,// run-trace section default-collapsed
+  filesCollapsed: false,
+};
+
 async function wfOpenDetail(executionId) {
-  // Remember which subtab the user came from so Back restores it. If we're
-  // already in a different detail view, tear it down cleanly first.
-  if (wfState.currentExecId && wfState.currentExecId !== executionId) {
-    wfStopPolling();
-    wfState.detailFollowups = [];
-    wfState.detailFollowupSid = null;
-    wfState.detailFollowupStreaming = false;
-  }
-  if (!document.getElementById('wf-detail').classList.contains('hidden')) {
-    // Already in a detail view — keep prevSubtab intact.
-  } else {
-    const activeTab = document.querySelector('.wf-subtab.active');
-    wfState.detailPrevSubtab = (activeTab && activeTab.dataset.subtab) || 'list';
-  }
-  wfState.currentExecId = executionId;
-  // Hide the list/runs surface, show the detail surface.
-  const subtabs = document.getElementById('wf-subtabs');
-  if (subtabs) subtabs.classList.add('hidden');
-  document.getElementById('wf-list').classList.add('hidden');
-  document.getElementById('wf-runs').classList.add('hidden');
-  const det = document.getElementById('wf-detail');
-  det.classList.remove('hidden');
-  // Reset transient view state
-  document.getElementById('wf-detail-title').textContent = 'Loading…';
-  document.getElementById('wf-detail-meta').textContent = '';
-  document.getElementById('wf-detail-turns').innerHTML = '<div class="wf-hist-loading">Loading…</div>';
-  document.getElementById('wf-detail-prompt').classList.add('hidden');
-  document.getElementById('wf-detail-cancel-btn').classList.add('hidden');
-  document.getElementById('wf-detail-save-btn').classList.add('hidden');
-  wfDetailUpdateComposerEnabled(false, 'Loading run…');
-  // Try the live endpoint first (fresh steps for an in-flight run); fall
-  // back to the persisted /history row when the execution isn't live.
-  let initial = null;
+  if (!executionId) return;
+  // Resolve (or create) the chat session bound to this run for the current
+  // user. This is the single source of truth — re-opening the same run
+  // hands back the same session so the conversation survives across
+  // workflow visits.
+  let info;
   try {
-    const r = await API.get(`/v1/workflows/executions/${executionId}`);
-    if (r && !r.error) initial = r;
-  } catch (_) { /* not live → fall through */ }
-  if (!initial) {
-    try {
-      initial = await API.get(`/v1/workflows/history/${executionId}`);
-    } catch (e) {
-      document.getElementById('wf-detail-turns').innerHTML =
-        `<div class="wf-hist-error">Could not load: ${escapeHtml(e.message)}</div>`;
+    // Pick a sensible default model: prefer the active chat's model so
+    // the user gets the model they've been using; fall back to the run's
+    // own model field; the server has a final fallback to first-enabled.
+    const model = (state.activeChat && state.activeChat.model) || '';
+    info = await API.post(`/v1/workflows/history/${encodeURIComponent(executionId)}/session`,
+                          model ? { model } : {});
+    if (info && info.error) { alert('Open failed: ' + info.error); return; }
+  } catch (e) {
+    alert('Open failed: ' + e.message);
+    return;
+  }
+  // Open the bound session in the regular chat view. The session-loading
+  // pipeline restores workflow_run_id onto the chat object (see
+  // sessions.js openSession), and the banner renderer keys off that.
+  if (typeof openSession !== 'function') {
+    alert('Internal error: openSession not available');
+    return;
+  }
+  const agentId = WF_AGENT;
+  navigateTo('chat');
+  await openSession(info.session_id, agentId);
+  // After openSession finishes, the banner should be primed. Fire the
+  // initial render explicitly (covers the case where openSession ran
+  // before workflow_run_id had reached the chat object).
+  wfBannerSetExec(executionId);
+}
+
+function wfBannerSetExec(execId) {
+  // Stop any prior polling — switching runs invalidates the timer.
+  wfBannerStopPolling();
+  wfBanner.execId = execId || null;
+  wfBanner.data = null;
+  if (!execId) {
+    wfBannerHide();
+    return;
+  }
+  wfBannerFetch(/*initial=*/true);
+}
+
+async function wfBannerFetch(initial) {
+  const id = wfBanner.execId;
+  if (!id) return;
+  // Live endpoint first (fresh steps); fall back to history row.
+  let data = null;
+  try {
+    const r = await API.get(`/v1/workflows/executions/${id}`);
+    if (r && !r.error) data = r;
+  } catch (_) {}
+  if (!data) {
+    try { data = await API.get(`/v1/workflows/history/${id}`); }
+    catch (e) {
+      const banner = document.getElementById('workflow-run-banner');
+      if (banner) {
+        banner.classList.remove('hidden');
+        banner.innerHTML = `<div class="workflow-run-banner-error">Could not load run: ${escapeHtml(e.message)}</div>`;
+      }
       return;
     }
   }
-  wfState.detailRun = initial;
-  wfRenderDetail(initial);
-  if (WF_LIVE_STATUSES.has(initial.status)) {
-    wfStartPolling();
+  wfBanner.data = data;
+  renderWorkflowBanner();
+  if (initial && data && WF_LIVE_STATUSES.has(data.status || '')) {
+    wfBannerStartPolling();
+  } else if (data && WF_TERMINAL_STATUSES.has(data.status || '')) {
+    // Re-fetch the persisted /history row once so the banner shows the
+    // full final trace + return value instead of the truncated live data.
+    try {
+      const persisted = await API.get(`/v1/workflows/history/${id}`);
+      if (persisted && !persisted.error) {
+        wfBanner.data = persisted;
+        renderWorkflowBanner();
+      }
+    } catch (_) {}
   }
 }
 
-function wfCloseDetail() {
-  wfStopPolling();
-  // Abort any in-flight follow-up stream so we don't leak text into the
-  // hidden view if the user re-opens it.
-  if (wfState.detailFollowupStreaming && API._abortController) {
-    try { API._abortController.abort(); } catch (_) {}
-  }
-  wfState.currentExecId = null;
-  wfState.detailRun = null;
-  wfState.detailFollowups = [];
-  wfState.detailFollowupSid = null;
-  wfState.detailFollowupStreaming = false;
-  document.getElementById('wf-detail').classList.add('hidden');
-  const subtabs = document.getElementById('wf-subtabs');
-  if (subtabs) subtabs.classList.remove('hidden');
-  // Restore previous subtab without forcing a reload of the run table.
-  const prev = wfState.detailPrevSubtab || 'list';
-  if (prev === 'runs') {
-    document.getElementById('wf-list').classList.add('hidden');
-    document.getElementById('wf-runs').classList.remove('hidden');
-    loadWorkflowRuns();
-  } else {
-    document.getElementById('wf-runs').classList.add('hidden');
-    document.getElementById('wf-list').classList.remove('hidden');
-    // Refresh open history tables so a freshly-finished run reflects its
-    // terminal status without the user clicking Refresh.
-    _wfRefreshOpenHistoryTables();
-  }
-  document.querySelectorAll('.wf-subtab').forEach(t => {
-    t.classList.toggle('active', t.dataset.subtab === prev);
-  });
+function wfBannerStartPolling() {
+  wfBannerStopPolling();
+  wfBanner.pollTimer = setInterval(() => wfBannerFetch(false), 800);
 }
 
-function wfStartPolling() {
-  wfStopPolling();
-  wfState.pollTimer = setInterval(wfPoll, 700);
-  wfPoll();
-}
-
-function wfStopPolling() {
-  if (wfState.pollTimer) {
-    clearInterval(wfState.pollTimer);
-    wfState.pollTimer = null;
+function wfBannerStopPolling() {
+  if (wfBanner.pollTimer) {
+    clearInterval(wfBanner.pollTimer);
+    wfBanner.pollTimer = null;
   }
 }
 
-async function wfPoll() {
-  const id = wfState.currentExecId;
-  if (!id) return;
-  try {
-    const data = await API.get(`/v1/workflows/executions/${id}`);
-    if (!data || data.error) return;
-    wfState.detailRun = data;
-    wfRenderDetail(data);
-    if (WF_TERMINAL_STATUSES.has(data.status)) {
-      wfStopPolling();
-      // Re-fetch from /history once so the persisted row (which has the
-      // full steps_json + return_value) matches what the chat-style view
-      // shows for completed runs.
-      try {
-        const persisted = await API.get(`/v1/workflows/history/${id}`);
-        if (persisted && !persisted.error) {
-          wfState.detailRun = persisted;
-          wfRenderDetail(persisted);
-        }
-      } catch (_) {}
-    }
-  } catch (e) { /* swallow transient */ }
+function wfBannerHide() {
+  const banner = document.getElementById('workflow-run-banner');
+  if (!banner) return;
+  banner.classList.add('hidden');
+  banner.innerHTML = '';
 }
 
-async function wfDetailCancel() {
-  const id = wfState.currentExecId;
+async function wfBannerCancel() {
+  const id = wfBanner.execId;
   if (!id) return;
   try {
     const r = await API.post(`/v1/workflows/executions/${id}/cancel`, {});
-    if (r && r.error) {
-      alert('Cancel failed: ' + r.error);
-      return;
+    if (r && r.error) { alert('Cancel failed: ' + r.error); return; }
+    wfBannerFetch(false);
+  } catch (e) { alert('Cancel error: ' + e.message); }
+}
+
+async function wfBannerSaveToChats() {
+  const id = wfBanner.execId;
+  const chat = state.activeChat;
+  const sid = chat && chat.sessionId;
+  if (!id || !sid) return;
+  // No "needs at least one follow-up" gate — the user may want to save
+  // a run for later reference even before asking anything.
+  try {
+    const r = await API.post(`/v1/workflows/history/${id}/promote-session/${sid}`, {});
+    if (r && r.error) { alert('Save failed: ' + r.error); return; }
+    // Seed the references panel from the input files the workflow read.
+    const refs = (r && r.references) || [];
+    if (refs.length) {
+      state.chatReferences = state.chatReferences || {};
+      const existing = state.chatReferences[sid] || { cited: [], searched: [] };
+      const seen = new Set(existing.searched.map(x => x.link));
+      for (const ref of refs) {
+        if (seen.has(ref.path)) continue;
+        existing.searched.push({
+          title: ref.name, link: ref.path, snippet: '',
+          domain: 'workflow run', favicon: '', kind: 'file',
+        });
+      }
+      state.chatReferences[sid] = existing;
     }
-    // Poll once to reflect the new status immediately.
-    wfPoll();
-  } catch (e) {
-    alert('Cancel error: ' + e.message);
+    // The chat is now visible in the sidebar (status flipped to active).
+    // Banner stays — the chat is forever recognizable as workflow-derived.
+    if (typeof loadSessions === 'function') loadSessions();
+    // Re-render the banner so the Save button switches to "Saved".
+    renderWorkflowBanner();
+  } catch (e) { alert('Save error: ' + e.message); }
+}
+
+function wfBannerBack() {
+  // Tear down banner state and route back to the workflows list.
+  wfBannerStopPolling();
+  wfBanner.execId = null;
+  wfBanner.data = null;
+  if (typeof navigateTo === 'function') navigateTo('workflows');
+}
+
+function wfBannerToggleTrace() {
+  wfBanner.traceCollapsed = !wfBanner.traceCollapsed;
+  renderWorkflowBanner();
+}
+function wfBannerToggleFiles() {
+  wfBanner.filesCollapsed = !wfBanner.filesCollapsed;
+  renderWorkflowBanner();
+}
+
+/* Lifecycle hook: chat.js calls maybeUpdateWorkflowBanner() whenever the
+   active chat changes (open / close / new chat) so the banner appears or
+   vanishes in step with state.activeChat. */
+function maybeUpdateWorkflowBanner() {
+  const chat = state.activeChat;
+  const wfId = chat && chat.workflowRunId ? chat.workflowRunId : '';
+  if (wfId && wfId !== wfBanner.execId) {
+    wfBannerSetExec(wfId);
+  } else if (!wfId && wfBanner.execId) {
+    wfBannerSetExec(null);
   }
 }
 
@@ -1384,84 +1427,66 @@ function wfDetailDownloadTranscript() {
   setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
 }
 
-/* ─── Detail rendering: chat-style turns ─── */
+/* ─── Banner: header + files + collapsed run trace + actions ─── */
 
-function wfRenderDetail(data) {
-  if (!data) return;
-  const status = data.status || 'unknown';
-  const isLive = WF_LIVE_STATUSES.has(status);
-  // Header
-  const titleEl = document.getElementById('wf-detail-title');
-  const metaEl = document.getElementById('wf-detail-meta');
-  const verb = isLive ? 'Running' : 'History';
-  titleEl.textContent = `${verb}: ${data.workflow_name || wfState.currentExecId}`;
-  const dur = data.duration_ms
-    ? (data.duration_ms < 1000 ? data.duration_ms + 'ms' : (data.duration_ms / 1000).toFixed(1) + 's')
-    : '';
-  const cost = data.cost_usd ? '$' + Number(data.cost_usd).toFixed(4) : '';
-  const metaBits = [
-    `<span class="wf-status-${status}">${escapeHtml(status)}</span>`,
-    data.user_display ? `by ${escapeHtml(data.user_display)}` : '',
-    data.trigger_kind ? `via ${escapeHtml(data.trigger_kind)}` : '',
-    dur,
-    cost,
-    `<span class="wf-detail-execid" title="${escapeHtml(wfState.currentExecId)}">${escapeHtml((wfState.currentExecId || '').slice(0, 8))}</span>`,
-  ].filter(Boolean);
-  metaEl.innerHTML = metaBits.join(' · ');
-  // Cancel + Save buttons
-  document.getElementById('wf-detail-cancel-btn').classList.toggle('hidden', !isLive);
-  // Save-to-chats only meaningful once a follow-up session exists. Without
-  // follow-ups there's nothing to save — just close the view.
-  document.getElementById('wf-detail-save-btn').classList.toggle('hidden', !wfState.detailFollowupSid);
-  // Composer is gated on terminal status — can't ask follow-ups about a
-  // run that's still mutating its trace mid-conversation.
-  if (isLive) {
-    wfDetailUpdateComposerEnabled(false, `Composer disabled while run is ${status}.`);
-  } else {
-    wfDetailUpdateComposerEnabled(true, '');
-  }
-  // Files panel (refs + artifacts)
-  const filesEl = document.getElementById('wf-detail-files');
-  if (filesEl) filesEl.innerHTML = wfDetailRenderFilesHtml(data);
-  // Chat-style turn rendering
-  const turnsEl = document.getElementById('wf-detail-turns');
-  turnsEl.innerHTML = wfDetailRenderTurnsHtml(data) + wfDetailRenderFollowupsHtml();
-  turnsEl.scrollTop = turnsEl.scrollHeight;
-  // Live ask-user-for-file prompt
-  const lastSteps = (data.steps || []).slice(-2);
-  const askStep = lastSteps.find(s =>
-    s.kind === 'call' && (s.detail || '').includes('ask_user_for_file('));
-  const completedAsk = lastSteps.some(s =>
-    s.kind === 'call_done' && (s.detail || '').includes('ask_user_for_file '));
-  const promptEl = document.getElementById('wf-detail-prompt');
-  if (askStep && !completedAsk && status === 'running') {
-    if (promptEl.classList.contains('hidden')) {
-      const { prompt, accept } = wfParseAskFileDetail(askStep.detail || '');
-      wfRenderUploadPrompt(promptEl, prompt, accept);
-      promptEl.classList.remove('hidden');
-    }
-  } else {
-    promptEl.classList.add('hidden');
-  }
+function _fmtTs(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString();
+  } catch (_) { return iso; }
 }
 
-function wfDetailRenderTurnsHtml(data) {
-  // Render the workflow source as a collapsible "system" turn at top, then
-  // each step as its own bubble. Tool calls + their result are paired; bare
-  // setup steps and engine bookkeeping become smaller dim rows.
-  const out = [];
+function _fmtDuration(ms) {
+  if (!ms && ms !== 0) return '';
+  if (ms < 1000) return ms + 'ms';
+  const s = ms / 1000;
+  if (s < 60) return s.toFixed(1) + 's';
+  const m = Math.floor(s / 60);
+  const rs = Math.round(s - m * 60);
+  return `${m}m ${rs}s`;
+}
+
+function renderWorkflowBanner() {
+  const banner = document.getElementById('workflow-run-banner');
+  const chat = state.activeChat;
+  if (!banner) return;
+  const wfId = chat && chat.workflowRunId ? chat.workflowRunId : '';
+  if (!wfId || wfId !== wfBanner.execId) {
+    banner.classList.add('hidden');
+    banner.innerHTML = '';
+    return;
+  }
+  const data = wfBanner.data;
+  if (!data) {
+    banner.classList.remove('hidden');
+    banner.innerHTML = `<div class="workflow-run-banner-loading">Loading workflow run…</div>`;
+    return;
+  }
+  const status = data.status || 'unknown';
+  const isLive = WF_LIVE_STATUSES.has(status);
+  const dur = _fmtDuration(data.duration_ms);
+  const cost = data.cost_usd ? '$' + Number(data.cost_usd).toFixed(4) : '';
+  const started = _fmtTs(data.started_at);
+  const finished = _fmtTs(data.finished_at);
+  const agent = data.agent_id || '';
+  const model = data.model || '—';
+
+  const groups = wfDetailExtractFiles(data);
+  const filesHtml = wfDetailRenderFilesHtml(data);
+
+  // Trace: workflow source + tool-call/result pairs + return
+  let traceHtml = '';
   const src = (data.workflow_source || '').trim();
   if (src) {
-    out.push(`
-      <div class="wf-detail-turn wf-detail-turn-system">
-        <div class="wf-detail-turn-label">Workflow source</div>
-        ${_wfMaybeCollapsed(src, { tag: 'pre', cls: 'wf-detail-source' })}
-      </div>
-    `);
+    traceHtml += `
+      <div class="wf-banner-trace-card">
+        <div class="wf-banner-trace-card-label">Workflow source</div>
+        ${_wfMaybeCollapsed(src, { tag: 'pre', cls: 'wf-banner-source' })}
+      </div>`;
   }
   const steps = data.steps || (typeof data.steps_json === 'string' ? JSON.parse(data.steps_json || '[]') : []) || [];
-  // Pair `call` with the matching `call_done` immediately following — engine
-  // emits them adjacent for synchronous tools.
   let i = 0;
   while (i < steps.length) {
     const s = steps[i];
@@ -1469,242 +1494,102 @@ function wfDetailRenderTurnsHtml(data) {
     if (kind === 'call') {
       const next = steps[i + 1];
       const paired = next && next.kind === 'call_done' ? next : null;
-      const callHtml = _wfMaybeCollapsed(s.detail || '', { tag: 'div', cls: 'wf-detail-turn-call' });
+      const callHtml = _wfMaybeCollapsed(s.detail || '', { tag: 'div', cls: 'wf-banner-trace-call' });
       const resultText = paired ? (paired.detail || '(no output)') : '';
       const resultHtml = paired
-        ? _wfMaybeCollapsed(resultText, { tag: 'div', cls: 'wf-detail-turn-result' })
-        : '<div class="wf-detail-turn-result wf-detail-pending">…</div>';
-      out.push(`
-        <div class="wf-detail-turn wf-detail-turn-tool">
-          <div class="wf-detail-turn-label">Tool call · L${s.line}</div>
+        ? _wfMaybeCollapsed(resultText, { tag: 'div', cls: 'wf-banner-trace-result' })
+        : '<div class="wf-banner-trace-result wf-detail-pending">…</div>';
+      traceHtml += `
+        <div class="wf-banner-trace-card wf-banner-trace-tool">
+          <div class="wf-banner-trace-card-label">Tool · L${s.line}</div>
           ${callHtml}
           ${resultHtml}
-        </div>
-      `);
+        </div>`;
       i += paired ? 2 : 1;
       continue;
     }
-    if (kind === 'call_done') {
-      // Orphan call_done (call already consumed) — skip.
-      i += 1;
-      continue;
-    }
+    if (kind === 'call_done') { i += 1; continue; }
     if (kind === 'error') {
-      out.push(`
-        <div class="wf-detail-turn wf-detail-turn-error">
-          <div class="wf-detail-turn-label">Error · L${s.line}</div>
-          ${_wfMaybeCollapsed(s.detail || '', { tag: 'div', cls: 'wf-detail-turn-result' })}
-        </div>
-      `);
-      i += 1;
-      continue;
+      traceHtml += `
+        <div class="wf-banner-trace-card wf-banner-trace-error">
+          <div class="wf-banner-trace-card-label">Error · L${s.line}</div>
+          ${_wfMaybeCollapsed(s.detail || '', { tag: 'div', cls: 'wf-banner-trace-result' })}
+        </div>`;
+      i += 1; continue;
     }
-    // Other engine steps (set, return, branch, …) — small dim row.
-    out.push(`
-      <div class="wf-detail-turn wf-detail-turn-step">
-        <span class="wf-detail-step-kind">${escapeHtml(kind)}</span>
-        <span class="wf-detail-step-line">L${s.line}</span>
-        <span class="wf-detail-step-detail">${escapeHtml(s.detail || '')}</span>
-      </div>
-    `);
+    traceHtml += `
+      <div class="wf-banner-trace-step">
+        <span class="wf-banner-step-kind">${escapeHtml(kind)}</span>
+        <span class="wf-banner-step-line">L${s.line}</span>
+        <span class="wf-banner-step-detail">${escapeHtml(s.detail || '')}</span>
+      </div>`;
     i += 1;
   }
-  // Final return / error
   let rv = data.return_value;
-  if (typeof rv === 'string' && rv) {
-    try { rv = JSON.parse(rv); } catch (_) {}
-  }
+  if (typeof rv === 'string' && rv) { try { rv = JSON.parse(rv); } catch (_) {} }
   if (rv !== null && rv !== undefined && rv !== '') {
     const txt = typeof rv === 'string' ? rv : JSON.stringify(rv, null, 2);
-    out.push(`
-      <div class="wf-detail-turn wf-detail-turn-final">
-        <div class="wf-detail-turn-label">Returned</div>
-        ${_wfMaybeCollapsed(txt, { tag: 'pre', cls: 'wf-detail-final-value' })}
-      </div>
-    `);
+    traceHtml += `
+      <div class="wf-banner-trace-card wf-banner-trace-final">
+        <div class="wf-banner-trace-card-label">Returned</div>
+        ${_wfMaybeCollapsed(txt, { tag: 'pre', cls: 'wf-banner-final-value' })}
+      </div>`;
   } else if (data.error) {
-    out.push(`
-      <div class="wf-detail-turn wf-detail-turn-error">
-        <div class="wf-detail-turn-label">Failed</div>
-        ${_wfMaybeCollapsed(data.error, { tag: 'pre', cls: 'wf-detail-final-value' })}
+    traceHtml += `
+      <div class="wf-banner-trace-card wf-banner-trace-error">
+        <div class="wf-banner-trace-card-label">Failed</div>
+        ${_wfMaybeCollapsed(data.error, { tag: 'pre', cls: 'wf-banner-final-value' })}
+      </div>`;
+  }
+
+  // Save-to-chats label flips to "Saved" once the bound session is
+  // active (status='active'), so the user gets a visual confirmation
+  // and the button becomes a no-op rather than vanishing entirely.
+  const sessionStatus = chat && chat.status; // not always populated
+  const promoted = sessionStatus === 'active';
+
+  banner.classList.remove('hidden');
+  banner.innerHTML = `
+    <div class="wf-banner-header">
+      <button class="wf-btn wf-btn-ghost wf-banner-back" onclick="wfBannerBack()" title="Back to workflows">← Workflows</button>
+      <div class="wf-banner-titlebar">
+        <div class="wf-banner-title">
+          <span class="wf-banner-workflow-name">${escapeHtml(data.workflow_name || 'Workflow')}</span>
+          <span class="wf-status-${status} wf-banner-status">${escapeHtml(status)}</span>
+        </div>
+        <div class="wf-banner-meta">
+          ${agent ? `<span class="wf-banner-meta-pill">agent: <strong>${escapeHtml(agent)}</strong></span>` : ''}
+          <span class="wf-banner-meta-pill">model: <strong>${escapeHtml(model)}</strong></span>
+          ${started ? `<span class="wf-banner-meta-pill">started: ${escapeHtml(started)}</span>` : ''}
+          ${finished ? `<span class="wf-banner-meta-pill">finished: ${escapeHtml(finished)}</span>` : ''}
+          ${dur ? `<span class="wf-banner-meta-pill">duration: ${escapeHtml(dur)}</span>` : ''}
+          ${cost ? `<span class="wf-banner-meta-pill">cost: ${escapeHtml(cost)}</span>` : ''}
+          ${data.user_display ? `<span class="wf-banner-meta-pill">by ${escapeHtml(data.user_display)}</span>` : ''}
+          <span class="wf-banner-meta-pill wf-banner-execid" title="${escapeHtml(wfId)}">${escapeHtml(wfId.slice(0, 10))}</span>
+        </div>
       </div>
-    `);
-  }
-  return out.join('');
-}
-
-function wfDetailRenderFollowupsHtml() {
-  if (!wfState.detailFollowups.length) return '';
-  const blocks = wfState.detailFollowups.map(f => {
-    const cls = f.role === 'user' ? 'wf-detail-fup-user' : 'wf-detail-fup-assistant';
-    const label = f.role === 'user' ? 'You' : 'Assistant';
-    const streaming = f.streaming ? '<span class="wf-detail-cursor">▍</span>' : '';
-    return `
-      <div class="wf-detail-followup ${cls}">
-        <div class="wf-detail-followup-label">${label}</div>
-        <div class="wf-detail-followup-text">${escapeHtml(f.text || '')}${streaming}</div>
+      <div class="wf-banner-actions">
+        ${isLive ? '<button class="wf-btn wf-btn-ghost" onclick="wfBannerCancel()">Cancel run</button>' : ''}
+        <button class="wf-btn wf-btn-ghost" onclick="wfDetailDownloadTranscript()" title="Download a Markdown transcript of this run">Download transcript</button>
+        ${promoted
+          ? '<button class="wf-btn wf-btn-ghost" disabled title="This run is saved as a chat">✓ Saved</button>'
+          : '<button class="wf-btn wf-btn-primary" onclick="wfBannerSaveToChats()">Save to chats</button>'}
       </div>
-    `;
-  });
-  return `<div class="wf-detail-followups-divider">Follow-up</div>` + blocks.join('');
-}
-
-function wfDetailUpdateComposerEnabled(enabled, statusMsg) {
-  const ta = document.getElementById('wf-detail-input');
-  const btn = document.getElementById('wf-detail-send-btn');
-  const status = document.getElementById('wf-detail-composer-status');
-  if (!ta || !btn) return;
-  ta.disabled = !enabled || wfState.detailFollowupStreaming;
-  btn.disabled = !enabled || wfState.detailFollowupStreaming;
-  status.textContent = statusMsg || '';
-  if (enabled) {
-    ta.placeholder = 'Ask a follow-up question about this run…';
-  } else {
-    ta.placeholder = statusMsg || 'Composer disabled.';
-  }
-}
-
-function wfDetailOnKeydown(e) {
-  // Cmd/Ctrl+Enter → send. Plain Enter → newline (long follow-ups about
-  // workflow runs often warrant multi-line questions).
-  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-    e.preventDefault();
-    wfDetailSend();
-  }
-}
-
-async function wfDetailSend() {
-  const ta = document.getElementById('wf-detail-input');
-  const text = (ta && ta.value || '').trim();
-  if (!text) return;
-  if (wfState.detailFollowupStreaming) return;
-  const execId = wfState.currentExecId;
-  if (!execId) return;
-  // Lazy-create the hidden chat session bound to this workflow run on the
-  // first send. Subsequent sends reuse it (full conversation context).
-  if (!wfState.detailFollowupSid) {
-    try {
-      // Use the active chat's model so the user gets the model they expect.
-      // Fall back to the first available model when no chat is open yet.
-      const model = (state.activeChat && state.activeChat.model)
-        || (state.models.length ? (state.models[0].id || state.models[0]) : '');
-      if (!model) {
-        alert('No model available — open a chat first to pick one.');
-        return;
-      }
-      const created = await API.createSession(WF_AGENT, model, '', 'workflow_run', execId);
-      if (created && created.error) {
-        alert('Could not create follow-up session: ' + created.error);
-        return;
-      }
-      wfState.detailFollowupSid = created.session_id;
-    } catch (e) {
-      alert('Could not create follow-up session: ' + e.message);
-      return;
-    }
-  }
-  // Append the user turn + an assistant placeholder for the streaming reply.
-  wfState.detailFollowups.push({ role: 'user', text });
-  const aIdx = wfState.detailFollowups.length;
-  wfState.detailFollowups.push({ role: 'assistant', text: '', streaming: true });
-  ta.value = '';
-  wfState.detailFollowupStreaming = true;
-  wfDetailUpdateComposerEnabled(true, 'Sending…');
-  wfRenderDetail(wfState.detailRun);
-  const turnsEl = document.getElementById('wf-detail-turns');
-  if (turnsEl) turnsEl.scrollTop = turnsEl.scrollHeight;
-  try {
-    await API.streamChat(wfState.detailFollowupSid, text, {
-      text_delta: (d) => {
-        const f = wfState.detailFollowups[aIdx];
-        if (!f) return;
-        f.text = (f.text || '') + (d.text || '');
-        // Cheap incremental update: re-render only the followups block.
-        const turns = document.getElementById('wf-detail-turns');
-        if (turns) {
-          // Find the last assistant followup div and patch its text node.
-          const fups = turns.querySelectorAll('.wf-detail-fup-assistant .wf-detail-followup-text');
-          const last = fups[fups.length - 1];
-          if (last) {
-            last.innerHTML = escapeHtml(f.text) + '<span class="wf-detail-cursor">▍</span>';
-            turns.scrollTop = turns.scrollHeight;
-          }
-        }
-      },
-      done: () => {
-        const f = wfState.detailFollowups[aIdx];
-        if (f) f.streaming = false;
-        wfState.detailFollowupStreaming = false;
-        wfDetailUpdateComposerEnabled(true, '');
-        // Save-to-chats button becomes meaningful now that a session exists.
-        document.getElementById('wf-detail-save-btn').classList.remove('hidden');
-        wfRenderDetail(wfState.detailRun);
-      },
-      error: (d) => {
-        const f = wfState.detailFollowups[aIdx];
-        if (f) {
-          f.text = (f.text || '') + `\n[Error: ${d.message || 'unknown'}]`;
-          f.streaming = false;
-        }
-        wfState.detailFollowupStreaming = false;
-        wfDetailUpdateComposerEnabled(true, 'Error — try again');
-        wfRenderDetail(wfState.detailRun);
-      },
-    });
-  } catch (e) {
-    const f = wfState.detailFollowups[aIdx];
-    if (f) {
-      f.text = (f.text || '') + `\n[Error: ${e.message}]`;
-      f.streaming = false;
-    }
-    wfState.detailFollowupStreaming = false;
-    wfDetailUpdateComposerEnabled(true, 'Error — try again');
-    wfRenderDetail(wfState.detailRun);
-  }
-}
-
-async function wfDetailSaveToChats() {
-  const sid = wfState.detailFollowupSid;
-  const execId = wfState.currentExecId;
-  if (!sid || !execId) {
-    alert('Send at least one follow-up before saving to chats.');
-    return;
-  }
-  try {
-    const r = await API.post(`/v1/workflows/history/${execId}/promote-session/${sid}`, {});
-    if (r && r.error) {
-      alert('Save failed: ' + r.error);
-      return;
-    }
-    // Seed the references panel for the promoted chat with the input files
-    // the workflow read. The artifacts panel auto-populates from the rows
-    // the server just wrote (it queries /v1/artifacts?session_id=…).
-    const refs = (r && r.references) || [];
-    if (refs.length) {
-      const refObjs = refs.map(ref => ({
-        title: ref.name,
-        link: ref.path,           // path serves as the unique key here
-        snippet: '',
-        domain: 'workflow run',   // shown as the source label in the UI
-        favicon: '',
-        kind: 'file',
-      }));
-      state.chatReferences = state.chatReferences || {};
-      state.chatReferences[sid] = { cited: [], searched: refObjs };
-    }
-    // Drop the user into the freshly-promoted chat. Clear local detail
-    // state so re-opening this run starts a fresh follow-up session.
-    const promotedSid = sid;
-    wfState.detailFollowupSid = null;
-    wfState.detailFollowups = [];
-    wfState.detailFollowupStreaming = false;
-    wfCloseDetail();
-    if (typeof openSession === 'function') {
-      openSession(promotedSid, WF_AGENT);
-    }
-  } catch (e) {
-    alert('Save error: ' + e.message);
-  }
+    </div>
+    ${groups.all.length ? `<div class="wf-banner-files-wrap ${wfBanner.filesCollapsed ? 'wf-banner-section-collapsed' : ''}">
+      ${filesHtml}
+    </div>` : ''}
+    <details class="wf-banner-trace-details" ${wfBanner.traceCollapsed ? '' : 'open'} ontoggle="wfBanner.traceCollapsed = !this.open">
+      <summary>
+        <span class="wf-banner-section-label">Run trace</span>
+        <span class="wf-banner-section-summary">${steps.length} step${steps.length === 1 ? '' : 's'}${data.tool_calls ? ` · ${data.tool_calls} tool call${data.tool_calls === 1 ? '' : 's'}` : ''}${data.llm_calls ? ` · ${data.llm_calls} LLM call${data.llm_calls === 1 ? '' : 's'}` : ''}</span>
+      </summary>
+      <div class="wf-banner-trace-body">
+        ${traceHtml || '<div class="wf-hist-empty">No steps recorded.</div>'}
+      </div>
+    </details>
+    ${isLive ? '<div class="wf-banner-live-hint">⏵ Run is in progress — composer will accept follow-ups once it finishes.</div>' : ''}
+  `;
 }
 
 function wfParseAskFileDetail(detail) {

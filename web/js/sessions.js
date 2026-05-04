@@ -115,6 +115,7 @@ async function openSession(sessionId, agentId) {
     if (data.max_context) chat.maxContext = data.max_context;
     chat.chatTitle = data.summary || data.title || '';
     chat.cavemanMode = parseInt(data.caveman_mode) || 0;
+    chat.workflowRunId = data.workflow_run_id || '';
     const memVal = parseInt(data.save_to_memory) || 0;
     chat.saveToMemory = memVal === 1;
     chat.memoryMode = memVal === 1 ? 'on' : memVal === 2 ? 'auto' : 'off';
@@ -251,6 +252,8 @@ async function openSession(sessionId, agentId) {
   // Force a scan of loaded history so the badge appears immediately if the
   // chat already contains PII, and auto-swap to a local model under block.
   schedulePIIBadgeUpdate();
+  // Update the workflow-run banner (visible only when chat.workflowRunId).
+  if (typeof maybeUpdateWorkflowBanner === 'function') maybeUpdateWorkflowBanner();
 }
 
 function newChat() {
@@ -269,6 +272,7 @@ function newChat() {
   }
   chat.sessionId = null;
   chat.chatTitle = '';
+  chat.workflowRunId = '';
   chat.messages = [];
   chat.totalTokens = 0;
   chat.maxContext = 0;
@@ -293,6 +297,7 @@ function newChat() {
   closeRightPanel();
   navigateTo('welcome');
   schedulePIIBadgeUpdate();
+  if (typeof maybeUpdateWorkflowBanner === 'function') maybeUpdateWorkflowBanner();
   // Session is created lazily on first send — pre-creating here would
   // leave an orphan 0-message row in the DB whenever the user opens a
   // fresh chat and walks away. The warm-pool keeper (for main agent) and

@@ -12,6 +12,20 @@ async function sendMessage() {
   let text = input?.value?.trim();
   if (!text && !state._pendingImages.length && !state._pendingFiles.length) return;
 
+  // Workflow-run binding: if this chat is bound to a still-running workflow
+  // execution, refuse the send. Asking follow-ups about a run that's still
+  // mutating its trace mid-conversation produces confusing context for the
+  // model. Composer re-enables automatically once the banner sees the run
+  // hit a terminal status (poller updates wfBanner.data).
+  const _wfChat = state.activeChat;
+  if (_wfChat && _wfChat.workflowRunId && wfBanner && wfBanner.data) {
+    const _ws = wfBanner.data.status || '';
+    if (WF_LIVE_STATUSES.has(_ws)) {
+      showToast(`Run is ${_ws} — wait for it to finish.`, true);
+      return;
+    }
+  }
+
   // Clear any stale suggestion — user is sending something new
   NextPrompt.clear();
 

@@ -219,6 +219,11 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
   <!-- ═══ Chat View ═══ -->
   <div id="chat-view">
     <div class="messages-scroll" id="messages-scroll">
+      <!-- Workflow-run banner: rendered when the active chat is bound to a
+           workflow run (has workflow_run_id). Carries header (agent/model/
+           timestamps), files (refs + artifacts), collapsed run trace, and
+           workflow actions. Empty + hidden otherwise. -->
+      <div id="workflow-run-banner" class="workflow-run-banner hidden"></div>
       <div class="messages-container" id="messages-container">
         <!-- Messages rendered here -->
       </div>
@@ -489,36 +494,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <div id="wf-runs-table-wrap"></div>
       </div>
 
-      <!-- Inline workflow-run detail view (replaces the run modal). Populated
-           by wfOpenDetail(execId); takes over the workflow tab area. -->
-      <div id="wf-detail" class="wf-detail hidden">
-        <div class="wf-detail-header">
-          <button class="wf-btn wf-btn-ghost wf-detail-back" onclick="wfCloseDetail()">← Back</button>
-          <div class="wf-detail-titlebar">
-            <div class="wf-detail-title" id="wf-detail-title">Workflow run</div>
-            <div class="wf-detail-meta" id="wf-detail-meta"></div>
-          </div>
-          <div class="wf-detail-actions">
-            <button class="wf-btn wf-btn-ghost" id="wf-detail-cancel-btn" onclick="wfDetailCancel()">Cancel</button>
-            <button class="wf-btn wf-btn-ghost" id="wf-detail-download-btn" onclick="wfDetailDownloadTranscript()" title="Download a Markdown transcript of this run">Download transcript</button>
-            <button class="wf-btn wf-btn-primary" id="wf-detail-save-btn" onclick="wfDetailSaveToChats()">Save to chats</button>
-          </div>
-        </div>
-        <div class="wf-detail-body">
-          <div id="wf-detail-files" class="wf-detail-files"></div>
-          <div id="wf-detail-turns" class="wf-detail-turns"></div>
-          <div id="wf-detail-prompt" class="wf-run-prompt hidden"></div>
-        </div>
-        <div class="wf-detail-composer" id="wf-detail-composer">
-          <div class="wf-detail-composer-status" id="wf-detail-composer-status"></div>
-          <div class="wf-detail-composer-row">
-            <textarea id="wf-detail-input" rows="2"
-                      placeholder="Ask a follow-up question about this run…"
-                      onkeydown="wfDetailOnKeydown(event)"></textarea>
-            <button class="wf-btn wf-btn-primary" id="wf-detail-send-btn" onclick="wfDetailSend()">Send</button>
-          </div>
-        </div>
-      </div>
+      <!-- (Inline wf-detail surface removed v8.24.2 — workflow runs now
+           open in the regular chat view via openSession(); the
+           workflow-run-banner above messages-container carries all the
+           run-specific UI.) -->
     </div>
   </div>
 

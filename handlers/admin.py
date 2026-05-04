@@ -702,6 +702,99 @@ class AdminHandlerMixin:
             "references": references,
         })
 
+    def _handle_workflow_get_or_create_session(self, path):
+        """POST /v1/workflows/history/<exec_id>/session
+
+        Look up (or create) the caller's bound chat session for this run.
+        Used by the inline-detail entry point so re-opening the same run
+        doesn't spawn a new session every time. Returns:
+          { session_id, status, created: bool }
+
+        Body (optional): { "model": "..." } — model to use when minting a
+        fresh session. Required only on first open.
+        """
+        parts = path.split("/")
+        if len(parts) < 6:
+            self._send_json({"error": "Invalid path"}, 400)
+            return
+        exec_id = parts[4]
+        from brain import _workflow_history_get
+        row = _workflow_history_get(exec_id)
+        if not row:
+            self._send_json({"error": "Execution not found"}, 404)
+            return
+        if not self._workflow_run_can_access(row):
+            self._send_json({"error": "Forbidden"}, 403)
+            return
+        au = getattr(self, "_auth_user", None) or {}
+        uid = au.get("id") or ""
+        # Look for an existing chat session bound to this run (any status).
+        existing = self._lookup_workflow_run_session(exec_id, uid)
+        if existing:
+            self._send_json({"session_id": existing["id"], "status": existing.get("status", "active"),
+                             "created": False, "model": existing.get("model", "")})
+            return
+        # No bound session yet — mint one.
+        body = self._read_json() if self.headers.get("Content-Length") else {}
+        model = body.get("model") or row.get("model") or ""
+        if not model:
+            # Fall back to the user's default model if any
+            try:
+                models = engine._models_config or {}
+                # Pick the first enabled model as last resort
+                for mid, mcfg in models.items():
+                    if mcfg.get("enabled", True):
+                        model = mid
+                        break
+            except Exception:
+                pass
+        if not model:
+            self._send_json({"error": "No model available — pick one in chat first"}, 400)
+            return
+        agent_id = row.get("agent_id") or "main"
+        provider = self._resolve_provider(model)
+        new_session = sessions.create(
+            agent_id=agent_id, model=model,
+            api_key=provider["api_key"], base_url=provider["base_url"],
+            max_context=engine.get_model_max_context(model),
+        )
+        new_session.user_id = uid
+        new_session.workflow_run_id = exec_id
+        new_session.status = "workflow_run"
+        ChatDB.save_session(new_session.id, agent_id, model, "",
+                            "workflow_run", new_session.created_at,
+                            new_session.last_active, "",
+                            user_id=uid, workflow_run_id=exec_id)
+        self._send_json({
+            "session_id": new_session.id, "status": "workflow_run",
+            "created": True, "model": model,
+        })
+
+    @staticmethod
+    def _lookup_workflow_run_session(exec_id, user_id):
+        """Find the most recent chat session bound to this workflow run for
+        this user. Empty user_id matches legacy/anonymous rows."""
+        try:
+            with _db_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                if user_id:
+                    row = conn.execute(
+                        """SELECT * FROM sessions
+                            WHERE workflow_run_id = ? AND (user_id = ? OR user_id = '')
+                            ORDER BY last_active DESC LIMIT 1""",
+                        (exec_id, user_id),
+                    ).fetchone()
+                else:
+                    row = conn.execute(
+                        """SELECT * FROM sessions
+                            WHERE workflow_run_id = ?
+                            ORDER BY last_active DESC LIMIT 1""",
+                        (exec_id,),
+                    ).fetchone()
+                return dict(row) if row else None
+        except Exception:
+            return None
+
     # --- Workflow run file access ---
     #
     # The general /v1/files/download validator restricts paths to the cctest

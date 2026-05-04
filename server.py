@@ -2784,6 +2784,8 @@ class BrainAgentHandler(
             self._handle_workflow_upload_file(path)
         elif path.startswith("/v1/workflows/history/") and "/promote-session/" in path:
             self._handle_workflow_promote_session(path)
+        elif path.startswith("/v1/workflows/history/") and path.endswith("/session"):
+            self._handle_workflow_get_or_create_session(path)
         elif path.startswith("/v1/agents/") and "/workflows/" in path and "/run" in path:
             self._handle_workflow_run(path)
         elif path.startswith("/v1/agents/") and "/workflows" in path:
