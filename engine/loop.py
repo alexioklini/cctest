@@ -2369,6 +2369,85 @@ def _project_preamble_text(agent_id: str, project_name: str) -> str:
     return "[Project context (this session):\n- " + "\n- ".join(lines) + "]"
 
 
+def _workflow_run_preamble_text(execution_id: str) -> str:
+    """Compact summary of a workflow run for chat follow-up context.
+
+    Built from the persisted workflow_history row: workflow source +
+    chronological tool-call trace + final return value or error. Injected
+    into the first user message of any chat session bound to this run so
+    the model can answer questions like "why did the second tool call
+    fail?" or "summarize the result" without the user re-pasting context.
+
+    Returns "" when the row is missing or the caller passed an empty id.
+    """
+    if not execution_id:
+        return ""
+    try:
+        # Local import: avoids a circular when engine.loop is reloaded.
+        from brain import _workflow_history_get
+        row = _workflow_history_get(execution_id)
+    except Exception:
+        row = None
+    if not row:
+        return ""
+    import json as _json
+    name = row.get("workflow_name") or "(unnamed)"
+    status = row.get("status") or "unknown"
+    src = (row.get("workflow_source") or "").strip()
+    # Cap source so a giant workflow doesn't dominate the prompt.
+    if len(src) > 4000:
+        src = src[:4000] + "\n…[truncated]"
+    steps_raw = row.get("steps_json") or "[]"
+    try:
+        steps = _json.loads(steps_raw) if isinstance(steps_raw, str) else (steps_raw or [])
+    except Exception:
+        steps = []
+    # Render only the call/call_done/error rows — engine bookkeeping
+    # (set, return, etc.) is implicit in the source so it doesn't earn
+    # a slot in the trace.
+    interesting = [s for s in steps
+                   if s.get("kind") in ("call", "call_done", "error")]
+    if len(interesting) > 50:
+        head = interesting[:25]
+        tail = interesting[-20:]
+        interesting = head + [{"kind": "…", "line": "", "detail": f"({len(steps) - len(head) - len(tail)} steps elided)"}] + tail
+    trace_lines: list[str] = []
+    for s in interesting:
+        line = s.get("line") or ""
+        kind = s.get("kind") or ""
+        detail = (s.get("detail") or "").strip()
+        # Trim long tool result strings — full payloads aren't useful
+        # in a context summary, the user can re-open the run for that.
+        if len(detail) > 400:
+            detail = detail[:400] + "…"
+        prefix = f"L{line} {kind}" if line else kind
+        trace_lines.append(f"  • {prefix}: {detail}" if detail else f"  • {prefix}")
+    rv_raw = row.get("return_value")
+    rv_text = ""
+    if rv_raw is not None and rv_raw != "":
+        try:
+            parsed = _json.loads(rv_raw) if isinstance(rv_raw, str) else rv_raw
+            rv_text = parsed if isinstance(parsed, str) else _json.dumps(parsed, indent=2, ensure_ascii=False)
+        except Exception:
+            rv_text = str(rv_raw)
+        if len(rv_text) > 1500:
+            rv_text = rv_text[:1500] + "\n…[truncated]"
+    err = (row.get("error") or "").strip()
+    parts: list[str] = [
+        f"[Workflow run context — the user is asking follow-up questions about a workflow that already finished. Use the trace below to answer; do NOT re-execute the workflow.",
+        f"Workflow: {name}  (status: {status})",
+    ]
+    if src:
+        parts.append("Source:\n```\n" + src + "\n```")
+    if trace_lines:
+        parts.append("Tool-call trace:\n" + "\n".join(trace_lines))
+    if rv_text:
+        parts.append("Return value:\n```\n" + rv_text + "\n```")
+    if err:
+        parts.append(f"Error: {err}")
+    return "\n\n".join(parts) + "]"
+
+
 def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                  silent: bool = False,
                  tools: bool = True,
@@ -2435,6 +2514,17 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
             except Exception:
                 _project_pre = ""
 
+            # Workflow-run preamble: when this session was created from the
+            # inline workflow detail view, attach a compact summary of the
+            # finished run so the model can answer follow-ups about it.
+            _workflow_run_pre = ""
+            try:
+                _wf_run_id = getattr(_thread_local, 'workflow_run_id', '') or ''
+                if _wf_run_id:
+                    _workflow_run_pre = _workflow_run_preamble_text(_wf_run_id)
+            except Exception:
+                _workflow_run_pre = ""
+
             _preamble_lines: list[str] = []
             _profile_doc = ""
             _greeting_uid = getattr(_thread_local, 'current_user_id', "") or ""
@@ -2481,13 +2571,18 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                         _preamble_lines.append(f"Their role: {_job}")
                     if _commprefs:
                         _preamble_lines.append(f"How they like to communicate: {_commprefs}")
-            if _preamble_lines or _profile_doc or _project_pre:
+            if _preamble_lines or _profile_doc or _project_pre or _workflow_run_pre:
                 for _idx, _m in enumerate(messages):
                     if _m.get("role") != "user":
                         continue
                     if _m.get("_greeting_injected"):
                         break
                     _bits: list[str] = []
+                    if _workflow_run_pre:
+                        # Lead with the workflow run context — it's the
+                        # whole reason the user is asking, so model attention
+                        # should land on it before generic project / profile.
+                        _bits.append(_workflow_run_pre)
                     if _project_pre:
                         _bits.append(_project_pre)
                     if _preamble_lines:

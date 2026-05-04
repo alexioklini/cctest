@@ -637,6 +637,37 @@ class AdminHandlerMixin:
             "size_bytes": size_bytes,
         })
 
+    def _handle_workflow_promote_session(self, path):
+        """POST /v1/workflows/history/{exec_id}/promote-session/{sid}
+
+        Flips a hidden workflow_run-bound session to status='active' so it
+        appears in the sidebar — the "Save to chats" action from the inline
+        workflow detail view. Refuses if the session isn't bound to this
+        execution_id (prevents promoting an unrelated session by accident).
+        """
+        parts = path.split("/")
+        # /v1/workflows/history/<exec_id>/promote-session/<sid>
+        if len(parts) < 7:
+            self._send_json({"error": "Invalid path"}, 400)
+            return
+        exec_id = parts[4]
+        sid = parts[6]
+        info = ChatDB.get_session_info(sid)
+        if not info:
+            self._send_json({"error": "Session not found"}, 404)
+            return
+        if (info.get("workflow_run_id") or "") != exec_id:
+            self._send_json({"error": "Session is not bound to this workflow run"}, 400)
+            return
+        au = getattr(self, "_auth_user", None) or {}
+        if au.get("role") != "admin":
+            owner = info.get("user_id") or ""
+            if owner and owner != (au.get("id") or ""):
+                self._send_json({"error": "Forbidden"}, 403)
+                return
+        ChatDB.update_session_status(sid, "active")
+        self._send_json({"status": "promoted", "session_id": sid, "execution_id": exec_id})
+
     # --- Agent file management ---
 
     def _handle_agent_files(self, path):

@@ -33,6 +33,10 @@ class Session:
         self.user_id: str = ""  # Owner user id (for MemPalace wing scoping)
         self.project: str | None = None  # Active project name (for scoped chat)
         self.note_context: str | None = None  # Note content for AI-assisted editing
+        # Bound workflow_history.execution_id when this session was created
+        # from the inline workflow detail view. Triggers the workflow-run
+        # preamble injection so follow-ups have the run's context.
+        self.workflow_run_id: str = ""
         self.summary: str = ""  # LLM-generated chat summary for sidebar
         self.sdk_session_id: str | None = None  # Agent SDK session ID for resume
         self._last_summary_at = 0  # Token count at last continuous summary
@@ -108,6 +112,7 @@ class Session:
                 self.user_id = info.get("user_id", "") or ""
                 self.save_to_memory = bool(info.get("save_to_memory", 0))
                 self.caveman_mode = int(info.get("caveman_mode", 0) or 0)
+                self.workflow_run_id = info.get("workflow_run_id", "") or ""
 
 
 class SessionManager:

@@ -707,6 +707,13 @@ class ChatDB:
                 pass
             conn.execute("CREATE INDEX IF NOT EXISTS idx_session_team ON sessions(team_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_session_project_id ON sessions(project_id)")
+            # workflow_run_id: link to workflow_history.execution_id for chat
+            # sessions created from the inline workflow detail view.
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN workflow_run_id TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_session_workflow_run ON sessions(workflow_run_id)")
             # ── MemPalace chat-sync cursor ──
             # Tracks which messages have already been mirrored into MemPalace,
             # per session. `last_message_id` is the highest messages.id filed so far.
@@ -911,7 +918,7 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=None)
-    def save_session(sid, agent_id, model, title, status, created_at, last_active, project="", summary="", user_id="", project_id=""):
+    def save_session(sid, agent_id, model, title, status, created_at, last_active, project="", summary="", user_id="", project_id="", workflow_run_id=""):
         # `project` is the legacy directory-name column (kept for back-compat
         # display + summaries elsewhere). `project_id` is the canonical filter
         # column — uuid4 hex[:12] from project.json. Resolve here when caller
@@ -920,16 +927,17 @@ class ChatDB:
             project_id = _project_id_for_name(agent_id, project)
         with _db_conn() as conn:
             conn.execute("""
-                INSERT INTO sessions (id, agent_id, model, title, status, created_at, last_active, project, project_id, summary, user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO sessions (id, agent_id, model, title, status, created_at, last_active, project, project_id, summary, user_id, workflow_run_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     agent_id=excluded.agent_id, model=excluded.model, title=excluded.title,
                     status=excluded.status, created_at=excluded.created_at, last_active=excluded.last_active,
                     project=excluded.project,
                     project_id=CASE WHEN excluded.project_id != '' THEN excluded.project_id ELSE sessions.project_id END,
                     summary=CASE WHEN excluded.summary != '' THEN excluded.summary ELSE sessions.summary END,
-                    user_id=CASE WHEN excluded.user_id != '' THEN excluded.user_id ELSE sessions.user_id END
-            """, (sid, agent_id, model, title, status, created_at, last_active, project or "", project_id or "", summary or "", user_id or ""))
+                    user_id=CASE WHEN excluded.user_id != '' THEN excluded.user_id ELSE sessions.user_id END,
+                    workflow_run_id=CASE WHEN excluded.workflow_run_id != '' THEN excluded.workflow_run_id ELSE sessions.workflow_run_id END
+            """, (sid, agent_id, model, title, status, created_at, last_active, project or "", project_id or "", summary or "", user_id or "", workflow_run_id or ""))
             conn.commit()
 
     @staticmethod
@@ -955,6 +963,22 @@ class ChatDB:
         with _db_conn() as conn:
             conn.execute("UPDATE sessions SET caveman_mode = ? WHERE id = ?",
                         (int(value), session_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_session_workflow_run_id(session_id, workflow_run_id):
+        with _db_conn() as conn:
+            conn.execute("UPDATE sessions SET workflow_run_id = ? WHERE id = ?",
+                        (workflow_run_id or "", session_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_session_status(session_id, status):
+        with _db_conn() as conn:
+            conn.execute("UPDATE sessions SET status = ? WHERE id = ?",
+                        (status, session_id))
             conn.commit()
 
     @staticmethod
@@ -1180,6 +1204,11 @@ class ChatDB:
                 else:
                     q += " AND s.status = ?"
                     params.append(status)
+            else:
+                # Default sidebar view excludes ephemeral statuses that have
+                # their own surfaces: note_chat (project notes editor) and
+                # workflow_run (inline workflow detail view follow-ups).
+                q += " AND s.status NOT IN ('note_chat', 'workflow_run')"
             # Hide orphan empty sessions: ensureSession() pre-creates a row
             # whenever a model is switched or a fresh chat is opened, even
             # if the user never types anything. Those linger as 0-message
@@ -1437,6 +1466,7 @@ class Session:
         self.user_id: str = ""  # Owner user id (for MemPalace wing scoping)
         self.project: str | None = None  # Active project name (for scoped chat)
         self.note_context: str | None = None  # Note content for AI-assisted editing
+        self.workflow_run_id: str = ""  # Bound workflow_history.execution_id
         self.summary: str = ""  # LLM-generated chat summary for sidebar
         self.sdk_session_id: str | None = None  # Agent SDK session ID for resume
         self._last_summary_at = 0  # Token count at last continuous summary
@@ -2745,6 +2775,8 @@ class BrainAgentHandler(
             self._handle_workflow_cancel(path)
         elif path.startswith("/v1/workflows/executions/") and path.endswith("/upload-file"):
             self._handle_workflow_upload_file(path)
+        elif path.startswith("/v1/workflows/history/") and "/promote-session/" in path:
+            self._handle_workflow_promote_session(path)
         elif path.startswith("/v1/agents/") and "/workflows/" in path and "/run" in path:
             self._handle_workflow_run(path)
         elif path.startswith("/v1/agents/") and "/workflows" in path:

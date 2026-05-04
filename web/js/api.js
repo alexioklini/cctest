@@ -63,10 +63,11 @@ class API {
   static saveAgentConfig(id, cfg) { return this.post(`/v1/agents/${id}/config`, cfg); }
 
   // Sessions
-  static createSession(agent, model, project, status) {
+  static createSession(agent, model, project, status, workflowRunId) {
     const body = { agent, model };
     if (project) body.project = project;
     if (status) body.status = status;
+    if (workflowRunId) body.workflow_run_id = workflowRunId;
     return this.post('/v1/sessions', body);
   }
   static deleteSession(id) { return this.del(`/v1/sessions/${id}`); }

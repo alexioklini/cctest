@@ -327,13 +327,22 @@ class ChatHandlerMixin:
         note_context = body.get("note_context", "")
         if note_context:
             session.note_context = note_context
+        # Bind to a workflow_history row so the chat loop's round-0 preamble
+        # can pull the run summary. Combined with status='workflow_run'
+        # below, this hides the session from the sidebar until the user hits
+        # "Save to chats" in the inline detail view.
+        wf_run_id = body.get("workflow_run_id", "")
+        if wf_run_id:
+            session.workflow_run_id = wf_run_id
+            ChatDB.update_session_workflow_run_id(session.id, wf_run_id)
         # Allow setting custom status (e.g., 'note_chat' to hide from chat lists)
         custom_status = body.get("status", "")
         if custom_status:
             session.status = custom_status
             ChatDB.save_session(session.id, session.agent_id, session.model,
                                session.title, session.status, session.created_at,
-                               session.last_active, session.project or "")
+                               session.last_active, session.project or "",
+                               workflow_run_id=session.workflow_run_id)
         # Per-model warmup flag
         mcfg = engine.resolve_model_settings(model)
         warmup_enabled = bool(mcfg.get("warmup", False))
@@ -903,6 +912,11 @@ class ChatHandlerMixin:
                 engine._thread_local.note_context = session.note_context
             else:
                 engine._thread_local.note_context = None
+
+            # Workflow-run binding: when this session was created from the
+            # inline workflow detail view, expose the execution_id so the
+            # round-0 preamble can pull a compact summary of the run.
+            engine._thread_local.workflow_run_id = getattr(session, 'workflow_run_id', '') or ''
 
             # Set caveman modes: chat-level (session toggle) + system-level (model config)
             engine._thread_local.caveman_chat = session.caveman_mode

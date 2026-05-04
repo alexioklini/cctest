@@ -463,7 +463,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           New Workflow
         </button>
       </div>
-      <div class="wf-subtabs">
+      <div class="wf-subtabs" id="wf-subtabs">
         <div class="wf-subtab active" data-subtab="list" onclick="wfSwitchSubtab('list',this)">Definitions</div>
         <div class="wf-subtab" data-subtab="runs" onclick="wfSwitchSubtab('runs',this)">All Runs</div>
       </div>
@@ -487,6 +487,35 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           <button class="wf-btn wf-btn-ghost wf-btn-clear-hist" onclick="wfClearAllRuns()">Clear runs…</button>
         </div>
         <div id="wf-runs-table-wrap"></div>
+      </div>
+
+      <!-- Inline workflow-run detail view (replaces the run modal). Populated
+           by wfOpenDetail(execId); takes over the workflow tab area. -->
+      <div id="wf-detail" class="wf-detail hidden">
+        <div class="wf-detail-header">
+          <button class="wf-btn wf-btn-ghost wf-detail-back" onclick="wfCloseDetail()">← Back</button>
+          <div class="wf-detail-titlebar">
+            <div class="wf-detail-title" id="wf-detail-title">Workflow run</div>
+            <div class="wf-detail-meta" id="wf-detail-meta"></div>
+          </div>
+          <div class="wf-detail-actions">
+            <button class="wf-btn wf-btn-ghost" id="wf-detail-cancel-btn" onclick="wfDetailCancel()">Cancel</button>
+            <button class="wf-btn wf-btn-primary" id="wf-detail-save-btn" onclick="wfDetailSaveToChats()">Save to chats</button>
+          </div>
+        </div>
+        <div class="wf-detail-body">
+          <div id="wf-detail-turns" class="wf-detail-turns"></div>
+          <div id="wf-detail-prompt" class="wf-run-prompt hidden"></div>
+        </div>
+        <div class="wf-detail-composer" id="wf-detail-composer">
+          <div class="wf-detail-composer-status" id="wf-detail-composer-status"></div>
+          <div class="wf-detail-composer-row">
+            <textarea id="wf-detail-input" rows="2"
+                      placeholder="Ask a follow-up question about this run…"
+                      onkeydown="wfDetailOnKeydown(event)"></textarea>
+            <button class="wf-btn wf-btn-primary" id="wf-detail-send-btn" onclick="wfDetailSend()">Send</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -539,23 +568,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     </div>
   </div>
 
-  <!-- ═══ Workflow Run Modal ═══ -->
-  <div id="wf-run-modal" class="wf-modal hidden">
-    <div class="wf-modal-backdrop" onclick="wfCloseRun()"></div>
-    <div class="wf-modal-content wf-run-content">
-      <div class="wf-modal-header">
-        <h3 id="wf-run-title">Running: …</h3>
-        <div class="wf-modal-actions">
-          <button class="wf-btn wf-btn-ghost" id="wf-run-cancel-btn" onclick="wfCancelRun()">Cancel</button>
-          <button class="wf-btn wf-btn-ghost" onclick="wfCloseRun()">Close</button>
-        </div>
-      </div>
-      <div id="wf-run-status" class="wf-run-status">Status: pending</div>
-      <div id="wf-run-prompt" class="wf-run-prompt hidden"></div>
-      <div id="wf-run-steps" class="wf-run-steps"></div>
-      <div id="wf-run-result" class="wf-run-result hidden"></div>
-    </div>
-  </div>
+  <!-- (Workflow Run Modal removed in v8.24.0 — replaced by inline wf-detail.) -->
 
   <!-- ═══ Tool Palette Popover ═══ -->
   <div id="wf-tool-palette" class="wf-modal hidden">

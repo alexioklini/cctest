@@ -13,8 +13,16 @@ let wfState = {
   list: [],
   tools: [],            // tool palette
   currentName: null,    // editor: workflow currently being edited (null = new)
-  currentExecId: null,  // run modal
+  currentExecId: null,  // currently-open inline detail view
   pollTimer: null,
+  // Inline detail view state. Populated by wfOpenDetail(); torn down by
+  // wfCloseDetail(). The follow-up session is created lazily on the first
+  // wfDetailSend() — read-only browsing of a run leaves no DB rows behind.
+  detailRun: null,            // last fetched run data (live or persisted)
+  detailFollowups: [],        // [{role:'user'|'assistant', text, streaming?}]
+  detailFollowupSid: null,    // hidden chat session bound to this run
+  detailFollowupStreaming: false,
+  detailPrevSubtab: 'list',   // restore on Back
 };
 
 /* ─── List view ─── */
@@ -237,76 +245,11 @@ async function wfCancelFromHistory(executionId, ev) {
   }
 }
 
+// Legacy entry point — every history-row View click routes through here. The
+// modal it used to open is gone; the inline detail view takes over the
+// workflow tab area instead.
 async function wfShowHistoryDetail(executionId) {
-  try {
-    // Active executions live in-memory at /v1/workflows/executions/<id> with
-    // fresh steps; the /history row only finalises on completion. Try the
-    // live endpoint first; if the execution is still active, attach to it.
-    let liveData = null;
-    try {
-      const r = await API.get(`/v1/workflows/executions/${executionId}`);
-      if (r && !r.error) liveData = r;
-    } catch (_) { /* not live (404) — fall through to history */ }
-    if (liveData && (liveData.status === 'running' || liveData.status === 'pending' || liveData.status === 'waiting_approval')) {
-      // Active run — reattach to it: live polling + working Cancel button.
-      document.getElementById('wf-run-title').textContent = `Running: ${liveData.workflow_name || executionId}`;
-      document.getElementById('wf-run-steps').innerHTML = '';
-      document.getElementById('wf-run-prompt').classList.add('hidden');
-      document.getElementById('wf-run-result').classList.add('hidden');
-      document.getElementById('wf-run-cancel-btn').classList.remove('hidden');
-      wfState.currentExecId = executionId;
-      document.getElementById('wf-run-modal').classList.remove('hidden');
-      wfStartPolling();
-      return;
-    }
-    const data = await API.get(`/v1/workflows/history/${executionId}`);
-    // Zombie row — DB says running but no live execution. Offer Cancel which
-    // the server now finalises the row in this case.
-    const isZombieRunning = (data.status === 'running' || data.status === 'pending' || data.status === 'waiting_approval');
-    if (isZombieRunning) {
-      wfState.currentExecId = executionId;
-      document.getElementById('wf-run-cancel-btn').classList.remove('hidden');
-    } else {
-      wfState.currentExecId = null;
-      document.getElementById('wf-run-cancel-btn').classList.add('hidden');
-    }
-    // Terminal status (completed / failed / cancelled) — read-only history view.
-    document.getElementById('wf-run-title').textContent = `History: ${data.workflow_name} (${executionId})`;
-    document.getElementById('wf-run-status').textContent = `Status: ${data.status}` +
-      (data.error ? ` — ${data.error}` : '') +
-      ` — ${data.user_display || 'unknown'} via ${data.trigger_kind || 'manual'} — ` +
-      ((data.cost_usd || 0).toFixed ? '$' + Number(data.cost_usd || 0).toFixed(4) : '$0');
-    document.getElementById('wf-run-status').className = 'wf-run-status wf-status-' + data.status;
-    const stepsArr = data.steps || (typeof data.steps_json === 'string' ? JSON.parse(data.steps_json || '[]') : []);
-    const stepsEl = document.getElementById('wf-run-steps');
-    stepsEl.innerHTML = stepsArr.map(s => {
-      const cls = (s.kind || '').includes('error') ? 'wf-step-err' : ((s.kind === 'call_done') ? 'wf-step-done' : '');
-      return `<div class="wf-step ${cls}">
-        <span class="wf-step-line">L${s.line}</span>
-        <span class="wf-step-kind">${escapeHtml(s.kind || '')}</span>
-        <span class="wf-step-detail">${escapeHtml(s.detail || '')}</span>
-      </div>`;
-    }).join('') || '<div class="wf-hist-empty">No steps recorded.</div>';
-    const resultEl = document.getElementById('wf-run-result');
-    let rv = data.return_value;
-    if (typeof rv === 'string' && rv) {
-      try { rv = JSON.parse(rv); } catch (_) {}
-    }
-    if (rv !== null && rv !== undefined && rv !== '') {
-      resultEl.innerHTML = `<div class="wf-result-label">Returned:</div><pre class="wf-result-value">${escapeHtml(typeof rv === 'string' ? rv : JSON.stringify(rv, null, 2))}</pre>`;
-      resultEl.classList.remove('hidden');
-    } else if (data.error) {
-      resultEl.innerHTML = `<div class="wf-result-label wf-error">Error</div><pre class="wf-result-value">${escapeHtml(data.error || '')}</pre>`;
-      resultEl.classList.remove('hidden');
-    } else {
-      resultEl.classList.add('hidden');
-    }
-    document.getElementById('wf-run-prompt').classList.add('hidden');
-    wfStopPolling();
-    document.getElementById('wf-run-modal').classList.remove('hidden');
-  } catch (e) {
-    alert('Could not load history detail: ' + e.message);
-  }
+  return wfOpenDetail(executionId);
 }
 
 /* ─── Sub-tab switching ─── */
@@ -848,34 +791,103 @@ async function wfRun(name) {
       alert('Run failed: ' + data.error);
       return;
     }
-    wfState.currentExecId = data.execution_id;
-    wfOpenRunModal(name);
-    wfStartPolling();
+    // Drop straight into the inline detail view; live polling kicks in.
+    wfOpenDetail(data.execution_id);
   } catch (e) {
     alert('Run error: ' + e.message);
   }
 }
 
-function wfOpenRunModal(name) {
-  document.getElementById('wf-run-title').textContent = `Running: ${name}`;
-  document.getElementById('wf-run-status').textContent = 'Status: starting…';
-  document.getElementById('wf-run-steps').innerHTML = '';
-  document.getElementById('wf-run-prompt').classList.add('hidden');
-  document.getElementById('wf-run-result').classList.add('hidden');
-  document.getElementById('wf-run-cancel-btn').classList.remove('hidden');
-  document.getElementById('wf-run-modal').classList.remove('hidden');
-}
+/* ─── Inline workflow-run detail view ─── */
 
-function wfCloseRun() {
-  wfStopPolling();
-  document.getElementById('wf-run-modal').classList.add('hidden');
-}
+const WF_TERMINAL_STATUSES = new Set(['completed', 'succeeded', 'failed', 'cancelled']);
+const WF_LIVE_STATUSES = new Set(['running', 'pending', 'waiting_approval']);
 
-async function wfCancelRun() {
-  if (!wfState.currentExecId) return;
+async function wfOpenDetail(executionId) {
+  // Remember which subtab the user came from so Back restores it. If we're
+  // already in a different detail view, tear it down cleanly first.
+  if (wfState.currentExecId && wfState.currentExecId !== executionId) {
+    wfStopPolling();
+    wfState.detailFollowups = [];
+    wfState.detailFollowupSid = null;
+    wfState.detailFollowupStreaming = false;
+  }
+  if (!document.getElementById('wf-detail').classList.contains('hidden')) {
+    // Already in a detail view — keep prevSubtab intact.
+  } else {
+    const activeTab = document.querySelector('.wf-subtab.active');
+    wfState.detailPrevSubtab = (activeTab && activeTab.dataset.subtab) || 'list';
+  }
+  wfState.currentExecId = executionId;
+  // Hide the list/runs surface, show the detail surface.
+  const subtabs = document.getElementById('wf-subtabs');
+  if (subtabs) subtabs.classList.add('hidden');
+  document.getElementById('wf-list').classList.add('hidden');
+  document.getElementById('wf-runs').classList.add('hidden');
+  const det = document.getElementById('wf-detail');
+  det.classList.remove('hidden');
+  // Reset transient view state
+  document.getElementById('wf-detail-title').textContent = 'Loading…';
+  document.getElementById('wf-detail-meta').textContent = '';
+  document.getElementById('wf-detail-turns').innerHTML = '<div class="wf-hist-loading">Loading…</div>';
+  document.getElementById('wf-detail-prompt').classList.add('hidden');
+  document.getElementById('wf-detail-cancel-btn').classList.add('hidden');
+  document.getElementById('wf-detail-save-btn').classList.add('hidden');
+  wfDetailUpdateComposerEnabled(false, 'Loading run…');
+  // Try the live endpoint first (fresh steps for an in-flight run); fall
+  // back to the persisted /history row when the execution isn't live.
+  let initial = null;
   try {
-    await API.post(`/v1/workflows/executions/${wfState.currentExecId}/cancel`, {});
-  } catch (e) {}
+    const r = await API.get(`/v1/workflows/executions/${executionId}`);
+    if (r && !r.error) initial = r;
+  } catch (_) { /* not live → fall through */ }
+  if (!initial) {
+    try {
+      initial = await API.get(`/v1/workflows/history/${executionId}`);
+    } catch (e) {
+      document.getElementById('wf-detail-turns').innerHTML =
+        `<div class="wf-hist-error">Could not load: ${escapeHtml(e.message)}</div>`;
+      return;
+    }
+  }
+  wfState.detailRun = initial;
+  wfRenderDetail(initial);
+  if (WF_LIVE_STATUSES.has(initial.status)) {
+    wfStartPolling();
+  }
+}
+
+function wfCloseDetail() {
+  wfStopPolling();
+  // Abort any in-flight follow-up stream so we don't leak text into the
+  // hidden view if the user re-opens it.
+  if (wfState.detailFollowupStreaming && API._abortController) {
+    try { API._abortController.abort(); } catch (_) {}
+  }
+  wfState.currentExecId = null;
+  wfState.detailRun = null;
+  wfState.detailFollowups = [];
+  wfState.detailFollowupSid = null;
+  wfState.detailFollowupStreaming = false;
+  document.getElementById('wf-detail').classList.add('hidden');
+  const subtabs = document.getElementById('wf-subtabs');
+  if (subtabs) subtabs.classList.remove('hidden');
+  // Restore previous subtab without forcing a reload of the run table.
+  const prev = wfState.detailPrevSubtab || 'list';
+  if (prev === 'runs') {
+    document.getElementById('wf-list').classList.add('hidden');
+    document.getElementById('wf-runs').classList.remove('hidden');
+    loadWorkflowRuns();
+  } else {
+    document.getElementById('wf-runs').classList.add('hidden');
+    document.getElementById('wf-list').classList.remove('hidden');
+    // Refresh open history tables so a freshly-finished run reflects its
+    // terminal status without the user clicking Refresh.
+    _wfRefreshOpenHistoryTables();
+  }
+  document.querySelectorAll('.wf-subtab').forEach(t => {
+    t.classList.toggle('active', t.dataset.subtab === prev);
+  });
 }
 
 function wfStartPolling() {
@@ -896,37 +908,89 @@ async function wfPoll() {
   if (!id) return;
   try {
     const data = await API.get(`/v1/workflows/executions/${id}`);
-    wfRenderRunState(data);
-    if (['completed','failed','cancelled'].includes(data.status)) {
+    if (!data || data.error) return;
+    wfState.detailRun = data;
+    wfRenderDetail(data);
+    if (WF_TERMINAL_STATUSES.has(data.status)) {
       wfStopPolling();
-      document.getElementById('wf-run-cancel-btn').classList.add('hidden');
+      // Re-fetch from /history once so the persisted row (which has the
+      // full steps_json + return_value) matches what the chat-style view
+      // shows for completed runs.
+      try {
+        const persisted = await API.get(`/v1/workflows/history/${id}`);
+        if (persisted && !persisted.error) {
+          wfState.detailRun = persisted;
+          wfRenderDetail(persisted);
+        }
+      } catch (_) {}
     }
   } catch (e) { /* swallow transient */ }
 }
 
-function wfRenderRunState(data) {
-  const statusEl = document.getElementById('wf-run-status');
-  statusEl.textContent = `Status: ${data.status}` + (data.error ? ` — ${data.error}` : '');
-  statusEl.className = 'wf-run-status wf-status-' + data.status;
+async function wfDetailCancel() {
+  const id = wfState.currentExecId;
+  if (!id) return;
+  try {
+    const r = await API.post(`/v1/workflows/executions/${id}/cancel`, {});
+    if (r && r.error) {
+      alert('Cancel failed: ' + r.error);
+      return;
+    }
+    // Poll once to reflect the new status immediately.
+    wfPoll();
+  } catch (e) {
+    alert('Cancel error: ' + e.message);
+  }
+}
 
-  const stepsEl = document.getElementById('wf-run-steps');
-  stepsEl.innerHTML = (data.steps || []).map(s => {
-    const cls = s.kind.includes('error') ? 'wf-step-err' : (s.kind === 'call_done' ? 'wf-step-done' : '');
-    return `<div class="wf-step ${cls}">
-      <span class="wf-step-line">L${s.line}</span>
-      <span class="wf-step-kind">${escapeHtml(s.kind)}</span>
-      <span class="wf-step-detail">${escapeHtml(s.detail || '')}</span>
-    </div>`;
-  }).join('');
+/* ─── Detail rendering: chat-style turns ─── */
 
-  // Detect waiting-for-file: most recent step is `ask_user_for_file` call (not call_done)
+function wfRenderDetail(data) {
+  if (!data) return;
+  const status = data.status || 'unknown';
+  const isLive = WF_LIVE_STATUSES.has(status);
+  // Header
+  const titleEl = document.getElementById('wf-detail-title');
+  const metaEl = document.getElementById('wf-detail-meta');
+  const verb = isLive ? 'Running' : 'History';
+  titleEl.textContent = `${verb}: ${data.workflow_name || wfState.currentExecId}`;
+  const dur = data.duration_ms
+    ? (data.duration_ms < 1000 ? data.duration_ms + 'ms' : (data.duration_ms / 1000).toFixed(1) + 's')
+    : '';
+  const cost = data.cost_usd ? '$' + Number(data.cost_usd).toFixed(4) : '';
+  const metaBits = [
+    `<span class="wf-status-${status}">${escapeHtml(status)}</span>`,
+    data.user_display ? `by ${escapeHtml(data.user_display)}` : '',
+    data.trigger_kind ? `via ${escapeHtml(data.trigger_kind)}` : '',
+    dur,
+    cost,
+    `<span class="wf-detail-execid" title="${escapeHtml(wfState.currentExecId)}">${escapeHtml((wfState.currentExecId || '').slice(0, 8))}</span>`,
+  ].filter(Boolean);
+  metaEl.innerHTML = metaBits.join(' · ');
+  // Cancel + Save buttons
+  document.getElementById('wf-detail-cancel-btn').classList.toggle('hidden', !isLive);
+  // Save-to-chats only meaningful once a follow-up session exists. Without
+  // follow-ups there's nothing to save — just close the view.
+  document.getElementById('wf-detail-save-btn').classList.toggle('hidden', !wfState.detailFollowupSid);
+  // Composer is gated on terminal status — can't ask follow-ups about a
+  // run that's still mutating its trace mid-conversation.
+  if (isLive) {
+    wfDetailUpdateComposerEnabled(false, `Composer disabled while run is ${status}.`);
+  } else {
+    wfDetailUpdateComposerEnabled(true, '');
+  }
+  // Chat-style turn rendering
+  const turnsEl = document.getElementById('wf-detail-turns');
+  turnsEl.innerHTML = wfDetailRenderTurnsHtml(data) + wfDetailRenderFollowupsHtml();
+  turnsEl.scrollTop = turnsEl.scrollHeight;
+  // Live ask-user-for-file prompt
   const lastSteps = (data.steps || []).slice(-2);
   const askStep = lastSteps.find(s =>
     s.kind === 'call' && (s.detail || '').includes('ask_user_for_file('));
   const completedAsk = lastSteps.some(s =>
     s.kind === 'call_done' && (s.detail || '').includes('ask_user_for_file '));
-  const promptEl = document.getElementById('wf-run-prompt');
-  if (askStep && !completedAsk && data.status === 'running') {
+  const promptEl = document.getElementById('wf-detail-prompt');
+  if (askStep && !completedAsk && status === 'running') {
     if (promptEl.classList.contains('hidden')) {
       const { prompt, accept } = wfParseAskFileDetail(askStep.detail || '');
       wfRenderUploadPrompt(promptEl, prompt, accept);
@@ -935,15 +999,246 @@ function wfRenderRunState(data) {
   } else {
     promptEl.classList.add('hidden');
   }
+}
 
-  // Render result
-  const resultEl = document.getElementById('wf-run-result');
-  if (data.status === 'completed' && data.return_value !== null && data.return_value !== undefined) {
-    resultEl.innerHTML = `<div class="wf-result-label">Returned:</div><pre class="wf-result-value">${escapeHtml(JSON.stringify(data.return_value, null, 2))}</pre>`;
-    resultEl.classList.remove('hidden');
-  } else if (data.status === 'failed') {
-    resultEl.innerHTML = `<div class="wf-result-label wf-error">Error</div><pre class="wf-result-value">${escapeHtml(data.error || '')}</pre>`;
-    resultEl.classList.remove('hidden');
+function wfDetailRenderTurnsHtml(data) {
+  // Render the workflow source as a collapsible "system" turn at top, then
+  // each step as its own bubble. Tool calls + their result are paired; bare
+  // setup steps and engine bookkeeping become smaller dim rows.
+  const out = [];
+  const src = (data.workflow_source || '').trim();
+  if (src) {
+    out.push(`
+      <div class="wf-detail-turn wf-detail-turn-system">
+        <div class="wf-detail-turn-label">Workflow source</div>
+        <pre class="wf-detail-source"><code>${escapeHtml(src)}</code></pre>
+      </div>
+    `);
+  }
+  const steps = data.steps || (typeof data.steps_json === 'string' ? JSON.parse(data.steps_json || '[]') : []) || [];
+  // Pair `call` with the matching `call_done` immediately following — engine
+  // emits them adjacent for synchronous tools.
+  let i = 0;
+  while (i < steps.length) {
+    const s = steps[i];
+    const kind = s.kind || '';
+    if (kind === 'call') {
+      const next = steps[i + 1];
+      const paired = next && next.kind === 'call_done' ? next : null;
+      out.push(`
+        <div class="wf-detail-turn wf-detail-turn-tool">
+          <div class="wf-detail-turn-label">Tool call · L${s.line}</div>
+          <div class="wf-detail-turn-call">${escapeHtml(s.detail || '')}</div>
+          ${paired ? `<div class="wf-detail-turn-result">${escapeHtml(paired.detail || '(no output)')}</div>` : '<div class="wf-detail-turn-result wf-detail-pending">…</div>'}
+        </div>
+      `);
+      i += paired ? 2 : 1;
+      continue;
+    }
+    if (kind === 'call_done') {
+      // Orphan call_done (call already consumed) — skip.
+      i += 1;
+      continue;
+    }
+    if (kind === 'error') {
+      out.push(`
+        <div class="wf-detail-turn wf-detail-turn-error">
+          <div class="wf-detail-turn-label">Error · L${s.line}</div>
+          <div class="wf-detail-turn-result">${escapeHtml(s.detail || '')}</div>
+        </div>
+      `);
+      i += 1;
+      continue;
+    }
+    // Other engine steps (set, return, branch, …) — small dim row.
+    out.push(`
+      <div class="wf-detail-turn wf-detail-turn-step">
+        <span class="wf-detail-step-kind">${escapeHtml(kind)}</span>
+        <span class="wf-detail-step-line">L${s.line}</span>
+        <span class="wf-detail-step-detail">${escapeHtml(s.detail || '')}</span>
+      </div>
+    `);
+    i += 1;
+  }
+  // Final return / error
+  let rv = data.return_value;
+  if (typeof rv === 'string' && rv) {
+    try { rv = JSON.parse(rv); } catch (_) {}
+  }
+  if (rv !== null && rv !== undefined && rv !== '') {
+    const txt = typeof rv === 'string' ? rv : JSON.stringify(rv, null, 2);
+    out.push(`
+      <div class="wf-detail-turn wf-detail-turn-final">
+        <div class="wf-detail-turn-label">Returned</div>
+        <pre class="wf-detail-final-value">${escapeHtml(txt)}</pre>
+      </div>
+    `);
+  } else if (data.error) {
+    out.push(`
+      <div class="wf-detail-turn wf-detail-turn-error">
+        <div class="wf-detail-turn-label">Failed</div>
+        <pre class="wf-detail-final-value">${escapeHtml(data.error)}</pre>
+      </div>
+    `);
+  }
+  return out.join('');
+}
+
+function wfDetailRenderFollowupsHtml() {
+  if (!wfState.detailFollowups.length) return '';
+  const blocks = wfState.detailFollowups.map(f => {
+    const cls = f.role === 'user' ? 'wf-detail-fup-user' : 'wf-detail-fup-assistant';
+    const label = f.role === 'user' ? 'You' : 'Assistant';
+    const streaming = f.streaming ? '<span class="wf-detail-cursor">▍</span>' : '';
+    return `
+      <div class="wf-detail-followup ${cls}">
+        <div class="wf-detail-followup-label">${label}</div>
+        <div class="wf-detail-followup-text">${escapeHtml(f.text || '')}${streaming}</div>
+      </div>
+    `;
+  });
+  return `<div class="wf-detail-followups-divider">Follow-up</div>` + blocks.join('');
+}
+
+function wfDetailUpdateComposerEnabled(enabled, statusMsg) {
+  const ta = document.getElementById('wf-detail-input');
+  const btn = document.getElementById('wf-detail-send-btn');
+  const status = document.getElementById('wf-detail-composer-status');
+  if (!ta || !btn) return;
+  ta.disabled = !enabled || wfState.detailFollowupStreaming;
+  btn.disabled = !enabled || wfState.detailFollowupStreaming;
+  status.textContent = statusMsg || '';
+  if (enabled) {
+    ta.placeholder = 'Ask a follow-up question about this run…';
+  } else {
+    ta.placeholder = statusMsg || 'Composer disabled.';
+  }
+}
+
+function wfDetailOnKeydown(e) {
+  // Cmd/Ctrl+Enter → send. Plain Enter → newline (long follow-ups about
+  // workflow runs often warrant multi-line questions).
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    e.preventDefault();
+    wfDetailSend();
+  }
+}
+
+async function wfDetailSend() {
+  const ta = document.getElementById('wf-detail-input');
+  const text = (ta && ta.value || '').trim();
+  if (!text) return;
+  if (wfState.detailFollowupStreaming) return;
+  const execId = wfState.currentExecId;
+  if (!execId) return;
+  // Lazy-create the hidden chat session bound to this workflow run on the
+  // first send. Subsequent sends reuse it (full conversation context).
+  if (!wfState.detailFollowupSid) {
+    try {
+      // Use the active chat's model so the user gets the model they expect.
+      // Fall back to the first available model when no chat is open yet.
+      const model = (state.activeChat && state.activeChat.model)
+        || (state.models.length ? (state.models[0].id || state.models[0]) : '');
+      if (!model) {
+        alert('No model available — open a chat first to pick one.');
+        return;
+      }
+      const created = await API.createSession(WF_AGENT, model, '', 'workflow_run', execId);
+      if (created && created.error) {
+        alert('Could not create follow-up session: ' + created.error);
+        return;
+      }
+      wfState.detailFollowupSid = created.session_id;
+    } catch (e) {
+      alert('Could not create follow-up session: ' + e.message);
+      return;
+    }
+  }
+  // Append the user turn + an assistant placeholder for the streaming reply.
+  wfState.detailFollowups.push({ role: 'user', text });
+  const aIdx = wfState.detailFollowups.length;
+  wfState.detailFollowups.push({ role: 'assistant', text: '', streaming: true });
+  ta.value = '';
+  wfState.detailFollowupStreaming = true;
+  wfDetailUpdateComposerEnabled(true, 'Sending…');
+  wfRenderDetail(wfState.detailRun);
+  const turnsEl = document.getElementById('wf-detail-turns');
+  if (turnsEl) turnsEl.scrollTop = turnsEl.scrollHeight;
+  try {
+    await API.streamChat(wfState.detailFollowupSid, text, {
+      text_delta: (d) => {
+        const f = wfState.detailFollowups[aIdx];
+        if (!f) return;
+        f.text = (f.text || '') + (d.text || '');
+        // Cheap incremental update: re-render only the followups block.
+        const turns = document.getElementById('wf-detail-turns');
+        if (turns) {
+          // Find the last assistant followup div and patch its text node.
+          const fups = turns.querySelectorAll('.wf-detail-fup-assistant .wf-detail-followup-text');
+          const last = fups[fups.length - 1];
+          if (last) {
+            last.innerHTML = escapeHtml(f.text) + '<span class="wf-detail-cursor">▍</span>';
+            turns.scrollTop = turns.scrollHeight;
+          }
+        }
+      },
+      done: () => {
+        const f = wfState.detailFollowups[aIdx];
+        if (f) f.streaming = false;
+        wfState.detailFollowupStreaming = false;
+        wfDetailUpdateComposerEnabled(true, '');
+        // Save-to-chats button becomes meaningful now that a session exists.
+        document.getElementById('wf-detail-save-btn').classList.remove('hidden');
+        wfRenderDetail(wfState.detailRun);
+      },
+      error: (d) => {
+        const f = wfState.detailFollowups[aIdx];
+        if (f) {
+          f.text = (f.text || '') + `\n[Error: ${d.message || 'unknown'}]`;
+          f.streaming = false;
+        }
+        wfState.detailFollowupStreaming = false;
+        wfDetailUpdateComposerEnabled(true, 'Error — try again');
+        wfRenderDetail(wfState.detailRun);
+      },
+    });
+  } catch (e) {
+    const f = wfState.detailFollowups[aIdx];
+    if (f) {
+      f.text = (f.text || '') + `\n[Error: ${e.message}]`;
+      f.streaming = false;
+    }
+    wfState.detailFollowupStreaming = false;
+    wfDetailUpdateComposerEnabled(true, 'Error — try again');
+    wfRenderDetail(wfState.detailRun);
+  }
+}
+
+async function wfDetailSaveToChats() {
+  const sid = wfState.detailFollowupSid;
+  const execId = wfState.currentExecId;
+  if (!sid || !execId) {
+    alert('Send at least one follow-up before saving to chats.');
+    return;
+  }
+  try {
+    const r = await API.post(`/v1/workflows/history/${execId}/promote-session/${sid}`, {});
+    if (r && r.error) {
+      alert('Save failed: ' + r.error);
+      return;
+    }
+    // Drop the user into the freshly-promoted chat. Clear local detail
+    // state so re-opening this run starts a fresh follow-up session.
+    const promotedSid = sid;
+    wfState.detailFollowupSid = null;
+    wfState.detailFollowups = [];
+    wfState.detailFollowupStreaming = false;
+    wfCloseDetail();
+    if (typeof openSession === 'function') {
+      openSession(promotedSid, WF_AGENT);
+    }
+  } catch (e) {
+    alert('Save error: ' + e.message);
   }
 }
 
