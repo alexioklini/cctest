@@ -4300,10 +4300,72 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 
 .wf-run-prompt {
   padding: 16px 18px;
-  background: rgba(251,146,60,0.08);
+  background: rgba(251,146,60,0.06);
   border-bottom: 1px solid var(--border-200);
 }
-.wf-run-prompt input[type=file] { margin: 8px 0; display: block; }
+
+/* Upload prompt — replaces raw <input type=file> with a styled drop zone */
+.wf-upload { display: flex; flex-direction: column; gap: 12px; }
+.wf-upload-header { display: flex; align-items: flex-start; gap: 12px; }
+.wf-upload-icon {
+  width: 36px; height: 36px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: rgba(251,146,60,0.18);
+  color: #ea580c;
+  display: flex; align-items: center; justify-content: center;
+}
+.wf-upload-text { flex: 1; min-width: 0; }
+.wf-upload-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-000);
+  line-height: 1.35;
+  margin-bottom: 2px;
+}
+.wf-upload-hint { font-size: 12px; color: var(--text-300); }
+.wf-upload-drop {
+  display: block;
+  border: 1.5px dashed var(--border-200);
+  border-radius: 10px;
+  padding: 18px 16px;
+  cursor: pointer;
+  background: var(--bg-page);
+  transition: border-color 120ms, background 120ms;
+}
+.wf-upload-drop:hover,
+.wf-upload-drop-active {
+  border-color: var(--accent, #3b82f6);
+  background: rgba(59,130,246,0.05);
+}
+.wf-upload-drop-inner {
+  display: flex; flex-direction: column; gap: 6px;
+  align-items: center;
+  text-align: center;
+}
+.wf-upload-drop-cta { font-size: 13px; color: var(--text-200); }
+.wf-upload-link {
+  color: var(--accent, #3b82f6);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.wf-upload-or { color: var(--text-400); margin-left: 4px; }
+.wf-upload-filename { font-size: 12px; min-height: 18px; }
+.wf-upload-filename-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 10px;
+  background: var(--bg-200);
+  border-radius: 999px;
+  color: var(--text-100);
+  font-family: 'SF Mono', monospace;
+}
+.wf-upload-filename-size { color: var(--text-400); font-weight: normal; }
+.wf-upload-error { color: #dc2626; font-size: 12px; }
+.wf-upload-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.wf-upload-actions .wf-btn[disabled] {
+  opacity: 0.5; cursor: not-allowed;
+}
 
 .wf-run-steps {
   flex: 1; overflow-y: auto;

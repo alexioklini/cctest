@@ -614,17 +614,15 @@ function wfRenderRunState(data) {
 
   // Detect waiting-for-file: most recent step is `ask_user_for_file` call (not call_done)
   const lastSteps = (data.steps || []).slice(-2);
-  const askedForFile = lastSteps.some(s =>
+  const askStep = lastSteps.find(s =>
     s.kind === 'call' && (s.detail || '').includes('ask_user_for_file('));
   const completedAsk = lastSteps.some(s =>
     s.kind === 'call_done' && (s.detail || '').includes('ask_user_for_file '));
   const promptEl = document.getElementById('wf-run-prompt');
-  if (askedForFile && !completedAsk && data.status === 'running') {
+  if (askStep && !completedAsk && data.status === 'running') {
     if (promptEl.classList.contains('hidden')) {
-      promptEl.innerHTML = `
-        <p>Workflow is waiting for a file upload.</p>
-        <input type="file" id="wf-upload-input" />
-        <button class="wf-btn wf-btn-primary" onclick="wfUploadFile()">Upload</button>`;
+      const { prompt, accept } = wfParseAskFileDetail(askStep.detail || '');
+      wfRenderUploadPrompt(promptEl, prompt, accept);
       promptEl.classList.remove('hidden');
     }
   } else {
@@ -642,19 +640,106 @@ function wfRenderRunState(data) {
   }
 }
 
+function wfParseAskFileDetail(detail) {
+  // Backend emits: ask_user_for_file(prompt='Upload meeting recording', accept='audio/*')
+  // Match repr-style strings (single OR double quotes, with escaped chars).
+  const out = { prompt: '', accept: '' };
+  const re = /(\w+)=(['"])((?:\\.|(?!\2).)*)\2/g;
+  let m;
+  while ((m = re.exec(detail)) !== null) {
+    if (m[1] in out) out[m[1]] = m[3].replace(/\\(.)/g, '$1');
+  }
+  return out;
+}
+
+function wfRenderUploadPrompt(root, prompt, accept) {
+  const promptText = prompt || 'The workflow is waiting for a file.';
+  const acceptHint = accept ? `Accepted: ${escapeHtml(accept)}` : 'Any file type accepted';
+  const acceptAttr = accept ? `accept="${escapeHtml(accept)}"` : '';
+  root.innerHTML = `
+    <div class="wf-upload">
+      <div class="wf-upload-header">
+        <div class="wf-upload-icon">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <div class="wf-upload-text">
+          <div class="wf-upload-title">${escapeHtml(promptText)}</div>
+          <div class="wf-upload-hint">${acceptHint}</div>
+        </div>
+      </div>
+      <label class="wf-upload-drop" id="wf-upload-drop">
+        <input type="file" id="wf-upload-input" ${acceptAttr} onchange="wfOnFilePicked()" hidden />
+        <div class="wf-upload-drop-inner">
+          <div class="wf-upload-drop-cta">
+            <span class="wf-upload-link">Choose a file</span>
+            <span class="wf-upload-or">or drop it here</span>
+          </div>
+          <div class="wf-upload-filename" id="wf-upload-filename"></div>
+        </div>
+      </label>
+      <div class="wf-upload-actions">
+        <button class="wf-btn wf-btn-ghost" onclick="wfCancelUpload()">Cancel</button>
+        <button class="wf-btn wf-btn-primary" id="wf-upload-submit" onclick="wfUploadFile()" disabled>Upload</button>
+      </div>
+    </div>`;
+  // Drag-and-drop wiring
+  const drop = document.getElementById('wf-upload-drop');
+  const input = document.getElementById('wf-upload-input');
+  if (drop && input) {
+    ['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => {
+      e.preventDefault(); e.stopPropagation(); drop.classList.add('wf-upload-drop-active');
+    }));
+    ['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => {
+      e.preventDefault(); e.stopPropagation(); drop.classList.remove('wf-upload-drop-active');
+    }));
+    drop.addEventListener('drop', e => {
+      const files = e.dataTransfer && e.dataTransfer.files;
+      if (files && files.length) {
+        input.files = files;
+        wfOnFilePicked();
+      }
+    });
+  }
+}
+
+function wfOnFilePicked() {
+  const input = document.getElementById('wf-upload-input');
+  const nameEl = document.getElementById('wf-upload-filename');
+  const submit = document.getElementById('wf-upload-submit');
+  if (!input || !nameEl) return;
+  const f = input.files && input.files[0];
+  if (f) {
+    const sizeKB = f.size / 1024;
+    const sizeStr = sizeKB < 1024 ? sizeKB.toFixed(1) + ' KB' : (sizeKB / 1024).toFixed(2) + ' MB';
+    nameEl.innerHTML = `<span class="wf-upload-filename-pill">${escapeHtml(f.name)} <span class="wf-upload-filename-size">· ${sizeStr}</span></span>`;
+    if (submit) submit.disabled = false;
+  } else {
+    nameEl.innerHTML = '';
+    if (submit) submit.disabled = true;
+  }
+}
+
+function wfCancelUpload() {
+  const input = document.getElementById('wf-upload-input');
+  if (input) { input.value = ''; }
+  wfOnFilePicked();
+}
+
 async function wfUploadFile() {
   const id = wfState.currentExecId;
   const input = document.getElementById('wf-upload-input');
-  if (!id || !input || !input.files || !input.files[0]) {
-    alert('Please choose a file first.');
-    return;
-  }
+  const submit = document.getElementById('wf-upload-submit');
+  if (!id || !input || !input.files || !input.files[0]) return;
   const f = input.files[0];
   const fd = new FormData();
   fd.append('file', f);
   const authToken = localStorage.getItem('auth-token');
   const headers = {};
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  if (submit) {
+    submit.disabled = true;
+    submit.textContent = 'Uploading…';
+  }
   try {
     const res = await fetch(`${BASE_URL}/v1/workflows/executions/${id}/upload-file`, {
       method: 'POST',
@@ -664,12 +749,16 @@ async function wfUploadFile() {
     });
     const data = await res.json();
     if (data.error) {
-      alert('Upload failed: ' + data.error);
+      if (submit) { submit.disabled = false; submit.textContent = 'Upload'; }
+      const nameEl = document.getElementById('wf-upload-filename');
+      if (nameEl) nameEl.innerHTML = `<span class="wf-upload-error">${escapeHtml(data.error)}</span>`;
       return;
     }
     document.getElementById('wf-run-prompt').classList.add('hidden');
   } catch (e) {
-    alert('Upload error: ' + e.message);
+    if (submit) { submit.disabled = false; submit.textContent = 'Upload'; }
+    const nameEl = document.getElementById('wf-upload-filename');
+    if (nameEl) nameEl.innerHTML = `<span class="wf-upload-error">${escapeHtml(e.message || 'Upload failed')}</span>`;
   }
 }
 
