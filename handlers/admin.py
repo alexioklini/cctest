@@ -376,18 +376,52 @@ class AdminHandlerMixin:
             self._send_json({"status": "approved", "execution_id": exec_id})
 
     def _handle_workflow_cancel(self, path):
-        """POST /v1/workflows/executions/{id}/cancel — cancel execution."""
+        """POST /v1/workflows/executions/{id}/cancel — cancel execution.
+
+        Live execution → ex.cancel(). If the in-memory execution is gone (server
+        restart killed it but the workflow_history row still says 'running'),
+        the row is finalised as 'cancelled' so it leaves the running set.
+        """
+        import datetime
         parts = path.split("/")
         if len(parts) < 5:
             self._send_json({"error": "Invalid path"}, 400)
             return
         exec_id = parts[4]
         ex = engine.workflow_get_execution(exec_id)
-        if not ex:
+        if ex:
+            ex.cancel()
+            self._send_json({"status": "cancelled", "execution_id": exec_id})
+            return
+        # Zombie row — no live execution but DB may still say running.
+        from brain import _workflow_history_get, _workflow_history_finalize
+        row = _workflow_history_get(exec_id)
+        if not row:
             self._send_json({"error": "Execution not found"}, 404)
             return
-        ex.cancel()
-        self._send_json({"status": "cancelled", "execution_id": exec_id})
+        if row.get("status") not in ("running", "pending", "waiting_approval"):
+            self._send_json({"error": f"Execution already terminal (status: {row.get('status')})"}, 400)
+            return
+        # RBAC: non-admins can only cancel their own runs.
+        au = getattr(self, "_auth_user", None) or {}
+        if au.get("role") != "admin":
+            owner = row.get("user_id") or ""
+            if owner and owner != (au.get("id") or ""):
+                self._send_json({"error": "Forbidden"}, 403)
+                return
+        now_iso = datetime.datetime.now().isoformat()
+        try:
+            started_at = row.get("started_at") or now_iso
+            started_dt = datetime.datetime.fromisoformat(started_at)
+            duration_ms = int((datetime.datetime.now() - started_dt).total_seconds() * 1000)
+        except Exception:
+            duration_ms = 0
+        _workflow_history_finalize(
+            exec_id, "cancelled", now_iso, duration_ms,
+            "Cancelled (no live execution — likely interrupted by server restart)",
+            "", row.get("steps_json") or "[]",
+        )
+        self._send_json({"status": "cancelled", "execution_id": exec_id, "zombie": True})
 
     def _handle_workflow_history(self, path, query_params=None):
         """GET /v1/workflows/history — list execution history with filtering.

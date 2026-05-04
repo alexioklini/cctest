@@ -150,6 +150,16 @@ async function wfShowHistoryDetail(executionId) {
       return;
     }
     const data = await API.get(`/v1/workflows/history/${executionId}`);
+    // Zombie row — DB says running but no live execution. Offer Cancel which
+    // the server now finalises the row in this case.
+    const isZombieRunning = (data.status === 'running' || data.status === 'pending' || data.status === 'waiting_approval');
+    if (isZombieRunning) {
+      wfState.currentExecId = executionId;
+      document.getElementById('wf-run-cancel-btn').classList.remove('hidden');
+    } else {
+      wfState.currentExecId = null;
+      document.getElementById('wf-run-cancel-btn').classList.add('hidden');
+    }
     // Terminal status (completed / failed / cancelled) — read-only history view.
     document.getElementById('wf-run-title').textContent = `History: ${data.workflow_name} (${executionId})`;
     document.getElementById('wf-run-status').textContent = `Status: ${data.status}` +
@@ -182,8 +192,6 @@ async function wfShowHistoryDetail(executionId) {
       resultEl.classList.add('hidden');
     }
     document.getElementById('wf-run-prompt').classList.add('hidden');
-    document.getElementById('wf-run-cancel-btn').classList.add('hidden');
-    wfState.currentExecId = null;
     wfStopPolling();
     document.getElementById('wf-run-modal').classList.remove('hidden');
   } catch (e) {
