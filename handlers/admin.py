@@ -222,34 +222,76 @@ class AdminHandlerMixin:
     # --- Workflow Handlers ---
 
     def _handle_workflow_list(self, path):
-        """GET /v1/agents/{id}/workflows — list workflows for an agent."""
+        """GET /v1/agents/{id}/workflows — list workflows for an agent.
+        Path may also be /v1/agents/{id}/workflows/{name} (single source) or
+        /v1/agents/{id}/workflows/tools (tool palette metadata).
+        """
         agent_id = self._parse_agent_from_path(path)
         if not agent_id:
             self._send_json({"error": "Missing agent ID"}, 400)
+            return
+        parts = path.split("/")
+        # /v1/agents/{id}/workflows/tools  → tool palette
+        if len(parts) >= 6 and parts[5] == "tools":
+            palette = []
+            for td in engine.TOOL_DEFINITIONS:
+                schema = td.get("input_schema") or {}
+                props = schema.get("properties") or {}
+                required = set(schema.get("required") or [])
+                args = []
+                for pname, pdef in props.items():
+                    args.append({
+                        "name": pname,
+                        "type": pdef.get("type", "string"),
+                        "description": pdef.get("description", ""),
+                        "required": pname in required,
+                    })
+                palette.append({
+                    "name": td.get("name"),
+                    "description": td.get("description", ""),
+                    "args": args,
+                    "primary_field": td.get("primary_field", ""),
+                })
+            self._send_json({"tools": palette})
+            return
+        # /v1/agents/{id}/workflows/{name} → return source
+        if len(parts) >= 6 and parts[5]:
+            name = parts[5]
+            src = engine.WorkflowEngine.get_workflow_source(agent_id, name)
+            if src is None:
+                self._send_json({"error": "Workflow not found"}, 404)
+                return
+            self._send_json({"agent": agent_id, "name": name, "source": src})
             return
         workflows = engine.WorkflowEngine.list_workflows(agent_id)
         self._send_json({"agent": agent_id, "workflows": workflows})
 
     def _handle_workflow_save(self, path):
-        """POST /v1/agents/{id}/workflows — save a workflow definition."""
+        """POST /v1/agents/{id}/workflows — save a workflow definition (text source)."""
         agent_id = self._parse_agent_from_path(path)
         if not agent_id:
             self._send_json({"error": "Missing agent ID"}, 400)
             return
         body = self._read_json()
         name = body.get("name", "")
-        definition = body.get("definition", "")
+        # Accept either "source" (new) or "definition" (legacy) field
+        source = body.get("source") or body.get("definition") or ""
         if not name:
             self._send_json({"error": "name is required"}, 400)
             return
-        if not definition:
-            self._send_json({"error": "definition is required"}, 400)
+        if not source:
+            self._send_json({"error": "source is required"}, 400)
+            return
+        # Sanitize filename
+        safe = re.sub(r"[^A-Za-z0-9_\-]+", "_", name)[:64]
+        if not safe:
+            self._send_json({"error": "invalid name"}, 400)
             return
         try:
-            fpath = engine.WorkflowEngine.save_workflow(agent_id, name, definition)
-            self._send_json({"status": "saved", "path": fpath})
+            fpath = engine.WorkflowEngine.save_workflow(agent_id, safe, source)
+            self._send_json({"status": "saved", "name": safe, "path": fpath})
         except Exception as e:
-            self._send_json({"error": str(e)}, 500)
+            self._send_json({"error": str(e)}, 400)
 
     def _handle_workflow_delete(self, path):
         """DELETE /v1/agents/{id}/workflows/{name} — delete a workflow."""
@@ -276,8 +318,18 @@ class AdminHandlerMixin:
         body = self._read_json()
         variables = body.get("variables", {})
         model = body.get("model")
+        trigger_kind = body.get("trigger_kind") or "manual"
+        trigger_ref = body.get("trigger_ref") or ""
+        # Pull caller identity from auth context
+        au = getattr(self, "_auth_user", None) or {}
+        user_id = au.get("id") or ""
+        user_display = au.get("display_name") or au.get("username") or ""
         try:
-            execution = engine.workflow_start(agent_id, wf_name, variables, model)
+            execution = engine.workflow_start(
+                agent_id, wf_name, variables, model,
+                user_id=user_id, user_display=user_display,
+                trigger_kind=trigger_kind, trigger_ref=trigger_ref,
+            )
             self._send_json({"execution_id": execution.execution_id, "status": execution.status})
         except Exception as e:
             self._send_json({"error": str(e)}, 400)
@@ -336,6 +388,163 @@ class AdminHandlerMixin:
             return
         ex.cancel()
         self._send_json({"status": "cancelled", "execution_id": exec_id})
+
+    def _handle_workflow_history(self, path, query_params=None):
+        """GET /v1/workflows/history — list execution history with filtering.
+        Query: workflow=<name>, user=<id>, status=<state>, mine=1, limit=N, offset=N.
+        Non-admins always get scoped to their own runs (mine=1 implied).
+        """
+        # `path` arrives without query string — read raw self.path for the qs.
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(getattr(self, "path", ""))
+        qs = parse_qs(parsed.query)
+        wf_filter = (qs.get("workflow") or [None])[0]
+        status_filter = (qs.get("status") or [None])[0]
+        user_filter = (qs.get("user") or [None])[0]
+        mine = (qs.get("mine") or [""])[0] in ("1", "true", "yes")
+        try:
+            limit = max(1, min(int((qs.get("limit") or ["50"])[0]), 500))
+        except ValueError:
+            limit = 50
+        try:
+            offset = max(0, int((qs.get("offset") or ["0"])[0]))
+        except ValueError:
+            offset = 0
+        # RBAC: admins can see all; non-admins always restricted to their own.
+        au = getattr(self, "_auth_user", None) or {}
+        is_admin = (au.get("role") == "admin")
+        if not is_admin or mine:
+            user_filter = au.get("id") or ""
+            if not user_filter:
+                self._send_json({"executions": []})
+                return
+        rows = engine._workflow_history_list(
+            workflow_name=wf_filter, user_id=user_filter,
+            status=status_filter, limit=limit, offset=offset,
+        )
+        self._send_json({"executions": rows, "limit": limit, "offset": offset})
+
+    def _handle_workflow_history_get(self, path):
+        """GET /v1/workflows/history/{execution_id} — full row including steps + variables."""
+        parts = path.split("/")
+        if len(parts) < 5:
+            self._send_json({"error": "Invalid path"}, 400)
+            return
+        exec_id = parts[4]
+        row = engine._workflow_history_get(exec_id)
+        if not row:
+            self._send_json({"error": "Not found"}, 404)
+            return
+        # RBAC: non-admins can only see own runs
+        au = getattr(self, "_auth_user", None) or {}
+        if au.get("role") != "admin":
+            owner = row.get("user_id") or ""
+            if owner and owner != (au.get("id") or ""):
+                self._send_json({"error": "Forbidden"}, 403)
+                return
+        # Decode JSON columns
+        for k in ("variables_json", "steps_json"):
+            v = row.get(k)
+            if isinstance(v, str) and v:
+                try:
+                    row[k.replace("_json", "")] = json.loads(v)
+                except Exception:
+                    pass
+        self._send_json(row)
+
+    def _handle_workflow_upload_file(self, path):
+        """POST /v1/workflows/executions/{id}/upload-file — multipart upload to satisfy
+        a paused ask_user_for_file call. Saves the file under /tmp/brain-workflow-uploads/
+        and delivers (path, filename, size_bytes) to the waiting workflow thread.
+        """
+        parts = path.split("/")
+        if len(parts) < 5:
+            self._send_json({"error": "Invalid path"}, 400)
+            return
+        exec_id = parts[4]
+        ex = engine.workflow_get_execution(exec_id)
+        if not ex:
+            self._send_json({"error": "Execution not found"}, 404)
+            return
+        # Confirm the workflow is actually waiting for a file
+        if exec_id not in engine._workflow_file_pending:
+            self._send_json({"error": "Workflow is not waiting for a file upload"}, 400)
+            return
+        content_type = self.headers.get("Content-Type", "")
+        content_length = int(self.headers.get("Content-Length", "0"))
+        if not content_length:
+            self._send_json({"error": "No content"}, 400)
+            return
+        if "multipart/form-data" not in content_type:
+            self._send_json({"error": "Expected multipart/form-data"}, 400)
+            return
+        body = self.rfile.read(content_length)
+        boundary = None
+        for part in content_type.split(";"):
+            part = part.strip()
+            if part.startswith("boundary="):
+                boundary = part[len("boundary="):]
+                break
+        if not boundary:
+            self._send_json({"error": "No boundary"}, 400)
+            return
+        delimiter = f"--{boundary}".encode()
+        chunks = body.split(delimiter)
+        filename = None
+        file_data = None
+        for chunk in chunks:
+            if not chunk or chunk in (b"--\r\n", b"--"):
+                continue
+            if b"\r\n\r\n" in chunk:
+                hdr, part_body = chunk.split(b"\r\n\r\n", 1)
+            elif b"\n\n" in chunk:
+                hdr, part_body = chunk.split(b"\n\n", 1)
+            else:
+                continue
+            if part_body.endswith(b"\r\n"):
+                part_body = part_body[:-2]
+            header_text = hdr.decode("utf-8", errors="replace")
+            field_name = None
+            field_filename = None
+            for line in header_text.split("\r\n"):
+                line = line.strip()
+                if line.lower().startswith("content-disposition:"):
+                    for item in line.split(";"):
+                        item = item.strip()
+                        if item.startswith("name="):
+                            field_name = item[5:].strip('"').strip("'")
+                        elif item.startswith("filename="):
+                            field_filename = item[9:].strip('"').strip("'")
+            if field_name == "file" and field_filename:
+                filename = field_filename
+                file_data = part_body
+        if not filename or file_data is None:
+            self._send_json({"error": "No file uploaded"}, 400)
+            return
+        # Persist to /tmp/brain-workflow-uploads/<exec_id>/<filename>
+        upload_root = os.path.join("/tmp", "brain-workflow-uploads", exec_id)
+        os.makedirs(upload_root, exist_ok=True)
+        # Sanitize filename (keep extension)
+        safe_filename = re.sub(r"[^A-Za-z0-9_\-\. ]+", "_", filename) or "upload"
+        full_path = os.path.join(upload_root, safe_filename)
+        with open(full_path, "wb") as f:
+            f.write(file_data)
+        size_bytes = len(file_data)
+        delivered = engine.deliver_workflow_file_answer(exec_id, {
+            "path": full_path,
+            "filename": safe_filename,
+            "size_bytes": size_bytes,
+        })
+        if not delivered:
+            self._send_json({"error": "Workflow no longer waiting"}, 400)
+            return
+        self._send_json({
+            "status": "delivered",
+            "execution_id": exec_id,
+            "path": full_path,
+            "filename": safe_filename,
+            "size_bytes": size_bytes,
+        })
 
     # --- Agent file management ---
 
@@ -4279,10 +4488,9 @@ class AdminHandlerMixin:
         self.send_response(200)
         self.send_header("Content-Type", ct)
         self.send_header("Content-Length", len(data))
-        if ext == "html":
-            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        if ext in ("html", "css", "js"):
+            self.send_header("Cache-Control", "no-cache, must-revalidate")
         elif ext in ("woff2", "woff", "ttf"):
-            # Content-addressable file names — safe to cache long.
             self.send_header("Cache-Control", "public, max-age=31536000, immutable")
         self.end_headers()
         self.wfile.write(data)

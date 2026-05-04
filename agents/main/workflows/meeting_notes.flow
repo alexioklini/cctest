@@ -1,0 +1,14 @@
+WORKFLOW "Meeting Notes"
+DESCRIPTION "Transcribe a meeting recording"
+TRIGGER manual
+
+SET upload = CALL ask_user_for_file prompt="Upload meeting recording" accept="audio/*"
+SET transcript_result = CALL transcribe_audio file=upload.path
+SET transcript = transcript_result.transcript
+SET notes_result = CALL ask_llm prompt="Extract: summary, decisions, action items from:\n{{transcript}}"
+SET notes = notes_result.text
+SET filename = "/tmp/meeting_" + now("%H%M%S") + ".md"
+SET body = "# Meeting Notes\n\n## Transcript\n\n" + transcript + "\n\n## Notes\n\n" + notes + "\n"
+CALL write_file path=filename content=body
+
+RETURN filename

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.23.2"
-VERSION_DATE = "2026-05-03"
+VERSION = "8.23.5"
+VERSION_DATE = "2026-05-04"
 CHANGELOG = [
+    ("8.23.5", "2026-05-04", "Static asset Cache-Control on CSS/JS. `_serve_static` (handlers/admin.py) only set `Cache-Control` on `.html` and on the woff fonts; `.css` and `.js` went out without any Cache-Control header. Browsers and intermediaries (notably Cloudflare's edge cache, which treats static extensions as cacheable by default unless told otherwise) cached old asset bytes indefinitely, so users on `brain.alexklinsky.dev` kept seeing UI from a previous deploy long after the server restarted. Symptom this caught: Workflows view's `Definitions` / `All Runs` sub-tabs and the per-row `History` button rendered as broken/missing — the served `main.css` was ~6KB shorter than the on-disk file (124102 vs 130372 bytes), missing the `.wf-subtabs`/`.wf-subtab` rules. Fix: send `Cache-Control: no-cache, must-revalidate` for `.html`, `.css`, and `.js` — `no-cache` (without `no-store`) lets the browser keep a copy but forces revalidation on every request, so unchanged files round-trip as fast 304s and updates land immediately on the next reload. Cloudflare Cache Rules separately needed a Bypass policy on the hostname to flush already-cached entries at the edge (operational, not code)."),
     ("8.23.0", "2026-04-30", "Token-saving optimisations + project Instructions refactor + Instructions UI polish. Three coordinated changes targeting per-turn token consumption + owner-editable response disciplines + better readability of the Instructions panel. (1) **A1+ per-session read_document / read_file cache** — `_read_doc_cache` in claude_cli.py keyed by `(session_id, abs_path)` with `(mtime, size, turn_first_read, content_hash)` value. On a repeat full-shape read of the same file in the same chat, returns a compact stub `{cached:true, first_read_in_turn:N, content_hash:..., note:'Bereits in Turn N gelesen — Inhalt unverändert'}` instead of streaming the file content back into the model's context. mtime+size check on every lookup invalidates if the file changed externally; `_after_file_write` invalidates the entry explicitly when the model writes/edits the same path so a follow-up read sees fresh content. Pagination args (offset / limit / pages / sheet / slides; explicit `limit` on read_file) bypass the cache entirely. read_document and read_file are added to `_DEDUP_EXEMPT` so the bare-string dedup (which kills the loop after 2 dupes) doesn't fire on legitimate cache-hit calls — the cache is the smarter dedup. `_thread_local.tool_round` set in `_execute_tools_batch` so the stub names the right turn. TTL 1h, max 64 entries per session. Validated on a real workflow: yesterday's 4-turn DSGVO chat (78beef49) used 335,683 input tokens reading the same Datenschutzhandbuch.pdf.md three times across turns; today's reproduction (1e7478d9) used 277,579 tokens — a measured −17% reduction DESPITE the model choosing to read 3× more source files per turn (3 .md companions instead of 1). User estimate normalised to a 1-source workflow comes out around −30%; without A1+ the 3-source variation alone would have inflated tokens far above yesterday's number. Per-round growth on Turn 2 dropped from yesterday's +2,605 (round 0 → 1) to today's +655 with three read_documents in flight, all hitting cache. (2) **B1 project preamble** — moved dynamic project state (drawer count, attachment count, input-folder list with absolute paths, path-join example) out of `_build_system_prompt` into a per-session preamble injected at round 0 on the first user message. New helper `_project_preamble_text(agent_id, project_name)` builds the `[Project context (this session): …]` block. Injection block hoisted out of the `_greeting_uid` guard so anonymous (auth-off) sessions in projects also get the absolute paths needed to resolve relative drawer source_files. KV-cache stability win: system prompt stays project-agnostic in shape, the per-project bytes only live in the user message — better prefix reuse on warm-pool slots and across project chats; saves ~1KB per request on Cloud providers without prompt cache. (3) **DEFAULT_PROJECT_INSTRUCTIONS constant + project Instructions refactor** — REFUSAL + PRECISION + CITATION discipline blocks (the v8.22.0 anti-hallucination rules) moved out of `_build_system_prompt`'s static text into a new module-level `DEFAULT_PROJECT_INSTRUCTIONS` constant (4081 chars). Used as the FALLBACK when `project.json.instructions` is empty so every project still gets the disciplines for free with no migration. Project owners can replace the default by writing their own text in the right-pane Instructions editor; override REPLACES the default rather than appending (an owner can opt out of the citation requirement by writing simpler instructions). New endpoint `GET /v1/projects/default-instructions` returns the constant; the editor modal grows a `Load default` button that pre-fills the textarea so owners can start from the disciplines and customise. Brain mechanics (the 3-step retrieval flow, `read_path` vs `read_path_original`, binary→.md companion explanation, KG hint block) STAY in the system prompt because those are infrastructure facts not editable behavior. (4) **Instructions UI polish** — the right-panel Instructions section now renders the saved instructions text as full markdown (headings / bullets / code / blockquotes / strong) via the existing renderMarkdown(). Section is height-capped at 200px with vertical scroll so long defaults (4KB markdown) don't push Files + Input-Folders sections below the fold. Editor modal grows Edit/Preview tabs above the textarea: Edit shows raw markdown (existing textarea, min-height bumped to 320px), Preview renders the current textarea content via the same renderer with up to 480px scrollable height. Switching tabs preserves the raw text; Save always reads from the textarea regardless of which tab is active. Load default refreshes the Preview if it's currently visible. Save path now also re-renders the right-panel block as markdown to match loadProjectDetail (was raw textContent before). (5) **Token-optimization memory captured** — three new memory notes documenting A1+/B1 mechanics, the validated −17% measurement, and a backlog item for lifting REFUSAL/PRECISION/CITATION into an org-wide setting (the user explicitly said 'lass mal' on that — don't apply prematurely)."),
     ("8.22.2", "2026-04-29", "References UI split into Zitiert + Durchsucht. The right-side References panel and the inline ref-badges under each assistant message previously rendered EVERY drawer that came back from `mempalace_query` — typically 5-10 results, of which the model only quotes 1-3 in `[Quelle: …]` markers. Visual noise made it hard to tell which sources were actually used. New split: refs whose basename matches a `[Quelle: <basename>]` marker in the assistant message text land in the Zitiert section (always visible); the rest land in Durchsucht (collapsed by default via `<details>`). When an answer cites no sources (refusals, no-source answers), Durchsucht opens by default so the pane isn't empty. Implementation: new `extractCitedBasenamesFromText` regex parses both `[Quelle:…]` and `[source:…]` markers (em-dash, en-dash, ASCII-hyphen-with-spaces, `§`, or closing-bracket all valid terminators); `normaliseCitationBasename` lowercases + strips path prefix + strips `.md` companion suffix on known binary extensions (pdf|docx|pptx|xlsx|xlsm|eml|msg) so `policy.pdf`, `policy.pdf.md`, and `Policy.PDF` collapse to the same key. `collectChatReferences()` and `getReferencesForMessage(idx)` return `{cited, searched}` instead of a flat array. Live-streaming refs always seed the searched bucket; cache is invalidated on `done` event so the next read re-splits using the now-final assistant text. Two new render paths share a single `_refCardHtml` helper; CSS for `msg-references-wrap` (per-message inline) + `refs-section` (right pane) wrap each section with a header label + count pill and `<details>`-driven disclosure on the collapsed surface."),
     ("8.22.1", "2026-04-29", "CITATION DISCIPLINE tightened: per-claim instead of per-block. Follow-up to v8.22.0 after the canary `a82327b7` showed the model still ending bullet lists with three uncited paraphrase bullets after a single inline blockquote — exactly where drift and fabrication slip in (the user can't tell which bullet came from which source). Reworked the CITATION DISCIPLINE block to mandate that EVERY sentence AND EVERY bullet carry its OWN `[Quelle: <basename> — \"<verbatim quote>\"]` reference, not just one at the end. Added explicit guidance: if no verbatim quote can be found for a bullet, DELETE the bullet — shorter fully-cited answer beats longer answer with uncited bullets. Two worked examples (single-sentence claim + bullet list with per-bullet quotes plus an explicit '(kein dritter Bullet, weil keine weitere Aussage im read_document gefunden — lieber weglassen als raten)' line so the model sees the deletion pattern modelled, not just told)."),
@@ -458,6 +459,59 @@ TOOL_DEFINITIONS = [
             },
             "required": ["path", "old_string", "new_string"],
         },
+    },
+    {
+        "name": "ask_llm",
+        "description": (
+            "One-shot LLM call. Returns plain text from the model — no tools, no agentic loop. "
+            "For deterministic text transformations: summarisation, extraction, rewriting. "
+            "Returns: {text, model}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "User message / instruction"},
+                "system": {"type": "string", "description": "Optional system prompt"},
+                "model": {"type": "string", "description": "Model id (defaults to refinement model)"},
+            },
+            "required": ["prompt"],
+        },
+        "primary_field": "text",
+    },
+    {
+        "name": "transcribe_audio",
+        "description": (
+            "Transcribe an audio file (.wav/.mp3/.m4a/.flac/.ogg) to text using local mlx-whisper. "
+            "First call downloads the model (~150MB for base). Runs entirely on-device. "
+            "Returns: {transcript, language, duration_s}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file": {"type": "string", "description": "Absolute path to the audio file"},
+                "language": {"type": "string", "description": "ISO language code (e.g. 'en', 'de'); auto-detect when omitted"},
+                "model": {"type": "string", "description": "Whisper model: 'tiny', 'base', 'small', 'medium', 'large-v3' (default: base)"},
+            },
+            "required": ["file"],
+        },
+        "primary_field": "transcript",
+    },
+    {
+        "name": "ask_user_for_file",
+        "description": (
+            "Pause execution and ask the user to upload a file. "
+            "The frontend opens a file picker; this call blocks until a file is uploaded or cancelled. "
+            "Returns: {path, filename, size_bytes}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "Message shown to the user explaining what to upload"},
+                "accept": {"type": "string", "description": "File type filter, e.g. 'audio/*' or '.wav,.mp3' (optional)"},
+            },
+            "required": ["prompt"],
+        },
+        "primary_field": "path",
     },
     {
         "name": "list_directory",
@@ -1469,6 +1523,8 @@ TOOL_GROUPS = {
     "skills": {"use_skill"},
     "nodes": {"list_nodes"},
     "code_exec": {"python_exec"},
+    "audio": {"transcribe_audio"},
+    "workflows": {"ask_user_for_file", "ask_llm"},
     "workers": {"get_artifact_detail", "worker_status", "worker_abort",
                 "worker_pause", "worker_resume", "worker_send",
                 "worker_ask_user"},
@@ -2072,6 +2128,117 @@ def tool_edit_file(args: dict) -> str:
         return _ok({"path": path, "replacements": count if replace_all else 1, "status": "edited"})
     except Exception as e:
         return _err(f"edit_file: {e}")
+
+
+def tool_ask_llm(args: dict) -> str:
+    """One-shot LLM call without an agentic loop. For workflows / chats that need
+    a quick text-in / text-out transformation. No tools, no memory, no streaming.
+
+    Args:
+        prompt: user message
+        system: optional system prompt (defaults to a generic helpful assistant)
+        model:  model id (defaults to refinement.model from tools_config.json,
+                falling back to the agent's preferred model)
+    """
+    prompt = args.get("prompt") or ""
+    if not prompt:
+        return _err("ask_llm: 'prompt' is required")
+    system_prompt = args.get("system") or (
+        "You are a helpful assistant. Answer concisely and directly."
+    )
+    model = args.get("model") or ""
+    # Resolution order: explicit kwarg → workflow MODEL header → workflow AGENT.preferred_model
+    # → refinement model → current agent → server fallback.
+    if not model:
+        model = (getattr(_thread_local, "workflow_default_model", "") or "").strip()
+    if not model:
+        wf_agent = getattr(_thread_local, "workflow_agent_id", "") or ""
+        if wf_agent:
+            try:
+                _ag = AgentConfig(wf_agent)
+                model = (_ag.preferred_model or "").strip()
+            except Exception:
+                pass
+    if not model:
+        try:
+            tcfg = _load_tools_config() or {}
+            model = ((tcfg.get("refinement") or {}).get("model") or "").strip()
+        except Exception:
+            model = ""
+    if not model:
+        agent = getattr(_thread_local, "current_agent", None) or _current_agent
+        if agent:
+            model = agent.preferred_model or ""
+    if not model:
+        model = _delegate_fallback_model or ""
+    if not model:
+        return _err("ask_llm: no model configured")
+    # Inherit the workflow's synthetic session_id ("wf-<execution_id>") so the
+    # cost log can attribute this LLM call back to the workflow run.
+    sid = getattr(_thread_local, "current_session_id", None) or ""
+    try:
+        text = _run_delegate(
+            [{"role": "user", "content": prompt}],
+            model, system_prompt,
+            tools=False,
+            session_id=sid or None,
+        ) or ""
+        return _ok({"text": text.strip(), "model": model})
+    except Exception as e:
+        return _err(f"ask_llm: {e}")
+
+
+_WHISPER_MODEL_REPO = {
+    "tiny":     "mlx-community/whisper-tiny-mlx",
+    "base":     "mlx-community/whisper-base-mlx",
+    "small":    "mlx-community/whisper-small-mlx",
+    "medium":   "mlx-community/whisper-medium-mlx",
+    "large-v3": "mlx-community/whisper-large-v3-mlx",
+}
+
+
+def tool_transcribe_audio(args: dict) -> str:
+    file_path = args.get("file", "")
+    language = args.get("language") or None
+    model_size = (args.get("model") or "base").lower()
+    if not file_path:
+        return _err("transcribe_audio: 'file' is required")
+    file_path = os.path.expanduser(file_path)
+    if not os.path.isabs(file_path):
+        file_path = os.path.abspath(file_path)
+    if not os.path.exists(file_path):
+        return _err(f"transcribe_audio: file not found: {file_path}")
+    repo = _WHISPER_MODEL_REPO.get(model_size)
+    if not repo:
+        return _err(f"transcribe_audio: unknown model '{model_size}'. Use one of: {', '.join(_WHISPER_MODEL_REPO)}")
+    try:
+        import mlx_whisper  # type: ignore
+    except ImportError:
+        return _err("transcribe_audio: mlx-whisper is not installed. Run: pip3 install --user mlx-whisper")
+    try:
+        kwargs = {"path_or_hf_repo": repo}
+        if language:
+            kwargs["language"] = language
+        result = mlx_whisper.transcribe(file_path, **kwargs)
+        transcript = (result or {}).get("text", "").strip()
+        detected_language = (result or {}).get("language") or language or ""
+        # Compute duration from segments if present
+        segments = (result or {}).get("segments") or []
+        duration_s = 0.0
+        if segments:
+            try:
+                duration_s = float(segments[-1].get("end", 0.0))
+            except (TypeError, ValueError):
+                duration_s = 0.0
+        return _ok({
+            "transcript": transcript,
+            "language": detected_language,
+            "duration_s": round(duration_s, 2),
+            "model": model_size,
+            "file": file_path,
+        })
+    except Exception as e:
+        return _err(f"transcribe_audio: {e}")
 
 
 def _describe_image_with_vision(image_data_b64: str, media_type: str, filename: str) -> str:
@@ -11502,8 +11669,994 @@ except ImportError:
     _yaml = None  # Graceful fallback — suggest pip3 install pyyaml
 
 
+# =================================================================
+# Workflow Language (.flow) — small scripted DSL.
+#
+# A workflow is a plain-text file storing keywords + tool calls. The
+# language stays deliberately tiny (Excel-formula-tier) so non-programmer
+# users can read and edit them; every action is a CALL to a Brain tool
+# from TOOL_DISPATCH so the language never lags behind the tool surface.
+#
+# Grammar (informal):
+#
+#   workflow      := (line)*
+#   line          := comment | header | statement
+#   comment       := '#' .*
+#   header        := 'WORKFLOW' STRING
+#                  | 'DESCRIPTION' STRING
+#                  | 'TRIGGER' STRING
+#   statement     := assign | call_stmt | if_stmt | for_stmt | return_stmt
+#   assign        := 'SET' IDENT '=' expr
+#   call_stmt     := 'CALL' IDENT (NAME '=' expr)*
+#                  | 'CALL?' IDENT (NAME '=' expr)*
+#   if_stmt       := 'IF' expr ':' BLOCK ('ELSE' ':' BLOCK)?
+#   for_stmt      := 'FOR' 'EACH' IDENT 'IN' expr ':' BLOCK
+#   return_stmt   := 'RETURN' expr
+#   BLOCK         := indented child lines
+#   expr          := literal | ident | indexing | call_expr | binop | str_interp
+#
+# Errors halt by default. `CALL?` makes a call non-fatal — on tool error
+# the variable is set to null and `last_error` holds the message.
+# =================================================================
+
+
+# ----------------------------- Lexer -----------------------------
+
+import re as _wf_re
+
+
+class WorkflowError(Exception):
+    """Raised on parse or runtime errors inside a workflow."""
+    def __init__(self, message: str, line: int = 0):
+        self.line = line
+        super().__init__(message)
+
+
+_WF_KEYWORDS = {
+    "WORKFLOW", "DESCRIPTION", "TRIGGER", "AGENT", "MODEL",
+    "SET", "CALL", "IF", "ELSE", "FOR", "EACH", "IN", "RETURN",
+    "AND", "OR", "NOT", "TRUE", "FALSE", "NULL",
+}
+
+# Token types
+_WF_TT = {
+    "KEYWORD", "IDENT", "NUMBER", "STRING", "OP", "NEWLINE",
+    "INDENT", "DEDENT", "COLON", "ASSIGN", "COMMA", "LPAREN", "RPAREN",
+    "LBRACK", "RBRACK", "LBRACE", "RBRACE", "QMARK", "DOT", "EOF",
+}
+
+
+def _wf_tokenize(source: str) -> list[tuple]:
+    """Indent-aware tokenizer. Returns list of (type, value, line) tuples."""
+    tokens: list[tuple] = []
+    indent_stack = [0]
+    lines = source.split("\n")
+    for lineno, raw_line in enumerate(lines, start=1):
+        # Strip trailing comment (but not inside strings).
+        # Simple approach: walk char by char, respect quotes.
+        in_str = False
+        quote = ""
+        clean_chars = []
+        i = 0
+        while i < len(raw_line):
+            c = raw_line[i]
+            if in_str:
+                clean_chars.append(c)
+                if c == "\\" and i + 1 < len(raw_line):
+                    clean_chars.append(raw_line[i + 1])
+                    i += 2
+                    continue
+                if c == quote:
+                    in_str = False
+                i += 1
+                continue
+            if c in ('"', "'"):
+                in_str = True
+                quote = c
+                clean_chars.append(c)
+                i += 1
+                continue
+            if c == "#":
+                break  # rest is comment
+            clean_chars.append(c)
+            i += 1
+        line = "".join(clean_chars).rstrip()
+        if not line.strip():
+            continue  # blank or comment-only line — no INDENT/DEDENT change
+        # Compute indent (spaces or tab=4)
+        idx = 0
+        col = 0
+        while idx < len(line) and line[idx] in (" ", "\t"):
+            col += 4 if line[idx] == "\t" else 1
+            idx += 1
+        body = line[idx:]
+        # Emit INDENT / DEDENT
+        if col > indent_stack[-1]:
+            indent_stack.append(col)
+            tokens.append(("INDENT", "", lineno))
+        else:
+            while col < indent_stack[-1]:
+                indent_stack.pop()
+                tokens.append(("DEDENT", "", lineno))
+            if col != indent_stack[-1]:
+                raise WorkflowError(f"Inconsistent indentation", lineno)
+        # Tokenize body
+        _wf_tok_line(body, lineno, tokens)
+        tokens.append(("NEWLINE", "", lineno))
+    while len(indent_stack) > 1:
+        indent_stack.pop()
+        tokens.append(("DEDENT", "", len(lines)))
+    tokens.append(("EOF", "", len(lines)))
+    return tokens
+
+
+_WF_OP_MULTICHAR = ["==", "!=", "<=", ">=", "&&", "||"]
+
+
+def _wf_tok_line(body: str, lineno: int, out: list[tuple]) -> None:
+    i = 0
+    n = len(body)
+    while i < n:
+        c = body[i]
+        if c.isspace():
+            i += 1
+            continue
+        # Strings
+        if c in ('"', "'"):
+            quote = c
+            j = i + 1
+            buf = []
+            while j < n:
+                ch = body[j]
+                if ch == "\\" and j + 1 < n:
+                    nxt = body[j + 1]
+                    esc = {"n": "\n", "t": "\t", "r": "\r", "\\": "\\", '"': '"', "'": "'"}.get(nxt, nxt)
+                    buf.append(esc)
+                    j += 2
+                    continue
+                if ch == quote:
+                    j += 1
+                    break
+                buf.append(ch)
+                j += 1
+            else:
+                raise WorkflowError("Unterminated string literal", lineno)
+            out.append(("STRING", "".join(buf), lineno))
+            i = j
+            continue
+        # Numbers
+        if c.isdigit() or (c == "-" and i + 1 < n and body[i + 1].isdigit() and (not out or out[-1][0] in ("OP", "ASSIGN", "COMMA", "LPAREN", "LBRACK", "COLON", "INDENT", "NEWLINE"))):
+            j = i + 1
+            saw_dot = False
+            while j < n and (body[j].isdigit() or (body[j] == "." and not saw_dot)):
+                if body[j] == ".":
+                    saw_dot = True
+                j += 1
+            num = body[i:j]
+            try:
+                val = float(num) if "." in num else int(num)
+            except ValueError:
+                raise WorkflowError(f"Invalid number: {num}", lineno)
+            out.append(("NUMBER", val, lineno))
+            i = j
+            continue
+        # Identifiers / keywords
+        if c.isalpha() or c == "_":
+            j = i + 1
+            while j < n and (body[j].isalnum() or body[j] == "_"):
+                j += 1
+            word = body[i:j]
+            uw = word.upper()
+            if uw in _WF_KEYWORDS:
+                out.append(("KEYWORD", uw, lineno))
+            else:
+                out.append(("IDENT", word, lineno))
+            i = j
+            continue
+        # Punctuation / operators
+        if i + 1 < n and body[i:i + 2] in _WF_OP_MULTICHAR:
+            op = body[i:i + 2]
+            if op == "&&":
+                op = "AND"
+                out.append(("KEYWORD", op, lineno))
+            elif op == "||":
+                op = "OR"
+                out.append(("KEYWORD", op, lineno))
+            else:
+                out.append(("OP", op, lineno))
+            i += 2
+            continue
+        if c == "?":
+            out.append(("QMARK", c, lineno))
+            i += 1
+            continue
+        if c == "=":
+            out.append(("ASSIGN", c, lineno))
+            i += 1
+            continue
+        if c in "+-*/<>":
+            out.append(("OP", c, lineno))
+            i += 1
+            continue
+        if c == ":":
+            out.append(("COLON", c, lineno))
+            i += 1
+            continue
+        if c == ",":
+            out.append(("COMMA", c, lineno))
+            i += 1
+            continue
+        if c == "(":
+            out.append(("LPAREN", c, lineno))
+            i += 1
+            continue
+        if c == ")":
+            out.append(("RPAREN", c, lineno))
+            i += 1
+            continue
+        if c == "[":
+            out.append(("LBRACK", c, lineno))
+            i += 1
+            continue
+        if c == "]":
+            out.append(("RBRACK", c, lineno))
+            i += 1
+            continue
+        if c == "{":
+            out.append(("LBRACE", c, lineno))
+            i += 1
+            continue
+        if c == "}":
+            out.append(("RBRACE", c, lineno))
+            i += 1
+            continue
+        if c == ".":
+            out.append(("DOT", c, lineno))
+            i += 1
+            continue
+        raise WorkflowError(f"Unexpected character {c!r}", lineno)
+
+
+# ----------------------------- AST -----------------------------
+
+
+class _WFNode:
+    pass
+
+
+class _WFLiteral(_WFNode):
+    __slots__ = ("value", "line")
+    def __init__(self, value, line): self.value = value; self.line = line
+
+
+class _WFVar(_WFNode):
+    __slots__ = ("name", "line")
+    def __init__(self, name, line): self.name = name; self.line = line
+
+
+class _WFGetAttr(_WFNode):
+    __slots__ = ("base", "attr", "line")
+    def __init__(self, base, attr, line): self.base = base; self.attr = attr; self.line = line
+
+
+class _WFGetItem(_WFNode):
+    __slots__ = ("base", "index", "line")
+    def __init__(self, base, index, line): self.base = base; self.index = index; self.line = line
+
+
+class _WFBinOp(_WFNode):
+    __slots__ = ("op", "left", "right", "line")
+    def __init__(self, op, left, right, line): self.op = op; self.left = left; self.right = right; self.line = line
+
+
+class _WFUnary(_WFNode):
+    __slots__ = ("op", "operand", "line")
+    def __init__(self, op, operand, line): self.op = op; self.operand = operand; self.line = line
+
+
+class _WFFnCall(_WFNode):
+    __slots__ = ("name", "args", "line")
+    def __init__(self, name, args, line): self.name = name; self.args = args; self.line = line
+
+
+class _WFList(_WFNode):
+    __slots__ = ("items", "line")
+    def __init__(self, items, line): self.items = items; self.line = line
+
+
+class _WFDict(_WFNode):
+    __slots__ = ("pairs", "line")
+    def __init__(self, pairs, line): self.pairs = pairs; self.line = line
+
+
+class _WFInterpStr(_WFNode):
+    """A string literal with {{...}} placeholders. parts is list of (kind, value)."""
+    __slots__ = ("parts", "line")
+    def __init__(self, parts, line): self.parts = parts; self.line = line
+
+
+class _WFAssign(_WFNode):
+    __slots__ = ("name", "value", "line")
+    def __init__(self, name, value, line): self.name = name; self.value = value; self.line = line
+
+
+class _WFCall(_WFNode):
+    """CALL <tool> name=value name=value  (statement form). soft=True for CALL?"""
+    __slots__ = ("tool", "kwargs", "soft", "line")
+    def __init__(self, tool, kwargs, soft, line): self.tool = tool; self.kwargs = kwargs; self.soft = soft; self.line = line
+
+
+class _WFIf(_WFNode):
+    __slots__ = ("cond", "then_body", "else_body", "line")
+    def __init__(self, cond, then_body, else_body, line):
+        self.cond = cond; self.then_body = then_body; self.else_body = else_body; self.line = line
+
+
+class _WFFor(_WFNode):
+    __slots__ = ("var", "iterable", "body", "line")
+    def __init__(self, var, iterable, body, line):
+        self.var = var; self.iterable = iterable; self.body = body; self.line = line
+
+
+class _WFReturn(_WFNode):
+    __slots__ = ("value", "line")
+    def __init__(self, value, line): self.value = value; self.line = line
+
+
+class _WFProgram(_WFNode):
+    __slots__ = ("name", "description", "trigger", "agent_id", "model", "body")
+    def __init__(self):
+        self.name = ""
+        self.description = ""
+        self.trigger = "manual"
+        self.agent_id = ""
+        self.model = ""
+        self.body: list[_WFNode] = []
+
+
+# ----------------------------- Parser -----------------------------
+
+
+class _WFParser:
+    def __init__(self, tokens: list[tuple]):
+        self.toks = tokens
+        self.pos = 0
+
+    def _peek(self, k=0) -> tuple:
+        return self.toks[self.pos + k]
+
+    def _eat(self, ttype: str, value=None) -> tuple:
+        tok = self.toks[self.pos]
+        if tok[0] != ttype:
+            raise WorkflowError(f"Expected {ttype}, got {tok[0]} ({tok[1]!r})", tok[2])
+        if value is not None and tok[1] != value:
+            raise WorkflowError(f"Expected {value!r}, got {tok[1]!r}", tok[2])
+        self.pos += 1
+        return tok
+
+    def _accept(self, ttype: str, value=None) -> tuple | None:
+        tok = self.toks[self.pos]
+        if tok[0] != ttype:
+            return None
+        if value is not None and tok[1] != value:
+            return None
+        self.pos += 1
+        return tok
+
+    def parse(self) -> _WFProgram:
+        prog = _WFProgram()
+        # Skip leading NEWLINEs
+        while self._peek()[0] == "NEWLINE":
+            self.pos += 1
+        while self._peek()[0] != "EOF":
+            tok = self._peek()
+            if tok[0] == "KEYWORD" and tok[1] in ("WORKFLOW", "DESCRIPTION", "TRIGGER", "AGENT", "MODEL"):
+                self._parse_header(prog)
+                continue
+            stmt = self._parse_statement()
+            if stmt is not None:
+                prog.body.append(stmt)
+            # Eat trailing NEWLINEs at top level
+            while self._peek()[0] == "NEWLINE":
+                self.pos += 1
+        return prog
+
+    def _parse_header(self, prog: _WFProgram) -> None:
+        kw = self._eat("KEYWORD")
+        # Header value: a STRING literal OR a bare identifier OR a sequence of
+        # IDENT/OP("-")/NUMBER tokens up to NEWLINE — supports hyphenated model
+        # names like mistral-vibe-cli-fast without requiring quotes.
+        nxt = self._peek()
+        if nxt[0] == "STRING":
+            value = nxt[1]
+            self.pos += 1
+        elif nxt[0] in ("IDENT", "NUMBER"):
+            buf = [str(nxt[1])]
+            self.pos += 1
+            while self._peek()[0] != "NEWLINE":
+                t = self._peek()
+                if t[0] == "OP" and t[1] == "-":
+                    buf.append("-")
+                    self.pos += 1
+                    continue
+                if t[0] == "DOT":
+                    buf.append(".")
+                    self.pos += 1
+                    continue
+                if t[0] in ("IDENT", "NUMBER"):
+                    buf.append(str(t[1]))
+                    self.pos += 1
+                    continue
+                break
+            value = "".join(buf)
+        else:
+            raise WorkflowError(f"Header {kw[1]} expects a string or identifier", kw[2])
+        if kw[1] == "WORKFLOW":
+            prog.name = value
+        elif kw[1] == "DESCRIPTION":
+            prog.description = value
+        elif kw[1] == "TRIGGER":
+            prog.trigger = value
+        elif kw[1] == "AGENT":
+            prog.agent_id = value
+        elif kw[1] == "MODEL":
+            prog.model = value
+        # Trailing newline
+        while self._peek()[0] == "NEWLINE":
+            self.pos += 1
+
+    def _parse_block(self) -> list[_WFNode]:
+        # Expect INDENT, then statements until DEDENT
+        self._eat("INDENT")
+        stmts: list[_WFNode] = []
+        while self._peek()[0] not in ("DEDENT", "EOF"):
+            s = self._parse_statement()
+            if s is not None:
+                stmts.append(s)
+            while self._peek()[0] == "NEWLINE":
+                self.pos += 1
+        if self._peek()[0] == "DEDENT":
+            self.pos += 1
+        return stmts
+
+    def _parse_statement(self) -> _WFNode | None:
+        tok = self._peek()
+        if tok[0] == "NEWLINE":
+            self.pos += 1
+            return None
+        if tok[0] == "KEYWORD":
+            kw = tok[1]
+            if kw == "SET":
+                return self._parse_set()
+            if kw == "CALL":
+                return self._parse_call_stmt()
+            if kw == "IF":
+                return self._parse_if()
+            if kw == "FOR":
+                return self._parse_for()
+            if kw == "RETURN":
+                return self._parse_return()
+        raise WorkflowError(f"Unexpected token at start of statement: {tok[0]} {tok[1]!r}", tok[2])
+
+    def _parse_set(self) -> _WFAssign:
+        line = self._peek()[2]
+        self._eat("KEYWORD", "SET")
+        name_tok = self._eat("IDENT")
+        self._eat("ASSIGN")
+        # Right-hand side may be a CALL expression OR a regular expression.
+        if self._peek()[0] == "KEYWORD" and self._peek()[1] == "CALL":
+            value = self._parse_call_expr()
+        else:
+            value = self._parse_expression()
+        return _WFAssign(name_tok[1], value, line)
+
+    def _parse_call_stmt(self) -> _WFCall:
+        node = self._parse_call_expr()
+        # Wrap in a statement node — _WFCall already serves both roles.
+        return node  # type: ignore
+
+    def _parse_call_expr(self) -> _WFCall:
+        line = self._peek()[2]
+        self._eat("KEYWORD", "CALL")
+        soft = False
+        if self._peek()[0] == "QMARK":
+            self.pos += 1
+            soft = True
+        tool_tok = self._eat("IDENT")
+        kwargs: list[tuple[str, _WFNode]] = []
+        # kwargs are space-separated NAME=expr — terminate at NEWLINE/COLON/RBRACK/RPAREN/EOF
+        while True:
+            t = self._peek()
+            if t[0] in ("NEWLINE", "COLON", "EOF", "RPAREN", "RBRACK", "RBRACE", "DEDENT"):
+                break
+            if t[0] == "COMMA":
+                self.pos += 1
+                continue
+            if t[0] != "IDENT":
+                raise WorkflowError(f"Expected argument name, got {t[1]!r}", t[2])
+            name_tok = self._eat("IDENT")
+            self._eat("ASSIGN")
+            val = self._parse_expression()
+            kwargs.append((name_tok[1], val))
+        return _WFCall(tool_tok[1], kwargs, soft, line)
+
+    def _parse_if(self) -> _WFIf:
+        line = self._peek()[2]
+        self._eat("KEYWORD", "IF")
+        cond = self._parse_expression()
+        self._eat("COLON")
+        # Optional NEWLINE before block
+        while self._peek()[0] == "NEWLINE":
+            self.pos += 1
+        then_body = self._parse_block()
+        else_body: list[_WFNode] = []
+        # Skip newlines and check for ELSE at the same indent
+        while self._peek()[0] == "NEWLINE":
+            self.pos += 1
+        if self._peek()[0] == "KEYWORD" and self._peek()[1] == "ELSE":
+            self._eat("KEYWORD", "ELSE")
+            self._eat("COLON")
+            while self._peek()[0] == "NEWLINE":
+                self.pos += 1
+            else_body = self._parse_block()
+        return _WFIf(cond, then_body, else_body, line)
+
+    def _parse_for(self) -> _WFFor:
+        line = self._peek()[2]
+        self._eat("KEYWORD", "FOR")
+        self._eat("KEYWORD", "EACH")
+        var_tok = self._eat("IDENT")
+        self._eat("KEYWORD", "IN")
+        iterable = self._parse_expression()
+        self._eat("COLON")
+        while self._peek()[0] == "NEWLINE":
+            self.pos += 1
+        body = self._parse_block()
+        return _WFFor(var_tok[1], iterable, body, line)
+
+    def _parse_return(self) -> _WFReturn:
+        line = self._peek()[2]
+        self._eat("KEYWORD", "RETURN")
+        # Optional value
+        if self._peek()[0] in ("NEWLINE", "EOF"):
+            return _WFReturn(_WFLiteral(None, line), line)
+        if self._peek()[0] == "KEYWORD" and self._peek()[1] == "CALL":
+            value = self._parse_call_expr()
+        else:
+            value = self._parse_expression()
+        return _WFReturn(value, line)
+
+    # --- Expressions (Pratt-ish, low-to-high precedence) ---
+
+    def _parse_expression(self) -> _WFNode:
+        return self._parse_or()
+
+    def _parse_or(self) -> _WFNode:
+        left = self._parse_and()
+        while self._peek()[0] == "KEYWORD" and self._peek()[1] == "OR":
+            line = self._peek()[2]
+            self.pos += 1
+            right = self._parse_and()
+            left = _WFBinOp("OR", left, right, line)
+        return left
+
+    def _parse_and(self) -> _WFNode:
+        left = self._parse_not()
+        while self._peek()[0] == "KEYWORD" and self._peek()[1] == "AND":
+            line = self._peek()[2]
+            self.pos += 1
+            right = self._parse_not()
+            left = _WFBinOp("AND", left, right, line)
+        return left
+
+    def _parse_not(self) -> _WFNode:
+        if self._peek()[0] == "KEYWORD" and self._peek()[1] == "NOT":
+            line = self._peek()[2]
+            self.pos += 1
+            return _WFUnary("NOT", self._parse_not(), line)
+        return self._parse_compare()
+
+    def _parse_compare(self) -> _WFNode:
+        left = self._parse_addsub()
+        while self._peek()[0] == "OP" and self._peek()[1] in ("==", "!=", "<", ">", "<=", ">="):
+            op_tok = self._peek()
+            self.pos += 1
+            right = self._parse_addsub()
+            left = _WFBinOp(op_tok[1], left, right, op_tok[2])
+        return left
+
+    def _parse_addsub(self) -> _WFNode:
+        left = self._parse_muldiv()
+        while self._peek()[0] == "OP" and self._peek()[1] in ("+", "-"):
+            op_tok = self._peek()
+            self.pos += 1
+            right = self._parse_muldiv()
+            left = _WFBinOp(op_tok[1], left, right, op_tok[2])
+        return left
+
+    def _parse_muldiv(self) -> _WFNode:
+        left = self._parse_unary()
+        while self._peek()[0] == "OP" and self._peek()[1] in ("*", "/"):
+            op_tok = self._peek()
+            self.pos += 1
+            right = self._parse_unary()
+            left = _WFBinOp(op_tok[1], left, right, op_tok[2])
+        return left
+
+    def _parse_unary(self) -> _WFNode:
+        if self._peek()[0] == "OP" and self._peek()[1] == "-":
+            line = self._peek()[2]
+            self.pos += 1
+            return _WFUnary("-", self._parse_unary(), line)
+        return self._parse_postfix()
+
+    def _parse_postfix(self) -> _WFNode:
+        node = self._parse_atom()
+        while True:
+            t = self._peek()
+            if t[0] == "DOT":
+                self.pos += 1
+                attr = self._eat("IDENT")
+                node = _WFGetAttr(node, attr[1], attr[2])
+                continue
+            if t[0] == "LBRACK":
+                self.pos += 1
+                idx_expr = self._parse_expression()
+                self._eat("RBRACK")
+                node = _WFGetItem(node, idx_expr, t[2])
+                continue
+            break
+        return node
+
+    def _parse_atom(self) -> _WFNode:
+        t = self._peek()
+        if t[0] == "NUMBER":
+            self.pos += 1
+            return _WFLiteral(t[1], t[2])
+        if t[0] == "STRING":
+            self.pos += 1
+            return self._make_interp(t[1], t[2])
+        if t[0] == "KEYWORD" and t[1] in ("TRUE", "FALSE", "NULL"):
+            self.pos += 1
+            v = True if t[1] == "TRUE" else False if t[1] == "FALSE" else None
+            return _WFLiteral(v, t[2])
+        if t[0] == "IDENT":
+            self.pos += 1
+            # Function call syntax: foo(arg, arg)
+            if self._peek()[0] == "LPAREN":
+                self.pos += 1
+                args: list[_WFNode] = []
+                if self._peek()[0] != "RPAREN":
+                    args.append(self._parse_expression())
+                    while self._peek()[0] == "COMMA":
+                        self.pos += 1
+                        args.append(self._parse_expression())
+                self._eat("RPAREN")
+                return _WFFnCall(t[1], args, t[2])
+            return _WFVar(t[1], t[2])
+        if t[0] == "LPAREN":
+            self.pos += 1
+            inner = self._parse_expression()
+            self._eat("RPAREN")
+            return inner
+        if t[0] == "LBRACK":
+            self.pos += 1
+            items: list[_WFNode] = []
+            if self._peek()[0] != "RBRACK":
+                items.append(self._parse_expression())
+                while self._peek()[0] == "COMMA":
+                    self.pos += 1
+                    items.append(self._parse_expression())
+            self._eat("RBRACK")
+            return _WFList(items, t[2])
+        if t[0] == "LBRACE":
+            self.pos += 1
+            pairs: list[tuple[_WFNode, _WFNode]] = []
+            if self._peek()[0] != "RBRACE":
+                pairs.append(self._parse_dict_pair())
+                while self._peek()[0] == "COMMA":
+                    self.pos += 1
+                    pairs.append(self._parse_dict_pair())
+            self._eat("RBRACE")
+            return _WFDict(pairs, t[2])
+        raise WorkflowError(f"Unexpected token {t[0]} {t[1]!r}", t[2])
+
+    def _parse_dict_pair(self) -> tuple[_WFNode, _WFNode]:
+        # key may be IDENT or STRING
+        key_tok = self._peek()
+        if key_tok[0] == "IDENT":
+            self.pos += 1
+            key_node: _WFNode = _WFLiteral(key_tok[1], key_tok[2])
+        elif key_tok[0] == "STRING":
+            self.pos += 1
+            key_node = _WFLiteral(key_tok[1], key_tok[2])
+        else:
+            raise WorkflowError(f"Expected dict key, got {key_tok[1]!r}", key_tok[2])
+        self._eat("COLON")
+        val_node = self._parse_expression()
+        return (key_node, val_node)
+
+    def _make_interp(self, raw: str, line: int) -> _WFNode:
+        """Convert a string with {{...}} into _WFInterpStr or plain _WFLiteral."""
+        if "{{" not in raw:
+            return _WFLiteral(raw, line)
+        parts: list[tuple[str, str]] = []
+        i = 0
+        n = len(raw)
+        buf: list[str] = []
+        while i < n:
+            if raw[i:i + 2] == "{{":
+                if buf:
+                    parts.append(("text", "".join(buf)))
+                    buf = []
+                j = raw.find("}}", i + 2)
+                if j == -1:
+                    raise WorkflowError("Unterminated {{ in string", line)
+                expr_src = raw[i + 2:j].strip()
+                parts.append(("expr", expr_src))
+                i = j + 2
+            else:
+                buf.append(raw[i])
+                i += 1
+        if buf:
+            parts.append(("text", "".join(buf)))
+        return _WFInterpStr(parts, line)
+
+
+# ----------------------------- Parser entry point -----------------------------
+
+
+def _wf_parse(source: str) -> _WFProgram:
+    toks = _wf_tokenize(source)
+    parser = _WFParser(toks)
+    return parser.parse()
+
+
+# ----------------------------- Interpreter -----------------------------
+
+
+class _WFReturnValue(Exception):
+    def __init__(self, value): self.value = value
+
+
+class _WorkflowInterpreter:
+    """Executes a parsed _WFProgram. Reports progress via a status callback."""
+
+    def __init__(self, program: _WFProgram, execution: "WorkflowExecution"):
+        self.program = program
+        self.execution = execution
+        self.env: dict[str, object] = dict(execution.variables or {})
+        # last_error available to scripts
+        self.env.setdefault("last_error", None)
+
+    def run(self) -> object:
+        try:
+            for node in self.program.body:
+                if self.execution._cancel.is_set():
+                    return None
+                self._exec(node)
+        except _WFReturnValue as rv:
+            self.execution._return_value = rv.value
+            return rv.value
+        return None
+
+    # --- Statement dispatch ---
+
+    def _exec(self, node: _WFNode) -> None:
+        if isinstance(node, _WFAssign):
+            value = self._eval(node.value)
+            self.env[node.name] = value
+            self._emit_step(node.line, "set", f"{node.name} = {self._summary(value)}")
+            return
+        if isinstance(node, _WFCall):
+            value = self._eval_call(node)
+            self.env["_"] = value
+            return
+        if isinstance(node, _WFIf):
+            cond = self._eval(node.cond)
+            self._emit_step(node.line, "if", f"condition = {bool(cond)}")
+            body = node.then_body if cond else node.else_body
+            for child in body:
+                if self.execution._cancel.is_set():
+                    return
+                self._exec(child)
+            return
+        if isinstance(node, _WFFor):
+            iterable = self._eval(node.iterable)
+            if not hasattr(iterable, "__iter__"):
+                raise WorkflowError(f"FOR EACH expects an iterable, got {type(iterable).__name__}", node.line)
+            count = 0
+            for item in iterable:
+                if self.execution._cancel.is_set():
+                    return
+                self.env[node.var] = item
+                count += 1
+                self._emit_step(node.line, "for", f"{node.var} = {self._summary(item)} (iter {count})")
+                for child in node.body:
+                    if self.execution._cancel.is_set():
+                        return
+                    self._exec(child)
+            return
+        if isinstance(node, _WFReturn):
+            value = self._eval(node.value)
+            raise _WFReturnValue(value)
+        raise WorkflowError(f"Unknown statement type: {type(node).__name__}", getattr(node, "line", 0))
+
+    # --- Expression eval ---
+
+    def _eval(self, node: _WFNode) -> object:
+        if isinstance(node, _WFLiteral):
+            return node.value
+        if isinstance(node, _WFVar):
+            if node.name not in self.env:
+                raise WorkflowError(f"Undefined variable: {node.name}", node.line)
+            return self.env[node.name]
+        if isinstance(node, _WFGetAttr):
+            base = self._eval(node.base)
+            return self._get_field(base, node.attr, node.line)
+        if isinstance(node, _WFGetItem):
+            base = self._eval(node.base)
+            idx = self._eval(node.index)
+            try:
+                return base[idx]
+            except (KeyError, IndexError, TypeError) as e:
+                raise WorkflowError(f"Index error: {e}", node.line)
+        if isinstance(node, _WFBinOp):
+            return self._eval_binop(node)
+        if isinstance(node, _WFUnary):
+            v = self._eval(node.operand)
+            if node.op == "-":
+                return -v
+            if node.op == "NOT":
+                return not v
+            raise WorkflowError(f"Unknown unary op {node.op}", node.line)
+        if isinstance(node, _WFFnCall):
+            return self._eval_builtin(node)
+        if isinstance(node, _WFList):
+            return [self._eval(it) for it in node.items]
+        if isinstance(node, _WFDict):
+            out: dict = {}
+            for k, v in node.pairs:
+                kv = self._eval(k)
+                vv = self._eval(v)
+                out[kv] = vv
+            return out
+        if isinstance(node, _WFInterpStr):
+            buf: list[str] = []
+            for kind, val in node.parts:
+                if kind == "text":
+                    buf.append(val)
+                else:
+                    expr_node = _wf_parse(f"SET _x = {val}").body[0]  # type: ignore
+                    res = self._eval(expr_node.value)  # type: ignore
+                    buf.append("" if res is None else str(res))
+            return "".join(buf)
+        if isinstance(node, _WFCall):
+            return self._eval_call(node)
+        raise WorkflowError(f"Unknown expression node: {type(node).__name__}", getattr(node, "line", 0))
+
+    def _eval_binop(self, node: _WFBinOp) -> object:
+        op = node.op
+        if op == "AND":
+            return bool(self._eval(node.left)) and bool(self._eval(node.right))
+        if op == "OR":
+            return bool(self._eval(node.left)) or bool(self._eval(node.right))
+        a = self._eval(node.left)
+        b = self._eval(node.right)
+        if op == "+":
+            if isinstance(a, str) or isinstance(b, str):
+                return str(a) + str(b)
+            return a + b
+        if op == "-": return a - b
+        if op == "*": return a * b
+        if op == "/": return a / b
+        if op == "==": return a == b
+        if op == "!=": return a != b
+        if op == "<":  return a < b
+        if op == ">":  return a > b
+        if op == "<=": return a <= b
+        if op == ">=": return a >= b
+        raise WorkflowError(f"Unknown binop {op}", node.line)
+
+    def _eval_builtin(self, node: _WFFnCall) -> object:
+        name = node.name
+        args = [self._eval(a) for a in node.args]
+        try:
+            if name == "len":
+                return len(args[0])
+            if name == "str":
+                return "" if args[0] is None else str(args[0])
+            if name == "int":
+                return int(args[0])
+            if name == "float":
+                return float(args[0])
+            if name == "bool":
+                return bool(args[0])
+            if name == "now":
+                fmt = args[0] if args else "%Y-%m-%dT%H:%M:%S"
+                return datetime.datetime.now().strftime(fmt)
+            if name == "lower":
+                return str(args[0]).lower()
+            if name == "upper":
+                return str(args[0]).upper()
+            if name == "trim":
+                return str(args[0]).strip()
+            if name == "contains":
+                return args[1] in args[0]
+            if name == "split":
+                return str(args[0]).split(args[1]) if len(args) > 1 else str(args[0]).split()
+            if name == "join":
+                sep = args[0]
+                items = args[1]
+                return sep.join(str(x) for x in items)
+            if name == "replace":
+                return str(args[0]).replace(args[1], args[2])
+        except Exception as e:
+            raise WorkflowError(f"{name}(): {e}", node.line)
+        raise WorkflowError(f"Unknown function: {name}", node.line)
+
+    def _eval_call(self, node: _WFCall) -> object:
+        tool = node.tool
+        # Resolve tool from TOOL_DISPATCH
+        fn = TOOL_DISPATCH.get(tool)
+        if not fn:
+            raise WorkflowError(f"Unknown tool: {tool}", node.line)
+        kwargs = {}
+        for k, expr in node.kwargs:
+            kwargs[k] = self._eval(expr)
+        self._emit_step(node.line, "call", f"{tool}({', '.join(f'{k}=…' for k, _ in node.kwargs)})")
+        try:
+            result_str = fn(kwargs)
+        except Exception as e:
+            if node.soft:
+                self.env["last_error"] = str(e)
+                self._emit_step(node.line, "call_soft_error", f"{tool}: {e}")
+                return None
+            raise WorkflowError(f"Tool {tool} raised: {e}", node.line)
+        # Parse JSON envelope
+        try:
+            parsed = json.loads(result_str) if isinstance(result_str, str) else result_str
+        except Exception:
+            # Tool returned non-JSON string; pass through
+            self._emit_step(node.line, "call_done", f"{tool} → (raw text)")
+            return result_str
+        if isinstance(parsed, dict) and "error" in parsed:
+            err = parsed.get("error", "unknown error")
+            if node.soft:
+                self.env["last_error"] = err
+                self._emit_step(node.line, "call_soft_error", f"{tool}: {err}")
+                return None
+            raise WorkflowError(f"Tool {tool} failed: {err}", node.line)
+        self.env["last_error"] = None
+        self._emit_step(node.line, "call_done", f"{tool} → {self._summary(parsed)}")
+        return parsed
+
+    def _get_field(self, obj, attr: str, line: int) -> object:
+        if isinstance(obj, dict):
+            if attr in obj:
+                return obj[attr]
+            raise WorkflowError(f"Field '{attr}' not in dict (keys: {list(obj.keys())})", line)
+        if hasattr(obj, attr):
+            return getattr(obj, attr)
+        raise WorkflowError(f"Cannot access field '{attr}' on {type(obj).__name__}", line)
+
+    def _summary(self, value) -> str:
+        s = str(value)
+        if len(s) > 120:
+            s = s[:117] + "..."
+        return s
+
+    def _emit_step(self, line: int, kind: str, detail: str) -> None:
+        self.execution._record_step(line, kind, detail)
+
+
+# ----------------------------- Public API -----------------------------
+
+
 class WorkflowEngine:
-    """Manages workflow definitions stored as YAML files per agent."""
+    """Workflow definitions stored as plain text under agents/<id>/workflows/*.flow."""
+
+    EXTENSION = ".flow"
 
     @staticmethod
     def _workflows_dir(agent_id: str) -> str:
@@ -11511,123 +12664,155 @@ class WorkflowEngine:
 
     @staticmethod
     def list_workflows(agent_id: str) -> list[dict]:
-        """Scan agents/<name>/workflows/*.yaml and return summaries."""
         wdir = WorkflowEngine._workflows_dir(agent_id)
         if not os.path.isdir(wdir):
             return []
         results = []
         for fname in sorted(os.listdir(wdir)):
-            if not fname.endswith((".yaml", ".yml")):
+            if not fname.endswith(WorkflowEngine.EXTENSION):
                 continue
-            wf = WorkflowEngine.get_workflow(agent_id, fname.rsplit(".", 1)[0])
-            if wf:
-                results.append({
-                    "name": wf.get("name", fname),
-                    "file": fname,
-                    "description": wf.get("description", ""),
-                    "stages": len(wf.get("stages", [])),
-                    "variables": [v.get("name", "") for v in wf.get("variables", [])],
-                })
+            name = fname[:-len(WorkflowEngine.EXTENSION)]
+            src = WorkflowEngine.get_workflow_source(agent_id, name)
+            display_name = name
+            description = ""
+            trigger = "manual"
+            if src is not None:
+                try:
+                    prog = _wf_parse(src)
+                    if prog.name:
+                        display_name = prog.name
+                    description = prog.description
+                    trigger = prog.trigger
+                except WorkflowError:
+                    pass
+            results.append({
+                "file": fname,
+                "name": name,
+                "display_name": display_name,
+                "description": description,
+                "trigger": trigger,
+            })
         return results
 
     @staticmethod
-    def get_workflow(agent_id: str, name: str) -> dict | None:
-        """Parse a workflow YAML file. Returns dict or None."""
-        if not _yaml:
-            return None
+    def get_workflow_source(agent_id: str, name: str) -> str | None:
         wdir = WorkflowEngine._workflows_dir(agent_id)
-        for ext in (".yaml", ".yml"):
-            fpath = os.path.join(wdir, name + ext)
-            if os.path.exists(fpath):
-                try:
-                    with open(fpath, "r") as f:
-                        return _yaml.safe_load(f)
-                except Exception:
-                    return None
-        return None
+        fpath = os.path.join(wdir, name + WorkflowEngine.EXTENSION)
+        if not os.path.exists(fpath):
+            return None
+        try:
+            with open(fpath, "r") as f:
+                return f.read()
+        except Exception:
+            return None
 
     @staticmethod
-    def save_workflow(agent_id: str, name: str, definition: dict | str) -> str:
-        """Write a workflow YAML file. Returns the file path."""
-        if not _yaml:
-            raise RuntimeError("PyYAML is not installed. Run: pip3 install pyyaml")
+    def save_workflow(agent_id: str, name: str, source: str) -> str:
+        # Validate by attempting to parse
+        try:
+            _wf_parse(source)
+        except WorkflowError as e:
+            raise RuntimeError(f"Workflow parse error on line {e.line}: {e}")
         wdir = WorkflowEngine._workflows_dir(agent_id)
         os.makedirs(wdir, exist_ok=True)
-        fpath = os.path.join(wdir, name + ".yaml")
+        fpath = os.path.join(wdir, name + WorkflowEngine.EXTENSION)
         with open(fpath, "w") as f:
-            if isinstance(definition, str):
-                f.write(definition)
-            else:
-                _yaml.dump(definition, f, default_flow_style=False, sort_keys=False)
+            f.write(source)
         return fpath
 
     @staticmethod
     def delete_workflow(agent_id: str, name: str) -> bool:
-        """Remove a workflow file. Returns True if deleted."""
         wdir = WorkflowEngine._workflows_dir(agent_id)
-        for ext in (".yaml", ".yml"):
-            fpath = os.path.join(wdir, name + ext)
-            if os.path.exists(fpath):
-                os.remove(fpath)
-                return True
+        fpath = os.path.join(wdir, name + WorkflowEngine.EXTENSION)
+        if os.path.exists(fpath):
+            os.remove(fpath)
+            return True
         return False
 
 
 class WorkflowExecution:
-    """Runs a workflow: sequential stage execution with approval gates."""
+    """Runs a parsed scripted workflow in a background thread.
 
-    def __init__(self, workflow: dict, variables: dict, agent_id: str,
-                 model: str | None = None, execution_id: str | None = None):
-        self.workflow = workflow
+    Backwards-compatible interface with the old YAML system: the same
+    public attributes (`status`, `current_stage_idx`, `current_stage_name`,
+    `started_at`, `finished_at`, `error`, `to_dict`) are preserved so the
+    HTTP handlers don't need rewriting.
+    """
+
+    def __init__(self, source: str, variables: dict, agent_id: str,
+                 model: str | None = None, execution_id: str | None = None,
+                 workflow_name: str = "",
+                 user_id: str = "", user_display: str = "",
+                 trigger_kind: str = "manual", trigger_ref: str = ""):
+        self.source = source
         self.variables = variables or {}
         self.agent_id = agent_id
         self.model = model
         self.execution_id = execution_id or _uuid.uuid4().hex[:10]
-        self.status = "pending"  # pending / running / waiting_approval / completed / failed / cancelled
+        self.workflow_name = workflow_name
+        self.user_id = user_id or ""
+        self.user_display = user_display or ""
+        self.trigger_kind = trigger_kind or "manual"
+        self.trigger_ref = trigger_ref or ""
+        self.status = "pending"
         self.current_stage_idx = -1
         self.current_stage_name = ""
-        self.stage_results: dict[str, dict] = {}  # stage_name -> {status, output, elapsed}
+        self.steps: list[dict] = []   # ordered execution log
         self.started_at: str | None = None
         self.finished_at: str | None = None
         self.error: str | None = None
         self._cancel = threading.Event()
-        self._approval_event = threading.Event()
-        self._approval_result: str | None = None  # "approved" or "rejected"
         self._thread: threading.Thread | None = None
+        self._return_value = None
+        self._program: _WFProgram | None = None
+        # Parse upfront to surface parse errors before run()
+        try:
+            self._program = _wf_parse(source)
+        except WorkflowError as e:
+            self.status = "failed"
+            self.error = f"Parse error on line {e.line}: {e}"
+            self.finished_at = datetime.datetime.now().isoformat()
+            return
+        # Inherit AGENT/MODEL from program headers when not overridden by caller
+        if self._program:
+            if not self.agent_id and self._program.agent_id:
+                self.agent_id = self._program.agent_id
+            if not self.model and self._program.model:
+                self.model = self._program.model
+        # Persist initial history row immediately so even running/zombied executions are visible
+        try:
+            wf_file = (self.workflow_name or "") + WorkflowEngine.EXTENSION
+            now_iso = datetime.datetime.now().isoformat()
+            self.started_at = now_iso  # provisional — overwritten on run()
+            _workflow_history_insert(
+                self.execution_id, self.workflow_name, wf_file, source,
+                self.agent_id or "main", self.user_id, self.user_display,
+                self.trigger_kind, self.trigger_ref, self.model or "",
+                now_iso, json.dumps(self.variables, default=str),
+            )
+        except Exception as e:
+            logging.warning(f"workflow init history: {e}")
 
-    @property
-    def stages(self) -> list[dict]:
-        return self.workflow.get("stages", [])
-
-    def _substitute(self, text: str) -> str:
-        """Replace {{variable}} and {{stages.X.output}} placeholders."""
-        if not text:
-            return text
-        import re
-        # Replace user variables: {{var_name}}
-        for k, v in self.variables.items():
-            text = text.replace("{{" + k + "}}", str(v))
-        # Replace stage references: {{stages.X.output}}, {{stages.X.status}}
-        def _stage_ref(m):
-            stage_name = m.group(1)
-            field = m.group(2)
-            sr = self.stage_results.get(stage_name, {})
-            return str(sr.get(field, f"[{stage_name}.{field} not available]"))
-        text = re.sub(r"\{\{stages\.(\w+)\.(\w+)\}\}", _stage_ref, text)
-        return text
-
-    def _build_context(self) -> str:
-        """Build accumulated context string from all completed stages."""
-        parts = []
-        for stage in self.stages:
-            sname = stage.get("name", "")
-            sr = self.stage_results.get(sname)
-            if sr and sr.get("status") == "completed" and sr.get("output"):
-                parts.append(f"=== Stage '{sname}' result ===\n{sr['output']}")
-        return "\n\n".join(parts)
-
-    def run(self):
-        """Start the workflow in a background thread."""
+    def run(self) -> None:
+        if self.status == "failed":
+            # Parse-error case: history row was never inserted; persist a final
+            # row so the run still appears in history with the parse error.
+            try:
+                wf_file = (self.workflow_name or "") + WorkflowEngine.EXTENSION
+                now_iso = self.finished_at or datetime.datetime.now().isoformat()
+                _workflow_history_insert(
+                    self.execution_id, self.workflow_name, wf_file, self.source,
+                    self.agent_id or "main", self.user_id, self.user_display,
+                    self.trigger_kind, self.trigger_ref, self.model or "",
+                    now_iso, json.dumps(self.variables, default=str),
+                )
+                _workflow_history_finalize(
+                    self.execution_id, "failed", now_iso, 0, self.error, "",
+                    json.dumps(self.steps, default=str),
+                )
+            except Exception:
+                pass
+            return
         self.status = "running"
         self.started_at = datetime.datetime.now().isoformat()
         self._thread = threading.Thread(
@@ -11635,197 +12820,109 @@ class WorkflowExecution:
             name=f"workflow-{self.execution_id}")
         self._thread.start()
 
-    def _execute(self):
-        """Sequential stage execution."""
+    def _execute(self) -> None:
+        # Set thread-locals so:
+        #  - ask_user_for_file finds the execution id
+        #  - cost-logging keys all LLM calls under "wf-<execution_id>"
+        #  - ask_llm sees workflow defaults (model, agent)
+        _thread_local.workflow_execution_id = self.execution_id
+        _thread_local.current_session_id = f"wf-{self.execution_id}"
+        _thread_local.current_user_id = self.user_id or ""
+        _thread_local.workflow_default_model = self.model or ""
+        _thread_local.workflow_agent_id = self.agent_id or ""
+        # Resolve and pin a current_agent so cost logging records the right agent
         try:
-            for idx, stage in enumerate(self.stages):
-                if self._cancel.is_set():
-                    self.status = "cancelled"
-                    self.finished_at = datetime.datetime.now().isoformat()
-                    return
-
-                sname = stage.get("name", f"stage_{idx}")
-                stype = stage.get("type", "prompt")
-                self.current_stage_idx = idx
-                self.current_stage_name = sname
-
-                if stype == "approval":
-                    self._run_approval_stage(sname, stage)
-                    if self._cancel.is_set() or self._approval_result == "rejected":
-                        if self._approval_result == "rejected":
-                            self.stage_results[sname] = {
-                                "status": "rejected", "output": "Approval rejected by user.",
-                                "elapsed": 0,
-                            }
-                            self.status = "failed"
-                            self.error = f"Approval rejected at stage '{sname}'"
-                        else:
-                            self.status = "cancelled"
-                        self.finished_at = datetime.datetime.now().isoformat()
-                        return
-                else:
-                    self._run_prompt_stage(sname, stage)
-
-                # Check if stage failed
-                sr = self.stage_results.get(sname, {})
-                if sr.get("status") == "error":
-                    self.status = "failed"
-                    self.error = f"Stage '{sname}' failed: {sr.get('output', 'unknown error')}"
-                    self.finished_at = datetime.datetime.now().isoformat()
-                    return
-
-            self.status = "completed"
-            self.finished_at = datetime.datetime.now().isoformat()
-
+            _thread_local.current_agent = AgentConfig(self.agent_id or "main")
+        except Exception:
+            _thread_local.current_agent = None
+        try:
+            interp = _WorkflowInterpreter(self._program, self)  # type: ignore
+            interp.run()
+            if self._cancel.is_set():
+                self.status = "cancelled"
+            else:
+                self.status = "completed"
+        except WorkflowError as e:
+            self.status = "failed"
+            self.error = f"Line {e.line}: {e}"
         except Exception as e:
             self.status = "failed"
             self.error = str(e)
-            self.finished_at = datetime.datetime.now().isoformat()
-
-    def _run_prompt_stage(self, sname: str, stage: dict):
-        """Execute a prompt stage using _run_delegate."""
-        start = datetime.datetime.now()
-        prompt_template = stage.get("prompt", "")
-        prompt = self._substitute(prompt_template)
-
-        # Build context from previous stages
-        context = self._build_context()
-        full_prompt = prompt
-        if context:
-            full_prompt = f"Previous workflow results:\n{context}\n\n---\n\nCurrent task:\n{prompt}"
-
-        # Resolve agent and model
-        target_agent_id = stage.get("agent", self.agent_id)
-        target = AgentConfig(target_agent_id)
-        target_memory = MemoryStore(target_agent_id, base_dir=target.memory_dir)
-
-        stage_model = self.model or target.preferred_model or _delegate_fallback_model or "claude-sonnet-4-6"
-
-        import platform
-        cwd = os.getcwd()
-        os_name = platform.system()
-        soul = target.soul
-        tools_guide = target.tools_guide
-
-        system_prompt = (
-            f"{soul}\n\n"
-            f"You are agent '{target_agent_id}' executing workflow stage '{sname}'.\n"
-            f"Current date and time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-            f"Current working directory: {cwd}\n"
-            f"Operating system: {os_name}\n\n"
-            "Complete the task and provide a concise result summary.\n"
-        )
-        if tools_guide:
-            system_prompt += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
-
-        # Tool restriction (set via thread-local if stage specifies allowed tools)
-        restricted_tools = stage.get("tools")
-
-        self.stage_results[sname] = {"status": "running", "output": "", "elapsed": 0}
-
-        messages = [{"role": "user", "content": full_prompt}]
-
-        try:
-            _wf_ctx = ExecutionContext(
-                mode="delegate",
-                agent_id=target_agent_id,
-                memory_store=target_memory,
-            )
-            init_thread_context(_wf_ctx, agent_config=target)
-            if restricted_tools:
-                _thread_local.workflow_allowed_tools = set(restricted_tools)
-
-            cancel_token = CancelToken()
-            # Link our cancel event to the cancel token
-            def _watch_cancel():
-                self._cancel.wait()
-                cancel_token.cancel()
-            watcher = threading.Thread(target=_watch_cancel, daemon=True)
-            watcher.start()
-
-            delegate_inf = get_inference_params(stage_model, target.config.get("model_purpose"))
-            result_text = _run_delegate(
-                messages, stage_model, system_prompt,
-                memory_store=target_memory,
-                cancel_token=cancel_token,
-                inference_params=delegate_inf,
-            ) or ""
-
-            elapsed = (datetime.datetime.now() - start).total_seconds()
-            if self._cancel.is_set():
-                self.stage_results[sname] = {"status": "cancelled", "output": result_text, "elapsed": elapsed}
-            else:
-                self.stage_results[sname] = {"status": "completed", "output": result_text, "elapsed": elapsed}
-
-        except Exception as e:
-            elapsed = (datetime.datetime.now() - start).total_seconds()
-            self.stage_results[sname] = {"status": "error", "output": str(e), "elapsed": elapsed}
         finally:
-            clear_thread_context()
-            _thread_local.workflow_allowed_tools = None
+            for k in ("workflow_execution_id", "current_session_id", "current_user_id",
+                      "workflow_default_model", "workflow_agent_id", "current_agent"):
+                try:
+                    setattr(_thread_local, k, None if k != "current_user_id" else "")
+                except Exception:
+                    pass
+            self.finished_at = datetime.datetime.now().isoformat()
+            # Compute duration
+            try:
+                start_dt = datetime.datetime.fromisoformat(self.started_at) if self.started_at else None
+                end_dt = datetime.datetime.fromisoformat(self.finished_at)
+                duration_ms = int((end_dt - start_dt).total_seconds() * 1000) if start_dt else 0
+            except Exception:
+                duration_ms = 0
+            # Persist terminal state
+            try:
+                rv = self._return_value
+                rv_str = json.dumps(rv, default=str) if rv is not None else ""
+                _workflow_history_finalize(
+                    self.execution_id, self.status, self.finished_at,
+                    duration_ms, self.error, rv_str,
+                    json.dumps(self.steps, default=str),
+                )
+            except Exception as e:
+                logging.warning(f"workflow finalize: {e}")
 
-    def _run_approval_stage(self, sname: str, stage: dict):
-        """Pause for human approval."""
-        message = self._substitute(stage.get("message", "Approval required."))
-        self.stage_results[sname] = {
-            "status": "waiting_approval", "output": message, "elapsed": 0,
-        }
-        self.status = "waiting_approval"
-        self._approval_event.clear()
-        self._approval_result = None
+    def _record_step(self, line: int, kind: str, detail: str) -> None:
+        self.steps.append({
+            "line": line,
+            "kind": kind,
+            "detail": detail,
+            "at": datetime.datetime.now().isoformat(),
+        })
+        self.current_stage_idx = len(self.steps) - 1
+        self.current_stage_name = f"line {line}"
 
-        # Wait until approved, rejected, or cancelled
-        while not self._approval_event.is_set() and not self._cancel.is_set():
-            self._approval_event.wait(timeout=1.0)
-
-        if self._cancel.is_set():
-            self.stage_results[sname] = {"status": "cancelled", "output": message, "elapsed": 0}
-            return
-
-        if self._approval_result == "approved":
-            self.stage_results[sname] = {"status": "completed", "output": "Approved.", "elapsed": 0}
-            self.status = "running"
-        # "rejected" handled by caller
-
-    def approve(self):
-        """Approve the current approval gate."""
-        self._approval_result = "approved"
-        self._approval_event.set()
-
-    def reject(self):
-        """Reject the current approval gate."""
-        self._approval_result = "rejected"
-        self._approval_event.set()
-
-    def cancel(self):
-        """Cancel the workflow execution."""
+    def cancel(self) -> None:
         self._cancel.set()
-        self._approval_event.set()  # Unblock approval wait
+        # Also unblock any pending file-upload wait
+        try:
+            deliver_workflow_file_answer(self.execution_id, None)
+        except Exception:
+            pass
+
+    # No-op approval methods — kept so HTTP handlers can call them harmlessly.
+    def approve(self) -> None: pass
+    def reject(self) -> None: self.cancel()
 
     def to_dict(self) -> dict:
-        """Serialize execution state."""
-        stages_info = []
-        for idx, stage in enumerate(self.stages):
-            sname = stage.get("name", f"stage_{idx}")
-            sr = self.stage_results.get(sname, {})
-            stages_info.append({
-                "name": sname,
-                "type": stage.get("type", "prompt"),
-                "status": sr.get("status", "pending"),
-                "output": sr.get("output", ""),
-                "elapsed": sr.get("elapsed", 0),
-            })
+        # For UI, expose the recorded steps as "stages"
+        stages = [
+            {
+                "name": f"L{step['line']}",
+                "type": step["kind"],
+                "status": "completed",
+                "output": step["detail"],
+                "elapsed": 0,
+            }
+            for step in self.steps
+        ]
+        # Pull final variable map from interpreter env if available
         return {
             "execution_id": self.execution_id,
-            "workflow_name": self.workflow.get("name", ""),
+            "workflow_name": self.workflow_name,
             "agent": self.agent_id,
             "model": self.model,
             "status": self.status,
             "current_stage": self.current_stage_name,
             "current_stage_idx": self.current_stage_idx,
-            "total_stages": len(self.stages),
-            "stages": stages_info,
+            "total_stages": len(self.steps),
+            "stages": stages,
+            "steps": self.steps,
             "variables": self.variables,
+            "return_value": self._return_value,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "error": self.error,
@@ -11833,19 +12930,24 @@ class WorkflowExecution:
 
 
 # Global workflow execution registry
-_workflow_executions: dict[str, WorkflowExecution] = {}
+_workflow_executions: dict[str, "WorkflowExecution"] = {}
 _workflow_lock = threading.Lock()
 
 
 def workflow_start(agent_id: str, workflow_name: str, variables: dict,
-                   model: str | None = None) -> WorkflowExecution:
-    """Start a workflow execution. Returns the execution object."""
-    if not _yaml:
-        raise RuntimeError("PyYAML is not installed. Run: pip3 install pyyaml")
-    wf = WorkflowEngine.get_workflow(agent_id, workflow_name)
-    if not wf:
+                   model: str | None = None,
+                   user_id: str = "", user_display: str = "",
+                   trigger_kind: str = "manual",
+                   trigger_ref: str = "") -> WorkflowExecution:
+    src = WorkflowEngine.get_workflow_source(agent_id, workflow_name)
+    if src is None:
         raise ValueError(f"Workflow '{workflow_name}' not found for agent '{agent_id}'")
-    execution = WorkflowExecution(wf, variables, agent_id, model)
+    execution = WorkflowExecution(
+        src, variables, agent_id, model,
+        workflow_name=workflow_name,
+        user_id=user_id, user_display=user_display,
+        trigger_kind=trigger_kind, trigger_ref=trigger_ref,
+    )
     with _workflow_lock:
         _workflow_executions[execution.execution_id] = execution
     execution.run()
@@ -11862,8 +12964,7 @@ def workflow_list_executions() -> list[dict]:
         return [ex.to_dict() for ex in _workflow_executions.values()]
 
 
-def workflow_cleanup_old(max_age_hours: int = 24):
-    """Remove completed/failed executions older than max_age_hours."""
+def workflow_cleanup_old(max_age_hours: int = 24) -> None:
     cutoff = datetime.datetime.now() - datetime.timedelta(hours=max_age_hours)
     with _workflow_lock:
         to_remove = []
@@ -11986,6 +13087,174 @@ def _sched_conn():
         conn.execute("PRAGMA journal_mode = WAL")
         _sched_db_pool.conn = conn
     return conn
+
+
+# --- Workflow run history (piggybacks on scheduler.db) ---
+
+_WF_HIST_INIT_DONE = False
+
+
+def _workflow_history_init() -> None:
+    """Idempotent: create workflow_history table on first use."""
+    global _WF_HIST_INIT_DONE
+    if _WF_HIST_INIT_DONE:
+        return
+    try:
+        conn = _sched_conn()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS workflow_history (
+                execution_id     TEXT PRIMARY KEY,
+                workflow_name    TEXT NOT NULL,
+                workflow_file    TEXT,
+                workflow_source  TEXT,
+                agent_id         TEXT NOT NULL DEFAULT 'main',
+                user_id          TEXT NOT NULL DEFAULT '',
+                user_display     TEXT NOT NULL DEFAULT '',
+                trigger_kind     TEXT NOT NULL DEFAULT 'manual',
+                trigger_ref      TEXT NOT NULL DEFAULT '',
+                model            TEXT NOT NULL DEFAULT '',
+                status           TEXT NOT NULL DEFAULT 'running',
+                started_at       TEXT NOT NULL,
+                finished_at      TEXT,
+                duration_ms      INTEGER NOT NULL DEFAULT 0,
+                error            TEXT,
+                return_value     TEXT,
+                variables_json   TEXT,
+                steps_json       TEXT,
+                tool_calls       INTEGER NOT NULL DEFAULT 0,
+                llm_calls        INTEGER NOT NULL DEFAULT 0,
+                tokens_in        INTEGER NOT NULL DEFAULT 0,
+                tokens_out       INTEGER NOT NULL DEFAULT 0,
+                cost_usd         REAL    NOT NULL DEFAULT 0.0
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_wfh_workflow ON workflow_history(workflow_name, started_at DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_wfh_user     ON workflow_history(user_id, started_at DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_wfh_status   ON workflow_history(status, started_at DESC)")
+        conn.commit()
+        _WF_HIST_INIT_DONE = True
+    except Exception as e:
+        logging.warning(f"workflow_history init: {e}")
+
+
+def _workflow_history_insert(execution_id: str, workflow_name: str, workflow_file: str,
+                             workflow_source: str, agent_id: str, user_id: str,
+                             user_display: str, trigger_kind: str, trigger_ref: str,
+                             model: str, started_at: str, variables_json: str) -> None:
+    _workflow_history_init()
+    try:
+        conn = _sched_conn()
+        conn.execute("""
+            INSERT OR REPLACE INTO workflow_history
+            (execution_id, workflow_name, workflow_file, workflow_source, agent_id,
+             user_id, user_display, trigger_kind, trigger_ref, model, status,
+             started_at, variables_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)
+        """, (execution_id, workflow_name, workflow_file, workflow_source, agent_id,
+              user_id or "", user_display or "", trigger_kind or "manual",
+              trigger_ref or "", model or "", started_at, variables_json or "{}"))
+        conn.commit()
+    except Exception as e:
+        logging.warning(f"workflow_history insert: {e}")
+
+
+def _workflow_history_finalize(execution_id: str, status: str, finished_at: str,
+                               duration_ms: int, error: str | None,
+                               return_value: str, steps_json: str) -> None:
+    """Update terminal-state row + roll up costs from cost_log keyed by 'wf-<execution_id>'."""
+    _workflow_history_init()
+    # Roll up costs from cost_log
+    sid = f"wf-{execution_id}"
+    tool_calls = 0
+    llm_calls = 0
+    tokens_in = 0
+    tokens_out = 0
+    cost_usd = 0.0
+    try:
+        with _cost_conn() as cconn:
+            row = cconn.execute("""
+                SELECT COUNT(*) AS llm_calls,
+                       COALESCE(SUM(tokens_in), 0) AS tokens_in,
+                       COALESCE(SUM(tokens_out), 0) AS tokens_out,
+                       COALESCE(SUM(cost_usd), 0.0) AS cost_usd
+                FROM cost_log WHERE session_id = ?
+            """, (sid,)).fetchone()
+            if row:
+                llm_calls = int(row[0] or 0)
+                tokens_in = int(row[1] or 0)
+                tokens_out = int(row[2] or 0)
+                cost_usd = float(row[3] or 0.0)
+    except Exception as e:
+        logging.warning(f"workflow_history cost rollup: {e}")
+    # Count tool_calls from steps_json
+    try:
+        steps = json.loads(steps_json) if steps_json else []
+        tool_calls = sum(1 for s in steps if s.get("kind") == "call")
+    except Exception:
+        pass
+    try:
+        conn = _sched_conn()
+        conn.execute("""
+            UPDATE workflow_history
+            SET status = ?, finished_at = ?, duration_ms = ?, error = ?,
+                return_value = ?, steps_json = ?,
+                tool_calls = ?, llm_calls = ?,
+                tokens_in = ?, tokens_out = ?, cost_usd = ?
+            WHERE execution_id = ?
+        """, (status, finished_at, duration_ms, error or "", return_value or "",
+              steps_json or "[]", tool_calls, llm_calls, tokens_in, tokens_out,
+              cost_usd, execution_id))
+        conn.commit()
+    except Exception as e:
+        logging.warning(f"workflow_history finalize: {e}")
+
+
+def _workflow_history_list(workflow_name: str | None = None, user_id: str | None = None,
+                           status: str | None = None, limit: int = 50, offset: int = 0) -> list[dict]:
+    _workflow_history_init()
+    try:
+        conn = _sched_conn()
+        conn.row_factory = sqlite3.Row
+        where_parts = []
+        params: list = []
+        if workflow_name:
+            where_parts.append("workflow_name = ?")
+            params.append(workflow_name)
+        if user_id:
+            where_parts.append("user_id = ?")
+            params.append(user_id)
+        if status:
+            where_parts.append("status = ?")
+            params.append(status)
+        where = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+        params.extend([int(limit), int(offset)])
+        rows = conn.execute(f"""
+            SELECT execution_id, workflow_name, workflow_file, agent_id, user_id, user_display,
+                   trigger_kind, trigger_ref, model, status, started_at, finished_at,
+                   duration_ms, error, return_value, tool_calls, llm_calls,
+                   tokens_in, tokens_out, cost_usd
+            FROM workflow_history {where}
+            ORDER BY started_at DESC
+            LIMIT ? OFFSET ?
+        """, params).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.warning(f"workflow_history list: {e}")
+        return []
+
+
+def _workflow_history_get(execution_id: str) -> dict | None:
+    _workflow_history_init()
+    try:
+        conn = _sched_conn()
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("""
+            SELECT * FROM workflow_history WHERE execution_id = ?
+        """, (execution_id,)).fetchone()
+        return dict(row) if row else None
+    except Exception as e:
+        logging.warning(f"workflow_history get: {e}")
+        return None
 
 
 def _validate_thinking_level_for_model(model: str | None, level: str) -> str | None:
@@ -19482,6 +20751,87 @@ def tool_worker_ask_user(args: dict) -> str:
 _ask_user_pending: dict[str, dict] = {}
 _ask_user_lock = threading.Lock()
 
+# --- Workflow-scoped pending file uploads ---
+# Keyed by workflow execution_id. The frontend POSTs the uploaded file path
+# (after writing it to a known location) to /v1/workflows/executions/<id>/file
+# which calls deliver_workflow_file_answer().
+_workflow_file_pending: dict[str, dict] = {}
+_workflow_file_lock = threading.Lock()
+
+
+def _workflow_file_register(execution_id: str) -> threading.Event:
+    event = threading.Event()
+    with _workflow_file_lock:
+        _workflow_file_pending[execution_id] = {"event": event, "result": None}
+    return event
+
+
+def _workflow_file_clear(execution_id: str) -> None:
+    with _workflow_file_lock:
+        _workflow_file_pending.pop(execution_id, None)
+
+
+def deliver_workflow_file_answer(execution_id: str, payload: dict | None) -> bool:
+    """Called by the upload endpoint. payload = {path, filename, size_bytes} or None to cancel."""
+    with _workflow_file_lock:
+        slot = _workflow_file_pending.get(execution_id)
+        if not slot:
+            return False
+        slot["result"] = payload
+        slot["event"].set()
+    return True
+
+
+def tool_ask_user_for_file(args: dict) -> str:
+    """Pause and request a file upload from the user.
+
+    Routes the request via the active event_callback as a 'file_upload_needed' SSE event,
+    then blocks on a pending-file slot keyed by execution_id (workflow) or session_id (chat).
+    Frontend uploads the file to /v1/workflows/upload-pending which delivers the answer.
+    """
+    prompt = args.get("prompt") or "Please upload a file"
+    accept = args.get("accept") or ""
+    timeout = int(args.get("timeout_seconds", 600))
+
+    # Prefer workflow execution_id; fall back to session_id for chat use.
+    execution_id = getattr(_thread_local, "workflow_execution_id", None)
+    session_id = getattr(_thread_local, "current_session_id", None)
+    key = execution_id or session_id
+    if not key:
+        return _err("ask_user_for_file requires an active workflow execution or chat session")
+
+    cb = getattr(_thread_local, "event_callback", None)
+    if cb:
+        try:
+            cb("file_upload_needed", {
+                "execution_id": execution_id or "",
+                "session_id": session_id or "",
+                "prompt": prompt,
+                "accept": accept,
+                "timeout_seconds": timeout,
+            })
+        except Exception:
+            pass
+
+    event = _workflow_file_register(key)
+    try:
+        got = event.wait(timeout=timeout)
+        if not got:
+            return _err("ask_user_for_file: timed out waiting for upload")
+        with _workflow_file_lock:
+            slot = _workflow_file_pending.get(key) or {}
+            payload = slot.get("result")
+        if not payload:
+            return _err("ask_user_for_file: cancelled by user")
+        return _ok({
+            "path": payload.get("path", ""),
+            "filename": payload.get("filename", ""),
+            "size_bytes": int(payload.get("size_bytes") or 0),
+        })
+    finally:
+        _workflow_file_clear(key)
+
+
 
 def _ask_user_register(session_id: str) -> threading.Event:
     """Create a pending-answer slot for a session. Returns the Event to wait on."""
@@ -19601,6 +20951,9 @@ TOOL_DISPATCH = {
     "read_file": tool_read_file,
     "write_file": tool_write_file,
     "edit_file": tool_edit_file,
+    "transcribe_audio": tool_transcribe_audio,
+    "ask_user_for_file": tool_ask_user_for_file,
+    "ask_llm": tool_ask_llm,
     "list_directory": tool_list_directory,
     "search_files": tool_search_files,
     "execute_command": tool_execute_command,

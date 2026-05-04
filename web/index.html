@@ -120,6 +120,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <span class="sb-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
         <span class="sb-label">Scheduled</span>
       </div>
+      <div class="sb-nav-item" onclick="navigateTo('workflows')" data-view="workflows">
+        <span class="sb-icon"><svg viewBox="0 0 24 24"><polyline points="4 7 8 11 4 15"/><polyline points="20 7 16 11 20 15"/><line x1="9" y1="18" x2="15" y2="6"/></svg></span>
+        <span class="sb-label">Workflows</span>
+      </div>
       <div class="sb-nav-item" id="sb-nav-customize" onclick="openAgentSettings()" data-view="settings">
         <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
         <span class="sb-label">Customize</span>
@@ -449,6 +453,99 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     </div>
   </div>
 
+  <!-- ═══ Workflows View ═══ -->
+  <div id="workflows-view">
+    <div class="wf-container">
+      <div class="wf-header">
+        <h1 class="wf-title">Workflows</h1>
+        <button class="wf-new-btn" onclick="wfOpenEditor(null)">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New Workflow
+        </button>
+      </div>
+      <div class="wf-subtabs">
+        <div class="wf-subtab active" data-subtab="list" onclick="wfSwitchSubtab('list',this)">Definitions</div>
+        <div class="wf-subtab" data-subtab="runs" onclick="wfSwitchSubtab('runs',this)">All Runs</div>
+      </div>
+      <div id="wf-list" class="wf-list">
+        <!-- Populated dynamically by loadWorkflows() -->
+      </div>
+      <div id="wf-runs" class="wf-runs hidden">
+        <div class="wf-runs-filters">
+          <select id="wf-runs-status" onchange="loadWorkflowRuns()">
+            <option value="">All statuses</option>
+            <option value="running">Running</option>
+            <option value="completed">Completed</option>
+            <option value="failed">Failed</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+          <label class="wf-runs-mine">
+            <input type="checkbox" id="wf-runs-mine" onchange="loadWorkflowRuns()" />
+            Only mine
+          </label>
+          <button class="wf-btn wf-btn-ghost" onclick="loadWorkflowRuns()">Refresh</button>
+        </div>
+        <div id="wf-runs-table-wrap"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Workflow Editor Modal ═══ -->
+  <div id="wf-editor-modal" class="wf-modal hidden">
+    <div class="wf-modal-backdrop" onclick="wfCloseEditor()"></div>
+    <div class="wf-modal-content">
+      <div class="wf-modal-header">
+        <input id="wf-editor-name" class="wf-name-input" type="text" placeholder="workflow_name" />
+        <div class="wf-modal-actions">
+          <button class="wf-btn wf-btn-ghost" onclick="wfShowToolPalette()">Insert tool…</button>
+          <button class="wf-btn wf-btn-primary" onclick="wfSaveCurrent()">Save</button>
+          <button class="wf-btn wf-btn-ghost" onclick="wfCloseEditor()">Close</button>
+        </div>
+      </div>
+      <div class="wf-editor-wrap">
+        <div id="wf-line-numbers" class="wf-line-numbers"></div>
+        <div class="wf-editor-area">
+          <pre id="wf-highlight" class="wf-highlight" aria-hidden="true"></pre>
+          <textarea id="wf-editor" class="wf-editor" spellcheck="false" wrap="off"
+                    oninput="wfOnInput()" onscroll="wfSyncScroll()"
+                    onkeydown="wfOnKeydown(event)"></textarea>
+        </div>
+      </div>
+      <div id="wf-editor-status" class="wf-editor-status"></div>
+    </div>
+  </div>
+
+  <!-- ═══ Workflow Run Modal ═══ -->
+  <div id="wf-run-modal" class="wf-modal hidden">
+    <div class="wf-modal-backdrop" onclick="wfCloseRun()"></div>
+    <div class="wf-modal-content wf-run-content">
+      <div class="wf-modal-header">
+        <h3 id="wf-run-title">Running: …</h3>
+        <div class="wf-modal-actions">
+          <button class="wf-btn wf-btn-ghost" id="wf-run-cancel-btn" onclick="wfCancelRun()">Cancel</button>
+          <button class="wf-btn wf-btn-ghost" onclick="wfCloseRun()">Close</button>
+        </div>
+      </div>
+      <div id="wf-run-status" class="wf-run-status">Status: pending</div>
+      <div id="wf-run-prompt" class="wf-run-prompt hidden"></div>
+      <div id="wf-run-steps" class="wf-run-steps"></div>
+      <div id="wf-run-result" class="wf-run-result hidden"></div>
+    </div>
+  </div>
+
+  <!-- ═══ Tool Palette Popover ═══ -->
+  <div id="wf-tool-palette" class="wf-modal hidden">
+    <div class="wf-modal-backdrop" onclick="wfCloseToolPalette()"></div>
+    <div class="wf-modal-content wf-palette-content">
+      <div class="wf-modal-header">
+        <input id="wf-palette-filter" class="wf-name-input" type="text"
+               placeholder="Filter tools…" oninput="wfRenderToolList()" />
+        <button class="wf-btn wf-btn-ghost" onclick="wfCloseToolPalette()">Close</button>
+      </div>
+      <div id="wf-palette-list" class="wf-palette-list"></div>
+    </div>
+  </div>
+
   <!-- ═══ Scheduled Tasks View ═══ -->
   <div id="scheduled-view">
     <div class="scheduled-container">
@@ -663,6 +760,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 <script src="js/settings.js"></script>
 <script src="js/search.js"></script>
 <script src="js/files.js"></script>
+<script src="js/workflows.js"></script>
 <script src="js/init.js"></script>
 </body>
 </html>

@@ -2473,6 +2473,10 @@ class BrainAgentHandler(
             self._handle_workflow_list_executions()
         elif path.startswith("/v1/workflows/executions/"):
             self._handle_workflow_get_execution(path)
+        elif path == "/v1/workflows/history":
+            self._handle_workflow_history(path)
+        elif path.startswith("/v1/workflows/history/"):
+            self._handle_workflow_history_get(path)
         elif path.startswith("/v1/agents/") and "/workflows" in path:
             self._handle_workflow_list(path)
         elif path == "/v1/teams":
@@ -2739,6 +2743,8 @@ class BrainAgentHandler(
             self._handle_workflow_approve(path)
         elif path.startswith("/v1/workflows/executions/") and path.endswith("/cancel"):
             self._handle_workflow_cancel(path)
+        elif path.startswith("/v1/workflows/executions/") and path.endswith("/upload-file"):
+            self._handle_workflow_upload_file(path)
         elif path.startswith("/v1/agents/") and "/workflows/" in path and "/run" in path:
             self._handle_workflow_run(path)
         elif path.startswith("/v1/agents/") and "/workflows" in path:

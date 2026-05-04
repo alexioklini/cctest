@@ -14,6 +14,8 @@ function navigateTo(view, opts) {
   document.getElementById('project-detail-view').classList.remove('active');
   document.getElementById('artifacts-view').classList.remove('active');
   document.getElementById('scheduled-view').classList.remove('active');
+  const wfView = document.getElementById('workflows-view');
+  if (wfView) wfView.classList.remove('active');
 
   // Update sidebar active state
   document.querySelectorAll('.sb-nav-item').forEach(n => n.classList.remove('active'));
@@ -95,6 +97,13 @@ function navigateTo(view, opts) {
       document.getElementById('status-bar').style.display = 'none';
       loadScheduledView();
       renderRecentChats(); // dispatches to renderRecentScheduledRuns when view==='scheduled'
+      break;
+
+    case 'workflows':
+      document.getElementById('workflows-view').classList.add('active');
+      updatePageHeader('Workflows');
+      document.getElementById('status-bar').style.display = 'none';
+      if (typeof loadWorkflows === 'function') loadWorkflows();
       break;
 
   }

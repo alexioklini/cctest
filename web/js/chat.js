@@ -134,8 +134,10 @@ async function sendMessage() {
       thinking_start: () => {
         // Each round's thinking becomes its own message row at thinking_done,
         // so the live buffer is per-round. Fresh start on every thinking_start.
+        // renderMessages() first so any tool_calls from the completed prior round
+        // render into the turn-body before the new thinking bubble is appended.
         chat.thinkingText = '';
-        if (isActive()) renderStreamingMessage(chat);
+        if (isActive()) { renderMessages(); renderStreamingMessage(chat); }
       },
       thinking_delta: (d) => {
         chat.thinkingText += d.text || '';
@@ -192,8 +194,6 @@ async function sendMessage() {
       },
       tool_call: (d) => {
         console.log('[SSE] tool_call:', d.name, 'showToolCalls:', state.showToolCalls);
-        // Always update data
-        if (!state.showToolCalls) return;
         const last = chat.messages[chat.messages.length - 1];
         const isNewToolCall = !(last && last.role === 'tool_call' && last.name === d.name && d.args && Object.keys(d.args).length);
         if (isNewToolCall) {
@@ -202,6 +202,7 @@ async function sendMessage() {
         } else {
           last.args = d.args;
         }
+        if (!state.showToolCalls) return;
         // renderMessages() wipes the container including the in-flight .msg-streaming div,
         // so re-render the streaming bubble right after. Without this, any partial assistant
         // text/thinking captured so far vanishes until the next text_delta arrives.
