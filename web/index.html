@@ -495,19 +495,42 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     <div class="wf-modal-backdrop" onclick="wfCloseEditor()"></div>
     <div class="wf-modal-content">
       <div class="wf-modal-header">
-        <input id="wf-editor-name" class="wf-name-input" type="text" placeholder="workflow_name" />
+        <input id="wf-editor-name" class="wf-name-input" type="text" placeholder="workflow_name (filename)" />
         <div class="wf-modal-actions">
           <button class="wf-btn wf-btn-ghost" onclick="wfShowToolPalette()">Insert tool…</button>
           <button class="wf-btn wf-btn-primary" onclick="wfSaveCurrent()">Save</button>
           <button class="wf-btn wf-btn-ghost" onclick="wfCloseEditor()">Close</button>
         </div>
       </div>
+      <div class="wf-editor-meta">
+        <div class="wf-editor-meta-row">
+          <label class="wf-editor-field">
+            <span class="wf-editor-field-label">Title</span>
+            <input id="wf-editor-title" type="text" class="wf-editor-field-input"
+                   placeholder="Display title (shown on card)"
+                   oninput="wfOnMetaChange('title')" />
+          </label>
+          <label class="wf-editor-field">
+            <span class="wf-editor-field-label">Agent</span>
+            <select id="wf-editor-agent" class="wf-editor-field-input"
+                    onchange="wfOnMetaChange('agent')">
+              <option value="">Default (main)</option>
+            </select>
+          </label>
+        </div>
+        <label class="wf-editor-field">
+          <span class="wf-editor-field-label">Description</span>
+          <textarea id="wf-editor-desc" class="wf-editor-field-input"
+                    rows="2" placeholder="What this workflow does"
+                    oninput="wfOnMetaChange('description')"></textarea>
+        </label>
+      </div>
       <div class="wf-editor-wrap">
         <div id="wf-line-numbers" class="wf-line-numbers"></div>
         <div class="wf-editor-area">
           <pre id="wf-highlight" class="wf-highlight" aria-hidden="true"></pre>
           <textarea id="wf-editor" class="wf-editor" spellcheck="false" wrap="off"
-                    oninput="wfOnInput()" onscroll="wfSyncScroll()"
+                    oninput="wfOnInput(); wfOnScriptChange()" onscroll="wfSyncScroll()"
                     onkeydown="wfOnKeydown(event)"></textarea>
         </div>
       </div>

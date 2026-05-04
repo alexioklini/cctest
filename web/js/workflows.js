@@ -53,7 +53,8 @@ function wfRenderList() {
         <div class="wf-card-actions">
           <button class="wf-btn wf-btn-primary" onclick="wfRun('${escapeJs(wf.name)}')">Run</button>
           <button class="wf-btn wf-btn-ghost" onclick="wfOpenEditor('${escapeJs(wf.name)}')">Edit</button>
-          <button class="wf-btn wf-btn-ghost" onclick="wfToggleHistory('${escapeJs(wf.name)}')">History</button>
+          <button class="wf-btn wf-btn-ghost" data-wf-history-btn="${escapeHtml(wf.name)}"
+                  onclick="wfToggleHistory('${escapeJs(wf.name)}')">History</button>
           <button class="wf-btn wf-btn-ghost" onclick="wfDelete('${escapeJs(wf.name)}')">Delete</button>
         </div>
       </div>
@@ -67,11 +68,14 @@ function wfRenderList() {
 async function wfToggleHistory(name) {
   const root = document.getElementById('wf-hist-' + name);
   if (!root) return;
+  const btn = document.querySelector(`[data-wf-history-btn="${name}"]`);
   if (!root.classList.contains('hidden')) {
     root.classList.add('hidden');
+    if (btn) btn.textContent = 'History';
     return;
   }
   root.classList.remove('hidden');
+  if (btn) btn.textContent = 'Hide history';
   root.innerHTML = '<div class="wf-hist-loading">Loading history…</div>';
   try {
     const data = await API.get(`/v1/workflows/history?workflow=${encodeURIComponent(name)}&limit=10`);
@@ -107,6 +111,19 @@ function wfRenderHistoryRows(root, rows) {
     </table>`;
 }
 
+function wfHistoryRowActions(r) {
+  const status = r.status || 'unknown';
+  const isCancelable = (status === 'running' || status === 'pending' || status === 'waiting_approval');
+  const cancelBtn = isCancelable
+    ? `<button class="wf-btn wf-btn-mini wf-btn-cancel" onclick="wfCancelFromHistory('${escapeJs(r.execution_id)}', event)">Cancel</button>`
+    : '';
+  return `
+    <div class="wf-hist-actions">
+      <button class="wf-btn wf-btn-ghost wf-btn-mini" onclick="wfShowHistoryDetail('${escapeJs(r.execution_id)}')">View</button>
+      ${cancelBtn}
+    </div>`;
+}
+
 function wfHistoryRowHtml(r) {
   const status = r.status || 'unknown';
   const dur = r.duration_ms ? (r.duration_ms < 1000 ? r.duration_ms + 'ms' : (r.duration_ms / 1000).toFixed(1) + 's') : '—';
@@ -123,8 +140,36 @@ function wfHistoryRowHtml(r) {
       <td>${r.llm_calls || 0}</td>
       <td>${tokens}</td>
       <td>${cost}</td>
-      <td><button class="wf-btn wf-btn-ghost wf-btn-mini" onclick="wfShowHistoryDetail('${escapeJs(r.execution_id)}')">View</button></td>
+      <td>${wfHistoryRowActions(r)}</td>
     </tr>`;
+}
+
+async function wfCancelFromHistory(executionId, ev) {
+  if (ev && typeof ev.stopPropagation === 'function') ev.stopPropagation();
+  try {
+    const r = await API.post(`/v1/workflows/executions/${executionId}/cancel`, {});
+    if (r && r.error) {
+      alert('Cancel failed: ' + r.error);
+      return;
+    }
+    // Refresh whichever table the user is looking at.
+    if (typeof loadWorkflowRuns === 'function' &&
+        document.getElementById('wf-runs') &&
+        !document.getElementById('wf-runs').classList.contains('hidden')) {
+      loadWorkflowRuns();
+    }
+    document.querySelectorAll('.wf-card-history:not(.hidden)').forEach(root => {
+      const wfName = root.id.replace(/^wf-hist-/, '');
+      if (wfName) {
+        // re-fetch
+        API.get(`/v1/workflows/history?workflow=${encodeURIComponent(wfName)}&limit=10`)
+          .then(d => wfRenderHistoryRows(root, d.executions || []))
+          .catch(() => {});
+      }
+    });
+  } catch (e) {
+    alert('Cancel error: ' + e.message);
+  }
 }
 
 async function wfShowHistoryDetail(executionId) {
@@ -260,7 +305,7 @@ async function loadWorkflowRuns() {
                 <td>${r.llm_calls || 0}</td>
                 <td>${tokens}</td>
                 <td>${cost}</td>
-                <td><button class="wf-btn wf-btn-ghost wf-btn-mini" onclick="wfShowHistoryDetail('${escapeJs(r.execution_id)}')">View</button></td>
+                <td>${wfHistoryRowActions(r)}</td>
               </tr>`;
           }).join('')}
         </tbody>
@@ -271,6 +316,171 @@ async function loadWorkflowRuns() {
 }
 
 /* ─── Editor ─── */
+
+// Round-trip helpers for header lines: WORKFLOW "..." / DESCRIPTION "..." / AGENT name
+// Line patterns are anchored to start-of-line (allowing leading whitespace) and
+// match an optional value, so we can both parse and rewrite.
+const WF_HEADER_PATTERNS = {
+  title:       /^[ \t]*WORKFLOW\b[^\n]*$/m,
+  description: /^[ \t]*DESCRIPTION\b[^\n]*$/m,
+  agent:       /^[ \t]*AGENT\b[^\n]*$/m,
+};
+const WF_HEADER_KEYWORDS = { title: 'WORKFLOW', description: 'DESCRIPTION', agent: 'AGENT' };
+// Track which side of the meta↔script bridge made the most recent change so
+// we don't re-sync back into the originator (would jump caret / trash undo).
+let _wfSyncDirection = null;
+
+function wfHeaderQuoted(field, raw) {
+  // WORKFLOW + DESCRIPTION are quoted strings. AGENT is a bare identifier in
+  // the .flow lexer (header parser accepts string OR ident; we emit ident
+  // when the agent id is identifier-shaped, otherwise fall back to a quoted
+  // string so unusual agent ids still round-trip safely).
+  if (field === 'agent') {
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(raw)) return raw;
+    return JSON.stringify(raw);
+  }
+  return JSON.stringify(raw || '');
+}
+
+function wfParseHeader(source, field) {
+  const re = WF_HEADER_PATTERNS[field];
+  const m = re.exec(source || '');
+  if (!m) return '';
+  const line = m[0].trim();
+  const after = line.replace(new RegExp('^' + WF_HEADER_KEYWORDS[field] + '\\b\\s*'), '');
+  if (!after) return '';
+  // Quoted string?
+  const qm = after.match(/^"((?:[^"\\]|\\.)*)"|^'((?:[^'\\]|\\.)*)'/);
+  if (qm) return (qm[1] !== undefined ? qm[1] : qm[2]).replace(/\\(.)/g, '$1');
+  // Bare identifier (agent only).
+  const im = after.match(/^([A-Za-z_][A-Za-z0-9_.\-]*)/);
+  return im ? im[1] : '';
+}
+
+function wfWriteHeader(source, field, value) {
+  // Replace the existing header line in-place if present, otherwise insert
+  // a new one in canonical order: WORKFLOW → DESCRIPTION → TRIGGER → AGENT → MODEL.
+  const re = WF_HEADER_PATTERNS[field];
+  const kw = WF_HEADER_KEYWORDS[field];
+  const trimmed = (value || '').trim();
+  if (re.test(source || '')) {
+    if (!trimmed) {
+      // Empty value → drop the line entirely.
+      return source.replace(re, '').replace(/^\n+/, '').replace(/\n{3,}/g, '\n\n');
+    }
+    return source.replace(re, `${kw} ${wfHeaderQuoted(field, trimmed)}`);
+  }
+  if (!trimmed) return source; // nothing to insert
+  // Insert after the last existing header line, otherwise at top.
+  const headerOrder = ['title','description','agent']; // WORKFLOW, DESCRIPTION, AGENT only — TRIGGER/MODEL we leave alone
+  let insertAfter = -1;
+  for (const f of headerOrder) {
+    if (f === field) break;
+    const m = WF_HEADER_PATTERNS[f].exec(source);
+    if (m) insertAfter = Math.max(insertAfter, m.index + m[0].length);
+  }
+  // Also respect TRIGGER if present and we're inserting AGENT (canonical order: WORKFLOW/DESCRIPTION/TRIGGER/AGENT/MODEL)
+  if (field === 'agent') {
+    const trigRe = /^[ \t]*TRIGGER\b[^\n]*$/m;
+    const tm = trigRe.exec(source);
+    if (tm) insertAfter = Math.max(insertAfter, tm.index + tm[0].length);
+  }
+  const newLine = `${kw} ${wfHeaderQuoted(field, trimmed)}`;
+  if (insertAfter < 0) {
+    // No existing header lines — prepend.
+    return newLine + '\n' + (source || '');
+  }
+  return source.slice(0, insertAfter) + '\n' + newLine + source.slice(insertAfter);
+}
+
+async function wfPopulateAgentDropdown() {
+  const sel = document.getElementById('wf-editor-agent');
+  if (!sel) return;
+  // Skip refetch if already populated.
+  if (sel.dataset.populated === '1') return;
+  try {
+    const data = await API.get('/v1/agents');
+    const a = data && data.agents;
+    let agents = [];
+    if (Array.isArray(a)) agents = a.map(x => x.id || x.name).filter(Boolean);
+    else if (a && typeof a === 'object') agents = Object.keys(a);
+    agents.sort();
+    // Keep the first option (Default) and append agents.
+    const seen = new Set();
+    sel.querySelectorAll('option').forEach(o => seen.add(o.value));
+    for (const id of agents) {
+      if (seen.has(id)) continue;
+      const opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = id;
+      sel.appendChild(opt);
+    }
+    sel.dataset.populated = '1';
+  } catch (e) {
+    /* keep default option */
+  }
+}
+
+function wfApplyMetaFromSource(source) {
+  // Parse header values from the script and push into the input fields.
+  _wfSyncDirection = 'script-to-meta';
+  try {
+    const titleEl = document.getElementById('wf-editor-title');
+    const descEl  = document.getElementById('wf-editor-desc');
+    const agentEl = document.getElementById('wf-editor-agent');
+    if (titleEl) titleEl.value = wfParseHeader(source, 'title');
+    if (descEl)  descEl.value  = wfParseHeader(source, 'description');
+    if (agentEl) {
+      const agentVal = wfParseHeader(source, 'agent');
+      // If the parsed agent isn't in the dropdown yet, add it so we don't
+      // silently drop the user's existing value.
+      if (agentVal && !Array.from(agentEl.options).some(o => o.value === agentVal)) {
+        const opt = document.createElement('option');
+        opt.value = agentVal;
+        opt.textContent = agentVal + ' (custom)';
+        agentEl.appendChild(opt);
+      }
+      agentEl.value = agentVal;
+    }
+  } finally {
+    _wfSyncDirection = null;
+  }
+}
+
+function wfOnMetaChange(field) {
+  if (_wfSyncDirection === 'script-to-meta') return;
+  const editor = document.getElementById('wf-editor');
+  if (!editor) return;
+  const valEl = document.getElementById(
+    field === 'title' ? 'wf-editor-title' :
+    field === 'description' ? 'wf-editor-desc' : 'wf-editor-agent');
+  if (!valEl) return;
+  const newVal = (valEl.value || '').trim();
+  _wfSyncDirection = 'meta-to-script';
+  try {
+    const before = editor.value;
+    const after = wfWriteHeader(before, field, newVal);
+    if (after !== before) {
+      // Preserve caret position on the textarea by using setRangeText where
+      // possible; for full-source rewrites we reset to current selection clamped.
+      const selStart = editor.selectionStart, selEnd = editor.selectionEnd;
+      editor.value = after;
+      editor.selectionStart = Math.min(selStart, after.length);
+      editor.selectionEnd   = Math.min(selEnd,   after.length);
+      wfOnInput();
+    }
+  } finally {
+    _wfSyncDirection = null;
+  }
+}
+
+function wfOnScriptChange() {
+  if (_wfSyncDirection === 'meta-to-script') return;
+  const editor = document.getElementById('wf-editor');
+  if (!editor) return;
+  wfApplyMetaFromSource(editor.value || '');
+}
+
 async function wfOpenEditor(name) {
   wfState.currentName = name;
   const modal = document.getElementById('wf-editor-modal');
@@ -278,6 +488,8 @@ async function wfOpenEditor(name) {
   const editor = document.getElementById('wf-editor');
   const status = document.getElementById('wf-editor-status');
   status.textContent = '';
+  // Populate agent list once per session.
+  await wfPopulateAgentDropdown();
   if (name) {
     nameInput.value = name;
     nameInput.disabled = true;
@@ -292,6 +504,8 @@ async function wfOpenEditor(name) {
     nameInput.disabled = false;
     editor.value = WF_TEMPLATE_MEETING_NOTES;
   }
+  // Sync the meta inputs from the script we just loaded.
+  wfApplyMetaFromSource(editor.value);
   // Load tool palette eagerly so insertion is instant
   if (!wfState.tools.length) await wfLoadTools();
   modal.classList.remove('hidden');

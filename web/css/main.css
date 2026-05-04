@@ -4210,6 +4210,56 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 }
 .wf-name-input:disabled { opacity: 0.7; }
 
+/* Editor metadata fields (above the script) */
+.wf-editor-meta {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-200);
+  background: var(--bg-100);
+}
+.wf-editor-meta-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 12px;
+}
+.wf-editor-field { display: flex; flex-direction: column; gap: 4px; }
+.wf-editor-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-300);
+}
+.wf-editor-field-input {
+  padding: 6px 10px;
+  font-size: 13px;
+  border: 1px solid var(--border-200);
+  border-radius: 6px;
+  background: var(--bg-page);
+  color: var(--text-000);
+  font-family: inherit;
+  resize: vertical;
+}
+.wf-editor-field-input:focus {
+  outline: none;
+  border-color: var(--accent, #3b82f6);
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.18);
+}
+textarea.wf-editor-field-input { min-height: 38px; }
+
+/* History action group + Cancel button styling */
+.wf-hist-actions {
+  display: flex; gap: 4px; justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+.wf-btn-cancel {
+  background: rgba(220,38,38,0.08);
+  color: #dc2626;
+  border-color: rgba(220,38,38,0.25);
+  font-weight: 500;
+}
+.wf-btn-cancel:hover { background: rgba(220,38,38,0.16); }
+
 /* ─── Editor ─── */
 .wf-editor-wrap {
   flex: 1;
