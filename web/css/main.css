@@ -4803,5 +4803,129 @@ textarea.wf-editor-field-input { min-height: 38px; }
 }
 .wf-detail-composer .wf-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
 
+/* ─── Files panel (refs + artifacts) inside detail view ─── */
+.wf-detail-files {
+  flex-shrink: 0;
+  padding: 0 20px;
+  margin-top: 12px;
+}
+.wf-detail-files-card {
+  border: 1px solid var(--border-200);
+  border-radius: 8px;
+  background: var(--bg-100);
+  overflow: hidden;
+}
+.wf-detail-files-card > summary {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-100);
+  list-style: revert;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.wf-detail-files-card > summary:hover { background: var(--bg-200); }
+.wf-detail-files-summary {
+  font-weight: 400;
+  color: var(--text-300);
+  font-size: 12px;
+}
+.wf-detail-files-body {
+  padding: 4px 0 6px;
+  border-top: 1px solid var(--border-200);
+}
+.wf-detail-files-section {
+  padding: 6px 12px;
+}
+.wf-detail-files-section + .wf-detail-files-section {
+  border-top: 1px solid var(--border-200);
+}
+.wf-detail-files-section-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-400);
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+.wf-detail-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+.wf-detail-file-row:hover { background: var(--bg-200); }
+.wf-detail-file-icon { font-size: 18px; flex-shrink: 0; }
+.wf-detail-file-main { flex: 1; min-width: 0; }
+.wf-detail-file-name {
+  font-size: 13px;
+  color: var(--text-000);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wf-detail-file-source {
+  font-size: 11px;
+  color: var(--text-400);
+}
+.wf-detail-file-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.wf-detail-file-dl {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  font-weight: 600;
+}
+
+/* ─── Click-to-expand collapsible bubbles ─── */
+.wf-detail-collapsible {
+  position: relative;
+}
+.wf-detail-collapsed-pre {
+  position: relative;
+  max-height: none; /* relies on character cap, not height */
+}
+.wf-detail-expanded-pre {
+  /* Allow large expanded blocks to scroll within their bubble rather than
+     blowing up the whole detail view. */
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.wf-detail-ellipsis {
+  color: var(--text-400);
+  font-style: italic;
+}
+.wf-detail-expand-btn {
+  margin-top: 4px;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+/* ─── File preview modal ─── */
+.wf-file-preview-content { width: min(900px, 94vw); max-height: 88vh; }
+.wf-file-preview-body {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 18px;
+}
+.wf-file-preview-pre {
+  margin: 0;
+  font: 12px/1.5 'SF Mono', monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-000);
+}
+.wf-file-preview-fallback {
+  color: var(--text-300);
+  font-style: italic;
+  text-align: center;
+  padding: 32px;
+}
+
 .hidden { display: none !important; }
 </style>

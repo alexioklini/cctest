@@ -500,10 +500,12 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           </div>
           <div class="wf-detail-actions">
             <button class="wf-btn wf-btn-ghost" id="wf-detail-cancel-btn" onclick="wfDetailCancel()">Cancel</button>
+            <button class="wf-btn wf-btn-ghost" id="wf-detail-download-btn" onclick="wfDetailDownloadTranscript()" title="Download a Markdown transcript of this run">Download transcript</button>
             <button class="wf-btn wf-btn-primary" id="wf-detail-save-btn" onclick="wfDetailSaveToChats()">Save to chats</button>
           </div>
         </div>
         <div class="wf-detail-body">
+          <div id="wf-detail-files" class="wf-detail-files"></div>
           <div id="wf-detail-turns" class="wf-detail-turns"></div>
           <div id="wf-detail-prompt" class="wf-run-prompt hidden"></div>
         </div>

@@ -943,6 +943,447 @@ async function wfDetailCancel() {
   }
 }
 
+/* ─── Heuristic file-path extraction from steps_json ───
+   Mirrors the regex used in admin.py:_workflow_run_paths so what the user
+   sees as a clickable reference / artifact is exactly what the backend
+   gate will allow them to download. Diverging the regexes silently
+   would hand the user broken download buttons.
+
+   Categories returned per file:
+     • role: 'input'     — read by the workflow (read_*, transcribe_*,
+                           ask_user_for_file uploads)
+     • role: 'output'    — written by the workflow (write_file/edit_file
+                           or surfaced as the RETURN value)
+     • role: 'unknown'   — referenced via a generic path/file arg on a
+                           tool we don't classify
+
+   Source-of-evidence label is preserved so the UI can show "uploaded by
+   you", "written by write_file", etc. */
+const WF_PATH_ARG_RE = /\b(?:path|file|file_path|filename|audio|audio_path|image|image_path|pdf|pdf_path|src|source|input|output|target|dest|content_path)\s*=\s*(['"])((?:\\.|(?!\1).)+)\1/g;
+const WF_QUOTED_PATH_RE = /(['"])((?:\/|~\/)[^'"\n]+)\1/g;
+const WF_INPUT_TOOLS = new Set([
+  'read_file', 'read_document', 'read_attachment',
+  'transcribe_audio', 'parse_pdf', 'parse_docx',
+  'ask_user_for_file',
+]);
+const WF_OUTPUT_TOOLS = new Set(['write_file', 'edit_file']);
+
+function _wfUnescapeQuoted(s) {
+  return s.replace(/\\(["'\\])/g, '$1');
+}
+
+function _wfParseToolCall(detail) {
+  // Handles three shapes the engine emits:
+  //   • "write_file(path=\"/tmp/foo.md\", content=...)"          (call line)
+  //   • "ask_user_for_file → {'path': '/tmp/...'}"                (call_done line)
+  //   • "transcribe_audio → {'transcript': ...}"                  (call_done line)
+  // The arrow form is what carries the actual path on call_done since the
+  // call line itself uses placeholder ellipses for elided args.
+  if (!detail) return null;
+  const paren = detail.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*\(/);
+  if (paren) return paren[1];
+  const arrow = detail.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*(?:→|->)/);
+  return arrow ? arrow[1] : null;
+}
+
+function _wfExtractFilePathsFromDetail(detail) {
+  const out = [];
+  if (!detail) return out;
+  WF_PATH_ARG_RE.lastIndex = 0;
+  let m;
+  while ((m = WF_PATH_ARG_RE.exec(detail)) !== null) {
+    out.push({ path: _wfUnescapeQuoted(m[2]), via: 'arg' });
+  }
+  WF_QUOTED_PATH_RE.lastIndex = 0;
+  while ((m = WF_QUOTED_PATH_RE.exec(detail)) !== null) {
+    // Skip duplicates already captured by the arg regex.
+    if (!out.some(p => p.path === m[2])) {
+      out.push({ path: m[2], via: 'quoted' });
+    }
+  }
+  return out;
+}
+
+function wfDetailExtractFiles(data) {
+  // Returns { inputs: [refs...], outputs: [arts...], all: [...] }
+  // where refs/arts share the shape:
+  //   { path, filename, role, source, tool_name, ext }
+  // `source` is a short user-facing label for where the path was seen.
+  const steps = data.steps || (typeof data.steps_json === 'string' ? JSON.parse(data.steps_json || '[]') : []) || [];
+  const seen = new Map(); // path -> entry
+  const claim = (path, role, source, tool_name) => {
+    if (!path) return;
+    const trimmed = path.trim();
+    if (!trimmed) return;
+    const ext = trimmed.includes('.') ? trimmed.split('.').pop().toLowerCase() : '';
+    const filename = trimmed.split('/').pop() || trimmed;
+    const existing = seen.get(trimmed);
+    if (existing) {
+      // Promote: outputs win over inputs (a file written then re-read is
+      // an output the user will care about); inputs win over unknown.
+      const order = { unknown: 0, input: 1, output: 2 };
+      if (order[role] > order[existing.role]) {
+        existing.role = role; existing.source = source; existing.tool_name = tool_name;
+      }
+      return;
+    }
+    seen.set(trimmed, { path: trimmed, filename, role, source, tool_name, ext });
+  };
+  // Pair call/call_done so a result string can also contribute paths
+  // (ask_user_for_file's return is "{'path': '/tmp/...'}" only on call_done).
+  for (let i = 0; i < steps.length; i++) {
+    const s = steps[i];
+    const kind = s.kind || '';
+    const detail = s.detail || '';
+    const tool = _wfParseToolCall(detail);
+    const role = tool && WF_OUTPUT_TOOLS.has(tool) ? 'output'
+               : tool && WF_INPUT_TOOLS.has(tool) ? 'input'
+               : 'unknown';
+    const source = tool ? `${kind === 'call_done' ? 'returned by ' : 'used by '}${tool}` : kind;
+    if (kind === 'call' || kind === 'call_done' || kind === 'error') {
+      const paths = _wfExtractFilePathsFromDetail(detail);
+      for (const p of paths) claim(p.path, role, source, tool || '');
+    }
+  }
+  // RETURN value as a bare path
+  let rv = data.return_value;
+  if (typeof rv === 'string' && rv) {
+    try { rv = JSON.parse(rv); } catch (_) {}
+  }
+  if (typeof rv === 'string' && (rv.startsWith('/') || rv.startsWith('~/'))) {
+    claim(rv, 'output', 'return value', '');
+  }
+  const all = Array.from(seen.values()).sort((a, b) => a.filename.localeCompare(b.filename));
+  return {
+    inputs: all.filter(f => f.role === 'input'),
+    outputs: all.filter(f => f.role === 'output'),
+    other: all.filter(f => f.role === 'unknown'),
+    all,
+  };
+}
+
+/* ─── Files panel (refs + artifacts) + transcript download ─── */
+
+function _wfFileIcon(ext) {
+  const e = (ext || '').toLowerCase();
+  if (['md','txt','log'].includes(e)) return '📝';
+  if (['json','yaml','yml','toml','xml','csv'].includes(e)) return '🗂';
+  if (['py','js','ts','tsx','jsx','go','rs','c','cpp','h','sh','rb','php'].includes(e)) return '💻';
+  if (['png','jpg','jpeg','gif','svg','webp','bmp'].includes(e)) return '🖼';
+  if (['wav','mp3','m4a','aac','ogg','flac'].includes(e)) return '🎵';
+  if (['mp4','mov','avi','mkv'].includes(e)) return '🎞';
+  if (['pdf'].includes(e)) return '📕';
+  if (['docx','doc'].includes(e)) return '📘';
+  if (['xlsx','xls'].includes(e)) return '📊';
+  if (['pptx','ppt'].includes(e)) return '📽';
+  if (['zip','tar','gz','7z','rar'].includes(e)) return '📦';
+  return '📄';
+}
+
+function wfDetailRenderFilesHtml(data) {
+  const groups = wfDetailExtractFiles(data);
+  if (!groups.all.length) return '';
+  const exec = wfState.currentExecId || '';
+  const renderRow = (f) => {
+    const icon = _wfFileIcon(f.ext);
+    const safePath = encodeURIComponent(f.path);
+    return `
+      <div class="wf-detail-file-row" title="${escapeHtml(f.path)}">
+        <span class="wf-detail-file-icon">${icon}</span>
+        <div class="wf-detail-file-main">
+          <div class="wf-detail-file-name">${escapeHtml(f.filename)}</div>
+          <div class="wf-detail-file-source">${escapeHtml(f.source || '')}</div>
+        </div>
+        <div class="wf-detail-file-actions">
+          <button class="wf-btn wf-btn-mini wf-btn-ghost" onclick="wfFilePreview('${escapeJs(exec)}','${escapeJs(f.path)}', event)" title="Preview">View</button>
+          <a class="wf-btn wf-btn-mini wf-btn-ghost wf-detail-file-dl"
+             href="${BASE_URL}/v1/workflows/history/${encodeURIComponent(exec)}/file?path=${safePath}"
+             onclick="wfFileDownload('${escapeJs(exec)}','${escapeJs(f.path)}', event)"
+             title="Download">↓</a>
+        </div>
+      </div>
+    `;
+  };
+  const sections = [];
+  if (groups.inputs.length) {
+    sections.push(`
+      <div class="wf-detail-files-section">
+        <div class="wf-detail-files-section-label">References (${groups.inputs.length})</div>
+        ${groups.inputs.map(renderRow).join('')}
+      </div>
+    `);
+  }
+  if (groups.outputs.length) {
+    sections.push(`
+      <div class="wf-detail-files-section">
+        <div class="wf-detail-files-section-label">Artifacts (${groups.outputs.length})</div>
+        ${groups.outputs.map(renderRow).join('')}
+      </div>
+    `);
+  }
+  if (groups.other.length) {
+    sections.push(`
+      <div class="wf-detail-files-section">
+        <div class="wf-detail-files-section-label">Other files (${groups.other.length})</div>
+        ${groups.other.map(renderRow).join('')}
+      </div>
+    `);
+  }
+  return `<details class="wf-detail-files-card" ${groups.outputs.length || groups.inputs.length ? 'open' : ''}>
+    <summary>
+      Files
+      <span class="wf-detail-files-summary">
+        ${groups.inputs.length ? `${groups.inputs.length} ref${groups.inputs.length === 1 ? '' : 's'}` : ''}
+        ${groups.inputs.length && (groups.outputs.length || groups.other.length) ? ' · ' : ''}
+        ${groups.outputs.length ? `${groups.outputs.length} artifact${groups.outputs.length === 1 ? '' : 's'}` : ''}
+        ${(groups.inputs.length + groups.outputs.length) && groups.other.length ? ' · ' : ''}
+        ${groups.other.length ? `${groups.other.length} other` : ''}
+      </span>
+    </summary>
+    <div class="wf-detail-files-body">${sections.join('')}</div>
+  </details>`;
+}
+
+async function wfFilePreview(execId, filePath, ev) {
+  if (ev) ev.preventDefault();
+  if (!execId || !filePath) return;
+  // For images and audio we let the browser handle it via the download
+  // endpoint with inline disposition (opens new tab). For text/document
+  // we fetch the preview JSON and render in a modal.
+  const ext = (filePath.split('.').pop() || '').toLowerCase();
+  const dlUrl = `${BASE_URL}/v1/workflows/history/${encodeURIComponent(execId)}/file?path=${encodeURIComponent(filePath)}`;
+  const inlineExts = new Set(['png','jpg','jpeg','gif','svg','webp','bmp','pdf','wav','mp3','m4a','ogg','flac']);
+  if (inlineExts.has(ext)) {
+    // Open inline via the existing download endpoint (server sets inline
+    // disposition for these types). Use authenticated fetch + blob URL.
+    try {
+      const authToken = localStorage.getItem('auth-token');
+      const headers = {};
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      const resp = await fetch(dlUrl, { headers, credentials: 'include' });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      // Revoke after a short delay so the new tab has time to load.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+      alert('Preview failed: ' + e.message);
+    }
+    return;
+  }
+  // Text / document: fetch preview JSON.
+  try {
+    const data = await API.get(`/v1/workflows/history/${encodeURIComponent(execId)}/file-preview?path=${encodeURIComponent(filePath)}`);
+    if (data && data.error) { alert('Preview error: ' + data.error); return; }
+    wfShowFilePreviewModal(data, dlUrl);
+  } catch (e) {
+    alert('Preview failed: ' + e.message);
+  }
+}
+
+async function wfFileDownload(execId, filePath, ev) {
+  // Authenticated download — fetch as blob and trigger client-side save
+  // so the Authorization header gets attached (a bare <a href> can't
+  // carry the bearer token).
+  if (ev) ev.preventDefault();
+  if (!execId || !filePath) return;
+  try {
+    const authToken = localStorage.getItem('auth-token');
+    const headers = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    const url = `${BASE_URL}/v1/workflows/history/${encodeURIComponent(execId)}/file?path=${encodeURIComponent(filePath)}`;
+    const resp = await fetch(url, { headers, credentials: 'include' });
+    if (!resp.ok) {
+      let errMsg = `HTTP ${resp.status}`;
+      try { const j = await resp.json(); if (j.error) errMsg = j.error; } catch(_) {}
+      alert('Download failed: ' + errMsg);
+      return;
+    }
+    const blob = await resp.blob();
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objUrl;
+    a.download = filePath.split('/').pop() || 'download';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(objUrl); }, 1000);
+  } catch (e) {
+    alert('Download failed: ' + e.message);
+  }
+}
+
+function wfShowFilePreviewModal(data, dlUrl) {
+  // Lightweight inline modal — reuses the wf-modal classes the editor uses.
+  let modal = document.getElementById('wf-file-preview-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'wf-file-preview-modal';
+    modal.className = 'wf-modal';
+    modal.innerHTML = `
+      <div class="wf-modal-backdrop" onclick="wfCloseFilePreview()"></div>
+      <div class="wf-modal-content wf-file-preview-content">
+        <div class="wf-modal-header">
+          <h3 id="wf-file-preview-title">Preview</h3>
+          <div class="wf-modal-actions">
+            <a id="wf-file-preview-dl" class="wf-btn wf-btn-ghost" target="_blank">Download</a>
+            <button class="wf-btn wf-btn-ghost" onclick="wfCloseFilePreview()">Close</button>
+          </div>
+        </div>
+        <div id="wf-file-preview-body" class="wf-file-preview-body"></div>
+      </div>`;
+    document.body.appendChild(modal);
+  }
+  modal.classList.remove('hidden');
+  document.getElementById('wf-file-preview-title').textContent = data.name || 'Preview';
+  const dl = document.getElementById('wf-file-preview-dl');
+  dl.href = dlUrl;
+  dl.onclick = (ev) => { ev.preventDefault(); wfFileDownload(wfState.currentExecId, data.path, ev); };
+  const body = document.getElementById('wf-file-preview-body');
+  if (data.type === 'text' || data.type === 'document') {
+    const trunc = data.truncated ? `\n\n…[truncated — download to see full content]` : '';
+    body.innerHTML = `<pre class="wf-file-preview-pre">${escapeHtml((data.content || '') + trunc)}</pre>`;
+  } else {
+    body.innerHTML = `<div class="wf-file-preview-fallback">Binary preview not available — use Download.</div>`;
+  }
+}
+
+function wfCloseFilePreview() {
+  const modal = document.getElementById('wf-file-preview-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+/* ─── Click-to-expand for long bubbles ─── */
+
+const WF_COLLAPSE_THRESHOLD = 800; // chars; above this we collapse-by-default
+
+function _wfMaybeCollapsed(text, opts) {
+  const { tag = 'pre', cls = '', innerCls = '' } = opts || {};
+  if (!text) return '';
+  const escaped = escapeHtml(text);
+  if (text.length <= WF_COLLAPSE_THRESHOLD) {
+    return `<${tag} class="${cls}">${escaped}</${tag}>`;
+  }
+  // Collapsed view: show first ~12 lines or 800 chars (whichever shorter).
+  let preview = text.slice(0, WF_COLLAPSE_THRESHOLD);
+  const newlineCut = preview.split('\n').slice(0, 12).join('\n');
+  if (newlineCut.length < preview.length) preview = newlineCut;
+  return `
+    <div class="wf-detail-collapsible" data-full="${encodeURIComponent(text)}">
+      <${tag} class="${cls} wf-detail-collapsed-pre">${escapeHtml(preview)}<span class="wf-detail-ellipsis"> … (+${(text.length - preview.length).toLocaleString()} chars)</span></${tag}>
+      <button type="button" class="wf-btn wf-btn-mini wf-btn-ghost wf-detail-expand-btn" onclick="wfDetailToggleExpand(this, '${tag}', '${cls.replace(/'/g, "\\'")}')">Show more</button>
+    </div>
+  `;
+}
+
+function wfDetailToggleExpand(btn, tag, cls) {
+  const wrap = btn.closest('.wf-detail-collapsible');
+  if (!wrap) return;
+  const expanded = wrap.classList.toggle('wf-detail-expanded');
+  if (expanded) {
+    const full = decodeURIComponent(wrap.dataset.full || '');
+    const pre = wrap.querySelector(tag || 'pre');
+    if (pre) {
+      pre.classList.remove('wf-detail-collapsed-pre');
+      pre.classList.add('wf-detail-expanded-pre');
+      pre.innerHTML = escapeHtml(full);
+    }
+    btn.textContent = 'Show less';
+  } else {
+    // Re-render collapsed
+    const full = decodeURIComponent(wrap.dataset.full || '');
+    let preview = full.slice(0, WF_COLLAPSE_THRESHOLD);
+    const newlineCut = preview.split('\n').slice(0, 12).join('\n');
+    if (newlineCut.length < preview.length) preview = newlineCut;
+    const pre = wrap.querySelector(tag || 'pre');
+    if (pre) {
+      pre.classList.add('wf-detail-collapsed-pre');
+      pre.classList.remove('wf-detail-expanded-pre');
+      pre.innerHTML = escapeHtml(preview) +
+        `<span class="wf-detail-ellipsis"> … (+${(full.length - preview.length).toLocaleString()} chars)</span>`;
+    }
+    btn.textContent = 'Show more';
+  }
+}
+
+/* ─── Transcript download ─── */
+
+function wfDetailDownloadTranscript() {
+  const data = wfState.detailRun;
+  if (!data) return;
+  const lines = [];
+  lines.push(`# Workflow run: ${data.workflow_name || ''}`);
+  lines.push('');
+  lines.push(`- Execution ID: \`${wfState.currentExecId}\``);
+  lines.push(`- Status: ${data.status || 'unknown'}`);
+  if (data.started_at) lines.push(`- Started: ${data.started_at}`);
+  if (data.finished_at) lines.push(`- Finished: ${data.finished_at}`);
+  if (data.duration_ms != null) lines.push(`- Duration: ${data.duration_ms}ms`);
+  if (data.user_display) lines.push(`- User: ${data.user_display}`);
+  if (data.trigger_kind) lines.push(`- Trigger: ${data.trigger_kind}`);
+  if (data.cost_usd) lines.push(`- Cost: $${Number(data.cost_usd).toFixed(4)}`);
+  lines.push('');
+  if (data.workflow_source) {
+    lines.push('## Workflow source');
+    lines.push('');
+    lines.push('```');
+    lines.push(data.workflow_source);
+    lines.push('```');
+    lines.push('');
+  }
+  const steps = data.steps || (typeof data.steps_json === 'string' ? JSON.parse(data.steps_json || '[]') : []) || [];
+  if (steps.length) {
+    lines.push('## Trace');
+    lines.push('');
+    for (const s of steps) {
+      const detail = s.detail || '';
+      const tag = s.kind === 'call_done' ? '✓' : s.kind === 'error' ? '✗' : '·';
+      lines.push(`${tag} **L${s.line} ${s.kind}**${detail ? ': ' + detail : ''}`);
+      lines.push('');
+    }
+  }
+  let rv = data.return_value;
+  if (typeof rv === 'string' && rv) {
+    try { rv = JSON.parse(rv); } catch (_) {}
+  }
+  if (rv != null && rv !== '') {
+    lines.push('## Returned');
+    lines.push('');
+    lines.push('```');
+    lines.push(typeof rv === 'string' ? rv : JSON.stringify(rv, null, 2));
+    lines.push('```');
+    lines.push('');
+  }
+  if (data.error) {
+    lines.push('## Error');
+    lines.push('');
+    lines.push('```');
+    lines.push(data.error);
+    lines.push('```');
+    lines.push('');
+  }
+  if (wfState.detailFollowups.length) {
+    lines.push('## Follow-up conversation');
+    lines.push('');
+    for (const f of wfState.detailFollowups) {
+      lines.push(`### ${f.role === 'user' ? 'User' : 'Assistant'}`);
+      lines.push('');
+      lines.push(f.text || '');
+      lines.push('');
+    }
+  }
+  const md = lines.join('\n');
+  const blob = new Blob([md], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const safeName = (data.workflow_name || 'workflow').replace(/[^A-Za-z0-9_\-]+/g, '_');
+  a.download = `${safeName}_${(wfState.currentExecId || '').slice(0, 8)}.md`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
+}
+
 /* ─── Detail rendering: chat-style turns ─── */
 
 function wfRenderDetail(data) {
@@ -979,6 +1420,9 @@ function wfRenderDetail(data) {
   } else {
     wfDetailUpdateComposerEnabled(true, '');
   }
+  // Files panel (refs + artifacts)
+  const filesEl = document.getElementById('wf-detail-files');
+  if (filesEl) filesEl.innerHTML = wfDetailRenderFilesHtml(data);
   // Chat-style turn rendering
   const turnsEl = document.getElementById('wf-detail-turns');
   turnsEl.innerHTML = wfDetailRenderTurnsHtml(data) + wfDetailRenderFollowupsHtml();
@@ -1011,7 +1455,7 @@ function wfDetailRenderTurnsHtml(data) {
     out.push(`
       <div class="wf-detail-turn wf-detail-turn-system">
         <div class="wf-detail-turn-label">Workflow source</div>
-        <pre class="wf-detail-source"><code>${escapeHtml(src)}</code></pre>
+        ${_wfMaybeCollapsed(src, { tag: 'pre', cls: 'wf-detail-source' })}
       </div>
     `);
   }
@@ -1025,11 +1469,16 @@ function wfDetailRenderTurnsHtml(data) {
     if (kind === 'call') {
       const next = steps[i + 1];
       const paired = next && next.kind === 'call_done' ? next : null;
+      const callHtml = _wfMaybeCollapsed(s.detail || '', { tag: 'div', cls: 'wf-detail-turn-call' });
+      const resultText = paired ? (paired.detail || '(no output)') : '';
+      const resultHtml = paired
+        ? _wfMaybeCollapsed(resultText, { tag: 'div', cls: 'wf-detail-turn-result' })
+        : '<div class="wf-detail-turn-result wf-detail-pending">…</div>';
       out.push(`
         <div class="wf-detail-turn wf-detail-turn-tool">
           <div class="wf-detail-turn-label">Tool call · L${s.line}</div>
-          <div class="wf-detail-turn-call">${escapeHtml(s.detail || '')}</div>
-          ${paired ? `<div class="wf-detail-turn-result">${escapeHtml(paired.detail || '(no output)')}</div>` : '<div class="wf-detail-turn-result wf-detail-pending">…</div>'}
+          ${callHtml}
+          ${resultHtml}
         </div>
       `);
       i += paired ? 2 : 1;
@@ -1044,7 +1493,7 @@ function wfDetailRenderTurnsHtml(data) {
       out.push(`
         <div class="wf-detail-turn wf-detail-turn-error">
           <div class="wf-detail-turn-label">Error · L${s.line}</div>
-          <div class="wf-detail-turn-result">${escapeHtml(s.detail || '')}</div>
+          ${_wfMaybeCollapsed(s.detail || '', { tag: 'div', cls: 'wf-detail-turn-result' })}
         </div>
       `);
       i += 1;
@@ -1070,14 +1519,14 @@ function wfDetailRenderTurnsHtml(data) {
     out.push(`
       <div class="wf-detail-turn wf-detail-turn-final">
         <div class="wf-detail-turn-label">Returned</div>
-        <pre class="wf-detail-final-value">${escapeHtml(txt)}</pre>
+        ${_wfMaybeCollapsed(txt, { tag: 'pre', cls: 'wf-detail-final-value' })}
       </div>
     `);
   } else if (data.error) {
     out.push(`
       <div class="wf-detail-turn wf-detail-turn-error">
         <div class="wf-detail-turn-label">Failed</div>
-        <pre class="wf-detail-final-value">${escapeHtml(data.error)}</pre>
+        ${_wfMaybeCollapsed(data.error, { tag: 'pre', cls: 'wf-detail-final-value' })}
       </div>
     `);
   }
@@ -1226,6 +1675,22 @@ async function wfDetailSaveToChats() {
     if (r && r.error) {
       alert('Save failed: ' + r.error);
       return;
+    }
+    // Seed the references panel for the promoted chat with the input files
+    // the workflow read. The artifacts panel auto-populates from the rows
+    // the server just wrote (it queries /v1/artifacts?session_id=…).
+    const refs = (r && r.references) || [];
+    if (refs.length) {
+      const refObjs = refs.map(ref => ({
+        title: ref.name,
+        link: ref.path,           // path serves as the unique key here
+        snippet: '',
+        domain: 'workflow run',   // shown as the source label in the UI
+        favicon: '',
+        kind: 'file',
+      }));
+      state.chatReferences = state.chatReferences || {};
+      state.chatReferences[sid] = { cited: [], searched: refObjs };
     }
     // Drop the user into the freshly-promoted chat. Clear local detail
     // state so re-opening this run starts a fresh follow-up session.

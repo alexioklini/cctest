@@ -2505,6 +2505,13 @@ class BrainAgentHandler(
             self._handle_workflow_get_execution(path)
         elif path == "/v1/workflows/history":
             self._handle_workflow_history(path)
+        elif path.startswith("/v1/workflows/history/") and "/file" in path:
+            # /v1/workflows/history/<exec_id>/file  → download a file the run touched
+            # /v1/workflows/history/<exec_id>/file-preview → preview a file the run touched
+            if "/file-preview" in path:
+                self._handle_workflow_run_file_preview(path)
+            else:
+                self._handle_workflow_run_file_download(path)
         elif path.startswith("/v1/workflows/history/"):
             self._handle_workflow_history_get(path)
         elif path.startswith("/v1/agents/") and "/workflows" in path:

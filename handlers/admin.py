@@ -9,6 +9,7 @@ import time
 import threading
 import urllib.request
 import urllib.error
+import uuid
 from urllib.parse import unquote, urlencode
 
 
@@ -666,7 +667,309 @@ class AdminHandlerMixin:
                 self._send_json({"error": "Forbidden"}, 403)
                 return
         ChatDB.update_session_status(sid, "active")
-        self._send_json({"status": "promoted", "session_id": sid, "execution_id": exec_id})
+        # Carry the workflow-run's files forward into the regular chat panels:
+        # outputs get registered as artifact rows on the promoted session
+        # (so the artifacts panel lights up immediately), and inputs are
+        # returned in the response so the client can seed the references
+        # panel without re-parsing the trace.
+        try:
+            classified_result = self._workflow_run_paths_classified(exec_id)
+            classified = classified_result[1] if classified_result else {}
+        except Exception:
+            classified = {}
+        artifacts_created = []
+        references = []
+        for realpath, role in classified.items():
+            if not os.path.isfile(realpath):
+                continue  # Skip files that no longer exist (e.g. /tmp churn)
+            name = os.path.basename(realpath)
+            if role == "output":
+                # Mint an artifact row so the regular Artifacts panel sees it.
+                # No version blob — the file lives on disk; the artifact row
+                # carries `path` for click-through.
+                ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+                art_id = uuid.uuid4().hex[:12]
+                ChatDB.create_artifact(art_id, sid, info.get("agent_id") or "main",
+                                       name, realpath, ext or "file", role="output")
+                artifacts_created.append({"id": art_id, "name": name, "path": realpath})
+            elif role == "input":
+                references.append({"name": name, "path": realpath})
+        self._send_json({
+            "status": "promoted",
+            "session_id": sid,
+            "execution_id": exec_id,
+            "artifacts_created": artifacts_created,
+            "references": references,
+        })
+
+    # --- Workflow run file access ---
+    #
+    # The general /v1/files/download validator restricts paths to the cctest
+    # tree, agents/, cwd, and project input folders — workflows often write
+    # outputs to /tmp (and uploaded files live under /tmp/brain-workflow-
+    # uploads/<exec_id>/) so those would be rejected. We can't loosen the
+    # general validator without opening up /tmp blanket, so workflow file
+    # access goes through a scoped endpoint that gates on:
+    #   1. The execution_id exists and the user can see it (RBAC).
+    #   2. The requested path actually appears in steps_json or return_value
+    #      for that run — i.e. the workflow demonstrably touched it.
+    # That's narrow enough to be safe and broad enough to cover both
+    # uploads and outputs without per-tool special-casing.
+
+    # Tools whose path arguments produce reference files (read-only inputs).
+    _WF_INPUT_TOOLS = frozenset({
+        "read_file", "read_document", "read_attachment",
+        "transcribe_audio", "parse_pdf", "parse_docx",
+        "ask_user_for_file",
+    })
+    # Tools whose path arguments produce output files (workflow artifacts).
+    _WF_OUTPUT_TOOLS = frozenset({"write_file", "edit_file"})
+
+    def _workflow_run_paths(self, exec_id):
+        """Return the set of file paths a workflow run demonstrably touched.
+
+        Pulled from steps_json (every `call`/`call_done`/`error` row's
+        `detail` string), plus `return_value` when it looks like a path.
+        Heuristic — same regex the frontend uses to render the references
+        and artifacts lists, so what the user sees is exactly what they
+        can download.
+
+        Returns (row, allowed_paths_set).
+        """
+        result = self._workflow_run_paths_classified(exec_id)
+        if result is None:
+            return None, None
+        row, classified = result
+        return row, set(classified.keys())
+
+    def _workflow_run_paths_classified(self, exec_id):
+        """Like _workflow_run_paths but returns role per path.
+
+        Returns (row, {realpath: 'input'|'output'|'unknown'}).
+        Used by promote-session to decide which paths to register as
+        artifact rows on the freshly-promoted chat session.
+        """
+        from brain import _workflow_history_get
+        row = _workflow_history_get(exec_id)
+        if not row:
+            return None
+        try:
+            steps = json.loads(row.get("steps_json") or "[]")
+        except Exception:
+            steps = []
+        arg_re = re.compile(r"""\b(?:path|file|file_path|filename|audio|audio_path|image|image_path|pdf|pdf_path|src|source|input|output|target|dest|content_path)\s*=\s*(['"])((?:\\.|(?!\1).)+)\1""")
+        path_re = re.compile(r"""(['"])((?:/|~/)[^'"\n]+)\1""")
+        # Two emit shapes: "tool_name(args)" on call lines, "tool_name → result"
+        # on call_done lines. The arrow shape is where the actual path lives
+        # for tools whose call line uses placeholder ellipses (transcribe_audio,
+        # write_file). Without this we'd lose role classification on call_done.
+        tool_re = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(|→|->)")
+        # path -> best role seen so far. output > input > unknown.
+        order = {"unknown": 0, "input": 1, "output": 2}
+        classified: dict[str, str] = {}
+        def claim(path: str, role: str):
+            real = os.path.realpath(os.path.expanduser(path))
+            existing = classified.get(real, "unknown")
+            if order[role] > order[existing]:
+                classified[real] = role
+        for s in steps:
+            d = (s.get("detail") or "")
+            if not d:
+                continue
+            tm = tool_re.match(d)
+            tool = tm.group(1) if tm else ""
+            role = ("output" if tool in self._WF_OUTPUT_TOOLS
+                    else "input" if tool in self._WF_INPUT_TOOLS
+                    else "unknown")
+            for m in arg_re.finditer(d):
+                claim(m.group(2).replace("\\\\", "\\").replace("\\'", "'").replace('\\"', '"'), role)
+            for m in path_re.finditer(d):
+                claim(m.group(2), role)
+        # return_value as a bare path string → output (it's what the
+        # workflow handed back to the caller).
+        rv = row.get("return_value")
+        if rv:
+            try:
+                parsed = json.loads(rv) if isinstance(rv, str) else rv
+            except Exception:
+                parsed = rv
+            if isinstance(parsed, str) and (parsed.startswith("/") or parsed.startswith("~/")):
+                claim(parsed, "output")
+        return row, classified
+
+    def _workflow_run_can_access(self, row):
+        au = getattr(self, "_auth_user", None) or {}
+        if au.get("role") == "admin":
+            return True
+        owner = (row or {}).get("user_id") or ""
+        if not owner:
+            return True  # legacy anonymous run
+        return owner == (au.get("id") or "")
+
+    def _handle_workflow_run_file_download(self, path):
+        """GET /v1/workflows/history/<exec_id>/file?path=<urlenc>"""
+        from urllib.parse import urlparse, parse_qs, quote as _urlq
+        parts = path.split("/")
+        if len(parts) < 6:
+            self._send_json({"error": "Invalid path"}, 400)
+            return
+        exec_id = parts[4]
+        qs = parse_qs(urlparse(self.path).query)
+        requested = qs.get("path", [""])[0]
+        if not requested:
+            self._send_json({"error": "Missing path"}, 400)
+            return
+        row, allowed = self._workflow_run_paths(exec_id)
+        if row is None:
+            self._send_json({"error": "Execution not found"}, 404)
+            return
+        if not self._workflow_run_can_access(row):
+            self._send_json({"error": "Forbidden"}, 403)
+            return
+        try:
+            resolved = os.path.realpath(os.path.expanduser(requested))
+        except Exception:
+            self._send_json({"error": "Invalid path"}, 400)
+            return
+        if resolved not in allowed:
+            self._send_json({"error": "Path not associated with this run"}, 403)
+            return
+        if not os.path.isfile(resolved):
+            self._send_json({"error": "File not found"}, 404)
+            return
+        ext = resolved.rsplit(".", 1)[-1].lower() if "." in resolved else ""
+        content_types = {
+            "md": "text/markdown", "txt": "text/plain", "py": "text/x-python",
+            "json": "application/json", "pdf": "application/pdf",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "html": "text/html", "csv": "text/csv",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "js": "application/javascript", "ts": "text/typescript",
+            "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "gif": "image/gif", "svg": "image/svg+xml",
+            "wav": "audio/wav", "mp3": "audio/mpeg", "m4a": "audio/mp4",
+        }
+        ct = content_types.get(ext, "application/octet-stream")
+        filename = os.path.basename(resolved)
+        inline_exts = {"pdf", "png", "jpg", "jpeg", "gif", "svg",
+                       "txt", "md", "html", "json", "csv"}
+        disposition = "inline" if ext in inline_exts else "attachment"
+        try:
+            with open(resolved, "rb") as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", ct)
+            self.send_header("Content-Length", len(data))
+            self.send_header(
+                "Content-Disposition",
+                f"{disposition}; filename*=UTF-8''{_urlq(filename)}",
+            )
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(data)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_workflow_run_file_preview(self, path):
+        """GET /v1/workflows/history/<exec_id>/file-preview?path=<urlenc>&lines=200
+
+        Same gate as the download endpoint; returns either a small JSON
+        envelope with text content (for text files) or a marker telling
+        the client to fall back to download for binary types.
+        """
+        from urllib.parse import urlparse, parse_qs
+        parts = path.split("/")
+        if len(parts) < 6:
+            self._send_json({"error": "Invalid path"}, 400)
+            return
+        exec_id = parts[4]
+        qs = parse_qs(urlparse(self.path).query)
+        requested = qs.get("path", [""])[0]
+        try:
+            max_lines = int(qs.get("lines", ["200"])[0])
+        except ValueError:
+            max_lines = 200
+        if not requested:
+            self._send_json({"error": "Missing path"}, 400)
+            return
+        row, allowed = self._workflow_run_paths(exec_id)
+        if row is None:
+            self._send_json({"error": "Execution not found"}, 404)
+            return
+        if not self._workflow_run_can_access(row):
+            self._send_json({"error": "Forbidden"}, 403)
+            return
+        try:
+            resolved = os.path.realpath(os.path.expanduser(requested))
+        except Exception:
+            self._send_json({"error": "Invalid path"}, 400)
+            return
+        if resolved not in allowed:
+            self._send_json({"error": "Path not associated with this run"}, 403)
+            return
+        if not os.path.isfile(resolved):
+            self._send_json({"error": "File not found"}, 404)
+            return
+        try:
+            size = os.path.getsize(resolved)
+            name = os.path.basename(resolved)
+            ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+            image_exts = {"jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "ico"}
+            audio_exts = {"wav", "mp3", "m4a", "aac", "ogg", "flac"}
+            office_exts = {"pdf", "docx", "xlsx", "pptx", "csv"}
+            if ext in image_exts:
+                self._send_json({"path": resolved, "name": name, "size": size,
+                                 "type": "image", "ext": ext})
+                return
+            if ext in audio_exts:
+                self._send_json({"path": resolved, "name": name, "size": size,
+                                 "type": "audio", "ext": ext})
+                return
+            if ext in office_exts:
+                try:
+                    if ext == "pdf":
+                        content = engine.DocumentParser.parse_pdf(resolved)
+                    elif ext == "docx":
+                        content = engine.DocumentParser.parse_docx(resolved)
+                    elif ext in ("xlsx", "xls"):
+                        content = engine.DocumentParser.parse_xlsx(resolved)
+                    elif ext == "pptx":
+                        content = engine.DocumentParser.parse_pptx(resolved)
+                    elif ext == "csv":
+                        with open(resolved, "r", errors="replace") as f:
+                            content = f.read(50 * 1024)
+                    else:
+                        content = ""
+                    all_lines = content.splitlines()
+                    truncated = len(all_lines) > 400
+                    self._send_json({
+                        "path": resolved, "name": name, "size": size,
+                        "type": "document", "ext": ext,
+                        "content": "\n".join(all_lines[:400]), "truncated": truncated,
+                    })
+                except Exception as e:
+                    self._send_json({"error": f"Could not parse {ext.upper()}: {e}"}, 500)
+                return
+            # Plain text / code
+            max_bytes = 200 * 1024
+            with open(resolved, "r", errors="replace") as f:
+                lines = []
+                total_bytes = 0
+                for i, line in enumerate(f):
+                    if i >= max_lines or total_bytes >= max_bytes:
+                        truncated = True
+                        break
+                    lines.append(line)
+                    total_bytes += len(line.encode("utf-8"))
+                else:
+                    truncated = False
+            self._send_json({
+                "path": resolved, "name": name, "size": size,
+                "type": "text", "ext": ext,
+                "content": "".join(lines), "truncated": truncated,
+            })
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
 
     # --- Agent file management ---
 
