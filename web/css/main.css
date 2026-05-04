@@ -765,14 +765,13 @@ textarea { resize: none; }
   font-size: 16px;
   line-height: 1.4;
   color: var(--text-300);
-  display: none;
+  display: inline-block;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   flex: 1;
   min-width: 0;
 }
-.turn-group.collapsed .turn-group-collapsed-hint { display: inline-block; }
 .turn-group.collapsed .turn-body { display: none; }
 
 /* Turn-nav dropdown — wider than other dropdowns to fit question previews */
