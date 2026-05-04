@@ -807,7 +807,6 @@ const wfBanner = {
   data: null,          // last fetched run data (live or persisted)
   pollTimer: null,
   traceCollapsed: true,// run-trace section default-collapsed
-  filesCollapsed: false,
 };
 
 async function wfOpenDetail(executionId) {
@@ -815,12 +814,10 @@ async function wfOpenDetail(executionId) {
   // Resolve (or create) the chat session bound to this run for the current
   // user. This is the single source of truth — re-opening the same run
   // hands back the same session so the conversation survives across
-  // workflow visits.
+  // workflow visits. Also seeds artifact rows for outputs (server-side)
+  // and returns input paths (we seed chatReferences locally below).
   let info;
   try {
-    // Pick a sensible default model: prefer the active chat's model so
-    // the user gets the model they've been using; fall back to the run's
-    // own model field; the server has a final fallback to first-enabled.
     const model = (state.activeChat && state.activeChat.model) || '';
     info = await API.post(`/v1/workflows/history/${encodeURIComponent(executionId)}/session`,
                           model ? { model } : {});
@@ -829,9 +826,28 @@ async function wfOpenDetail(executionId) {
     alert('Open failed: ' + e.message);
     return;
   }
-  // Open the bound session in the regular chat view. The session-loading
-  // pipeline restores workflow_run_id onto the chat object (see
-  // sessions.js openSession), and the banner renderer keys off that.
+  // Seed the References panel from the workflow's input files so the
+  // regular tab populates immediately on chat open. This must happen
+  // BEFORE openSession() so the renderer picks the cache up on first
+  // render — otherwise the user sees an empty Refs panel for a beat.
+  const refs = (info && info.references) || [];
+  if (refs.length) {
+    state.chatReferences = state.chatReferences || {};
+    const existing = state.chatReferences[info.session_id] || { cited: [], searched: [] };
+    const seen = new Set(existing.searched.map(x => x.link));
+    for (const ref of refs) {
+      if (seen.has(ref.path)) continue;
+      existing.searched.push({
+        title: ref.name,
+        link: ref.path,
+        snippet: '',
+        domain: 'workflow run',
+        favicon: '',
+        kind: 'file',
+      });
+    }
+    state.chatReferences[info.session_id] = existing;
+  }
   if (typeof openSession !== 'function') {
     alert('Internal error: openSession not available');
     return;
@@ -968,10 +984,6 @@ function wfBannerToggleTrace() {
   wfBanner.traceCollapsed = !wfBanner.traceCollapsed;
   renderWorkflowBanner();
 }
-function wfBannerToggleFiles() {
-  wfBanner.filesCollapsed = !wfBanner.filesCollapsed;
-  renderWorkflowBanner();
-}
 
 /* Lifecycle hook: chat.js calls maybeUpdateWorkflowBanner() whenever the
    active chat changes (open / close / new chat) so the banner appears or
@@ -986,315 +998,10 @@ function maybeUpdateWorkflowBanner() {
   }
 }
 
-/* ─── Heuristic file-path extraction from steps_json ───
-   Mirrors the regex used in admin.py:_workflow_run_paths so what the user
-   sees as a clickable reference / artifact is exactly what the backend
-   gate will allow them to download. Diverging the regexes silently
-   would hand the user broken download buttons.
-
-   Categories returned per file:
-     • role: 'input'     — read by the workflow (read_*, transcribe_*,
-                           ask_user_for_file uploads)
-     • role: 'output'    — written by the workflow (write_file/edit_file
-                           or surfaced as the RETURN value)
-     • role: 'unknown'   — referenced via a generic path/file arg on a
-                           tool we don't classify
-
-   Source-of-evidence label is preserved so the UI can show "uploaded by
-   you", "written by write_file", etc. */
-const WF_PATH_ARG_RE = /\b(?:path|file|file_path|filename|audio|audio_path|image|image_path|pdf|pdf_path|src|source|input|output|target|dest|content_path)\s*=\s*(['"])((?:\\.|(?!\1).)+)\1/g;
-const WF_QUOTED_PATH_RE = /(['"])((?:\/|~\/)[^'"\n]+)\1/g;
-const WF_INPUT_TOOLS = new Set([
-  'read_file', 'read_document', 'read_attachment',
-  'transcribe_audio', 'parse_pdf', 'parse_docx',
-  'ask_user_for_file',
-]);
-const WF_OUTPUT_TOOLS = new Set(['write_file', 'edit_file']);
-
-function _wfUnescapeQuoted(s) {
-  return s.replace(/\\(["'\\])/g, '$1');
-}
-
-function _wfParseToolCall(detail) {
-  // Handles three shapes the engine emits:
-  //   • "write_file(path=\"/tmp/foo.md\", content=...)"          (call line)
-  //   • "ask_user_for_file → {'path': '/tmp/...'}"                (call_done line)
-  //   • "transcribe_audio → {'transcript': ...}"                  (call_done line)
-  // The arrow form is what carries the actual path on call_done since the
-  // call line itself uses placeholder ellipses for elided args.
-  if (!detail) return null;
-  const paren = detail.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*\(/);
-  if (paren) return paren[1];
-  const arrow = detail.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*(?:→|->)/);
-  return arrow ? arrow[1] : null;
-}
-
-function _wfExtractFilePathsFromDetail(detail) {
-  const out = [];
-  if (!detail) return out;
-  WF_PATH_ARG_RE.lastIndex = 0;
-  let m;
-  while ((m = WF_PATH_ARG_RE.exec(detail)) !== null) {
-    out.push({ path: _wfUnescapeQuoted(m[2]), via: 'arg' });
-  }
-  WF_QUOTED_PATH_RE.lastIndex = 0;
-  while ((m = WF_QUOTED_PATH_RE.exec(detail)) !== null) {
-    // Skip duplicates already captured by the arg regex.
-    if (!out.some(p => p.path === m[2])) {
-      out.push({ path: m[2], via: 'quoted' });
-    }
-  }
-  return out;
-}
-
-function wfDetailExtractFiles(data) {
-  // Returns { inputs: [refs...], outputs: [arts...], all: [...] }
-  // where refs/arts share the shape:
-  //   { path, filename, role, source, tool_name, ext }
-  // `source` is a short user-facing label for where the path was seen.
-  const steps = data.steps || (typeof data.steps_json === 'string' ? JSON.parse(data.steps_json || '[]') : []) || [];
-  const seen = new Map(); // path -> entry
-  const claim = (path, role, source, tool_name) => {
-    if (!path) return;
-    const trimmed = path.trim();
-    if (!trimmed) return;
-    const ext = trimmed.includes('.') ? trimmed.split('.').pop().toLowerCase() : '';
-    const filename = trimmed.split('/').pop() || trimmed;
-    const existing = seen.get(trimmed);
-    if (existing) {
-      // Promote: outputs win over inputs (a file written then re-read is
-      // an output the user will care about); inputs win over unknown.
-      const order = { unknown: 0, input: 1, output: 2 };
-      if (order[role] > order[existing.role]) {
-        existing.role = role; existing.source = source; existing.tool_name = tool_name;
-      }
-      return;
-    }
-    seen.set(trimmed, { path: trimmed, filename, role, source, tool_name, ext });
-  };
-  // Pair call/call_done so a result string can also contribute paths
-  // (ask_user_for_file's return is "{'path': '/tmp/...'}" only on call_done).
-  for (let i = 0; i < steps.length; i++) {
-    const s = steps[i];
-    const kind = s.kind || '';
-    const detail = s.detail || '';
-    const tool = _wfParseToolCall(detail);
-    const role = tool && WF_OUTPUT_TOOLS.has(tool) ? 'output'
-               : tool && WF_INPUT_TOOLS.has(tool) ? 'input'
-               : 'unknown';
-    const source = tool ? `${kind === 'call_done' ? 'returned by ' : 'used by '}${tool}` : kind;
-    if (kind === 'call' || kind === 'call_done' || kind === 'error') {
-      const paths = _wfExtractFilePathsFromDetail(detail);
-      for (const p of paths) claim(p.path, role, source, tool || '');
-    }
-  }
-  // RETURN value as a bare path
-  let rv = data.return_value;
-  if (typeof rv === 'string' && rv) {
-    try { rv = JSON.parse(rv); } catch (_) {}
-  }
-  if (typeof rv === 'string' && (rv.startsWith('/') || rv.startsWith('~/'))) {
-    claim(rv, 'output', 'return value', '');
-  }
-  const all = Array.from(seen.values()).sort((a, b) => a.filename.localeCompare(b.filename));
-  return {
-    inputs: all.filter(f => f.role === 'input'),
-    outputs: all.filter(f => f.role === 'output'),
-    other: all.filter(f => f.role === 'unknown'),
-    all,
-  };
-}
-
-/* ─── Files panel (refs + artifacts) + transcript download ─── */
-
-function _wfFileIcon(ext) {
-  const e = (ext || '').toLowerCase();
-  if (['md','txt','log'].includes(e)) return '📝';
-  if (['json','yaml','yml','toml','xml','csv'].includes(e)) return '🗂';
-  if (['py','js','ts','tsx','jsx','go','rs','c','cpp','h','sh','rb','php'].includes(e)) return '💻';
-  if (['png','jpg','jpeg','gif','svg','webp','bmp'].includes(e)) return '🖼';
-  if (['wav','mp3','m4a','aac','ogg','flac'].includes(e)) return '🎵';
-  if (['mp4','mov','avi','mkv'].includes(e)) return '🎞';
-  if (['pdf'].includes(e)) return '📕';
-  if (['docx','doc'].includes(e)) return '📘';
-  if (['xlsx','xls'].includes(e)) return '📊';
-  if (['pptx','ppt'].includes(e)) return '📽';
-  if (['zip','tar','gz','7z','rar'].includes(e)) return '📦';
-  return '📄';
-}
-
-function wfDetailRenderFilesHtml(data) {
-  const groups = wfDetailExtractFiles(data);
-  if (!groups.all.length) return '';
-  const exec = wfState.currentExecId || '';
-  const renderRow = (f) => {
-    const icon = _wfFileIcon(f.ext);
-    const safePath = encodeURIComponent(f.path);
-    return `
-      <div class="wf-detail-file-row" title="${escapeHtml(f.path)}">
-        <span class="wf-detail-file-icon">${icon}</span>
-        <div class="wf-detail-file-main">
-          <div class="wf-detail-file-name">${escapeHtml(f.filename)}</div>
-          <div class="wf-detail-file-source">${escapeHtml(f.source || '')}</div>
-        </div>
-        <div class="wf-detail-file-actions">
-          <button class="wf-btn wf-btn-mini wf-btn-ghost" onclick="wfFilePreview('${escapeJs(exec)}','${escapeJs(f.path)}', event)" title="Preview">View</button>
-          <a class="wf-btn wf-btn-mini wf-btn-ghost wf-detail-file-dl"
-             href="${BASE_URL}/v1/workflows/history/${encodeURIComponent(exec)}/file?path=${safePath}"
-             onclick="wfFileDownload('${escapeJs(exec)}','${escapeJs(f.path)}', event)"
-             title="Download">↓</a>
-        </div>
-      </div>
-    `;
-  };
-  const sections = [];
-  if (groups.inputs.length) {
-    sections.push(`
-      <div class="wf-detail-files-section">
-        <div class="wf-detail-files-section-label">References (${groups.inputs.length})</div>
-        ${groups.inputs.map(renderRow).join('')}
-      </div>
-    `);
-  }
-  if (groups.outputs.length) {
-    sections.push(`
-      <div class="wf-detail-files-section">
-        <div class="wf-detail-files-section-label">Artifacts (${groups.outputs.length})</div>
-        ${groups.outputs.map(renderRow).join('')}
-      </div>
-    `);
-  }
-  if (groups.other.length) {
-    sections.push(`
-      <div class="wf-detail-files-section">
-        <div class="wf-detail-files-section-label">Other files (${groups.other.length})</div>
-        ${groups.other.map(renderRow).join('')}
-      </div>
-    `);
-  }
-  return `<details class="wf-detail-files-card" ${groups.outputs.length || groups.inputs.length ? 'open' : ''}>
-    <summary>
-      Files
-      <span class="wf-detail-files-summary">
-        ${groups.inputs.length ? `${groups.inputs.length} ref${groups.inputs.length === 1 ? '' : 's'}` : ''}
-        ${groups.inputs.length && (groups.outputs.length || groups.other.length) ? ' · ' : ''}
-        ${groups.outputs.length ? `${groups.outputs.length} artifact${groups.outputs.length === 1 ? '' : 's'}` : ''}
-        ${(groups.inputs.length + groups.outputs.length) && groups.other.length ? ' · ' : ''}
-        ${groups.other.length ? `${groups.other.length} other` : ''}
-      </span>
-    </summary>
-    <div class="wf-detail-files-body">${sections.join('')}</div>
-  </details>`;
-}
-
-async function wfFilePreview(execId, filePath, ev) {
-  if (ev) ev.preventDefault();
-  if (!execId || !filePath) return;
-  // For images and audio we let the browser handle it via the download
-  // endpoint with inline disposition (opens new tab). For text/document
-  // we fetch the preview JSON and render in a modal.
-  const ext = (filePath.split('.').pop() || '').toLowerCase();
-  const dlUrl = `${BASE_URL}/v1/workflows/history/${encodeURIComponent(execId)}/file?path=${encodeURIComponent(filePath)}`;
-  const inlineExts = new Set(['png','jpg','jpeg','gif','svg','webp','bmp','pdf','wav','mp3','m4a','ogg','flac']);
-  if (inlineExts.has(ext)) {
-    // Open inline via the existing download endpoint (server sets inline
-    // disposition for these types). Use authenticated fetch + blob URL.
-    try {
-      const authToken = localStorage.getItem('auth-token');
-      const headers = {};
-      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-      const resp = await fetch(dlUrl, { headers, credentials: 'include' });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      window.open(url, '_blank');
-      // Revoke after a short delay so the new tab has time to load.
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (e) {
-      alert('Preview failed: ' + e.message);
-    }
-    return;
-  }
-  // Text / document: fetch preview JSON.
-  try {
-    const data = await API.get(`/v1/workflows/history/${encodeURIComponent(execId)}/file-preview?path=${encodeURIComponent(filePath)}`);
-    if (data && data.error) { alert('Preview error: ' + data.error); return; }
-    wfShowFilePreviewModal(data, dlUrl);
-  } catch (e) {
-    alert('Preview failed: ' + e.message);
-  }
-}
-
-async function wfFileDownload(execId, filePath, ev) {
-  // Authenticated download — fetch as blob and trigger client-side save
-  // so the Authorization header gets attached (a bare <a href> can't
-  // carry the bearer token).
-  if (ev) ev.preventDefault();
-  if (!execId || !filePath) return;
-  try {
-    const authToken = localStorage.getItem('auth-token');
-    const headers = {};
-    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-    const url = `${BASE_URL}/v1/workflows/history/${encodeURIComponent(execId)}/file?path=${encodeURIComponent(filePath)}`;
-    const resp = await fetch(url, { headers, credentials: 'include' });
-    if (!resp.ok) {
-      let errMsg = `HTTP ${resp.status}`;
-      try { const j = await resp.json(); if (j.error) errMsg = j.error; } catch(_) {}
-      alert('Download failed: ' + errMsg);
-      return;
-    }
-    const blob = await resp.blob();
-    const objUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = objUrl;
-    a.download = filePath.split('/').pop() || 'download';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(objUrl); }, 1000);
-  } catch (e) {
-    alert('Download failed: ' + e.message);
-  }
-}
-
-function wfShowFilePreviewModal(data, dlUrl) {
-  // Lightweight inline modal — reuses the wf-modal classes the editor uses.
-  let modal = document.getElementById('wf-file-preview-modal');
-  if (!modal) {
-    modal = document.createElement('div');
-    modal.id = 'wf-file-preview-modal';
-    modal.className = 'wf-modal';
-    modal.innerHTML = `
-      <div class="wf-modal-backdrop" onclick="wfCloseFilePreview()"></div>
-      <div class="wf-modal-content wf-file-preview-content">
-        <div class="wf-modal-header">
-          <h3 id="wf-file-preview-title">Preview</h3>
-          <div class="wf-modal-actions">
-            <a id="wf-file-preview-dl" class="wf-btn wf-btn-ghost" target="_blank">Download</a>
-            <button class="wf-btn wf-btn-ghost" onclick="wfCloseFilePreview()">Close</button>
-          </div>
-        </div>
-        <div id="wf-file-preview-body" class="wf-file-preview-body"></div>
-      </div>`;
-    document.body.appendChild(modal);
-  }
-  modal.classList.remove('hidden');
-  document.getElementById('wf-file-preview-title').textContent = data.name || 'Preview';
-  const dl = document.getElementById('wf-file-preview-dl');
-  dl.href = dlUrl;
-  dl.onclick = (ev) => { ev.preventDefault(); wfFileDownload(wfState.currentExecId, data.path, ev); };
-  const body = document.getElementById('wf-file-preview-body');
-  if (data.type === 'text' || data.type === 'document') {
-    const trunc = data.truncated ? `\n\n…[truncated — download to see full content]` : '';
-    body.innerHTML = `<pre class="wf-file-preview-pre">${escapeHtml((data.content || '') + trunc)}</pre>`;
-  } else {
-    body.innerHTML = `<div class="wf-file-preview-fallback">Binary preview not available — use Download.</div>`;
-  }
-}
-
-function wfCloseFilePreview() {
-  const modal = document.getElementById('wf-file-preview-modal');
-  if (modal) modal.classList.add('hidden');
-}
+/* The client-side path-extraction heuristic moved to the server
+   (admin.py:_workflow_run_paths_classified). Single source of truth so
+   what the regular Refs/Artifacts panels show always matches what the
+   download endpoints will serve. */
 
 /* ─── Click-to-expand for long bubbles ─── */
 
@@ -1473,8 +1180,9 @@ function renderWorkflowBanner() {
   const agent = data.agent_id || '';
   const model = data.model || '—';
 
-  const groups = wfDetailExtractFiles(data);
-  const filesHtml = wfDetailRenderFilesHtml(data);
+  // Files (refs + artifacts) are surfaced via the regular right-panel
+  // tabs — seeded server-side at session-create time. The banner doesn't
+  // render its own files card to avoid duplicating UI.
 
   // Trace: workflow source + tool-call/result pairs + return
   let traceHtml = '';
@@ -1576,9 +1284,6 @@ function renderWorkflowBanner() {
           : '<button class="wf-btn wf-btn-primary" onclick="wfBannerSaveToChats()">Save to chats</button>'}
       </div>
     </div>
-    ${groups.all.length ? `<div class="wf-banner-files-wrap ${wfBanner.filesCollapsed ? 'wf-banner-section-collapsed' : ''}">
-      ${filesHtml}
-    </div>` : ''}
     <details class="wf-banner-trace-details" ${wfBanner.traceCollapsed ? '' : 'open'} ontoggle="wfBanner.traceCollapsed = !this.open">
       <summary>
         <span class="wf-banner-section-label">Run trace</span>

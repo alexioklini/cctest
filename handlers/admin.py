@@ -667,33 +667,13 @@ class AdminHandlerMixin:
                 self._send_json({"error": "Forbidden"}, 403)
                 return
         ChatDB.update_session_status(sid, "active")
-        # Carry the workflow-run's files forward into the regular chat panels:
-        # outputs get registered as artifact rows on the promoted session
-        # (so the artifacts panel lights up immediately), and inputs are
-        # returned in the response so the client can seed the references
-        # panel without re-parsing the trace.
-        try:
-            classified_result = self._workflow_run_paths_classified(exec_id)
-            classified = classified_result[1] if classified_result else {}
-        except Exception:
-            classified = {}
-        artifacts_created = []
-        references = []
-        for realpath, role in classified.items():
-            if not os.path.isfile(realpath):
-                continue  # Skip files that no longer exist (e.g. /tmp churn)
-            name = os.path.basename(realpath)
-            if role == "output":
-                # Mint an artifact row so the regular Artifacts panel sees it.
-                # No version blob — the file lives on disk; the artifact row
-                # carries `path` for click-through.
-                ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-                art_id = uuid.uuid4().hex[:12]
-                ChatDB.create_artifact(art_id, sid, info.get("agent_id") or "main",
-                                       name, realpath, ext or "file", role="output")
-                artifacts_created.append({"id": art_id, "name": name, "path": realpath})
-            elif role == "input":
-                references.append({"name": name, "path": realpath})
+        # Re-run the seed pass — idempotent, dedupes by path. Covers the
+        # legacy case where a session pre-dating v8.24.3 was created
+        # without seeding (the session-create endpoint now handles it on
+        # first open, so this is normally a no-op).
+        agent_id = info.get("agent_id") or "main"
+        artifacts_created, references = self._seed_artifacts_for_run(
+            exec_id, sid, agent_id)
         self._send_json({
             "status": "promoted",
             "session_id": sid,
@@ -731,8 +711,20 @@ class AdminHandlerMixin:
         # Look for an existing chat session bound to this run (any status).
         existing = self._lookup_workflow_run_session(exec_id, uid)
         if existing:
-            self._send_json({"session_id": existing["id"], "status": existing.get("status", "active"),
-                             "created": False, "model": existing.get("model", "")})
+            # Re-derive refs/artifacts even on existing-session lookups so
+            # the client can re-seed state.chatReferences[sid] on page
+            # reload (chatReferences is in-memory only). Idempotent.
+            agent_id = existing.get("agent_id") or "main"
+            artifacts_seeded, references_seeded = self._seed_artifacts_for_run(
+                exec_id, existing["id"], agent_id)
+            self._send_json({
+                "session_id": existing["id"],
+                "status": existing.get("status", "active"),
+                "created": False,
+                "model": existing.get("model", ""),
+                "artifacts": artifacts_seeded,
+                "references": references_seeded,
+            })
             return
         # No bound session yet — mint one.
         body = self._read_json() if self.headers.get("Content-Length") else {}
@@ -765,10 +757,83 @@ class AdminHandlerMixin:
                             "workflow_run", new_session.created_at,
                             new_session.last_active, "",
                             user_id=uid, workflow_run_id=exec_id)
+        # Seed the regular Artifacts + References panels so the workflow's
+        # files behave exactly like any other chat — no banner-internal
+        # widgets, no special UI. Outputs become artifact rows under this
+        # session_id (the regular /v1/artifacts endpoint serves them);
+        # inputs are returned in the response and the client populates
+        # state.chatReferences[sid] so the References tab lights up.
+        artifacts_seeded, references_seeded = self._seed_artifacts_for_run(
+            exec_id, new_session.id, agent_id)
         self._send_json({
             "session_id": new_session.id, "status": "workflow_run",
             "created": True, "model": model,
+            "artifacts": artifacts_seeded,
+            "references": references_seeded,
         })
+
+    def _seed_artifacts_for_run(self, exec_id, session_id, agent_id):
+        """For every file the run touched: register output paths as
+        artifacts under the bound session, and gather input paths to be
+        returned to the client for chatReferences seeding. Idempotent —
+        safe to call multiple times for the same session (de-dupes by
+        path). Files ≤5MB get a content version snapshot so the artifact
+        viewer can render them; bigger files leave content NULL and the
+        existing disk-fallback path serves bytes from artifact.path.
+        """
+        try:
+            classified_result = self._workflow_run_paths_classified(exec_id)
+        except Exception:
+            classified_result = None
+        if not classified_result:
+            return [], []
+        _, classified = classified_result
+        # Existing artifact paths under this session — avoid duplicate rows
+        # if the user re-opens the same run after we've already seeded.
+        existing_paths = set()
+        try:
+            for art in (ChatDB.get_artifacts(session_id) or []):
+                p = art.get("path")
+                if p:
+                    existing_paths.add(p)
+        except Exception:
+            pass
+        artifacts_out = []
+        references_out = []
+        SNAPSHOT_CAP = 5 * 1024 * 1024  # 5 MB — matches artifact_versions limit
+        for realpath, role in classified.items():
+            if not os.path.isfile(realpath):
+                continue
+            name = os.path.basename(realpath)
+            if role == "output":
+                if realpath in existing_paths:
+                    continue
+                ext = name.rsplit(".", 1)[-1].lower() if "." in name else "file"
+                art_id = uuid.uuid4().hex[:12]
+                ChatDB.create_artifact(art_id, session_id, agent_id, name,
+                                       realpath, ext, role="output")
+                # Optional content snapshot — gives the viewer something to
+                # render without a separate disk-read endpoint, AND survives
+                # the underlying file getting deleted from /tmp.
+                try:
+                    size = os.path.getsize(realpath)
+                except OSError:
+                    size = 0
+                content = None
+                if 0 < size <= SNAPSHOT_CAP:
+                    try:
+                        with open(realpath, "rb") as f:
+                            content = f.read()
+                    except Exception:
+                        content = None
+                try:
+                    ChatDB.add_artifact_version(art_id, 1, content, size, 0, "created")
+                except Exception:
+                    pass
+                artifacts_out.append({"id": art_id, "name": name, "path": realpath})
+            elif role == "input":
+                references_out.append({"name": name, "path": realpath})
+        return artifacts_out, references_out
 
     @staticmethod
     def _lookup_workflow_run_session(exec_id, user_id):
