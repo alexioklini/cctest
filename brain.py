@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.24.3"
+VERSION = "8.24.4"
 VERSION_DATE = "2026-05-04"
 CHANGELOG = [
     ("8.23.10", "2026-05-04", "Workflow history — delete entries (per-row + bulk). Schedules already had `delete_run` / `delete_history` / `delete_orphan_history` but workflows had nothing comparable, so the workflow_history table grew without bound and there was no way to clean up failed/test runs. Three new module-level helpers in brain.py: **`_workflow_history_delete_run(execution_id)`** purges a single row; refuses if the row's status is in the live set (`running`/`pending`/`waiting_approval`) — caller must Cancel first (and the cancel endpoint is zombie-aware since v8.23.8 so this is always reachable). **`_workflow_history_delete_for_workflow(workflow_name, user_id=None)`** bulk-purges every terminal row for a given workflow, optionally scoped to a single user (used by non-admin RBAC). **`_workflow_history_delete_all(user_id=None)`** purges every terminal row, optionally user-scoped. All three respect the same `_WF_LIVE_STATUSES` set so in-flight rows are never accidentally swept; module-level constant so it stays in sync with the cancel handler. Two new HTTP routes: **`DELETE /v1/workflows/history/{execution_id}`** (per-row) and **`DELETE /v1/workflows/history`** (bulk; query params: `workflow=<name>` for per-workflow, `mine=1` to scope to caller). RBAC: non-admins are always restricted to their own runs (their `user_id` becomes the scope filter regardless of `mine`); admins without `mine` get unrestricted scope. UI in workflows.js: new shared `wfHistoryRowActions(r)` already rendered View + Cancel; now also renders **Delete** (small ghost button that turns red on hover) for terminal rows. New `wfDeleteRunFromHistory` + `wfClearWorkflowHistory` + `wfClearAllRuns` helpers; all three confirm() before firing and call new `_wfRefreshOpenHistoryTables` helper that re-loads whichever tables are currently visible (per-workflow inline + All Runs) so the row vanishes immediately. Per-workflow inline history grows a **Clear history** button in a `wf-hist-toolbar` div that only appears when there's at least one terminal row to clear; All Runs filter bar grows a **Clear runs…** button respecting the current `Only mine` toggle. Confirmation copy explicitly tells the user that running entries are kept (\"cancel them first to delete\") so the in-flight protection isn't surprising. Verified end-to-end: per-row delete on a terminal row → row vanishes; bulk per-workflow delete (9 → 0, runs_removed: 9, no live rows touched); attempted delete of an in-flight row → 400 with `Cannot delete a running run; cancel it first`; cancel + delete → terminal cleanup."),
@@ -23499,6 +23499,73 @@ def _workflow_run_preamble_text(execution_id: str) -> str:
     return "\n\n".join(parts) + "]"
 
 
+def _files_in_chat_preamble_text(session_id: str) -> str:
+    """Per-turn list of files this chat has produced or pulled in.
+
+    Reads `artifacts` rows scoped to the session and renders them as a
+    [Files in this chat: ...] block on the first user message of every
+    turn at round 0. The list is the model's "memory of what's on disk"
+    that survives compaction — when a tool result has been compressed
+    out of the conversation history, the file's path stays in the
+    preamble so the model can call read_document on it.
+
+    Caps at the 50 most-recent rows (with "(+N more)" for the tail) so
+    long-running chats don't blow up the prompt budget.
+    """
+    if not session_id:
+        return ""
+    try:
+        from server import _db_conn as _chat_db_conn
+        with _chat_db_conn() as conn:
+            rows = conn.execute(
+                """SELECT name, path, type, role, created_at
+                     FROM artifacts
+                    WHERE session_id = ?
+                 ORDER BY created_at DESC
+                    LIMIT 51""",
+                (session_id,)
+            ).fetchall()
+    except Exception:
+        return ""
+    if not rows:
+        return ""
+    lines: list[str] = []
+    truncated = len(rows) > 50
+    for r in rows[:50]:
+        name = r[0] or ""
+        path = r[1] or ""
+        ftype = r[2] or "file"
+        role = r[3] or "output"
+        # Best-effort size — file may have been deleted from disk.
+        try:
+            size = os.path.getsize(path)
+            if size < 1024:
+                size_s = f"{size}B"
+            elif size < 1024 * 1024:
+                size_s = f"{size / 1024:.1f}KB"
+            else:
+                size_s = f"{size / (1024 * 1024):.1f}MB"
+        except OSError:
+            size_s = "missing"
+        # Output files written by the agent get the (output) tag; inputs
+        # come from workflow-run seeding (read by the run, available for
+        # follow-ups). Other roles (e.g. intermediate) fall back to type.
+        role_tag = role if role in ("output", "input") else ftype
+        lines.append(f"  • {path}  ({role_tag}, {size_s})")
+    if truncated:
+        lines.append(f"  • (+{len(rows) - 50} older)")
+    return (
+        "[Files in this chat — paths on disk that you wrote or that "
+        "this session was given access to. If their content is not "
+        "already visible in the conversation above (e.g. the trace was "
+        "compacted, or you only have a summary), call read_document "
+        "with the path to fetch full content. Do not guess at content "
+        "from the filename.\n"
+        + "\n".join(lines)
+        + "]"
+    )
+
+
 def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                  silent: bool = False,
                  tools: bool = True,
@@ -23663,6 +23730,60 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                                           + _content)
                     _m["_greeting_injected"] = True
                     break
+
+        # Files-in-chat block — refreshed every turn (not gated by
+        # _has_assistant). The list of artifacts on disk grows
+        # monotonically as the agent writes/reads files; injecting on
+        # every round 0 keeps the model's "memory of disk state"
+        # current even after compaction has dropped older tool results.
+        # We splice onto the *latest* user message and strip any prior
+        # files-block from it first so we don't accumulate stale
+        # snapshots on a retry of the same turn.
+        try:
+            _fic_sid = getattr(_thread_local, 'current_session_id', '') or ''
+            _files_block = _files_in_chat_preamble_text(_fic_sid) if _fic_sid else ""
+        except Exception:
+            _files_block = ""
+        if _files_block:
+            # Find the latest user message and refresh its files block.
+            for _idx in range(len(messages) - 1, -1, -1):
+                _m = messages[_idx]
+                if _m.get("role") != "user":
+                    continue
+                _content = _m.get("content")
+                # Strip any previously-injected files block (idempotent
+                # on retries; replaces stale snapshot from earlier turn
+                # if this is the same user message). The marker is
+                # unique enough to grep for.
+                _MARKER = "[Files in this chat —"
+                def _strip_block(text: str) -> str:
+                    i = text.find(_MARKER)
+                    if i < 0:
+                        return text
+                    # Block ends at the matching closing ']' on its own
+                    # line followed by two newlines (consistent with how
+                    # we render it); fall back to first ']\n\n' after.
+                    end = text.find("]\n\n", i)
+                    if end < 0:
+                        return text
+                    return text[:i] + text[end + 3:]
+                _new_block = _files_block + "\n\n"
+                if isinstance(_content, str):
+                    _m["content"] = _new_block + _strip_block(_content)
+                elif isinstance(_content, list):
+                    # Multimodal — strip from the leading text part if
+                    # present, prepend a fresh text block.
+                    new_blocks = []
+                    stripped_first = False
+                    for _b in _content:
+                        if not stripped_first and isinstance(_b, dict) and _b.get("type") == "text":
+                            new_blocks.append({"type": "text", "text": _strip_block(_b.get("text") or "")})
+                            stripped_first = True
+                        else:
+                            new_blocks.append(_b)
+                    _m["content"] = [{"type": "text", "text": _new_block}] + new_blocks
+                _m["_files_block_injected"] = True
+                break
 
         # GDPR/PII scan on first round only. Assistant/tool rounds reuse the
         # same user content, so re-scanning every round is wasted work.
