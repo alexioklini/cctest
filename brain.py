@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.23.9"
+VERSION = "8.23.10"
 VERSION_DATE = "2026-05-04"
 CHANGELOG = [
+    ("8.23.10", "2026-05-04", "Workflow history — delete entries (per-row + bulk). Schedules already had `delete_run` / `delete_history` / `delete_orphan_history` but workflows had nothing comparable, so the workflow_history table grew without bound and there was no way to clean up failed/test runs. Three new module-level helpers in brain.py: **`_workflow_history_delete_run(execution_id)`** purges a single row; refuses if the row's status is in the live set (`running`/`pending`/`waiting_approval`) — caller must Cancel first (and the cancel endpoint is zombie-aware since v8.23.8 so this is always reachable). **`_workflow_history_delete_for_workflow(workflow_name, user_id=None)`** bulk-purges every terminal row for a given workflow, optionally scoped to a single user (used by non-admin RBAC). **`_workflow_history_delete_all(user_id=None)`** purges every terminal row, optionally user-scoped. All three respect the same `_WF_LIVE_STATUSES` set so in-flight rows are never accidentally swept; module-level constant so it stays in sync with the cancel handler. Two new HTTP routes: **`DELETE /v1/workflows/history/{execution_id}`** (per-row) and **`DELETE /v1/workflows/history`** (bulk; query params: `workflow=<name>` for per-workflow, `mine=1` to scope to caller). RBAC: non-admins are always restricted to their own runs (their `user_id` becomes the scope filter regardless of `mine`); admins without `mine` get unrestricted scope. UI in workflows.js: new shared `wfHistoryRowActions(r)` already rendered View + Cancel; now also renders **Delete** (small ghost button that turns red on hover) for terminal rows. New `wfDeleteRunFromHistory` + `wfClearWorkflowHistory` + `wfClearAllRuns` helpers; all three confirm() before firing and call new `_wfRefreshOpenHistoryTables` helper that re-loads whichever tables are currently visible (per-workflow inline + All Runs) so the row vanishes immediately. Per-workflow inline history grows a **Clear history** button in a `wf-hist-toolbar` div that only appears when there's at least one terminal row to clear; All Runs filter bar grows a **Clear runs…** button respecting the current `Only mine` toggle. Confirmation copy explicitly tells the user that running entries are kept (\"cancel them first to delete\") so the in-flight protection isn't surprising. Verified end-to-end: per-row delete on a terminal row → row vanishes; bulk per-workflow delete (9 → 0, runs_removed: 9, no live rows touched); attempted delete of an in-flight row → 400 with `Cannot delete a running run; cancel it first`; cancel + delete → terminal cleanup."),
     ("8.23.9", "2026-05-04", "Workflow editor + history UX overhaul. Four user-reported pain points fixed in one ship. **(1) Title / Description / Agent inputs in the editor** — the modal previously had only a filename input + raw `.flow` script; the only way to set the display title, description, or agent was to write `WORKFLOW \"…\"` / `DESCRIPTION \"…\"` / `AGENT name` lines by hand. New `wf-editor-meta` strip above the script: 2-column row with **Title** and **Agent** (dropdown, populated from `/v1/agents` once per session), plus a full-width 2-row **Description** textarea. All three round-trip with the script: `wfApplyMetaFromSource` parses `WORKFLOW`/`DESCRIPTION`/`AGENT` header lines into the inputs on open and on direct script edits; `wfOnMetaChange` rewrites/inserts the corresponding header line in canonical position when an input changes. AGENT is emitted as a bare identifier when shaped that way, otherwise as a quoted string (matches the `.flow` lexer's accept-string-or-identifier rule). Empty values drop the line entirely. Custom agent ids not in the dropdown get added with a `(custom)` suffix so they don't silently disappear. Direction guard `_wfSyncDirection` prevents script-to-meta and meta-to-script cycles from echoing back. **(2) Cancel buttons on history-table rows** — was only available inside the View dialog (and that dialog used to be read-only on a finished row). New shared `wfHistoryRowActions(r)` renders **View** plus a red **Cancel** button on rows whose status is `running`/`pending`/`waiting_approval`. Used by both the per-workflow inline history and the All Runs table. `wfCancelFromHistory` POSTs to `/cancel` (which now handles zombie rows too, see v8.23.8) and refreshes whichever tables are visible without reloading the page. Stops event propagation so the row's underlying click doesn't navigate to View. **(3) History toggle is now actually a toggle** — the inline-history collapsing was already coded but the button label always read \"History\", giving no signal that a second click would close it. Button now flips to **Hide history** when the table is open, back to **History** on collapse. **(4) Cancel-by-zombie path stays intact** — the history-row Cancel uses the same `/cancel` endpoint, so v8.23.8's zombie-aware fallback applies here too. Verified end-to-end on the meeting_notes workflow: opened editor → fields populated from script; typed in Title → `WORKFLOW \"…\"` line rewrote in-place; chose Agent → `AGENT main` line inserted; edited DESCRIPTION line directly → field updated back. Started a run that blocks on `ask_user_for_file`; opened inline history on the card; red Cancel button visible on the running row; click → terminated cleanly with `failed — ask_user_for_file: cancelled by user`."),
     ("8.23.8", "2026-05-04", "Zombie workflow runs — startup sweep + cancel-of-zombie. v8.23.7 made it possible to **reattach** to live runs from the history table, but the user still saw 3 rows stuck in `running`. Root cause: `_workflow_history_insert` writes the row with `status='running'` up front and only `_workflow_history_finalize` moves it to a terminal state. When Brain restarts (e.g. picking up the v8.23.6 / v8.23.7 ship), every running execution's in-memory `WorkflowExecution` is destroyed but the SQLite row stays at `running` forever — a **zombie row**. The previous reattach logic correctly 404'd on the live endpoint and fell through to read-only history view, leaving the user no path to clear the row. Two coordinated fixes. **(1) Startup sweep in `_workflow_history_init`** — idempotent UPDATE marks every row currently in `running`/`pending`/`waiting_approval` as `cancelled` with `error='Cancelled at server startup (in-memory execution lost)'` and `finished_at = now()`. Runs once per process (gated by `_WF_HIST_INIT_DONE`) on the first history-table touch (any GET/POST that lazily inits the table). Counted via `cur.rowcount` and logged. Scoped to actual zombies — terminal-status rows are not touched. **(2) Cancel handler accepts zombie rows** — `_handle_workflow_cancel` first tries `engine.workflow_get_execution(exec_id).cancel()` as before; on `None` (no live execution), reads the persisted row via `_workflow_history_get`, refuses if already terminal, applies RBAC (non-admins can only zombie-cancel their own runs), and calls `_workflow_history_finalize` directly with `status='cancelled'` + a `Cancelled (no live execution — likely interrupted by server restart)` error message. Response includes `zombie: true` for telemetry. **(3) UI reattach logic extended** — `wfShowHistoryDetail` was clearing the cancel button and `currentExecId` unconditionally on the read-only path. Now: when the live lookup 404s but the persisted row still says running/pending/waiting_approval, treat the row as a zombie — leave the cancel button visible and `currentExecId` set, so clicking Cancel hits the new zombie-aware server endpoint. Verified end-to-end: 3 pre-existing zombie rows from prior restarts swept to `cancelled` on first history hit; new live-run kicked off, opened from All Runs, cancel button visible, click → status went terminal cleanly."),
     ("8.23.7", "2026-05-04", "Reattach to active workflow runs from the history table — Cancel works again. The All Runs / per-workflow History tables both wire their `View` button to `wfShowHistoryDetail`, which always rendered the modal in **read-only** mode: cancel button hidden, `wfState.currentExecId = null`, polling stopped. So when a user opened a still-running execution from the history table they saw a frozen step list and no way to cancel — the user-visible bug was \"active runs cannot be canceled in workflow history\". Root cause: `_workflow_history_get` reads only the persisted `workflow_history` row, whose `steps_json` is empty until `_workflow_history_finalize` runs at completion. So even if we'd shown the cancel button against the history row, the polling target would have been the wrong endpoint and steps would never refresh. Fix in `wfShowHistoryDetail`: try `/v1/workflows/executions/<id>` (in-memory live execution via `workflow_get_execution` — fresh `steps[]` and current status) FIRST. If the response shows `running` / `pending` / `waiting_approval`, switch the modal into live mode (cancel button visible, `currentExecId` set, polling started — same behavior as just-launched runs). Only fall through to the history endpoint when the live lookup 404s or returns a terminal status. Also broadens the live-mode trigger to include `pending` and `waiting_approval` (was only `running` in the prior attempt). Verified end-to-end: started a run that blocks on `ask_user_for_file`, closed the modal, clicked View on the All Runs row → modal reopened in live mode with steps streaming and Cancel visible; clicking Cancel terminated the run cleanly with status `failed — ask_user_for_file: cancelled`."),
@@ -13286,6 +13287,85 @@ def _workflow_history_get(execution_id: str) -> dict | None:
     except Exception as e:
         logging.warning(f"workflow_history get: {e}")
         return None
+
+
+_WF_LIVE_STATUSES = ("running", "pending", "waiting_approval")
+
+
+def _workflow_history_delete_run(execution_id: str) -> dict:
+    """Delete a single workflow_history row. Refuses in-flight runs — caller
+    must cancel first (the cancel endpoint finalises the row). Returns a
+    summary dict; idempotent (returns deleted=0 if the row is already gone).
+    """
+    _workflow_history_init()
+    row = _workflow_history_get(execution_id)
+    if not row:
+        return {"status": "ok", "deleted": 0}
+    if row.get("status") in _WF_LIVE_STATUSES:
+        return {"error": f"Cannot delete a {row.get('status')} run; cancel it first"}
+    try:
+        conn = _sched_conn()
+        cur = conn.execute("DELETE FROM workflow_history WHERE execution_id = ?", (execution_id,))
+        conn.commit()
+        return {"status": "ok", "deleted": int(cur.rowcount or 0), "execution_id": execution_id}
+    except Exception as e:
+        logging.warning(f"workflow_history delete_run: {e}")
+        return {"error": str(e)}
+
+
+def _workflow_history_delete_for_workflow(workflow_name: str,
+                                          user_id: str | None = None) -> dict:
+    """Purge every terminal run for a given workflow. In-flight runs are left
+    intact. When `user_id` is provided, only that user's runs are deleted —
+    the HTTP layer uses this for non-admin RBAC."""
+    _workflow_history_init()
+    try:
+        conn = _sched_conn()
+        params: list = [workflow_name]
+        scope_clause = ""
+        if user_id:
+            scope_clause = " AND user_id = ?"
+            params.append(user_id)
+        # Build a NOT IN clause over the live statuses to avoid deleting
+        # in-flight rows.
+        live_placeholders = ",".join("?" * len(_WF_LIVE_STATUSES))
+        params.extend(_WF_LIVE_STATUSES)
+        cur = conn.execute(
+            f"DELETE FROM workflow_history "
+            f"WHERE workflow_name = ?{scope_clause} "
+            f"AND status NOT IN ({live_placeholders})",
+            params,
+        )
+        conn.commit()
+        return {"status": "ok", "runs_removed": int(cur.rowcount or 0)}
+    except Exception as e:
+        logging.warning(f"workflow_history delete_for_workflow: {e}")
+        return {"error": str(e)}
+
+
+def _workflow_history_delete_all(user_id: str | None = None) -> dict:
+    """Purge every terminal workflow run. Live runs are left intact. When
+    `user_id` is provided, only that user's runs are deleted (non-admin path)."""
+    _workflow_history_init()
+    try:
+        conn = _sched_conn()
+        params: list = []
+        scope_clause = ""
+        if user_id:
+            scope_clause = "user_id = ? AND "
+            params.append(user_id)
+        live_placeholders = ",".join("?" * len(_WF_LIVE_STATUSES))
+        params.extend(_WF_LIVE_STATUSES)
+        cur = conn.execute(
+            f"DELETE FROM workflow_history "
+            f"WHERE {scope_clause}status NOT IN ({live_placeholders})",
+            params,
+        )
+        conn.commit()
+        return {"status": "ok", "runs_removed": int(cur.rowcount or 0)}
+    except Exception as e:
+        logging.warning(f"workflow_history delete_all: {e}")
+        return {"error": str(e)}
 
 
 def _validate_thinking_level_for_model(model: str | None, level: str) -> str | None:

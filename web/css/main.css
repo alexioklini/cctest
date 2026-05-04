@@ -4259,6 +4259,27 @@ textarea.wf-editor-field-input { min-height: 38px; }
   font-weight: 500;
 }
 .wf-btn-cancel:hover { background: rgba(220,38,38,0.16); }
+.wf-btn-delete {
+  background: transparent;
+  color: var(--text-300);
+  border-color: var(--border-200);
+  opacity: 0.7;
+}
+.wf-btn-delete:hover {
+  background: rgba(220,38,38,0.08);
+  color: #dc2626;
+  border-color: rgba(220,38,38,0.25);
+  opacity: 1;
+}
+
+.wf-hist-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 4px 8px;
+}
+.wf-btn-clear-hist {
+  font-size: 12px;
+}
 
 /* ─── Editor ─── */
 .wf-editor-wrap {

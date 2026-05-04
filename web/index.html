@@ -484,6 +484,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
             Only mine
           </label>
           <button class="wf-btn wf-btn-ghost" onclick="loadWorkflowRuns()">Refresh</button>
+          <button class="wf-btn wf-btn-ghost wf-btn-clear-hist" onclick="wfClearAllRuns()">Clear runs…</button>
         </div>
         <div id="wf-runs-table-wrap"></div>
       </div>

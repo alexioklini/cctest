@@ -2906,6 +2906,10 @@ class BrainAgentHandler(
             self._handle_agent_ingested_delete(path)
         elif path.startswith("/v1/agents/") and "/workflows/" in path:
             self._handle_workflow_delete(path)
+        elif path.startswith("/v1/workflows/history/"):
+            self._handle_workflow_history_delete_run(path)
+        elif path == "/v1/workflows/history":
+            self._handle_workflow_history_delete_bulk()
         else:
             self._send_json({"error": "Not found"}, 404)
 

@@ -458,6 +458,63 @@ class AdminHandlerMixin:
         )
         self._send_json({"executions": rows, "limit": limit, "offset": offset})
 
+    def _handle_workflow_history_delete_run(self, path):
+        """DELETE /v1/workflows/history/{execution_id} — delete one history row.
+        Refuses in-flight runs (caller must cancel first). Non-admins can only
+        delete their own runs."""
+        parts = path.split("/")
+        if len(parts) < 5:
+            self._send_json({"error": "Invalid path"}, 400)
+            return
+        exec_id = parts[4]
+        from brain import _workflow_history_get, _workflow_history_delete_run
+        row = _workflow_history_get(exec_id)
+        if not row:
+            self._send_json({"status": "ok", "deleted": 0})
+            return
+        au = getattr(self, "_auth_user", None) or {}
+        if au.get("role") != "admin":
+            owner = row.get("user_id") or ""
+            if owner and owner != (au.get("id") or ""):
+                self._send_json({"error": "Forbidden"}, 403)
+                return
+        result = _workflow_history_delete_run(exec_id)
+        if result.get("error"):
+            self._send_json(result, 400)
+            return
+        self._send_json(result)
+
+    def _handle_workflow_history_delete_bulk(self):
+        """DELETE /v1/workflows/history — bulk purge.
+        Query params:
+          - workflow=<name> : delete only that workflow's runs
+          - mine=1          : restrict to caller's own runs (implicit for non-admins)
+        Without `workflow`, deletes every terminal run the caller can see."""
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(getattr(self, "path", ""))
+        qs = parse_qs(parsed.query)
+        wf = (qs.get("workflow") or [None])[0]
+        mine = (qs.get("mine") or [""])[0] in ("1", "true", "yes")
+        au = getattr(self, "_auth_user", None) or {}
+        is_admin = (au.get("role") == "admin")
+        # Non-admins are always scoped to their own runs.
+        scope_user = au.get("id") or ""
+        if (not is_admin) or mine:
+            if not scope_user:
+                self._send_json({"status": "ok", "runs_removed": 0})
+                return
+        else:
+            scope_user = None  # admin & not-mine → unrestricted
+        from brain import _workflow_history_delete_for_workflow, _workflow_history_delete_all
+        if wf:
+            result = _workflow_history_delete_for_workflow(wf, user_id=scope_user)
+        else:
+            result = _workflow_history_delete_all(user_id=scope_user)
+        if result.get("error"):
+            self._send_json(result, 400)
+            return
+        self._send_json(result)
+
     def _handle_workflow_history_get(self, path):
         """GET /v1/workflows/history/{execution_id} — full row including steps + variables."""
         parts = path.split("/")

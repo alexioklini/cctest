@@ -86,11 +86,20 @@ async function wfToggleHistory(name) {
 }
 
 function wfRenderHistoryRows(root, rows) {
+  // Recover the workflow name from the container id so the Clear button knows
+  // which workflow to scope to. Empty when this helper is reused elsewhere.
+  const wfName = (root && root.id) ? root.id.replace(/^wf-hist-/, '') : '';
   if (!rows.length) {
     root.innerHTML = '<div class="wf-hist-empty">No runs yet.</div>';
     return;
   }
+  // Toolbar appears whenever there's at least one terminal row to clear.
+  const hasTerminal = rows.some(r => !['running','pending','waiting_approval'].includes(r.status));
+  const clearBtn = (hasTerminal && wfName)
+    ? `<button class="wf-btn wf-btn-ghost wf-btn-mini wf-btn-clear-hist" onclick="wfClearWorkflowHistory('${escapeJs(wfName)}')">Clear history</button>`
+    : '';
   root.innerHTML = `
+    ${clearBtn ? `<div class="wf-hist-toolbar">${clearBtn}</div>` : ''}
     <table class="wf-hist-table">
       <thead>
         <tr>
@@ -117,11 +126,81 @@ function wfHistoryRowActions(r) {
   const cancelBtn = isCancelable
     ? `<button class="wf-btn wf-btn-mini wf-btn-cancel" onclick="wfCancelFromHistory('${escapeJs(r.execution_id)}', event)">Cancel</button>`
     : '';
+  // Terminal rows (completed / failed / cancelled) get a Delete button. Live
+  // rows don't — user must Cancel first; once cancelled the next render shows
+  // Delete in place of Cancel.
+  const deleteBtn = isCancelable
+    ? ''
+    : `<button class="wf-btn wf-btn-mini wf-btn-delete" title="Delete this history row" onclick="wfDeleteRunFromHistory('${escapeJs(r.execution_id)}', event)">Delete</button>`;
   return `
     <div class="wf-hist-actions">
       <button class="wf-btn wf-btn-ghost wf-btn-mini" onclick="wfShowHistoryDetail('${escapeJs(r.execution_id)}')">View</button>
       ${cancelBtn}
+      ${deleteBtn}
     </div>`;
+}
+
+function _wfRefreshOpenHistoryTables() {
+  if (typeof loadWorkflowRuns === 'function' &&
+      document.getElementById('wf-runs') &&
+      !document.getElementById('wf-runs').classList.contains('hidden')) {
+    loadWorkflowRuns();
+  }
+  document.querySelectorAll('.wf-card-history:not(.hidden)').forEach(root => {
+    const wfName = root.id.replace(/^wf-hist-/, '');
+    if (wfName) {
+      API.get(`/v1/workflows/history?workflow=${encodeURIComponent(wfName)}&limit=10`)
+        .then(d => wfRenderHistoryRows(root, d.executions || []))
+        .catch(() => {});
+    }
+  });
+}
+
+async function wfDeleteRunFromHistory(executionId, ev) {
+  if (ev && typeof ev.stopPropagation === 'function') ev.stopPropagation();
+  if (!confirm('Delete this history entry? This cannot be undone.')) return;
+  try {
+    const r = await API.del(`/v1/workflows/history/${executionId}`);
+    if (r && r.error) {
+      alert('Delete failed: ' + r.error);
+      return;
+    }
+    _wfRefreshOpenHistoryTables();
+  } catch (e) {
+    alert('Delete error: ' + e.message);
+  }
+}
+
+async function wfClearWorkflowHistory(name) {
+  if (!confirm(`Delete ALL terminal runs for "${name}"? This cannot be undone. Running entries are kept (cancel them first to delete).`)) return;
+  try {
+    const r = await API.del(`/v1/workflows/history?workflow=${encodeURIComponent(name)}`);
+    if (r && r.error) {
+      alert('Clear failed: ' + r.error);
+      return;
+    }
+    _wfRefreshOpenHistoryTables();
+  } catch (e) {
+    alert('Clear error: ' + e.message);
+  }
+}
+
+async function wfClearAllRuns() {
+  const mine = document.getElementById('wf-runs-mine');
+  const onlyMine = mine && mine.checked;
+  const scope = onlyMine ? 'your runs' : 'all visible runs';
+  if (!confirm(`Delete ${scope}? This cannot be undone. Running entries are kept (cancel them first to delete).`)) return;
+  try {
+    const url = '/v1/workflows/history' + (onlyMine ? '?mine=1' : '');
+    const r = await API.del(url);
+    if (r && r.error) {
+      alert('Clear failed: ' + r.error);
+      return;
+    }
+    _wfRefreshOpenHistoryTables();
+  } catch (e) {
+    alert('Clear error: ' + e.message);
+  }
 }
 
 function wfHistoryRowHtml(r) {
@@ -152,21 +231,7 @@ async function wfCancelFromHistory(executionId, ev) {
       alert('Cancel failed: ' + r.error);
       return;
     }
-    // Refresh whichever table the user is looking at.
-    if (typeof loadWorkflowRuns === 'function' &&
-        document.getElementById('wf-runs') &&
-        !document.getElementById('wf-runs').classList.contains('hidden')) {
-      loadWorkflowRuns();
-    }
-    document.querySelectorAll('.wf-card-history:not(.hidden)').forEach(root => {
-      const wfName = root.id.replace(/^wf-hist-/, '');
-      if (wfName) {
-        // re-fetch
-        API.get(`/v1/workflows/history?workflow=${encodeURIComponent(wfName)}&limit=10`)
-          .then(d => wfRenderHistoryRows(root, d.executions || []))
-          .catch(() => {});
-      }
-    });
+    _wfRefreshOpenHistoryTables();
   } catch (e) {
     alert('Cancel error: ' + e.message);
   }
