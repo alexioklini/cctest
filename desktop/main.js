@@ -59,11 +59,6 @@ app.whenReady().then(() => {
   tray.create(getMainWindow, serverUrl);
   registerGlobalShortcut();
   updater.setup(getMainWindow);
-  try {
-    require('./local-inference').register();
-  } catch (e) {
-    console.error('[local-inference] Failed to register:', e);
-  }
 });
 
 app.on('window-all-closed', () => {

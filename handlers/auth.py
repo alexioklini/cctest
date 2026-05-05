@@ -586,10 +586,6 @@ class AuthHandlerMixin:
         # gating in send_message handles cost; auth gate covers identity.
         # Nodes management (remote workers config)
         "/v1/nodes",
-        # Client-hosted local model manifest (admin CRUD). Manifest reads and
-        # weight downloads stay open to any authenticated user so non-admin
-        # desktop clients can still pull models the admin has blessed.
-        "/v1/client/models",
     }
     _ADMIN_POST_PATHS = _ADMIN_POST_EXACT  # backwards compat
     _ADMIN_POST_PREFIXES = (

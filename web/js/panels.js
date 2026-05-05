@@ -68,8 +68,6 @@ function updateStatusBar() {
   document.getElementById('status-agent').textContent = state.activeAgentId || '';
   document.getElementById('status-model').textContent = modelShortName(chat.model);
   document.getElementById('status-session').textContent = chat.sessionId ? chat.sessionId.substring(0,8) : '';
-  const execModeEl = document.getElementById('status-exec-mode');
-  if (execModeEl) execModeEl.style.display = ClientProxy.enabled ? '' : 'none';
 
   // Save-to-memory toggle: green=on, amber=auto, grey=off
   // Mirror the same state to both chat- and welcome-screen composers.

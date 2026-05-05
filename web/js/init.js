@@ -2447,15 +2447,15 @@ async function cancelQueueTicket(ticketId, stateLabel) {
 // ID scheme (data-id → assigned id):
 //   welcome:  welcome-input, welcome-image-preview, welcome-slash-popup,
 //             welcome-btn-{thinking,refine,toggle-tools,save-to-memory,caveman},
-//             welcome-local-inference-chip, welcome-model-selector, welcome-warmup-dot,
+//             welcome-model-selector, welcome-warmup-dot,
 //             welcome-model-name, welcome-send-btn, welcome-stop-btn
 //   chat:     chat-input, chat-image-preview, chat-slash-popup,
 //             btn-{thinking,refine,toggle-tools,save-to-memory,caveman},
-//             chat-local-inference-chip, chat-model-selector, chat-warmup-dot,
+//             chat-model-selector, chat-warmup-dot,
 //             chat-model-name, chat-send-btn, chat-stop-btn
 //   project:  project-input, project-image-preview, project-slash-popup,
 //             project-btn-{thinking,refine,toggle-tools,save-to-memory,caveman},
-//             project-local-inference-chip, project-model-selector, project-warmup-dot,
+//             project-model-selector, project-warmup-dot,
 //             project-model-name, project-send-btn, project-stop-btn
 function initComposers() {
   const tpl = document.getElementById('composer-template');
@@ -2464,7 +2464,7 @@ function initComposers() {
   const views = [
     {
       mountId:     'welcome-composer-mount',
-      idPrefix:    'welcome-',   // applied to btn-*, local-inference-chip, model-selector, warmup-dot, model-name, send-btn, stop-btn, image-preview, slash-popup
+      idPrefix:    'welcome-',   // applied to btn-*, model-selector, warmup-dot, model-name, send-btn, stop-btn, image-preview, slash-popup
       inputId:     'welcome-input',
       placeholder: 'Ask anything...',
     },
@@ -2515,7 +2515,6 @@ function initComposers() {
       set('btn-toggle-tools',     'btn-toggle-tools');
       set('btn-save-to-memory',   'btn-save-to-memory');
       set('btn-caveman',          'btn-caveman');
-      set('local-inference-chip', 'chat-local-inference-chip');
       set('model-selector',       'chat-model-selector');
       set('warmup-dot',           'chat-warmup-dot');
       set('model-name',           'chat-model-name');
@@ -2531,7 +2530,6 @@ function initComposers() {
       set('btn-toggle-tools',     p + 'btn-toggle-tools');
       set('btn-save-to-memory',   p + 'btn-save-to-memory');
       set('btn-caveman',          p + 'btn-caveman');
-      set('local-inference-chip', p + 'local-inference-chip');
       set('model-selector',       p + 'model-selector');
       set('warmup-dot',           p + 'warmup-dot');
       set('model-name',           p + 'model-name');
@@ -2573,7 +2571,7 @@ async function init() {
 
   // Load initial data
   try {
-    const [statusData, agentsData, modelsData, providersData, teamsData, modelsConfigData, servicesData, clfData, _] = await Promise.all([
+    const [statusData, agentsData, modelsData, providersData, teamsData, modelsConfigData, servicesData, clfData] = await Promise.all([
       API.getStatus().catch(() => null),
       API.getAgents().catch(() => ({agents:[]})),
       API.getModels().catch(() => ({models:[]})),
@@ -2582,8 +2580,6 @@ async function init() {
       API.getModelsConfig().catch(() => ({})),
       API.getServices().catch(() => ({})),
       API.get('/v1/mempalace/classifier').catch(() => ({})),
-      ClientProxy.init(),
-      LocalInference.init(),
     ]);
 
     state.connected = !!statusData;

@@ -286,7 +286,7 @@ async function sendMessage() {
             sel.value = d.artifact_version;
           }
           loadArtifactVersion(d.artifact_version);
-        } else {
+        } else if (d.artifact_role !== 'intermediate') {
           openArtifactPanel(d.artifact_id, d.artifact_version);
         }
         updateRightPanelBadges();
@@ -511,27 +511,6 @@ async function sendMessage() {
           showToast(d.message, true);
         }
       },
-      proxy_request: (d) => {
-        if (ClientProxy.enabled) {
-          ClientProxy.handleProxyRequest(chat.sessionId, d)
-            .catch(e => showToast('Proxy error: ' + e.message, true));
-        }
-      },
-      local_inference_request: (d) => {
-        // Server has decided this request should run on the client's own
-        // local model (capability handshake matched a family). Route via
-        // LocalInference — distinct from ClientProxy which goes to a cloud
-        // endpoint with server-supplied creds.
-        if (window.LocalInference && LocalInference.enabled) {
-          LocalInference.handleRequest(chat.sessionId, d)
-            .catch(e => showToast('Local inference error: ' + e.message, true));
-        } else {
-          showToast('Server routed request to client but local inference is off', true);
-        }
-      },
-      proxy_tool: (d) => {
-        if (ClientProxy.enabled) ClientProxy.handleProxyTool(chat.sessionId, d).catch(e => console.error('[ClientProxy] proxy_tool handler error:', e));
-      },
       done: (d) => {
         console.log('[SSE] done event received', {textLen: (d.text||'').length, tokens: d.tokens, model: d.model, msgCount: chat.messages.length});
         // Finalize assistant message (always update data)
@@ -707,12 +686,7 @@ async function openInspectModal() {
 
     // --- Summary bar ---
     const t = data.totals || {};
-    const sessionExecMode = (data.interactions || []).find(ix => ix.assistant?.execution_mode)?.assistant?.execution_mode || 'server';
-    html += `<div style="display:grid;grid-template-columns:repeat(${sessionExecMode === 'client' ? 6 : 5},1fr);gap:12px;margin-bottom:20px">
-      ${sessionExecMode === 'client' ? `<div style="background:#7c3aed22;border:1px solid #7c3aed44;border-radius:10px;padding:12px;text-align:center">
-        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Execution</div>
-        <div style="font-size:16px;font-weight:600;color:#7c3aed;margin-top:4px">CLIENT</div>
-      </div>` : ''}
+    html += `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px">
       <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
         <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Turns</div>
         <div style="font-size:20px;font-weight:600;color:var(--text-000);margin-top:4px">${t.turns || 0}</div>
@@ -777,11 +751,6 @@ async function openInspectModal() {
 
       html += `<div style="border:1px solid var(--border-100);border-radius:10px;margin-bottom:12px;overflow:hidden">`;
 
-      // Turn header
-      const execMode = a.execution_mode || 'server';
-      const execBadge = execMode === 'client'
-        ? '<span style="font-size:10px;background:#7c3aed;color:#fff;padding:1px 6px;border-radius:4px;margin-left:4px" title="LLM call executed in browser (client proxy mode)">CLIENT</span>'
-        : '';
       // Per-turn state badges: thinking level + caveman modes
       const tLvl = a.thinking_level || (a.thinking ? 'on' : '');
       const thinkingBadge = (tLvl && tLvl !== 'none')
@@ -797,7 +766,7 @@ async function openInspectModal() {
         ? `<span style="font-size:10px;background:#fef3c7;color:#b45309;padding:1px 6px;border-radius:4px" title="Caveman compression level applied for this turn (system prompt / chat response)">caveman: ${cavParts.join(' / ')}</span>`
         : '';
       html += `<div style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--bg-100);border-bottom:1px solid var(--border-100);flex-wrap:wrap">
-        <span style="font-weight:600;color:var(--text-000)">Turn ${ix.turn}</span>${execBadge}
+        <span style="font-weight:600;color:var(--text-000)">Turn ${ix.turn}</span>
         ${thinkingBadge}
         ${cavBadge}
         <span style="margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--text-400)">

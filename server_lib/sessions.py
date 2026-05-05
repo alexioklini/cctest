@@ -50,12 +50,6 @@ class Session:
         self._warmup_cancel = threading.Event()
         self._warmup_lock = threading.Lock()
 
-        # Client-hosted inference capability. Declared by the browser/Electron
-        # client via POST /v1/sessions/<id>/capabilities. In-memory, session-
-        # scoped, never persisted. Shape: {"enabled": bool, "families": [str],
-        # "set_at": float}. Empty/missing means "no client-side inference".
-        self.client_capabilities: dict = {}
-
         self.agent = engine.AgentConfig(agent_id)
         self.memory = engine.MemoryStore(agent_id, base_dir=self.agent.memory_dir)
 

@@ -103,67 +103,6 @@ class SessionsHandlerMixin:
         except Exception as e:
             self._send_json({"suggestion": None, "error": str(e)}, 500)
 
-    def _handle_session_capabilities(self, path):
-        """GET/POST /v1/sessions/<id>/capabilities — client-declared local
-        inference capability handshake.
-
-        Body (POST): {"enabled": bool, "families": [str, ...]}
-
-        Stored in-memory on the Session. No persistence: on reconnect the
-        client is expected to re-declare. Access gated by the same ownership
-        check as other per-session routes.
-        """
-        parts = path.split("/")
-        if len(parts) < 5:
-            self._send_json({"error": "Invalid session path"}, 400)
-            return
-        sid = parts[3]
-        session = self._session_access_check(sid)
-        if session is None:
-            return  # _session_access_check already sent the error
-
-        if self.command == "GET":
-            self._send_json({
-                "session_id": sid,
-                "capabilities": session.client_capabilities or {},
-            })
-            return
-
-        # POST — update capabilities
-        body = self._read_json() or {}
-        enabled = bool(body.get("enabled", False))
-        families_raw = body.get("families", []) or []
-        if not isinstance(families_raw, list):
-            self._send_json({"error": "families must be a list of strings"}, 400)
-            return
-        families = []
-        for f in families_raw:
-            if not isinstance(f, str):
-                continue
-            fstr = f.strip()
-            if fstr and fstr not in families:
-                families.append(fstr)
-
-        # Cross-check against the server's manifest — silently drop families
-        # the server doesn't publish, so the client can't trick the server
-        # into routing to a family that has no corresponding server model.
-        known_families = {e.get("family") for e in engine._load_client_models() if e.get("family")}
-        accepted = [f for f in families if f in known_families]
-        rejected = [f for f in families if f not in known_families]
-
-        with session.lock:
-            session.client_capabilities = {
-                "enabled": enabled and bool(accepted),
-                "families": accepted,
-                "set_at": time.time(),
-            }
-
-        self._send_json({
-            "session_id": sid,
-            "capabilities": session.client_capabilities,
-            "rejected_families": rejected,
-        })
-
     def _handle_session_inspect(self, path):
         """GET /v1/sessions/<id>/inspect — full session debug view."""
         parts = path.split("/")
@@ -231,7 +170,6 @@ class SessionsHandlerMixin:
                         "tokens_total": meta.get("tokens", 0),
                         "duration": meta.get("duration", 0),
                         "model": meta.get("model", ""),
-                        "execution_mode": meta.get("execution_mode", "server"),
                         "cost": meta.get("cost", 0),
                         "tools": meta.get("tools", []),
                         "thinking": bool(meta.get("thinking")),

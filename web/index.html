@@ -626,9 +626,6 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     <div class="status-item">
       <span class="status-model" id="status-model"></span>
     </div>
-    <div class="status-item" id="status-exec-mode" style="display:none">
-      <span style="font-size:9px;font-weight:600;background:#7c3aed;color:#fff;padding:1px 5px;border-radius:3px;letter-spacing:0.5px">CLIENT</span>
-    </div>
     <div class="status-item" id="status-tokens-in-wrap" title="Input tokens (total)">
       <span class="status-label">In:</span>
       <span class="status-value" id="status-tokens-in">0</span>
@@ -782,8 +779,6 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         </button>
       </div>
       <div class="composer-footer-right">
-        <span class="local-inference-chip" data-id="local-inference-chip" style="display:none"
-              title="This turn will run on your own computer (client-hosted inference)">local</span>
         <span class="model-selector-btn" data-id="model-selector" onclick="toggleModelDropdown(event)">
           <span class="warmup-dot" data-id="warmup-dot" style="display:none;margin-right:4px"></span>
           <span class="model-name" data-id="model-name">Sonnet 4.6</span>

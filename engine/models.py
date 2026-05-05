@@ -1,4 +1,4 @@
-# Extracted from claude_cli.py — model configuration, provider resolution, proxy channel, CLI rendering
+# Extracted from claude_cli.py — model configuration, provider resolution, CLI rendering
 #
 # Cross-module dependencies (all live in claude_cli.py — imported at call-sites or injected):
 #   _thread_local          — thread.local() with current_agent, current_session_id, current_user_id
@@ -15,10 +15,6 @@
 #   DEFAULT_MAX_CONTEXT_TOKENS — constant in claude_cli.py (131072)
 #   _is_local_base_url     — defined in claude_cli.py
 #   TaskCancelled          — exception class in claude_cli.py
-#   _CLIENT_PROXY_TOOLS_DEFAULT — ["exa_search"] in claude_cli.py
-#   _execution_mode_cache, _execution_mode_cache_time, _client_proxy_tools_cache
-#                          — module-level cache vars; also defined here for standalone use
-#   queue                  — stdlib queue module (used by ProxyChannel)
 #   shutil, sys, random    — stdlib (used by Spinner, markdown helpers)
 
 import json
@@ -33,96 +29,6 @@ import time
 import unicodedata
 import urllib.error
 import urllib.request
-
-
-# ---------------------------------------------------------------------------
-# --- Client-hosted local models manifest ----------------------------------
-# ---------------------------------------------------------------------------
-# Server declares GGUF model weights that clients (Electron desktop app) may
-# download and run locally. Family string is the compat key — server-side oMLX
-# model and client-side GGUF are "the same model" for routing purposes when
-# their family matches, even if quant/format differ. See CLAUDE.md.
-
-_client_models_cache = None
-_client_models_cache_time = 0.0
-_CLIENT_MODELS_TTL = 10.0
-
-
-def _load_client_models() -> list:
-    """Read config.json → client_models: [{id, family, gguf_path, sha256,
-    size_bytes, auto_download}]. 10s cache. Returns [] on any error."""
-    global _client_models_cache, _client_models_cache_time
-    now = time.time()
-    if _client_models_cache is not None and (now - _client_models_cache_time) < _CLIENT_MODELS_TTL:
-        return _client_models_cache
-    cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-    entries = []
-    try:
-        with open(cfg_path) as f:
-            raw = json.load(f).get("client_models", []) or []
-        if isinstance(raw, list):
-            entries = [e for e in raw if isinstance(e, dict) and e.get("id") and e.get("family")]
-    except (OSError, json.JSONDecodeError):
-        entries = []
-    _client_models_cache = entries
-    _client_models_cache_time = now
-    return entries
-
-
-def _invalidate_client_models_cache():
-    """Called from server.py when client_models config changes."""
-    global _client_models_cache, _client_models_cache_time
-    _client_models_cache = None
-    _client_models_cache_time = 0.0
-
-
-def get_client_model(model_id: str) -> dict | None:
-    """Return the client_models manifest entry matching `model_id` (by id),
-    or None if the model isn't in the client-eligible list."""
-    for entry in _load_client_models():
-        if entry.get("id") == model_id:
-            return entry
-    return None
-
-
-def get_client_model_by_family(family: str) -> dict | None:
-    """Return the first manifest entry with the given family string, or None."""
-    if not family:
-        return None
-    for entry in _load_client_models():
-        if entry.get("family") == family:
-            return entry
-    return None
-
-
-def is_model_client_executable(capabilities: dict | None, model_id: str) -> tuple[bool, str]:
-    """Decide whether a request for `model_id` should be routed to client-
-    hosted inference instead of running on the server, given the client-
-    declared capabilities dict (from Session.client_capabilities).
-
-    Returns (True, family) if:
-      - capabilities.enabled is True
-      - model_id has a manifest entry (i.e. is a client-eligible model)
-      - the manifest entry's family appears in capabilities.families
-
-    Returns (False, "") otherwise. The caller is expected to have verified
-    the request is interactive (has event_callback) — background/scheduled
-    requests never route to clients regardless of capabilities.
-    """
-    if not capabilities or not model_id:
-        return False, ""
-    if not capabilities.get("enabled"):
-        return False, ""
-    families = capabilities.get("families") or []
-    if not families:
-        return False, ""
-    entry = get_client_model(model_id)
-    if not entry:
-        return False, ""
-    family = entry.get("family", "")
-    if family and family in families:
-        return True, family
-    return False, ""
 
 
 class GDPRBlockedError(RuntimeError):
@@ -295,139 +201,6 @@ def gdpr_pick_model_for_background(model: str, texts, purpose: str = "") -> str:
 
     # Warn-only mode: leave the caller to use the cloud model.
     return model
-
-
-_execution_mode_cache = None
-_execution_mode_cache_time = 0.0
-_client_proxy_tools_cache = None
-
-_CLIENT_PROXY_TOOLS_DEFAULT = ["exa_search"]
-
-
-def _get_execution_mode() -> str:
-    """Read execution_mode from config.json. 30s cache. Returns 'server' or 'client'."""
-    global _execution_mode_cache, _execution_mode_cache_time, _client_proxy_tools_cache
-    now = time.time()
-    if _execution_mode_cache is not None and (now - _execution_mode_cache_time) < 30:
-        return _execution_mode_cache
-    cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-    mode = "server"
-    try:
-        with open(cfg_path) as f:
-            cfg = json.load(f)
-        mode = cfg.get("execution_mode", "server") or "server"
-        tools = cfg.get("client_proxy_tools")
-        _client_proxy_tools_cache = set(tools) if isinstance(tools, list) else None
-    except (OSError, json.JSONDecodeError):
-        pass
-    _execution_mode_cache = mode
-    _execution_mode_cache_time = now
-    return mode
-
-
-def _get_client_proxy_tools() -> set:
-    """Return the set of tool names to proxy through the browser in client mode."""
-    _get_execution_mode()
-    if _client_proxy_tools_cache is not None:
-        return _client_proxy_tools_cache
-    return set(_CLIENT_PROXY_TOOLS_DEFAULT)
-
-
-class ProxyChannel:
-    """Thread-safe channel for proxying LLM calls and web tool execution through a browser client.
-
-    In client execution mode, the agentic loop emits proxy_request/proxy_tool events via
-    event_callback, then blocks on this channel waiting for the browser to stream back results.
-    """
-
-    def __init__(self):
-        self.response_queue = queue.Queue()
-        self.tool_results = {}  # tool_call_id -> result string
-        self._tool_events = {}  # tool_call_id -> threading.Event
-
-    def wait_for_llm_lines(self, escape_watcher=None):
-        """Yield SSE lines from the browser's proxied LLM response.
-        Implements the same iterator interface as urllib response (for line in response:).
-        """
-        while True:
-            if escape_watcher and escape_watcher.cancelled:
-                raise TaskCancelled()
-            try:
-                item = self.response_queue.get(timeout=1.0)
-            except queue.Empty:
-                continue
-            if item is None:
-                break
-            if isinstance(item, Exception):
-                raise item
-            yield item.encode("utf-8") if isinstance(item, str) else item
-
-    def feed_llm_line(self, line: str):
-        """Browser sends an SSE line from the provider response."""
-        self.response_queue.put(line)
-
-    def feed_llm_done(self):
-        """Browser signals the LLM response stream is complete."""
-        self.response_queue.put(None)
-
-    def feed_llm_error(self, message: str):
-        """Browser signals an error during LLM call."""
-        self.response_queue.put(RuntimeError(f"Client proxy error: {message}"))
-
-    def request_tool_result(self, tool_call_id: str) -> threading.Event:
-        """Create a wait event for a proxied tool result."""
-        evt = threading.Event()
-        self._tool_events[tool_call_id] = evt
-        return evt
-
-    def feed_tool_result(self, tool_call_id: str, result: str):
-        """Browser sends the result of a proxied web tool."""
-        self.tool_results[tool_call_id] = result
-        evt = self._tool_events.pop(tool_call_id, None)
-        if evt:
-            evt.set()
-
-    def get_tool_result(self, tool_call_id: str, timeout: float = 120.0,
-                        escape_watcher=None) -> str:
-        """Block until the browser returns the tool result."""
-        evt = self._tool_events.get(tool_call_id)
-        if not evt:
-            evt = self.request_tool_result(tool_call_id)
-        start = time.time()
-        while not evt.wait(timeout=1.0):
-            if escape_watcher and escape_watcher.cancelled:
-                raise TaskCancelled()
-            if time.time() - start > timeout:
-                return json.dumps({"error": f"Client proxy timeout after {timeout}s"})
-        return self.tool_results.pop(tool_call_id, json.dumps({"error": "No result received"}))
-
-    def reset(self):
-        """Clear state for a new LLM call."""
-        while not self.response_queue.empty():
-            try:
-                self.response_queue.get_nowait()
-            except queue.Empty:
-                break
-        self.tool_results.clear()
-        self._tool_events.clear()
-
-
-_proxy_channels = {}  # session_id -> ProxyChannel
-_proxy_channels_lock = threading.Lock()
-
-
-def get_proxy_channel(session_id: str) -> ProxyChannel:
-    """Get or create a proxy channel for a session."""
-    with _proxy_channels_lock:
-        if session_id not in _proxy_channels:
-            _proxy_channels[session_id] = ProxyChannel()
-        return _proxy_channels[session_id]
-
-
-def cleanup_proxy_channel(session_id: str):
-    """Remove proxy channel when session is done."""
-    with _proxy_channels_lock:
-        _proxy_channels.pop(session_id, None)
 
 
 # --- Spinner ---

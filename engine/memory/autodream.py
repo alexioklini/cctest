@@ -770,19 +770,24 @@ def generate_next_prompt_suggestion(session) -> str | None:
 
         prov = resolve_provider_for_model(model)
 
-        text = send_message_with_fallback(
-            clean_msgs,
-            model,
-            prov.get("api_key", ""),
-            prov.get("base_url", ""),
-            silent=True,
-            tools=False,
-            event_callback=None,
-            provider_resolver=resolve_provider_for_model,
-            inference_params={"max_tokens": 200, "temperature": 0.7},
-            purpose="next_prompt_suggestion",
-            session_id=None,
-        )
+        _prev_uid = getattr(_thread_local, "current_user_id", None)
+        _thread_local.current_user_id = (getattr(session, "user_id", "") or "")
+        try:
+            text = send_message_with_fallback(
+                clean_msgs,
+                model,
+                prov.get("api_key", ""),
+                prov.get("base_url", ""),
+                silent=True,
+                tools=False,
+                event_callback=None,
+                provider_resolver=resolve_provider_for_model,
+                inference_params={"max_tokens": 200, "temperature": 0.7},
+                purpose="next_prompt_suggestion",
+                session_id=None,
+            )
+        finally:
+            _thread_local.current_user_id = _prev_uid
         try:
             sys.stderr.write(f"[next_prompt] model={model} raw={text!r}\n")
         except Exception:

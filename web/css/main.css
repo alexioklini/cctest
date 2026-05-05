@@ -608,14 +608,6 @@ textarea { resize: none; }
   white-space: nowrap;
 }
 .model-selector-btn:hover { background: var(--bg-200); color: var(--text-100); }
-.local-inference-chip {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
-  padding: 2px 7px; border-radius: 4px;
-  background: color-mix(in srgb, var(--accent-brand) 16%, transparent);
-  color: var(--accent-brand);
-  margin-right: 6px;
-}
 .model-selector-btn .model-name { font-weight: 500; color: var(--text-200); }
 .model-selector-btn .model-tier { color: var(--text-400); }
 .model-selector-btn svg { width: 12px; height: 12px; }
@@ -1793,26 +1785,26 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   line-height: 1.6;
   overflow: auto;
   height: 100%;
-  background: #232327;
-  color: #eaeaec;
+  background: var(--code-bg);
+  color: var(--code-text);
 }
-/* Override HLJS light stylesheet inside artifact panel — needs !important to beat .hljs{color} */
-.artifact-content .artifact-code .hljs { background: #232327 !important; color: #eaeaec !important; }
-.artifact-content .artifact-code .hljs-keyword,
-.artifact-content .artifact-code .hljs-built_in { color: #ff7b72 !important; }
-.artifact-content .artifact-code .hljs-string,
-.artifact-content .artifact-code .hljs-attr { color: #a5d6ff !important; }
-.artifact-content .artifact-code .hljs-number,
-.artifact-content .artifact-code .hljs-literal { color: #f2cc60 !important; }
-.artifact-content .artifact-code .hljs-comment { color: #8b949e !important; font-style: italic; }
-.artifact-content .artifact-code .hljs-function,
-.artifact-content .artifact-code .hljs-title { color: #d2a8ff !important; }
-.artifact-content .artifact-code .hljs-variable,
-.artifact-content .artifact-code .hljs-name { color: #ffa657 !important; }
-.artifact-content .artifact-code .hljs-type,
-.artifact-content .artifact-code .hljs-class { color: #7ee787 !important; }
-.artifact-content .artifact-code .hljs-tag { color: #7ee787 !important; }
-.artifact-content .artifact-code .hljs-meta { color: #8b949e !important; }
+/* Dark-only token overrides — under light theme the github.min.css HLJS sheet handles colors. */
+[data-mode="dark"] .artifact-content .artifact-code .hljs { background: var(--code-bg) !important; color: var(--code-text) !important; }
+[data-mode="dark"] .artifact-content .artifact-code .hljs-keyword,
+[data-mode="dark"] .artifact-content .artifact-code .hljs-built_in { color: #ff7b72 !important; }
+[data-mode="dark"] .artifact-content .artifact-code .hljs-string,
+[data-mode="dark"] .artifact-content .artifact-code .hljs-attr { color: #a5d6ff !important; }
+[data-mode="dark"] .artifact-content .artifact-code .hljs-number,
+[data-mode="dark"] .artifact-content .artifact-code .hljs-literal { color: #f2cc60 !important; }
+[data-mode="dark"] .artifact-content .artifact-code .hljs-comment { color: #8b949e !important; font-style: italic; }
+[data-mode="dark"] .artifact-content .artifact-code .hljs-function,
+[data-mode="dark"] .artifact-content .artifact-code .hljs-title { color: #d2a8ff !important; }
+[data-mode="dark"] .artifact-content .artifact-code .hljs-variable,
+[data-mode="dark"] .artifact-content .artifact-code .hljs-name { color: #ffa657 !important; }
+[data-mode="dark"] .artifact-content .artifact-code .hljs-type,
+[data-mode="dark"] .artifact-content .artifact-code .hljs-class { color: #7ee787 !important; }
+[data-mode="dark"] .artifact-content .artifact-code .hljs-tag { color: #7ee787 !important; }
+[data-mode="dark"] .artifact-content .artifact-code .hljs-meta { color: #8b949e !important; }
 .artifact-content .artifact-markdown {
   padding: 24px;
 }

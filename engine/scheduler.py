@@ -1033,6 +1033,12 @@ class Scheduler:
             _thread_local.delegate_agent_id = agent_id
             _thread_local.current_session_id = sched_session_id
             _thread_local.session_id = sched_session_id
+            # Pin owner so client-mode ambient proxy can pick a tab of the
+            # task's user. Empty string for legacy tasks with no owner — the
+            # ambient picker will return None and the call falls through to
+            # direct urlopen (which fails fast on air-gapped servers; Stage 2
+            # adds a persistent admin agent client as the final fallback).
+            _thread_local.current_user_id = (task_row.get("user_id") or "")
             # Clear any stale trace id from a previous run on this thread so
             # _handle_openai_response installs a fresh one that we capture
             # after the delegate returns.
@@ -1101,6 +1107,7 @@ class Scheduler:
             _thread_local.delegate_agent_id = None
             _thread_local.current_session_id = None
             _thread_local.session_id = None
+            _thread_local.current_user_id = ""
             _thread_local.trace_id = None
             with self._lock:
                 self._running_tasks.pop(name, None)

@@ -27,7 +27,3 @@ Files arrive as `body.files` (legacy `body.images` for Telegram) — base64. Per
 - MIME match + base64 + <20MB → OpenAI `image_url` data URI (multimodal path)
 - Otherwise → `/tmp/brain-attachments/{session_id}/`, agent uses `read_document`
 - Non-vision model + image → describe via `attachments.image_model`; unconfigured → metadata only
-
-## Client Execution Mode (chat.py)
-
-`execution_mode: client` — loop stays on server; LLM calls proxy through browser via `proxy_request` SSE → `POST /v1/chat/proxy-response`. Web tools via `proxy_tool` SSE → `POST /v1/chat/proxy-tool-result`. Server-local models bypass proxy (`_is_local_base_url`).

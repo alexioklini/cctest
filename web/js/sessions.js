@@ -56,13 +56,6 @@ async function ensureSession(chat) {
     if (data.warmup) {
       startWarmupPoll(chat);
     }
-    // Declare client-hosted inference capabilities so the server can route
-    // matching requests to this client instead of running them server-side.
-    // Fire-and-forget — if the handshake fails the server simply doesn't
-    // transfer requests and things work as before.
-    if (window.LocalInference) {
-      LocalInference.declareCapabilities(chat.sessionId);
-    }
     return chat.sessionId;
   } catch(e) {
     showToast('Failed to create session: ' + e.message, true);
@@ -101,12 +94,6 @@ async function openSession(sessionId, agentId) {
   chat._activityStates = new Map();
   // Real chat open — drop any sticky scheduled-run selection.
   state.activeScheduledRunId = null;
-
-  // Re-declare local inference capabilities for the reopened session (server-
-  // side capability state is not persisted across reconnects).
-  if (window.LocalInference) {
-    LocalInference.declareCapabilities(sessionId);
-  }
 
   try {
     const data = await API.getSessionMessages(sessionId);

@@ -9465,19 +9465,27 @@ def generate_next_prompt_suggestion(session) -> str | None:
 
         prov = resolve_provider_for_model(model)
 
-        text = send_message_with_fallback(
-            clean_msgs,
-            model,
-            prov.get("api_key", ""),
-            prov.get("base_url", ""),
-            silent=True,
-            tools=False,
-            event_callback=None,
-            provider_resolver=resolve_provider_for_model,
-            inference_params={"max_tokens": 200, "temperature": 0.7},
-            purpose="next_prompt_suggestion",
-            session_id=None,
-        )
+        # Set current_user_id so client-mode ambient proxy routing can pick a
+        # client owned by the session's user. session_id stays None — this is
+        # a sessionless call (no live SSE on the chat).
+        _prev_uid = getattr(_thread_local, "current_user_id", None)
+        _thread_local.current_user_id = (getattr(session, "user_id", "") or "")
+        try:
+            text = send_message_with_fallback(
+                clean_msgs,
+                model,
+                prov.get("api_key", ""),
+                prov.get("base_url", ""),
+                silent=True,
+                tools=False,
+                event_callback=None,
+                provider_resolver=resolve_provider_for_model,
+                inference_params={"max_tokens": 200, "temperature": 0.7},
+                purpose="next_prompt_suggestion",
+                session_id=None,
+            )
+        finally:
+            _thread_local.current_user_id = _prev_uid
         try:
             sys.stderr.write(f"[next_prompt] model={model} raw={text!r}\n")
         except Exception:
@@ -11016,12 +11024,14 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
         _thread_local.max_tool_rounds = MAX_DELEGATE_TOOL_ROUNDS
         try:
             data = json.dumps(payload).encode("utf-8")
-            request = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
             _provider_name = _prov.get("provider_name", "") or "default"
             _agent_ctx = getattr(_thread_local, "current_agent", None)
             _agent_id_ctx = _agent_ctx.agent_id if _agent_ctx else None
             _user_id_ctx = getattr(_thread_local, "current_user_id", None)
             _session_id_ctx = getattr(_thread_local, "current_session_id", None)
+
+            request = urllib.request.Request(
+                endpoint, data=data, headers=headers, method="POST")
             _queue_cm = _provider_queue.acquire_if(
                 _provider_name, label="delegate",
                 session_id=_session_id_ctx, agent_id=_agent_id_ctx,
@@ -14517,10 +14527,15 @@ class Scheduler:
 
         # Init thread context before building the system prompt — _build_system_prompt
         # reads current_agent from thread-local for soul.md / tools_guide.
+        # Pin user_id so client-mode ambient proxy can pick a tab of the
+        # task's owner. Empty for legacy tasks without owner — picker returns
+        # None and the call fails fast (Stage 2: persistent admin agent
+        # client closes that hole).
         _sched_ctx_pre = ExecutionContext(
             mode="scheduled",
             agent_id=agent_id,
             session_id=sched_session_id,
+            user_id=(task_row.get("user_id") or ""),
             memory_store=target_memory,
         )
         init_thread_context(_sched_ctx_pre, agent_config=target)
@@ -19111,14 +19126,6 @@ class EscapeWatcher:
                 pass
 
 
-# --- Client Execution Mode (proxy LLM + web tools through browser) ---
-
-_execution_mode_cache = None
-_execution_mode_cache_time = 0.0
-_client_proxy_tools_cache = None
-
-_CLIENT_PROXY_TOOLS_DEFAULT = ["exa_search"]
-
 _gdpr_scanner_cache: dict | None = None
 _gdpr_scanner_cache_time: float = 0.0
 
@@ -19312,94 +19319,6 @@ def _invalidate_gdpr_cache():
     _gdpr_scanner_cache_time = 0.0
 
 
-# --- Client-hosted local models manifest ----------------------------------
-# Server declares GGUF model weights that clients (Electron desktop app) may
-# download and run locally. Family string is the compat key — server-side oMLX
-# model and client-side GGUF are "the same model" for routing purposes when
-# their family matches, even if quant/format differ. See CLAUDE.md.
-
-_client_models_cache = None
-_client_models_cache_time = 0.0
-_CLIENT_MODELS_TTL = 10.0
-
-
-def _load_client_models() -> list:
-    """Read config.json → client_models: [{id, family, gguf_path, sha256,
-    size_bytes, auto_download}]. 10s cache. Returns [] on any error."""
-    global _client_models_cache, _client_models_cache_time
-    now = time.time()
-    if _client_models_cache is not None and (now - _client_models_cache_time) < _CLIENT_MODELS_TTL:
-        return _client_models_cache
-    cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-    entries = []
-    try:
-        with open(cfg_path) as f:
-            raw = json.load(f).get("client_models", []) or []
-        if isinstance(raw, list):
-            entries = [e for e in raw if isinstance(e, dict) and e.get("id") and e.get("family")]
-    except (OSError, json.JSONDecodeError):
-        entries = []
-    _client_models_cache = entries
-    _client_models_cache_time = now
-    return entries
-
-
-def _invalidate_client_models_cache():
-    """Called from server.py when client_models config changes."""
-    global _client_models_cache, _client_models_cache_time
-    _client_models_cache = None
-    _client_models_cache_time = 0.0
-
-
-def get_client_model(model_id: str) -> dict | None:
-    """Return the client_models manifest entry matching `model_id` (by id),
-    or None if the model isn't in the client-eligible list."""
-    for entry in _load_client_models():
-        if entry.get("id") == model_id:
-            return entry
-    return None
-
-
-def get_client_model_by_family(family: str) -> dict | None:
-    """Return the first manifest entry with the given family string, or None."""
-    if not family:
-        return None
-    for entry in _load_client_models():
-        if entry.get("family") == family:
-            return entry
-    return None
-
-
-def is_model_client_executable(capabilities: dict | None, model_id: str) -> tuple[bool, str]:
-    """Decide whether a request for `model_id` should be routed to client-
-    hosted inference instead of running on the server, given the client-
-    declared capabilities dict (from Session.client_capabilities).
-
-    Returns (True, family) if:
-      - capabilities.enabled is True
-      - model_id has a manifest entry (i.e. is a client-eligible model)
-      - the manifest entry's family appears in capabilities.families
-
-    Returns (False, "") otherwise. The caller is expected to have verified
-    the request is interactive (has event_callback) — background/scheduled
-    requests never route to clients regardless of capabilities.
-    """
-    if not capabilities or not model_id:
-        return False, ""
-    if not capabilities.get("enabled"):
-        return False, ""
-    families = capabilities.get("families") or []
-    if not families:
-        return False, ""
-    entry = get_client_model(model_id)
-    if not entry:
-        return False, ""
-    family = entry.get("family", "")
-    if family and family in families:
-        return True, family
-    return False, ""
-
-
 class GDPRBlockedError(RuntimeError):
     """Raised by gdpr_pick_model_for_background when PII is detected, the
     server is configured in hard-block mode, and no safe local route exists.
@@ -19570,132 +19489,6 @@ def gdpr_pick_model_for_background(model: str, texts, purpose: str = "") -> str:
 
     # Warn-only mode: leave the caller to use the cloud model.
     return model
-
-
-def _get_execution_mode() -> str:
-    """Read execution_mode from config.json. 30s cache. Returns 'server' or 'client'."""
-    global _execution_mode_cache, _execution_mode_cache_time, _client_proxy_tools_cache
-    now = time.time()
-    if _execution_mode_cache is not None and (now - _execution_mode_cache_time) < 30:
-        return _execution_mode_cache
-    cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
-    mode = "server"
-    try:
-        with open(cfg_path) as f:
-            cfg = json.load(f)
-        mode = cfg.get("execution_mode", "server") or "server"
-        tools = cfg.get("client_proxy_tools")
-        _client_proxy_tools_cache = set(tools) if isinstance(tools, list) else None
-    except (OSError, json.JSONDecodeError):
-        pass
-    _execution_mode_cache = mode
-    _execution_mode_cache_time = now
-    return mode
-
-
-def _get_client_proxy_tools() -> set:
-    """Return the set of tool names to proxy through the browser in client mode."""
-    _get_execution_mode()
-    if _client_proxy_tools_cache is not None:
-        return _client_proxy_tools_cache
-    return set(_CLIENT_PROXY_TOOLS_DEFAULT)
-
-
-class ProxyChannel:
-    """Thread-safe channel for proxying LLM calls and web tool execution through a browser client.
-
-    In client execution mode, the agentic loop emits proxy_request/proxy_tool events via
-    event_callback, then blocks on this channel waiting for the browser to stream back results.
-    """
-
-    def __init__(self):
-        self.response_queue = queue.Queue()
-        self.tool_results = {}  # tool_call_id -> result string
-        self._tool_events = {}  # tool_call_id -> threading.Event
-
-    def wait_for_llm_lines(self, escape_watcher=None):
-        """Yield SSE lines from the browser's proxied LLM response.
-        Implements the same iterator interface as urllib response (for line in response:).
-        """
-        while True:
-            if escape_watcher and escape_watcher.cancelled:
-                raise TaskCancelled()
-            try:
-                item = self.response_queue.get(timeout=1.0)
-            except queue.Empty:
-                continue
-            if item is None:
-                break
-            if isinstance(item, Exception):
-                raise item
-            yield item.encode("utf-8") if isinstance(item, str) else item
-
-    def feed_llm_line(self, line: str):
-        """Browser sends an SSE line from the provider response."""
-        self.response_queue.put(line)
-
-    def feed_llm_done(self):
-        """Browser signals the LLM response stream is complete."""
-        self.response_queue.put(None)
-
-    def feed_llm_error(self, message: str):
-        """Browser signals an error during LLM call."""
-        self.response_queue.put(RuntimeError(f"Client proxy error: {message}"))
-
-    def request_tool_result(self, tool_call_id: str) -> threading.Event:
-        """Create a wait event for a proxied tool result."""
-        evt = threading.Event()
-        self._tool_events[tool_call_id] = evt
-        return evt
-
-    def feed_tool_result(self, tool_call_id: str, result: str):
-        """Browser sends the result of a proxied web tool."""
-        self.tool_results[tool_call_id] = result
-        evt = self._tool_events.pop(tool_call_id, None)
-        if evt:
-            evt.set()
-
-    def get_tool_result(self, tool_call_id: str, timeout: float = 120.0,
-                        escape_watcher=None) -> str:
-        """Block until the browser returns the tool result."""
-        evt = self._tool_events.get(tool_call_id)
-        if not evt:
-            evt = self.request_tool_result(tool_call_id)
-        start = time.time()
-        while not evt.wait(timeout=1.0):
-            if escape_watcher and escape_watcher.cancelled:
-                raise TaskCancelled()
-            if time.time() - start > timeout:
-                return json.dumps({"error": f"Client proxy timeout after {timeout}s"})
-        return self.tool_results.pop(tool_call_id, json.dumps({"error": "No result received"}))
-
-    def reset(self):
-        """Clear state for a new LLM call."""
-        while not self.response_queue.empty():
-            try:
-                self.response_queue.get_nowait()
-            except queue.Empty:
-                break
-        self.tool_results.clear()
-        self._tool_events.clear()
-
-
-_proxy_channels = {}  # session_id -> ProxyChannel
-_proxy_channels_lock = threading.Lock()
-
-
-def get_proxy_channel(session_id: str) -> ProxyChannel:
-    """Get or create a proxy channel for a session."""
-    with _proxy_channels_lock:
-        if session_id not in _proxy_channels:
-            _proxy_channels[session_id] = ProxyChannel()
-        return _proxy_channels[session_id]
-
-
-def cleanup_proxy_channel(session_id: str):
-    """Remove proxy channel when session is done."""
-    with _proxy_channels_lock:
-        _proxy_channels.pop(session_id, None)
 
 
 # --- Spinner ---
@@ -20055,7 +19848,16 @@ _MEMORY_CLASSIFIER_PROMPT = (
 
 def classify_chat_for_memory(user_text: str, assistant_text: str,
                              model: str, timeout: int = 15) -> str | None:
-    """Classify a user+assistant exchange for memory filing. Returns category or None on error."""
+    """Classify a user+assistant exchange for memory filing. Returns the
+    category label or None on error.
+
+    Routes through send_message_with_fallback so it picks up the same
+    client-mode proxy gate as every other LLM call: session-bound proxy when
+    the caller is inside an active chat (rare for the classifier), ambient
+    proxy via the chat owner's connected client otherwise. The chat-sync
+    daemon sets `current_user_id` on the thread-local before invoking us so
+    the ambient picker can find the right tab.
+    """
     try:
         # GDPR auto-fallback before any cloud HTTP call. Hard-block without
         # a local fallback skips classification; the chat pair stays unfiled.
@@ -20065,31 +19867,42 @@ def classify_chat_for_memory(user_text: str, assistant_text: str,
         except GDPRBlockedError:
             return None
         provider = resolve_provider_for_model(model)
-        headers = make_headers(provider["api_key"])
-        endpoint = f"{provider['base_url']}/chat/completions"
-        payload = json.dumps({
-            "model": get_api_model_id(model),
-            "max_tokens": 20,
-            "temperature": 0,
-            "stream": False,
-            "messages": [
-                {"role": "system", "content": _MEMORY_CLASSIFIER_PROMPT},
-                {"role": "user", "content": f"User: {user_text[:2000]}\nAssistant: {assistant_text[:2000]}"},
-            ],
-        }).encode("utf-8")
-        req = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
-        _provider_name = provider.get("provider_name", "") or "default"
-        with _provider_queue.acquire_if(
-            _provider_name, label="mempalace_classify",
-            session_id=None, agent_id=None, user_id=None,
-            model=model, event_callback=None, cancel_token=None,
-            timeout=max(timeout * 2, 30),
-        ):
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-        content = (data.get("choices", [{}])[0].get("message", {}).get("content") or "").strip().lower()
-        content = content.strip('"').strip("'").strip()
-        valid = {"fact", "preference", "decision", "reference", "generic", "refusal", "chitchat"}
+        messages = [
+            {"role": "system", "content": _MEMORY_CLASSIFIER_PROMPT},
+            {"role": "user",
+             "content": f"User: {user_text[:2000]}\nAssistant: {assistant_text[:2000]}"},
+        ]
+        # send_message_with_fallback always runs with stream=True (the proxy
+        # path requires SSE). For a 20-token label call this is fine — the
+        # full label arrives in one or two SSE chunks and we just collect
+        # the assistant text. event_callback=None keeps it silent (no
+        # tool/usage forwarding); the proxy_request fan-out happens via the
+        # ambient channel resolved from current_user_id.
+        text = send_message_with_fallback(
+            messages,
+            model,
+            provider.get("api_key", ""),
+            provider.get("base_url", ""),
+            silent=True,
+            tools=False,
+            event_callback=None,
+            provider_resolver=resolve_provider_for_model,
+            inference_params={"max_tokens": 20, "temperature": 0.0},
+            purpose="memory_classifier",
+            session_id=None,
+        )
+        if not text:
+            return None
+        content = text.strip().strip('"').strip("'").strip().lower()
+        # Some thinking-format models leak <think>…</think> wrappers around
+        # short answers. Strip the wrapper so the label inside is comparable.
+        if "<think>" in content and "</think>" in content:
+            content = content.split("</think>", 1)[1].strip()
+        # Take just the first token-ish word — labels are single words.
+        if content:
+            content = content.split()[0].strip(",.;:!?\"'`").lower()
+        valid = {"fact", "preference", "decision", "reference",
+                 "generic", "refusal", "chitchat"}
         return content if content in valid else None
     except Exception as e:
         print(f"[mempalace-classifier] error: {e}", file=sys.stderr, flush=True)
@@ -22706,25 +22519,8 @@ def _execute_tool_inner(name: str, args: dict) -> str:
     result_status = "success"
     result = None
     try:
-        # Client execution mode: proxy web tools through connected browser
-        if _get_execution_mode() == "client" and name in _get_client_proxy_tools():
-            _cb = getattr(_thread_local, 'event_callback', None)
-            _sid = getattr(_thread_local, 'current_session_id', None) or ""
-            _tcid = getattr(_thread_local, 'tool_use_id', None) or name
-            if _cb and _sid:
-                channel = get_proxy_channel(_sid)
-                channel.request_tool_result(_tcid)
-                _cb("proxy_tool", {
-                    "tool_call_id": _tcid,
-                    "name": name,
-                    "args": args,
-                })
-                ew = getattr(_thread_local, '_escape_watcher', None)
-                result = channel.get_tool_result(_tcid, escape_watcher=ew)
-            else:
-                result = _err(f"Client execution mode requires an active browser connection for {name}")
         # Check MCP tools first (prefer thread-local for concurrent requests)
-        elif (mcp := (getattr(_thread_local, 'mcp_manager', None) or _mcp_manager)) and mcp.is_mcp_tool(name):
+        if (mcp := (getattr(_thread_local, 'mcp_manager', None) or _mcp_manager)) and mcp.is_mcp_tool(name):
             result = mcp.call_tool(name, args)
         else:
             fn = TOOL_DISPATCH.get(name)
@@ -24456,84 +24252,6 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
             raise RuntimeError(reason)
 
     data = json.dumps(payload).encode("utf-8")
-
-    # Client-hosted local inference: if the session declared it can serve this
-    # model's family on the Electron/browser side, transfer execution to the
-    # client instead of running the LLM on the server. This is independent of
-    # execution_mode — it works in both server mode AND client mode, because
-    # the decision is per-request (based on the session's capability handshake)
-    # rather than a global server toggle. Tasks, scheduler, and background
-    # calls never reach this branch because they don't set
-    # client_capabilities on the thread-local.
-    _client_caps = getattr(_thread_local, "client_capabilities", None)
-    _client_executable, _client_family = is_model_client_executable(_client_caps, model)
-    if _client_executable and event_callback and session_id:
-        channel = get_proxy_channel(session_id)
-        channel.reset()
-        event_callback("local_inference_request", {
-            "type": "llm_local",
-            "model": model,
-            "family": _client_family,
-            "payload": json.loads(data.decode("utf-8")),
-        })
-        # Audit-log the transfer so ops can reconstruct where inference ran.
-        try:
-            _agent_ctx = getattr(_thread_local, "current_agent", None)
-            _agent_id = _agent_ctx.agent_id if _agent_ctx else ""
-            _user_id = getattr(_thread_local, "current_user_id", "") or ""
-            if _audit_log:
-                _audit_log.log_action(
-                    agent=_agent_id or _user_id or "anonymous",
-                    action_type="client_inference",
-                    tool_name="send_message",
-                    args_summary=f"model={model} family={_client_family}",
-                    session_id=session_id,
-                    source="chat",
-                )
-        except Exception:
-            pass
-        try:
-            proxy_iter = channel.wait_for_llm_lines(escape_watcher)
-            return _handle_openai_response(
-                proxy_iter, payload, messages, model, api_key, base_url,
-                silent, tools, headers, endpoint, escape_watcher,
-                _tool_round, event_callback, inference_params, session_id)
-        except RuntimeError as e:
-            # Fallback policy: surface error, do NOT retry server-side. This was
-            # an explicit design decision — retrying would double latency on
-            # failures and mask real problems with the client's local model.
-            error_msg = f"Client local inference failed: {str(e)}"
-            print(f"  [client-inference] {error_msg[:200]}", file=sys.stderr, flush=True)
-            if event_callback:
-                event_callback("error", {"message": error_msg})
-            return None
-
-    # Client execution mode: proxy LLM call through connected browser.
-    # Skip the proxy for server-local models — the server can reach them directly,
-    # so there's no point round-tripping through the client. Saves a hop on every
-    # turn that routes to oMLX/CLIProxyAPI/etc in client mode.
-    _exec_mode = _get_execution_mode()
-    if _exec_mode == "client" and event_callback and session_id and not is_model_local(model):
-        channel = get_proxy_channel(session_id)
-        channel.reset()
-        event_callback("proxy_request", {
-            "type": "llm",
-            "endpoint": endpoint,
-            "headers": headers,
-            "payload": json.loads(data.decode("utf-8")),
-        })
-        try:
-            proxy_iter = channel.wait_for_llm_lines(escape_watcher)
-            return _handle_openai_response(
-                proxy_iter, payload, messages, model, api_key, base_url,
-                silent, tools, headers, endpoint, escape_watcher,
-                _tool_round, event_callback, inference_params, session_id)
-        except RuntimeError as e:
-            error_msg = str(e)
-            print(f"  [proxy] LLM proxy error: {error_msg[:200]}", file=sys.stderr, flush=True)
-            if event_callback:
-                event_callback("error", {"message": error_msg})
-            return None
 
     request = urllib.request.Request(
         endpoint, data=data, headers=headers, method="POST",

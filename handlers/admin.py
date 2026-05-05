@@ -2302,8 +2302,6 @@ class AdminHandlerMixin:
                 "default_provider": next((name for name, p in server_config.get("providers", {}).items() if p.get("default_model") == server_config.get("default_model")), ""),
                 "default_model": server_config.get("default_model", ""),
                 "attachment_image_model": server_config.get("attachment_image_model", ""),
-                "execution_mode": server_config.get("execution_mode", "server"),
-                "client_proxy_tools": server_config.get("client_proxy_tools", engine._CLIENT_PROXY_TOOLS_DEFAULT),
                 "gdpr_scanner": {
                     "enabled": bool(server_config.get("gdpr_scanner", {}).get("enabled", True)),
                     "server_log": bool(server_config.get("gdpr_scanner", {}).get("server_log", True)),
@@ -2449,49 +2447,6 @@ class AdminHandlerMixin:
                 self._send_json({"error": str(e)}, 500)
                 return
             result["attachment_image_model"] = aim
-
-        # --- Execution mode ---
-        if "execution_mode" in body:
-            mode = body["execution_mode"]
-            if mode not in ("server", "client"):
-                self._send_json({"error": "execution_mode must be 'server' or 'client'"}, 400)
-                return
-            server_config["execution_mode"] = mode
-            engine._execution_mode_cache = mode
-            engine._execution_mode_cache_time = time.time()
-            try:
-                config = {}
-                if os.path.exists(config_path):
-                    with open(config_path) as f:
-                        config = json.load(f)
-                config["execution_mode"] = mode
-                with open(config_path, "w") as f:
-                    json.dump(config, f, indent=2)
-            except Exception as e:
-                self._send_json({"error": str(e)}, 500)
-                return
-            result["execution_mode"] = mode
-
-        # --- Client proxy tools ---
-        if "client_proxy_tools" in body:
-            tools_list = body["client_proxy_tools"]
-            if not isinstance(tools_list, list):
-                self._send_json({"error": "client_proxy_tools must be a list"}, 400)
-                return
-            server_config["client_proxy_tools"] = tools_list
-            engine._client_proxy_tools_cache = set(tools_list) if tools_list else None
-            try:
-                config = {}
-                if os.path.exists(config_path):
-                    with open(config_path) as f:
-                        config = json.load(f)
-                config["client_proxy_tools"] = tools_list
-                with open(config_path, "w") as f:
-                    json.dump(config, f, indent=2)
-            except Exception as e:
-                self._send_json({"error": str(e)}, 500)
-                return
-            result["client_proxy_tools"] = tools_list
 
         # --- GDPR/PII scanner settings ---
         if "gdpr_scanner" in body:

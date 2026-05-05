@@ -182,29 +182,9 @@ Full invariants in `engine/CLAUDE.md`. Key gotcha: `_summarise_tool_result` retu
 
 Full invariants in `engine/CLAUDE.md`. Key rule: warmup payload must match first-turn payload byte-for-byte — hour-rounded timestamp, same tools, same `stream_options`. `claim()` only fires for bare `{agent:main, project:'', status:'', note_context:''}` sessions.
 
-## Client Execution Mode
-
-Air-gapped servers with internet-on-browser: `execution_mode: client` in `config.json`. Loop stays on server; LLM calls + web tools proxy through browser.
-
-- **LLM**: server emits `proxy_request` SSE → browser POSTs to provider → streams back via `POST /v1/chat/proxy-response`
-- **Web tools**: `proxy_tool` SSE → browser executes → `POST /v1/chat/proxy-tool-result`
-- Local tools (file ops, git, shell, code graph) run on server normally
-- `client_proxy_tools` list (default `web_fetch`, `exa_search`)
-- **Server-local models bypass proxy**: when `_is_local_base_url(provider)` is true, `send_message` skips `proxy_request` and calls gateway directly
-
-## Client-Hosted Local Inference
-
-Desktop clients can declare they serve a model family locally; server transfers matching requests to client. Per-request decision based on session capability handshake. Scheduler/delegates/background never reach this branch.
-
-- **Identity by `family`, not id**: server's `gemma-3-e4b-mlx-4bit` and client's `gemma-3-4b-it-Q4_K_M` both declare `family=gemma3-e4b`
-- **Manifests**: `client_models` (per-model `{id, family, gguf_path, sha256, size_bytes}` — `sha256`+`size_bytes` recomputed server-side every save, never trust admin input). `client_engines` per-platform `{url, sha256}` — server refuses to invent defaults (air-gap leak prevention)
-- **Routing**: `is_model_client_executable(caps, model_id)` returns `(True, family)` iff caps.enabled + manifest match + family in caps.families. Emits `local_inference_request` SSE. **No server-side retry** on failure.
-- **Desktop** (`desktop/local-inference.js`): fully lazy. Cache keyed by sha256. Resumable downloader (`Range`, streaming sha256 verify, `.partial` siblings). Engine `chmod +x` on Unix. **Archive distributions not supported** — direct binary URL only. `llama-server` on random free port, `/health` poll, 10-min idle SIGTERM. FIFO queue (`max_concurrent=1`).
-- **Auth**: manifest reads + weights downloads open to any auth user. CRUD admin-only.
-
 ## Desktop App (Electron)
 
-Shell loading web UI + CORS-free Node IPC. Required for client-mode on air-gapped servers. `--server=http://host:port` CLI arg. Build: `npm run build:{mac,win,all}`. `desktop/local-inference.js` registers `localInference.*` IPC for llama-server lifecycle.
+Shell loading web UI + CORS-free Node IPC. `--server=http://host:port` CLI arg. Build: `npm run build:{mac,win,all}`.
 
 ## Agent Teams
 

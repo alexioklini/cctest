@@ -419,99 +419,6 @@ class ChatHandlerMixin:
         session.cancel_token.cancel()
         self._send_json({"status": "cancelled"})
 
-    def _handle_execution_mode_get(self):
-        """GET /v1/config/execution-mode — return execution mode and provider credentials for client proxy."""
-        mode = server_config.get("execution_mode", "server")
-        result = {"execution_mode": mode}
-        if mode == "client":
-            providers = server_config.get("providers", {})
-            result["providers"] = {}
-            for name, prov in providers.items():
-                result["providers"][name] = {
-                    "api_key": prov.get("api_key", ""),
-                    "base_url": prov.get("base_url", ""),
-                }
-            tcfg = engine.get_tool_config()
-            exa_cfg = tcfg.get("exa_search", {})
-            result["exa_api_key"] = (exa_cfg.get("api_key", "")
-                                     or os.environ.get("EXA_API_KEY", "")
-                                     or "97dbd594-f7b4-4866-9a8e-6a297e3df576")
-        self._send_json(result)
-
-    def _handle_proxy_response(self):
-        """POST /v1/chat/proxy-response — browser sends proxied LLM response chunks."""
-        body = self._read_json()
-        sid = body.get("session_id", "")
-        msg_type = body.get("type", "")
-        if not sid:
-            self._send_json({"error": "session_id required"}, 400)
-            return
-        channel = engine.get_proxy_channel(sid)
-        if msg_type == "chunk":
-            data = body.get("data", "")
-            channel.feed_llm_line(data)
-        elif msg_type == "chunks":
-            for line in body.get("lines", []):
-                channel.feed_llm_line(line)
-        elif msg_type == "done":
-            channel.feed_llm_done()
-        elif msg_type == "error":
-            channel.feed_llm_error(body.get("message", "Unknown error"))
-        else:
-            self._send_json({"error": f"Unknown type: {msg_type}"}, 400)
-            return
-        self._send_json({"ok": True})
-
-    def _handle_local_inference_usage(self):
-        """POST /v1/chat/local-inference-usage — client reports token usage
-        after a client-hosted inference turn completes.
-
-        Body: {session_id, model, family, tokens_in, tokens_out, duration_ms}
-
-        Logged to costs.db with provider="client:<session_id>" and cost=0 (by
-        virtue of _compute_cost returning 0 for unknown provider/model combos,
-        and client inference genuinely being free from the server's POV —
-        electricity on the user's laptop is not our problem). Keeping the
-        token counts honest lets dashboards distinguish client- vs server-
-        executed turns without a schema change."""
-        body = self._read_json() or {}
-        sid = body.get("session_id", "")
-        model = body.get("model", "")
-        tokens_in = int(body.get("tokens_in", 0) or 0)
-        tokens_out = int(body.get("tokens_out", 0) or 0)
-        if not sid or not model:
-            self._send_json({"error": "session_id and model required"}, 400)
-            return
-        # Authorization: only the session owner (or admin) may report usage.
-        s = self._session_access_check(sid)
-        if s is None:
-            return
-        agent_id = s.agent_id or ""
-        try:
-            if engine._cost_tracker:
-                engine._cost_tracker.log_call(
-                    agent=agent_id, session_id=sid, model=model,
-                    provider=f"client:{sid[:8]}",
-                    tokens_in=tokens_in, tokens_out=tokens_out,
-                )
-        except Exception as e:
-            self._send_json({"error": str(e)}, 500)
-            return
-        self._send_json({"ok": True})
-
-    def _handle_proxy_tool_result(self):
-        """POST /v1/chat/proxy-tool-result — browser sends proxied web tool results."""
-        body = self._read_json()
-        sid = body.get("session_id", "")
-        tool_call_id = body.get("tool_call_id", "")
-        result = body.get("result", "")
-        if not sid or not tool_call_id:
-            self._send_json({"error": "session_id and tool_call_id required"}, 400)
-            return
-        channel = engine.get_proxy_channel(sid)
-        channel.feed_tool_result(tool_call_id, result)
-        self._send_json({"ok": True})
-
     def _handle_chat(self):
         """Handle chat request with SSE streaming."""
         body = self._read_json()
@@ -932,12 +839,6 @@ class ChatHandlerMixin:
             # Set current model for worker summariser (cache reuse)
             engine._thread_local._current_model = session.model
 
-            # Client-hosted inference capability: if the browser/Electron has
-            # declared it can serve this model's family locally, plumb that
-            # decision into the engine so send_message can route to the client
-            # instead of calling the LLM directly. See phases 2-3 for details.
-            engine._thread_local.client_capabilities = dict(session.client_capabilities or {})
-
             # Snapshot message count for rollback on failure
             _msg_count_before = len(session.messages)
             _req_start = time.time()
@@ -994,7 +895,6 @@ class ChatHandlerMixin:
                     _req_duration = round(time.time() - _req_start, 2)
                     msg_metadata = {}
                     msg_metadata["model"] = session.model
-                    msg_metadata["execution_mode"] = server_config.get("execution_mode", "server")
                     msg_metadata["duration"] = _req_duration
                     msg_metadata["tokens_in"] = _usage_totals["tokens_in"]
                     msg_metadata["tokens_out"] = _usage_totals["tokens_out"]
@@ -1106,7 +1006,6 @@ class ChatHandlerMixin:
                         "tokens": engine._estimate_conversation_tokens(session.messages),
                         "max_context": session.max_context,
                         "model": session.model,
-                        "execution_mode": server_config.get("execution_mode", "server"),
                         "duration": _req_duration,
                         "tokens_in": _usage_totals["tokens_in"],
                         "tokens_out": _usage_totals["tokens_out"],
@@ -1229,8 +1128,6 @@ class ChatHandlerMixin:
                 engine._thread_local.caveman_system = 0
                 engine._thread_local.execution_overrides = {}
                 engine._thread_local._current_model = None
-                engine._thread_local.client_capabilities = None
-                engine.cleanup_proxy_channel(sid)
                 event_queue.put(None)  # sentinel
 
 

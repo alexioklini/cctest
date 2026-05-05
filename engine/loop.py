@@ -1376,25 +1376,8 @@ def _execute_tool_inner(name: str, args: dict) -> str:
     result_status = "success"
     result = None
     try:
-        # Client execution mode: proxy web tools through connected browser
-        if _get_execution_mode() == "client" and name in _get_client_proxy_tools():
-            _cb = getattr(_thread_local, 'event_callback', None)
-            _sid = getattr(_thread_local, 'current_session_id', None) or ""
-            _tcid = getattr(_thread_local, 'tool_use_id', None) or name
-            if _cb and _sid:
-                channel = get_proxy_channel(_sid)
-                channel.request_tool_result(_tcid)
-                _cb("proxy_tool", {
-                    "tool_call_id": _tcid,
-                    "name": name,
-                    "args": args,
-                })
-                ew = getattr(_thread_local, '_escape_watcher', None)
-                result = channel.get_tool_result(_tcid, escape_watcher=ew)
-            else:
-                result = _err(f"Client execution mode requires an active browser connection for {name}")
         # Check MCP tools first (prefer thread-local for concurrent requests)
-        elif (mcp := (getattr(_thread_local, 'mcp_manager', None) or _mcp_manager)) and mcp.is_mcp_tool(name):
+        if (mcp := (getattr(_thread_local, 'mcp_manager', None) or _mcp_manager)) and mcp.is_mcp_tool(name):
             result = mcp.call_tool(name, args)
         else:
             fn = TOOL_DISPATCH.get(name)
@@ -2950,84 +2933,6 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
             raise RuntimeError(reason)
 
     data = json.dumps(payload).encode("utf-8")
-
-    # Client-hosted local inference: if the session declared it can serve this
-    # model's family on the Electron/browser side, transfer execution to the
-    # client instead of running the LLM on the server. This is independent of
-    # execution_mode — it works in both server mode AND client mode, because
-    # the decision is per-request (based on the session's capability handshake)
-    # rather than a global server toggle. Tasks, scheduler, and background
-    # calls never reach this branch because they don't set
-    # client_capabilities on the thread-local.
-    _client_caps = getattr(_thread_local, "client_capabilities", None)
-    _client_executable, _client_family = is_model_client_executable(_client_caps, model)
-    if _client_executable and event_callback and session_id:
-        channel = get_proxy_channel(session_id)
-        channel.reset()
-        event_callback("local_inference_request", {
-            "type": "llm_local",
-            "model": model,
-            "family": _client_family,
-            "payload": json.loads(data.decode("utf-8")),
-        })
-        # Audit-log the transfer so ops can reconstruct where inference ran.
-        try:
-            _agent_ctx = getattr(_thread_local, "current_agent", None)
-            _agent_id = _agent_ctx.agent_id if _agent_ctx else ""
-            _user_id = getattr(_thread_local, "current_user_id", "") or ""
-            if _audit_log:
-                _audit_log.log_action(
-                    agent=_agent_id or _user_id or "anonymous",
-                    action_type="client_inference",
-                    tool_name="send_message",
-                    args_summary=f"model={model} family={_client_family}",
-                    session_id=session_id,
-                    source="chat",
-                )
-        except Exception:
-            pass
-        try:
-            proxy_iter = channel.wait_for_llm_lines(escape_watcher)
-            return _handle_openai_response(
-                proxy_iter, payload, messages, model, api_key, base_url,
-                silent, tools, headers, endpoint, escape_watcher,
-                _tool_round, event_callback, inference_params, session_id)
-        except RuntimeError as e:
-            # Fallback policy: surface error, do NOT retry server-side. This was
-            # an explicit design decision — retrying would double latency on
-            # failures and mask real problems with the client's local model.
-            error_msg = f"Client local inference failed: {str(e)}"
-            print(f"  [client-inference] {error_msg[:200]}", file=sys.stderr, flush=True)
-            if event_callback:
-                event_callback("error", {"message": error_msg})
-            return None
-
-    # Client execution mode: proxy LLM call through connected browser.
-    # Skip the proxy for server-local models — the server can reach them directly,
-    # so there's no point round-tripping through the client. Saves a hop on every
-    # turn that routes to oMLX/CLIProxyAPI/etc in client mode.
-    _exec_mode = _get_execution_mode()
-    if _exec_mode == "client" and event_callback and session_id and not is_model_local(model):
-        channel = get_proxy_channel(session_id)
-        channel.reset()
-        event_callback("proxy_request", {
-            "type": "llm",
-            "endpoint": endpoint,
-            "headers": headers,
-            "payload": json.loads(data.decode("utf-8")),
-        })
-        try:
-            proxy_iter = channel.wait_for_llm_lines(escape_watcher)
-            return _handle_openai_response(
-                proxy_iter, payload, messages, model, api_key, base_url,
-                silent, tools, headers, endpoint, escape_watcher,
-                _tool_round, event_callback, inference_params, session_id)
-        except RuntimeError as e:
-            error_msg = str(e)
-            print(f"  [proxy] LLM proxy error: {error_msg[:200]}", file=sys.stderr, flush=True)
-            if event_callback:
-                event_callback("error", {"message": error_msg})
-            return None
 
     request = urllib.request.Request(
         endpoint, data=data, headers=headers, method="POST",

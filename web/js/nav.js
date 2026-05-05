@@ -233,24 +233,6 @@ function updateModelSelectorDisplay(modelId) {
     if (el) el.textContent = name;
   }
   refreshThinkingButton();
-  refreshLocalInferenceChip(modelId);
-}
-
-// Show the composer "local" chip when client-hosted inference will run this
-// turn. Trigger conditions: local inference enabled, model has a client-
-// manifest entry, and its family is selected in LocalInference.families.
-function refreshLocalInferenceChip(modelId) {
-  const li = window.LocalInference;
-  let show = false;
-  if (li && li.enabled && Array.isArray(li.manifest)) {
-    const entry = li.manifest.find(m => m.id === modelId);
-    if (entry && (li.families || []).includes(entry.family)) show = true;
-  }
-  const style = show ? '' : 'display:none';
-  for (const id of ['welcome-local-inference-chip', 'chat-local-inference-chip', 'project-local-inference-chip']) {
-    const el = document.getElementById(id);
-    if (el) el.style.cssText = style;
-  }
 }
 
 // Model locality helper — prefers the server-derived is_local flag exposed via

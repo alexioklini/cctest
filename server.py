@@ -1480,12 +1480,6 @@ class Session:
         self._warmup_cancel = threading.Event()
         self._warmup_lock = threading.Lock()
 
-        # Client-hosted inference capability. Declared by the browser/Electron
-        # client via POST /v1/sessions/<id>/capabilities. In-memory, session-
-        # scoped, never persisted. Shape: {"enabled": bool, "families": [str],
-        # "set_at": float}. Empty/missing means "no client-side inference".
-        self.client_capabilities: dict = {}
-
         self.agent = engine.AgentConfig(agent_id)
         self.memory = engine.MemoryStore(agent_id, base_dir=self.agent.memory_dir)
 
@@ -2265,7 +2259,6 @@ class BrainAgentHandler(
         "/v1/skills/claude-code/install",
         "/v1/commands/expand",
         "/v1/nodes",
-        "/v1/client/models",
     }
     _ADMIN_POST_PATHS = _ADMIN_POST_EXACT
     _ADMIN_POST_PREFIXES = (
@@ -2477,8 +2470,6 @@ class BrainAgentHandler(
             self._handle_get_messages(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/next-prompt"):
             self._handle_next_prompt_suggestion(path)
-        elif path.startswith("/v1/sessions/") and path.endswith("/capabilities"):
-            self._handle_session_capabilities(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/warmup"):
             sid = path.split("/")[3]
             s = sessions.get(sid)
@@ -2547,8 +2538,6 @@ class BrainAgentHandler(
             self._handle_warmup_status()
         elif path == "/v1/queue/status":
             self._handle_queue_status()
-        elif path == "/v1/config/execution-mode":
-            self._handle_execution_mode_get()
         elif path == "/v1/traces" or path.startswith("/v1/traces?"):
             self._handle_traces_list()
         elif path.startswith("/v1/traces/"):
@@ -2633,12 +2622,6 @@ class BrainAgentHandler(
             self._handle_nodes_list()
         elif path.startswith("/v1/nodes/poll"):
             self._handle_node_poll()
-        elif path == "/v1/client/models/manifest":
-            self._handle_client_models_manifest()
-        elif path == "/v1/client/engines":
-            self._handle_client_engines_manifest()
-        elif path.startswith("/v1/client/models/") and path.endswith("/weights"):
-            self._handle_client_model_weights(path)
         elif path == "/v1/channels":
             self._handle_channels_list()
         elif path == "/v1/tools/config":
@@ -2736,12 +2719,6 @@ class BrainAgentHandler(
             self._handle_chat()
         elif path == "/v1/chat/cancel":
             self._handle_cancel()
-        elif path == "/v1/chat/proxy-response":
-            self._handle_proxy_response()
-        elif path == "/v1/chat/local-inference-usage":
-            self._handle_local_inference_usage()
-        elif path == "/v1/chat/proxy-tool-result":
-            self._handle_proxy_tool_result()
         elif path == "/v1/sessions/manage":
             self._handle_manage_session()
         elif path == "/v1/agents/switch":
@@ -2819,8 +2796,6 @@ class BrainAgentHandler(
         elif path == "/v1/cache/clear":
             engine._web_cache.clear()
             self._send_json({"status": "cleared"})
-        elif path.startswith("/v1/sessions/") and path.endswith("/capabilities"):
-            self._handle_session_capabilities(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/warmup"):
             sid = path.split("/")[3]
             s = sessions.get(sid)
@@ -2886,8 +2861,6 @@ class BrainAgentHandler(
             self._handle_node_result()
         elif path == "/v1/nodes/execute":
             self._handle_node_execute()
-        elif path == "/v1/client/models":
-            self._handle_client_models_admin()
         elif path == "/v1/tools/config":
             self._handle_tools_config_save()
         elif path.startswith("/v1/agents/") and path.endswith("/hooks"):
@@ -3530,6 +3503,8 @@ def _generate_chat_summary(session):
     # Set thread-local context for this background thread
     engine._thread_local.current_agent = session.agent
     engine._thread_local.memory_store = None  # No memory injection — summary must be based only on chat content
+    # Owner pin so client-mode ambient proxy can pick a tab of the chat owner.
+    engine._thread_local.current_user_id = (getattr(session, "user_id", "") or "")
     # Build a condensed view of the conversation (first + last few messages)
     msgs = session.messages
     sample = []
@@ -4137,8 +4112,6 @@ def main():
     server_config["telegram_enabled"] = file_config.get("telegram", {}).get("enabled", True)
     attachments_cfg = file_config.get("attachments", {})
     server_config["attachment_image_model"] = attachments_cfg.get("image_model", "")
-    server_config["execution_mode"] = file_config.get("execution_mode", "server")
-    server_config["client_proxy_tools"] = file_config.get("client_proxy_tools", engine._CLIENT_PROXY_TOOLS_DEFAULT)
     server_config["gdpr_scanner"] = file_config.get("gdpr_scanner", {}) or {}
 
     # Initialize models config
@@ -4186,12 +4159,6 @@ def main():
         print(f"Auth: enabled (registration: {'open' if _auth_mod.registration_enabled() else 'closed'})")
     else:
         print("Auth: disabled (single-user mode)")
-
-    exec_mode = server_config.get("execution_mode", "server")
-    if exec_mode == "client":
-        print(f"Execution mode: CLIENT (LLM calls + web tools proxied through browser)")
-    else:
-        print(f"Execution mode: server (default)")
 
     # Initialize engine globals
     engine._delegate_api_key = args.api_key
@@ -5237,29 +5204,41 @@ def main():
                     # Skip classifier entirely if user toggled save_to_memory on this session.
                     _clf_skip_ids: set[int] = set()
                     if clf_enabled and clf_model and mem_mode == 2:
-                        i = 0
-                        while i < len(new_messages):
-                            m = new_messages[i]
-                            m_role = (m.get("role") or "").strip()
-                            m_id = int(m.get("id") or 0)
-                            # Pair user+assistant for classification
-                            if m_role == "user" and i + 1 < len(new_messages):
-                                nxt = new_messages[i + 1]
-                                nxt_role = (nxt.get("role") or "").strip()
-                                nxt_id = int(nxt.get("id") or 0)
-                                if nxt_role == "assistant":
-                                    u_text = str(m.get("content") or "")[:2000]
-                                    a_text = str(nxt.get("content") or "")[:2000]
-                                    category = engine.classify_chat_for_memory(
-                                        u_text, a_text, clf_model)
-                                    if category and category not in clf_file_categories:
-                                        _clf_skip_ids.add(m_id)
-                                        _clf_skip_ids.add(nxt_id)
-                                        print(f"[mempalace-classifier] skip ({category}): "
-                                              f"{u_text[:60]}", flush=True)
-                                    i += 2
-                                    continue
-                            i += 1
+                        # Pin the chat owner's user_id on the daemon thread so
+                        # client-mode ambient proxy can pick a tab of the right
+                        # user. Empty for legacy sessions without owner — the
+                        # picker returns None and the LLM call fails fast on
+                        # an air-gapped server (same fail-fast contract as
+                        # scheduled tasks; Stage 2 closes that hole).
+                        _prev_clf_uid = getattr(engine._thread_local,
+                                                'current_user_id', None)
+                        engine._thread_local.current_user_id = session_user_id or ""
+                        try:
+                            i = 0
+                            while i < len(new_messages):
+                                m = new_messages[i]
+                                m_role = (m.get("role") or "").strip()
+                                m_id = int(m.get("id") or 0)
+                                # Pair user+assistant for classification
+                                if m_role == "user" and i + 1 < len(new_messages):
+                                    nxt = new_messages[i + 1]
+                                    nxt_role = (nxt.get("role") or "").strip()
+                                    nxt_id = int(nxt.get("id") or 0)
+                                    if nxt_role == "assistant":
+                                        u_text = str(m.get("content") or "")[:2000]
+                                        a_text = str(nxt.get("content") or "")[:2000]
+                                        category = engine.classify_chat_for_memory(
+                                            u_text, a_text, clf_model)
+                                        if category and category not in clf_file_categories:
+                                            _clf_skip_ids.add(m_id)
+                                            _clf_skip_ids.add(nxt_id)
+                                            print(f"[mempalace-classifier] skip ({category}): "
+                                                  f"{u_text[:60]}", flush=True)
+                                        i += 2
+                                        continue
+                                i += 1
+                        finally:
+                            engine._thread_local.current_user_id = _prev_clf_uid
 
                     # Track the current turn's anchor user-message id. Every drawer
                     # filed from this turn (user, assistant, attachment, tool result)

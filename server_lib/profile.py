@@ -419,7 +419,9 @@ def _user_profile_run_llm(uid: str, prior_profile: str, samples: list,
         # text or a "Delegation error: …" string we filter out.
         # current_agent must be an AgentConfig object, not just the agent id.
         engine._thread_local.current_agent = engine.AgentConfig("main")
-        engine._thread_local.current_user_id = ""
+        # Pin owner so client-mode ambient proxy can pick a tab of the user
+        # whose profile we're building. uid is the user being profiled.
+        engine._thread_local.current_user_id = uid or ""
         engine._thread_local.memory_store = None
         result = engine._run_delegate(
             messages=[{"role": "user", "content": user_msg}],
