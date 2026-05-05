@@ -662,26 +662,24 @@ function renderProjectsList() {
     list.innerHTML = '<div class="project-grid-empty">No projects found</div>';
     return;
   }
-  // Default per-project accent palette (cycles); overridden by p.color when set.
-  const palette = ['#6366f1','#8b5cf6','#0ea5e9','#10b981','#f59e0b','#ec4899','#475569','#0f172a'];
   for (let i = 0; i < filtered.length; i++) {
     const p = filtered[i];
     const item = document.createElement('div');
     item.className = 'project-card';
     const timeAgo = p.created_at ? formatTimeAgo(new Date(p.created_at)) : '';
     const agent = p.agentId || 'main';
-    const accent = p.color || palette[i % palette.length];
     const hasImage = !!p.image;
     const imgUrl = hasImage
       ? `/v1/agents/${encodeURIComponent(agent)}/projects/${encodeURIComponent(p.name)}/image`
       : '';
     const icon = (p.icon && p.icon.length <= 4) ? p.icon : '📁';
+    const artClass = hasImage ? 'project-card-art has-image' : 'project-card-art';
     const artStyle = hasImage
       ? `style="background-image:url('${esc(imgUrl)}');background-size:cover;background-position:center"`
-      : `style="background:${esc(accent)}"`;
+      : '';
     const titleAttr = p.description ? ` title="${esc(p.description)}"` : '';
     item.innerHTML = `
-      <div class="project-card-art" ${artStyle}>
+      <div class="${artClass}" ${artStyle}>
         ${hasImage ? '<div class="project-card-art-overlay"></div>' : ''}
         ${!hasImage ? `<span class="project-card-glyph">${esc(icon)}</span>` : ''}
         <div class="project-card-fav-slot" onclick="event.stopPropagation()"></div>
