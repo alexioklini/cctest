@@ -28,7 +28,9 @@ JOB_SWEEP_INTERVAL = 300
 @dataclass
 class TranslateJob:
     id: str
+    kind: str = "document"         # document | media — drives worker dispatch
     state: str = "queued"          # queued | running | done | error
+    stage: str = ""                # free-text current phase, mainly for media jobs
     filename: str = ""             # original upload name
     src_path: str = ""             # tmp file the worker reads
     output_path: str = ""          # final translated file (artifact folder)
@@ -36,6 +38,7 @@ class TranslateJob:
     source_lang: str = ""
     glossary: str = ""
     model: str = ""
+    transcribe_model: str = ""     # media: voxtral / whisper id used
     runs_done: int = 0
     runs_total: int = 0
     progress_pct: float = 0.0
@@ -46,6 +49,11 @@ class TranslateJob:
     runs: int = 0                  # final run count (post-translate)
     agent_id: str = "main"         # for artifact path resolution
     session_id: str = ""           # synthetic session for artifact folder
+    # Media-specific outputs (populated by media worker once done):
+    transcript: str = ""
+    duration_s: float = 0.0
+    segments: list[dict] | None = None
+    output_files: dict[str, str] | None = None  # format → abs path
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     # Subscriber queues — one per active SSE listener. Each receives every
@@ -56,9 +64,11 @@ class TranslateJob:
     _terminal: bool = False        # latched once when state becomes done/error
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "id": self.id,
+            "kind": self.kind,
             "state": self.state,
+            "stage": self.stage,
             "filename": self.filename,
             "target_lang": self.target_lang,
             "source_lang": self.source_lang,
@@ -76,6 +86,19 @@ class TranslateJob:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+        if self.kind == "media":
+            d.update({
+                "transcribe_model": self.transcribe_model,
+                "transcript": self.transcript,
+                "duration_s": self.duration_s,
+                "segments": self.segments or [],
+                # Bare filenames so the UI can pick which to download — full
+                # paths stay server-side.
+                "output_files": (
+                    {k: os.path.basename(v) for k, v in (self.output_files or {}).items()}
+                ),
+            })
+        return d
 
     def subscribe(self) -> queue.Queue:
         q: queue.Queue = queue.Queue()
@@ -112,6 +135,40 @@ class TranslateJob:
         if self.state == "queued":
             self.state = "running"
         self._broadcast({"type": "progress", "job": self.to_dict()})
+
+    def update_stage(self, stage: str, done: int = 0, total: int = 0) -> None:
+        """Media-job hook: fire 'transcribe' / 'translate' phase + counters."""
+        self.stage = stage
+        self.runs_done = done
+        self.runs_total = total
+        if total > 0:
+            self.progress_pct = (done / total * 100.0)
+        elif stage == "transcribe":
+            # Single blocking call — show indeterminate-ish progress.
+            self.progress_pct = max(self.progress_pct, 5.0)
+        self.updated_at = time.time()
+        if self.state == "queued":
+            self.state = "running"
+        self._broadcast({"type": "progress", "job": self.to_dict()})
+
+    def finish_media(self, *, transcript: str, segments: list[dict],
+                     duration_s: float, output_files: dict[str, str],
+                     primary_path: str, transcribe_model: str,
+                     translation_model: str) -> None:
+        self.state = "done"
+        self.transcript = transcript
+        self.segments = segments
+        self.duration_s = duration_s
+        self.output_files = output_files
+        self.output_path = primary_path
+        self.transcribe_model = transcribe_model
+        self.model = translation_model or self.model
+        self.runs = sum(1 for s in (segments or []) if s.get("translation"))
+        self.progress_pct = 100.0
+        self.stage = ""
+        self.updated_at = time.time()
+        self._terminal = True
+        self._broadcast({"type": "done", "job": self.to_dict()})
 
     def finish(self, *, output_path: str, runs: int, fallback: bool,
                detected: dict | None, noop: bool, model: str) -> None:

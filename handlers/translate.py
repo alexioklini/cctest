@@ -15,6 +15,9 @@ import queue as _queue
 
 # Multipart upload size cap for document translation. 50MB matches read_document.
 MAX_DOCUMENT_BYTES = 50 * 1024 * 1024
+# Audio/video uploads can be larger — Voxtral accepts ~25min mp3 ≈ 25MB; bump
+# to 200MB so users can drop a 1h podcast or short video without resizing.
+MAX_MEDIA_BYTES = 200 * 1024 * 1024
 
 
 class TranslateHandlerMixin:
@@ -289,7 +292,14 @@ class TranslateHandlerMixin:
             job.unsubscribe(sub)
 
     def _handle_translate_job_result(self, job_id: str):
-        """GET /v1/translate/jobs/<id>/result — download translated file."""
+        """GET /v1/translate/jobs/<id>/result[?format=...] — download output.
+
+        For document jobs the path is fixed (job.output_path).
+        For media jobs an optional `format` query param picks one of the
+        emitted output files (transcript_txt / transcript_srt / transcript_vtt /
+        translation_txt / translation_srt / translation_vtt / bilingual_txt).
+        Defaults to `primary`.
+        """
         from server_lib.translate import JOB_REGISTRY
         job = JOB_REGISTRY.get(job_id)
         if not job:
@@ -298,19 +308,36 @@ class TranslateHandlerMixin:
         if job.state != "done":
             self._send_json({"error": f"job not ready (state={job.state})"}, 409)
             return
-        if not job.output_path or not os.path.isfile(job.output_path):
+
+        # Resolve the file to serve.
+        target_path = job.output_path
+        if job.kind == "media" and job.output_files:
+            # Pull `format` out of the query string. self.path includes ?…
+            try:
+                from urllib.parse import urlparse, parse_qs
+                qs = parse_qs(urlparse(self.path).query)
+                fmt = (qs.get("format") or [""])[0]
+            except Exception:
+                fmt = ""
+            if fmt:
+                target_path = job.output_files.get(fmt) or ""
+                if not target_path:
+                    self._send_json({"error": f"unknown format '{fmt}'"}, 400)
+                    return
+
+        if not target_path or not os.path.isfile(target_path):
             self._send_json({"error": "output file missing"}, 410)
             return
         try:
-            with open(job.output_path, "rb") as f:
+            with open(target_path, "rb") as f:
                 data = f.read()
         except OSError as e:
             self._send_json({"error": f"read failed: {e}"}, 500)
             return
-        fname = os.path.basename(job.output_path)
+        fname = os.path.basename(target_path)
         self.send_response(200)
         # Octet-stream so the browser always offers a Save dialog regardless
-        # of the actual MIME (.docx/.pptx/.pdf).
+        # of the actual MIME.
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Disposition",
                          f'attachment; filename="{fname}"')
@@ -321,6 +348,239 @@ class TranslateHandlerMixin:
             self.wfile.write(data)
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
+
+    # ─── Media translation (audio/video) ───────────────────────────────────
+
+    def _handle_translate_media_upload(self):
+        """POST /v1/translate/media — multipart upload of audio/video file.
+
+        Form fields:
+          - file (required, audio/video, ≤200MB)
+          - target_lang (required ISO 639-1 — empty string allowed = transcribe-only)
+          - source_lang (optional — passed to Voxtral as language hint)
+          - glossary (optional slug)
+          - model (optional translation model id)
+          - transcribe_model (optional — voxtral-* / whisper-* id)
+          - agent_id (optional, defaults to 'main')
+
+        Returns: {job_id, ...job_dict}.
+        """
+        ctype = self.headers.get("Content-Type", "")
+        if not ctype.startswith("multipart/form-data"):
+            self._send_json({"error": "multipart/form-data required"}, 400)
+            return
+        boundary = None
+        for part in ctype.split(";"):
+            part = part.strip()
+            if part.startswith("boundary="):
+                boundary = part.split("=", 1)[1].strip('"')
+                break
+        if not boundary:
+            self._send_json({"error": "missing boundary"}, 400)
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length <= 0 or length > MAX_MEDIA_BYTES + 32 * 1024:
+            self._send_json({"error": "payload too large"}, 413)
+            return
+
+        raw = self.rfile.read(length)
+        fields, file_name, file_bytes = _parse_multipart(raw, boundary)
+        if not file_name or not file_bytes:
+            self._send_json({"error": "missing file"}, 400)
+            return
+        ext = os.path.splitext(file_name)[1].lower()
+        from server_lib.translate import MEDIA_EXTS
+        if ext not in MEDIA_EXTS:
+            self._send_json({
+                "error": f"unsupported extension '{ext}' — supported: {sorted(MEDIA_EXTS)}",
+            }, 400)
+            return
+        if len(file_bytes) > MAX_MEDIA_BYTES:
+            self._send_json({"error": "file too large"}, 413)
+            return
+
+        target_lang = (fields.get("target_lang") or "").strip().lower()
+        # Empty target_lang is allowed for transcribe-only mode — UI uses this.
+        source_lang = (fields.get("source_lang") or "").strip().lower()
+        glossary_slug = (fields.get("glossary") or "").strip()
+        model = (fields.get("model") or "").strip()
+        transcribe_model = (fields.get("transcribe_model") or "").strip()
+        agent_id = (fields.get("agent_id") or "main").strip() or "main"
+
+        import tempfile
+        tmpdir = tempfile.mkdtemp(prefix="brain-translate-media-")
+        src_path = os.path.join(tmpdir, file_name)
+        try:
+            with open(src_path, "wb") as f:
+                f.write(file_bytes)
+        except OSError as e:
+            self._send_json({"error": f"save failed: {e}"}, 500)
+            return
+
+        # Same `tr<14 hex>` synthesis as document jobs — keeps artifact-folder
+        # name unique across concurrent jobs.
+        import uuid
+        session_id = f"tr{uuid.uuid4().hex[:14]}"
+
+        from server_lib.translate import JOB_REGISTRY
+        job = JOB_REGISTRY.create(
+            kind="media",
+            filename=file_name,
+            src_path=src_path,
+            target_lang=target_lang,
+            source_lang=source_lang,
+            glossary=glossary_slug,
+            model=model,
+            transcribe_model=transcribe_model,
+            agent_id=agent_id,
+            session_id=session_id,
+        )
+
+        t = threading.Thread(
+            target=_run_media_job,
+            args=(job.id,),
+            name=f"translate-media-{job.id}",
+            daemon=True,
+        )
+        t.start()
+        self._send_json({"job_id": job.id, **job.to_dict()})
+
+    # ─── Live microphone translation ───────────────────────────────────
+
+    def _handle_live_start(self):
+        """POST /v1/translate/live/start — open a live transcription session.
+
+        Body: {target_lang, source_lang?, glossary?, model?}
+        Returns: {id, target_lang, source_lang, glossary, model}.
+        """
+        body = self._read_json()
+        from server_lib.translate import LIVE_REGISTRY
+        target_lang = (body.get("target_lang") or "").strip().lower()
+        source_lang = (body.get("source_lang") or "").strip().lower()
+        glossary = (body.get("glossary") or "").strip()
+        model = (body.get("model") or "").strip()
+        # Best-effort current user / agent — used for cleanup tracking.
+        agent_id = (body.get("agent_id") or "main").strip() or "main"
+        try:
+            user_id = getattr(self, "_current_user_id", None) or ""
+        except Exception:
+            user_id = ""
+        sess = LIVE_REGISTRY.create(
+            target_lang=target_lang,
+            source_lang=source_lang,
+            glossary=glossary,
+            model=model,
+            agent_id=agent_id,
+            user_id=user_id,
+        )
+        self._send_json({
+            "id": sess.id,
+            "target_lang": sess.target_lang,
+            "source_lang": sess.source_lang,
+            "glossary": sess.glossary,
+            "model": sess.model,
+        })
+
+    def _handle_live_chunk(self, sess_id: str):
+        """POST /v1/translate/live/<id>/chunk — multipart audio fragment."""
+        from server_lib.translate import LIVE_REGISTRY
+        sess = LIVE_REGISTRY.get(sess_id)
+        if not sess:
+            self._send_json({"error": "session not found"}, 404)
+            return
+        if sess.closed:
+            self._send_json({"error": "session closed"}, 409)
+            return
+
+        ctype = self.headers.get("Content-Type", "")
+        if not ctype.startswith("multipart/form-data"):
+            self._send_json({"error": "multipart/form-data required"}, 400)
+            return
+        boundary = None
+        for part in ctype.split(";"):
+            part = part.strip()
+            if part.startswith("boundary="):
+                boundary = part.split("=", 1)[1].strip('"')
+                break
+        if not boundary:
+            self._send_json({"error": "missing boundary"}, 400)
+            return
+        # Per-chunk cap: 25MB. 4s of 16kHz mono opus is ~30KB, so this is huge
+        # headroom — guards against accidental large uploads or video tracks.
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length <= 0 or length > 25 * 1024 * 1024:
+            self._send_json({"error": "chunk too large"}, 413)
+            return
+        raw = self.rfile.read(length)
+        fields, _file_name, file_bytes = _parse_multipart(raw, boundary)
+        if not file_bytes:
+            self._send_json({"error": "missing chunk"}, 400)
+            return
+        try:
+            seq = int(fields.get("seq") or "0")
+        except ValueError:
+            seq = 0
+        mime = (fields.get("mime") or "audio/webm").strip()
+        sess.add_chunk(seq, file_bytes, mime)
+        self._send_json({"ok": True, "seq": seq, "bytes": len(file_bytes)})
+
+    def _handle_live_stop(self, sess_id: str):
+        """POST /v1/translate/live/<id>/stop — flush + close."""
+        from server_lib.translate import LIVE_REGISTRY
+        sess = LIVE_REGISTRY.get(sess_id)
+        if not sess:
+            self._send_json({"error": "session not found"}, 404)
+            return
+        sess.stop()
+        self._send_json({"ok": True})
+
+    def _handle_live_stream(self, sess_id: str):
+        """GET /v1/translate/live/<id> — SSE stream of segment + translation events."""
+        from server_lib.translate import LIVE_REGISTRY
+        sess = LIVE_REGISTRY.get(sess_id)
+        if not sess:
+            self._send_json({"error": "session not found"}, 404)
+            return
+
+        try:
+            self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except OSError:
+            pass
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        try:
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
+        sub = sess.subscribe()
+        try:
+            while True:
+                try:
+                    ev_type, payload = sub.get(timeout=5.0)
+                except _queue.Empty:
+                    try:
+                        self.wfile.write(b": keepalive\n\n")
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError, OSError):
+                        return
+                    continue
+                try:
+                    self.wfile.write(
+                        f"event: {ev_type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
+                    )
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    return
+                if ev_type == "closed":
+                    return
+        finally:
+            sess.unsubscribe(sub)
 
 
 # ─── Helpers (module-level so the worker can import without circulars) ─────
@@ -410,6 +670,58 @@ def _run_translate_job(job_id: str) -> None:
             detected=result.get("detected"),
             noop=result.get("noop", False),
             model=result.get("model", ""),
+        )
+    except Exception as e:
+        job.fail(str(e))
+
+
+def _run_media_job(job_id: str) -> None:
+    """Background worker for audio/video translation jobs."""
+    from server_lib.translate import (
+        JOB_REGISTRY, transcribe_and_translate, write_media_output_files,
+    )
+    job = JOB_REGISTRY.get(job_id)
+    if not job:
+        return
+    try:
+        import brain
+        from datetime import datetime as _dt
+        folder = f"{_dt.now().strftime('%Y-%m-%d')}_{job.session_id[:8]}"
+        out_dir = os.path.join(brain.AGENTS_DIR, job.agent_id, "artifacts", folder)
+        os.makedirs(out_dir, exist_ok=True)
+
+        def _progress(stage: str, done: int, total: int) -> None:
+            job.update_stage(stage, done, total)
+
+        result = transcribe_and_translate(
+            job.src_path,
+            target_lang=job.target_lang,
+            source_lang=job.source_lang,
+            glossary_slug=job.glossary,
+            model=job.model,
+            transcribe_model=job.transcribe_model,
+            progress=_progress,
+        )
+
+        base_name = os.path.splitext(os.path.basename(job.filename))[0] or "media"
+        files = write_media_output_files(result, out_dir=out_dir, base_name=base_name)
+
+        # Promote each emitted file as artifact (the bilingual TXT is the
+        # "primary"; SRT/VTT live alongside).
+        for path in {v for k, v in files.items() if k != "primary"}:
+            try:
+                brain._after_file_write(path, "created", job.agent_id)
+            except Exception:
+                pass
+
+        job.finish_media(
+            transcript=result.get("transcript", ""),
+            segments=result.get("segments") or [],
+            duration_s=result.get("duration_s", 0.0),
+            output_files=files,
+            primary_path=files.get("primary", ""),
+            transcribe_model=result.get("transcribe_model", ""),
+            translation_model=job.model,
         )
     except Exception as e:
         job.fail(str(e))

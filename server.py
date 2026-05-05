@@ -2499,6 +2499,9 @@ class BrainAgentHandler(
         elif path.startswith("/v1/translate/jobs/"):
             jid = path[len("/v1/translate/jobs/"):]
             self._handle_translate_job_status(jid)
+        elif path.startswith("/v1/translate/live/"):
+            sid = path[len("/v1/translate/live/"):]
+            self._handle_live_stream(sid)
         elif path == "/v1/tasks":
             self._handle_list_tasks()
         elif path == "/v1/schedule/running":
@@ -2851,6 +2854,16 @@ class BrainAgentHandler(
             self._handle_translate_text()
         elif path == "/v1/translate/document":
             self._handle_translate_document_upload()
+        elif path == "/v1/translate/media":
+            self._handle_translate_media_upload()
+        elif path == "/v1/translate/live/start":
+            self._handle_live_start()
+        elif path.startswith("/v1/translate/live/") and path.endswith("/chunk"):
+            sid = path[len("/v1/translate/live/"):-len("/chunk")]
+            self._handle_live_chunk(sid)
+        elif path.startswith("/v1/translate/live/") and path.endswith("/stop"):
+            sid = path[len("/v1/translate/live/"):-len("/stop")]
+            self._handle_live_stop(sid)
         elif path == "/v1/translate/glossaries":
             self._handle_glossary_save()
         elif path.startswith("/v1/agents/") and path.endswith("/commands"):

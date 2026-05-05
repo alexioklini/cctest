@@ -2305,7 +2305,8 @@ def _transcription_config() -> dict:
         return {}
 
 
-def _transcribe_with_whisper(file_path: str, model_id: str, language: str | None) -> dict:
+def _transcribe_with_whisper(file_path: str, model_id: str, language: str | None,
+                             with_segments: bool = False) -> dict:
     """Run local mlx-whisper. Raises on import / runtime failure."""
     repo = _whisper_repo_for(model_id)
     import mlx_whisper  # type: ignore
@@ -2322,17 +2323,37 @@ def _transcribe_with_whisper(file_path: str, model_id: str, language: str | None
             duration_s = float(segments[-1].get("end", 0.0))
         except (TypeError, ValueError):
             duration_s = 0.0
-    return {
+    out = {
         "transcript": transcript,
         "language": detected_language,
         "duration_s": round(duration_s, 2),
     }
+    if with_segments:
+        norm: list[dict] = []
+        for s in segments:
+            if not isinstance(s, dict):
+                continue
+            try:
+                norm.append({
+                    "text": (s.get("text") or "").strip(),
+                    "start": float(s.get("start") or 0.0),
+                    "end": float(s.get("end") or 0.0),
+                })
+            except (TypeError, ValueError):
+                pass
+        out["segments"] = norm
+    return out
 
 
 def _transcribe_with_voxtral(file_path: str, model_id: str, provider_name: str,
-                             language: str | None) -> dict:
+                             language: str | None, with_segments: bool = False) -> dict:
     """POST audio to Mistral Voxtral /audio/transcriptions (OpenAI-compatible multipart).
-    Raises on HTTP error so the caller can decide whether to fall back."""
+    Raises on HTTP error so the caller can decide whether to fall back.
+
+    When `with_segments=True`, the returned dict carries a `segments` list of
+    `{text, start, end}` (Voxtral always returns these — the flag just controls
+    whether we expose them upward). Used for SRT/VTT generation.
+    """
     try:
         cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
         with open(cfg_path) as f:
@@ -2366,6 +2387,12 @@ def _transcribe_with_voxtral(file_path: str, model_id: str, provider_name: str,
     _field("model", model_id)
     if language:
         _field("language", language)
+    if with_segments:
+        # Mistral OpenAI-compat: array fields use repeated key with []. Voxtral
+        # returns segments unconditionally, but we still pass this so the wire
+        # is explicit about what we expect — future-proofs against a default
+        # change to text-only.
+        _field("timestamp_granularities[]", "segment")
     parts.append(f"--{boundary}\r\n".encode())
     parts.append(
         f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode()
@@ -2413,18 +2440,33 @@ def _transcribe_with_voxtral(file_path: str, model_id: str, provider_name: str,
             if v:
                 duration_s = v
                 break
-    if not duration_s:
-        segs = data.get("segments") or []
-        if segs:
-            try:
-                duration_s = float(segs[-1].get("end", 0.0))
-            except (TypeError, ValueError):
-                duration_s = 0.0
-    return {
+    raw_segments = data.get("segments") or []
+    if not duration_s and raw_segments:
+        try:
+            duration_s = float(raw_segments[-1].get("end", 0.0))
+        except (TypeError, ValueError):
+            duration_s = 0.0
+    out = {
         "transcript": transcript,
         "language": detected_language,
         "duration_s": round(duration_s, 2),
     }
+    if with_segments:
+        # Normalize to a stable shape — drop speaker_id/type/etc., enforce floats.
+        norm: list[dict] = []
+        for s in raw_segments:
+            if not isinstance(s, dict):
+                continue
+            try:
+                norm.append({
+                    "text": (s.get("text") or "").strip(),
+                    "start": float(s.get("start") or 0.0),
+                    "end": float(s.get("end") or 0.0),
+                })
+            except (TypeError, ValueError):
+                pass
+        out["segments"] = norm
+    return out
 
 
 def _normalize_legacy_audio_id(requested: str) -> str:

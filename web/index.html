@@ -553,8 +553,8 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <div class="tr-tabs" id="tr-tabs">
         <div class="tr-tab active" data-tab="text" onclick="trSwitchTab('text')">Text</div>
         <div class="tr-tab" data-tab="document" onclick="trSwitchTab('document')">Document</div>
-        <div class="tr-tab tr-tab-disabled" data-tab="audio" title="Coming in next session">Audio / Video</div>
-        <div class="tr-tab tr-tab-disabled" data-tab="live" title="Coming in next session">Live Microphone</div>
+        <div class="tr-tab" data-tab="audio" onclick="trSwitchTab('audio')">Audio / Video</div>
+        <div class="tr-tab" data-tab="live" onclick="trSwitchTab('live')">Live Microphone</div>
       </div>
 
       <!-- Top toolbar: language pills, glossary, model -->
@@ -668,6 +668,87 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
             Translate document
           </button>
           <span class="tr-status" id="tr-doc-status"></span>
+        </div>
+      </div>
+
+      <!-- Audio / Video tab content -->
+      <div class="tr-tab-panel" id="tr-panel-audio" style="display:none">
+        <div class="tr-doc-drop" id="tr-media-drop"
+             ondragover="trMediaDragOver(event)" ondragleave="trMediaDragLeave(event)" ondrop="trMediaDrop(event)"
+             onclick="document.getElementById('tr-media-file').click()">
+          <input type="file" id="tr-media-file" accept="audio/*,video/*" style="display:none"
+                 onchange="trMediaFileSelected(event)">
+          <div class="tr-doc-drop-icon">
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path d="M12 2v20M5 9v6M19 9v6M2 11v2M22 11v2M8 6v12M16 6v12"/>
+            </svg>
+          </div>
+          <div class="tr-doc-drop-title">Drop an audio or video file, or click to choose</div>
+          <div class="tr-doc-drop-hint">Supports .mp3 .wav .m4a .flac .ogg .mp4 .mov .webm .mkv .avi — max 200 MB. Output: transcript + translation in TXT, SRT and VTT.</div>
+        </div>
+
+        <div class="tr-doc-job hidden" id="tr-media-job">
+          <div class="tr-doc-job-row">
+            <div class="tr-doc-job-name" id="tr-media-job-name">filename.mp3</div>
+            <div class="tr-doc-job-state" id="tr-media-job-state">Queued</div>
+          </div>
+          <div class="tr-doc-progress">
+            <div class="tr-doc-progress-bar" id="tr-media-progress-bar"></div>
+          </div>
+          <div class="tr-doc-job-meta" id="tr-media-job-meta">Preparing…</div>
+          <div class="tr-doc-job-actions">
+            <button class="tr-btn" id="tr-media-cancel-btn" onclick="trMediaReset()">Reset</button>
+            <div class="tr-media-downloads hidden" id="tr-media-downloads"></div>
+          </div>
+        </div>
+
+        <div class="tr-media-results hidden" id="tr-media-results">
+          <div class="tr-media-results-header">Segment-aligned transcript</div>
+          <div class="tr-media-segments" id="tr-media-segments"></div>
+        </div>
+
+        <div class="tr-doc-actions-row">
+          <label class="tr-pill-group" style="margin-right:auto">
+            <span class="tr-pill-label">Mode</span>
+            <select id="tr-media-mode" class="tr-select">
+              <option value="translate">Transcribe + translate</option>
+              <option value="transcribe">Transcribe only</option>
+            </select>
+          </label>
+          <button class="tr-btn tr-btn-primary" id="tr-media-translate-btn"
+                  onclick="trRunMediaTranslation()" disabled>
+            Process file
+          </button>
+          <span class="tr-status" id="tr-media-status"></span>
+        </div>
+      </div>
+
+      <!-- Live Microphone tab content -->
+      <div class="tr-tab-panel" id="tr-panel-live" style="display:none">
+        <div class="tr-live-controls">
+          <button class="tr-btn tr-btn-primary tr-live-record" id="tr-live-record-btn"
+                  onclick="trLiveToggle()">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+            Start recording
+          </button>
+          <span class="tr-live-elapsed" id="tr-live-elapsed">0:00</span>
+          <span class="tr-status" id="tr-live-status"></span>
+          <div class="tr-toolbar-spacer"></div>
+          <label class="tr-pill-group">
+            <span class="tr-pill-label">Mode</span>
+            <select id="tr-live-mode" class="tr-select">
+              <option value="translate">Transcribe + translate</option>
+              <option value="transcribe">Transcribe only</option>
+            </select>
+          </label>
+          <button class="tr-btn" id="tr-live-download-btn" onclick="trLiveDownload()" disabled>
+            Save SRT
+          </button>
+          <button class="tr-btn" onclick="trLiveClear()">Clear</button>
+        </div>
+
+        <div class="tr-live-stream" id="tr-live-stream">
+          <div class="tr-placeholder">Press Start to begin live transcription. Audio is streamed to Voxtral in 4-second chunks; each finalized segment is translated as it lands.</div>
         </div>
       </div>
     </div>
