@@ -1555,6 +1555,8 @@ class SessionManager:
         self._lock = threading.Lock()
         self._load_events: dict[str, threading.Event] = {}  # session_id -> Event for waiters
         ChatDB.init()
+        from server_lib.favourites import FavouritesDB
+        FavouritesDB.init()
 
     def create(self, **kwargs) -> Session:
         session = Session(**kwargs)
@@ -2035,6 +2037,7 @@ from handlers.sessions_handler import SessionsHandlerMixin
 from handlers.providers import ProvidersHandlerMixin
 from handlers.projects import ProjectsHandlerMixin
 from handlers.admin import AdminHandlerMixin
+from handlers.favourites import FavouritesHandlerMixin
 
 # Inject server-level globals into handler modules (they were originally
 # defined in the same file and relied on shared module globals).
@@ -2054,6 +2057,7 @@ def _inject_server_globals():
         ProvidersHandlerMixin.__module__,
         ProjectsHandlerMixin.__module__,
         AdminHandlerMixin.__module__,
+        FavouritesHandlerMixin.__module__,
     ]
     # All names from server module that handlers reference as bare globals.
     # Include modules aliased as simple names (e.g. engine, _auth_mod) since
@@ -2077,6 +2081,7 @@ class BrainAgentHandler(
     ProvidersHandlerMixin,
     ProjectsHandlerMixin,
     AdminHandlerMixin,
+    FavouritesHandlerMixin,
     BaseHTTPRequestHandler,
 ):
     """HTTP request handler for Brain Agent API."""
@@ -2604,6 +2609,8 @@ class BrainAgentHandler(
             self._handle_project_sync_runs(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/sync-runs/" in path:
             self._handle_project_sync_run_detail(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/image"):
+            self._handle_project_image_get(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path:
             self._handle_project_get(path)
         elif path.startswith("/v1/agents/") and path.endswith("/projects"):
@@ -2646,6 +2653,10 @@ class BrainAgentHandler(
             self._handle_file_preview()
         elif path == "/v1/files/tree":
             self._handle_file_tree()
+        elif path == "/v1/favourites":
+            self._handle_favourites_list()
+        elif path.startswith("/v1/favourites/image/"):
+            self._handle_favourites_image_get(path)
         elif path == "/v1/artifacts":
             self._handle_artifacts_list()
         elif path == "/v1/artifacts/browse":
@@ -2712,6 +2723,13 @@ class BrainAgentHandler(
 
         if path == "/mcp":
             self._handle_mcp_jsonrpc()
+        elif path == "/v1/favourites":
+            self._handle_favourites_add()
+        elif path.startswith("/v1/favourites/") and path.endswith("/image"):
+            self._handle_favourites_image_upload(path)
+        elif (path.startswith("/v1/agents/") and "/projects/" in path
+              and path.endswith("/image")):
+            self._handle_project_image_upload(path)
         elif path == "/v1/sessions":
             self._handle_create_session()
         elif path == "/v1/chat":
@@ -2902,6 +2920,8 @@ class BrainAgentHandler(
             self._handle_notes(path, "PUT")
         elif path.startswith("/v1/agents/") and "/projects/" in path:
             self._handle_project_update(path)
+        elif path.startswith("/v1/favourites/"):
+            self._handle_favourites_patch(path)
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -2937,6 +2957,8 @@ class BrainAgentHandler(
             self._handle_project_doc_delete(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/input-folders/" in path:
             self._handle_project_input_folders_delete(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/image"):
+            self._handle_project_image_delete(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path:
             self._handle_project_delete(path)
         elif path.startswith("/v1/agents/") and "/ingested/" in path:
@@ -2947,6 +2969,10 @@ class BrainAgentHandler(
             self._handle_workflow_history_delete_run(path)
         elif path == "/v1/workflows/history":
             self._handle_workflow_history_delete_bulk()
+        elif path == "/v1/favourites":
+            self._handle_favourites_remove_bulk()
+        elif path.startswith("/v1/favourites/"):
+            self._handle_favourites_remove(path)
         else:
             self._send_json({"error": "Not found"}, 404)
 

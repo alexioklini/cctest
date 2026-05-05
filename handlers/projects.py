@@ -200,6 +200,162 @@ class ProjectsHandlerMixin:
         else:
             self._send_json(result)
 
+    def _handle_project_image_upload(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/image — multipart upload.
+        Stores at agents/<agent>/projects/<name>/.image.<ext> and records the
+        relative basename in project.json so list_projects() exposes it.
+        """
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return
+
+        from server_lib.favourites import MAX_IMAGE_BYTES, ALLOWED_IMAGE_EXTS
+
+        ctype = self.headers.get("Content-Type", "")
+        if not ctype.startswith("multipart/form-data"):
+            self._send_json({"error": "multipart/form-data required"}, 400)
+            return
+        boundary = None
+        for part in ctype.split(";"):
+            part = part.strip()
+            if part.startswith("boundary="):
+                boundary = part.split("=", 1)[1].strip('"')
+                break
+        if not boundary:
+            self._send_json({"error": "missing boundary"}, 400)
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length <= 0 or length > MAX_IMAGE_BYTES + 4096:
+            self._send_json({"error": "payload too large"}, 413)
+            return
+        raw = self.rfile.read(length)
+        parts = raw.split(b"--" + boundary.encode())
+        filename = ""
+        body_bytes = b""
+        for p in parts:
+            if b"Content-Disposition" not in p:
+                continue
+            head_end = p.find(b"\r\n\r\n")
+            if head_end < 0:
+                continue
+            head = p[:head_end].decode("latin-1", errors="replace")
+            if 'name="file"' not in head:
+                continue
+            for line in head.split("\r\n"):
+                if "filename=" in line:
+                    filename = line.split("filename=", 1)[1].strip().strip('";')
+                    break
+            body_bytes = p[head_end + 4:]
+            if body_bytes.endswith(b"\r\n"):
+                body_bytes = body_bytes[:-2]
+            break
+
+        if not filename or not body_bytes:
+            self._send_json({"error": "missing file"}, 400)
+            return
+        ext = os.path.splitext(filename)[1].lower() or ""
+        if ext not in ALLOWED_IMAGE_EXTS:
+            self._send_json({"error": f"unsupported extension '{ext}'"}, 400)
+            return
+        if len(body_bytes) > MAX_IMAGE_BYTES:
+            self._send_json({"error": "image too large"}, 413)
+            return
+
+        pdir = engine.ProjectManager._project_dir(agent_id, proj_name)
+        # Remove any prior .image.* file regardless of extension.
+        try:
+            for entry in os.listdir(pdir):
+                if entry.startswith(".image.") and os.path.isfile(os.path.join(pdir, entry)):
+                    try:
+                        os.unlink(os.path.join(pdir, entry))
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+
+        full = os.path.join(pdir, f".image{ext}")
+        try:
+            with open(full, "wb") as f:
+                f.write(body_bytes)
+        except OSError as e:
+            self._send_json({"error": f"save failed: {e}"}, 500)
+            return
+
+        # Record the basename in project.json so list/get expose image_url.
+        engine.ProjectManager.update_project(agent_id, proj_name, {"image": f".image{ext}"})
+        self._send_json({"status": "ok", "image": f".image{ext}"})
+
+    def _handle_project_image_delete(self, path: str):
+        """DELETE /v1/agents/{id}/projects/{name}/image"""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name, require_manage=True)
+        if project is None:
+            return
+        pdir = engine.ProjectManager._project_dir(agent_id, proj_name)
+        try:
+            for entry in os.listdir(pdir):
+                if entry.startswith(".image.") and os.path.isfile(os.path.join(pdir, entry)):
+                    try:
+                        os.unlink(os.path.join(pdir, entry))
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+        engine.ProjectManager.update_project(agent_id, proj_name, {"image": ""})
+        self._send_json({"status": "ok"})
+
+    def _handle_project_image_get(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/image — serve the stored image."""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return
+        image_name = (project.get("image") or "").strip()
+        if not image_name or not image_name.startswith(".image."):
+            self._send_json({"error": "no image"}, 404)
+            return
+        pdir = engine.ProjectManager._project_dir(agent_id, proj_name)
+        full = os.path.join(pdir, image_name)
+        try:
+            real_dir = os.path.realpath(pdir)
+            real_full = os.path.realpath(full)
+            if not real_full.startswith(real_dir + os.sep):
+                self._send_json({"error": "not found"}, 404)
+                return
+            if not os.path.isfile(real_full):
+                self._send_json({"error": "not found"}, 404)
+                return
+            with open(real_full, "rb") as f:
+                blob = f.read()
+        except OSError:
+            self._send_json({"error": "io error"}, 500)
+            return
+        ext = os.path.splitext(image_name)[1].lower()
+        ctype = {
+            ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+            ".webp": "image/webp", ".svg": "image/svg+xml",
+        }.get(ext, "application/octet-stream")
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", len(blob))
+        self.send_header("Cache-Control", "private, max-age=300")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(blob)
+
     def _handle_project_delete(self, path: str):
         """DELETE /v1/agents/{id}/projects/{name}"""
         agent_id = self._parse_agent_from_path(path)

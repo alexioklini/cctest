@@ -41,7 +41,10 @@ function wfRenderList() {
     <div class="wf-card" data-wf-name="${escapeHtml(wf.name)}">
       <div class="wf-card-row">
         <div class="wf-card-main">
-          <div class="wf-card-title">${escapeHtml(wf.display_name || wf.name)}</div>
+          <div class="wf-card-title">
+            <span class="wf-card-fav-slot" data-wf-fav="${escapeHtml(wf.name)}"></span>
+            ${escapeHtml(wf.display_name || wf.name)}
+          </div>
           <div class="wf-card-desc">${escapeHtml(wf.description || '')}</div>
           <div class="wf-card-meta">
             <span class="wf-pill">${escapeHtml(wf.trigger || 'manual')}</span>
@@ -61,6 +64,18 @@ function wfRenderList() {
       </div>
     </div>
   `).join('');
+  // Mount a star button in each card's title slot.
+  if (window.Favourites?.mount) {
+    root.querySelectorAll('.wf-card-fav-slot').forEach(slot => {
+      const name = slot.dataset.wfFav;
+      if (!name) return;
+      window.Favourites.mount(slot, {
+        item_type: 'workflow',
+        item_id: name,
+        agent_id: WF_AGENT,
+      });
+    });
+  }
 }
 
 async function wfToggleHistory(name) {

@@ -3961,6 +3961,7 @@ async function loadScheduledView() {
       const cardId = 'sched-card-' + btoa(s.name).replace(/[^a-zA-Z0-9]/g,'').slice(0,12);
       html += `<div class="sched-card" id="${cardId}">
         <div class="sched-card-header">
+          <span class="sched-card-fav-slot" data-sched-fav="${esc(s.name)}"></span>
           <span class="sched-card-name">${esc(s.name)}</span>
           <span class="sched-card-badge ${badgeClass}">${badgeText}</span>
         </div>
@@ -3990,6 +3991,18 @@ async function loadScheduledView() {
       html = '<div style="padding:40px;text-align:center;color:var(--text-400)">No scheduled tasks. Click "New Task" to create one.</div>';
     }
     container.innerHTML = html;
+    // Mount the star button in each schedule card.
+    if (window.Favourites?.mount) {
+      container.querySelectorAll('.sched-card-fav-slot').forEach(slot => {
+        const name = slot.dataset.schedFav;
+        if (!name) return;
+        window.Favourites.mount(slot, {
+          item_type: 'schedule',
+          item_id: name,
+          agent_id: 'main',
+        });
+      });
+    }
   } catch(e) {
     container.innerHTML = `<div style="padding:20px;color:var(--error)">Failed to load: ${esc(e.message)}</div>`;
   }

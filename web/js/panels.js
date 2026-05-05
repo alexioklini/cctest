@@ -9,13 +9,23 @@ function updateChatView() {
   const agent = state.agents.find(a => (a.id || a.name) === state.activeAgentId);
   const agentDisplay = agent?.display_name || state.activeAgentId || 'Chat';
   const chatTitle = chat.chatTitle || '';
+  // Build the favourite descriptor for this chat (skipped for not-yet-saved
+  // chats and for synthetic scheduled-run sessions, which the user pins via
+  // their schedule entry instead).
+  const sid = chat.sessionId || '';
+  const isSynthetic = sid.startsWith('sched-') || chat.readonly;
+  const favOpts = (sid && !isSynthetic) ? {
+    item_type: state.currentProject ? 'project_chat' : 'chat',
+    item_id: sid,
+    agent_id: chat.agentId || state.activeAgentId || 'main',
+  } : null;
   if (state.currentProject) {
     const projAgent = chat.agentId || state._projectDetailAgent || state.activeAgentId;
-    updatePageHeader(chatTitle || agentDisplay, state.currentProject, projAgent);
+    updatePageHeader(chatTitle || agentDisplay, state.currentProject, projAgent, favOpts);
   } else if (chatTitle) {
-    updatePageHeader(chatTitle, agentDisplay);
+    updatePageHeader(chatTitle, agentDisplay, null, favOpts);
   } else {
-    updatePageHeader(agentDisplay);
+    updatePageHeader(agentDisplay, null, null, favOpts);
   }
 
   // Update model
@@ -649,27 +659,58 @@ function renderProjectsList() {
   // 'activity' = default order (already sorted by filesystem)
 
   list.innerHTML = '';
+  list.classList.add('project-grid');
   if (!filtered.length) {
-    list.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-400)">No projects found</div>';
+    list.innerHTML = '<div class="project-grid-empty">No projects found</div>';
     return;
   }
-  for (const p of filtered) {
+  // Default per-project accent palette (cycles); overridden by p.color when set.
+  const palette = ['#6366f1','#8b5cf6','#0ea5e9','#10b981','#f59e0b','#ec4899','#475569','#0f172a'];
+  for (let i = 0; i < filtered.length; i++) {
+    const p = filtered[i];
     const item = document.createElement('div');
-    item.className = 'project-list-item';
+    item.className = 'project-card';
     const timeAgo = p.created_at ? formatTimeAgo(new Date(p.created_at)) : '';
+    const agent = p.agentId || 'main';
+    const accent = p.color || palette[i % palette.length];
+    const hasImage = !!p.image;
+    const imgUrl = hasImage
+      ? `/v1/agents/${encodeURIComponent(agent)}/projects/${encodeURIComponent(p.name)}/image`
+      : '';
+    const icon = (p.icon && p.icon.length <= 4) ? p.icon : '📁';
+    const artStyle = hasImage
+      ? `style="background-image:url('${esc(imgUrl)}');background-size:cover;background-position:center"`
+      : `style="background:${esc(accent)}"`;
+    const titleAttr = p.description ? ` title="${esc(p.description)}"` : '';
     item.innerHTML = `
-      <div class="project-list-item-body">
-        <div class="project-list-item-name">${esc(p.name)}</div>
-        ${p.description ? `<div class="project-list-item-desc">${esc(p.description)}</div>` : ''}
-        <div class="project-list-item-meta">Updated ${timeAgo || 'recently'}</div>
-      </div>
-      <div class="project-list-item-actions">
-        <button onclick="event.stopPropagation(); showProjectListMenu(event, '${esc(p.agentId)}', '${esc(p.name)}')" title="More options">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+      <div class="project-card-art" ${artStyle}>
+        ${hasImage ? '<div class="project-card-art-overlay"></div>' : ''}
+        ${!hasImage ? `<span class="project-card-glyph">${esc(icon)}</span>` : ''}
+        <div class="project-card-fav-slot" onclick="event.stopPropagation()"></div>
+        <button class="project-card-menu" onclick="event.stopPropagation(); showProjectListMenu(event, '${esc(agent)}', '${esc(p.name)}')" title="More options">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
         </button>
       </div>
+      <div class="project-card-info">
+        <div class="project-card-title"${titleAttr}>${esc(p.name)}</div>
+        <div class="project-card-meta">
+          <span class="project-card-type">Project</span>
+          ${timeAgo ? `<span>· ${esc(timeAgo)}</span>` : ''}
+        </div>
+      </div>
     `;
-    item.onclick = () => openProject(p.agentId, p.name);
+    item.onclick = () => openProject(agent, p.name);
+    if (p.id && window.Favourites?.mount) {
+      const slot = item.querySelector('.project-card-fav-slot');
+      if (slot) {
+        window.Favourites.mount(slot, {
+          item_type: 'project',
+          item_id: p.id,
+          agent_id: agent,
+          simple: true,
+        });
+      }
+    }
     list.appendChild(item);
   }
 }
@@ -714,6 +755,138 @@ function openProject(agentId, projectName) {
   initProjectDetailPanelResize();
 }
 
+async function _editProjectImageUpload(ev, agentId, projectName) {
+  const file = ev?.target?.files?.[0];
+  if (!file) return;
+  if (file.size > 2 * 1024 * 1024) { alert('Image too large (max 2 MB).'); return; }
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const r = await fetch(
+      `${BASE_URL}/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(projectName)}/image`,
+      { method: 'POST',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('auth-token') || ''}` },
+        body: fd });
+    if (!r.ok) { alert(`Upload failed: ${r.status}`); return; }
+    const data = await r.json();
+    const preview = document.getElementById('edit-project-image-preview');
+    const label   = document.getElementById('edit-project-image-label');
+    const clear   = document.getElementById('edit-project-image-clear');
+    if (preview) preview.style.backgroundImage = `url('/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(projectName)}/image?v=${Date.now()}')`;
+    if (label) label.textContent = 'Replace';
+    if (clear) clear.style.display = 'inline-block';
+    if (window._projectEditOriginal) window._projectEditOriginal.image = data.image || '';
+    try { await window.Favourites?.reload?.(); } catch(_) {}
+    // Refresh the projects list cache so the card reflects the new image
+    // when the user closes the modal and returns to the list.
+    try { await loadProjectsList(); } catch(_) {}
+  } catch (e) {
+    alert(`Upload failed: ${e.message || e}`);
+  } finally {
+    ev.target.value = '';
+  }
+}
+
+async function _editProjectImageClear(agentId, projectName) {
+  if (!confirm('Remove this project image?')) return;
+  try {
+    await API.del(`/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(projectName)}/image`);
+    const preview = document.getElementById('edit-project-image-preview');
+    const label   = document.getElementById('edit-project-image-label');
+    const clear   = document.getElementById('edit-project-image-clear');
+    if (preview) preview.style.backgroundImage = '';
+    if (label) label.textContent = 'Upload';
+    if (clear) clear.style.display = 'none';
+    if (window._projectEditOriginal) window._projectEditOriginal.image = '';
+    try { await window.Favourites?.reload?.(); } catch(_) {}
+    try { await loadProjectsList(); } catch(_) {}
+  } catch (e) {
+    alert(`Remove failed: ${e.message || e}`);
+  }
+}
+
+function paintProjectDetailBanner(agentId, projectName, project) {
+  const banner = document.getElementById('project-detail-banner');
+  const glyph  = document.getElementById('project-detail-banner-glyph');
+  const remove = document.getElementById('project-detail-banner-remove');
+  const label  = document.getElementById('project-detail-banner-upload-label');
+  if (!banner) return;
+  const palette = ['#6366f1','#8b5cf6','#0ea5e9','#10b981','#f59e0b','#ec4899','#475569','#0f172a'];
+  const accent = project?.color
+    || palette[(project?.name || '').split('').reduce((s,c) => s + c.charCodeAt(0), 0) % palette.length];
+  const icon = (project?.icon && project.icon.length <= 4) ? project.icon : '📁';
+  if (project?.image) {
+    const url = `/v1/agents/${encodeURIComponent(agentId || 'main')}/projects/${encodeURIComponent(projectName)}/image?v=${Date.now()}`;
+    banner.style.backgroundImage = `url('${url}')`;
+    banner.style.backgroundSize = 'cover';
+    banner.style.backgroundPosition = 'center';
+    banner.style.background = '';
+    if (glyph) glyph.style.display = 'none';
+    if (remove) remove.style.display = '';
+    if (label) label.textContent = 'Replace image';
+  } else {
+    banner.style.backgroundImage = '';
+    banner.style.background = accent;
+    if (glyph) { glyph.style.display = ''; glyph.textContent = icon; }
+    if (remove) remove.style.display = 'none';
+    if (label) label.textContent = 'Upload image';
+  }
+}
+
+async function handleProjectImageUpload(ev) {
+  const file = ev?.target?.files?.[0];
+  if (!file) return;
+  const project = state._projectDetail;
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!project || !agentId || !projectName) return;
+  if (file.size > 2 * 1024 * 1024) {
+    alert('Image too large (max 2 MB).');
+    return;
+  }
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const r = await fetch(
+      `${BASE_URL}/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(projectName)}/image`,
+      {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('auth-token') || ''}` },
+        body: fd,
+      });
+    if (!r.ok) {
+      alert(`Upload failed: ${r.status}`);
+      return;
+    }
+    const data = await r.json();
+    project.image = data.image || '';
+    paintProjectDetailBanner(agentId, projectName, project);
+    // Reload the favourites cache so any favourite of this project picks up
+    // the new source_image_url on next render.
+    try { await window.Favourites?.reload?.(); } catch(_) {}
+  } catch (e) {
+    alert(`Upload failed: ${e.message || e}`);
+  } finally {
+    ev.target.value = '';
+  }
+}
+
+async function removeProjectImage() {
+  const project = state._projectDetail;
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!project || !agentId || !projectName) return;
+  if (!confirm('Remove this project image?')) return;
+  try {
+    await API.del(`/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(projectName)}/image`);
+    project.image = '';
+    paintProjectDetailBanner(agentId, projectName, project);
+    try { await window.Favourites?.reload?.(); } catch(_) {}
+  } catch (e) {
+    alert(`Remove failed: ${e.message || e}`);
+  }
+}
+
 async function loadProjectDetail(agentId, projectName) {
   // Load project config
   try {
@@ -724,6 +897,15 @@ async function loadProjectDetail(agentId, projectName) {
       return;
     }
     state._projectDetail = project;
+
+    // Mount the favourite star into the page-header for this project.
+    if (project.id) {
+      updatePageHeader(project.name || projectName, null, null, {
+        item_type: 'project',
+        item_id: project.id,
+        agent_id: agentId || 'main',
+      });
+    }
 
     // Render header
     document.getElementById('project-detail-name').textContent = project.name || projectName;
@@ -2066,6 +2248,18 @@ async function editProjectFromMenu(agentId, projectName) {
       <div class="project-modal-field">
         <label class="project-modal-label">Icon</label>
         <input class="project-modal-input" id="edit-project-icon" value="${esc(project.icon || '📁')}" maxlength="4" style="width:80px;text-align:center;font-size:18px">
+      </div>
+      <div class="project-modal-field">
+        <label class="project-modal-label">Image</label>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div id="edit-project-image-preview" style="width:64px;height:42px;border-radius:6px;border:1px solid var(--border-200);background:var(--bg-300);background-size:cover;background-position:center;flex-shrink:0;${project.image ? `background-image:url('/v1/agents/${esc(agentId)}/projects/${esc(projectName)}/image?v=${Date.now()}')` : ''}"></div>
+          <label class="btn-secondary" style="cursor:pointer">
+            <span id="edit-project-image-label">${project.image ? 'Replace' : 'Upload'}</span>
+            <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden onchange="_editProjectImageUpload(event,'${esc(agentId)}','${esc(projectName)}')">
+          </label>
+          <button type="button" class="btn-secondary" id="edit-project-image-clear" onclick="_editProjectImageClear('${esc(agentId)}','${esc(projectName)}')" style="display:${project.image?'inline-block':'none'}">Remove</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-400);margin-top:4px">Used as the card background on the projects list and on favourites pinned to this project. Max 2 MB.</div>
       </div>
       ${ownerSelectorBlock}
       ${scopeBlock}
@@ -3661,11 +3855,12 @@ function renderArtifactsBrowse() {
       : '';
 
     html += `
-      <div class="artifact-browse-card" onclick="openArtifactFromBrowse('${esc(a.id)}', '${esc(a.session_id)}', '${esc(a.agent_id)}')" ${isInter ? 'style="opacity:0.78"' : ''}>
-        <div class="artifact-browse-preview${hasPreview ? '' : ' no-preview'}">
+      <div class="artifact-browse-card" data-art-id="${esc(a.id)}" data-art-agent="${esc(a.agent_id)}" ${isInter ? 'style="opacity:0.78"' : ''}>
+        <div class="artifact-browse-fav-slot" onclick="event.stopPropagation()" data-art-fav-id="${esc(a.id)}" data-art-fav-agent="${esc(a.agent_id)}"></div>
+        <div class="artifact-browse-preview${hasPreview ? '' : ' no-preview'}" onclick="openArtifactFromBrowse('${esc(a.id)}', '${esc(a.session_id)}', '${esc(a.agent_id)}')">
           ${hasPreview ? preview : artifactTypeIcon(a.type)}
         </div>
-        <div class="artifact-browse-info">
+        <div class="artifact-browse-info" onclick="openArtifactFromBrowse('${esc(a.id)}', '${esc(a.session_id)}', '${esc(a.agent_id)}')">
           <div class="artifact-browse-name">${esc(a.name)}</div>
           <div class="artifact-browse-meta">
             <span class="abm-type">${esc(a.type)}</span>
@@ -3679,6 +3874,18 @@ function renderArtifactsBrowse() {
     `;
   }
   grid.innerHTML = html;
+  if (window.Favourites?.mount) {
+    grid.querySelectorAll('.artifact-browse-fav-slot').forEach(slot => {
+      const id = slot.dataset.artFavId;
+      const agent = slot.dataset.artFavAgent || 'main';
+      if (!id) return;
+      window.Favourites.mount(slot, {
+        item_type: 'artifact',
+        item_id: id,
+        agent_id: agent,
+      });
+    });
+  }
 }
 
 function filterArtifactsBrowse(type) {

@@ -7220,10 +7220,13 @@ class ProjectManager:
             owner_uid = cfg.get("owner_user_id", "")
             owner_tid = cfg.get("owner_team_id", "")
             projects.append({
+                "id": cfg.get("id", ""),
                 "name": name,
                 "description": cfg.get("description", ""),
                 "instructions": cfg.get("instructions", ""),
                 "icon": cfg.get("icon", "folder"),
+                "image": cfg.get("image", ""),
+                "color": cfg.get("color", ""),
                 "created_at": cfg.get("created_at", ""),
                 "tags": cfg.get("tags", []),
                 "watch_folders": cfg.get("watch_folders", []),
@@ -7356,6 +7359,7 @@ class ProjectManager:
             with open(cfg_path, "r") as f:
                 cfg = json.load(f)
             for k in ("description", "watch_folders", "tags", "model", "name", "icon",
+                       "image", "color",
                        "status", "instructions",
                        "input_folders", "input_folders_last_scan", "sync_status",
                        "visibility", "owner_user_id", "owner_team_id",

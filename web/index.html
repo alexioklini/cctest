@@ -112,6 +112,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg></span>
         <span class="sb-label">Projects</span>
       </div>
+      <div class="sb-nav-item" onclick="navigateTo('favourites')" data-view="favourites">
+        <span class="sb-icon"><svg viewBox="0 0 24 24"><polygon points="12 2 15 8.5 22 9.3 17 14 18.2 21 12 17.8 5.8 21 7 14 2 9.3 9 8.5 12 2"/></svg></span>
+        <span class="sb-label">Favourites</span>
+      </div>
       <div class="sb-nav-item" onclick="navigateTo('artifacts')" data-view="artifacts">
         <span class="sb-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
         <span class="sb-label">Artifacts</span>
@@ -131,6 +135,11 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     </nav>
 
     <hr class="sb-divider">
+
+    <div class="sb-section-title sb-favourites-title" id="sb-favourites-title" style="display:none">Favourites</div>
+    <div class="sb-sessions-list" id="sb-recent-favourites">
+      <!-- Populated dynamically -->
+    </div>
 
     <div class="sb-section-title">Recent</div>
     <div class="sb-sessions-list" id="sb-recent-chats">
@@ -453,6 +462,29 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <!-- Agent chips populated dynamically -->
       </div>
       <div class="artifacts-grid" id="artifacts-grid">
+        <!-- Populated dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Favourites View ═══ -->
+  <div id="favourites-view">
+    <div class="fav-view-container">
+      <div class="fav-view-header">
+        <h1 class="fav-view-title">Favourites</h1>
+        <div class="fav-view-actions">
+          <select id="fav-view-sort" onchange="favViewSort(this.value)">
+            <option value="recent">Recently changed</option>
+            <option value="name">Name (A–Z)</option>
+            <option value="added">Most recently added</option>
+          </select>
+          <button class="fav-view-clear" onclick="favViewClear()">Clear all</button>
+        </div>
+      </div>
+      <div class="fav-view-tabs" id="fav-view-tabs">
+        <!-- Populated dynamically (Mine / Team / Everyone chips) -->
+      </div>
+      <div class="fav-view-grid" id="fav-view-grid">
         <!-- Populated dynamically -->
       </div>
     </div>
@@ -782,6 +814,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 <script src="js/search.js"></script>
 <script src="js/files.js"></script>
 <script src="js/workflows.js"></script>
+<script src="js/favourites.js"></script>
 <script src="js/init.js"></script>
 </body>
 </html>

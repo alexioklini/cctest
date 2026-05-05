@@ -14,6 +14,8 @@ function navigateTo(view, opts) {
   document.getElementById('project-detail-view').classList.remove('active');
   document.getElementById('artifacts-view').classList.remove('active');
   document.getElementById('scheduled-view').classList.remove('active');
+  const favView = document.getElementById('favourites-view');
+  if (favView) favView.classList.remove('active');
   const wfView = document.getElementById('workflows-view');
   if (wfView) wfView.classList.remove('active');
 
@@ -106,6 +108,13 @@ function navigateTo(view, opts) {
       if (typeof loadWorkflows === 'function') loadWorkflows();
       break;
 
+    case 'favourites':
+      if (favView) favView.classList.add('active');
+      updatePageHeader('Favourites');
+      document.getElementById('status-bar').style.display = 'none';
+      if (typeof loadFavouritesView === 'function') loadFavouritesView();
+      break;
+
   }
 
   // Sync the sidebar list to the new view. Dispatcher in renderRecentChats
@@ -123,7 +132,7 @@ function navigateTo(view, opts) {
   closeMobileSidebar();
 }
 
-function updatePageHeader(title, breadcrumb, breadcrumbAgentId) {
+function updatePageHeader(title, breadcrumb, breadcrumbAgentId, favouriteOpts) {
   const el = document.getElementById('page-header-title');
   if (breadcrumb) {
     // When breadcrumbAgentId is set, the breadcrumb is a project name and the
@@ -140,6 +149,20 @@ function updatePageHeader(title, breadcrumb, breadcrumbAgentId) {
     }
   } else {
     el.textContent = title;
+  }
+
+  // Mount / refresh the favourite-star button in the header-right area.
+  // favouriteOpts: { item_type, item_id, agent_id } or null/undefined to clear.
+  const right = document.getElementById('page-header-right');
+  if (right) {
+    const existing = right.querySelector('.fav-star-btn');
+    if (existing) existing.remove();
+    if (favouriteOpts && favouriteOpts.item_id && window.Favourites?.mount) {
+      const btn = window.Favourites.mount(right, favouriteOpts);
+      if (btn) {
+        btn.style.order = '-1';  // place before the panel toggle
+      }
+    }
   }
 }
 
@@ -830,6 +853,8 @@ function closeMobileSidebar() {
 }
 
 function renderRecentChats() {
+  // Always refresh the favourites sidebar block alongside Recent — same poll cadence.
+  try { window.Favourites?.renderSidebar?.(); } catch(_) {}
   const container = document.getElementById('sb-recent-chats');
   // Sidebar shows scheduled runs whenever the user is browsing the scheduled
   // view OR currently looking at a read-only scheduled-run timeline (which
