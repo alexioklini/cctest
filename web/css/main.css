@@ -5190,7 +5190,11 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
   position: relative;
   height: 140px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 48px;
+  font-size: 44px;
+  color: var(--text-300);
+  background: var(--bg-200);
+}
+.fav-view-card-art.has-image {
   color: rgba(255,255,255,0.95);
   text-shadow: 0 2px 6px rgba(0,0,0,0.25);
 }
@@ -5199,32 +5203,39 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
   background: linear-gradient(to top, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0) 60%);
   pointer-events: none;
 }
-.fav-view-card-glyph { position: relative; z-index: 1; }
+.fav-view-card-glyph { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; }
+.fav-view-card-glyph .card-line-glyph { display: block; }
 .fav-view-card-remove {
   position: absolute;
   top: 8px; right: 8px;
   width: 26px; height: 26px;
   border-radius: 6px;
-  background: rgba(0,0,0,0.5);
-  color: #fff;
+  background: transparent;
+  color: var(--text-300);
   border: none;
   cursor: pointer;
   font-size: 16px;
   line-height: 1;
   opacity: 0;
-  transition: opacity 0.12s;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
   z-index: 2;
 }
+.fav-view-card-art.has-image .fav-view-card-remove {
+  background: rgba(0,0,0,0.45);
+  color: #fff;
+}
 .fav-view-card:hover .fav-view-card-remove { opacity: 1; }
-.fav-view-card-remove:hover { background: rgba(220,38,38,0.85); }
+.fav-view-card-remove:hover { background: var(--bg-300); color: var(--text-100); }
+.fav-view-card-art.has-image .fav-view-card-remove:hover { background: rgba(0,0,0,0.7); }
 
 .fav-view-card-run {
   position: absolute;
-  top: 8px; left: 8px;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
   display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px;
-  border-radius: 6px;
-  background: rgba(0,0,0,0.55);
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.45);
   color: #fff;
   border: none;
   cursor: pointer;
@@ -5232,11 +5243,13 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
   opacity: 0;
   transition: opacity 0.12s, background 0.12s, transform 0.08s;
   z-index: 2;
+  backdrop-filter: blur(4px);
 }
+.fav-view-card-art.has-image .fav-view-card-run { background: rgba(0,0,0,0.55); }
 .fav-view-card:hover .fav-view-card-run { opacity: 1; }
-.fav-view-card-run:hover { background: rgba(16,185,129,0.9); }
-.fav-view-card-run:active { transform: scale(0.94); }
-.fav-view-card-run svg { display: block; margin-left: 1px; /* optical centering of play triangle */ }
+.fav-view-card-run:hover { background: rgba(0,0,0,0.7); }
+.fav-view-card-run:active { transform: translate(-50%, -50%) scale(0.94); }
+.fav-view-card-run svg { display: block; margin-left: 2px; /* optical centering of play triangle */ }
 
 .fav-view-card-info {
   padding: 12px 14px;
@@ -5266,9 +5279,12 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.fav-view-card-scope.is-user { background: rgba(99,102,241,0.12); color: #4f46e5; }
-.fav-view-card-scope.is-team { background: rgba(16,185,129,0.12); color: #047857; }
-.fav-view-card-scope.is-general { background: rgba(245,158,11,0.14); color: #b45309; }
+.fav-view-card-scope.is-user,
+.fav-view-card-scope.is-team,
+.fav-view-card-scope.is-general {
+  background: var(--bg-200);
+  color: var(--text-400);
+}
 
 .fav-view-empty {
   padding: 64px 20px;
@@ -5326,7 +5342,8 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
   background: linear-gradient(to top, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0) 60%);
   pointer-events: none;
 }
-.project-card-glyph { position: relative; z-index: 1; }
+.project-card-glyph { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; }
+.project-card-glyph .card-line-glyph { display: block; }
 .project-card-fav-slot {
   position: absolute;
   top: 8px; left: 8px;

@@ -672,7 +672,12 @@ function renderProjectsList() {
     const imgUrl = hasImage
       ? `/v1/agents/${encodeURIComponent(agent)}/projects/${encodeURIComponent(p.name)}/image`
       : '';
-    const icon = (p.icon && p.icon.length <= 4) ? p.icon : '📁';
+    // Treat the type-default emoji as "no custom icon" → render line-art glyph.
+    const rawIcon = (p.icon && p.icon.length <= 4) ? p.icon : '';
+    const customIcon = (rawIcon && rawIcon !== '📁') ? rawIcon : '';
+    const glyphHtml = customIcon
+      ? esc(customIcon)
+      : (window.Favourites?.typeGlyphSvg?.('project', 44) || '');
     const artClass = hasImage ? 'project-card-art has-image' : 'project-card-art';
     const artStyle = hasImage
       ? `style="background-image:url('${esc(imgUrl)}');background-size:cover;background-position:center"`
@@ -681,7 +686,7 @@ function renderProjectsList() {
     item.innerHTML = `
       <div class="${artClass}" ${artStyle}>
         ${hasImage ? '<div class="project-card-art-overlay"></div>' : ''}
-        ${!hasImage ? `<span class="project-card-glyph">${esc(icon)}</span>` : ''}
+        ${!hasImage ? `<span class="project-card-glyph">${glyphHtml}</span>` : ''}
         <div class="project-card-fav-slot" onclick="event.stopPropagation()"></div>
         <button class="project-card-menu" onclick="event.stopPropagation(); showProjectListMenu(event, '${esc(agent)}', '${esc(p.name)}')" title="More options">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>

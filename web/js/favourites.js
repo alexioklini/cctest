@@ -15,6 +15,25 @@ const FAVOURITES_TYPE_DEFAULTS = {
   artifact:     { icon: '📄', color: '#8b5cf6', label: 'Artifact' },
 };
 
+/* Sidebar-style line-art glyphs used as the *default* card icon when the user
+   has not picked a custom emoji. Currents-color stroke, no fill, weight 1.8 —
+   matches .sb-nav-item .sb-icon. Returns inner SVG markup; caller wraps in
+   <svg viewBox="0 0 24 24">. */
+const FAVOURITES_TYPE_GLYPH_SVG = {
+  project:      '<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>',
+  project_chat: '<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>',
+  chat:         '<path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>',
+  workflow:     '<polyline points="4 7 8 11 4 15"/><polyline points="20 7 16 11 20 15"/><line x1="9" y1="18" x2="15" y2="6"/>',
+  schedule:     '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  artifact:     '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>',
+};
+
+function favouriteTypeGlyphSvg(itemType, sizePx) {
+  const inner = FAVOURITES_TYPE_GLYPH_SVG[itemType] || FAVOURITES_TYPE_GLYPH_SVG.artifact;
+  const size = sizePx || 44;
+  return `<svg class="card-line-glyph" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+}
+
 // Curated icon palette for the customise modal (emoji = visually solid + zero deps).
 const FAVOURITES_ICON_PALETTE = [
   '⭐','🔥','💡','🎯','📌','🔖','🏷️','📚',
@@ -487,11 +506,14 @@ async function renderRecentFavourites() {
     const div = document.createElement('div');
     div.className = 'sb-session-item sb-fav-item';
     const def  = FAVOURITES_TYPE_DEFAULTS[row.item_type] || {};
-    const icon = row.icon || row.source_icon || def.icon || '⭐';
-    const tone = row.color || row.source_color || def.color || 'var(--text-300)';
+    const rawIcon = row.icon || row.source_icon || '';
+    const customIcon = (rawIcon && rawIcon !== def.icon) ? rawIcon : '';
+    const iconHtml = customIcon
+      ? escapeHtml(customIcon)
+      : favouriteTypeGlyphSvg(row.item_type, 16);
     const t = (row.title || '(untitled)').slice(0, 50);
     div.innerHTML = `
-      <span class="sb-sess-icon sb-fav-icon" style="color:${escapeHtml(tone)}">${escapeHtml(icon)}</span>
+      <span class="sb-sess-icon sb-fav-icon">${iconHtml}</span>
       <span class="sb-session-title">${escapeHtml(t)}</span>
     `;
     div.title = `${row.item_type} · ${labelForScope(row.scope, row.scope_id)}`;
@@ -641,30 +663,35 @@ function renderFavouritesGrid() {
 
   grid.innerHTML = rows.map(row => {
     const def  = FAVOURITES_TYPE_DEFAULTS[row.item_type] || {};
-    const tone = row.color || row.source_color || def.color || '#475569';
-    const ic   = row.icon || row.source_icon || def.icon || '⭐';
+    const rawIcon = row.icon || row.source_icon || '';
+    // Treat the seeded type-default emoji as "no custom icon picked" so cards
+    // fall back to the line-art glyph (matching sidebar style). User-picked
+    // icons differ from the default and are honoured verbatim.
+    const customIcon = (rawIcon && rawIcon !== def.icon) ? rawIcon : '';
+    const ic   = customIcon || def.icon || '⭐';
     const ago  = row.updated_at ? favRelativeTime(row.updated_at * 1000) : '';
     const scopeBadge = scopeBadgeHtml(row);
     const typeLabel  = def.label || row.item_type;
     const unavailable = row.available === false;
-    // Image precedence: per-favourite override > underlying item's image > tone+icon
+    // Image precedence: per-favourite override > underlying item's image > neutral bg
     const imageUrl = row.image_path
       ? `/v1/favourites/image/${encodeURIComponent(row.image_path)}`
       : (row.source_image_url || '');
+    const artClass = imageUrl ? 'fav-view-card-art has-image' : 'fav-view-card-art';
     const bg = imageUrl
       ? `style="background-image:url('${escapeHtml(imageUrl)}');background-size:cover;background-position:center"`
-      : `style="background:${escapeHtml(tone)}"`;
+      : '';
     const runnable = !unavailable && (row.item_type === 'workflow' || row.item_type === 'schedule');
     const runBtn = runnable
       ? `<button class="fav-view-card-run" title="Run now" aria-label="Run now">
-           <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+           <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
          </button>`
       : '';
     return `
       <div class="fav-view-card${unavailable ? ' is-unavailable' : ''}" data-fav-id="${row.id}">
-        <div class="fav-view-card-art" ${bg}>
+        <div class="${artClass}" ${bg}>
           ${imageUrl ? '<div class="fav-view-card-overlay"></div>' : ''}
-          ${!imageUrl ? `<span class="fav-view-card-glyph">${escapeHtml(ic)}</span>` : ''}
+          ${!imageUrl ? `<span class="fav-view-card-glyph">${customIcon ? escapeHtml(ic) : favouriteTypeGlyphSvg(row.item_type, 44)}</span>` : ''}
           ${runBtn}
           <button class="fav-view-card-remove" title="Remove favourite">×</button>
         </div>
@@ -810,4 +837,5 @@ window.Favourites = {
   renderSidebar: renderRecentFavourites,
   openRow: openFavouriteRow,
   TYPE_DEFAULTS: FAVOURITES_TYPE_DEFAULTS,
+  typeGlyphSvg: favouriteTypeGlyphSvg,
 };
