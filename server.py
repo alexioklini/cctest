@@ -2254,7 +2254,6 @@ class BrainAgentHandler(
         "/v1/agents/create",
         "/v1/agents/delete",
         "/v1/agents/rename",
-        "/v1/skills/install",
         "/v1/skills/install-zip",
         "/v1/skills/remove",
         "/v1/skills/claude-code",
@@ -2753,10 +2752,6 @@ class BrainAgentHandler(
             self._handle_queue_cancel()
         elif path == "/v1/warmup/trigger":
             self._handle_warmup_trigger()
-        elif path == "/v1/skills/browse":
-            self._handle_browse_skills()
-        elif path == "/v1/skills/install":
-            self._handle_install_skill()
         elif path == "/v1/skills/install-zip":
             self._handle_install_skill_zip()
         elif path == "/v1/schedule/cancel":

@@ -221,11 +221,7 @@ Agents see each other via the **agent registry** and can delegate tasks. Pause/d
 
 ## Skills
 
-OpenClaw-compatible `SKILL.md` format. Three ways to install:
-
-1. **Search** — browse 7000+ skills from ClawHub repository
-2. **URL** — paste `https://clawhub.ai/author/skill-name`
-3. **Zip** — upload a `.zip` containing `SKILL.md`
+Claude `SKILL.md` format. Upload a `.zip` containing `SKILL.md` (and any sibling files) to install.
 
 Skills are loaded on-demand via `use_skill("slug")` to keep the system prompt lean.
 
@@ -367,8 +363,6 @@ All providers are OpenAI-compatible (`/v1/chat/completions`). Brain connects to 
 | POST | `/v1/schedule` | Manage schedules |
 | POST | `/v1/providers` | Add/edit/delete providers |
 | POST | `/v1/providers/test` | Test provider connection |
-| POST | `/v1/skills/browse` | Search skills repository |
-| POST | `/v1/skills/install` | Install from ClawHub |
 | POST | `/v1/skills/install-zip` | Install from zip |
 | POST | `/v1/skills/remove` | Remove skill |
 | GET | `/v1/agents/activity` | Active agent tasks/chats |

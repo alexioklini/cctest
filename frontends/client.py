@@ -247,12 +247,6 @@ class BrainAgentClient:
 
     # --- Skills ---
 
-    def skills_browse(self, query: str, agent: str = "main") -> dict:
-        return self._post("/v1/skills/browse", {"query": query, "agent": agent})
-
-    def skills_install(self, url: str, agent: str = "main") -> dict:
-        return self._post("/v1/skills/install", {"url": url, "agent": agent})
-
     def skills_remove(self, slug: str, agent: str = "main") -> dict:
         return self._post("/v1/skills/remove", {"slug": slug, "agent": agent})
 

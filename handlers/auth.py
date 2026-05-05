@@ -572,7 +572,6 @@ class AuthHandlerMixin:
         "/v1/agents/delete",
         "/v1/agents/rename",
         # Skills install/remove
-        "/v1/skills/install",
         "/v1/skills/install-zip",
         "/v1/skills/remove",
         "/v1/skills/claude-code",

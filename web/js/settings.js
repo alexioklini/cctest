@@ -2481,64 +2481,6 @@ async function removeAgentSkill(agentId, skillName) {
   }
 }
 
-async function searchClawHub(agentId, query) {
-  const results = document.getElementById('skill-marketplace-results');
-  const searchBtn = document.getElementById('clawhub-search-btn');
-  if (!query || query.length < 2) {
-    results.innerHTML = '<div style="padding:24px;text-align:center;color:#a1a09a;font-size:12px">Enter at least 2 characters to search</div>';
-    return;
-  }
-  results.innerHTML = `<div style="padding:20px;text-align:center">
-    <div style="display:inline-block;width:18px;height:18px;border:2px solid #e8e7e0;border-top-color:#d97757;border-radius:50%;animation:spin 0.6s linear infinite"></div>
-    <div style="margin-top:8px;color:#73726c;font-size:12px">Searching ClawHub for "${esc(query)}"...</div>
-  </div>`;
-  if (searchBtn) { searchBtn.textContent = '...'; searchBtn.disabled = true; }
-  try {
-    const data = await API.browseSkills(query);
-    const skills = data.skills || [];
-    if (searchBtn) { searchBtn.textContent = 'Search'; searchBtn.disabled = false; }
-    if (!skills.length) {
-      results.innerHTML = `<div style="padding:24px;text-align:center;color:#a1a09a;font-size:12px">No skills found for "${esc(query)}"</div>`;
-      return;
-    }
-    let html = `<div style="padding:4px 0;font-size:11px;color:#a1a09a;margin-bottom:4px">${skills.length} results (${data.total_in_repo || '?'} total in repo)</div>`;
-    for (const s of skills) {
-      html += `
-        <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid rgba(31,30,29,0.08);border-radius:8px;margin-bottom:6px;transition:background 0.15s;overflow:hidden" onmouseover="this.style.background='rgba(0,0,0,0.02)'" onmouseout="this.style.background='transparent'">
-          <div style="flex:1;min-width:0;overflow:hidden">
-            <div style="font-size:13px;font-weight:600;color:#141413">${esc(s.display_name || s.name)}</div>
-            ${s.description ? `<div style="font-size:11px;color:#73726c;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.description)}</div>` : ''}
-            <div style="font-size:10px;color:#a1a09a;margin-top:2px">${esc(s.author)}/${esc(s.name)}</div>
-          </div>
-          <button onclick="installFromClawHub('${esc(agentId)}','${esc(s.name)}','${esc(s.author)}',this)"
-            style="${_mcpBtn};padding:4px 12px;flex-shrink:0">Install</button>
-        </div>`;
-    }
-    results.innerHTML = html;
-  } catch(e) {
-    if (searchBtn) { searchBtn.textContent = 'Search'; searchBtn.disabled = false; }
-    results.innerHTML = `<div style="padding:24px;text-align:center;color:#dc2626;font-size:12px">${esc(e.message)}</div>`;
-  }
-}
-
-async function installFromClawHub(agentId, skill, author, btn) {
-  btn.disabled = true;
-  btn.textContent = 'Installing...';
-  btn.style.opacity = '0.5';
-  try {
-    await API.installSkill(skill, author, agentId);
-    const added = document.createElement('span');
-    added.textContent = 'Added';
-    added.style.cssText = 'font-size:11px;font-weight:500;color:#16a34a;padding:4px 12px';
-    btn.replaceWith(added);
-    setTimeout(() => switchAgentTab(agentId, 'skills', null), 800);
-  } catch(e) {
-    btn.textContent = 'Failed';
-    btn.style.cssText = 'font-size:11px;padding:4px 12px;border-radius:6px;background:rgba(220,38,38,0.08);color:#dc2626;border:none;cursor:pointer';
-    btn.disabled = false;
-  }
-}
-
 async function searchCCMarketplace(query) {
   const results = document.getElementById('cc-marketplace-results');
   const searchBtn = document.getElementById('cc-marketplace-search-btn');
@@ -2730,7 +2672,7 @@ async function switchAgentTab(agentId, tab, btn) {
             </div>
           </div>`;
       if (!agentSkills.length) {
-        html += '<div style="padding:16px;text-align:center;color:#73726c;font-size:12px">No agent skills installed. Search ClawHub below to discover 7000+ skills.</div>';
+        html += '<div style="padding:16px;text-align:center;color:#73726c;font-size:12px">No agent skills installed.</div>';
       } else {
         html += '<div style="display:grid;gap:6px;grid-template-columns:minmax(0,1fr)">';
         for (const s of agentSkills) {
@@ -2751,23 +2693,7 @@ async function switchAgentTab(agentId, tab, btn) {
       }
       html += '</div>';
 
-      // --- Section 2: Browse ClawHub (always visible) ---
-      html += `
-        <div style="border-top:1px solid rgba(31,30,29,0.08);padding-top:16px">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-            <span style="font-size:14px;font-weight:700;color:#141413">Browse ClawHub</span>
-            <span style="font-size:10px;color:#a1a09a">7000+ skills</span>
-          </div>
-          <div style="position:relative;margin-bottom:10px">
-            <input id="skill-marketplace-search" style="width:100%;box-sizing:border-box;background:#f5f4ed;border:1px solid rgba(31,30,29,0.08);border-radius:8px;padding:9px 80px 9px 12px;font-size:13px;color:#141413;outline:none;transition:border-color 0.15s" placeholder="Search skills (e.g. git, docker, aws)..." onfocus="this.style.borderColor='#d97757'" onblur="this.style.borderColor='rgba(31,30,29,0.08)'" onkeydown="if(event.key==='Enter'){event.preventDefault();searchClawHub('${esc(agentId)}',this.value)}" oninput="clearTimeout(window._clawHubDebounce);window._clawHubDebounce=setTimeout(()=>searchClawHub('${esc(agentId)}',this.value),400)">
-            <button id="clawhub-search-btn" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:11px;padding:5px 14px;border-radius:6px;background:#d97757;color:#fff;border:none;cursor:pointer;font-weight:500;transition:background 0.15s" onmouseover="this.style.background='#c66140'" onmouseout="this.style.background='#d97757'" onclick="searchClawHub('${esc(agentId)}',document.getElementById('skill-marketplace-search').value)">Search</button>
-          </div>
-          <div id="skill-marketplace-results" style="display:grid;gap:6px">
-            <div style="padding:24px;text-align:center;color:#a1a09a;font-size:12px">Type to search the ClawHub skill registry</div>
-          </div>
-        </div>`;
-
-      // --- Section 3: Claude Code Skills ---
+      // --- Section 2: Claude Code Skills ---
       html += `
         <div style="border-top:1px solid rgba(31,30,29,0.08);padding-top:16px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
@@ -2805,7 +2731,7 @@ async function switchAgentTab(agentId, tab, btn) {
       }
       html += '</div>';
 
-      // --- Section 4: Browse CC Marketplace (always visible) ---
+      // --- Section 3: Browse CC Marketplace (always visible) ---
       html += `
         <div style="border-top:1px solid rgba(31,30,29,0.08);padding-top:16px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">

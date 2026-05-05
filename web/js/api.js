@@ -141,8 +141,6 @@ class API {
   static toggleCCSkill(agent, slug, enabled) { return this.post('/v1/skills/claude-code', {agent, slug, enabled}); }
   static browseCCPlugins(query) { return this.post('/v1/skills/claude-code/browse', {query}); }
   static installCCPlugin(plugin, marketplace) { return this.post('/v1/skills/claude-code/install', {plugin, marketplace}); }
-  static browseSkills(search) { return this.post('/v1/skills/browse', {search}); }
-  static installSkill(skill, author, agent) { return this.post('/v1/skills/install', {skill, author, agent}); }
   static removeSkill(skill, agent) { return this.post('/v1/skills/remove', {skill, agent}); }
 
   // Memory
