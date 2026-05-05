@@ -654,11 +654,18 @@ function renderFavouritesGrid() {
     const bg = imageUrl
       ? `style="background-image:url('${escapeHtml(imageUrl)}');background-size:cover;background-position:center"`
       : `style="background:${escapeHtml(tone)}"`;
+    const runnable = !unavailable && (row.item_type === 'workflow' || row.item_type === 'schedule');
+    const runBtn = runnable
+      ? `<button class="fav-view-card-run" title="Run now" aria-label="Run now">
+           <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+         </button>`
+      : '';
     return `
       <div class="fav-view-card${unavailable ? ' is-unavailable' : ''}" data-fav-id="${row.id}">
         <div class="fav-view-card-art" ${bg}>
           ${imageUrl ? '<div class="fav-view-card-overlay"></div>' : ''}
           ${!imageUrl ? `<span class="fav-view-card-glyph">${escapeHtml(ic)}</span>` : ''}
+          ${runBtn}
           <button class="fav-view-card-remove" title="Remove favourite">×</button>
         </div>
         <div class="fav-view-card-info">
@@ -677,8 +684,9 @@ function renderFavouritesGrid() {
     const row = FavouritesCache.rows.find(r => r.id === id);
     if (!row) return;
     card.addEventListener('click', (ev) => {
-      // Don't open when × is clicked.
+      // Don't open when × or ▶ Run is clicked.
       if (ev.target.closest('.fav-view-card-remove')) return;
+      if (ev.target.closest('.fav-view-card-run')) return;
       if (row.available === false) {
         flashToast('This item is no longer accessible', true);
         return;
@@ -699,7 +707,43 @@ function renderFavouritesGrid() {
         }
       });
     }
+    const runBtn = card.querySelector('.fav-view-card-run');
+    if (runBtn) {
+      runBtn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        await runFavouriteRow(row);
+      });
+    }
   });
+}
+
+/* Trigger a one-shot execution for a runnable favourite (workflow / schedule).
+   Reuses the same code path the dedicated views use:
+     • workflow → POST /v1/agents/<agent>/workflows/<name>/run + open detail
+     • schedule → manageSchedule({action:'run_now', name}) */
+async function runFavouriteRow(row) {
+  if (!row || row.available === false) {
+    flashToast('This item is no longer accessible', true);
+    return;
+  }
+  const t = row.item_type;
+  const name = row.item_id;
+  if (t === 'workflow') {
+    if (typeof wfRun === 'function') {
+      flashToast('Starting workflow…');
+      navigateTo('workflows');
+      try { await wfRun(name); } catch (e) { flashToast(`Run failed: ${e.message || e}`, true); }
+    } else {
+      flashToast('Workflow runner unavailable', true);
+    }
+  } else if (t === 'schedule') {
+    try {
+      await API.manageSchedule({ action: 'run_now', name });
+      flashToast(`Triggered "${row.title || name}"`);
+    } catch (e) {
+      flashToast(`Run failed: ${e.message || e}`, true);
+    }
+  }
 }
 
 function scopeBadgeHtml(row) {

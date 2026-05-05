@@ -14606,7 +14606,7 @@ class Scheduler:
                 sched_inf.pop("thinking_level", None)
                 sched_inf["thinking"] = False
             # Memory summary tasks only need memory tools, not the full 39-tool schema
-            sched_tools = tcfg.get("scheduled_task_tools", True)
+            sched_tools = _get_token_config(agent_id).get("scheduled_task_tools", True)
             if name.startswith("_memory_summary_"):
                 sched_tools = "memory_only"
             result_text = _run_delegate(messages, model, system_prompt,

@@ -3156,6 +3156,190 @@ class BrainAgentHandler(
         else:
             self._send_json({"schedules": [], "running": []})
 
+    def _handle_modify_schedule(self):
+        body = self._read_json()
+        action = body.get("action", "list")
+        if not engine._scheduler:
+            self._send_json({"error": "Scheduler not running"}, 500)
+            return
+
+        if action == "add":
+            atts = body.get("attachments") or []
+            if not isinstance(atts, list):
+                atts = []
+            wd = body.get("working_dir") or None
+            if isinstance(wd, str):
+                wd = wd.strip() or None
+            actor = getattr(self, "_auth_user", None)
+            owner_id = actor.get("id", "") if actor else ""
+            result = engine._scheduler.add(
+                body.get("name", ""), body.get("task", ""),
+                body.get("schedule", ""), body.get("agent", "main"),
+                body.get("model"), timeout=int(body.get("timeout", 300)),
+                attachments=atts, working_dir=wd,
+                user_id=owner_id,
+                thinking_level=body.get("thinking_level", "") or "",
+                caveman_chat=body.get("caveman_chat", 0) or 0,
+            )
+            self._send_json(result)
+        elif action == "pause":
+            name = body.get("name", "")
+            if not self._schedule_owner_check(name):
+                return
+            self._send_json(engine._scheduler.pause(name))
+        elif action == "resume":
+            name = body.get("name", "")
+            if not self._schedule_owner_check(name):
+                return
+            self._send_json(engine._scheduler.resume(name))
+        elif action == "delete":
+            name = body.get("name", "")
+            if not self._schedule_owner_check(name):
+                return
+            self._send_json(engine._scheduler.remove(name))
+        elif action == "run_now":
+            name = body.get("name", "")
+            if not self._schedule_owner_check(name):
+                return
+            task_row = engine._scheduler.get_task(name) if hasattr(engine._scheduler, 'get_task') else None
+            if task_row:
+                t = threading.Thread(target=engine._scheduler._execute_scheduled, args=(task_row,), daemon=True, name=f"sched_now_{name}")
+                t.start()
+                self._send_json({"status": "triggered", "name": name})
+            else:
+                self._send_json({"error": f"Task '{name}' not found"}, 404)
+        elif action == "history":
+            name = body.get("name")
+            if name and not self._schedule_owner_check(name):
+                return
+            self._send_json({"history": engine._scheduler.get_history(
+                name, body.get("limit", 20))})
+        elif action == "delete_run":
+            try:
+                run_id = int(body.get("run_id") or 0)
+            except (TypeError, ValueError):
+                run_id = 0
+            if not run_id:
+                self._send_json({"error": "run_id is required"}, 400)
+                return
+            run_row = engine._scheduler.get_run(run_id)
+            if run_row and run_row.get("schedule_name"):
+                if not self._schedule_owner_check(run_row.get("schedule_name")):
+                    return
+            res = engine._scheduler.delete_run(run_id)
+            if isinstance(res, dict) and res.get("error"):
+                self._send_json(res, 400 if "Cannot delete" in res["error"] else 404)
+            else:
+                self._send_json(res)
+        elif action == "clear_history":
+            name = body.get("name", "")
+            if not name:
+                self._send_json({"error": "name is required"}, 400)
+                return
+            if not self._schedule_owner_check(name):
+                return
+            self._send_json(engine._scheduler.delete_history(name))
+        elif action == "purge_orphan_history":
+            user = getattr(self, "_auth_user", None)
+            if user and user.get("role") != "admin" and user.get("id") != "__system__":
+                self._send_json({"error": "Forbidden: admin only"}, 403)
+                return
+            self._send_json(engine._scheduler.delete_orphan_history())
+        elif action == "edit":
+            name = body.get("name", "")
+            if not name:
+                self._send_json({"error": "name is required"}, 400)
+                return
+            if not self._schedule_owner_check(name):
+                return
+            fields = {k: body.get(k) for k in
+                      ("task", "schedule", "model", "timeout", "agent",
+                       "new_name", "attachments", "working_dir",
+                       "thinking_level", "caveman_chat")
+                      if k in body}
+            res = engine._scheduler.update(name, fields)
+            if isinstance(res, dict) and res.get("error"):
+                self._send_json(res, 400)
+            else:
+                self._send_json(res)
+        elif action == "run_detail":
+            try:
+                run_id = int(body.get("run_id") or 0)
+            except (TypeError, ValueError):
+                run_id = 0
+            if not run_id:
+                self._send_json({"error": "run_id is required"}, 400)
+                return
+            row = engine._scheduler.get_run(run_id)
+            if not row:
+                self._send_json({"error": f"Run {run_id} not found"}, 404)
+                return
+            session_id = f"sched-{run_id}"
+            spans = []
+            try:
+                tm = engine._trace_manager
+                if tm:
+                    trace_id = row.get("trace_id")
+                    if trace_id:
+                        spans = tm.get_trace(trace_id)
+                    elif hasattr(tm, "get_spans_for_session"):
+                        spans = tm.get_spans_for_session(session_id)
+            except Exception as e:
+                spans = []
+                row["_trace_error"] = str(e)
+            artifacts: list = []
+            try:
+                art_rows = ChatDB.list_artifacts_for_session(session_id) \
+                    if hasattr(ChatDB, "list_artifacts_for_session") \
+                    else []
+                if not art_rows:
+                    all_a = ChatDB.get_all_artifacts(agent_id=row.get("agent"), limit=500)
+                    art_rows = [a for a in all_a if a.get("session_id") == session_id]
+                for a in art_rows:
+                    try:
+                        size = a.get("latest_size") or (os.path.getsize(a["path"]) if os.path.isfile(a["path"]) else 0)
+                    except OSError:
+                        size = 0
+                    artifacts.append({
+                        "id": a.get("id"),
+                        "name": a.get("name"),
+                        "path": a.get("path"),
+                        "size": size,
+                        "type": a.get("type"),
+                        "role": a.get("role", "output"),
+                        "latest_version": a.get("latest_version", 1),
+                    })
+            except Exception:
+                artifacts = []
+            if not artifacts:
+                folder = row.get("artifact_folder")
+                if folder:
+                    agent_id = row.get("agent") or "main"
+                    folder_path = os.path.join(
+                        engine.AGENTS_DIR, agent_id, "artifacts", folder)
+                    if os.path.isdir(folder_path):
+                        for fname in sorted(os.listdir(folder_path)):
+                            fpath = os.path.join(folder_path, fname)
+                            if os.path.isfile(fpath):
+                                try:
+                                    size = os.path.getsize(fpath)
+                                except OSError:
+                                    size = 0
+                                artifacts.append({
+                                    "id": None,
+                                    "name": fname,
+                                    "size": size,
+                                    "path": fpath,
+                                })
+            self._send_json({
+                "run": row,
+                "session_id": session_id,
+                "spans": spans,
+                "artifacts": artifacts,
+            })
+        else:
+            self._send_json({"schedules": engine._scheduler.list_all()})
+
     def _schedule_owner_check(self, name: str) -> bool:
         """Enforce ownership for non-admin schedule mutations."""
         user = getattr(self, "_auth_user", None)

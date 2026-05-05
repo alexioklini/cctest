@@ -5227,6 +5227,26 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
 .fav-view-card:hover .fav-view-card-remove { opacity: 1; }
 .fav-view-card-remove:hover { background: rgba(220,38,38,0.85); }
 
+.fav-view-card-run {
+  position: absolute;
+  top: 8px; left: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px;
+  border-radius: 6px;
+  background: rgba(0,0,0,0.55);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s, transform 0.08s;
+  z-index: 2;
+}
+.fav-view-card:hover .fav-view-card-run { opacity: 1; }
+.fav-view-card-run:hover { background: rgba(16,185,129,0.9); }
+.fav-view-card-run:active { transform: scale(0.94); }
+.fav-view-card-run svg { display: block; margin-left: 1px; /* optical centering of play triangle */ }
+
 .fav-view-card-info {
   padding: 12px 14px;
 }
