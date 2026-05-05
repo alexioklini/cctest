@@ -55,5 +55,10 @@
     "enabled": true,
     "default_model": "mistral-experimental/voxtral-mini-latest",
     "fallback_model": "whisper-base"
+  },
+  "translation": {
+    "enabled": true,
+    "default_model": "mistral-vibe/mistral-medium-3.5",
+    "detection_fallback_model": "mistral-vibe-cli-fast"
   }
 }

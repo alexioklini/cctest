@@ -1,0 +1,123 @@
+"""Text translation — single _run_delegate call with glossary-aware system prompt."""
+from __future__ import annotations
+
+from .detect import LANG_NAMES, detect_language
+from .glossary import load_glossary, glossary_to_system_block
+
+
+def _lang_label(code: str) -> str:
+    code = (code or "").strip().lower()
+    return LANG_NAMES.get(code, code or "the source language")
+
+
+def build_translate_system_prompt(source_lang: str, target_lang: str,
+                                  glossary: dict | None = None,
+                                  tone: str = "") -> str:
+    """Self-contained — used by tool, HTTP wrapper, and document chunker."""
+    src = _lang_label(source_lang) if source_lang else "the source language (auto-detect)"
+    tgt = _lang_label(target_lang)
+    parts = [
+        f"You are a professional translator. Translate the user's text from {src} into {tgt}.",
+        "",
+        "RULES:",
+        "- Output ONLY the translation. No preamble, no explanation, no quotes around the result.",
+        "- Preserve all formatting: line breaks, lists, headings, code blocks, markdown, whitespace.",
+        "- Preserve numbers, dates, units, URLs, email addresses, and proper nouns verbatim.",
+        "- Keep the same register, tone, and level of formality as the source.",
+        "- If the source contains text already in the target language, keep it as-is.",
+        "- Do not summarise, expand, or improve — translate faithfully.",
+    ]
+    if tone:
+        parts.append(f"- Tone hint: {tone}")
+    block = glossary_to_system_block(glossary)
+    if block:
+        parts.append(block)
+    return "\n".join(parts)
+
+
+def translate_text(text: str, target_lang: str, *,
+                   source_lang: str = "",
+                   glossary_slug: str = "",
+                   model: str = "",
+                   tone: str = "",
+                   auto_detect_fallback_model: str = "") -> dict:
+    """Translate `text` into `target_lang`.
+
+    - source_lang: ISO 639-1; if empty, attempts auto-detection (lingua + optional LLM fallback).
+    - glossary_slug: optional glossary file id.
+    - model: model id used for the translation call. Falls back to ask_llm's resolution chain.
+
+    Returns: {translation, source_lang, target_lang, detected, model, glossary}.
+    Raises ValueError on bad input.
+    """
+    text = text or ""
+    target_lang = (target_lang or "").strip().lower()
+    if not text.strip():
+        raise ValueError("text is empty")
+    if not target_lang:
+        raise ValueError("target_lang is required")
+    if target_lang not in LANG_NAMES:
+        # Tolerate non-canonical entries — only emit a warning shape, don't reject.
+        pass
+
+    detected = None
+    src = (source_lang or "").strip().lower()
+    if not src:
+        detected = detect_language(text, fallback_model=auto_detect_fallback_model or None)
+        src = detected.get("lang", "") if detected else ""
+
+    if src and src == target_lang:
+        return {
+            "translation": text,
+            "source_lang": src,
+            "target_lang": target_lang,
+            "detected": detected,
+            "model": "",
+            "glossary": glossary_slug or "",
+            "noop": True,
+        }
+
+    glossary = load_glossary(glossary_slug) if glossary_slug else None
+    system_prompt = build_translate_system_prompt(src, target_lang, glossary=glossary, tone=tone)
+
+    import brain  # late import
+    chosen_model = (model or "").strip()
+    if not chosen_model:
+        try:
+            tcfg = brain.get_tool_config() or {}
+            chosen_model = ((tcfg.get("translation") or {}).get("default_model") or "").strip()
+        except Exception:
+            chosen_model = ""
+    if not chosen_model:
+        try:
+            tcfg = brain.get_tool_config() or {}
+            chosen_model = ((tcfg.get("refinement") or {}).get("model") or "").strip()
+        except Exception:
+            chosen_model = ""
+    if not chosen_model:
+        chosen_model = getattr(brain, "_delegate_fallback_model", "") or ""
+    if not chosen_model:
+        raise RuntimeError("no model available for translation — set tools_config.translation.default_model")
+
+    result = brain._run_delegate(
+        [{"role": "user", "content": text}],
+        chosen_model,
+        system_prompt,
+        tools=False,
+    )
+    if not result:
+        raise RuntimeError("translation returned empty result")
+    # _run_delegate returns error strings prefixed with "Delegation error:" instead
+    # of raising — surface that as an exception so callers don't store junk.
+    if isinstance(result, str) and result.startswith("Delegation error:"):
+        raise RuntimeError(result)
+
+    return {
+        "translation": result.strip(),
+        "source_lang": src,
+        "target_lang": target_lang,
+        "detected": detected,
+        "model": chosen_model,
+        "glossary": glossary_slug or "",
+        "noop": False,
+    }

@@ -2032,6 +2032,7 @@ from handlers.providers import ProvidersHandlerMixin
 from handlers.projects import ProjectsHandlerMixin
 from handlers.admin import AdminHandlerMixin
 from handlers.favourites import FavouritesHandlerMixin
+from handlers.translate import TranslateHandlerMixin
 
 # Inject server-level globals into handler modules (they were originally
 # defined in the same file and relied on shared module globals).
@@ -2052,6 +2053,7 @@ def _inject_server_globals():
         ProjectsHandlerMixin.__module__,
         AdminHandlerMixin.__module__,
         FavouritesHandlerMixin.__module__,
+        TranslateHandlerMixin.__module__,
     ]
     # All names from server module that handlers reference as bare globals.
     # Include modules aliased as simple names (e.g. engine, _auth_mod) since
@@ -2076,6 +2078,7 @@ class BrainAgentHandler(
     ProjectsHandlerMixin,
     AdminHandlerMixin,
     FavouritesHandlerMixin,
+    TranslateHandlerMixin,
     BaseHTTPRequestHandler,
 ):
     """HTTP request handler for Brain Agent API."""
@@ -2485,6 +2488,17 @@ class BrainAgentHandler(
                 self._send_json({"warmup": warmup_enabled, "warming_up": s._warmup_active})
         elif path == "/v1/schedule":
             self._handle_list_schedule()
+        elif path == "/v1/translate/glossaries":
+            self._handle_glossaries_list()
+        elif path.startswith("/v1/translate/glossaries/"):
+            slug = path[len("/v1/translate/glossaries/"):]
+            self._handle_glossary_get(slug)
+        elif path.startswith("/v1/translate/jobs/") and path.endswith("/result"):
+            jid = path[len("/v1/translate/jobs/"):-len("/result")]
+            self._handle_translate_job_result(jid)
+        elif path.startswith("/v1/translate/jobs/"):
+            jid = path[len("/v1/translate/jobs/"):]
+            self._handle_translate_job_status(jid)
         elif path == "/v1/tasks":
             self._handle_list_tasks()
         elif path == "/v1/schedule/running":
@@ -2831,6 +2845,14 @@ class BrainAgentHandler(
             self._handle_restore()
         elif path == "/v1/refine":
             self._handle_refine()
+        elif path == "/v1/translate/detect":
+            self._handle_translate_detect()
+        elif path == "/v1/translate/text":
+            self._handle_translate_text()
+        elif path == "/v1/translate/document":
+            self._handle_translate_document_upload()
+        elif path == "/v1/translate/glossaries":
+            self._handle_glossary_save()
         elif path.startswith("/v1/agents/") and path.endswith("/commands"):
             self._handle_agent_commands_post(path)
         elif path == "/v1/mcp/connect":
@@ -2946,6 +2968,9 @@ class BrainAgentHandler(
             self._handle_favourites_remove_bulk()
         elif path.startswith("/v1/favourites/"):
             self._handle_favourites_remove(path)
+        elif path.startswith("/v1/translate/glossaries/"):
+            slug = path[len("/v1/translate/glossaries/"):]
+            self._handle_glossary_delete(slug)
         else:
             self._send_json({"error": "Not found"}, 404)
 

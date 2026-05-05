@@ -128,6 +128,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <span class="sb-icon"><svg viewBox="0 0 24 24"><polyline points="4 7 8 11 4 15"/><polyline points="20 7 16 11 20 15"/><line x1="9" y1="18" x2="15" y2="6"/></svg></span>
         <span class="sb-label">Workflows</span>
       </div>
+      <div class="sb-nav-item" onclick="navigateTo('translation')" data-view="translation">
+        <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/></svg></span>
+        <span class="sb-label">Translation</span>
+      </div>
       <div class="sb-nav-item" id="sb-nav-customize" onclick="openAgentSettings()" data-view="settings">
         <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
         <span class="sb-label">Customize</span>
@@ -533,6 +537,158 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     </div>
   </div>
 
+  <!-- ═══ Translation View ═══ -->
+  <div id="translation-view">
+    <div class="tr-container">
+      <div class="tr-header">
+        <h1 class="tr-title">Translation</h1>
+        <div class="tr-header-actions">
+          <button class="tr-btn tr-btn-ghost" onclick="trOpenGlossariesModal()">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+            Glossaries
+          </button>
+        </div>
+      </div>
+
+      <div class="tr-tabs" id="tr-tabs">
+        <div class="tr-tab active" data-tab="text" onclick="trSwitchTab('text')">Text</div>
+        <div class="tr-tab" data-tab="document" onclick="trSwitchTab('document')">Document</div>
+        <div class="tr-tab tr-tab-disabled" data-tab="audio" title="Coming in next session">Audio / Video</div>
+        <div class="tr-tab tr-tab-disabled" data-tab="live" title="Coming in next session">Live Microphone</div>
+      </div>
+
+      <!-- Top toolbar: language pills, glossary, model -->
+      <div class="tr-toolbar">
+        <div class="tr-pill-group">
+          <label class="tr-pill-label">From</label>
+          <button class="tr-pill" id="tr-source-pill" onclick="trToggleSourceMenu(event)">
+            <span id="tr-source-label">Auto-detect</span>
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        </div>
+        <button class="tr-swap-btn" onclick="trSwapLanguages()" title="Swap source ↔ target">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
+        </button>
+        <div class="tr-pill-group">
+          <label class="tr-pill-label">To</label>
+          <button class="tr-pill tr-pill-target" id="tr-target-pill" onclick="trToggleTargetMenu(event)">
+            <span id="tr-target-label">English</span>
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        </div>
+        <div class="tr-toolbar-spacer"></div>
+        <div class="tr-pill-group">
+          <label class="tr-pill-label">Glossary</label>
+          <select id="tr-glossary-select" class="tr-select" onchange="trSetGlossary(this.value)">
+            <option value="">— none —</option>
+          </select>
+        </div>
+        <div class="tr-pill-group">
+          <label class="tr-pill-label">Model</label>
+          <select id="tr-model-select" class="tr-select"></select>
+        </div>
+      </div>
+
+      <!-- Text tab content -->
+      <div class="tr-tab-panel" id="tr-panel-text">
+        <div class="tr-split">
+          <div class="tr-pane tr-pane-source">
+            <div class="tr-pane-header">
+              <span class="tr-pane-title">Source</span>
+              <span class="tr-detect-badge" id="tr-detect-badge"></span>
+              <span class="tr-pane-meta" id="tr-source-count">0 chars</span>
+              <button class="tr-pane-btn" onclick="trClearSource()" title="Clear">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <textarea id="tr-source-textarea" class="tr-textarea"
+              placeholder="Paste or type your text here. Source language is detected automatically."
+              oninput="trOnSourceInput()"></textarea>
+          </div>
+          <div class="tr-pane tr-pane-target">
+            <div class="tr-pane-header">
+              <span class="tr-pane-title">Translation</span>
+              <span class="tr-pane-meta" id="tr-target-count">0 chars</span>
+              <button class="tr-pane-btn" onclick="trCopyTarget()" id="tr-copy-btn" title="Copy">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              </button>
+            </div>
+            <div class="tr-output" id="tr-target-output">
+              <div class="tr-placeholder">Translation will appear here.</div>
+            </div>
+          </div>
+        </div>
+        <div class="tr-actions-row">
+          <button class="tr-btn tr-btn-primary" id="tr-translate-btn" onclick="trRunTextTranslation()">
+            Translate
+          </button>
+          <span class="tr-status" id="tr-status"></span>
+        </div>
+      </div>
+
+      <!-- Document tab content -->
+      <div class="tr-tab-panel" id="tr-panel-document" style="display:none">
+        <div class="tr-doc-drop" id="tr-doc-drop"
+             ondragover="trDocDragOver(event)" ondragleave="trDocDragLeave(event)" ondrop="trDocDrop(event)"
+             onclick="document.getElementById('tr-doc-file').click()">
+          <input type="file" id="tr-doc-file" accept=".docx,.pptx,.pdf" style="display:none"
+                 onchange="trDocFileSelected(event)">
+          <div class="tr-doc-drop-icon">
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="12" y1="18" x2="12" y2="12"/>
+              <polyline points="9 15 12 12 15 15"/>
+            </svg>
+          </div>
+          <div class="tr-doc-drop-title">Drop a document here, or click to choose</div>
+          <div class="tr-doc-drop-hint">Supports .docx, .pptx, .pdf — max 50 MB. PDFs are converted to .docx.</div>
+        </div>
+
+        <div class="tr-doc-job hidden" id="tr-doc-job">
+          <div class="tr-doc-job-row">
+            <div class="tr-doc-job-name" id="tr-doc-job-name">filename.docx</div>
+            <div class="tr-doc-job-state" id="tr-doc-job-state">Queued</div>
+          </div>
+          <div class="tr-doc-progress">
+            <div class="tr-doc-progress-bar" id="tr-doc-progress-bar"></div>
+          </div>
+          <div class="tr-doc-job-meta" id="tr-doc-job-meta">Preparing…</div>
+          <div class="tr-doc-job-actions">
+            <button class="tr-btn" id="tr-doc-cancel-btn" onclick="trDocReset()">Reset</button>
+            <button class="tr-btn tr-btn-primary hidden" id="tr-doc-download-btn" onclick="trDocDownload()">
+              Download translated file
+            </button>
+          </div>
+        </div>
+
+        <div class="tr-doc-actions-row">
+          <button class="tr-btn tr-btn-primary" id="tr-doc-translate-btn"
+                  onclick="trRunDocTranslation()" disabled>
+            Translate document
+          </button>
+          <span class="tr-status" id="tr-doc-status"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Glossaries Modal ═══ -->
+  <div id="tr-glossaries-modal" class="tr-modal hidden">
+    <div class="tr-modal-backdrop" onclick="trCloseGlossariesModal()"></div>
+    <div class="tr-modal-card">
+      <div class="tr-modal-header">
+        <h2 class="tr-modal-title" id="tr-modal-title">Glossaries</h2>
+        <button class="tr-modal-close" onclick="trCloseGlossariesModal()" aria-label="Close">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="tr-modal-body" id="tr-modal-body">
+        <!-- Either the list view or the editor view, swapped by JS -->
+      </div>
+    </div>
+  </div>
+
   <!-- ═══ Workflow Editor Modal ═══ -->
   <div id="wf-editor-modal" class="wf-modal hidden">
     <div class="wf-modal-backdrop" onclick="wfCloseEditor()"></div>
@@ -804,6 +960,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 <script src="js/files.js"></script>
 <script src="js/workflows.js"></script>
 <script src="js/favourites.js"></script>
+<script src="js/translation.js"></script>
 <script src="js/init.js"></script>
 </body>
 </html>

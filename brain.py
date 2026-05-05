@@ -490,7 +490,8 @@ TOOL_DEFINITIONS = [
             "Routes to any model in the models config flagged with the 'audio' capability — "
             "cloud Voxtral, local Whisper, or anything else added with that flag. Falls back to "
             "the configured local fallback when GDPR server_block is on or the cloud call errors. "
-            "Returns: {transcript, language, duration_s, model, file, [fallback_used]}."
+            "Optionally translate the transcript by passing translate_to (ISO 639-1). "
+            "Returns: {transcript, language, duration_s, model, file, [translation, target_lang], [fallback_used]}."
         ),
         "input_schema": {
             "type": "object",
@@ -498,10 +499,96 @@ TOOL_DEFINITIONS = [
                 "file": {"type": "string", "description": "Absolute path to the audio file"},
                 "language": {"type": "string", "description": "ISO language code (e.g. 'en', 'de'); auto-detect when omitted"},
                 "model": {"type": "string", "description": "Any model id whose capabilities list includes 'audio'. Defaults to transcribe_audio.default_model."},
+                "translate_to": {"type": "string", "description": "Optional ISO 639-1 code. When set, the transcript is translated into this language and returned alongside it."},
+                "glossary": {"type": "string", "description": "Optional glossary slug for the translation step. Ignored if translate_to is empty."},
             },
             "required": ["file"],
         },
         "primary_field": "transcript",
+    },
+    {
+        "name": "translate_text",
+        "description": (
+            "Translate a text passage into another language using the configured Mistral model. "
+            "Auto-detects the source language when source_lang is omitted. Optionally applies a glossary "
+            "for bank-specific terminology. Preserves formatting (line breaks, lists, markdown). "
+            "Returns: {translation, source_lang, target_lang, detected, model, glossary, noop}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Source text to translate."},
+                "target_lang": {"type": "string", "description": "Target language as ISO 639-1 (e.g. 'en', 'de', 'fr')."},
+                "source_lang": {"type": "string", "description": "Optional source language ISO 639-1. Auto-detected when omitted."},
+                "glossary": {"type": "string", "description": "Optional glossary slug. Use list_glossaries to discover available ones."},
+                "model": {"type": "string", "description": "Optional model id override. Defaults to tools_config.translation.default_model."},
+                "tone": {"type": "string", "description": "Optional tone hint, e.g. 'formal', 'plain', 'marketing'."},
+            },
+            "required": ["text", "target_lang"],
+        },
+        "primary_field": "translation",
+    },
+    {
+        "name": "detect_language",
+        "description": (
+            "Detect the language of a text snippet. Uses the offline lingua detector and falls back "
+            "to a tiny LLM call for very short or ambiguous inputs. "
+            "Returns: {lang, confidence, source}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Text to inspect."},
+            },
+            "required": ["text"],
+        },
+        "primary_field": "lang",
+    },
+    {
+        "name": "list_glossaries",
+        "description": (
+            "List all stored translation glossaries. "
+            "Returns: {glossaries: [{slug, name, description, source, target, entry_count, do_not_translate_count}]}."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_glossary",
+        "description": (
+            "Read a translation glossary by slug. "
+            "Returns: {glossary: {slug, name, description, source, target, entries[], do_not_translate[]}}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "slug": {"type": "string", "description": "Glossary slug (from list_glossaries)."},
+            },
+            "required": ["slug"],
+        },
+    },
+    {
+        "name": "translate_document",
+        "description": (
+            "Translate a DOCX, PPTX, or PDF document into another language. "
+            "DOCX/PPTX preserve original layout (text replaced in place inside the OOXML). "
+            "PDFs are converted to DOCX (no library round-trips PDF without breaking layout) — "
+            "the result file's extension changes to .docx accordingly. "
+            "The translated file is written into the current chat's artifact folder and "
+            "appears in the artifact panel automatically. "
+            "Returns: {output_path, format, runs, source_lang, target_lang, glossary, model, fallback}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the source .docx/.pptx/.pdf file."},
+                "target_lang": {"type": "string", "description": "Target language as ISO 639-1."},
+                "source_lang": {"type": "string", "description": "Optional source language ISO 639-1. Auto-detected when omitted."},
+                "glossary": {"type": "string", "description": "Optional glossary slug. Use list_glossaries to discover available ones."},
+                "model": {"type": "string", "description": "Optional model id override. Defaults to tools_config.translation.default_model."},
+            },
+            "required": ["path", "target_lang"],
+        },
+        "primary_field": "output_path",
     },
     {
         "name": "ask_user_for_file",
@@ -1531,6 +1618,8 @@ TOOL_GROUPS = {
     "nodes": {"list_nodes"},
     "code_exec": {"python_exec"},
     "audio": {"transcribe_audio"},
+    "translation": {"translate_text", "translate_document", "detect_language",
+                    "list_glossaries", "get_glossary"},
     "workflows": {"ask_user_for_file", "ask_llm"},
     "workers": {"get_artifact_detail", "worker_status", "worker_abort",
                 "worker_pause", "worker_resume", "worker_send",
@@ -1539,7 +1628,7 @@ TOOL_GROUPS = {
 
 # Default tool groups included for all agents (if no explicit config)
 DEFAULT_TOOL_GROUPS = {"core", "memory", "context", "web", "delegation", "git", "skills",
-                       "nodes", "scheduler", "mcp", "workers"}
+                       "nodes", "scheduler", "mcp", "workers", "translation"}
 
 
 TOKEN_CONFIG_DEFAULTS = {
@@ -2499,12 +2588,151 @@ def tool_transcribe_audio(args: dict) -> str:
     }
     if fallback_used_reason:
         out["fallback_used"] = fallback_used_reason
+
+    # Optional chained translation step.
+    translate_to = (args.get("translate_to") or "").strip().lower()
+    if translate_to and result["transcript"].strip():
+        try:
+            from server_lib.translate import translate_text as _tt
+            tr = _tt(
+                result["transcript"],
+                translate_to,
+                source_lang=result["language"] or "",
+                glossary_slug=args.get("glossary") or "",
+            )
+            out["translation"] = tr["translation"]
+            out["target_lang"] = tr["target_lang"]
+            out["translation_model"] = tr["model"]
+        except Exception as e:
+            out["translation_error"] = str(e)[:200]
+
     try:
         print(f"[transcribe_audio] model={model_id} duration_s={result['duration_s']} "
-              f"chars={len(result['transcript'])} fallback={fallback_used_reason or '-'}", flush=True)
+              f"chars={len(result['transcript'])} fallback={fallback_used_reason or '-'} "
+              f"translate_to={translate_to or '-'}", flush=True)
     except Exception:
         pass
     return _ok(out)
+
+
+# ─── Translation tools ──────────────────────────────────────────────────────
+
+def tool_translate_text(args: dict) -> str:
+    text = args.get("text") or ""
+    target_lang = (args.get("target_lang") or "").strip().lower()
+    if not text:
+        return _err("translate_text: 'text' is required")
+    if not target_lang:
+        return _err("translate_text: 'target_lang' is required")
+    try:
+        from server_lib.translate import translate_text as _tt
+        result = _tt(
+            text,
+            target_lang,
+            source_lang=(args.get("source_lang") or "").strip().lower(),
+            glossary_slug=(args.get("glossary") or "").strip(),
+            model=(args.get("model") or "").strip(),
+            tone=(args.get("tone") or "").strip(),
+        )
+        return _ok(result)
+    except ValueError as e:
+        return _err(f"translate_text: {e}")
+    except Exception as e:
+        return _err(f"translate_text: {e}")
+
+
+def tool_detect_language(args: dict) -> str:
+    text = args.get("text") or ""
+    if not text:
+        return _err("detect_language: 'text' is required")
+    try:
+        from server_lib.translate import detect_language as _dl
+        return _ok(_dl(text))
+    except Exception as e:
+        return _err(f"detect_language: {e}")
+
+
+def tool_list_glossaries(args: dict) -> str:
+    try:
+        from server_lib.translate import list_glossaries as _lg
+        return _ok({"glossaries": _lg()})
+    except Exception as e:
+        return _err(f"list_glossaries: {e}")
+
+
+def tool_get_glossary(args: dict) -> str:
+    slug = (args.get("slug") or "").strip()
+    if not slug:
+        return _err("get_glossary: 'slug' is required")
+    try:
+        from server_lib.translate import load_glossary as _ld
+        g = _ld(slug)
+        if not g:
+            return _err(f"get_glossary: not found '{slug}'")
+        return _ok({"glossary": g})
+    except Exception as e:
+        return _err(f"get_glossary: {e}")
+
+
+def tool_translate_document(args: dict) -> str:
+    path = (args.get("path") or "").strip()
+    target_lang = (args.get("target_lang") or "").strip().lower()
+    if not path:
+        return _err("translate_document: 'path' is required")
+    if not target_lang:
+        return _err("translate_document: 'target_lang' is required")
+
+    # Resolve relative paths against the current artifact folder so the agent
+    # can pass a bare filename of something it just wrote — same convention
+    # write_file uses.
+    src_path = os.path.expanduser(path)
+    if not os.path.isabs(src_path):
+        session_id = getattr(_thread_local, "current_session_id", None)
+        agent = getattr(_thread_local, "current_agent", None) or _current_agent
+        if session_id and agent:
+            folder = _get_artifact_session_folder(session_id)
+            artifact_dir = os.path.join(AGENTS_DIR, agent.agent_id, "artifacts", folder)
+            candidate = os.path.join(artifact_dir, src_path)
+            src_path = candidate if os.path.exists(candidate) else os.path.abspath(src_path)
+        else:
+            src_path = os.path.abspath(src_path)
+    if not os.path.isfile(src_path):
+        return _err(f"translate_document: file not found: {src_path}")
+
+    # Output goes into the artifact folder so it auto-promotes.
+    session_id = getattr(_thread_local, "current_session_id", None)
+    agent = getattr(_thread_local, "current_agent", None) or _current_agent
+    if session_id and agent:
+        folder = _get_artifact_session_folder(session_id)
+        out_dir = os.path.join(AGENTS_DIR, agent.agent_id, "artifacts", folder)
+        os.makedirs(out_dir, exist_ok=True)
+    else:
+        out_dir = os.path.dirname(src_path) or "."
+
+    try:
+        from server_lib.translate import translate_document_file
+        result = translate_document_file(
+            src_path,
+            target_lang=target_lang,
+            source_lang=(args.get("source_lang") or "").strip().lower(),
+            glossary_slug=(args.get("glossary") or "").strip(),
+            model=(args.get("model") or "").strip(),
+            output_dir=out_dir,
+        )
+    except FileNotFoundError as e:
+        return _err(f"translate_document: file not found: {e}")
+    except ValueError as e:
+        return _err(f"translate_document: {e}")
+    except Exception as e:
+        return _err(f"translate_document: {e}")
+
+    # Register the output as an artifact write so the panel picks it up.
+    try:
+        _after_file_write(result["output_path"], "created",
+                          agent.agent_id if agent else "main")
+    except Exception:
+        pass
+    return _ok(result)
 
 
 def _describe_image_with_vision(image_data_b64: str, media_type: str, filename: str) -> str:
@@ -5588,6 +5816,11 @@ _TOOLS_CONFIG_DEFAULTS = {
         "enabled": True,
         "default_model": "mistral-experimental/voxtral-mini-latest",
         "fallback_model": "whisper-base",
+    },
+    "translation": {
+        "enabled": True,
+        "default_model": "",                  # empty = falls back to refinement model
+        "detection_fallback_model": "",       # empty = lingua only, no LLM fallback
     },
 }
 
@@ -21208,6 +21441,11 @@ TOOL_DISPATCH = {
     "write_file": tool_write_file,
     "edit_file": tool_edit_file,
     "transcribe_audio": tool_transcribe_audio,
+    "translate_text": tool_translate_text,
+    "translate_document": tool_translate_document,
+    "detect_language": tool_detect_language,
+    "list_glossaries": tool_list_glossaries,
+    "get_glossary": tool_get_glossary,
     "ask_user_for_file": tool_ask_user_for_file,
     "ask_llm": tool_ask_llm,
     "list_directory": tool_list_directory,

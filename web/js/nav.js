@@ -18,6 +18,8 @@ function navigateTo(view, opts) {
   if (favView) favView.classList.remove('active');
   const wfView = document.getElementById('workflows-view');
   if (wfView) wfView.classList.remove('active');
+  const trView = document.getElementById('translation-view');
+  if (trView) trView.classList.remove('active');
 
   // Update sidebar active state
   document.querySelectorAll('.sb-nav-item').forEach(n => n.classList.remove('active'));
@@ -106,6 +108,13 @@ function navigateTo(view, opts) {
       updatePageHeader('Workflows');
       document.getElementById('status-bar').style.display = 'none';
       if (typeof loadWorkflows === 'function') loadWorkflows();
+      break;
+
+    case 'translation':
+      document.getElementById('translation-view').classList.add('active');
+      updatePageHeader('Translation');
+      document.getElementById('status-bar').style.display = 'none';
+      if (typeof loadTranslationView === 'function') loadTranslationView();
       break;
 
     case 'favourites':
