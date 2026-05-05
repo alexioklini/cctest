@@ -513,6 +513,7 @@ async function wfOpenEditor(name) {
 
 function wfCloseEditor() {
   document.getElementById('wf-editor-modal').classList.add('hidden');
+  wfACClose();
 }
 
 async function wfSaveCurrent() {
@@ -568,6 +569,10 @@ function wfOnInput() {
   for (let i = 1; i <= lines; i++) nums.push(i);
   lineNumbers.textContent = nums.join('\n');
   wfSyncScroll();
+  // Trigger context-aware autocomplete after every input change. This is
+  // safe to call every keystroke — wfACMaybeOpen exits cheaply when there
+  // is no token under the caret.
+  wfACMaybeOpen(false);
 }
 
 function wfSyncScroll() {
@@ -582,9 +587,45 @@ function wfSyncScroll() {
   if (lineNumbers) {
     lineNumbers.scrollTop = editor.scrollTop;
   }
+  // Reposition the popover / ghost so they track caret on scroll.
+  if (wfAC.open) wfACRenderPopover();
+  if (wfAC.ghost) wfACRenderGhost();
+}
+
+function wfOnEditorBlur() {
+  // Defer a tick so a click on a popover item can fire first.
+  setTimeout(() => {
+    if (document.activeElement && document.activeElement.id === 'wf-editor') return;
+    wfACClose();
+  }, 120);
 }
 
 function wfOnKeydown(e) {
+  // Autocomplete popover takes priority on its keys.
+  if (wfAC.open) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); wfACMove(1); return; }
+    if (e.key === 'ArrowUp')   { e.preventDefault(); wfACMove(-1); return; }
+    if (e.key === 'Escape')    { e.preventDefault(); wfACClose(); return; }
+    if (e.key === 'Tab' || e.key === 'Enter') {
+      // Tab always accepts; Enter only when there's a real selection (let
+      // newline through if the popover is open with no items).
+      if (wfAC.items.length > 0) {
+        e.preventDefault();
+        wfACAccept();
+        return;
+      }
+    }
+  }
+  // Single-suggestion ghost text path: Tab accepts the only candidate
+  // even when the popover is suppressed (matches composer "ghost" UX).
+  if (e.key === 'Tab' && !e.shiftKey) {
+    const ghost = wfACSingleCandidate();
+    if (ghost) {
+      e.preventDefault();
+      wfACAcceptGhost(ghost);
+      return;
+    }
+  }
   // Tab inserts 4 spaces (don't break out of textarea)
   if (e.key === 'Tab') {
     e.preventDefault();
@@ -594,6 +635,458 @@ function wfOnKeydown(e) {
     ta.selectionStart = ta.selectionEnd = s + 4;
     wfOnInput();
   }
+}
+
+/* ─── Inline autocomplete (tools / params / variables / keywords) ─── */
+
+const WF_AC_MAX = 12;
+
+const wfAC = {
+  open: false,
+  items: [],          // [{label, kind, insert, detail}]
+  index: 0,
+  prefix: '',         // the token currently being typed
+  prefixStart: 0,     // offset in textarea.value where prefix begins
+  context: null,      // 'tool' | 'arg' | 'field' | 'general' | 'interp'
+  ghost: null,        // {label, insert} when single-candidate ghost is showing
+};
+
+function wfACEditor() { return document.getElementById('wf-editor'); }
+
+// Walk the source up to caret and collect SET <name> = CALL <tool> assignments.
+// Returns Map: varName → {tool, primary_field}. Best-effort, regex-based.
+function wfCollectVars(srcUpToCaret) {
+  const out = new Map();
+  const re = /^[ \t]*SET[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*(?:CALL[ \t]+([A-Za-z_][A-Za-z0-9_]*))?/gmi;
+  let m;
+  while ((m = re.exec(srcUpToCaret)) !== null) {
+    const name = m[1];
+    const tool = m[2] || null;
+    let primary = '';
+    if (tool) {
+      const t = wfState.tools.find(x => x.name === tool);
+      if (t) primary = t.primary_field || '';
+    }
+    out.set(name, { tool, primary_field: primary });
+  }
+  // Also pick up FOR EACH <name> IN ... loop variables (best effort).
+  const reFor = /^[ \t]*FOR[ \t]+EACH[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]+IN\b/gmi;
+  while ((m = reFor.exec(srcUpToCaret)) !== null) {
+    if (!out.has(m[1])) out.set(m[1], { tool: null, primary_field: '' });
+  }
+  return out;
+}
+
+// Determine caret context: what kind of completion makes sense here.
+// Returns { context, prefix, prefixStart, callTool? } or null.
+function wfACContext(value, caret) {
+  // Find the current logical line (caret-bearing).
+  const lineStart = value.lastIndexOf('\n', caret - 1) + 1;
+  const lineEnd = (() => {
+    const i = value.indexOf('\n', caret);
+    return i < 0 ? value.length : i;
+  })();
+  const before = value.slice(lineStart, caret);
+  const fullLine = value.slice(lineStart, lineEnd);
+
+  // Inside a string? Detect by counting unescaped quotes before caret on
+  // the current line. Inside a string, only {{...}} interpolation completes.
+  const inString = (() => {
+    let i = 0, q = null;
+    while (i < before.length) {
+      const c = before[i];
+      if (q) {
+        if (c === '\\') { i += 2; continue; }
+        if (c === q) { q = null; i++; continue; }
+        i++; continue;
+      }
+      if (c === '"' || c === "'") { q = c; i++; continue; }
+      if (c === '#') return false; // comment kills string scanning
+      i++;
+    }
+    return q;
+  })();
+
+  if (inString) {
+    // Look for an open '{{' without a matching '}}' before caret.
+    const openIdx = before.lastIndexOf('{{');
+    const closeIdx = before.lastIndexOf('}}');
+    if (openIdx < 0 || openIdx <= closeIdx) return null;
+    // Token = chars after '{{' that are identifier-ish.
+    const inside = before.slice(openIdx + 2);
+    const m = inside.match(/([A-Za-z_][A-Za-z0-9_.]*)$/);
+    const prefix = m ? m[1] : '';
+    return {
+      context: 'interp',
+      prefix,
+      prefixStart: caret - prefix.length,
+    };
+  }
+
+  // Identifier under caret (the prefix being typed).
+  const tokMatch = before.match(/([A-Za-z_][A-Za-z0-9_]*)$/);
+  const prefix = tokMatch ? tokMatch[1] : '';
+  const prefixStart = caret - prefix.length;
+
+  // Field access: <ident>.<prefix>
+  // Look for "<word>." immediately before the prefix.
+  const beforeToken = before.slice(0, before.length - prefix.length);
+  const dotMatch = beforeToken.match(/([A-Za-z_][A-Za-z0-9_]*)\.\s*$/);
+  if (dotMatch) {
+    return {
+      context: 'field',
+      varName: dotMatch[1],
+      prefix,
+      prefixStart,
+    };
+  }
+
+  // Find a CALL <tool> earlier on the line *before* the current prefix —
+  // i.e. the prefix is NOT itself the tool name being typed.
+  const beforePrefix = before.slice(0, before.length - prefix.length);
+  const callPriorMatch = beforePrefix.match(/\bCALL[ \t]+([A-Za-z_][A-Za-z0-9_]*)\b([\s\S]*)$/);
+  if (callPriorMatch) {
+    const tail = callPriorMatch[2];  // text between the tool name and the prefix
+    const lastEqual = tail.lastIndexOf('=');
+    const lastSpace = Math.max(tail.lastIndexOf(' '), tail.lastIndexOf('\t'));
+    // We're on an arg name slot when the most recent token-separator on
+    // the tail is whitespace (i.e. not directly after `=`-value).
+    const argLike = tail.trim() === '' || lastSpace > lastEqual;
+    if (argLike) {
+      return {
+        context: 'arg',
+        callTool: callPriorMatch[1],
+        prefix,
+        prefixStart,
+      };
+    }
+  }
+
+  // After `CALL ` (no tool name yet, or tool name being typed):
+  // tool completion. Use beforePrefix so we don't see our own prefix as a
+  // pre-existing tool name.
+  if (/\bCALL[ \t]+$/.test(beforePrefix)) {
+    return {
+      context: 'tool',
+      prefix,
+      prefixStart,
+    };
+  }
+
+  // General context: keywords, variables, builtins, tool names (low prio).
+  // Only pop up if the user has typed at least one character — avoids
+  // spamming the popover on every space. Empty-prefix completions are
+  // available via Ctrl-Space (handled in wfACMaybeOpen).
+  if (!prefix) return null;
+  return {
+    context: 'general',
+    prefix,
+    prefixStart,
+  };
+}
+
+function wfACBuildItems(ctx, value, caret) {
+  const p = (ctx.prefix || '').toLowerCase();
+  const startsOrSubstr = (s) => {
+    const sl = s.toLowerCase();
+    if (!p) return true;
+    if (sl.startsWith(p)) return 2;
+    if (sl.includes(p)) return 1;
+    return 0;
+  };
+  const collected = [];
+  const push = (label, kind, insert, detail) => {
+    const score = startsOrSubstr(label);
+    if (!score) return;
+    collected.push({ label, kind, insert: insert ?? label, detail: detail || '', score });
+  };
+
+  if (ctx.context === 'tool') {
+    for (const t of wfState.tools) {
+      push(t.name, 'tool', t.name, t.description || '');
+    }
+  } else if (ctx.context === 'arg') {
+    const tool = wfState.tools.find(t => t.name === ctx.callTool);
+    if (tool) {
+      for (const a of tool.args) {
+        push(a.name, a.required ? 'arg-required' : 'arg', a.name + '=""', a.description || a.type || '');
+      }
+    }
+  } else if (ctx.context === 'field') {
+    const vars = wfCollectVars(value.slice(0, caret));
+    const v = vars.get(ctx.varName);
+    if (v && v.primary_field) {
+      push(v.primary_field, 'field', v.primary_field, 'primary field');
+    }
+    // Generic suggestions that show up across tool results we know about:
+    const generic = ['text','content','data','result','path','status','error','transcript','json'];
+    for (const g of generic) {
+      if (v && v.primary_field === g) continue;
+      push(g, 'field', g, '');
+    }
+  } else if (ctx.context === 'interp') {
+    const vars = wfCollectVars(value.slice(0, caret));
+    for (const [name, info] of vars) {
+      const detail = info.tool ? `from CALL ${info.tool}` : 'variable';
+      push(name, 'var', name, detail);
+    }
+    for (const b of WF_BUILTINS) push(b, 'builtin', b + '()', 'builtin');
+  } else if (ctx.context === 'general') {
+    // Keywords (uppercase to match DSL convention).
+    for (const k of WF_KEYWORDS) push(k, 'keyword', k, '');
+    // Variables in scope.
+    const vars = wfCollectVars(value.slice(0, caret));
+    for (const [name, info] of vars) {
+      const detail = info.tool ? `from CALL ${info.tool}` : 'variable';
+      push(name, 'var', name, detail);
+    }
+    // Builtins (lowercase).
+    for (const b of WF_BUILTINS) push(b, 'builtin', b + '(', 'builtin');
+    // Tool names — lower priority, so user typing "wri" still sees write_file.
+    for (const t of wfState.tools) push(t.name, 'tool', t.name, t.description || '');
+  }
+
+  // Rank: prefix-match (2) before substring (1), then alpha.
+  collected.sort((a, b) => (b.score - a.score) || a.label.localeCompare(b.label));
+  // Dedupe by label (first wins — preserves rank).
+  const seen = new Set();
+  const out = [];
+  for (const it of collected) {
+    if (seen.has(it.label)) continue;
+    seen.add(it.label);
+    out.push(it);
+    if (out.length >= WF_AC_MAX) break;
+  }
+  return out;
+}
+
+function wfACMaybeOpen(force = false) {
+  const ed = wfACEditor();
+  if (!ed) return;
+  const caret = ed.selectionStart;
+  if (caret !== ed.selectionEnd) { wfACClose(); return; }
+  const ctx = wfACContext(ed.value, caret);
+  if (!ctx) { wfACClose(); return; }
+  const items = wfACBuildItems(ctx, ed.value, caret);
+  if (!items.length) { wfACClose(); return; }
+  // Single-candidate ghost path: don't open a popover; show ghost text and
+  // let Tab accept. We set wfAC.ghost so wfOnKeydown can pick it up.
+  if (items.length === 1 && !force) {
+    wfAC.ghost = {
+      label: items[0].label,
+      insert: items[0].insert,
+      prefix: ctx.prefix,
+      prefixStart: ctx.prefixStart,
+    };
+    wfACRenderGhost();
+    wfACHidePopover();
+    wfAC.open = false;
+    wfAC.items = [items[0]]; // remember for any consumer that asks
+    return;
+  }
+  wfAC.ghost = null;
+  wfACClearGhost();
+  wfAC.open = true;
+  wfAC.items = items;
+  wfAC.prefix = ctx.prefix;
+  wfAC.prefixStart = ctx.prefixStart;
+  wfAC.context = ctx.context;
+  wfAC.index = 0;
+  wfACRenderPopover();
+}
+
+function wfACSingleCandidate() {
+  // Returns the ghost candidate iff there's exactly one and it's showing.
+  return wfAC.ghost;
+}
+
+function wfACAcceptGhost(ghost) {
+  const ed = wfACEditor();
+  if (!ed) return;
+  const caret = ed.selectionStart;
+  const before = ed.value.slice(0, ghost.prefixStart);
+  const after = ed.value.slice(caret);
+  const inserted = ghost.insert;
+  ed.value = before + inserted + after;
+  // Caret position: if the insert ends with `=""` put caret between quotes;
+  // if it ends with `(` put caret right after; otherwise at end of insert.
+  let newCaret = before.length + inserted.length;
+  if (inserted.endsWith('=""')) newCaret = before.length + inserted.length - 1;
+  ed.selectionStart = ed.selectionEnd = newCaret;
+  wfAC.ghost = null;
+  wfACClearGhost();
+  wfOnInput();
+  ed.focus();
+}
+
+function wfACAccept() {
+  const ed = wfACEditor();
+  if (!ed) return;
+  const it = wfAC.items[wfAC.index];
+  if (!it) { wfACClose(); return; }
+  const caret = ed.selectionStart;
+  const before = ed.value.slice(0, wfAC.prefixStart);
+  const after = ed.value.slice(caret);
+  const inserted = it.insert;
+  ed.value = before + inserted + after;
+  let newCaret = before.length + inserted.length;
+  if (inserted.endsWith('=""')) newCaret = before.length + inserted.length - 1;
+  ed.selectionStart = ed.selectionEnd = newCaret;
+  wfACClose();
+  wfOnInput();
+  ed.focus();
+}
+
+function wfACMove(delta) {
+  if (!wfAC.open || !wfAC.items.length) return;
+  const n = wfAC.items.length;
+  wfAC.index = (wfAC.index + delta + n) % n;
+  wfACRenderPopover();
+}
+
+function wfACClose() {
+  wfAC.open = false;
+  wfAC.items = [];
+  wfAC.ghost = null;
+  wfACHidePopover();
+  wfACClearGhost();
+}
+
+/* DOM helpers — popover + ghost overlay. */
+function wfACEnsurePopover() {
+  let pop = document.getElementById('wf-ac-popover');
+  if (pop) return pop;
+  pop = document.createElement('div');
+  pop.id = 'wf-ac-popover';
+  pop.className = 'wf-ac-popover hidden';
+  pop.addEventListener('mousedown', (e) => {
+    // Clicks on items shouldn't blur the textarea.
+    e.preventDefault();
+  });
+  document.body.appendChild(pop);
+  return pop;
+}
+
+function wfACHidePopover() {
+  const pop = document.getElementById('wf-ac-popover');
+  if (pop) pop.classList.add('hidden');
+}
+
+function wfACRenderPopover() {
+  const ed = wfACEditor();
+  const pop = wfACEnsurePopover();
+  if (!ed) return;
+  const pos = wfACCaretPos(ed, wfAC.prefixStart);
+  pop.innerHTML = wfAC.items.map((it, i) => `
+    <div class="wf-ac-item ${i === wfAC.index ? 'sel' : ''}" data-i="${i}">
+      <span class="wf-ac-kind wf-ac-kind-${escapeHtml(it.kind)}">${escapeHtml(wfACKindLabel(it.kind))}</span>
+      <span class="wf-ac-label">${escapeHtml(it.label)}</span>
+      <span class="wf-ac-detail">${escapeHtml(it.detail || '')}</span>
+    </div>
+  `).join('');
+  pop.querySelectorAll('.wf-ac-item').forEach(el => {
+    el.addEventListener('click', () => {
+      wfAC.index = parseInt(el.dataset.i, 10) || 0;
+      wfACAccept();
+    });
+  });
+  pop.classList.remove('hidden');
+  pop.style.left = pos.left + 'px';
+  pop.style.top  = pos.top + 'px';
+}
+
+function wfACKindLabel(k) {
+  return ({
+    'tool': 'tool',
+    'arg': 'arg',
+    'arg-required': 'arg*',
+    'field': 'field',
+    'var': 'var',
+    'keyword': 'kw',
+    'builtin': 'fn',
+  })[k] || k;
+}
+
+/* Compute pixel position of a character offset inside the textarea by
+   mirroring its content into a hidden div with identical font + padding,
+   inserting a marker span at the offset, and reading its bounding box. */
+function wfACCaretPos(ta, offset) {
+  let mirror = document.getElementById('wf-ac-mirror');
+  if (!mirror) {
+    mirror = document.createElement('div');
+    mirror.id = 'wf-ac-mirror';
+    mirror.className = 'wf-ac-mirror';
+    document.body.appendChild(mirror);
+  }
+  const cs = window.getComputedStyle(ta);
+  const props = ['fontFamily','fontSize','fontWeight','fontStyle','letterSpacing',
+                 'lineHeight','padding','border','tabSize','whiteSpace','wordWrap','wordBreak'];
+  for (const p of props) mirror.style[p] = cs[p];
+  mirror.style.width = ta.clientWidth + 'px';
+  mirror.style.height = 'auto';
+  mirror.style.position = 'fixed';
+  mirror.style.visibility = 'hidden';
+  mirror.style.left = '0px';
+  mirror.style.top  = '0px';
+  // Match textarea's whitespace handling.
+  mirror.style.whiteSpace = 'pre';
+  mirror.style.overflow = 'hidden';
+  const before = ta.value.slice(0, offset);
+  const after = ta.value.slice(offset);
+  mirror.textContent = '';
+  mirror.appendChild(document.createTextNode(before));
+  const marker = document.createElement('span');
+  marker.textContent = '​';
+  mirror.appendChild(marker);
+  mirror.appendChild(document.createTextNode(after.length ? after : ' '));
+  // Now we need the marker's offsetLeft/offsetTop relative to the textarea,
+  // accounting for the textarea's scroll position and its absolute viewport pos.
+  const taRect = ta.getBoundingClientRect();
+  const mRect = marker.getBoundingClientRect();
+  const mirrorRect = mirror.getBoundingClientRect();
+  // Position relative to the page, adjusted by textarea scroll.
+  const left = taRect.left + (mRect.left - mirrorRect.left) - ta.scrollLeft + window.scrollX;
+  const top  = taRect.top  + (mRect.top  - mirrorRect.top)  - ta.scrollTop  + window.scrollY
+             + parseFloat(cs.lineHeight || '18');
+  return { left, top };
+}
+
+/* Ghost-text rendering: paints a faded suffix into the highlight overlay so
+   the single remaining candidate is visible inline. We rebuild the overlay
+   HTML through wfHighlight() and append a ghost span at the caret offset. */
+function wfACRenderGhost() {
+  const ed = wfACEditor();
+  const overlay = document.getElementById('wf-highlight');
+  if (!ed || !overlay || !wfAC.ghost) return;
+  // We avoid touching the highlight's structured HTML. Instead, place a
+  // floating ghost element absolutely positioned at the caret.
+  let g = document.getElementById('wf-ac-ghost');
+  if (!g) {
+    g = document.createElement('span');
+    g.id = 'wf-ac-ghost';
+    g.className = 'wf-ac-ghost';
+    document.body.appendChild(g);
+  }
+  const caret = ed.selectionStart;
+  const pos = wfACCaretPos(ed, caret);
+  // The ghost shows the *unconsumed* tail of the candidate.
+  const prefix = wfAC.ghost.prefix || '';
+  const cand = wfAC.ghost.label;
+  let tail = '';
+  if (cand.toLowerCase().startsWith(prefix.toLowerCase())) {
+    tail = cand.slice(prefix.length);
+  } else {
+    tail = ' → ' + cand; // substring match: show full on the side
+  }
+  g.textContent = tail + '  ⇥';
+  g.style.left = pos.left + 'px';
+  g.style.top  = (pos.top - parseFloat(window.getComputedStyle(ed).lineHeight || '18')) + 'px';
+  g.classList.remove('hidden');
+}
+
+function wfACClearGhost() {
+  const g = document.getElementById('wf-ac-ghost');
+  if (g) g.classList.add('hidden');
 }
 
 /* Token-based highlighter — renders to HTML inside the overlay <pre>. */

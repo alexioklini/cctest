@@ -542,7 +542,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           <pre id="wf-highlight" class="wf-highlight" aria-hidden="true"></pre>
           <textarea id="wf-editor" class="wf-editor" spellcheck="false" wrap="off"
                     oninput="wfOnInput(); wfOnScriptChange()" onscroll="wfSyncScroll()"
-                    onkeydown="wfOnKeydown(event)"></textarea>
+                    onkeydown="wfOnKeydown(event)"
+                    onblur="wfOnEditorBlur()"
+                    onclick="wfACMaybeOpen(false)"
+                    onkeyup="if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) wfACMaybeOpen(false)"></textarea>
         </div>
       </div>
       <div id="wf-editor-status" class="wf-editor-status"></div>

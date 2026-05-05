@@ -4355,6 +4355,87 @@ textarea.wf-editor-field-input { min-height: 38px; }
 .wf-editor-status.wf-error { color: #dc2626; }
 .wf-editor-status.wf-ok    { color: #16a34a; }
 
+/* ─── Workflow editor: inline autocomplete ─── */
+.wf-ac-popover {
+  position: absolute;
+  z-index: 10000;
+  min-width: 260px;
+  max-width: 480px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: #1e1e2e;
+  border: 1px solid #3b3b52;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  font: 13px/1.45 'SF Mono', 'Monaco', 'Menlo', monospace;
+  color: #d6d6e3;
+  padding: 4px 0;
+}
+.wf-ac-popover.hidden { display: none; }
+.wf-ac-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.wf-ac-item.sel { background: #3b3b52; }
+.wf-ac-item:hover { background: #2c2c40; }
+.wf-ac-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  min-width: 36px;
+  text-align: center;
+}
+.wf-ac-kind-tool         { background: rgba(96,165,250,0.18); color: #93c5fd; }
+.wf-ac-kind-arg          { background: rgba(163,230,53,0.15); color: #bef264; }
+.wf-ac-kind-arg-required { background: rgba(251,146,60,0.20); color: #fdba74; }
+.wf-ac-kind-field        { background: rgba(56,189,248,0.18); color: #7dd3fc; }
+.wf-ac-kind-var          { background: rgba(192,132,252,0.18); color: #d8b4fe; }
+.wf-ac-kind-keyword      { background: rgba(192,132,252,0.25); color: #e9d5ff; }
+.wf-ac-kind-builtin      { background: rgba(56,189,248,0.15); color: #7dd3fc; font-style: italic; }
+.wf-ac-label {
+  color: #d6d6e3;
+  font-weight: 600;
+}
+.wf-ac-detail {
+  color: #6b7280;
+  font-size: 11px;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 240px;
+}
+
+/* Inline ghost text — single-candidate hint, accepted with Tab. */
+.wf-ac-ghost {
+  position: absolute;
+  z-index: 9999;
+  pointer-events: none;
+  color: #6b7280;
+  font: 13px/1.55 'SF Mono', 'Monaco', 'Menlo', monospace;
+  white-space: pre;
+  opacity: 0.85;
+}
+.wf-ac-ghost.hidden { display: none; }
+
+/* Hidden mirror used to compute caret pixel position. */
+.wf-ac-mirror {
+  position: fixed;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: pre;
+  word-wrap: normal;
+  top: 0; left: 0;
+  z-index: -1;
+}
+
 /* ─── Run modal ─── */
 .wf-run-content { width: min(720px, 92vw); }
 .wf-run-status {
