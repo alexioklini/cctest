@@ -538,33 +538,36 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     <div class="wf-modal-backdrop" onclick="wfCloseEditor()"></div>
     <div class="wf-modal-content">
       <div class="wf-modal-header">
-        <input id="wf-editor-name" class="wf-name-input" type="text" placeholder="workflow_name (filename)" />
+        <div class="wf-header-titles">
+          <input id="wf-editor-title" type="text" class="wf-title-input"
+                 placeholder="Untitled workflow"
+                 oninput="wfOnMetaChange('title')" />
+          <div class="wf-header-name-row">
+            <span class="wf-header-name-prefix">file</span>
+            <input id="wf-editor-name" class="wf-name-input" type="text"
+                   placeholder="workflow_name" spellcheck="false" autocomplete="off" />
+            <span class="wf-header-name-suffix">.wf</span>
+          </div>
+        </div>
         <div class="wf-modal-actions">
-          <button class="wf-btn wf-btn-ghost" onclick="wfShowToolPalette()">Insert tool…</button>
           <button class="wf-btn wf-btn-primary" onclick="wfSaveCurrent()">Save</button>
-          <button class="wf-btn wf-btn-ghost" onclick="wfCloseEditor()">Close</button>
+          <button class="wf-icon-btn" onclick="wfCloseEditor()" title="Close" aria-label="Close">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>
+          </button>
         </div>
       </div>
       <div class="wf-editor-meta">
-        <div class="wf-editor-meta-row">
-          <label class="wf-editor-field">
-            <span class="wf-editor-field-label">Title</span>
-            <input id="wf-editor-title" type="text" class="wf-editor-field-input"
-                   placeholder="Display title (shown on card)"
-                   oninput="wfOnMetaChange('title')" />
-          </label>
-          <label class="wf-editor-field">
-            <span class="wf-editor-field-label">Agent</span>
-            <select id="wf-editor-agent" class="wf-editor-field-input"
-                    onchange="wfOnMetaChange('agent')">
-              <option value="">Default (main)</option>
-            </select>
-          </label>
-        </div>
-        <label class="wf-editor-field">
+        <label class="wf-editor-field wf-editor-field-agent">
+          <span class="wf-editor-field-label">Agent</span>
+          <select id="wf-editor-agent" class="wf-editor-field-input"
+                  onchange="wfOnMetaChange('agent')">
+            <option value="">Default (main)</option>
+          </select>
+        </label>
+        <label class="wf-editor-field wf-editor-field-desc">
           <span class="wf-editor-field-label">Description</span>
           <textarea id="wf-editor-desc" class="wf-editor-field-input"
-                    rows="2" placeholder="What this workflow does"
+                    rows="1" placeholder="What this workflow does"
                     oninput="wfOnMetaChange('description')"></textarea>
         </label>
       </div>
@@ -580,24 +583,15 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
                     onkeyup="if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) wfACMaybeOpen(false)"></textarea>
         </div>
       </div>
-      <div id="wf-editor-status" class="wf-editor-status"></div>
+      <div class="wf-editor-footer">
+        <div id="wf-editor-status" class="wf-editor-status"></div>
+        <div class="wf-editor-hint">Ctrl-Space for completions</div>
+      </div>
     </div>
   </div>
 
   <!-- (Workflow Run Modal removed in v8.24.0 — replaced by inline wf-detail.) -->
-
-  <!-- ═══ Tool Palette Popover ═══ -->
-  <div id="wf-tool-palette" class="wf-modal hidden">
-    <div class="wf-modal-backdrop" onclick="wfCloseToolPalette()"></div>
-    <div class="wf-modal-content wf-palette-content">
-      <div class="wf-modal-header">
-        <input id="wf-palette-filter" class="wf-name-input" type="text"
-               placeholder="Filter tools…" oninput="wfRenderToolList()" />
-        <button class="wf-btn wf-btn-ghost" onclick="wfCloseToolPalette()">Close</button>
-      </div>
-      <div id="wf-palette-list" class="wf-palette-list"></div>
-    </div>
-  </div>
+  <!-- (Tool Palette removed — completion now inline via Ctrl-Space in editor.) -->
 
   <!-- ═══ Scheduled Tasks View ═══ -->
   <div id="scheduled-view">

@@ -1215,71 +1215,8 @@ async function wfLoadTools() {
   }
 }
 
-function wfShowToolPalette() {
-  document.getElementById('wf-tool-palette').classList.remove('hidden');
-  document.getElementById('wf-palette-filter').value = '';
-  wfRenderToolList();
-  setTimeout(() => document.getElementById('wf-palette-filter').focus(), 50);
-}
-
-function wfCloseToolPalette() {
-  document.getElementById('wf-tool-palette').classList.add('hidden');
-}
-
-function wfRenderToolList() {
-  const filter = (document.getElementById('wf-palette-filter').value || '').toLowerCase();
-  const root = document.getElementById('wf-palette-list');
-  const items = wfState.tools
-    .filter(t => !filter || t.name.includes(filter) || (t.description || '').toLowerCase().includes(filter))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  root.innerHTML = items.map(t => {
-    const argHtml = t.args.map(a => `<span class="wf-arg ${a.required ? 'required' : ''}">${escapeHtml(a.name)}</span>`).join(' ');
-    return `
-      <div class="wf-palette-item" onclick="wfInsertToolCall('${escapeJs(t.name)}')">
-        <div class="wf-palette-name">${escapeHtml(t.name)}</div>
-        <div class="wf-palette-desc">${escapeHtml(t.description || '')}</div>
-        <div class="wf-palette-args">${argHtml}</div>
-      </div>`;
-  }).join('');
-}
-
-function wfInsertToolCall(toolName) {
-  const tool = wfState.tools.find(t => t.name === toolName);
-  if (!tool) return;
-  const editor = document.getElementById('wf-editor');
-  // Build a CALL line with each required arg as name="" and a comment listing optional args
-  const requiredArgs = tool.args.filter(a => a.required);
-  const optionalArgs = tool.args.filter(a => !a.required);
-  let line = `CALL ${tool.name}`;
-  for (const a of requiredArgs) {
-    line += ` ${a.name}=""`;
-  }
-  // If the tool has a primary_field, suggest a SET wrapper using that field name
-  let snippet;
-  if (tool.primary_field) {
-    snippet = `SET result = ${line}\n# Access fields: result.${tool.primary_field}\n`;
-  } else {
-    snippet = line + '\n';
-  }
-  if (optionalArgs.length) {
-    snippet += `# Optional args: ${optionalArgs.map(a => a.name).join(', ')}\n`;
-  }
-  // Insert at caret
-  const s = editor.selectionStart, en = editor.selectionEnd;
-  const before = editor.value.slice(0, s);
-  const after = editor.value.slice(en);
-  // Snap to start of current line
-  const lineStart = before.lastIndexOf('\n') + 1;
-  const newCaret = lineStart + snippet.length;
-  editor.value = editor.value.slice(0, lineStart) + snippet + editor.value.slice(lineStart + (s - lineStart) + (en - s)) + after.slice(0);
-  // Simpler approach: just insert at caret, ignoring the snap
-  // (revert to direct insert to avoid bugs):
-  editor.value = before + snippet + after;
-  editor.selectionStart = editor.selectionEnd = s + snippet.length;
-  wfCloseToolPalette();
-  editor.focus();
-  wfOnInput();
-}
+/* (wfShowToolPalette / wfInsertToolCall removed — completion is now inline
+   in the editor via wfACMaybeOpen + Ctrl-Space.) */
 
 /* ─── Run ─── */
 async function wfRun(name) {
