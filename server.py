@@ -3874,9 +3874,39 @@ def _profile_run_synchronous(user: dict, since_ts: float, now: float):
             "bytes": write_res.get("bytes"), "samples": len(samples)}
 
 
+_AUDIO_PROVIDER_MIGRATION_FLAG = "_local_mlx_whisper_seeded"
+
+
+def _migrate_audio_provider_once(file_config: dict) -> dict:
+    """One-shot: ensure providers config carries the 'local-mlx-whisper'
+    pseudo-provider used by the in-process mlx-whisper transcribe wire.
+    Stamps a top-level marker key so subsequent startups never re-add it
+    even if the user deletes the entry deliberately.
+    """
+    if file_config.get(_AUDIO_PROVIDER_MIGRATION_FLAG):
+        return file_config
+    providers = file_config.setdefault("providers", {})
+    if "local-mlx-whisper" not in providers:
+        providers["local-mlx-whisper"] = {
+            "base_url": "",
+            "api_key": "",
+            "default_model": "",
+            "type": "in_process",
+        }
+    file_config[_AUDIO_PROVIDER_MIGRATION_FLAG] = True
+    try:
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        with open(config_path, "w") as f:
+            json.dump(file_config, f, indent=2)
+    except Exception as e:
+        print(f"[migrate] failed to persist local-mlx-whisper provider: {e}", flush=True)
+    return file_config
+
+
 def main():
     # Load config.json for defaults
     file_config = _load_config_file()
+    file_config = _migrate_audio_provider_once(file_config)
     providers = file_config.get("providers", {})
     default_provider = file_config.get("default_provider", "")
     provider = providers.get(default_provider, {}) if default_provider else {}

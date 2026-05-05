@@ -444,6 +444,7 @@ async function switchGeneralTab(tab, btn) {
               </div>
               <div style="display:flex;align-items:center;gap:6px;padding-top:14px"><input type="checkbox" class="mdl-warmup-allow-cloud" ${cfg.warmup_allow_cloud ? 'checked' : ''} style="margin:0"><label class="form-label" style="font-size:11px;margin:0;cursor:pointer" title="Permit warmup against cloud providers (costs tokens)">Allow cloud</label></div>
               <div style="grid-column:1/-1"><label class="form-label" style="font-size:11px">Raw Formats <span style="color:var(--text-400);font-weight:400">(MIME patterns the model handles natively as multimodal)</span></label><input class="form-input mdl-raw-formats" value="${esc((cfg.raw_formats||[]).join(', '))}" placeholder="e.g. image/*, application/pdf" style="font-size:12px"></div>
+              <div style="grid-column:1/-1"><label class="form-label" style="font-size:11px">Capabilities <span style="color:var(--text-400);font-weight:400">(comma-separated; flags routing — e.g. <code>audio</code> exposes the model to the transcribe_audio tool)</span></label><input class="form-input mdl-capabilities" value="${esc((cfg.capabilities||[]).join(', '))}" placeholder="e.g. coding, analysis, audio" style="font-size:12px"></div>
             </div>
           </div>
         </div>`;
@@ -1704,6 +1705,37 @@ async function switchGeneralTab(tab, btn) {
       const refCfg = cfg.refinement || {};
       const rdCfg = cfg.read_document || {};
       const cgCfg = cfg.code_graph || {};
+      const taCfg = cfg.transcribe_audio || {};
+      // Transcription model list comes from the models config: any entry whose
+      // capabilities include 'audio'. Local fallback is restricted to entries
+      // routed via the local-mlx-whisper pseudo-provider (or otherwise marked
+      // local) so GDPR routing stays on-prem.
+      const _allModels = (state.modelsConfig?.models || {});
+      const _audioEntries = Object.entries(_allModels)
+        .filter(([,c]) => Array.isArray(c.capabilities) && c.capabilities.includes('audio'))
+        .map(([id, c]) => ({
+          id,
+          label: c.display_name || c.shortname || id,
+          isLocal: !!c.is_local || (Array.isArray(c.capabilities) && c.capabilities.includes('local')) || c.provider === 'local-mlx-whisper',
+        }))
+        .sort((a,b) => a.label.localeCompare(b.label));
+      const _transcribeOptionList = (entries, sel) => {
+        if (!entries.length) {
+          return `<option value="" disabled selected>No audio-capable models — flag a model with the 'audio' capability in the Models tab</option>`;
+        }
+        // Include the saved value as a stub option even if it no longer matches
+        // a model entry (legacy id, model removed) so the user can see what's
+        // there without it silently flipping to the first option.
+        const ids = new Set(entries.map(e => e.id));
+        let html = entries.map(m =>
+          `<option value="${esc(m.id)}" ${m.id===sel?'selected':''}>${esc(m.label)}</option>`).join('');
+        if (sel && !ids.has(sel)) {
+          html = `<option value="${esc(sel)}" selected>${esc(sel)} (legacy/missing)</option>` + html;
+        }
+        return html;
+      };
+      const transcribeOpts = (sel) => _transcribeOptionList(_audioEntries, sel);
+      const whisperOpts = (sel) => _transcribeOptionList(_audioEntries.filter(m => m.isLocal), sel);
 
       C.innerHTML = P(`<div style="${G('12px')}">
         <!-- Exa Search -->
@@ -1783,6 +1815,22 @@ async function switchGeneralTab(tab, btn) {
           </div>
         </div>
 
+        <!-- Transcribe Audio -->
+        <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px">
+          ${tog('transcribe_audio','Transcribe Audio')}
+          <div style="${G('8px')}">
+            ${lbl('Default Model')}
+            <select id="tool-ta-default-model" class="form-select" style="font-size:11px">
+              ${transcribeOpts(taCfg.default_model || '')}
+            </select>
+            ${lbl('GDPR Fallback Model (local only)')}
+            <select id="tool-ta-fallback-model" class="form-select" style="font-size:11px">
+              ${whisperOpts(taCfg.fallback_model || '')}
+            </select>
+            <div style="font-size:10px;color:var(--text-400)">Lists every model in the Models tab whose Capabilities include <code>audio</code>. The fallback dropdown is restricted to local entries — GDPR server-block routes audio there silently because voice can't be content-scanned. Cloud HTTP errors also fall back automatically.</div>
+          </div>
+        </div>
+
         <!-- Write Document -->
         <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px">
           ${tog('write_document','Write Document')}
@@ -1859,6 +1907,11 @@ async function saveToolsConfig() {
       enabled: document.getElementById('tool-code_graph-enabled')?.checked ?? true,
       exclude_dirs: document.getElementById('tool-cg-exclude')?.value || '',
       max_file_size_kb: parseInt(document.getElementById('tool-cg-maxsize')?.value) || 500,
+    },
+    transcribe_audio: {
+      enabled: document.getElementById('tool-transcribe_audio-enabled')?.checked ?? true,
+      default_model: document.getElementById('tool-ta-default-model')?.value || 'mistral-experimental/voxtral-mini-latest',
+      fallback_model: document.getElementById('tool-ta-fallback-model')?.value || 'whisper-base',
     },
   };
   try {
@@ -2253,6 +2306,13 @@ async function saveModelsConfig() {
         mc[mid].raw_formats = rawFmt.split(',').map(s => s.trim()).filter(Boolean);
       } else {
         mc[mid].raw_formats = [];
+      }
+      // Capabilities (free-form list; routing keys like 'audio' live here too)
+      const capsRaw = row.querySelector('.mdl-capabilities')?.value?.trim();
+      if (capsRaw) {
+        mc[mid].capabilities = capsRaw.split(',').map(s => s.trim()).filter(Boolean);
+      } else {
+        mc[mid].capabilities = [];
       }
       // Thinking format
       const tfmt = row.querySelector('.mdl-thinking-format')?.value;

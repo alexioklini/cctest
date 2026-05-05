@@ -486,16 +486,18 @@ TOOL_DEFINITIONS = [
     {
         "name": "transcribe_audio",
         "description": (
-            "Transcribe an audio file (.wav/.mp3/.m4a/.flac/.ogg) to text using local mlx-whisper. "
-            "First call downloads the model (~150MB for base). Runs entirely on-device. "
-            "Returns: {transcript, language, duration_s}."
+            "Transcribe an audio file (.wav/.mp3/.m4a/.flac/.ogg) to text. "
+            "Routes to any model in the models config flagged with the 'audio' capability — "
+            "cloud Voxtral, local Whisper, or anything else added with that flag. Falls back to "
+            "the configured local fallback when GDPR server_block is on or the cloud call errors. "
+            "Returns: {transcript, language, duration_s, model, file, [fallback_used]}."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "file": {"type": "string", "description": "Absolute path to the audio file"},
                 "language": {"type": "string", "description": "ISO language code (e.g. 'en', 'de'); auto-detect when omitted"},
-                "model": {"type": "string", "description": "Whisper model: 'tiny', 'base', 'small', 'medium', 'large-v3' (default: base)"},
+                "model": {"type": "string", "description": "Any model id whose capabilities list includes 'audio'. Defaults to transcribe_audio.default_model."},
             },
             "required": ["file"],
         },
@@ -2193,19 +2195,227 @@ def tool_ask_llm(args: dict) -> str:
         return _err(f"ask_llm: {e}")
 
 
-_WHISPER_MODEL_REPO = {
-    "tiny":     "mlx-community/whisper-tiny-mlx",
-    "base":     "mlx-community/whisper-base-mlx",
-    "small":    "mlx-community/whisper-small-mlx",
-    "medium":   "mlx-community/whisper-medium-mlx",
-    "large-v3": "mlx-community/whisper-large-v3-mlx",
-}
+_WHISPER_PROVIDER = "local-mlx-whisper"
+
+
+def _whisper_repo_for(model_id: str) -> str:
+    """Map a whisper model id (e.g. 'whisper-base', 'whisper-large-v3') to the
+    HuggingFace mlx-community repo id. The id-to-repo derivation is mechanical:
+    'whisper-<size>' → 'mlx-community/whisper-<size>-mlx'."""
+    base = model_id.split("/")[-1]  # tolerate scoped ids
+    if not base.startswith("whisper-"):
+        raise ValueError(f"not a whisper model id: '{model_id}'")
+    return f"mlx-community/{base}-mlx"
+
+
+def _transcription_config() -> dict:
+    """Read the transcribe_audio block from tools_config.json (merged with defaults)."""
+    try:
+        return get_tool_config().get("transcribe_audio", {}) or {}
+    except Exception:
+        return {}
+
+
+def _transcribe_with_whisper(file_path: str, model_id: str, language: str | None) -> dict:
+    """Run local mlx-whisper. Raises on import / runtime failure."""
+    repo = _whisper_repo_for(model_id)
+    import mlx_whisper  # type: ignore
+    kwargs = {"path_or_hf_repo": repo}
+    if language:
+        kwargs["language"] = language
+    result = mlx_whisper.transcribe(file_path, **kwargs) or {}
+    transcript = (result.get("text") or "").strip()
+    detected_language = result.get("language") or language or ""
+    segments = result.get("segments") or []
+    duration_s = 0.0
+    if segments:
+        try:
+            duration_s = float(segments[-1].get("end", 0.0))
+        except (TypeError, ValueError):
+            duration_s = 0.0
+    return {
+        "transcript": transcript,
+        "language": detected_language,
+        "duration_s": round(duration_s, 2),
+    }
+
+
+def _transcribe_with_voxtral(file_path: str, model_id: str, provider_name: str,
+                             language: str | None) -> dict:
+    """POST audio to Mistral Voxtral /audio/transcriptions (OpenAI-compatible multipart).
+    Raises on HTTP error so the caller can decide whether to fall back."""
+    try:
+        cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+        with open(cfg_path) as f:
+            prov = json.load(f).get("providers", {}).get(provider_name, {}) or {}
+    except Exception as e:
+        raise RuntimeError(f"could not load provider '{provider_name}': {e}")
+    base_url = (prov.get("base_url") or "").rstrip("/")
+    api_key = prov.get("api_key") or ""
+    if not base_url or not api_key:
+        raise RuntimeError(f"provider '{provider_name}' missing base_url or api_key")
+
+    # Build multipart body manually (stdlib only — keeps install footprint identical).
+    boundary = f"----brainagentboundary{int(time.time()*1000)}"
+    with open(file_path, "rb") as f:
+        file_bytes = f.read()
+    filename = os.path.basename(file_path)
+    ext = os.path.splitext(filename)[1].lstrip(".").lower() or "bin"
+    mime_map = {
+        "wav": "audio/wav", "mp3": "audio/mpeg", "m4a": "audio/mp4",
+        "mp4": "audio/mp4", "ogg": "audio/ogg", "flac": "audio/flac",
+        "aac": "audio/aac", "webm": "audio/webm",
+    }
+    mime = mime_map.get(ext, "application/octet-stream")
+
+    parts: list[bytes] = []
+    def _field(name: str, value: str):
+        parts.append(f"--{boundary}\r\n".encode())
+        parts.append(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
+        parts.append(value.encode("utf-8"))
+        parts.append(b"\r\n")
+    _field("model", model_id)
+    if language:
+        _field("language", language)
+    parts.append(f"--{boundary}\r\n".encode())
+    parts.append(
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode()
+    )
+    parts.append(f"Content-Type: {mime}\r\n\r\n".encode())
+    parts.append(file_bytes)
+    parts.append(b"\r\n")
+    parts.append(f"--{boundary}--\r\n".encode())
+    body = b"".join(parts)
+
+    url = f"{base_url}/audio/transcriptions"
+    req = urllib.request.Request(
+        url, data=body, method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as e:
+        try:
+            err_body = e.read().decode("utf-8", errors="replace")[:500]
+        except Exception:
+            err_body = ""
+        raise RuntimeError(f"HTTP {e.code} from {url}: {err_body}")
+
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except Exception as e:
+        raise RuntimeError(f"voxtral: bad JSON response: {e}")
+
+    transcript = (data.get("text") or "").strip()
+    detected_language = data.get("language") or language or ""
+    # Voxtral returns usage.prompt_audio_seconds; older / OpenAI-shape APIs use usage.seconds.
+    duration_s = 0.0
+    usage = data.get("usage") or {}
+    if isinstance(usage, dict):
+        for key in ("prompt_audio_seconds", "seconds", "audio_seconds"):
+            try:
+                v = float(usage.get(key) or 0.0)
+            except (TypeError, ValueError):
+                v = 0.0
+            if v:
+                duration_s = v
+                break
+    if not duration_s:
+        segs = data.get("segments") or []
+        if segs:
+            try:
+                duration_s = float(segs[-1].get("end", 0.0))
+            except (TypeError, ValueError):
+                duration_s = 0.0
+    return {
+        "transcript": transcript,
+        "language": detected_language,
+        "duration_s": round(duration_s, 2),
+    }
+
+
+def _normalize_legacy_audio_id(requested: str) -> str:
+    """Back-compat: pre-capability ids stored in tools_config.json or passed by
+    older callers. Maps to the new canonical model_config ids.
+
+      - 'whisper:base' (and other sizes) → 'whisper-base'
+      - bare 'tiny'/'base'/'small'/'medium'/'large-v3' → 'whisper-base' etc.
+      - bare 'voxtral-mini-latest' / 'voxtral-small-latest' → scoped 'mistral-experimental/voxtral-*-latest'
+    """
+    r = (requested or "").strip()
+    if not r:
+        return r
+    low = r.lower()
+    legacy_whisper_sizes = {"tiny", "base", "small", "medium", "large-v3"}
+    if low.startswith("whisper:"):
+        size = low.split(":", 1)[1]
+        return f"whisper-{size}"
+    if low in legacy_whisper_sizes:
+        return f"whisper-{low}"
+    if low in ("voxtral-mini-latest", "voxtral-small-latest"):
+        return f"mistral-experimental/{low}"
+    return r
+
+
+def _transcription_resolve(model_arg: str | None) -> tuple[str, dict]:
+    """Resolve a model arg to (canonical_id, route_dict). route_dict has {wire, provider}.
+
+    The model registry is _models_config: any entry whose capabilities list
+    includes 'audio' is selectable here. The provider field on the model
+    determines the wire:
+      - provider == 'local-mlx-whisper' → wire 'mlx_whisper' (in-process)
+      - everything else → wire 'openai_audio' (multipart POST to <base_url>/audio/transcriptions)
+
+    Accepts legacy ids ('whisper:base', bare 'voxtral-mini-latest', bare sizes)
+    and normalizes them to the new ids before lookup.
+    """
+    cfg = _transcription_config()
+    requested = (model_arg or "").strip()
+    if not requested:
+        requested = (cfg.get("default_model") or "whisper-base").strip()
+    requested = _normalize_legacy_audio_id(requested)
+
+    entry = _models_config.get(requested)
+    if not entry:
+        # Tolerate case differences and unscoped ids that match exactly one
+        # capability=audio model.
+        lower = requested.lower()
+        candidates = [
+            (mid, cfg_) for mid, cfg_ in _models_config.items()
+            if "audio" in (cfg_.get("capabilities") or [])
+            and (mid.lower() == lower or mid.lower().endswith("/" + lower))
+        ]
+        if len(candidates) == 1:
+            requested, entry = candidates[0]
+        else:
+            audio_ids = sorted([
+                mid for mid, c in _models_config.items()
+                if "audio" in (c.get("capabilities") or [])
+            ])
+            raise ValueError(
+                f"unknown transcription model '{requested}'. "
+                f"Configured (capability=audio): {', '.join(audio_ids) or '(none)'}"
+            )
+
+    if "audio" not in (entry.get("capabilities") or []):
+        raise ValueError(
+            f"model '{requested}' is not flagged with the 'audio' capability. "
+            "Add 'audio' to its capabilities in the Models tab."
+        )
+
+    provider = (entry.get("provider") or "").strip()
+    if provider == _WHISPER_PROVIDER:
+        return requested, {"wire": "mlx_whisper", "provider": provider}
+    return requested, {"wire": "openai_audio", "provider": provider}
 
 
 def tool_transcribe_audio(args: dict) -> str:
     file_path = args.get("file", "")
     language = args.get("language") or None
-    model_size = (args.get("model") or "base").lower()
     if not file_path:
         return _err("transcribe_audio: 'file' is required")
     file_path = os.path.expanduser(file_path)
@@ -2213,37 +2423,88 @@ def tool_transcribe_audio(args: dict) -> str:
         file_path = os.path.abspath(file_path)
     if not os.path.exists(file_path):
         return _err(f"transcribe_audio: file not found: {file_path}")
-    repo = _WHISPER_MODEL_REPO.get(model_size)
-    if not repo:
-        return _err(f"transcribe_audio: unknown model '{model_size}'. Use one of: {', '.join(_WHISPER_MODEL_REPO)}")
+
     try:
-        import mlx_whisper  # type: ignore
-    except ImportError:
-        return _err("transcribe_audio: mlx-whisper is not installed. Run: pip3 install --user mlx-whisper")
+        model_id, route = _transcription_resolve(args.get("model"))
+    except ValueError as e:
+        return _err(f"transcribe_audio: {e}")
+    wire = (route.get("wire") or "").lower()
+
+    # GDPR gate: when server_block is master-on and the chosen backend is cloud
+    # (i.e. not mlx_whisper), swap to the configured local fallback. We can't scan
+    # audio content, so this is a conservative blanket policy — voice notes can
+    # carry PII the scanner would otherwise catch in text.
+    fallback_used_reason = ""
+    if wire != "mlx_whisper":
+        try:
+            cfg_root = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")))
+            gdpr = cfg_root.get("gdpr_scanner") or {}
+            if gdpr.get("enabled") and gdpr.get("server_block"):
+                fb_id = (_transcription_config().get("fallback_model") or "whisper-base")
+                model_id, route = _transcription_resolve(fb_id)
+                wire = (route.get("wire") or "").lower()
+                fallback_used_reason = "gdpr_server_block"
+                try:
+                    if _audit_log:
+                        _agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+                        _audit_log.log_action(
+                            agent=(_agent.agent_id if _agent else "main"),
+                            action_type="pii_auto_fallback",
+                            tool_name="transcribe_audio",
+                            args_summary=f"cloud -> {model_id}",
+                            result_summary="audio file, content not scannable",
+                            result_status="ok",
+                            session_id=getattr(_thread_local, 'current_session_id', None) or None,
+                            source="background",
+                        )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # Dispatch.
     try:
-        kwargs = {"path_or_hf_repo": repo}
-        if language:
-            kwargs["language"] = language
-        result = mlx_whisper.transcribe(file_path, **kwargs)
-        transcript = (result or {}).get("text", "").strip()
-        detected_language = (result or {}).get("language") or language or ""
-        # Compute duration from segments if present
-        segments = (result or {}).get("segments") or []
-        duration_s = 0.0
-        if segments:
+        if wire == "mlx_whisper":
             try:
-                duration_s = float(segments[-1].get("end", 0.0))
-            except (TypeError, ValueError):
-                duration_s = 0.0
-        return _ok({
-            "transcript": transcript,
-            "language": detected_language,
-            "duration_s": round(duration_s, 2),
-            "model": model_size,
-            "file": file_path,
-        })
+                result = _transcribe_with_whisper(file_path, model_id, language)
+            except ImportError:
+                return _err("transcribe_audio: mlx-whisper is not installed. Run: pip3 install --user mlx-whisper")
+        elif wire == "openai_audio":
+            provider = route.get("provider") or ""
+            if not provider:
+                return _err(f"transcribe_audio: model '{model_id}' has no provider configured")
+            api_model_id = get_api_model_id(model_id)
+            try:
+                result = _transcribe_with_voxtral(file_path, api_model_id, provider, language)
+            except Exception as cloud_err:
+                fb_id = (_transcription_config().get("fallback_model") or "whisper-base")
+                try:
+                    fb_model_id, _ = _transcription_resolve(fb_id)
+                    result = _transcribe_with_whisper(file_path, fb_model_id, language)
+                    fallback_used_reason = f"cloud_error: {cloud_err}"[:200]
+                    model_id = fb_model_id
+                except Exception:
+                    return _err(f"transcribe_audio: {cloud_err}")
+        else:
+            return _err(f"transcribe_audio: unknown wire '{wire}' for model '{model_id}'")
     except Exception as e:
         return _err(f"transcribe_audio: {e}")
+
+    out = {
+        "transcript": result["transcript"],
+        "language": result["language"],
+        "duration_s": result["duration_s"],
+        "model": model_id,
+        "file": file_path,
+    }
+    if fallback_used_reason:
+        out["fallback_used"] = fallback_used_reason
+    try:
+        print(f"[transcribe_audio] model={model_id} duration_s={result['duration_s']} "
+              f"chars={len(result['transcript'])} fallback={fallback_used_reason or '-'}", flush=True)
+    except Exception:
+        pass
+    return _ok(out)
 
 
 def _describe_image_with_vision(image_data_b64: str, media_type: str, filename: str) -> str:
@@ -5322,6 +5583,11 @@ _TOOLS_CONFIG_DEFAULTS = {
         "timeout": 30,
         "max_output_chars": 50000,
         "venv_path": "",
+    },
+    "transcribe_audio": {
+        "enabled": True,
+        "default_model": "mistral-experimental/voxtral-mini-latest",
+        "fallback_model": "whisper-base",
     },
 }
 
@@ -19857,9 +20123,11 @@ KNOWN_MODELS = {
     "pixtral": {"icon": "\U0001f32c\ufe0f", "priority": 45, "max_context": 131072, "max_output": 16384, "capabilities": ["coding", "analysis"], "inference": {"temperature": 0.7}, "raw_formats": ["image/*"]},
     "minimax": {"icon": "\U0001f4ab", "priority": 55, "max_context": 131072, "max_output": 32768, "capabilities": ["coding", "analysis"], "inference": {"temperature": 0.7}, "raw_formats": []},
     "devstral": {"icon": "\U0001f32c\ufe0f", "priority": 50, "max_context": 256000, "max_output": 65536, "capabilities": ["coding", "analysis", "agentic"], "inference": {"temperature": 0.7}, "raw_formats": []},
+    "voxtral": {"icon": "\U0001f3a4", "priority": 45, "max_context": 32768, "max_output": 4096, "capabilities": ["audio"], "inference": {}, "raw_formats": []},
+    "whisper": {"icon": "\U0001f3a4", "priority": 30, "max_context": 0, "max_output": 0, "capabilities": ["audio", "local"], "inference": {}, "raw_formats": []},
 }
 
-CAPABILITY_VALUES = ["coding", "analysis", "agentic", "fast", "creative", "local"]
+CAPABILITY_VALUES = ["coding", "analysis", "agentic", "fast", "creative", "local", "audio"]
 
 _models_config: dict = {}
 
@@ -20078,7 +20346,67 @@ def init_models_config(providers: dict, existing_models: dict | None = None,
                 if redetected != "none":
                     cfg["thinking_format"] = redetected
 
+    _ensure_audio_models()
     return _models_config
+
+
+_WHISPER_SIZES = ("tiny", "base", "small", "medium", "large-v3")
+
+
+def _ensure_audio_models() -> None:
+    """Idempotent migration: ensure
+      - the 5 mlx-whisper sizes exist as model entries (provider=local-mlx-whisper, capability=audio)
+      - any voxtral entry already in _models_config carries the 'audio' capability
+    Runs on every init_models_config so existing installs gain the entries
+    without manual config edits.
+    """
+    global _models_config
+    for size in _WHISPER_SIZES:
+        mid = f"whisper-{size}"
+        if mid in _models_config:
+            # Existing entry: never re-stamp capabilities. The user owns them.
+            # Only fill in structural fields that must be present for routing.
+            cfg = _models_config[mid]
+            cfg.setdefault("provider", _WHISPER_PROVIDER)
+            cfg.setdefault("is_local", True)
+            cfg.setdefault("warmup", False)
+            cfg.setdefault("manual", True)
+            continue
+        # First-time seed.
+        _models_config[mid] = {
+            "enabled": True,
+            "shortname": mid,
+            "display_name": f"Whisper {size}",
+            "icon": "\U0001f3a4",
+            "priority": 30,
+            "capabilities": ["audio", "local"],
+            "raw_formats": [],
+            "thinking_format": "none",
+            "provider": _WHISPER_PROVIDER,
+            "is_local": True,
+            "warmup": False,
+            "manual": True,
+            "_audio_backfilled": True,
+        }
+    # One-shot backfill of 'audio' capability on existing voxtral entries
+    # served by the mistral-experimental provider. Other voxtral rows in the
+    # registry are orphans (provider removed, manual=True kept them around);
+    # they don't route anywhere so flagging them would just litter the dropdown.
+    # The marker per entry means the user can remove the capability later
+    # without it coming back on the next startup.
+    for mid, cfg in _models_config.items():
+        if cfg.get("_audio_backfilled"):
+            continue
+        if cfg.get("provider") != "mistral-experimental":
+            continue
+        sn = (cfg.get("shortname") or mid).lower()
+        base = (cfg.get("base_model_id") or "").lower()
+        if "voxtral" in sn or "voxtral" in base or "voxtral" in mid.lower():
+            caps = list(cfg.get("capabilities") or [])
+            if "audio" not in caps:
+                caps.append("audio")
+                cfg["capabilities"] = caps
+            cfg["_audio_backfilled"] = True
 
 
 def resolve_model(model_spec: str, purpose: str | None = None) -> str:

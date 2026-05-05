@@ -50,5 +50,10 @@
     "timeout": 30,
     "max_output_chars": 50000,
     "venv_path": ""
+  },
+  "transcribe_audio": {
+    "enabled": true,
+    "default_model": "mistral-experimental/voxtral-mini-latest",
+    "fallback_model": "whisper-base"
   }
 }
