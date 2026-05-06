@@ -173,21 +173,166 @@ _provider_cache_lock = threading.Lock()
 _provider_cache_time: float = 0
 
 
+# --- Multi-key pool per provider ---
+#
+# Each provider may have a list of api_keys with a usage tier:
+#   preferred   — prio 1: used round-robin among all preferred keys first
+#   round_robin — prio 2: used when no preferred keys are available
+#   fallback    — prio 3: only when prio 1+2 are all exhausted
+#
+# A key is "exhausted" when the last HTTP call with it returned 429 or a
+# token-limit error. Exhaustion resets after _KEY_EXHAUST_TTL seconds so
+# keys are retried after rate-limit windows expire.
+#
+# Backward compat: a plain string `api_key` field is treated as a single
+# preferred key with name "default".
+
+_KEY_EXHAUST_TTL = 60.0  # seconds before an exhausted key is retried
+
+class ProviderKeyPool:
+    """Thread-safe round-robin key selector with exhaustion tracking."""
+
+    def __init__(self, keys: list[dict]):
+        # keys: [{name, key, usage, deadline?}]
+        self._lock = threading.Lock()
+        self._keys = keys
+        # Round-robin cursors per usage tier
+        self._rr: dict[str, int] = {"preferred": 0, "round_robin": 0, "fallback": 0}
+        # {key_name: exhausted_until_ts}
+        self._exhausted: dict[str, float] = {}
+
+    def _available(self, tier: str) -> list[dict]:
+        now = time.time()
+        out = []
+        for k in self._keys:
+            if k.get("usage", "preferred") != tier:
+                continue
+            dl = k.get("deadline")
+            if dl:
+                try:
+                    import datetime
+                    exp = datetime.datetime.fromisoformat(dl)
+                    if exp.tzinfo is None:
+                        exp = exp.replace(tzinfo=datetime.timezone.utc)
+                    if datetime.datetime.now(datetime.timezone.utc) > exp:
+                        continue
+                except Exception:
+                    pass
+            if self._exhausted.get(k["name"], 0) > now:
+                continue
+            out.append(k)
+        return out
+
+    def pick(self) -> str | None:
+        with self._lock:
+            for tier in ("preferred", "round_robin", "fallback"):
+                avail = self._available(tier)
+                if not avail:
+                    continue
+                idx = self._rr[tier] % len(avail)
+                self._rr[tier] = (idx + 1) % len(avail)
+                return avail[idx]["key"]
+        return None
+
+    def mark_exhausted(self, key_value: str, ttl: float = _KEY_EXHAUST_TTL):
+        with self._lock:
+            for k in self._keys:
+                if k["key"] == key_value:
+                    self._exhausted[k["name"]] = time.time() + ttl
+                    break
+
+    def reset_exhausted(self, key_value: str):
+        with self._lock:
+            for k in self._keys:
+                if k["key"] == key_value:
+                    self._exhausted.pop(k["name"], None)
+                    break
+
+
+# Per-provider key pools (keyed by provider_name)
+_key_pools: dict[str, ProviderKeyPool] = {}
+_key_pools_lock = threading.Lock()
+
+
+def _get_key_pool(provider_name: str, prov_cfg: dict) -> ProviderKeyPool:
+    """Return (or create) the ProviderKeyPool for a provider config."""
+    with _key_pools_lock:
+        pool = _key_pools.get(provider_name)
+        if pool is not None:
+            return pool
+        keys = _normalize_api_keys(prov_cfg)
+        pool = ProviderKeyPool(keys)
+        _key_pools[provider_name] = pool
+        return pool
+
+
+def _normalize_api_keys(prov_cfg: dict) -> list[dict]:
+    """Return a normalized list of key dicts from a provider config.
+
+    Handles both legacy `api_key: "str"` and new `api_keys: [{name,key,usage,...}]`.
+    """
+    if prov_cfg.get("api_keys"):
+        raw = prov_cfg["api_keys"]
+        result = []
+        for i, k in enumerate(raw):
+            if isinstance(k, str):
+                result.append({"name": f"key-{i}", "key": k, "usage": "preferred"})
+            else:
+                entry = dict(k)
+                entry.setdefault("name", f"key-{i}")
+                entry.setdefault("usage", "preferred")
+                result.append(entry)
+        return result
+    # Legacy single key
+    legacy = prov_cfg.get("api_key", "")
+    if legacy:
+        return [{"name": "default", "key": legacy, "usage": "preferred"}]
+    return []
+
+
+def invalidate_key_pool(provider_name: str):
+    """Drop the cached pool so it is rebuilt on next pick (call after config changes)."""
+    with _key_pools_lock:
+        _key_pools.pop(provider_name, None)
+
+
+def mark_api_key_exhausted(provider_name: str, api_key: str, ttl: float = _KEY_EXHAUST_TTL):
+    """Mark a specific key as rate-limited / token-exhausted."""
+    with _key_pools_lock:
+        pool = _key_pools.get(provider_name)
+    if pool:
+        pool.mark_exhausted(api_key, ttl)
+
+
 def resolve_provider_for_model(model: str) -> dict:
     """Resolve provider credentials for a model. Returns {api_key, base_url, provider_name}.
 
     Single source of truth for model→provider resolution. Uses model config's provider
     field, falls back to delegate defaults. Thread-safe with 60s cache.
+
+    When a provider has multiple api_keys, picks one according to the priority/
+    round-robin rules defined in ProviderKeyPool.pick().
     """
     global _provider_cache_time
 
-    # Check cache first
+    # Check cache first — cache stores provider meta but NOT the selected key
+    # (key selection is live so exhaustion/RR state is always current)
     now = time.time()
     with _provider_cache_lock:
         if model in _provider_cache and now - _provider_cache_time < 60:
-            return _provider_cache[model].copy()
+            cached = _provider_cache[model].copy()
+            # Re-pick key live so exhaustion/round-robin is respected
+            pname = cached.get("provider_name", "")
+            if pname and pname != "default":
+                with _key_pools_lock:
+                    pool = _key_pools.get(pname)
+                if pool:
+                    picked = pool.pick()
+                    if picked is not None:
+                        cached["api_key"] = picked
+            return cached
 
-    # Default: delegate globals (set by server at startup)
+    # Default: delegate globals
     result = {
         "api_key": _delegate_api_key,
         "base_url": _delegate_base_url,
@@ -203,8 +348,10 @@ def resolve_provider_for_model(model: str) -> dict:
             with open(cfg_path) as f:
                 prov = json.load(f).get("providers", {}).get(provider_name, {})
             if prov:
+                pool = _get_key_pool(provider_name, prov)
+                picked = pool.pick()
                 result = {
-                    "api_key": prov.get("api_key", ""),
+                    "api_key": picked if picked is not None else "",
                     "base_url": prov.get("base_url", ""),
                     "provider_name": provider_name,
                 }
@@ -212,17 +359,21 @@ def resolve_provider_for_model(model: str) -> dict:
             pass
 
     with _provider_cache_lock:
-        _provider_cache[model] = result
+        # Cache provider meta (base_url, name) — key is re-picked live above
+        _provider_cache[model] = {k: v for k, v in result.items() if k != "api_key"}
+        _provider_cache[model]["api_key"] = result.get("api_key", "")
         _provider_cache_time = now
     return result
 
 
 def clear_provider_cache():
-    """Clear the provider resolution cache (call after config changes)."""
+    """Clear the provider resolution cache and key pools (call after config changes)."""
     global _provider_cache_time
     with _provider_cache_lock:
         _provider_cache.clear()
         _provider_cache_time = 0
+    with _key_pools_lock:
+        _key_pools.clear()
 
 
 # --- Warmup Registry ---

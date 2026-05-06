@@ -11354,22 +11354,158 @@ _provider_cache: dict[str, dict] = {}
 _provider_cache_lock = threading.Lock()
 _provider_cache_time: float = 0
 
+# --- Multi-key pool per provider ---
+#
+# Each provider may have a list of api_keys with a usage tier:
+#   preferred   — prio 1: used round-robin among all preferred keys first
+#   round_robin — prio 2: used when no preferred keys are available
+#   fallback    — prio 3: only when prio 1+2 are all exhausted
+#
+# A key is "exhausted" when the last HTTP call returned 429 or a token-limit
+# error. Exhaustion resets after _KEY_EXHAUST_TTL seconds.
+#
+# Backward compat: a plain string `api_key` field is treated as a single
+# preferred key with name "default".
+
+_KEY_EXHAUST_TTL = 60.0  # seconds before an exhausted key is retried
+
+
+class ProviderKeyPool:
+    """Thread-safe round-robin key selector with exhaustion tracking."""
+
+    def __init__(self, keys: list):
+        self._lock = threading.Lock()
+        self._keys = keys
+        self._rr: dict = {"preferred": 0, "round_robin": 0, "fallback": 0}
+        self._exhausted: dict = {}
+
+    def _available(self, tier: str) -> list:
+        import datetime
+        now = time.time()
+        out = []
+        for k in self._keys:
+            if k.get("usage", "preferred") != tier:
+                continue
+            dl = k.get("deadline")
+            if dl:
+                try:
+                    exp = datetime.datetime.fromisoformat(dl)
+                    if exp.tzinfo is None:
+                        exp = exp.replace(tzinfo=datetime.timezone.utc)
+                    if datetime.datetime.now(datetime.timezone.utc) > exp:
+                        continue
+                except Exception:
+                    pass
+            if self._exhausted.get(k["name"], 0) > now:
+                continue
+            out.append(k)
+        return out
+
+    def pick(self):
+        with self._lock:
+            for tier in ("preferred", "round_robin", "fallback"):
+                avail = self._available(tier)
+                if not avail:
+                    continue
+                idx = self._rr[tier] % len(avail)
+                self._rr[tier] = (idx + 1) % len(avail)
+                return avail[idx]["key"]
+        return None
+
+    def mark_exhausted(self, key_value: str, ttl: float = _KEY_EXHAUST_TTL):
+        with self._lock:
+            for k in self._keys:
+                if k["key"] == key_value:
+                    self._exhausted[k["name"]] = time.time() + ttl
+                    break
+
+    def reset_exhausted(self, key_value: str):
+        with self._lock:
+            for k in self._keys:
+                if k["key"] == key_value:
+                    self._exhausted.pop(k["name"], None)
+                    break
+
+
+# Per-provider key pools (keyed by provider_name)
+_key_pools: dict = {}
+_key_pools_lock = threading.Lock()
+
+
+def _get_key_pool(provider_name: str, prov_cfg: dict) -> ProviderKeyPool:
+    with _key_pools_lock:
+        pool = _key_pools.get(provider_name)
+        if pool is not None:
+            return pool
+        keys = _normalize_api_keys(prov_cfg)
+        pool = ProviderKeyPool(keys)
+        _key_pools[provider_name] = pool
+        return pool
+
+
+def _normalize_api_keys(prov_cfg: dict) -> list:
+    """Return normalized key list from provider config.
+
+    Handles both legacy `api_key: str` and new `api_keys: [{name,key,usage,...}]`.
+    """
+    if prov_cfg.get("api_keys"):
+        raw = prov_cfg["api_keys"]
+        result = []
+        for i, k in enumerate(raw):
+            if isinstance(k, str):
+                result.append({"name": f"key-{i}", "key": k, "usage": "preferred"})
+            else:
+                entry = dict(k)
+                entry.setdefault("name", f"key-{i}")
+                entry.setdefault("usage", "preferred")
+                result.append(entry)
+        return result
+    legacy = prov_cfg.get("api_key", "")
+    if legacy:
+        return [{"name": "default", "key": legacy, "usage": "preferred"}]
+    return []
+
+
+def invalidate_key_pool(provider_name: str):
+    """Drop the cached pool so it is rebuilt on next pick."""
+    with _key_pools_lock:
+        _key_pools.pop(provider_name, None)
+
+
+def mark_api_key_exhausted(provider_name: str, api_key: str, ttl: float = _KEY_EXHAUST_TTL):
+    """Mark a specific key as rate-limited / token-exhausted."""
+    with _key_pools_lock:
+        pool = _key_pools.get(provider_name)
+    if pool:
+        pool.mark_exhausted(api_key, ttl)
+
 
 def resolve_provider_for_model(model: str) -> dict:
     """Resolve provider credentials for a model. Returns {api_key, base_url, provider_name}.
 
     Single source of truth for model→provider resolution. Uses model config's provider
     field, falls back to delegate defaults. Thread-safe with 60s cache.
+
+    When a provider has multiple api_keys, picks one according to the priority/
+    round-robin rules defined in ProviderKeyPool.pick().
     """
     global _provider_cache_time
 
-    # Check cache first
     now = time.time()
     with _provider_cache_lock:
         if model in _provider_cache and now - _provider_cache_time < 60:
-            return _provider_cache[model].copy()
+            cached = _provider_cache[model].copy()
+            pname = cached.get("provider_name", "")
+            if pname and pname != "default":
+                with _key_pools_lock:
+                    pool = _key_pools.get(pname)
+                if pool:
+                    picked = pool.pick()
+                    if picked is not None:
+                        cached["api_key"] = picked
+            return cached
 
-    # Default: delegate globals (set by server at startup)
+    # Default: delegate globals
     result = {
         "api_key": _delegate_api_key,
         "base_url": _delegate_base_url,
@@ -11385,8 +11521,10 @@ def resolve_provider_for_model(model: str) -> dict:
             with open(cfg_path) as f:
                 prov = json.load(f).get("providers", {}).get(provider_name, {})
             if prov:
+                pool = _get_key_pool(provider_name, prov)
+                picked = pool.pick()
                 result = {
-                    "api_key": prov.get("api_key", ""),
+                    "api_key": picked if picked is not None else "",
                     "base_url": prov.get("base_url", ""),
                     "provider_name": provider_name,
                 }
@@ -11394,17 +11532,19 @@ def resolve_provider_for_model(model: str) -> dict:
             pass
 
     with _provider_cache_lock:
-        _provider_cache[model] = result
+        _provider_cache[model] = result.copy()
         _provider_cache_time = now
     return result
 
 
 def clear_provider_cache():
-    """Clear the provider resolution cache (call after config changes)."""
+    """Clear the provider resolution cache and key pools (call after config changes)."""
     global _provider_cache_time
     with _provider_cache_lock:
         _provider_cache.clear()
         _provider_cache_time = 0
+    with _key_pools_lock:
+        _key_pools.clear()
 
 
 # --- Warmup Registry ---
@@ -15166,6 +15306,7 @@ class CostTracker:
                     user_id TEXT NOT NULL DEFAULT '',
                     model TEXT NOT NULL,
                     provider TEXT NOT NULL DEFAULT '',
+                    key_name TEXT NOT NULL DEFAULT '',
                     tokens_in INTEGER NOT NULL DEFAULT 0,
                     tokens_out INTEGER NOT NULL DEFAULT 0,
                     cost_usd REAL NOT NULL DEFAULT 0.0,
@@ -15173,33 +15314,59 @@ class CostTracker:
                     created_at TEXT NOT NULL DEFAULT (datetime('now'))
                 )
             """)
-            # Migration: add user_id column to pre-existing tables
+            # Migrations
             try:
                 cols = {r[1] for r in conn.execute("PRAGMA table_info(cost_log)").fetchall()}
                 if "user_id" not in cols:
                     conn.execute("ALTER TABLE cost_log ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+                if "key_name" not in cols:
+                    conn.execute("ALTER TABLE cost_log ADD COLUMN key_name TEXT NOT NULL DEFAULT ''")
             except sqlite3.Error as e:
-                logging.warning(f"cost_log user_id migration: {e}")
+                logging.warning(f"cost_log migration: {e}")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_agent ON cost_log(agent)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_session ON cost_log(session_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_created ON cost_log(created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_user ON cost_log(user_id, created_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_provider ON cost_log(provider, key_name, created_at)")
             conn.commit()
 
     def log_call(self, agent: str, session_id: str, model: str, provider: str,
                  tokens_in: int, tokens_out: int, tool_round: int = 0,
-                 user_id: str = ""):
+                 user_id: str = "", key_name: str = ""):
         """Log an LLM call with cost estimation."""
         cost = _compute_cost(model, tokens_in, tokens_out)
         try:
             with _cost_conn() as conn:
                 conn.execute("""
-                    INSERT INTO cost_log (agent, session_id, user_id, model, provider, tokens_in, tokens_out, cost_usd, tool_round)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (agent, session_id or "", user_id or "", model, provider, tokens_in, tokens_out, cost, tool_round))
+                    INSERT INTO cost_log (agent, session_id, user_id, model, provider, key_name, tokens_in, tokens_out, cost_usd, tool_round)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (agent, session_id or "", user_id or "", model, provider, key_name or "", tokens_in, tokens_out, cost, tool_round))
                 conn.commit()
         except (sqlite3.Error, OSError) as e:
             logging.warning(f"Cost tracking error: {e}")
+
+    def per_provider_key_stats(self, days: int = 30) -> list[dict]:
+        """Return per-provider + per-key call/token/cost aggregates."""
+        try:
+            with _cost_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute("""
+                    SELECT provider, key_name,
+                           COUNT(*) AS calls,
+                           SUM(tokens_in) AS tokens_in,
+                           SUM(tokens_out) AS tokens_out,
+                           SUM(cost_usd) AS cost_usd,
+                           MAX(created_at) AS last_used
+                    FROM cost_log
+                    WHERE created_at >= datetime('now', ?)
+                      AND provider != ''
+                    GROUP BY provider, key_name
+                    ORDER BY provider, key_name
+                """, (f"-{days} days",)).fetchall()
+                return [dict(r) for r in rows]
+        except (sqlite3.Error, OSError) as e:
+            logging.warning(f"per_provider_key_stats error: {e}")
+            return []
 
     def get_stats(self, agent: str | None = None, hours: int = 24,
                   user_id: str | None = None) -> dict:
@@ -23296,7 +23463,8 @@ def _find_tool_name_for_block(messages: list[dict], tool_use_id: str | None) -> 
 
 
 def _log_call_cost(model: str, tokens_in: int, tokens_out: int,
-                   session_id: str | None = None, tool_round: int = 0):
+                   session_id: str | None = None, tool_round: int = 0,
+                   api_key: str = ""):
     """Log an LLM call to the cost tracker (if initialized)."""
     if not _cost_tracker:
         return
@@ -23306,9 +23474,23 @@ def _log_call_cost(model: str, tokens_in: int, tokens_out: int,
     agent_id = agent.agent_id if agent else "main"
     provider = _models_config.get(model, {}).get("provider", "")
     user_id = getattr(_thread_local, 'current_user_id', "") or ""
+    # Resolve key_name from the pool using the api_key value
+    key_name = ""
+    if api_key and provider:
+        try:
+            with _key_pools_lock:
+                pool = _key_pools.get(provider)
+            if pool:
+                for k in pool._keys:
+                    if k.get("key") == api_key:
+                        key_name = k.get("name", "")
+                        break
+        except Exception:
+            pass
     try:
         _cost_tracker.log_call(agent_id, session_id, model, provider,
-                               tokens_in, tokens_out, tool_round, user_id=user_id)
+                               tokens_in, tokens_out, tool_round, user_id=user_id,
+                               key_name=key_name)
         # Record in rate limiter too
         if _rate_limiter:
             cost = _compute_cost(model, tokens_in, tokens_out)
@@ -24628,8 +24810,13 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         # Transient errors: return None to trigger retry/fallback
         _TRANSIENT_CODES = {429, 500, 502, 503, 504, 529}
         if e.code in _TRANSIENT_CODES:
-            # Store error info for fallback logic
             _thread_local._last_send_error = {"code": e.code, "message": error_msg}
+            # Mark key exhausted on 429 so next pick skips it for _KEY_EXHAUST_TTL seconds
+            if e.code == 429:
+                try:
+                    mark_api_key_exhausted(_provider_name, api_key)
+                except Exception:
+                    pass
             return None
         # Permanent errors (401, 403, 404, etc.)
         _thread_local._last_send_error = {"code": e.code, "message": error_msg, "permanent": True}
@@ -24989,7 +25176,7 @@ def _handle_openai_response(response, payload, messages, model, api_key,
             collected_text = [full_text] if full_text else []
 
     # Log cost for this API call
-    _log_call_cost(model, _usage_in, _usage_out, session_id, _tool_round)
+    _log_call_cost(model, _usage_in, _usage_out, session_id, _tool_round, api_key=api_key)
 
     # Emit usage event so callers can capture token counts
     if event_callback:

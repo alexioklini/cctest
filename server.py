@@ -2239,6 +2239,7 @@ class BrainAgentHandler(
         "/v1/restart",
         "/v1/providers",
         "/v1/providers/test",
+        "/v1/providers/stats",
         "/v1/models/config",
         "/v1/services/server",
         "/v1/services/telegram",
@@ -2512,6 +2513,8 @@ class BrainAgentHandler(
             self._handle_running_tasks()
         elif path == "/v1/providers":
             self._handle_list_providers()
+        elif path.startswith("/v1/providers/stats"):
+            self._handle_provider_stats()
         elif path == "/v1/models/config":
             self._handle_models_config_get()
         elif path == "/v1/agents/activity":

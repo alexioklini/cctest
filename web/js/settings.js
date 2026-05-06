@@ -446,13 +446,39 @@ async function switchGeneralTab(tab, btn) {
   /* ─── PROVIDERS ─── */
   if (tab === 'providers') {
     try {
-      const provs = await API.getProviders();
+      const [provs, statsResp] = await Promise.all([
+        API.getProviders(),
+        API.get('/v1/providers/stats?days=30').catch(() => ({stats:[]})),
+      ]);
       const providers = Array.isArray(provs) ? provs : (provs.providers || []);
+      const statsByProvider = {};
+      for (const s of (statsResp.stats || [])) statsByProvider[s.provider] = s;
       let html = `<div style="${G('12px')}">`;
       for (const p of providers) {
         const ok = p.model_count > 0;
         const mc = p.models?.length || p.model_count || 0;
         const pid = `prov-edit-${p.name.replace(/[^a-zA-Z0-9]/g,'_')}`;
+        const USAGE_LABELS = {preferred:'Preferred (prio 1)',round_robin:'Round-robin (prio 2)',fallback:'Fallback (prio 3)'};
+        const USAGE_COLORS = {preferred:'var(--accent)',round_robin:'var(--text-200)',fallback:'var(--text-400)'};
+        const pStats = statsByProvider[p.name];
+        const keyStatsByName = {};
+        for (const ks of (pStats?.keys || [])) keyStatsByName[ks.key_name] = ks;
+        const fmtNum = n => n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'K' : String(n||0);
+        const keysHtml = (p.api_keys||[]).map((k,i) => {
+          const usageColor = USAGE_COLORS[k.usage]||'var(--text-200)';
+          const deadlinePart = k.deadline ? `<span style="${MONO};font-size:10px;color:var(--text-400)">exp ${esc(k.deadline.slice(0,10))}</span>` : '';
+          const ks = keyStatsByName[k.name] || keyStatsByName['(unknown)'];
+          const statsPart = ks ? `<span style="${MONO};font-size:10px;color:var(--text-400);margin-left:4px">${ks.calls} calls · ${fmtNum(ks.tokens_in)}↑ ${fmtNum(ks.tokens_out)}↓${ks.cost_usd > 0 ? ' · $'+ks.cost_usd.toFixed(4) : ''}</span>` : '';
+          return `<div style="display:flex;align-items:center;gap:6px;padding:4px 6px;background:var(--bg-100);border-radius:6px;flex-wrap:wrap">
+            <span style="font-size:12px;font-weight:500;color:var(--text-100);min-width:80px">${esc(k.name)}</span>
+            <span style="${MONO};color:${usageColor};font-size:11px">${esc(USAGE_LABELS[k.usage]||k.usage)}</span>
+            <span style="${MONO};color:var(--text-400);font-size:11px">${esc(k.key_hint||'')}</span>
+            ${deadlinePart}${statsPart}
+            <button class="btn-secondary" style="padding:1px 7px;font-size:11px;margin-left:auto" onclick="openKeyEditModal('${esc(p.name)}','${esc(k.name)}')">Edit</button>
+            <button class="btn-secondary" style="padding:1px 7px;font-size:11px;color:var(--error)" onclick="deleteProviderKey('${esc(p.name)}','${esc(k.name)}')">Delete</button>
+          </div>`;
+        }).join('');
+        const provStatsHtml = pStats ? `<div style="${MONO};font-size:10px;color:var(--text-400);margin-bottom:4px">Last 30 days: ${pStats.calls} calls · ${fmtNum(pStats.tokens_in)} in · ${fmtNum(pStats.tokens_out)} out${pStats.cost_usd > 0 ? ' · $'+pStats.cost_usd.toFixed(4) : ''}</div>` : '';
         html += `<div style="padding:12px;border:1px solid var(--border-100);border-radius:10px">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
             ${DOT(ok)}
@@ -461,16 +487,26 @@ async function switchGeneralTab(tab, btn) {
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="syncProvider(this,'${esc(p.name)}')" title="Add newly-available models from this provider. Honors deletions.">Sync</button>
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="resyncProvider(this,'${esc(p.name)}')" title="Drop all models for this provider AND clear deletion tombstones, then re-discover. Manual only.">Full Resync</button>
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="testProvider('${esc(p.name)}')">Test</button>
-            <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="document.getElementById('${pid}').style.display=document.getElementById('${pid}').style.display==='none'?'grid':'none'">Edit</button>
+            <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="document.getElementById('${pid}').style.display=document.getElementById('${pid}').style.display==='none'?'block':'none'">Settings</button>
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px;color:var(--error)" onclick="if(confirm('Delete provider ${esc(p.name)}?'))deleteProvider('${esc(p.name)}')">Delete</button>
           </div>
-          <div style="${MONO};overflow:hidden;text-overflow:ellipsis">${esc(p.base_url||'')}</div>
+          <div style="${MONO};overflow:hidden;text-overflow:ellipsis;margin-bottom:8px">${esc(p.base_url||'')}</div>
+          <div style="margin-bottom:6px">
+            ${provStatsHtml}
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+              <span style="font-size:11px;font-weight:500;color:var(--text-200)">API Keys</span>
+              <span style="${MONO};font-size:10px;color:var(--text-400)">(preferred → round-robin → fallback)</span>
+              <button class="btn-secondary" style="padding:1px 7px;font-size:11px;margin-left:auto" onclick="openKeyEditModal('${esc(p.name)}','')">+ Add key</button>
+            </div>
+            <div style="${G('4px')}">${keysHtml||`<span style="${MONO};color:var(--text-400);font-size:11px">No keys — click + Add key</span>`}</div>
+          </div>
           ${(p.models||[]).length?`<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${(p.models||[]).slice(0,8).map(m=>{const mid=typeof m==='string'?m:(m.id||m);return BADGE(modelShortName(mid,false));}).join('')}${(p.models||[]).length>8?`<span style="${MONO}">+${(p.models||[]).length-8} more</span>`:''}</div>`:''}
-          <div id="${pid}" style="display:none;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-100)">
-            <div><label class="form-label">Base URL</label><input class="form-input" id="${pid}-url" value="${esc(p.base_url||'')}"></div>
-            <div><label class="form-label">API Key</label><input class="form-input" id="${pid}-key" type="password" placeholder="${p.api_key||'unchanged'}"></div>
-            <div><label class="form-label">Default Model</label><input class="form-input" id="${pid}-model" value="${esc(p.default_model||'')}"></div>
-            <div><button class="btn-primary" style="font-size:12px" onclick="saveProviderEdit('${esc(p.name)}','${pid}')">Save</button></div>
+          <div id="${pid}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-100)">
+            <div style="${G('8px')}">
+              <div><label class="form-label">Base URL</label><input class="form-input" id="${pid}-url" value="${esc(p.base_url||'')}"></div>
+              <div><label class="form-label">Default Model</label><input class="form-input" id="${pid}-model" value="${esc(p.default_model||'')}"></div>
+              <div><button class="btn-primary" style="font-size:12px" onclick="saveProviderEdit('${esc(p.name)}','${pid}')">Save settings</button></div>
+            </div>
           </div>
         </div>`;
       }
@@ -2146,16 +2182,89 @@ async function syncProvider(btn, name) {
 
 async function saveProviderEdit(name, pid) {
   const base_url = document.getElementById(`${pid}-url`).value;
-  const api_key = document.getElementById(`${pid}-key`).value;
   const default_model = document.getElementById(`${pid}-model`).value;
-  const provider = { base_url, default_model };
-  if (api_key) provider.api_key = api_key;
-  else provider._keep_key = true;
+  const provider = { base_url, default_model, _keep_key: true };
   try {
     await API.post('/v1/providers', { action: 'add', name, provider });
     showToast('Provider updated');
     switchGeneralTab('providers');
   } catch(e) { showToast('Save failed: ' + e.message, true); }
+}
+
+function openKeyEditModal(provName, keyName) {
+  // Remove any existing key modal
+  document.getElementById('_key-edit-modal')?.remove();
+  const isEdit = !!keyName;
+  const overlay = document.createElement('div');
+  overlay.id = '_key-edit-modal';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `<div class="modal-content" style="max-width:420px;padding:20px;display:grid;gap:12px">
+    <div style="font-size:15px;font-weight:600;color:var(--text-000)">${isEdit?'Edit API Key':'Add API Key'}</div>
+    <div><label class="form-label">Key name</label><input class="form-input" id="_kmod-name" placeholder="e.g. main, backup-1" value="${isEdit?esc(keyName):''}"></div>
+    <div><label class="form-label">API key value</label><input class="form-input" id="_kmod-key" type="password" placeholder="${isEdit?'leave blank to keep current':'sk-...'}"></div>
+    <div><label class="form-label">Usage / priority</label>
+      <select class="form-select" id="_kmod-usage" style="width:100%">
+        <option value="preferred">Preferred (prio 1 — used first, round-robin among peers)</option>
+        <option value="round_robin">Round-robin (prio 2 — when no preferred available)</option>
+        <option value="fallback">Fallback (prio 3 — last resort)</option>
+      </select>
+    </div>
+    <div><label class="form-label">Expiry date <span style="color:var(--text-400)">(optional, ISO date e.g. 2026-12-31)</span></label>
+      <input class="form-input" id="_kmod-deadline" placeholder="2026-12-31">
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn-primary" onclick="saveKeyFromModal('${esc(provName)}','${isEdit?esc(keyName):''}')">Save</button>
+      <button class="btn-secondary" onclick="document.getElementById('_key-edit-modal')?.remove()">Cancel</button>
+    </div>
+  </div>`;
+  overlay.addEventListener('click', e => { if(e.target===overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  // If editing, pre-fill usage/deadline from current state
+  if (isEdit) {
+    const providers = state.providers || [];
+    const prov = providers.find(p=>p.name===provName);
+    if (prov) {
+      const key = (prov.api_keys||[]).find(k=>k.name===keyName);
+      if (key) {
+        document.getElementById('_kmod-usage').value = key.usage || 'preferred';
+        document.getElementById('_kmod-deadline').value = key.deadline || '';
+      }
+    }
+  }
+}
+
+async function saveKeyFromModal(provName, oldKeyName) {
+  const name = document.getElementById('_kmod-name')?.value?.trim();
+  const keyVal = document.getElementById('_kmod-key')?.value;
+  const usage = document.getElementById('_kmod-usage')?.value || 'preferred';
+  const deadline = document.getElementById('_kmod-deadline')?.value?.trim();
+  if (!name) { showToast('Key name required', true); return; }
+  const isEdit = !!oldKeyName;
+  // If editing and no new key value, we need to look up the existing key from stored list
+  // The server only has the masked hint, so require the value if it's a new key;
+  // for edits without a new value, send a special _keep_key_value flag
+  const entry = { name, usage };
+  if (keyVal) entry.key = keyVal;
+  else if (!isEdit) { showToast('API key value required for new key', true); return; }
+  else entry._keep_key_value = true;
+  if (deadline) entry.deadline = deadline;
+  try {
+    await API.post('/v1/providers', { action: 'save_key', name: provName, key_entry: entry, old_name: oldKeyName });
+    showToast('Key saved');
+    document.getElementById('_key-edit-modal')?.remove();
+    state.providers = await API.getProviders().then(p => Array.isArray(p) ? p : (p.providers||[]));
+    switchGeneralTab('providers');
+  } catch(e) { showToast('Save failed: ' + e.message, true); }
+}
+
+async function deleteProviderKey(provName, keyName) {
+  if (!confirm(`Delete key "${keyName}" from ${provName}?`)) return;
+  try {
+    await API.post('/v1/providers', { action: 'delete_key', name: provName, key_name: keyName });
+    showToast('Key deleted');
+    state.providers = await API.getProviders().then(p => Array.isArray(p) ? p : (p.providers||[]));
+    switchGeneralTab('providers');
+  } catch(e) { showToast('Delete failed: ' + e.message, true); }
 }
 
 async function testProvider(name) {
@@ -2178,7 +2287,6 @@ async function testNewProvider() {
   res.innerHTML = '<span style="color:var(--text-400)">Testing...</span>';
   try {
     const r = await API.post('/v1/providers/test', {
-      name: document.getElementById('prov-name')?.value,
       base_url: document.getElementById('prov-url')?.value,
       api_key: document.getElementById('prov-key')?.value,
     });
@@ -2191,15 +2299,15 @@ async function testNewProvider() {
 async function saveNewProvider() {
   const name = document.getElementById('prov-name')?.value?.trim();
   if (!name) { showToast('Name required', true); return; }
+  const rawKey = document.getElementById('prov-key')?.value || '';
   const provider = {
     base_url: document.getElementById('prov-url')?.value || '',
-    api_key: document.getElementById('prov-key')?.value || '',
     default_model: document.getElementById('prov-model')?.value || '',
+    api_keys: rawKey ? [{ name: 'default', key: rawKey, usage: 'preferred' }] : [],
   };
   try {
     await API.post('/v1/providers', { action: 'add', name, provider });
     showToast('Provider added');
-    // Refresh providers
     state.providers = await API.getProviders().then(p => Array.isArray(p) ? p : (p.providers||[]));
     switchGeneralTab('providers');
   } catch(e) { showToast('Add failed: ' + e.message, true); }

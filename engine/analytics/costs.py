@@ -157,6 +157,7 @@ class CostTracker:
                     user_id TEXT NOT NULL DEFAULT '',
                     model TEXT NOT NULL,
                     provider TEXT NOT NULL DEFAULT '',
+                    key_name TEXT NOT NULL DEFAULT '',
                     tokens_in INTEGER NOT NULL DEFAULT 0,
                     tokens_out INTEGER NOT NULL DEFAULT 0,
                     cost_usd REAL NOT NULL DEFAULT 0.0,
@@ -164,33 +165,59 @@ class CostTracker:
                     created_at TEXT NOT NULL DEFAULT (datetime('now'))
                 )
             """)
-            # Migration: add user_id column to pre-existing tables
+            # Migrations
             try:
                 cols = {r[1] for r in conn.execute("PRAGMA table_info(cost_log)").fetchall()}
                 if "user_id" not in cols:
                     conn.execute("ALTER TABLE cost_log ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+                if "key_name" not in cols:
+                    conn.execute("ALTER TABLE cost_log ADD COLUMN key_name TEXT NOT NULL DEFAULT ''")
             except sqlite3.Error as e:
-                logging.warning(f"cost_log user_id migration: {e}")
+                logging.warning(f"cost_log migration: {e}")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_agent ON cost_log(agent)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_session ON cost_log(session_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_created ON cost_log(created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_user ON cost_log(user_id, created_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_provider ON cost_log(provider, key_name, created_at)")
             conn.commit()
 
     def log_call(self, agent: str, session_id: str, model: str, provider: str,
                  tokens_in: int, tokens_out: int, tool_round: int = 0,
-                 user_id: str = ""):
+                 user_id: str = "", key_name: str = ""):
         """Log an LLM call with cost estimation."""
         cost = _compute_cost(model, tokens_in, tokens_out)
         try:
             with _cost_conn() as conn:
                 conn.execute("""
-                    INSERT INTO cost_log (agent, session_id, user_id, model, provider, tokens_in, tokens_out, cost_usd, tool_round)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (agent, session_id or "", user_id or "", model, provider, tokens_in, tokens_out, cost, tool_round))
+                    INSERT INTO cost_log (agent, session_id, user_id, model, provider, key_name, tokens_in, tokens_out, cost_usd, tool_round)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (agent, session_id or "", user_id or "", model, provider, key_name or "", tokens_in, tokens_out, cost, tool_round))
                 conn.commit()
         except (sqlite3.Error, OSError) as e:
             logging.warning(f"Cost tracking error: {e}")
+
+    def per_provider_key_stats(self, days: int = 30) -> list[dict]:
+        """Return per-provider + per-key call/token/cost aggregates."""
+        try:
+            with _cost_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute("""
+                    SELECT provider, key_name,
+                           COUNT(*) AS calls,
+                           SUM(tokens_in) AS tokens_in,
+                           SUM(tokens_out) AS tokens_out,
+                           SUM(cost_usd) AS cost_usd,
+                           MAX(created_at) AS last_used
+                    FROM cost_log
+                    WHERE created_at >= datetime('now', ?)
+                      AND provider != ''
+                    GROUP BY provider, key_name
+                    ORDER BY provider, key_name
+                """, (f"-{days} days",)).fetchall()
+                return [dict(r) for r in rows]
+        except (sqlite3.Error, OSError) as e:
+            logging.warning(f"per_provider_key_stats error: {e}")
+            return []
 
     def get_stats(self, agent: str | None = None, hours: int = 24,
                   user_id: str | None = None) -> dict:

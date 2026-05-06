@@ -10,20 +10,35 @@ import brain as engine
 
 class ProvidersHandlerMixin:
 
+    @staticmethod
+    def _mask_key(key: str) -> str:
+        return key[:4] + "***" if key and len(key) > 4 else "***"
+
     def _handle_list_providers(self):
         providers = server_config.get("providers", {})
         models_cfg = engine._models_config or {}
         result = []
         for name, p in providers.items():
-            # Use already-known models from config instead of fetching from provider
             all_models = [mid for mid, mcfg in models_cfg.items()
                           if mcfg.get("provider") == name]
             enabled_models = [mid for mid, mcfg in models_cfg.items()
                               if mcfg.get("provider") == name and mcfg.get("enabled", True)]
+            # Expose masked key list; also expose legacy single-key in masked form
+            raw_keys = engine._normalize_api_keys(p)
+            masked_keys = [
+                {
+                    "name": k.get("name", ""),
+                    "usage": k.get("usage", "preferred"),
+                    "deadline": k.get("deadline", ""),
+                    "key_hint": self._mask_key(k.get("key", "")),
+                }
+                for k in raw_keys
+            ]
             result.append({
                 "name": name,
                 "base_url": p.get("base_url", ""),
-                "api_key": p.get("api_key", "")[:4] + "***" if p.get("api_key") else "",
+                "api_key": self._mask_key(p.get("api_key", "")) if p.get("api_key") else "",
+                "api_keys": masked_keys,
                 "type": p.get("type", "openai"),
                 "default_model": p.get("default_model", ""),
                 "use_sdk": p.get("use_sdk", True),
@@ -71,15 +86,114 @@ class ProvidersHandlerMixin:
                 if os.path.exists(config_path):
                     with open(config_path) as f:
                         config = json.load(f)
-                # If _keep_key is set, preserve existing api_key
+                existing = config.get("providers", {}).get(name, {})
+                # Preserve existing api_key when _keep_key is set
                 if provider.pop("_keep_key", False):
-                    existing = config.get("providers", {}).get(name, {})
                     provider["api_key"] = existing.get("api_key", "")
+                # Preserve existing api_keys list when not supplied
+                if "api_keys" not in provider and existing.get("api_keys"):
+                    provider["api_keys"] = existing["api_keys"]
                 config.setdefault("providers", {})[name] = provider
                 with open(config_path, "w") as f:
                     json.dump(config, f, indent=2)
                 server_config.setdefault("providers", {})[name] = provider
+                engine.invalidate_key_pool(name)
                 self._send_json({"status": "added", "name": name})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif action == "save_key":
+            # Add or update a single api_key entry for a provider.
+            # Body: {name, key_entry: {name, key|_keep_key_value, usage, deadline?}, old_name?}
+            # If old_name is provided, the key with that name is replaced; otherwise appended.
+            # _keep_key_value: preserve the existing key value when editing (name/usage/deadline may change).
+            prov_name = body.get("name", "")
+            key_entry = body.get("key_entry", {})
+            old_key_name = body.get("old_name", "")
+            keep_key_value = key_entry.pop("_keep_key_value", False)
+            if not prov_name or not key_entry.get("name"):
+                self._send_json({"error": "name and key_entry.name required"}, 400)
+                return
+            if not key_entry.get("key") and not keep_key_value:
+                self._send_json({"error": "key_entry.key required for new keys"}, 400)
+                return
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+            try:
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                prov = config.get("providers", {}).get(prov_name)
+                if prov is None:
+                    self._send_json({"error": f"Unknown provider: {prov_name}"}, 404)
+                    return
+                # Migrate legacy single key to api_keys list if needed
+                if "api_keys" not in prov:
+                    legacy = prov.pop("api_key", "")
+                    prov["api_keys"] = [{"name": "default", "key": legacy, "usage": "preferred"}] if legacy else []
+                keys = prov["api_keys"]
+                # Find existing key to preserve value if _keep_key_value
+                existing_key_value = ""
+                lookup_name = old_key_name or key_entry["name"]
+                for k in keys:
+                    if k.get("name") == lookup_name:
+                        existing_key_value = k.get("key", "")
+                        break
+                entry = {
+                    "name": key_entry["name"],
+                    "key": key_entry["key"] if key_entry.get("key") else existing_key_value,
+                    "usage": key_entry.get("usage", "preferred"),
+                }
+                if key_entry.get("deadline"):
+                    entry["deadline"] = key_entry["deadline"]
+                if old_key_name:
+                    for i, k in enumerate(keys):
+                        if k.get("name") == old_key_name:
+                            keys[i] = entry
+                            break
+                    else:
+                        keys.append(entry)
+                else:
+                    for i, k in enumerate(keys):
+                        if k.get("name") == entry["name"]:
+                            keys[i] = entry
+                            break
+                    else:
+                        keys.append(entry)
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+                server_config.setdefault("providers", {})[prov_name] = prov
+                engine.invalidate_key_pool(prov_name)
+                self._send_json({"status": "saved", "name": prov_name})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+
+        elif action == "delete_key":
+            # Remove a single api_key entry. Body: {name, key_name}
+            prov_name = body.get("name", "")
+            key_name = body.get("key_name", "")
+            if not prov_name or not key_name:
+                self._send_json({"error": "name and key_name required"}, 400)
+                return
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+            try:
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                prov = config.get("providers", {}).get(prov_name)
+                if prov is None:
+                    self._send_json({"error": f"Unknown provider: {prov_name}"}, 404)
+                    return
+                if "api_keys" not in prov:
+                    legacy = prov.pop("api_key", "")
+                    prov["api_keys"] = [{"name": "default", "key": legacy, "usage": "preferred"}] if legacy else []
+                prov["api_keys"] = [k for k in prov["api_keys"] if k.get("name") != key_name]
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+                server_config.setdefault("providers", {})[prov_name] = prov
+                engine.invalidate_key_pool(prov_name)
+                self._send_json({"status": "deleted", "name": prov_name, "key_name": key_name})
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
 
@@ -95,6 +209,7 @@ class ProvidersHandlerMixin:
                 with open(config_path, "w") as f:
                     json.dump(config, f, indent=2)
                 server_config.get("providers", {}).pop(name, None)
+                engine.invalidate_key_pool(name)
                 self._send_json({"status": "deleted", "name": name})
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
@@ -104,13 +219,14 @@ class ProvidersHandlerMixin:
     def _handle_test_provider(self):
         """POST /v1/providers/test — test provider connection."""
         body = self._read_json()
-        # If only name is provided, look up provider config
         name = body.get("name")
         if name and not body.get("base_url"):
             providers = server_config.get("providers", {})
             p = providers.get(name, {})
             base_url = p.get("base_url", "")
-            api_key = p.get("api_key", "")
+            # Pick the first available key using the pool
+            pool = engine._get_key_pool(name, p)
+            api_key = pool.pick() or p.get("api_key", "")
         else:
             base_url = body.get("base_url", "")
             api_key = body.get("api_key", "")
@@ -128,6 +244,37 @@ class ProvidersHandlerMixin:
                 "error": str(e),
                 "models": [],
             })
+
+    def _handle_provider_stats(self):
+        """GET /v1/providers/stats?days=30 — per-provider+key call/token/cost aggregates."""
+        days = int((self.path.split("days=")[-1].split("&")[0]) if "days=" in self.path else 30)
+        try:
+            rows = engine._cost_tracker.per_provider_key_stats(days=days)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+            return
+        # Group by provider
+        by_provider = {}
+        for r in rows:
+            pname = r["provider"]
+            if pname not in by_provider:
+                by_provider[pname] = {"provider": pname, "calls": 0, "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0, "keys": []}
+            by_provider[pname]["calls"] += r["calls"]
+            by_provider[pname]["tokens_in"] += r["tokens_in"] or 0
+            by_provider[pname]["tokens_out"] += r["tokens_out"] or 0
+            by_provider[pname]["cost_usd"] += r["cost_usd"] or 0.0
+            by_provider[pname]["keys"].append({
+                "key_name": r["key_name"] or "(unknown)",
+                "calls": r["calls"],
+                "tokens_in": r["tokens_in"] or 0,
+                "tokens_out": r["tokens_out"] or 0,
+                "cost_usd": round(r["cost_usd"] or 0.0, 6),
+                "last_used": r["last_used"] or "",
+            })
+        result = sorted(by_provider.values(), key=lambda x: x["calls"], reverse=True)
+        for p in result:
+            p["cost_usd"] = round(p["cost_usd"], 6)
+        self._send_json({"stats": result, "days": days})
 
     def _handle_models_config_get(self):
         """GET /v1/models/config — return models configuration.
