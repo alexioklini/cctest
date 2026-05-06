@@ -543,6 +543,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <div class="tr-header">
         <h1 class="tr-title">Translation</h1>
         <div class="tr-header-actions">
+          <button class="tr-btn tr-btn-ghost" onclick="trOpenHistoryPanel()">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            History
+          </button>
           <button class="tr-btn tr-btn-ghost" onclick="trOpenGlossariesModal()">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
             Glossaries
@@ -584,8 +588,29 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           </select>
         </div>
         <div class="tr-pill-group">
-          <label class="tr-pill-label">Model</label>
-          <select id="tr-model-select" class="tr-select"></select>
+          <label class="tr-pill-label">Tone</label>
+          <select id="tr-tone-select" class="tr-select" onchange="trSetTone(this.value)">
+            <option value="">Auto</option>
+            <option value="formal">Formal</option>
+            <option value="informal">Informal</option>
+            <option value="plain">Plain</option>
+            <option value="marketing">Marketing</option>
+            <option value="technical">Technical</option>
+          </select>
+        </div>
+        <div class="tr-pill-group" id="tr-toolbar-mode-group" style="display:none">
+          <label class="tr-pill-label">Mode</label>
+          <select id="tr-media-mode" class="tr-select">
+            <option value="translate">Transcribe + translate</option>
+            <option value="transcribe">Transcribe only</option>
+          </select>
+        </div>
+        <div class="tr-pill-group" id="tr-toolbar-live-mode-group" style="display:none">
+          <label class="tr-pill-label">Mode</label>
+          <select id="tr-live-mode" class="tr-select">
+            <option value="translate">Transcribe + translate</option>
+            <option value="transcribe">Transcribe only</option>
+          </select>
         </div>
       </div>
 
@@ -597,6 +622,9 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
               <span class="tr-pane-title">Source</span>
               <span class="tr-detect-badge" id="tr-detect-badge"></span>
               <span class="tr-pane-meta" id="tr-source-count">0 chars</span>
+              <button class="tr-pane-btn" id="tr-tts-source-btn" onclick="trSpeakSource()" title="Speak source text">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/><path d="M19.07 4.93a10 10 0 010 14.14"/></svg>
+              </button>
               <button class="tr-pane-btn" onclick="trClearSource()" title="Clear">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
@@ -609,6 +637,9 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
             <div class="tr-pane-header">
               <span class="tr-pane-title">Translation</span>
               <span class="tr-pane-meta" id="tr-target-count">0 chars</span>
+              <button class="tr-pane-btn" id="tr-tts-target-btn" onclick="trSpeakTarget()" title="Speak translation">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/><path d="M19.07 4.93a10 10 0 010 14.14"/></svg>
+              </button>
               <button class="tr-pane-btn" onclick="trCopyTarget()" id="tr-copy-btn" title="Copy">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
               </button>
@@ -622,6 +653,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           <button class="tr-btn tr-btn-primary" id="tr-translate-btn" onclick="trRunTextTranslation()">
             Translate
           </button>
+          <button class="tr-btn" onclick="trClearSource()">Clear</button>
           <span class="tr-status" id="tr-status"></span>
         </div>
       </div>
@@ -667,6 +699,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
                   onclick="trRunDocTranslation()" disabled>
             Translate document
           </button>
+          <button class="tr-btn" onclick="trDocReset()">Clear</button>
           <span class="tr-status" id="tr-doc-status"></span>
         </div>
       </div>
@@ -703,22 +736,19 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         </div>
 
         <div class="tr-media-results hidden" id="tr-media-results">
-          <div class="tr-media-results-header">Segment-aligned transcript</div>
+          <div class="tr-media-results-header">
+            <span>Segment-aligned transcript</span>
+            <div class="tr-media-speak-btns" id="tr-media-speak-btns"></div>
+          </div>
           <div class="tr-media-segments" id="tr-media-segments"></div>
         </div>
 
         <div class="tr-doc-actions-row">
-          <label class="tr-pill-group" style="margin-right:auto">
-            <span class="tr-pill-label">Mode</span>
-            <select id="tr-media-mode" class="tr-select">
-              <option value="translate">Transcribe + translate</option>
-              <option value="transcribe">Transcribe only</option>
-            </select>
-          </label>
           <button class="tr-btn tr-btn-primary" id="tr-media-translate-btn"
                   onclick="trRunMediaTranslation()" disabled>
             Process file
           </button>
+          <button class="tr-btn" onclick="trMediaReset()">Clear</button>
           <span class="tr-status" id="tr-media-status"></span>
         </div>
       </div>
@@ -734,13 +764,6 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           <span class="tr-live-elapsed" id="tr-live-elapsed">0:00</span>
           <span class="tr-status" id="tr-live-status"></span>
           <div class="tr-toolbar-spacer"></div>
-          <label class="tr-pill-group">
-            <span class="tr-pill-label">Mode</span>
-            <select id="tr-live-mode" class="tr-select">
-              <option value="translate">Transcribe + translate</option>
-              <option value="transcribe">Transcribe only</option>
-            </select>
-          </label>
           <button class="tr-btn" id="tr-live-download-btn" onclick="trLiveDownload()" disabled>
             Save SRT
           </button>
@@ -766,6 +789,22 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       </div>
       <div class="tr-modal-body" id="tr-modal-body">
         <!-- Either the list view or the editor view, swapped by JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Translation History Panel ═══ -->
+  <div id="tr-history-panel" class="tr-history-panel hidden">
+    <div class="tr-history-backdrop" onclick="trCloseHistoryPanel()"></div>
+    <div class="tr-history-drawer">
+      <div class="tr-history-header">
+        <span class="tr-history-title">Translation History</span>
+        <button class="tr-modal-close" onclick="trCloseHistoryPanel()" aria-label="Close">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="tr-history-list" id="tr-history-list">
+        <div class="tr-history-empty">No history yet.</div>
       </div>
     </div>
   </div>

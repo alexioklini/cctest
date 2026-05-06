@@ -577,6 +577,21 @@ class ChatDB:
                     updated_at REAL DEFAULT (strftime('%s','now'))
                 )
             """)
+            # ── Translation history ──
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS translate_history (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL DEFAULT '',
+                    type TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    source_lang TEXT NOT NULL DEFAULT '',
+                    target_lang TEXT NOT NULL DEFAULT '',
+                    result_json TEXT NOT NULL DEFAULT '{}',
+                    artifact_path TEXT NOT NULL DEFAULT '',
+                    created_at REAL DEFAULT (strftime('%s','now'))
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_translate_history_user ON translate_history(user_id, created_at DESC)")
             conn.commit()
 
     # ── Artifact CRUD ──
@@ -1295,3 +1310,58 @@ class ChatDB:
                 except Exception:
                     pass
             return sids
+
+
+class TranslateHistoryDB:
+    """Persist translation history (text, document, media, live) to chats.db."""
+
+    @staticmethod
+    @_db_safe(default=None)
+    def add(*, entry_id: str, user_id: str, type: str, title: str,
+            source_lang: str, target_lang: str, result_json: str,
+            artifact_path: str = "") -> None:
+        with _db_conn() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO translate_history
+                   (id, user_id, type, title, source_lang, target_lang, result_json, artifact_path)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (entry_id, user_id, type, title, source_lang, target_lang,
+                 result_json, artifact_path),
+            )
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=list)
+    def list_for_user(user_id: str, limit: int = 200) -> list:
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT id, type, title, source_lang, target_lang,
+                          result_json, artifact_path, created_at
+                   FROM translate_history
+                   WHERE user_id = ?
+                   ORDER BY created_at DESC LIMIT ?""",
+                (user_id, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=None)
+    def get(entry_id: str, user_id: str):
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM translate_history WHERE id = ? AND user_id = ?",
+                (entry_id, user_id),
+            ).fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    @_db_safe(default=None)
+    def delete(entry_id: str, user_id: str) -> None:
+        with _db_conn() as conn:
+            conn.execute(
+                "DELETE FROM translate_history WHERE id = ? AND user_id = ?",
+                (entry_id, user_id),
+            )
+            conn.commit()

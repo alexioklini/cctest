@@ -49,6 +49,7 @@ class TranslateJob:
     runs: int = 0                  # final run count (post-translate)
     agent_id: str = "main"         # for artifact path resolution
     session_id: str = ""           # synthetic session for artifact folder
+    user_id: str = ""              # owner — used for history persistence
     # Media-specific outputs (populated by media worker once done):
     transcript: str = ""
     duration_s: float = 0.0

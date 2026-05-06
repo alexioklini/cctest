@@ -5864,6 +5864,11 @@ _TOOLS_CONFIG_DEFAULTS = {
         "default_model": "",                  # empty = falls back to refinement model
         "detection_fallback_model": "",       # empty = lingua only, no LLM fallback
     },
+    "text_to_speech": {
+        "enabled": True,
+        "default_model": "mistral-experimental/voxtral-mini-tts-latest",
+        "voice": "en_paul_neutral",  # slug from /audio/voices (Mistral voxtral-tts)
+    },
 }
 
 

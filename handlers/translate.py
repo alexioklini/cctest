@@ -23,6 +23,145 @@ MAX_MEDIA_BYTES = 200 * 1024 * 1024
 class TranslateHandlerMixin:
     """Mixin with /v1/translate/* handlers."""
 
+    # ─── Text-to-Speech ─────────────────────────────────────────────────────
+
+    def _handle_translate_tts_voices(self):
+        """GET /v1/translate/tts/voices — list available TTS voices from the provider.
+
+        Calls /audio/voices on the configured TTS provider. Returns
+        {voices: [{slug, name, gender, languages, tags}]} sorted by name.
+        Falls back to a hardcoded set if the provider endpoint fails.
+        """
+        try:
+            import brain
+            import urllib.request as _urllib
+
+            cfg = brain.get_tool_config().get("text_to_speech", {}) or {}
+            model_id = cfg.get("default_model") or "mistral-experimental/voxtral-mini-tts-latest"
+            prov = brain.resolve_provider_for_model(model_id)
+            base_url = (prov.get("base_url") or "").rstrip("/")
+            api_key = prov.get("api_key") or ""
+
+            if not base_url or not api_key:
+                raise RuntimeError("TTS provider not configured")
+
+            all_voices = []
+            seen_slugs: set = set()
+            for page in range(1, 10):
+                req = _urllib.Request(
+                    f"{base_url}/audio/voices?page={page}&page_size=50",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                with _urllib.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read())
+                for v in data.get("items", []):
+                    slug = v.get("slug") or ""
+                    if slug and slug not in seen_slugs:
+                        seen_slugs.add(slug)
+                        all_voices.append({
+                            "slug": slug,
+                            "name": v.get("name") or slug,
+                            "gender": v.get("gender") or "",
+                            "languages": v.get("languages") or [],
+                            "tags": v.get("tags") or [],
+                        })
+                if page >= data.get("total_pages", 1):
+                    break
+
+            all_voices.sort(key=lambda v: v["name"])
+            self._send_json({"voices": all_voices})
+        except Exception as e:
+            # Return a minimal hardcoded fallback so the UI stays usable.
+            self._send_json({"voices": [
+                {"slug": "en_paul_neutral", "name": "Paul - Neutral", "gender": "male", "languages": ["en_us"], "tags": []},
+                {"slug": "en_paul_cheerful", "name": "Paul - Cheerful", "gender": "male", "languages": ["en_us"], "tags": []},
+                {"slug": "gb_oliver_neutral", "name": "Oliver - Neutral", "gender": "male", "languages": ["en_gb"], "tags": []},
+                {"slug": "gb_jane_sarcasm", "name": "Jane - Sarcasm", "gender": "female", "languages": ["en_gb"], "tags": []},
+            ], "error": str(e)})
+
+    def _handle_translate_tts(self):
+        """POST /v1/translate/tts — {text, lang, [model, voice]} → audio/mpeg bytes.
+
+        Calls Mistral's OpenAI-compatible /audio/speech endpoint using the
+        voxtral-mini-tts model. Returns raw audio bytes with Content-Type
+        audio/mpeg so the browser can play them directly via an Audio object.
+        """
+        body = self._read_json()
+        text = (body.get("text") or "").strip()
+        if not text:
+            self._send_json({"error": "text is required"}, 400)
+            return
+
+        try:
+            import brain
+            import urllib.request
+
+            cfg = brain.get_tool_config().get("text_to_speech", {}) or {}
+            model_id = (body.get("model") or "").strip() or cfg.get("default_model") or "mistral-experimental/voxtral-mini-tts-latest"
+            voice = (body.get("voice") or "").strip() or cfg.get("voice") or "nova"
+
+            # Resolve provider for the TTS model.
+            prov = brain.resolve_provider_for_model(model_id)
+            base_url = (prov.get("base_url") or "").rstrip("/")
+            api_key = prov.get("api_key") or ""
+            if not base_url or not api_key:
+                self._send_json({"error": "TTS provider not configured — check text_to_speech.default_model in Tools Config"}, 503)
+                return
+
+            # Strip provider-scope prefix for the wire model id.
+            api_model_id = model_id
+            if "/" in model_id:
+                api_model_id = model_id.split("/", 1)[1]
+
+            payload = json.dumps({
+                "model": api_model_id,
+                "input": text,
+                "voice": voice,
+            }).encode("utf-8")
+
+            url = f"{base_url}/audio/speech"
+            req = urllib.request.Request(
+                url, data=payload, method="POST",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                    "Accept": "audio/mpeg",
+                },
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    raw = resp.read()
+                    resp_ct = resp.headers.get("Content-Type", "")
+            except urllib.error.HTTPError as e:
+                try:
+                    err_body = e.read().decode("utf-8", errors="replace")[:500]
+                except Exception:
+                    err_body = ""
+                self._send_json({"error": f"TTS API error {e.code}: {err_body}"}, 502)
+                return
+
+            # Mistral voxtral-tts returns JSON {"audio_data": "<base64 mp3>"}.
+            # Decode to raw bytes before sending to the browser.
+            import base64 as _b64
+            if resp_ct.startswith("application/json") or raw[:1] == b"{":
+                try:
+                    jdata = json.loads(raw)
+                    audio_bytes = _b64.b64decode(jdata["audio_data"])
+                except Exception as dec_err:
+                    self._send_json({"error": f"TTS decode error: {dec_err}"}, 502)
+                    return
+            else:
+                audio_bytes = raw
+
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("Content-Length", str(len(audio_bytes)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(audio_bytes)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
     # ─── Detection ──────────────────────────────────────────────────────────
 
     def _handle_translate_detect(self):
@@ -74,9 +213,44 @@ class TranslateHandlerMixin:
                 model=(body.get("model") or "").strip(),
                 tone=(body.get("tone") or "").strip(),
             )
+            # Persist to translation history (fire-and-forget).
+            if not result.get("noop") and result.get("translation"):
+                try:
+                    user_id = getattr(self, "_current_user_id", None) or ""
+                    _tr_history_save_text(
+                        user_id=user_id,
+                        text=text,
+                        result=result,
+                        source_lang=(body.get("source_lang") or "").strip().lower(),
+                        target_lang=target_lang,
+                    )
+                except Exception:
+                    pass
             self._send_json(result)
         except ValueError as e:
             self._send_json({"error": str(e)}, 400)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    # ─── Translation History ─────────────────────────────────────────────────
+
+    def _handle_translate_history_list(self):
+        """GET /v1/translate/history — return entries for the current user."""
+        try:
+            user_id = getattr(self, "_current_user_id", None) or ""
+            from server_lib.db import TranslateHistoryDB
+            entries = TranslateHistoryDB.list_for_user(user_id)
+            self._send_json({"entries": entries})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_translate_history_delete(self, entry_id: str):
+        """DELETE /v1/translate/history/<id>."""
+        try:
+            user_id = getattr(self, "_current_user_id", None) or ""
+            from server_lib.db import TranslateHistoryDB
+            TranslateHistoryDB.delete(entry_id, user_id)
+            self._send_json({"ok": True})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
@@ -186,6 +360,10 @@ class TranslateHandlerMixin:
         model = (fields.get("model") or "").strip()
         agent_id = (fields.get("agent_id") or "main").strip() or "main"
         session_id = (fields.get("session_id") or "").strip()
+        try:
+            user_id = getattr(self, "_current_user_id", None) or ""
+        except Exception:
+            user_id = ""
 
         # Persist the upload to a tmp file the worker can read.
         import tempfile
@@ -218,6 +396,7 @@ class TranslateHandlerMixin:
             model=model,
             agent_id=agent_id,
             session_id=session_id,
+            user_id=user_id,
         )
 
         # Worker thread runs the actual translation. Daemon so it doesn't
@@ -406,6 +585,10 @@ class TranslateHandlerMixin:
         model = (fields.get("model") or "").strip()
         transcribe_model = (fields.get("transcribe_model") or "").strip()
         agent_id = (fields.get("agent_id") or "main").strip() or "main"
+        try:
+            media_user_id = getattr(self, "_current_user_id", None) or ""
+        except Exception:
+            media_user_id = ""
 
         import tempfile
         tmpdir = tempfile.mkdtemp(prefix="brain-translate-media-")
@@ -434,6 +617,7 @@ class TranslateHandlerMixin:
             transcribe_model=transcribe_model,
             agent_id=agent_id,
             session_id=session_id,
+            user_id=media_user_id,
         )
 
         t = threading.Thread(
@@ -532,6 +716,12 @@ class TranslateHandlerMixin:
             self._send_json({"error": "session not found"}, 404)
             return
         sess.stop()
+        # Persist to translation history.
+        try:
+            user_id = getattr(self, "_current_user_id", None) or ""
+            _tr_history_save_live(user_id=user_id, sess=sess)
+        except Exception:
+            pass
         self._send_json({"ok": True})
 
     def _handle_live_stream(self, sess_id: str):
@@ -671,8 +861,14 @@ def _run_translate_job(job_id: str) -> None:
             noop=result.get("noop", False),
             model=result.get("model", ""),
         )
+        # Persist to translation history.
+        try:
+            _tr_history_save_job(job)
+        except Exception:
+            pass
     except Exception as e:
         job.fail(str(e))
+
 
 
 def _run_media_job(job_id: str) -> None:
@@ -723,5 +919,91 @@ def _run_media_job(job_id: str) -> None:
             transcribe_model=result.get("transcribe_model", ""),
             translation_model=job.model,
         )
+        # Persist to translation history.
+        try:
+            _tr_history_save_job(job)
+        except Exception:
+            pass
     except Exception as e:
         job.fail(str(e))
+
+
+# ─── Translation history helpers ────────────────────────────────────────────
+
+def _tr_history_save_text(*, user_id: str, text: str, result: dict,
+                          source_lang: str, target_lang: str) -> None:
+    import uuid as _uuid
+    from server_lib.db import TranslateHistoryDB
+    title = text[:80].replace("\n", " ")
+    detected = (result.get("detected") or {})
+    actual_src = detected.get("language") or source_lang or "auto"
+    TranslateHistoryDB.add(
+        entry_id=_uuid.uuid4().hex,
+        user_id=user_id,
+        type="text",
+        title=title,
+        source_lang=actual_src,
+        target_lang=target_lang,
+        result_json=json.dumps({
+            "text": text,
+            "translation": result.get("translation", ""),
+            "detected": detected,
+            "noop": result.get("noop", False),
+        }, ensure_ascii=False),
+    )
+
+
+def _tr_history_save_job(job) -> None:
+    import uuid as _uuid
+    from server_lib.db import TranslateHistoryDB
+    title = os.path.basename(job.filename) if job.filename else f"Job {job.id}"
+    data: dict = {"job_id": job.id, "filename": job.filename}
+    artifact_path = ""
+    if job.kind == "document":
+        data["output_filename"] = os.path.basename(job.output_path) if job.output_path else ""
+        artifact_path = job.output_path or ""
+    elif job.kind == "media":
+        data["segments"] = job.segments or []
+        data["transcript"] = job.transcript or ""
+        data["duration_s"] = job.duration_s
+        data["output_files"] = {k: os.path.basename(v) for k, v in (job.output_files or {}).items()}
+        artifact_path = job.output_path or ""
+    TranslateHistoryDB.add(
+        entry_id=_uuid.uuid4().hex,
+        user_id=getattr(job, "user_id", "") or "",
+        type=job.kind,
+        title=title,
+        source_lang=job.source_lang or "",
+        target_lang=job.target_lang or "",
+        result_json=json.dumps(data, ensure_ascii=False),
+        artifact_path=artifact_path,
+    )
+
+
+def _tr_history_save_live(*, user_id: str, sess) -> None:
+    import uuid as _uuid
+    from server_lib.db import TranslateHistoryDB
+    segs = list(sess.segments) if hasattr(sess, "segments") else []
+    if not segs:
+        return
+    from datetime import datetime as _dt
+    title = f"Live mic — {_dt.now().strftime('%H:%M')}"
+    TranslateHistoryDB.add(
+        entry_id=_uuid.uuid4().hex,
+        user_id=user_id,
+        type="live",
+        title=title,
+        source_lang=getattr(sess, "source_lang", "") or "",
+        target_lang=getattr(sess, "target_lang", "") or "",
+        result_json=json.dumps({
+            "segments": [
+                {
+                    "start": s.start if hasattr(s, "start") else s.get("start", 0),
+                    "end": s.end if hasattr(s, "end") else s.get("end", 0),
+                    "text": s.text if hasattr(s, "text") else s.get("text", ""),
+                    "translation": s.translation if hasattr(s, "translation") else s.get("translation", ""),
+                }
+                for s in segs
+            ]
+        }, ensure_ascii=False),
+    )

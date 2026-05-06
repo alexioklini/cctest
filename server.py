@@ -2488,6 +2488,10 @@ class BrainAgentHandler(
                 self._send_json({"warmup": warmup_enabled, "warming_up": s._warmup_active})
         elif path == "/v1/schedule":
             self._handle_list_schedule()
+        elif path == "/v1/translate/tts/voices":
+            self._handle_translate_tts_voices()
+        elif path == "/v1/translate/history":
+            self._handle_translate_history_list()
         elif path == "/v1/translate/glossaries":
             self._handle_glossaries_list()
         elif path.startswith("/v1/translate/glossaries/"):
@@ -2848,6 +2852,10 @@ class BrainAgentHandler(
             self._handle_restore()
         elif path == "/v1/refine":
             self._handle_refine()
+        elif path == "/v1/translate/tts/voices":
+            self._handle_translate_tts_voices()
+        elif path == "/v1/translate/tts":
+            self._handle_translate_tts()
         elif path == "/v1/translate/detect":
             self._handle_translate_detect()
         elif path == "/v1/translate/text":
@@ -2984,6 +2992,9 @@ class BrainAgentHandler(
         elif path.startswith("/v1/translate/glossaries/"):
             slug = path[len("/v1/translate/glossaries/"):]
             self._handle_glossary_delete(slug)
+        elif path.startswith("/v1/translate/history/"):
+            entry_id = path[len("/v1/translate/history/"):]
+            self._handle_translate_history_delete(entry_id)
         else:
             self._send_json({"error": "Not found"}, 404)
 

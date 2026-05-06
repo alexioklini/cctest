@@ -16,8 +16,8 @@ const trState = {
   targetLang: 'en',
   glossarySlug: '',
   model: '',
+  tone: '',
   glossaries: [],          // cached list from /v1/translate/glossaries
-  modelOptions: [],        // mistral models pulled from /v1/models
   detectTimer: null,
   inflightAbort: null,
   // Glossary modal state — null = list view, object = editing form.
@@ -65,7 +65,7 @@ function trLangLabel(code) {
 async function loadTranslationView() {
   trRenderTargetPill();
   trRenderSourcePill();
-  await Promise.all([trLoadGlossaries(), trLoadModels()]);
+  await trLoadGlossaries();
   trUpdateCounts();
 }
 
@@ -92,38 +92,6 @@ async function trLoadGlossaries() {
   }
 }
 
-async function trLoadModels() {
-  // Pull the active models list and surface only Mistral entries — translation
-  // is Mistral-only by design (prompt + glossary tuning verified there).
-  try {
-    const data = await API.get('/v1/models');
-    const all = data.models || data || [];
-    const mistrals = (Array.isArray(all) ? all : [])
-      .filter(m => {
-        const id = (m.id || m).toLowerCase();
-        return id.includes('mistral') || id.includes('voxtral');
-      })
-      .map(m => ({ id: m.id || m, name: m.name || m.display_name || m.id || m }));
-    trState.modelOptions = mistrals;
-  } catch (e) {
-    console.warn('trLoadModels failed', e);
-    trState.modelOptions = [];
-  }
-  const sel = document.getElementById('tr-model-select');
-  if (!sel) return;
-  if (!trState.modelOptions.length) {
-    sel.innerHTML = '<option value="">(server default)</option>';
-    return;
-  }
-  sel.innerHTML = '<option value="">(server default)</option>' +
-    trState.modelOptions
-      .filter(m => !/voxtral/i.test(m.id))
-      .map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`)
-      .join('');
-  sel.value = trState.model || '';
-  sel.onchange = () => { trState.model = sel.value; };
-}
-
 /* ─── Tabs ─────────────────────────────────────────────────── */
 
 function trSwitchTab(tab) {
@@ -141,6 +109,10 @@ function trSwitchTab(tab) {
     const el = document.getElementById(id);
     if (el) el.style.display = (tab === key) ? '' : 'none';
   }
+  const modeGroup = document.getElementById('tr-toolbar-mode-group');
+  if (modeGroup) modeGroup.style.display = (tab === 'audio') ? '' : 'none';
+  const liveModeGroup = document.getElementById('tr-toolbar-live-mode-group');
+  if (liveModeGroup) liveModeGroup.style.display = (tab === 'live') ? '' : 'none';
 }
 
 /* ─── Source / target language pills ──────────────────────── */
@@ -255,6 +227,10 @@ function trSetGlossary(slug) {
   trState.glossarySlug = slug || '';
 }
 
+function trSetTone(tone) {
+  trState.tone = tone || '';
+}
+
 /* ─── Source input + auto-detect ──────────────────────────── */
 
 function trOnSourceInput() {
@@ -366,6 +342,7 @@ async function trRunTextTranslation() {
     }
     if (trState.glossarySlug) body.glossary = trState.glossarySlug;
     if (trState.model) body.model = trState.model;
+    if (trState.tone) body.tone = trState.tone;
     const r = await API.post('/v1/translate/text', body);
     const dt = ((Date.now() - t0) / 1000).toFixed(1);
     out.classList.remove('translating');
@@ -384,6 +361,10 @@ async function trRunTextTranslation() {
       status.textContent = `Done in ${dt}s${m}`;
     }
     trUpdateCounts();
+    // Prefetch TTS for both sides so audio is ready on first click.
+    const srcLang = trState.sourceLang || trState.detected?.lang || '';
+    _trTtsPrefetch('source', text, srcLang);
+    if (r.translation && !r.noop) _trTtsPrefetch('target', r.translation, trState.targetLang);
   } catch (e) {
     out.classList.remove('translating');
     out.innerHTML = '<div class="tr-placeholder">Translation failed.</div>';
@@ -406,6 +387,117 @@ function trCopyTarget() {
       setTimeout(() => { if (status.textContent === 'Copied.') status.textContent = prev; }, 1500);
     }
   });
+}
+
+/* ─── Text-to-Speech ─────────────────────────────────────── */
+
+// Shared state for the currently active TTS playback.
+let _trTtsAudio = null;
+let _trTtsPlaying = false;
+// Pre-fetched blob URLs keyed by side ('source'|'target'), cleared on new translation.
+const _trTtsCache = { source: null, target: null };
+
+function _trTtsSetStatus(msg) {
+  const el = document.getElementById('tr-status');
+  if (el) el.textContent = msg || '';
+}
+
+function _trTtsResetBtns() {
+  document.getElementById('tr-tts-source-btn')?.classList.remove('tr-tts-active');
+  document.getElementById('tr-tts-target-btn')?.classList.remove('tr-tts-active');
+}
+
+function _trTtsStop() {
+  if (_trTtsAudio) { _trTtsAudio.pause(); _trTtsAudio = null; }
+  _trTtsPlaying = false;
+  _trTtsResetBtns();
+}
+
+async function _trTtsFetch(text, lang) {
+  // Returns a blob URL ready to play, or throws.
+  const resp = await fetch('/v1/translate/tts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...trAuthHeaders() },
+    body: JSON.stringify({ text, lang }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${resp.status}`);
+  }
+  const blob = await resp.blob();
+  return URL.createObjectURL(blob);
+}
+
+// Prefetch is called optimistically after a translation completes so the audio
+// is ready by the time the user clicks the speaker button.
+async function _trTtsPrefetch(side, text, lang) {
+  if (!text) return;
+  // Revoke any previous blob for this side.
+  if (_trTtsCache[side]) { try { URL.revokeObjectURL(_trTtsCache[side]); } catch(_) {} }
+  _trTtsCache[side] = null;
+  try {
+    _trTtsCache[side] = await _trTtsFetch(text, lang);
+  } catch(_) { /* silent — will fetch on demand if prefetch failed */ }
+}
+
+// Called on real button click (user gesture) — plays immediately if cached,
+// fetches synchronously otherwise.
+async function _trTtsPlay(side, text, lang, btn) {
+  // Toggle off if already playing.
+  if (_trTtsPlaying) { _trTtsStop(); return; }
+
+  _trTtsSetStatus('');
+  _trTtsResetBtns();
+  if (btn) btn.classList.add('tr-tts-active');
+
+  try {
+    let blobUrl = _trTtsCache[side];
+    if (!blobUrl) {
+      // No prefetch — fetch now (still within the user-gesture callstack).
+      blobUrl = await _trTtsFetch(text, lang);
+    } else {
+      // Clear cache so next call re-fetches fresh.
+      _trTtsCache[side] = null;
+    }
+
+    const audio = new Audio(blobUrl);
+    _trTtsAudio = audio;
+    _trTtsPlaying = true;
+
+    audio.onended = () => {
+      URL.revokeObjectURL(blobUrl);
+      _trTtsPlaying = false;
+      _trTtsResetBtns();
+    };
+    audio.onerror = () => {
+      URL.revokeObjectURL(blobUrl);
+      _trTtsPlaying = false;
+      _trTtsResetBtns();
+      _trTtsSetStatus('TTS playback error');
+    };
+
+    await audio.play();
+  } catch (e) {
+    _trTtsStop();
+    _trTtsSetStatus('TTS failed: ' + e.message);
+  }
+}
+
+function trSpeakSource() {
+  const text = document.getElementById('tr-source-textarea')?.value?.trim();
+  if (!text) return;
+  const lang = trState.sourceLang || trState.detected?.lang || '';
+  const btn = document.getElementById('tr-tts-source-btn');
+  _trTtsPlay('source', text, lang, btn);
+}
+
+function trSpeakTarget() {
+  const out = document.getElementById('tr-target-output');
+  const text = out?.dataset.translation || '';
+  if (!text) return;
+  const lang = trState.targetLang || 'en';
+  const btn = document.getElementById('tr-tts-target-btn');
+  _trTtsPlay('target', text, lang, btn);
 }
 
 /* ─── Glossaries modal ────────────────────────────────────── */
@@ -1209,23 +1301,73 @@ function trMediaRenderSegments(segments) {
   if (!wrap || !list) return;
   if (!segments.length) { wrap.classList.add('hidden'); return; }
   const hasTranslation = segments.some(s => s.translation);
-  list.innerHTML = segments.map(s => {
+  const srcLang = trState.sourceLang || trState.detected?.lang || '';
+  const tgtLang = trState.targetLang || 'en';
+
+  // Header speak-all buttons.
+  const speakBtns = document.getElementById('tr-media-speak-btns');
+  if (speakBtns) {
+    const svgSpk = `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/><path d="M19.07 4.93a10 10 0 010 14.14"/></svg>`;
+    let html = `<button class="tr-media-speak-all-btn" id="tr-media-speak-transcript" title="Speak full transcript">${svgSpk} Transcript</button>`;
+    if (hasTranslation) {
+      html += `<button class="tr-media-speak-all-btn" id="tr-media-speak-translation" title="Speak full translation">${svgSpk} Translation</button>`;
+    }
+    speakBtns.innerHTML = html;
+    const allTranscript = segments.map(s => s.text || '').join(' ');
+    const allTranslation = segments.map(s => s.translation || '').join(' ');
+    document.getElementById('tr-media-speak-transcript').onclick = () =>
+      _trMediaSpeak('media-all-transcript', allTranscript, srcLang,
+        document.getElementById('tr-media-speak-transcript'));
+    if (hasTranslation) {
+      document.getElementById('tr-media-speak-translation').onclick = () =>
+        _trMediaSpeak('media-all-translation', allTranslation, tgtLang,
+          document.getElementById('tr-media-speak-translation'));
+    }
+  }
+
+  list.innerHTML = segments.map((s, i) => {
     const t = trFormatTimeShort(s.start || 0);
     const src = escapeHtml(s.text || '');
+    const svgSpk = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>`;
     if (!hasTranslation) {
       return `<div class="tr-media-seg no-translation">
         <div class="tr-media-seg-time">${t}</div>
         <div class="tr-media-seg-src">${src}</div>
+        <button class="tr-media-seg-speak" data-seg="${i}" data-side="src" title="Speak">${svgSpk}</button>
       </div>`;
     }
     const tgt = escapeHtml(s.translation || '');
     return `<div class="tr-media-seg">
       <div class="tr-media-seg-time">${t}</div>
-      <div class="tr-media-seg-src">${src}</div>
-      <div class="tr-media-seg-tgt">${tgt}</div>
+      <div class="tr-media-seg-src">${src}<button class="tr-media-seg-speak" data-seg="${i}" data-side="src" title="Speak source">${svgSpk}</button></div>
+      <div class="tr-media-seg-tgt">${tgt}<button class="tr-media-seg-speak" data-seg="${i}" data-side="tgt" title="Speak translation">${svgSpk}</button></div>
     </div>`;
   }).join('');
+
+  // Wire per-segment speak buttons.
+  list.querySelectorAll('.tr-media-seg-speak').forEach(btn => {
+    btn.onclick = () => {
+      const i = parseInt(btn.dataset.seg);
+      const side = btn.dataset.side;
+      const seg = segments[i];
+      if (!seg) return;
+      const text = side === 'src' ? (seg.text || '') : (seg.translation || '');
+      const lang = side === 'src' ? srcLang : tgtLang;
+      _trMediaSpeak(`media-seg-${i}-${side}`, text, lang, btn);
+    };
+  });
+
   wrap.classList.remove('hidden');
+}
+
+// Shared TTS play for media segments — reuses the same _trTtsPlay plumbing.
+function _trMediaSpeak(cacheKey, text, lang, btn) {
+  if (!text) return;
+  // Stop any currently playing audio first.
+  if (_trTtsPlaying) { _trTtsStop(); }
+  // Use the generic play function with a dynamic cache slot.
+  _trTtsCache[cacheKey] = _trTtsCache[cacheKey] || null;
+  _trTtsPlay(cacheKey, text, lang, btn);
 }
 
 function trFormatTimeShort(t) {
@@ -1799,4 +1941,160 @@ function trLiveDownload() {
   a.click();
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+/* ─── Translation History ──────────────────────────────────────────────── */
+
+const _trHistoryIcons = {
+  text: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>`,
+  document: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`,
+  media: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>`,
+  live: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>`,
+};
+
+let _trHistoryEntries = [];
+
+function trOpenHistoryPanel() {
+  const panel = document.getElementById('tr-history-panel');
+  if (!panel) return;
+  panel.classList.remove('hidden');
+  _trHistoryLoad();
+}
+
+function trCloseHistoryPanel() {
+  const panel = document.getElementById('tr-history-panel');
+  if (panel) panel.classList.add('hidden');
+}
+
+async function _trHistoryLoad() {
+  const list = document.getElementById('tr-history-list');
+  if (!list) return;
+  list.innerHTML = '<div class="tr-history-empty">Loading…</div>';
+  try {
+    const data = await API.get('/v1/translate/history');
+    _trHistoryEntries = data.entries || [];
+    _trHistoryRenderList(list);
+  } catch (e) {
+    list.innerHTML = `<div class="tr-history-empty">Error: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function _trHistoryRenderList(list) {
+  list = list || document.getElementById('tr-history-list');
+  if (!_trHistoryEntries.length) {
+    list.innerHTML = '<div class="tr-history-empty">No history yet.</div>';
+    return;
+  }
+  list.innerHTML = _trHistoryEntries.map(e => {
+    const icon = _trHistoryIcons[e.type] || _trHistoryIcons.text;
+    const date = new Date((e.created_at || 0) * 1000).toLocaleString(undefined, {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+    const langs = [e.source_lang, e.target_lang].filter(Boolean).join(' → ') || '';
+    const typeLabel = {text:'Text', document:'Document', media:'Audio/Video', live:'Live Mic'}[e.type] || e.type;
+    return `<div class="tr-history-entry" onclick="_trHistoryOpen('${escapeHtml(e.id)}')">
+      <div class="tr-history-entry-icon">${icon}</div>
+      <div class="tr-history-entry-body">
+        <div class="tr-history-entry-title">${escapeHtml(e.title || '—')}</div>
+        <div class="tr-history-entry-meta">${typeLabel}${langs ? ' · ' + escapeHtml(langs) : ''} · ${escapeHtml(date)}</div>
+      </div>
+      <button class="tr-history-entry-del" onclick="event.stopPropagation();_trHistoryDelete('${escapeHtml(e.id)}')" title="Delete">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+      </button>
+    </div>`;
+  }).join('');
+}
+
+async function _trHistoryDelete(id) {
+  try {
+    await API.delete(`/v1/translate/history/${encodeURIComponent(id)}`);
+    _trHistoryEntries = _trHistoryEntries.filter(e => e.id !== id);
+    _trHistoryRenderList();
+  } catch(e) { /* silent */ }
+}
+
+function _trHistoryOpen(id) {
+  const entry = _trHistoryEntries.find(e => e.id === id);
+  if (!entry) return;
+  const drawer = document.querySelector('.tr-history-drawer');
+  if (!drawer) return;
+  let result = {};
+  try { result = JSON.parse(entry.result_json || '{}'); } catch(_) {}
+
+  if (entry.type === 'text') {
+    _trHistoryRestoreText(entry, result);
+    trCloseHistoryPanel();
+    return;
+  }
+  if (entry.type === 'document') {
+    _trHistoryShowDocDetail(drawer, entry, result);
+    return;
+  }
+  if (entry.type === 'media' || entry.type === 'live') {
+    _trHistoryShowSegDetail(drawer, entry, result);
+    return;
+  }
+}
+
+function _trHistoryRestoreText(entry, result) {
+  // Switch to text tab and restore source + translation.
+  trSwitchTab('text');
+  const src = document.getElementById('tr-source-textarea');
+  const tgt = document.getElementById('tr-target-output');
+  if (src) src.value = result.text || '';
+  if (tgt) {
+    tgt.textContent = result.translation || '';
+    tgt.dataset.translation = result.translation || '';
+  }
+  // Update language pills.
+  if (entry.source_lang && entry.source_lang !== 'auto') {
+    trState.sourceLang = entry.source_lang;
+    trRenderSourcePill();
+  }
+  if (entry.target_lang) {
+    trState.targetLang = entry.target_lang;
+    trRenderTargetPill();
+  }
+  trUpdateCounts();
+}
+
+function _trHistoryShowDocDetail(drawer, entry, result) {
+  const list = drawer.querySelector('.tr-history-list') || document.getElementById('tr-history-list');
+  const detailId = 'tr-history-detail-' + entry.id;
+  // Replace list content with detail view.
+  list.innerHTML = `<div class="tr-history-detail" id="${detailId}">
+    <button class="tr-history-detail-back" onclick="_trHistoryBackToList()">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg> Back
+    </button>
+    <div style="font-size:15px;font-weight:600;color:var(--text-000);margin-bottom:8px">${escapeHtml(entry.title)}</div>
+    <div style="font-size:12px;color:var(--text-400);margin-bottom:16px">${[entry.source_lang, entry.target_lang].filter(Boolean).join(' → ')}</div>
+    ${result.output_filename ? `<div style="font-size:13px;color:var(--text-200)">Output: <code>${escapeHtml(result.output_filename)}</code></div>` : ''}
+    ${entry.artifact_path ? `<div style="margin-top:12px"><em style="font-size:12px;color:var(--text-400)">File saved to Artifacts.</em></div>` : ''}
+  </div>`;
+}
+
+function _trHistoryShowSegDetail(drawer, entry, result) {
+  const list = drawer.querySelector('.tr-history-list') || document.getElementById('tr-history-list');
+  const segs = result.segments || [];
+  const hasTranslation = segs.some(s => s.translation);
+  const segHtml = segs.map(s => {
+    const t = typeof s.start === 'number' ? trFormatTimeShort(s.start) : '';
+    return `<div class="tr-history-seg">
+      <div class="tr-history-seg-time">${t}</div>
+      <div class="tr-history-seg-src">${escapeHtml(s.text || '')}</div>
+      ${s.translation ? `<div class="tr-history-seg-tgt">${escapeHtml(s.translation)}</div>` : ''}
+    </div>`;
+  }).join('');
+  const typeLabel = entry.type === 'live' ? 'Live Mic' : 'Audio/Video';
+  list.innerHTML = `<div class="tr-history-detail">
+    <button class="tr-history-detail-back" onclick="_trHistoryBackToList()">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg> Back
+    </button>
+    <div style="font-size:15px;font-weight:600;color:var(--text-000);margin-bottom:4px">${escapeHtml(entry.title)}</div>
+    <div style="font-size:12px;color:var(--text-400);margin-bottom:14px">${typeLabel} · ${[entry.source_lang, entry.target_lang].filter(Boolean).join(' → ')}</div>
+    ${result.transcript ? `<div style="font-size:13px;color:var(--text-200);margin-bottom:12px;line-height:1.5">${escapeHtml(result.transcript)}</div>` : ''}
+    <div class="tr-history-seg-list">${segHtml}</div>
+  </div>`;
+}
+
+function _trHistoryBackToList() {
+  _trHistoryRenderList();
 }

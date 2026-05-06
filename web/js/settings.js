@@ -1522,6 +1522,7 @@ async function switchGeneralTab(tab, btn) {
       const rdCfg = cfg.read_document || {};
       const cgCfg = cfg.code_graph || {};
       const taCfg = cfg.transcribe_audio || {};
+      const ttsCfg = cfg.text_to_speech || {};
       // Transcription model list comes from the models config: any entry whose
       // capabilities include 'audio'. Local fallback is restricted to entries
       // routed via the local-mlx-whisper pseudo-provider (or otherwise marked
@@ -1552,6 +1553,18 @@ async function switchGeneralTab(tab, btn) {
       };
       const transcribeOpts = (sel) => _transcribeOptionList(_audioEntries, sel);
       const whisperOpts = (sel) => _transcribeOptionList(_audioEntries.filter(m => m.isLocal), sel);
+      // TTS models: audio-capable entries whose id contains 'tts' (voxtral-mini-tts-*).
+      const _ttsEntries = _audioEntries.filter(e => e.id.toLowerCase().includes('tts'));
+      const ttsOpts = (sel) => _transcribeOptionList(_ttsEntries.length ? _ttsEntries : _audioEntries, sel);
+      // Load TTS voices from the provider; fall back to empty while loading.
+      let _ttsVoices = [];
+      try { _ttsVoices = (await API.get('/v1/translate/tts/voices')).voices || []; } catch(_) {}
+      const ttsVoiceOpts = (sel) => {
+        if (!_ttsVoices.length) return `<option value="${esc(sel||'en_paul_neutral')}" selected>${esc(sel||'en_paul_neutral')}</option>`;
+        return _ttsVoices.map(v =>
+          `<option value="${esc(v.slug)}" ${v.slug===sel?'selected':''}>${esc(v.name)}${v.gender?' ('+v.gender+')':''}</option>`
+        ).join('');
+      };
 
       C.innerHTML = P(`<div style="${G('12px')}">
         <!-- Exa Search -->
@@ -1647,6 +1660,22 @@ async function switchGeneralTab(tab, btn) {
           </div>
         </div>
 
+        <!-- Text-to-Speech -->
+        <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px">
+          ${tog('text_to_speech','Text-to-Speech')}
+          <div style="${G('8px')}">
+            ${lbl('TTS Model')}
+            <select id="tool-tts-model" class="form-select" style="font-size:11px">
+              ${ttsOpts(ttsCfg.default_model || '')}
+            </select>
+            ${lbl('Voice')}
+            <select id="tool-tts-voice" class="form-select" style="font-size:11px">
+              ${ttsVoiceOpts(ttsCfg.voice || 'en_paul_neutral')}
+            </select>
+            <div style="font-size:10px;color:var(--text-400)">Used by the speaker buttons in the Translation text tab. Voice names follow the OpenAI /audio/speech convention — not all voices may be available depending on the model.</div>
+          </div>
+        </div>
+
         <!-- Write Document -->
         <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px">
           ${tog('write_document','Write Document')}
@@ -1728,6 +1757,11 @@ async function saveToolsConfig() {
       enabled: document.getElementById('tool-transcribe_audio-enabled')?.checked ?? true,
       default_model: document.getElementById('tool-ta-default-model')?.value || 'mistral-experimental/voxtral-mini-latest',
       fallback_model: document.getElementById('tool-ta-fallback-model')?.value || 'whisper-base',
+    },
+    text_to_speech: {
+      enabled: document.getElementById('tool-text_to_speech-enabled')?.checked ?? true,
+      default_model: document.getElementById('tool-tts-model')?.value || 'mistral-experimental/voxtral-mini-tts-latest',
+      voice: document.getElementById('tool-tts-voice')?.value || 'en_paul_neutral',
     },
   };
   try {

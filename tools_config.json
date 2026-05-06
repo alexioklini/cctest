@@ -60,5 +60,10 @@
     "enabled": true,
     "default_model": "mistral-vibe/mistral-medium-3.5",
     "detection_fallback_model": "mistral-vibe-cli-fast"
+  },
+  "text_to_speech": {
+    "enabled": true,
+    "default_model": "mistral-experimental/voxtral-mini-tts-latest",
+    "voice": "en_paul_confident"
   }
 }
