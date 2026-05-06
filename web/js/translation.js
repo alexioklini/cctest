@@ -1886,11 +1886,15 @@ function trLiveRenderSegments() {
   const html = trLiveState.segments.map((s, idx) => {
     const t = trFormatTimeShort(s.start || 0);
     const cls = s.translating ? ' translating' : '';
-    const text = `<div class="tr-live-segment-src">${escapeHtml(s.text)}</div>`;
+    const speakerN = s.speaker ? parseInt(s.speaker.replace(/\D/g, ''), 10) || 1 : 0;
+    const speakerCls = speakerN ? ` tr-speaker-${((speakerN - 1) % 6) + 1}` : '';
+    const speakerLabel = s.speaker
+      ? `<span class="tr-live-speaker-label">${escapeHtml(s.speaker)}</span>` : '';
+    const text = `<div class="tr-live-segment-src">${speakerLabel}${escapeHtml(s.text)}</div>`;
     const trans = s.translation
       ? `<div class="tr-live-segment-tgt">${escapeHtml(s.translation)}</div>`
       : (s.translating ? `<div class="tr-live-segment-tgt"></div>` : '');
-    return `<div class="tr-live-segment${cls}">
+    return `<div class="tr-live-segment${cls}${speakerCls}">
       <div class="tr-live-segment-time">${t}</div>
       <div>${text}${trans}</div>
     </div>`;
@@ -1924,8 +1928,9 @@ function trLiveDownload() {
   let i = 0;
   const lines = [];
   for (const s of trLiveState.segments) {
-    const text = (s.translation || s.text || '').trim();
-    if (!text) continue;
+    const rawText = (s.translation || s.text || '').trim();
+    if (!rawText) continue;
+    const text = s.speaker ? `${s.speaker}: ${rawText}` : rawText;
     i++;
     lines.push(String(i));
     lines.push(`${fmt(s.start || 0)} --> ${fmt(s.end || s.start || 0)}`);

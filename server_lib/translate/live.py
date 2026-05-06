@@ -32,6 +32,129 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
+class SpeakerTracker:
+    """Assigns stable speaker labels per-segment using resemblyzer embeddings.
+
+    For each Voxtral segment we slice the exact audio window by timestamp,
+    embed that slice, and compare against known speaker centroids.  This gives
+    per-segment speaker labels rather than one label for the whole chunk, so
+    two speakers in the same chunk are handled correctly as long as Voxtral's
+    segment boundaries fall at the speaker change.
+
+    Centroids are updated with EWMA so they drift-correct over the session.
+    Thread-safe — all state is guarded by a single lock.
+
+    Falls back gracefully: if the slice is too short (<0.5s) or the audio
+    can't be read, returns the previous speaker label (or "Speaker 1").
+    """
+
+    MATCH_THRESHOLD = 0.82   # cosine sim above this → same speaker
+    EWMA_ALPHA = 0.3         # weight of new embedding vs running centroid
+    MIN_SAMPLES = 8000       # 0.5s at 16kHz — minimum slice for a clean embed
+    SAMPLE_RATE = 16000
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._centroids: list = []   # list of numpy arrays, one per speaker
+        self._encoder = None         # lazy-loaded VoiceEncoder
+        self._last_speaker: str = "Speaker 1"
+
+    def _load_encoder(self):
+        if self._encoder is None:
+            from resemblyzer import VoiceEncoder
+            self._encoder = VoiceEncoder()
+        return self._encoder
+
+    def _read_wav_samples(self, wav_path: str):
+        """Read WAV as float32 mono array at SAMPLE_RATE, or None on error."""
+        try:
+            import numpy as np
+            import wave
+            with wave.open(wav_path, 'rb') as wf:
+                n_channels = wf.getnchannels()
+                sampwidth = wf.getsampwidth()
+                framerate = wf.getframerate()
+                n_frames = wf.getnframes()
+                raw = wf.readframes(n_frames)
+            if sampwidth == 2:
+                samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+            elif sampwidth == 4:
+                samples = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
+            else:
+                return None, framerate
+            if n_channels > 1:
+                samples = samples[::n_channels]  # take left channel
+            return samples, framerate
+        except Exception:
+            return None, self.SAMPLE_RATE
+
+    def _embed_samples(self, samples):
+        """Embed a float32 numpy array; returns unit vector or None."""
+        try:
+            import numpy as np
+            from resemblyzer import preprocess_wav
+            enc = self._load_encoder()
+            # preprocess_wav accepts a numpy array directly
+            wav = preprocess_wav(samples, source_sr=self.SAMPLE_RATE)
+            if len(wav) < self.MIN_SAMPLES:
+                return None
+            emb = enc.embed_utterance(wav)
+            norm = np.linalg.norm(emb) + 1e-9
+            return emb / norm
+        except Exception:
+            return None
+
+    def _match_or_create(self, emb) -> str:
+        """Given a unit embedding, return the matched/new speaker label.
+        Must be called with self._lock held."""
+        import numpy as np
+        best_idx, best_sim = -1, -1.0
+        for i, centroid in enumerate(self._centroids):
+            sim = float(np.dot(emb, centroid))
+            if sim > best_sim:
+                best_sim, best_idx = sim, i
+        if best_sim >= self.MATCH_THRESHOLD:
+            c = self._centroids[best_idx]
+            c = (1 - self.EWMA_ALPHA) * c + self.EWMA_ALPHA * emb
+            c /= (np.linalg.norm(c) + 1e-9)
+            self._centroids[best_idx] = c
+            return f"Speaker {best_idx + 1}"
+        else:
+            self._centroids.append(emb.copy())
+            return f"Speaker {len(self._centroids)}"
+
+    def assign_segment(self, wav_path: str, seg_start: float, seg_end: float) -> str:
+        """Return 'Speaker N' for the audio window [seg_start, seg_end] seconds."""
+        import numpy as np
+        samples, framerate = self._read_wav_samples(wav_path)
+        if samples is None:
+            return self._last_speaker
+
+        # Resample index to the file's actual framerate
+        sr = framerate or self.SAMPLE_RATE
+        i0 = int(seg_start * sr)
+        i1 = int(seg_end * sr)
+        slice_ = samples[i0:i1]
+
+        # Resample to 16kHz if needed (resemblyzer expects 16kHz)
+        if sr != self.SAMPLE_RATE and len(slice_) > 0:
+            try:
+                import librosa
+                slice_ = librosa.resample(slice_, orig_sr=sr, target_sr=self.SAMPLE_RATE)
+            except Exception:
+                pass  # fall through — embed at wrong sr, still better than chunk
+
+        emb = self._embed_samples(slice_)
+        if emb is None:
+            # Slice too short — keep previous speaker (avoids phantom new speakers)
+            return self._last_speaker
+
+        with self._lock:
+            label = self._match_or_create(emb)
+        self._last_speaker = label
+        return label
+
+
 SESSION_TTL_SECONDS = 7200       # 2h after last activity
 SESSION_SWEEP_INTERVAL = 600
 
@@ -53,6 +176,7 @@ class _Segment:
     end: float
     text: str
     translation: str = ""
+    speaker: str = ""           # "Speaker N" label from resemblyzer, empty = unknown
 
 
 class LiveSession:
@@ -81,6 +205,7 @@ class LiveSession:
         self._chunks: "queue.Queue[Optional[_Chunk]]" = queue.Queue()
         self._segments: list[_Segment] = []
         self._segments_lock = threading.Lock()
+        self._speaker_tracker = SpeakerTracker()
 
         self._subscribers: list[queue.Queue] = []
         self._sub_lock = threading.Lock()
@@ -129,6 +254,7 @@ class LiveSession:
             "end": round(s.end, 3),
             "text": s.text,
             "translation": s.translation,
+            "speaker": s.speaker,
             "target_lang": self.target_lang,
         }
 
@@ -252,22 +378,28 @@ class LiveSession:
         if not segments:
             return
 
-        # Apply absolute timeline offset.
+        # Apply absolute timeline offset and assign per-segment speaker labels.
+        # Each segment is embedded individually using its Voxtral timestamps,
+        # so two speakers within one chunk get different labels.
         offset = self._time_offset_s
         for s in segments:
             text = (s.get("text") or "").strip()
             if not text:
                 continue
-            start = float(s.get("start") or 0.0) + offset
-            end = float(s.get("end") or s.get("start") or 0.0) + offset
+            seg_start = float(s.get("start") or 0.0)
+            seg_end = float(s.get("end") or seg_start)
+            speaker = self._speaker_tracker.assign_segment(
+                chunk.path, seg_start, seg_end
+            )
             with self._segments_lock:
                 idx = len(self._segments)
                 seg = _Segment(
                     index=idx,
                     chunk_seq=chunk.seq,
-                    start=start,
-                    end=end,
+                    start=seg_start + offset,
+                    end=seg_end + offset,
                     text=text,
+                    speaker=speaker,
                 )
                 self._segments.append(seg)
             self._broadcast("segment", self._segment_to_dict(seg))

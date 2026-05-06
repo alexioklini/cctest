@@ -5868,6 +5868,33 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
   content: '…';
   color: var(--text-400);
 }
+.tr-live-speaker-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  margin-right: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  vertical-align: middle;
+  opacity: 0.85;
+}
+/* Six speaker colours — cycle with tr-speaker-N class on the segment row */
+.tr-speaker-1 .tr-live-speaker-label { background: #dbeafe; color: #1d4ed8; }
+.tr-speaker-2 .tr-live-speaker-label { background: #fce7f3; color: #be185d; }
+.tr-speaker-3 .tr-live-speaker-label { background: #dcfce7; color: #15803d; }
+.tr-speaker-4 .tr-live-speaker-label { background: #fef9c3; color: #a16207; }
+.tr-speaker-5 .tr-live-speaker-label { background: #ede9fe; color: #6d28d9; }
+.tr-speaker-6 .tr-live-speaker-label { background: #ffedd5; color: #c2410c; }
+/* Dark-mode adjustments */
+@media (prefers-color-scheme: dark) {
+  .tr-speaker-1 .tr-live-speaker-label { background: #1e3a5f; color: #93c5fd; }
+  .tr-speaker-2 .tr-live-speaker-label { background: #4a1942; color: #f9a8d4; }
+  .tr-speaker-3 .tr-live-speaker-label { background: #14532d; color: #86efac; }
+  .tr-speaker-4 .tr-live-speaker-label { background: #3b2f00; color: #fde68a; }
+  .tr-speaker-5 .tr-live-speaker-label { background: #2e1065; color: #c4b5fd; }
+  .tr-speaker-6 .tr-live-speaker-label { background: #431407; color: #fed7aa; }
+}
 
 .tr-btn {
   padding: 8px 18px;
