@@ -244,7 +244,7 @@ async function switchGeneralTab(tab, btn) {
       // Default model selector — chat-capable only.
       const mc = state.modelsConfig?.models || {};
       const enabledModels = enabledModelsWithCapability('chat');
-      const modelOpts = enabledModels.map(([mid])=>`<option value="${esc(mid)}" ${mid===srv.default_model?'selected':''}>${esc(modelShortName(mid))}</option>`).join('');
+      const modelOpts = enabledModels.map(([mid])=>modelOption(mid, {selected: mid===srv.default_model})).join('');
 
       C.innerHTML = P(`<div style="${G('16px')}">
         <div style="display:flex;align-items:center;gap:8px">
@@ -263,7 +263,7 @@ async function switchGeneralTab(tab, btn) {
         <div style="display:flex;gap:8px;align-items:center">
           <select class="form-select" id="srv-attachment-image-model" style="flex:1">
             <option value="">None (images not described)</option>
-            ${enabledModelsWithCapability('image').map(([mid])=>`<option value="${esc(mid)}" ${mid===(srv.attachment_image_model||'')?'selected':''}>${esc(modelShortName(mid))}</option>`).join('')}
+            ${enabledModelsWithCapability('image').map(([mid])=>modelOption(mid, {selected: mid===(srv.attachment_image_model||'')})).join('')}
           </select>
           <button class="btn-secondary" onclick="API.post('/v1/services/server',{attachment_image_model:document.getElementById('srv-attachment-image-model').value}).then(()=>showToast('Image model updated')).catch(e=>showToast('Failed',true))">Set</button>
         </div>
@@ -361,6 +361,10 @@ async function switchGeneralTab(tab, btn) {
             <button class="btn-secondary" style="padding:2px 6px;font-size:10px;color:var(--error)" onclick="if(confirm('Remove model ${esc(mid)}?'))removeModel('${esc(mid)}')">&#10005;</button>
           </div>
           <div id="${detId}" style="display:none;padding:8px 12px;margin:0 0 6px 0;border:1px solid var(--border-100);border-top:none;border-radius:0 0 8px 8px;background:var(--bg-100)">
+            <div style="margin-bottom:8px">
+              <label style="font-size:11px;font-weight:600;color:var(--text-100);display:block;margin-bottom:3px">Description <span style="color:var(--text-400);font-weight:400">(shown as tooltip in model dropdowns)</span></label>
+              <textarea class="mdl-description" rows="2" style="width:100%;padding:4px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:12px;background:var(--bg-000);color:var(--text-100);font-family:inherit;resize:vertical" placeholder="e.g. Best for long-context analysis. Slow but cheap.">${esc(cfg.description || '')}</textarea>
+            </div>
             <div style="display:flex;align-items:center;gap:10px;padding:6px 8px;margin-bottom:8px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-000)">
               <label style="font-size:11px;font-weight:600;color:var(--text-100);margin:0">Profile</label>
               <select class="mdl-profile" style="padding:3px 8px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-100);color:var(--text-100)" title="Speed: warmup + stable KV prefix, no token savings (local). Balanced: current defaults. Frugal: aggressive token savings, caveman system prompt (cloud). Custom: no overlay.">
@@ -498,6 +502,7 @@ async function switchGeneralTab(tab, btn) {
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="resyncProvider(this,'${esc(p.name)}')" title="Drop all models for this provider AND clear deletion tombstones, then re-discover. Manual only.">Full Resync</button>
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="testProvider('${esc(p.name)}')">Test</button>
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="document.getElementById('${pid}').style.display=document.getElementById('${pid}').style.display==='none'?'block':'none'">Settings</button>
+            <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="renameProvider('${esc(p.name)}')" title="Rename this provider. Updates models, default_provider, tombstones, and provider-scoped model ids in one shot.">Rename</button>
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px;color:var(--error)" onclick="if(confirm('Delete provider ${esc(p.name)}?'))deleteProvider('${esc(p.name)}')">Delete</button>
           </div>
           <div style="${MONO};overflow:hidden;text-overflow:ellipsis;margin-bottom:8px">${esc(p.base_url||'')}</div>
@@ -547,7 +552,7 @@ async function switchGeneralTab(tab, btn) {
         </div>
         <div><label class="form-label">Description</label><input class="form-input" id="new-agent-desc" placeholder="What does this agent do?"></div>
         <div><label class="form-label">Model</label><select class="form-select" id="new-agent-model" style="width:100%">
-          ${enabledModelsWithCapability('chat').map(([mid])=>`<option value="${esc(mid)}">${esc(modelShortName(mid))}</option>`).join('')}
+          ${enabledModelsWithCapability('chat').map(([mid])=>modelOption(mid)).join('')}
         </select></div>
         <div><label class="form-label">Soul (system prompt)</label><textarea class="form-input" id="new-agent-soul" rows="3" placeholder="Optional initial soul.md content" style="resize:vertical"></textarea></div>
         <div style="display:flex;gap:8px">
@@ -686,7 +691,7 @@ async function switchGeneralTab(tab, btn) {
     try {
       const cfg = await API.get('/v1/context/config');
       const enabledModels = enabledModelsWithCapability('chat');
-      const modelOpts = `<option value="">Auto (cheapest)</option>` + enabledModels.map(([mid])=>`<option value="${esc(mid)}" ${mid===cfg.summary_model?'selected':''}>${esc(modelShortName(mid))}</option>`).join('');
+      const modelOpts = `<option value="">Auto (cheapest)</option>` + enabledModels.map(([mid])=>modelOption(mid, {selected: mid===cfg.summary_model})).join('');
 
       C.innerHTML = P(`<div style="${G('16px')}">
         <div style="display:flex;align-items:center;gap:8px">
@@ -761,7 +766,7 @@ async function switchGeneralTab(tab, btn) {
         ['hard_block','Hard block on red'],
       ].map(([v,l]) => `<option value="${v}" ${v===cfg.enforce_red?'selected':''}>${esc(l)}</option>`).join('');
       const fbOpts = ['<option value="">— none —</option>'].concat(
-        localModels.map(mid => `<option value="${esc(mid)}" ${mid===cfg.default_local_fallback_model?'selected':''}>${esc(modelShortName(mid, true))}</option>`)
+        localModels.map(mid => modelOption(mid, {selected: mid===cfg.default_local_fallback_model, label: modelShortName(mid, true)}))
       ).join('');
       const startDayLabel = (cycle) => ({monthly:'Day of month (1-31)', weekly:'Day of week (0=Mon … 6=Sun)', yearly:'Month of year (1-12)'})[cycle] || 'Start';
       const limitInput = (role, fld) => {
@@ -882,7 +887,7 @@ async function switchGeneralTab(tab, btn) {
       }).map(m => {
         const mid = m.id || m.name || m;
         const sel = mid === (clf.model || '') ? ' selected' : '';
-        return `<option value="${esc(mid)}"${sel}>${esc(modelShortName(mid))}</option>`;
+        return modelOption(mid, {selected: mid === (clf.model || '')});
       }).join('');
       const allCats = ['fact','preference','decision','reference','generic','refusal','chitchat'];
       const fileCats = new Set(clf.categories_to_file || ['fact','preference','decision','reference']);
@@ -1291,7 +1296,7 @@ async function switchGeneralTab(tab, btn) {
         + enabledModelList.map(([mid,cfg])=>{
           const sel = mid === currentModel ? ' selected' : '';
           const localTag = cfg.is_local ? ' [local]' : '';
-          return `<option value="${esc(mid)}"${sel}>${esc(modelShortName(mid))}${localTag}</option>`;
+          return modelOption(mid, {selected: mid === currentModel, suffix: localTag});
         }).join('');
 
       const profileOpts = ['normative','generic'].map(p =>
@@ -1405,7 +1410,7 @@ async function switchGeneralTab(tab, btn) {
       const localOpts = Object.entries(mcAll)
         .filter(([id, cfg]) => cfg.enabled && (cfg.is_local === true))
         .sort((a, b) => (b[1].priority || 0) - (a[1].priority || 0))
-        .map(([mid]) => `<option value="${esc(mid)}" ${mid===(gs.default_local_fallback_model||'')?'selected':''}>${esc(modelShortName(mid))}</option>`)
+        .map(([mid]) => modelOption(mid, {selected: mid===(gs.default_local_fallback_model||'')}))
         .join('');
       const hasLocals = localOpts.length > 0;
 
@@ -1538,9 +1543,9 @@ async function switchGeneralTab(tab, btn) {
       const mc = state.modelsConfig?.models || {};
       // chat-capability dropdowns (refinement model, etc).
       const enabledModels = enabledModelsWithCapability('chat');
-      const modelOpts = (sel) => enabledModels.map(([mid])=>`<option value="${esc(mid)}" ${mid===sel?'selected':''}>${esc(modelShortName(mid))}</option>`).join('');
+      const modelOpts = (sel) => enabledModels.map(([mid])=>modelOption(mid, {selected: mid===sel})).join('');
       // image-capability dropdown for read_document vision_model.
-      const visionModelOpts = (sel) => enabledModelsWithCapability('image').map(([mid])=>`<option value="${esc(mid)}" ${mid===sel?'selected':''}>${esc(modelShortName(mid))}</option>`).join('');
+      const visionModelOpts = (sel) => enabledModelsWithCapability('image').map(([mid])=>modelOption(mid, {selected: mid===sel})).join('');
 
       const sBadge = (name) => {
         const s = status[name]?.status || 'not configured';
@@ -2055,6 +2060,8 @@ async function saveModelsConfig() {
       if (pVal !== undefined) mc[mid].priority = parseInt(pVal) || 0;
       const dName = row.querySelector('.mdl-display-name')?.value?.trim();
       if (dName) mc[mid].display_name = dName;
+      const desc = row.querySelector('.mdl-description')?.value?.trim();
+      if (desc) mc[mid].description = desc; else delete mc[mid].description;
       // Profile (speed/balanced/frugal/custom)
       const profile = row.querySelector('.mdl-profile')?.value;
       if (profile && profile !== 'custom') mc[mid].profile = profile;
@@ -2412,6 +2419,19 @@ async function deleteProvider(name) {
   } catch(e) { showToast('Delete failed: ' + e.message, true); }
 }
 
+async function renameProvider(name) {
+  const next = prompt(`Rename provider "${name}" to:`, name);
+  if (next === null) return;
+  const trimmed = next.trim();
+  if (!trimmed || trimmed === name) return;
+  if (/[\s/]/.test(trimmed)) { showToast("Name must not contain '/' or whitespace", true); return; }
+  try {
+    await API.post('/v1/providers', { action: 'rename', name, new_name: trimmed });
+    showToast(`Renamed to ${trimmed}`);
+    switchGeneralTab('providers');
+  } catch(e) { showToast('Rename failed: ' + e.message, true); }
+}
+
 async function testNewProvider() {
   const res = document.getElementById('prov-test-result');
   res.innerHTML = '<span style="color:var(--text-400)">Testing...</span>';
@@ -2588,7 +2608,7 @@ async function switchAgentTab(agentId, tab, btn) {
       const cfg = JSON.parse(data.content || '{}');
       const enabledModels = enabledModelsWithCapability('chat');
       const modelOptions = enabledModels.map(([mid]) =>
-        `<option value="${esc(mid)}" ${mid===cfg.model?'selected':''}>${esc(modelShortName(mid))}</option>`
+        modelOption(mid, {selected: mid===cfg.model})
       ).join('');
       // Next-prompt suggestion config — override model drives where the
       // ghost-text completion is generated. Empty = reuse session model
@@ -2600,7 +2620,7 @@ async function switchAgentTab(agentId, tab, btn) {
       const npsMaxWords = nps.max_words != null ? nps.max_words : 15;
       const npsModelOptions = `<option value="" ${npsModel===''?'selected':''}>(session model — best cache reuse)</option>`
         + enabledModels.map(([mid]) =>
-            `<option value="${esc(mid)}" ${mid===npsModel?'selected':''}>${esc(modelShortName(mid))}</option>`
+            modelOption(mid, {selected: mid===npsModel})
           ).join('');
 
       container.innerHTML = `
@@ -4442,7 +4462,7 @@ async function _schedViewEdit(name) {
     `<option value="${esc(a.id)}" ${a.id === task.agent ? 'selected' : ''}>${esc(a.display_name || a.id)}</option>`
   ).join('');
   const modelOpts = (state.models || []).filter(m => modelHasCapability(m, 'chat')).map(m =>
-    `<option value="${esc(m)}" ${m === task.model ? 'selected' : ''}>${esc(m)}</option>`
+    modelOption(m, {selected: m === task.model, label: m})
   ).join('');
 
   const overlay = document.createElement('div');

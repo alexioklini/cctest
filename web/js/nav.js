@@ -237,9 +237,15 @@ async function loadAgentProjects(agentId) {
    ═══════════════════════════════════════════════════════════ */
 function updateModelSelectorDisplay(modelId) {
   const name = modelShortName(modelId);
+  const tip = modelDescription(modelId);
   for (const id of ['model-selector-name', 'welcome-model-name', 'chat-model-name', 'project-model-name', 'status-model']) {
     const el = document.getElementById(id);
-    if (el) el.textContent = name;
+    if (el) {
+      el.textContent = name;
+      // Set on the parent button when present so the whole click target shows the tooltip.
+      const target = el.closest('button') || el;
+      if (tip) target.title = tip; else target.removeAttribute('title');
+    }
   }
   refreshThinkingButton();
 }
@@ -601,6 +607,7 @@ function toggleModelDropdown(event) {
     const item = document.createElement('div');
     item.className = 'dropdown-item' + (mid === currentModel ? ' active' : '');
     const label = modelShortName(mid);
+    item.title = modelDescription(mid);
     item.innerHTML = `
       <span class="dd-check">${mid === currentModel ? '&#10003;' : ''}</span>
       <span class="dd-label">${esc(label)}</span>

@@ -58,6 +58,24 @@ function modelShortName(modelId, withProvider = true) {
   return name;
 }
 
+// User-editable description for a model — shown as tooltip in dropdowns.
+// Falls back to provider-qualified short name when empty.
+function modelDescription(modelId) {
+  if (!modelId) return '';
+  const cfg = state.modelsConfig?.models?.[modelId];
+  const desc = (cfg?.description || '').trim();
+  if (desc) return desc;
+  return modelShortName(modelId, true);
+}
+
+// Renders <option title="<description>">…</option> for a model id.
+// Tooltip falls back to the qualified short name when no description is set,
+// so dropdowns always show something useful on hover.
+function modelOption(mid, { selected = false, label = null, suffix = '' } = {}) {
+  const lbl = label != null ? label : modelShortName(mid);
+  return `<option value="${esc(mid)}" title="${esc(modelDescription(mid))}"${selected ? ' selected' : ''}>${esc(lbl)}${suffix}</option>`;
+}
+
 // True when the model is enabled and its capabilities list includes `cap`.
 // Default cap is 'chat' — every general model dropdown filters by this.
 function modelHasCapability(midOrCfg, cap) {

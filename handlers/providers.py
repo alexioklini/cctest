@@ -213,6 +213,78 @@ class ProvidersHandlerMixin:
                 self._send_json({"status": "deleted", "name": name})
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
+
+        elif action == "rename":
+            # Atomic rename: provider key + every reference that pins by name.
+            # Touched: providers.<name>, default_provider, models[*].provider,
+            # provider-scoped model keys "<name>/<id>", deleted_models tombstones
+            # of either form. Caches (key pool, provider→model resolution) are
+            # invalidated for both old and new names.
+            old_name = (body.get("name", "") or "").strip()
+            new_name = (body.get("new_name", "") or "").strip()
+            if not old_name or not new_name:
+                self._send_json({"error": "name and new_name required"}, 400)
+                return
+            if old_name == new_name:
+                self._send_json({"status": "unchanged", "name": new_name})
+                return
+            # Reject characters that would break provider-scoped model ids.
+            if "/" in new_name or any(c.isspace() for c in new_name):
+                self._send_json({"error": "new_name must not contain '/' or whitespace"}, 400)
+                return
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+            try:
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                providers = config.get("providers", {}) or {}
+                if old_name not in providers:
+                    self._send_json({"error": f"Unknown provider: {old_name}"}, 404)
+                    return
+                if new_name in providers:
+                    self._send_json({"error": f"Provider already exists: {new_name}"}, 409)
+                    return
+                # 1) provider entry
+                providers[new_name] = providers.pop(old_name)
+                # Preserve insertion order by rebuilding (Python dict is insertion-ordered;
+                # popping then inserting moves the entry to the end — acceptable).
+                config["providers"] = providers
+                # 2) default_provider pointer
+                if config.get("default_provider") == old_name:
+                    config["default_provider"] = new_name
+                # 3) models[*].provider field + provider-scoped model keys
+                models_dict = config.get("models", {}) or {}
+                renamed_models: dict[str, dict] = {}
+                old_prefix = f"{old_name}/"
+                new_prefix = f"{new_name}/"
+                for mid, mcfg in models_dict.items():
+                    new_mid = (new_prefix + mid[len(old_prefix):]) if mid.startswith(old_prefix) else mid
+                    if (mcfg or {}).get("provider") == old_name:
+                        mcfg = dict(mcfg)
+                        mcfg["provider"] = new_name
+                    renamed_models[new_mid] = mcfg
+                config["models"] = renamed_models
+                # 4) tombstones — rewrite scoped form, leave bare ids alone
+                tombstones = config.get("deleted_models", []) or []
+                config["deleted_models"] = [
+                    (new_prefix + t[len(old_prefix):]) if t.startswith(old_prefix) else t
+                    for t in tombstones
+                ]
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+                # 5) in-memory mirrors
+                server_config["providers"] = providers
+                if server_config.get("default_provider") == old_name:
+                    server_config["default_provider"] = new_name
+                engine._models_config = dict(renamed_models)
+                # 6) invalidate caches for both old and new names
+                engine.invalidate_key_pool(old_name)
+                engine.invalidate_key_pool(new_name)
+                engine.clear_provider_cache()
+                self._send_json({"status": "renamed", "old_name": old_name, "new_name": new_name})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)
 
@@ -298,9 +370,9 @@ class ProvidersHandlerMixin:
         # else (api keys are already in providers, but cost/inference/warmup
         # internals, raw_formats, profile knobs, base_url, etc.) is stripped.
         _SAFE_FIELDS = (
-            "display_name", "shortname", "enabled", "priority", "provider",
-            "base_model_id", "is_local", "thinking_format", "max_context",
-            "max_output", "capabilities", "caveman_system",
+            "display_name", "description", "shortname", "enabled", "priority",
+            "provider", "base_model_id", "is_local", "thinking_format",
+            "max_context", "max_output", "capabilities", "caveman_system",
         )
 
         models = {}
