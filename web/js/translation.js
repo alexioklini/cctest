@@ -1484,9 +1484,133 @@ const trLiveState = {
   startedAt: 0,
   elapsedTimer: null,
   abortSse: null,
-  segments: [],          // finalized segments {start,end,text,translation}
+  segments: [],          // finalized segments {start,end,text,translation,detectedLang}
   partialIndex: -1,      // DOM/state index of the in-progress segment, if any
+  // Auto-TTS for translated segments. Played sequentially so utterances don't
+  // overlap; mic is muted during playback so we don't transcribe our own audio.
+  ttsEnabled: false,
+  ttsQueue: [],          // pending {index, text, lang}
+  ttsPlaying: false,
+  ttsAudio: null,
+  ttsSpokenIdx: new Set(), // segment indices already queued/spoken (dedup re-renders)
 };
+
+// Normalize 'en-US' / 'EN_us' → 'en'. Same logic as backend _norm_lang.
+function _trNormLang(s) {
+  if (!s) return '';
+  s = String(s).trim().toLowerCase();
+  const i = s.search(/[-_]/);
+  return i >= 0 ? s.slice(0, i) : s;
+}
+
+function trLiveOnTtsToggleChange() {
+  const el = document.getElementById('tr-live-tts-toggle');
+  trLiveState.ttsEnabled = !!(el && el.checked);
+  try { localStorage.setItem('tr-live-tts', trLiveState.ttsEnabled ? '1' : '0'); } catch (_) {}
+  // Disabling mid-stream: stop current playback and drop the queue. Restore mic.
+  if (!trLiveState.ttsEnabled) {
+    trLiveTtsStop();
+  }
+}
+
+// Restore toggle state on first script load.
+(function _trLiveTtsRestore() {
+  try {
+    const saved = localStorage.getItem('tr-live-tts');
+    if (saved === '1') {
+      const el = document.getElementById('tr-live-tts-toggle');
+      if (el) { el.checked = true; trLiveState.ttsEnabled = true; }
+    }
+  } catch (_) {}
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      try {
+        const saved = localStorage.getItem('tr-live-tts');
+        const el = document.getElementById('tr-live-tts-toggle');
+        if (saved === '1' && el) { el.checked = true; trLiveState.ttsEnabled = true; }
+      } catch (_) {}
+    }, { once: true });
+  }
+})();
+
+function _trLiveSetMicMuted(muted) {
+  // Toggle the MediaStreamTrack — the VAD recorder still runs but receives
+  // silence, so it won't flush a chunk full of TTS playback echo. Cheaper
+  // than tearing the recorder down.
+  const stream = trLiveState.stream;
+  if (!stream) return;
+  for (const t of stream.getTracks()) {
+    try { t.enabled = !muted; } catch (_) {}
+  }
+}
+
+function trLiveTtsStop() {
+  if (trLiveState.ttsAudio) {
+    try { trLiveState.ttsAudio.pause(); } catch (_) {}
+    trLiveState.ttsAudio = null;
+  }
+  trLiveState.ttsQueue = [];
+  trLiveState.ttsPlaying = false;
+  // Always restore mic when we tear playback down.
+  if (trLiveState.recording) _trLiveSetMicMuted(false);
+}
+
+function trLiveMaybeQueueTts(seg, idx) {
+  // Decide whether to speak this translated segment, then enqueue.
+  if (!trLiveState.ttsEnabled) return;
+  if (!trLiveState.recording) return;          // post-stop translation: skip
+  if (!seg || !seg.translation) return;
+  if (trLiveState.ttsSpokenIdx.has(idx)) return;
+  const targetLang = _trNormLang(trState.targetLang);
+  if (!targetLang) return;                     // transcribe-only mode
+  const detected = _trNormLang(seg.detectedLang);
+  // Skip when speaker's source language matches the target — meeting case:
+  // English-only listener doesn't need TTS for their own English speech, only
+  // for the German segments that get translated.
+  if (detected && detected === targetLang) return;
+  trLiveState.ttsSpokenIdx.add(idx);
+  trLiveState.ttsQueue.push({ index: idx, text: seg.translation, lang: targetLang });
+  _trLiveTtsDrain();
+}
+
+async function _trLiveTtsDrain() {
+  if (trLiveState.ttsPlaying) return;
+  const job = trLiveState.ttsQueue.shift();
+  if (!job) return;
+  trLiveState.ttsPlaying = true;
+  _trLiveSetMicMuted(true);
+  let blobUrl = '';
+  try {
+    blobUrl = await _trTtsFetch(job.text, job.lang);
+    if (!trLiveState.ttsEnabled || !trLiveState.recording) {
+      // Toggled off / stopped while fetching — bail.
+      try { URL.revokeObjectURL(blobUrl); } catch (_) {}
+      trLiveState.ttsPlaying = false;
+      _trLiveSetMicMuted(false);
+      return;
+    }
+    const audio = new Audio(blobUrl);
+    trLiveState.ttsAudio = audio;
+    await new Promise((resolve) => {
+      audio.onended = resolve;
+      audio.onerror = resolve;
+      audio.play().catch(resolve);
+    });
+    try { URL.revokeObjectURL(blobUrl); } catch (_) {}
+  } catch (_) {
+    // Silent: a single failed TTS shouldn't kill the queue.
+    if (blobUrl) { try { URL.revokeObjectURL(blobUrl); } catch (_) {} }
+  } finally {
+    trLiveState.ttsAudio = null;
+    trLiveState.ttsPlaying = false;
+  }
+  // Drain next, or restore mic if the queue is empty.
+  if (trLiveState.ttsQueue.length && trLiveState.ttsEnabled && trLiveState.recording) {
+    _trLiveTtsDrain();
+  } else {
+    _trLiveSetMicMuted(false);
+  }
+}
 
 function trLiveStatus(msg, isError = false) {
   const el = document.getElementById('tr-live-status');
@@ -1552,6 +1676,8 @@ async function trLiveStart() {
   trLiveState.recording = true;
   trLiveState.segments = [];
   trLiveState.partialIndex = -1;
+  trLiveState.ttsSpokenIdx = new Set();
+  trLiveState.ttsQueue = [];
   trLiveState.startedAt = Date.now();
   trLiveRenderSegments();
   document.getElementById('tr-live-record-btn').classList.add('recording');
@@ -1768,6 +1894,8 @@ function trEncodeWav(samples, sampleRate) {
 
 async function trLiveStop() {
   trLiveState.recording = false;
+  // Drop any pending/queued TTS playback so we don't keep speaking after stop.
+  trLiveTtsStop();
   document.getElementById('tr-live-record-btn').classList.remove('recording');
   document.getElementById('tr-live-record-btn').innerHTML =
     '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg> Start recording';
@@ -1841,21 +1969,29 @@ async function trLiveSubscribe(sessionId) {
     try { payload = JSON.parse(data); } catch (_) { return; }
     if (type === 'segment') {
       // Final transcript segment landed (translation may follow).
-      trLiveState.segments.push({
+      const seg = {
         start: payload.start || 0,
         end: payload.end || 0,
         text: payload.text || '',
         translation: payload.translation || '',
+        detectedLang: payload.detected_lang || '',
+        speaker: payload.speaker || '',
         translating: !payload.translation && !!payload.target_lang,
-      });
+      };
+      const idx = trLiveState.segments.length;
+      trLiveState.segments.push(seg);
       trLiveRenderSegments();
+      // Replay path: translation already attached on the segment event itself.
+      if (seg.translation) trLiveMaybeQueueTts(seg, idx);
     } else if (type === 'translation') {
       // Translation for an existing segment landed — match by index.
       const i = (typeof payload.index === 'number') ? payload.index : -1;
       if (i >= 0 && i < trLiveState.segments.length) {
-        trLiveState.segments[i].translation = payload.translation || '';
-        trLiveState.segments[i].translating = false;
+        const seg = trLiveState.segments[i];
+        seg.translation = payload.translation || '';
+        seg.translating = false;
         trLiveRenderSegments();
+        trLiveMaybeQueueTts(seg, i);
       }
     } else if (type === 'error') {
       trLiveStatus(`Server: ${payload.error || 'error'}`, true);
@@ -2121,7 +2257,12 @@ function _trHistoryInstallFileClickHandler() {
 }
 
 function _trHistoryDetailDocument(entry, result) {
-  const srcName = result.source_filename || result.filename || '';
+  // Only show the source link when the durable artifact copy exists. Falling
+  // back to result.filename (the original upload name) shows a button that
+  // 404s — the /tmp upload is gone after the worker finishes. result.
+  // source_filename is populated by _tr_history_save_job IFF the copy
+  // succeeded, so it's the right gate.
+  const srcName = result.source_filename || '';
   const outName = result.output_filename || '';
   return `<div class="tr-history-detail-inline">
     <div class="tr-history-files">
@@ -2132,7 +2273,10 @@ function _trHistoryDetailDocument(entry, result) {
 }
 
 function _trHistoryDetailMedia(entry, result) {
-  const srcName = result.source_filename || result.filename || '';
+  // Same rule as document: gate on source_filename only — that's the marker
+  // that the artifact copy succeeded. result.filename is just the upload
+  // name, useless for serving.
+  const srcName = result.source_filename || '';
   const outFiles = result.output_files || {};
   const formatLabels = {
     transcript_txt: 'Transcript (TXT)',

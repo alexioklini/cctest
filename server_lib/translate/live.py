@@ -32,6 +32,19 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
+def _norm_lang(s) -> str:
+    """Normalize a language tag to a lowercase short ISO code.
+    'en-US' / 'EN_us' → 'en'. None/empty → ''."""
+    if not s:
+        return ""
+    s = str(s).strip().lower()
+    for sep in ("-", "_"):
+        if sep in s:
+            s = s.split(sep, 1)[0]
+            break
+    return s
+
+
 class SpeakerTracker:
     """Assigns stable speaker labels per-segment using resemblyzer embeddings.
 
@@ -177,6 +190,7 @@ class _Segment:
     text: str
     translation: str = ""
     speaker: str = ""           # "Speaker N" label from resemblyzer, empty = unknown
+    detected_lang: str = ""     # ISO code from Voxtral/Whisper (chunk-level today)
 
 
 class LiveSession:
@@ -255,6 +269,7 @@ class LiveSession:
             "text": s.text,
             "translation": s.translation,
             "speaker": s.speaker,
+            "detected_lang": s.detected_lang,
             "target_lang": self.target_lang,
         }
 
@@ -378,6 +393,16 @@ class LiveSession:
         if not segments:
             return
 
+        # Chunk-level detected language. Voxtral returns one language per
+        # response; we attach it to every segment from this chunk. With short
+        # VAD-gated chunks (4–8s) this is one-speaker-per-chunk in practice,
+        # so per-chunk == per-segment for the auto-TTS skip-when-same logic.
+        # Fallback chain: per-segment field (future-proof) → chunk-level →
+        # manual source hint. Normalized to lowercase ISO short code.
+        chunk_lang = _norm_lang(result.get("language"))
+        if not chunk_lang:
+            chunk_lang = _norm_lang(self.source_lang)
+
         # Apply absolute timeline offset and assign per-segment speaker labels.
         # Each segment is embedded individually using its Voxtral timestamps,
         # so two speakers within one chunk get different labels.
@@ -391,6 +416,7 @@ class LiveSession:
             speaker = self._speaker_tracker.assign_segment(
                 chunk.path, seg_start, seg_end
             )
+            seg_lang = _norm_lang(s.get("language")) or chunk_lang
             with self._segments_lock:
                 idx = len(self._segments)
                 seg = _Segment(
@@ -400,6 +426,7 @@ class LiveSession:
                     end=seg_end + offset,
                     text=text,
                     speaker=speaker,
+                    detected_lang=seg_lang,
                 )
                 self._segments.append(seg)
             self._broadcast("segment", self._segment_to_dict(seg))

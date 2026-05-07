@@ -812,6 +812,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           <span class="tr-live-elapsed" id="tr-live-elapsed">0:00</span>
           <span class="tr-status" id="tr-live-status"></span>
           <div class="tr-toolbar-spacer"></div>
+          <label class="tr-live-tts-toggle" title="Speak each translated segment aloud. Mic is muted while playing. Skipped when the segment's detected language matches the target language.">
+            <input type="checkbox" id="tr-live-tts-toggle" onchange="trLiveOnTtsToggleChange()">
+            <span>🔊 Auto-speak</span>
+          </label>
           <button class="tr-btn" id="tr-live-download-btn" onclick="trLiveDownload()" disabled>
             Save SRT
           </button>
