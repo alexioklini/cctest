@@ -58,6 +58,28 @@ function modelShortName(modelId, withProvider = true) {
   return name;
 }
 
+// True when the model is enabled and its capabilities list includes `cap`.
+// Default cap is 'chat' — every general model dropdown filters by this.
+function modelHasCapability(midOrCfg, cap) {
+  cap = cap || 'chat';
+  const cfg = (typeof midOrCfg === 'string')
+    ? (state.modelsConfig?.models || {})[midOrCfg]
+    : (midOrCfg || {});
+  if (!cfg || cfg.enabled === false) return false;
+  const caps = Array.isArray(cfg.capabilities) ? cfg.capabilities : [];
+  return caps.includes(cap);
+}
+
+// Returns [[mid, cfg], ...] for enabled models with capability `cap`,
+// sorted by priority (desc). Default cap is 'chat'.
+function enabledModelsWithCapability(cap) {
+  cap = cap || 'chat';
+  const mc = state.modelsConfig?.models || {};
+  return Object.entries(mc)
+    .filter(([mid, cfg]) => modelHasCapability(cfg, cap))
+    .sort((a, b) => (b[1].priority || 0) - (a[1].priority || 0));
+}
+
 function autoResizeInput(el) {
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, 200) + 'px';

@@ -4189,7 +4189,8 @@ def main():
                 bv = b.get(k, {})
                 # Compare just the fields init_models_config actually touches.
                 for fld in ("thinking_format", "provider", "max_context",
-                            "raw_formats", "profile"):
+                            "raw_formats", "profile", "capabilities",
+                            "_caps_canonical"):
                     if av.get(fld) != bv.get(fld):
                         return True
             return False

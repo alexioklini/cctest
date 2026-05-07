@@ -537,12 +537,10 @@ function piiEnsureLocalModel() {
   const mc = state.modelsConfig?.models || {};
   const fallback = state.piiLocalFallback;
   let target = '';
-  if (fallback && mc[fallback]?.enabled && isModelLocal(fallback)) {
+  if (fallback && modelHasCapability(fallback, 'chat') && isModelLocal(fallback)) {
     target = fallback;
   } else {
-    const locals = Object.entries(mc)
-      .filter(([id, cfg]) => cfg.enabled && isModelLocal(id))
-      .sort((a, b) => (b[1].priority || 0) - (a[1].priority || 0));
+    const locals = enabledModelsWithCapability('chat').filter(([id]) => isModelLocal(id));
     if (locals.length) target = locals[0][0];
   }
   if (!target) return false;
@@ -587,12 +585,10 @@ function toggleModelDropdown(event) {
   const currentModel = state.activeChat?.model || '';
   const localOnly = piiBlockActive(state.activeChat);
 
-  // Build list from modelsConfig (enabled only, sorted by priority).
+  // Build list from modelsConfig — enabled, capability=chat, sorted by priority.
   // When PII+block is active, restrict to local models.
-  const mcModels = state.modelsConfig?.models || {};
-  const enabledModels = Object.entries(mcModels)
-    .filter(([id, cfg]) => cfg.enabled && (!localOnly || isModelLocal(id)))
-    .sort((a, b) => (b[1].priority || 0) - (a[1].priority || 0));
+  const enabledModels = enabledModelsWithCapability('chat')
+    .filter(([id]) => !localOnly || isModelLocal(id));
 
   if (localOnly) {
     const hdr = document.createElement('div');

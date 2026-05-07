@@ -2781,7 +2781,16 @@ def _describe_image_with_vision(image_data_b64: str, media_type: str, filename: 
     """Use a vision-capable model to describe an image attachment."""
     vision_model = getattr(_thread_local, 'attachment_image_model', '') or ''
     if not vision_model:
-        return f"(Image: {filename} — no image model configured. Set attachments.image_model in config.)"
+        # Fall back to the cheapest enabled image-capable model.
+        candidates = [
+            (mid, cfg) for mid, cfg in (_models_config or {}).items()
+            if cfg.get("enabled", True) and "image" in (cfg.get("capabilities") or [])
+        ]
+        candidates.sort(key=lambda t: (t[1].get("cost_input", 1e9), -(t[1].get("priority") or 0)))
+        if candidates:
+            vision_model = candidates[0][0]
+    if not vision_model:
+        return f"(Image: {filename} — no image-capable model configured. Flag a model with the 'image' capability in the Models tab or set attachments.image_model.)"
 
     # Build multimodal message with image
     content_blocks = [
@@ -20391,7 +20400,62 @@ KNOWN_MODELS = {
     "whisper": {"icon": "\U0001f3a4", "priority": 30, "max_context": 0, "max_output": 0, "capabilities": ["audio", "local"], "inference": {}, "raw_formats": []},
 }
 
-CAPABILITY_VALUES = ["coding", "analysis", "agentic", "fast", "creative", "local", "audio"]
+CAPABILITY_VALUES = ["chat", "image", "audio", "tts", "video"]
+CANONICAL_CAPABILITIES = tuple(CAPABILITY_VALUES)
+
+
+def _infer_canonical_capabilities(model_id: str, cfg: dict) -> list[str]:
+    """Infer the canonical capability set for a model entry.
+
+    The five canonical buckets are routing flags (not marketing tags):
+      - chat:  selectable in any general model dropdown
+      - image: vision input — listable for read_document image fallback
+      - audio: speech-to-text — listable for transcribe_audio
+      - tts:   text-to-speech — listable for the speaker / translate TTS dropdown
+      - video: video input — reserved for video-in models
+
+    Heuristics, in order:
+      - raw_formats containing 'image/*' → image
+      - raw_formats containing 'video/*' → video
+      - id/shortname/base contains 'tts' → tts (and not chat)
+      - id/shortname/base contains 'whisper' or 'voxtral' (without 'tts') → audio (and not chat)
+      - legacy 'audio' capability (pre-canonical) → audio (and not chat)
+      - everything else → chat
+    """
+    sn = (cfg.get("shortname") or "").lower()
+    base = (cfg.get("base_model_id") or "").lower()
+    mid_l = (model_id or "").lower()
+    blob = " ".join((mid_l, sn, base))
+    raw = [str(p).lower() for p in (cfg.get("raw_formats") or [])]
+    legacy = set(cfg.get("capabilities") or [])
+
+    caps: list[str] = []
+    if "tts" in blob:
+        caps.append("tts")
+    elif "whisper" in blob or "voxtral" in blob or "audio" in legacy:
+        caps.append("audio")
+    else:
+        caps.append("chat")
+    if any(p.startswith("image") for p in raw):
+        if "image" not in caps:
+            caps.append("image")
+    if any(p.startswith("video") for p in raw):
+        if "video" not in caps:
+            caps.append("video")
+    return caps
+
+
+def _canonicalize_model_capabilities(force: bool = False) -> None:
+    """One-shot migration: replace freeform legacy tags with the canonical
+    {chat, image, audio, tts, video} set. Idempotent — each entry is migrated
+    once (marker ``_caps_canonical: True``) so user removals afterwards stick.
+    """
+    global _models_config
+    for mid, cfg in (_models_config or {}).items():
+        if cfg.get("_caps_canonical") and not force:
+            continue
+        cfg["capabilities"] = _infer_canonical_capabilities(mid, cfg)
+        cfg["_caps_canonical"] = True
 
 _models_config: dict = {}
 
@@ -20611,6 +20675,7 @@ def init_models_config(providers: dict, existing_models: dict | None = None,
                     cfg["thinking_format"] = redetected
 
     _ensure_audio_models()
+    _canonicalize_model_capabilities()
     return _models_config
 
 
@@ -20643,7 +20708,7 @@ def _ensure_audio_models() -> None:
             "display_name": f"Whisper {size}",
             "icon": "\U0001f3a4",
             "priority": 30,
-            "capabilities": ["audio", "local"],
+            "capabilities": ["audio"],
             "raw_formats": [],
             "thinking_format": "none",
             "provider": _WHISPER_PROVIDER,
@@ -20651,6 +20716,7 @@ def _ensure_audio_models() -> None:
             "warmup": False,
             "manual": True,
             "_audio_backfilled": True,
+            "_caps_canonical": True,
         }
     # One-shot backfill of 'audio' capability on existing voxtral entries
     # served by the mistral-experimental provider. Other voxtral rows in the
@@ -20881,7 +20947,7 @@ def get_inference_params(model: str, purpose: str | None = None) -> dict:
 _INFERENCE_STANDARD_KEYS = {"temperature", "top_p", "top_k", "max_tokens"}
 # Keys only for OpenAI-compatible / oMLX
 _INFERENCE_OPENAI_KEYS = {"frequency_penalty", "presence_penalty"}
-# oMLX extension keys (also OpenAI-compatible endpoint)
+# oMLX extension keys
 _INFERENCE_OMLX_KEYS = {"min_p", "repetition_penalty"}
 
 

@@ -241,9 +241,9 @@ async function switchGeneralTab(tab, btn) {
           <span style="font-size:11px;color:${ok?'var(--success)':'var(--error)'}">${esc(info.status||(ok?'running':'stopped'))}</span>
         </div>`;
       }
-      // Default model selector
+      // Default model selector — chat-capable only.
       const mc = state.modelsConfig?.models || {};
-      const enabledModels = Object.entries(mc).filter(([,c])=>c.enabled).sort((a,b)=>(b[1].priority||0)-(a[1].priority||0));
+      const enabledModels = enabledModelsWithCapability('chat');
       const modelOpts = enabledModels.map(([mid])=>`<option value="${esc(mid)}" ${mid===srv.default_model?'selected':''}>${esc(modelShortName(mid))}</option>`).join('');
 
       C.innerHTML = P(`<div style="${G('16px')}">
@@ -263,15 +263,14 @@ async function switchGeneralTab(tab, btn) {
         <div style="display:flex;gap:8px;align-items:center">
           <select class="form-select" id="srv-attachment-image-model" style="flex:1">
             <option value="">None (images not described)</option>
-            ${enabledModels.map(([mid])=>`<option value="${esc(mid)}" ${mid===(srv.attachment_image_model||'')?'selected':''}>${esc(modelShortName(mid))}</option>`).join('')}
+            ${enabledModelsWithCapability('image').map(([mid])=>`<option value="${esc(mid)}" ${mid===(srv.attachment_image_model||'')?'selected':''}>${esc(modelShortName(mid))}</option>`).join('')}
           </select>
           <button class="btn-secondary" onclick="API.post('/v1/services/server',{attachment_image_model:document.getElementById('srv-attachment-image-model').value}).then(()=>showToast('Image model updated')).catch(e=>showToast('Failed',true))">Set</button>
         </div>
         <div style="font-size:11px;color:var(--text-400);margin-top:2px">Vision model used to describe attached images when the active model has no vision support (e.g. gemini-2.5-flash, mistral-small-latest)</div>
         ${(() => {
           const defMdl = srv.default_model || '';
-          const defCfg = state.modelsConfig?.models?.[defMdl] || {};
-          const hasVision = (defCfg.raw_formats || []).some(p => p.startsWith('image'));
+          const hasVision = modelHasCapability(defMdl, 'image');
           const hasImageModel = !!(srv.attachment_image_model);
           return (!hasVision && !hasImageModel) ? `<div style="font-size:11px;color:var(--warning, #b45309);margin-top:4px;padding:6px 8px;border-radius:6px;background:var(--bg-200)">&#9888; Your default model does not support vision and no image description model is configured. Attached images will only return basic metadata (dimensions, format).</div>` : '';
         })()}
@@ -412,7 +411,21 @@ async function switchGeneralTab(tab, btn) {
               </div>
               <div style="display:flex;align-items:center;gap:6px;padding-top:14px"><input type="checkbox" class="mdl-warmup-allow-cloud" ${cfg.warmup_allow_cloud ? 'checked' : ''} style="margin:0"><label class="form-label" style="font-size:11px;margin:0;cursor:pointer" title="Permit warmup against cloud providers (costs tokens)">Allow cloud</label></div>
               <div style="grid-column:1/-1"><label class="form-label" style="font-size:11px">Raw Formats <span style="color:var(--text-400);font-weight:400">(MIME patterns the model handles natively as multimodal)</span></label><input class="form-input mdl-raw-formats" value="${esc((cfg.raw_formats||[]).join(', '))}" placeholder="e.g. image/*, application/pdf" style="font-size:12px"></div>
-              <div style="grid-column:1/-1"><label class="form-label" style="font-size:11px">Capabilities <span style="color:var(--text-400);font-weight:400">(comma-separated; flags routing — e.g. <code>audio</code> exposes the model to the transcribe_audio tool)</span></label><input class="form-input mdl-capabilities" value="${esc((cfg.capabilities||[]).join(', '))}" placeholder="e.g. coding, analysis, audio" style="font-size:12px"></div>
+              <div style="grid-column:1/-1"><label class="form-label" style="font-size:11px">Capabilities <span style="color:var(--text-400);font-weight:400">(routing flags — controls where the model is selectable in the UI)</span></label>
+                <div class="mdl-capabilities-grid" data-mid="${esc(mid)}" style="display:flex;flex-wrap:wrap;gap:10px;padding:6px 8px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100)">
+                  ${(()=>{
+                    const caps = new Set(cfg.capabilities||[]);
+                    const opts = [
+                      ['chat',  'Chat',  'Selectable in the chat composer + every general model dropdown.'],
+                      ['image', 'Image', 'Vision input — used by read_document for image attachments.'],
+                      ['audio', 'Audio', 'Speech-to-text — listed under transcribe_audio.'],
+                      ['tts',   'TTS',   'Text-to-speech — listed under text_to_speech.'],
+                      ['video', 'Video', 'Video input — reserved for video-capable models.'],
+                    ];
+                    return opts.map(([k,l,t]) => `<label style="display:flex;gap:5px;align-items:center;font-size:11px;cursor:pointer" title="${esc(t)}"><input type="checkbox" class="mdl-cap-cb" data-cap="${k}" ${caps.has(k)?'checked':''}>${l}</label>`).join('');
+                  })()}
+                </div>
+              </div>
             </div>
           </div>
         </div>`;
@@ -534,7 +547,7 @@ async function switchGeneralTab(tab, btn) {
         </div>
         <div><label class="form-label">Description</label><input class="form-input" id="new-agent-desc" placeholder="What does this agent do?"></div>
         <div><label class="form-label">Model</label><select class="form-select" id="new-agent-model" style="width:100%">
-          ${(Object.entries(state.modelsConfig?.models||{}).filter(([,c])=>c.enabled).sort((a,b)=>(b[1].priority||0)-(a[1].priority||0)).map(([mid])=>`<option value="${esc(mid)}">${esc(modelShortName(mid))}</option>`).join(''))}
+          ${enabledModelsWithCapability('chat').map(([mid])=>`<option value="${esc(mid)}">${esc(modelShortName(mid))}</option>`).join('')}
         </select></div>
         <div><label class="form-label">Soul (system prompt)</label><textarea class="form-input" id="new-agent-soul" rows="3" placeholder="Optional initial soul.md content" style="resize:vertical"></textarea></div>
         <div style="display:flex;gap:8px">
@@ -672,8 +685,7 @@ async function switchGeneralTab(tab, btn) {
   if (tab === 'context') {
     try {
       const cfg = await API.get('/v1/context/config');
-      const mc = state.modelsConfig?.models || {};
-      const enabledModels = Object.entries(mc).filter(([,c])=>c.enabled).sort((a,b)=>(b[1].priority||0)-(a[1].priority||0));
+      const enabledModels = enabledModelsWithCapability('chat');
       const modelOpts = `<option value="">Auto (cheapest)</option>` + enabledModels.map(([mid])=>`<option value="${esc(mid)}" ${mid===cfg.summary_model?'selected':''}>${esc(modelShortName(mid))}</option>`).join('');
 
       C.innerHTML = P(`<div style="${G('16px')}">
@@ -740,8 +752,8 @@ async function switchGeneralTab(tab, btn) {
       const cfg = await API.get('/v1/quotas/config');
       const usersResp = await API.get('/v1/quotas/admin/users').catch(()=>({users:[]}));
       const users = usersResp.users || [];
-      const localModels = Object.entries(state.modelsConfig?.models || {})
-        .filter(([,c]) => c.enabled && c.is_local).map(([mid]) => mid);
+      const localModels = enabledModelsWithCapability('chat')
+        .filter(([,c]) => c.is_local).map(([mid]) => mid);
       const cycleOpts = ['monthly','weekly','yearly'].map(c => `<option value="${c}" ${c===cfg.billing_cycle?'selected':''}>${c}</option>`).join('');
       const enforceOpts = [
         ['warn_only','Warn only (no server-side refusal)'],
@@ -864,7 +876,10 @@ async function switchGeneralTab(tab, btn) {
 
       // Classifier config
       const clf = await API.get('/v1/mempalace/classifier').catch(() => ({}));
-      const modelOpts = (state.models || []).map(m => {
+      const modelOpts = (state.models || []).filter(m => {
+        const mid = (typeof m === 'string') ? m : (m.id || m.name);
+        return modelHasCapability(mid, 'chat');
+      }).map(m => {
         const mid = m.id || m.name || m;
         const sel = mid === (clf.model || '') ? ' selected' : '';
         return `<option value="${esc(mid)}"${sel}>${esc(modelShortName(mid))}</option>`;
@@ -1521,8 +1536,11 @@ async function switchGeneralTab(tab, btn) {
     try {
       const [cfg, status] = await Promise.all([API.get('/v1/tools/config'), API.get('/v1/tools/status')]);
       const mc = state.modelsConfig?.models || {};
-      const enabledModels = Object.entries(mc).filter(([,c])=>c.enabled).sort((a,b)=>(b[1].priority||0)-(a[1].priority||0));
+      // chat-capability dropdowns (refinement model, etc).
+      const enabledModels = enabledModelsWithCapability('chat');
       const modelOpts = (sel) => enabledModels.map(([mid])=>`<option value="${esc(mid)}" ${mid===sel?'selected':''}>${esc(modelShortName(mid))}</option>`).join('');
+      // image-capability dropdown for read_document vision_model.
+      const visionModelOpts = (sel) => enabledModelsWithCapability('image').map(([mid])=>`<option value="${esc(mid)}" ${mid===sel?'selected':''}>${esc(modelShortName(mid))}</option>`).join('');
 
       const sBadge = (name) => {
         const s = status[name]?.status || 'not configured';
@@ -1554,22 +1572,20 @@ async function switchGeneralTab(tab, btn) {
       const cgCfg = cfg.code_graph || {};
       const taCfg = cfg.transcribe_audio || {};
       const ttsCfg = cfg.text_to_speech || {};
-      // Transcription model list comes from the models config: any entry whose
-      // capabilities include 'audio'. Local fallback is restricted to entries
-      // routed via the local-mlx-whisper pseudo-provider (or otherwise marked
-      // local) so GDPR routing stays on-prem.
-      const _allModels = (state.modelsConfig?.models || {});
-      const _audioEntries = Object.entries(_allModels)
-        .filter(([,c]) => Array.isArray(c.capabilities) && c.capabilities.includes('audio'))
-        .map(([id, c]) => ({
-          id,
-          label: c.display_name || c.shortname || id,
-          isLocal: !!c.is_local || (Array.isArray(c.capabilities) && c.capabilities.includes('local')) || c.provider === 'local-mlx-whisper',
-        }))
-        .sort((a,b) => a.label.localeCompare(b.label));
-      const _transcribeOptionList = (entries, sel) => {
+      // Transcription / TTS model lists come from the models config — filtered
+      // by canonical capability ('audio' for STT, 'tts' for text-to-speech).
+      // The local-only fallback dropdown for STT additionally requires is_local
+      // so GDPR routing stays on-prem.
+      const _entriesForCap = (cap) => enabledModelsWithCapability(cap).map(([id, c]) => ({
+        id,
+        label: c.display_name || c.shortname || id,
+        isLocal: !!c.is_local || c.provider === 'local-mlx-whisper',
+      })).sort((a,b) => a.label.localeCompare(b.label));
+      const _audioEntries = _entriesForCap('audio');
+      const _ttsEntries = _entriesForCap('tts');
+      const _capOptionList = (entries, sel, capLabel) => {
         if (!entries.length) {
-          return `<option value="" disabled selected>No audio-capable models — flag a model with the 'audio' capability in the Models tab</option>`;
+          return `<option value="" disabled selected>No ${esc(capLabel)}-capable models — enable the '${esc(capLabel)}' capability on a model in the Models tab</option>`;
         }
         // Include the saved value as a stub option even if it no longer matches
         // a model entry (legacy id, model removed) so the user can see what's
@@ -1582,11 +1598,9 @@ async function switchGeneralTab(tab, btn) {
         }
         return html;
       };
-      const transcribeOpts = (sel) => _transcribeOptionList(_audioEntries, sel);
-      const whisperOpts = (sel) => _transcribeOptionList(_audioEntries.filter(m => m.isLocal), sel);
-      // TTS models: audio-capable entries whose id contains 'tts' (voxtral-mini-tts-*).
-      const _ttsEntries = _audioEntries.filter(e => e.id.toLowerCase().includes('tts'));
-      const ttsOpts = (sel) => _transcribeOptionList(_ttsEntries.length ? _ttsEntries : _audioEntries, sel);
+      const transcribeOpts = (sel) => _capOptionList(_audioEntries, sel, 'audio');
+      const whisperOpts = (sel) => _capOptionList(_audioEntries.filter(m => m.isLocal), sel, 'audio');
+      const ttsOpts = (sel) => _capOptionList(_ttsEntries, sel, 'tts');
       // Load TTS voices from the provider; fall back to empty while loading.
       let _ttsVoices = [];
       try { _ttsVoices = (await API.get('/v1/translate/tts/voices')).voices || []; } catch(_) {}
@@ -1669,9 +1683,9 @@ async function switchGeneralTab(tab, btn) {
             ${lbl('Vision Model (for images)')}
             <select id="tool-rdoc-vision-model" class="form-select" style="font-size:11px">
               <option value="">Auto (cheapest vision model)</option>
-              ${modelOpts(rdCfg.vision_model)}
+              ${visionModelOpts(rdCfg.vision_model)}
             </select>
-            <div style="font-size:10px;color:var(--text-400)">Reads PDF, DOCX, XLSX, PPTX, CSV, images, SVG with format-aware parsing.</div>
+            <div style="font-size:10px;color:var(--text-400)">Lists every model in the Models tab whose Capabilities include <code>image</code>. Reads PDF, DOCX, XLSX, PPTX, CSV, images, SVG with format-aware parsing.</div>
           </div>
         </div>
 
@@ -2097,13 +2111,15 @@ async function saveModelsConfig() {
       } else {
         mc[mid].raw_formats = [];
       }
-      // Capabilities (free-form list; routing keys like 'audio' live here too)
-      const capsRaw = row.querySelector('.mdl-capabilities')?.value?.trim();
-      if (capsRaw) {
-        mc[mid].capabilities = capsRaw.split(',').map(s => s.trim()).filter(Boolean);
-      } else {
-        mc[mid].capabilities = [];
-      }
+      // Capabilities — canonical {chat, image, audio, tts, video} checkboxes.
+      // Order is preserved to keep the saved config diff-stable.
+      const _capOrder = ['chat','image','audio','tts','video'];
+      const _checkedCaps = new Set(
+        Array.from(row.querySelectorAll('.mdl-cap-cb'))
+          .filter(cb => cb.checked).map(cb => cb.dataset.cap)
+      );
+      mc[mid].capabilities = _capOrder.filter(c => _checkedCaps.has(c));
+      mc[mid]._caps_canonical = true;
       // Thinking format
       const tfmt = row.querySelector('.mdl-thinking-format')?.value;
       if (tfmt && tfmt !== 'none') mc[mid].thinking_format = tfmt;
@@ -2570,8 +2586,7 @@ async function switchAgentTab(agentId, tab, btn) {
     try {
       const data = await API.get(`/v1/agents/${agentId}/file?name=agent.json`);
       const cfg = JSON.parse(data.content || '{}');
-      const mcModels = state.modelsConfig?.models || {};
-      const enabledModels = Object.entries(mcModels).filter(([,c]) => c.enabled).sort((a,b) => (b[1].priority||0)-(a[1].priority||0));
+      const enabledModels = enabledModelsWithCapability('chat');
       const modelOptions = enabledModels.map(([mid]) =>
         `<option value="${esc(mid)}" ${mid===cfg.model?'selected':''}>${esc(modelShortName(mid))}</option>`
       ).join('');
@@ -3026,7 +3041,7 @@ async function switchAgentTab(agentId, tab, btn) {
       const activeGroups = tcfg.tool_groups || null; // null = all
       const deferredGroups = 'deferred_tool_groups' in tcfg ? (tcfg.deferred_tool_groups || []) : ['email','documents','code_graph','scheduler'];
       const mc = state.modelsConfig?.models || {};
-      const modelOptions = Object.entries(mc).filter(([,c])=>c.enabled).sort((a,b)=>(b[1].priority||0)-(a[1].priority||0));
+      const modelOptions = enabledModelsWithCapability('chat');
 
       container.innerHTML = `
         <div style="padding:16px;display:grid;gap:16px">
@@ -4426,7 +4441,7 @@ async function _schedViewEdit(name) {
   const agentOpts = (state.agents || []).map(a =>
     `<option value="${esc(a.id)}" ${a.id === task.agent ? 'selected' : ''}>${esc(a.display_name || a.id)}</option>`
   ).join('');
-  const modelOpts = (state.models || []).map(m =>
+  const modelOpts = (state.models || []).filter(m => modelHasCapability(m, 'chat')).map(m =>
     `<option value="${esc(m)}" ${m === task.model ? 'selected' : ''}>${esc(m)}</option>`
   ).join('');
 
@@ -4567,8 +4582,8 @@ function showCreateScheduledModal() {
     `<option value="${esc(a.id)}" ${a.id === (state.activeAgentId || 'main') ? 'selected' : ''}>${esc(a.display_name || a.id)}</option>`
   ).join('');
 
-  // Build model options
-  const modelOpts = (state.models || []).map(m =>
+  // Build model options — chat-capable only.
+  const modelOpts = (state.models || []).filter(m => modelHasCapability(m, 'chat')).map(m =>
     `<option value="${esc(m)}">${esc(m)}</option>`
   ).join('');
 
