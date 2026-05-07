@@ -910,6 +910,7 @@ def _copy_source_to_artifacts(src_path: str, out_dir: str) -> str:
     """
     try:
         if not src_path or not os.path.exists(src_path):
+            print(f"[translate] source-copy: src missing src={src_path!r}", flush=True)
             return ""
         import shutil
         dest_dir = os.path.join(out_dir, "source")
@@ -927,7 +928,10 @@ def _copy_source_to_artifacts(src_path: str, out_dir: str) -> str:
                 i += 1
         shutil.copy2(src_path, dest)
         return dest
-    except Exception:
+    except Exception as e:
+        # Surface the failure so we don't silently produce history rows
+        # whose source-link will 404. History still works without the copy.
+        print(f"[translate] source-copy failed src={src_path!r} dst={out_dir!r}: {e}", flush=True)
         return ""
 
 
