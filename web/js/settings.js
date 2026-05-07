@@ -461,24 +461,21 @@ async function switchGeneralTab(tab, btn) {
         const USAGE_LABELS = {preferred:'Preferred (prio 1)',round_robin:'Round-robin (prio 2)',fallback:'Fallback (prio 3)'};
         const USAGE_COLORS = {preferred:'var(--accent)',round_robin:'var(--text-200)',fallback:'var(--text-400)'};
         const pStats = statsByProvider[p.name];
-        const keyStatsByName = {};
-        for (const ks of (pStats?.keys || [])) keyStatsByName[ks.key_name] = ks;
         const fmtNum = n => n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'K' : String(n||0);
-        const keysHtml = (p.api_keys||[]).map((k,i) => {
-          const usageColor = USAGE_COLORS[k.usage]||'var(--text-200)';
-          const deadlinePart = k.deadline ? `<span style="${MONO};font-size:10px;color:var(--text-400)">exp ${esc(k.deadline.slice(0,10))}</span>` : '';
-          const ks = keyStatsByName[k.name] || keyStatsByName['(unknown)'];
-          const statsPart = ks ? `<span style="${MONO};font-size:10px;color:var(--text-400);margin-left:4px">${ks.calls} calls · ${fmtNum(ks.tokens_in)}↑ ${fmtNum(ks.tokens_out)}↓${ks.cost_usd > 0 ? ' · $'+ks.cost_usd.toFixed(4) : ''}</span>` : '';
-          return `<div style="display:flex;align-items:center;gap:6px;padding:4px 6px;background:var(--bg-100);border-radius:6px;flex-wrap:wrap">
-            <span style="font-size:12px;font-weight:500;color:var(--text-100);min-width:80px">${esc(k.name)}</span>
-            <span style="${MONO};color:${usageColor};font-size:11px">${esc(USAGE_LABELS[k.usage]||k.usage)}</span>
-            <span style="${MONO};color:var(--text-400);font-size:11px">${esc(k.key_hint||'')}</span>
-            ${deadlinePart}${statsPart}
-            <button class="btn-secondary" style="padding:1px 7px;font-size:11px;margin-left:auto" onclick="openKeyEditModal('${esc(p.name)}','${esc(k.name)}')">Edit</button>
-            <button class="btn-secondary" style="padding:1px 7px;font-size:11px;color:var(--error)" onclick="deleteProviderKey('${esc(p.name)}','${esc(k.name)}')">Delete</button>
-          </div>`;
-        }).join('');
-        const provStatsHtml = pStats ? `<div style="${MONO};font-size:10px;color:var(--text-400);margin-bottom:4px">Last 30 days: ${pStats.calls} calls · ${fmtNum(pStats.tokens_in)} in · ${fmtNum(pStats.tokens_out)} out${pStats.cost_usd > 0 ? ' · $'+pStats.cost_usd.toFixed(4) : ''}</div>` : '';
+        const keys = p.api_keys || [];
+        const keyCounts = {preferred:0, round_robin:0, fallback:0};
+        for (const k of keys) keyCounts[k.usage] = (keyCounts[k.usage]||0) + 1;
+        const keySummaryParts = [];
+        if (keyCounts.preferred) keySummaryParts.push(`${keyCounts.preferred} preferred`);
+        if (keyCounts.round_robin) keySummaryParts.push(`${keyCounts.round_robin} round-robin`);
+        if (keyCounts.fallback) keySummaryParts.push(`${keyCounts.fallback} fallback`);
+        const keySummary = keys.length
+          ? `${keys.length} key${keys.length===1?'':'s'}${keySummaryParts.length?` · ${keySummaryParts.join(' · ')}`:''}`
+          : 'No keys configured';
+        const keySummaryColor = keys.length ? 'var(--text-200)' : 'var(--warning)';
+        const provStatsLine = pStats
+          ? `${pStats.calls} calls · ${fmtNum(pStats.tokens_in)} in · ${fmtNum(pStats.tokens_out)} out${pStats.cost_usd > 0 ? ' · $'+pStats.cost_usd.toFixed(4) : ''} (30d)`
+          : 'No usage in last 30 days';
         html += `<div style="padding:12px;border:1px solid var(--border-100);border-radius:10px">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
             ${DOT(ok)}
@@ -491,14 +488,11 @@ async function switchGeneralTab(tab, btn) {
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px;color:var(--error)" onclick="if(confirm('Delete provider ${esc(p.name)}?'))deleteProvider('${esc(p.name)}')">Delete</button>
           </div>
           <div style="${MONO};overflow:hidden;text-overflow:ellipsis;margin-bottom:8px">${esc(p.base_url||'')}</div>
-          <div style="margin-bottom:6px">
-            ${provStatsHtml}
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-              <span style="font-size:11px;font-weight:500;color:var(--text-200)">API Keys</span>
-              <span style="${MONO};font-size:10px;color:var(--text-400)">(preferred → round-robin → fallback)</span>
-              <button class="btn-secondary" style="padding:1px 7px;font-size:11px;margin-left:auto" onclick="openKeyEditModal('${esc(p.name)}','')">+ Add key</button>
-            </div>
-            <div style="${G('4px')}">${keysHtml||`<span style="${MONO};color:var(--text-400);font-size:11px">No keys — click + Add key</span>`}</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;padding:6px 8px;background:var(--bg-100);border-radius:6px">
+            <span style="font-size:11px;color:${keySummaryColor};font-weight:500">${keySummary}</span>
+            <span style="${MONO};font-size:10px;color:var(--text-400);margin-left:6px">${provStatsLine}</span>
+            <button class="btn-secondary" style="padding:2px 8px;font-size:11px;margin-left:auto" onclick="openProviderKeysModal('${esc(p.name)}')">Manage Keys</button>
+            <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="openProviderStatsModal('${esc(p.name)}')">Stats</button>
           </div>
           ${(p.models||[]).length?`<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${(p.models||[]).slice(0,8).map(m=>{const mid=typeof m==='string'?m:(m.id||m);return BADGE(modelShortName(mid,false));}).join('')}${(p.models||[]).length>8?`<span style="${MONO}">+${(p.models||[]).length-8} more</span>`:''}</div>`:''}
           <div id="${pid}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-100)">
@@ -510,7 +504,8 @@ async function switchGeneralTab(tab, btn) {
           </div>
         </div>`;
       }
-      html += `${SEC('Add Provider')}
+      html += `
+        ${SEC('Add Provider')}
         <div style="padding:12px;border:1px solid var(--border-200);border-radius:10px;${G('10px')}">
           <div><label class="form-label">Name</label><input class="form-input" id="prov-name" placeholder="e.g. my-provider"></div>
           <div><label class="form-label">Base URL</label><input class="form-input" id="prov-url" placeholder="http://localhost:8081/v1"></div>
@@ -2062,7 +2057,7 @@ async function saveModelsConfig() {
       if (co !== undefined) mc[mid].cost_output = co; else delete mc[mid].cost_output;
       // Inference params — collect non-empty values
       const inf = {};
-      const infKeys = ['temperature','top_p','top_k','max_tokens','frequency_penalty','presence_penalty','min_p','repetition_penalty'];
+      const infKeys = ['temperature','top_p','top_k','max_tokens','frequency_penalty','presence_penalty','min_p','repetition_penalty','thinking_budget'];
       for (const k of infKeys) {
         const v = readNum(row, `mdl-inf-${k}`);
         if (v !== undefined && !isNaN(v)) inf[k] = v;
@@ -2191,6 +2186,123 @@ async function saveProviderEdit(name, pid) {
   } catch(e) { showToast('Save failed: ' + e.message, true); }
 }
 
+async function openProviderKeysModal(provName) {
+  document.getElementById('_prov-keys-modal')?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = '_prov-keys-modal';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `<div class="modal-content" style="max-width:640px;padding:20px;display:grid;gap:12px">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:15px;font-weight:600;color:var(--text-000)">API Keys — ${esc(provName)}</span>
+      <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-400)">preferred → round-robin → fallback</span>
+      <button class="modal-close" style="margin-left:auto" onclick="document.getElementById('_prov-keys-modal')?.remove()">&times;</button>
+    </div>
+    <div id="_prov-keys-list" style="display:grid;gap:6px"><span style="color:var(--text-400);font-size:12px">Loading…</span></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn-primary" style="font-size:12px" onclick="openKeyEditModal('${esc(provName)}','')">+ Add key</button>
+      <button class="btn-secondary" style="font-size:12px;margin-left:auto" onclick="openProviderStatsModal('${esc(provName)}')">View stats →</button>
+    </div>
+  </div>`;
+  overlay.addEventListener('click', e => { if (e.target===overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  await _renderProviderKeysList(provName);
+}
+
+async function _renderProviderKeysList(provName) {
+  const target = document.getElementById('_prov-keys-list');
+  if (!target) return;
+  const USAGE_LABELS = {preferred:'Preferred (prio 1)',round_robin:'Round-robin (prio 2)',fallback:'Fallback (prio 3)'};
+  const USAGE_COLORS = {preferred:'var(--accent)',round_robin:'var(--text-200)',fallback:'var(--text-400)'};
+  try {
+    const provs = await API.getProviders();
+    const providers = Array.isArray(provs) ? provs : (provs.providers || []);
+    state.providers = providers;
+    const prov = providers.find(p => p.name === provName);
+    const keys = prov?.api_keys || [];
+    if (!keys.length) {
+      target.innerHTML = `<span style="font-family:var(--font-mono);color:var(--text-400);font-size:11px">No keys yet — click + Add key</span>`;
+      return;
+    }
+    target.innerHTML = keys.map(k => {
+      const usageColor = USAGE_COLORS[k.usage]||'var(--text-200)';
+      const deadlinePart = k.deadline ? `<span style="font-family:var(--font-mono);font-size:10px;color:var(--text-400)">exp ${esc(k.deadline.slice(0,10))}</span>` : '';
+      return `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--bg-100);border-radius:6px;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:500;color:var(--text-100);min-width:100px">${esc(k.name)}</span>
+        <span style="font-family:var(--font-mono);color:${usageColor};font-size:11px">${esc(USAGE_LABELS[k.usage]||k.usage)}</span>
+        <span style="font-family:var(--font-mono);color:var(--text-400);font-size:11px">${esc(k.key_hint||'')}</span>
+        ${deadlinePart}
+        <button class="btn-secondary" style="padding:2px 8px;font-size:11px;margin-left:auto" onclick="openKeyEditModal('${esc(provName)}','${esc(k.name)}')">Edit</button>
+        <button class="btn-secondary" style="padding:2px 8px;font-size:11px;color:var(--error)" onclick="deleteProviderKey('${esc(provName)}','${esc(k.name)}')">Delete</button>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    target.innerHTML = `<span style="color:var(--error);font-size:12px">Failed to load: ${esc(e.message||'error')}</span>`;
+  }
+}
+
+async function openProviderStatsModal(provName, days) {
+  document.getElementById('_prov-stats-modal')?.remove();
+  const d = Number(days) || 30;
+  const overlay = document.createElement('div');
+  overlay.id = '_prov-stats-modal';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `<div class="modal-content" style="max-width:760px;padding:20px;display:grid;gap:12px">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:15px;font-weight:600;color:var(--text-000)">Usage Stats — ${esc(provName)}</span>
+      <select class="form-select" id="_prov-stats-days" style="width:auto;font-size:12px;padding:2px 8px;margin-left:8px"
+        onchange="openProviderStatsModal('${esc(provName)}', this.value)">
+        <option value="7"${d===7?' selected':''}>Last 7 days</option>
+        <option value="30"${d===30?' selected':''}>Last 30 days</option>
+        <option value="90"${d===90?' selected':''}>Last 90 days</option>
+        <option value="365"${d===365?' selected':''}>Last 365 days</option>
+      </select>
+      <button class="modal-close" style="margin-left:auto" onclick="document.getElementById('_prov-stats-modal')?.remove()">&times;</button>
+    </div>
+    <div id="_prov-stats-body"><span style="color:var(--text-400);font-size:12px">Loading…</span></div>
+  </div>`;
+  overlay.addEventListener('click', e => { if (e.target===overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  const fmtNum = n => n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'K' : String(n||0);
+  const fmtCost = c => (c||0) > 0 ? '$'+(c).toFixed(4) : '—';
+  try {
+    const resp = await API.get(`/v1/providers/stats?days=${d}`);
+    const all = resp.stats || [];
+    const ps = all.find(s => s.provider === provName);
+    const body = document.getElementById('_prov-stats-body');
+    if (!body) return;
+    if (!ps) {
+      body.innerHTML = `<span style="font-family:var(--font-mono);color:var(--text-400);font-size:11px">No usage in selected window.</span>`;
+      return;
+    }
+    const totals = `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:10px;background:var(--bg-100);border-radius:8px">
+      <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Calls</div><div style="font-size:18px;font-weight:600;color:var(--text-000)">${fmtNum(ps.calls)}</div></div>
+      <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Tokens in</div><div style="font-size:18px;font-weight:600;color:var(--text-000)">${fmtNum(ps.tokens_in)}</div></div>
+      <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Tokens out</div><div style="font-size:18px;font-weight:600;color:var(--text-000)">${fmtNum(ps.tokens_out)}</div></div>
+      <div><div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Cost</div><div style="font-size:18px;font-weight:600;color:var(--text-000)">${fmtCost(ps.cost_usd)}</div></div>
+    </div>`;
+    const keys = (ps.keys || []).slice().sort((a,b)=>b.calls-a.calls);
+    const headerRow = `<div style="display:grid;grid-template-columns:1.4fr repeat(5, 1fr);gap:8px;padding:6px 8px;font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--border-100)">
+      <div>Key</div><div style="text-align:right">Calls</div><div style="text-align:right">Tokens in</div><div style="text-align:right">Tokens out</div><div style="text-align:right">Cost</div><div style="text-align:right">Last used</div>
+    </div>`;
+    const rows = keys.length ? keys.map(k => `<div style="display:grid;grid-template-columns:1.4fr repeat(5, 1fr);gap:8px;padding:6px 8px;font-size:12px;border-bottom:1px solid var(--border-100)">
+      <div style="color:var(--text-100);font-weight:500;overflow:hidden;text-overflow:ellipsis">${esc(k.key_name||'(unknown)')}</div>
+      <div style="font-family:var(--font-mono);text-align:right;color:var(--text-100)">${fmtNum(k.calls)}</div>
+      <div style="font-family:var(--font-mono);text-align:right;color:var(--text-200)">${fmtNum(k.tokens_in)}</div>
+      <div style="font-family:var(--font-mono);text-align:right;color:var(--text-200)">${fmtNum(k.tokens_out)}</div>
+      <div style="font-family:var(--font-mono);text-align:right;color:var(--text-100)">${fmtCost(k.cost_usd)}</div>
+      <div style="font-family:var(--font-mono);text-align:right;color:var(--text-400);font-size:10px">${esc((k.last_used||'').slice(0,16).replace('T',' '))}</div>
+    </div>`).join('') : `<div style="padding:8px;font-family:var(--font-mono);color:var(--text-400);font-size:11px">No per-key breakdown available.</div>`;
+    body.innerHTML = `${totals}
+      <div style="margin-top:8px">
+        <div style="font-size:11px;font-weight:500;color:var(--text-200);margin-bottom:4px">Per API key</div>
+        ${headerRow}${rows}
+      </div>`;
+  } catch(e) {
+    const body = document.getElementById('_prov-stats-body');
+    if (body) body.innerHTML = `<span style="color:var(--error);font-size:12px">Failed to load stats: ${esc(e.message||'error')}</span>`;
+  }
+}
+
 function openKeyEditModal(provName, keyName) {
   // Remove any existing key modal
   document.getElementById('_key-edit-modal')?.remove();
@@ -2253,7 +2365,8 @@ async function saveKeyFromModal(provName, oldKeyName) {
     showToast('Key saved');
     document.getElementById('_key-edit-modal')?.remove();
     state.providers = await API.getProviders().then(p => Array.isArray(p) ? p : (p.providers||[]));
-    switchGeneralTab('providers');
+    if (document.getElementById('_prov-keys-modal')) await _renderProviderKeysList(provName);
+    else switchGeneralTab('providers');
   } catch(e) { showToast('Save failed: ' + e.message, true); }
 }
 
@@ -2263,7 +2376,8 @@ async function deleteProviderKey(provName, keyName) {
     await API.post('/v1/providers', { action: 'delete_key', name: provName, key_name: keyName });
     showToast('Key deleted');
     state.providers = await API.getProviders().then(p => Array.isArray(p) ? p : (p.providers||[]));
-    switchGeneralTab('providers');
+    if (document.getElementById('_prov-keys-modal')) await _renderProviderKeysList(provName);
+    else switchGeneralTab('providers');
   } catch(e) { showToast('Delete failed: ' + e.message, true); }
 }
 
@@ -4910,4 +5024,3 @@ async function saveAgentJson(agentId) {
     showToast('Save failed: ' + e.message, true);
   }
 }
-
