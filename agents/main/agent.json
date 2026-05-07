@@ -2,7 +2,7 @@
   "description": "General-purpose main agent",
   "model": "mistral-vibe/mistral-medium-3.5",
   "avatar": "captain",
-  "display_name": "Steve Rogers",
+  "display_name": "Main",
   "memory_summary": {
     "enabled": true,
     "paused": false,
