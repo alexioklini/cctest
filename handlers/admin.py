@@ -4719,6 +4719,11 @@ class AdminHandlerMixin:
 
         # Enrich: source tag + schedule-run summary for scheduled artifacts.
         # Batch-resolve run rows so we don't hit the scheduler DB per-artifact.
+        # Translation jobs use synthetic session ids `tr<14 hex>` minted by
+        # handlers/translate.py — tag them as "translation" so the browse UI
+        # can split them off from regular chat artifacts.
+        import re as _re
+        _TR_SID_RE = _re.compile(r"^tr[0-9a-f]{14}$")
         run_ids_needed = set()
         for a in artifacts:
             sid = a.get("session_id") or ""
@@ -4729,6 +4734,9 @@ class AdminHandlerMixin:
                     run_ids_needed.add(a["run_id"])
                 except (ValueError, IndexError):
                     a["run_id"] = None
+            elif _TR_SID_RE.match(sid):
+                a["source"] = "translation"
+                a["run_id"] = None
             else:
                 a["source"] = "chat"
                 a["run_id"] = None
@@ -4748,7 +4756,7 @@ class AdminHandlerMixin:
             if a.get("run_id") in run_map:
                 a["schedule_run"] = run_map[a["run_id"]]
 
-        if source_filter in ("chat", "scheduled"):
+        if source_filter in ("chat", "scheduled", "translation"):
             artifacts = [a for a in artifacts if a.get("source") == source_filter]
 
         # Fetch text preview for each text-based artifact

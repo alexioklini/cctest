@@ -2493,6 +2493,11 @@ class BrainAgentHandler(
             self._handle_translate_tts_voices()
         elif path == "/v1/translate/history":
             self._handle_translate_history_list()
+        elif path.startswith("/v1/translate/history/") and "/file" in path:
+            # /v1/translate/history/<id>/file?which=...
+            tail = path[len("/v1/translate/history/"):]
+            entry_id = tail.split("/", 1)[0]
+            self._handle_translate_history_file(entry_id)
         elif path == "/v1/translate/glossaries":
             self._handle_glossaries_list()
         elif path.startswith("/v1/translate/glossaries/"):

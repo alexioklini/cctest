@@ -448,6 +448,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <button class="artifacts-source-tab active" data-source="all" onclick="filterArtifactsSource('all')" style="padding:8px 14px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-300);cursor:pointer;font-size:13px">All</button>
         <button class="artifacts-source-tab" data-source="chat" onclick="filterArtifactsSource('chat')" style="padding:8px 14px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-300);cursor:pointer;font-size:13px">Chats</button>
         <button class="artifacts-source-tab" data-source="scheduled" onclick="filterArtifactsSource('scheduled')" style="padding:8px 14px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-300);cursor:pointer;font-size:13px">Scheduled</button>
+        <button class="artifacts-source-tab" data-source="translation" onclick="filterArtifactsSource('translation')" style="padding:8px 14px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-300);cursor:pointer;font-size:13px">Translations</button>
       </div>
       <div class="artifacts-tabs" id="artifacts-tabs">
         <button class="artifacts-tab active" onclick="filterArtifactsBrowse('all')">All</button>
@@ -543,10 +544,6 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <div class="tr-header">
         <h1 class="tr-title">Translation</h1>
         <div class="tr-header-actions">
-          <button class="tr-btn tr-btn-ghost" onclick="trOpenHistoryPanel()">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-            History
-          </button>
           <button class="tr-btn tr-btn-ghost" onclick="trOpenGlossariesModal()">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
             Glossaries
@@ -656,6 +653,23 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           <button class="tr-btn" onclick="trClearSource()">Clear</button>
           <span class="tr-status" id="tr-status"></span>
         </div>
+        <div class="tr-history-inline" data-history-for="text">
+          <div class="tr-history-inline-header">
+            <span class="tr-history-inline-title">History</span>
+            <input type="search" class="tr-history-search" data-search-for="text"
+              placeholder="Search…" oninput="trHistoryOnSearchInput('text')">
+            <select class="tr-history-sort" data-sort-for="text" onchange="trHistoryOnSortChange('text')">
+              <option value="date_desc">Newest first</option>
+              <option value="date_asc">Oldest first</option>
+              <option value="name_asc">Name A→Z</option>
+              <option value="name_desc">Name Z→A</option>
+            </select>
+            <button class="tr-btn tr-btn-ghost" onclick="trHistoryRefresh()" title="Refresh">↻</button>
+          </div>
+          <div class="tr-history-inline-list" id="tr-history-text-list">
+            <div class="tr-history-empty">No translations yet.</div>
+          </div>
+        </div>
       </div>
 
       <!-- Document tab content -->
@@ -701,6 +715,23 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           </button>
           <button class="tr-btn" onclick="trDocReset()">Clear</button>
           <span class="tr-status" id="tr-doc-status"></span>
+        </div>
+        <div class="tr-history-inline" data-history-for="document">
+          <div class="tr-history-inline-header">
+            <span class="tr-history-inline-title">History</span>
+            <input type="search" class="tr-history-search" data-search-for="document"
+              placeholder="Search…" oninput="trHistoryOnSearchInput('document')">
+            <select class="tr-history-sort" data-sort-for="document" onchange="trHistoryOnSortChange('document')">
+              <option value="date_desc">Newest first</option>
+              <option value="date_asc">Oldest first</option>
+              <option value="name_asc">Name A→Z</option>
+              <option value="name_desc">Name Z→A</option>
+            </select>
+            <button class="tr-btn tr-btn-ghost" onclick="trHistoryRefresh()" title="Refresh">↻</button>
+          </div>
+          <div class="tr-history-inline-list" id="tr-history-document-list">
+            <div class="tr-history-empty">No documents translated yet.</div>
+          </div>
         </div>
       </div>
 
@@ -751,6 +782,23 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           <button class="tr-btn" onclick="trMediaReset()">Clear</button>
           <span class="tr-status" id="tr-media-status"></span>
         </div>
+        <div class="tr-history-inline" data-history-for="media">
+          <div class="tr-history-inline-header">
+            <span class="tr-history-inline-title">History</span>
+            <input type="search" class="tr-history-search" data-search-for="media"
+              placeholder="Search…" oninput="trHistoryOnSearchInput('media')">
+            <select class="tr-history-sort" data-sort-for="media" onchange="trHistoryOnSortChange('media')">
+              <option value="date_desc">Newest first</option>
+              <option value="date_asc">Oldest first</option>
+              <option value="name_asc">Name A→Z</option>
+              <option value="name_desc">Name Z→A</option>
+            </select>
+            <button class="tr-btn tr-btn-ghost" onclick="trHistoryRefresh()" title="Refresh">↻</button>
+          </div>
+          <div class="tr-history-inline-list" id="tr-history-media-list">
+            <div class="tr-history-empty">No audio/video translations yet.</div>
+          </div>
+        </div>
       </div>
 
       <!-- Live Microphone tab content -->
@@ -773,6 +821,23 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <div class="tr-live-stream" id="tr-live-stream">
           <div class="tr-placeholder">Press Start to begin live transcription. Audio is streamed to Voxtral in 4-second chunks; each finalized segment is translated as it lands.</div>
         </div>
+        <div class="tr-history-inline" data-history-for="live">
+          <div class="tr-history-inline-header">
+            <span class="tr-history-inline-title">History</span>
+            <input type="search" class="tr-history-search" data-search-for="live"
+              placeholder="Search…" oninput="trHistoryOnSearchInput('live')">
+            <select class="tr-history-sort" data-sort-for="live" onchange="trHistoryOnSortChange('live')">
+              <option value="date_desc">Newest first</option>
+              <option value="date_asc">Oldest first</option>
+              <option value="name_asc">Name A→Z</option>
+              <option value="name_desc">Name Z→A</option>
+            </select>
+            <button class="tr-btn tr-btn-ghost" onclick="trHistoryRefresh()" title="Refresh">↻</button>
+          </div>
+          <div class="tr-history-inline-list" id="tr-history-live-list">
+            <div class="tr-history-empty">No live recordings yet.</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -793,21 +858,6 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     </div>
   </div>
 
-  <!-- ═══ Translation History Panel ═══ -->
-  <div id="tr-history-panel" class="tr-history-panel hidden">
-    <div class="tr-history-backdrop" onclick="trCloseHistoryPanel()"></div>
-    <div class="tr-history-drawer">
-      <div class="tr-history-header">
-        <span class="tr-history-title">Translation History</span>
-        <button class="tr-modal-close" onclick="trCloseHistoryPanel()" aria-label="Close">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
-      </div>
-      <div class="tr-history-list" id="tr-history-list">
-        <div class="tr-history-empty">No history yet.</div>
-      </div>
-    </div>
-  </div>
 
   <!-- ═══ Workflow Editor Modal ═══ -->
   <div id="wf-editor-modal" class="wf-modal hidden">

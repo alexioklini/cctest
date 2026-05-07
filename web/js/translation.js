@@ -67,6 +67,9 @@ async function loadTranslationView() {
   trRenderSourcePill();
   await trLoadGlossaries();
   trUpdateCounts();
+  // Inline history is now part of every tab — fetch once on mount.
+  _trHistoryInstallFileClickHandler();
+  trHistoryRefresh();
 }
 
 async function trLoadGlossaries() {
@@ -365,6 +368,7 @@ async function trRunTextTranslation() {
     const srcLang = trState.sourceLang || trState.detected?.lang || '';
     _trTtsPrefetch('source', text, srcLang);
     if (r.translation && !r.noop) _trTtsPrefetch('target', r.translation, trState.targetLang);
+    if (r.translation && !r.noop) trHistoryRefresh();
   } catch (e) {
     out.classList.remove('translating');
     out.innerHTML = '<div class="tr-placeholder">Translation failed.</div>';
@@ -943,6 +947,7 @@ function trDocApplyJobState(job) {
     dl?.classList.remove('hidden');
     const status = document.getElementById('tr-doc-status');
     if (status) { status.textContent = 'Done.'; status.classList.remove('error'); }
+    trHistoryRefresh();
   } else if (job.state === 'error') {
     meta.textContent = job.error || 'Unknown error';
     dl?.classList.add('hidden');
@@ -1242,6 +1247,7 @@ function trMediaApplyJobState(job) {
     document.getElementById('tr-media-translate-btn').disabled = false;
     const status = document.getElementById('tr-media-status');
     if (status) { status.textContent = 'Done.'; status.classList.remove('error'); }
+    trHistoryRefresh();
   } else if (job.state === 'error') {
     meta.textContent = job.error || 'Unknown error';
     document.getElementById('tr-media-translate-btn').disabled = false;
@@ -1797,6 +1803,7 @@ async function trLiveStop() {
   document.getElementById('tr-live-download-btn').disabled =
     !trLiveState.segments.length;
   trLiveStatus(trLiveState.segments.length ? 'Stopped.' : 'Stopped (no segments).');
+  if (trLiveState.segments.length) trHistoryRefresh();
 }
 
 function trLiveStartElapsedTimer() {
@@ -1948,99 +1955,233 @@ function trLiveDownload() {
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
-/* ─── Translation History ──────────────────────────────────────────────── */
+/* ─── Translation History (inline, per tab) ───────────────────────────── */
 
-const _trHistoryIcons = {
-  text: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>`,
-  document: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`,
-  media: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>`,
-  live: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>`,
+let _trHistoryEntries = [];          // raw rows from /v1/translate/history
+let _trHistoryIsAdmin = false;
+let _trHistoryCurrentUser = '';
+const _trHistoryUiState = {           // per-tab search + sort
+  text:     { search: '', sort: 'date_desc' },
+  document: { search: '', sort: 'date_desc' },
+  media:    { search: '', sort: 'date_desc' },
+  live:     { search: '', sort: 'date_desc' },
 };
+// Inline expanded entries (id → bool) so clicking a row opens detail in place.
+const _trHistoryExpanded = {};
 
-let _trHistoryEntries = [];
-
-function trOpenHistoryPanel() {
-  const panel = document.getElementById('tr-history-panel');
-  if (!panel) return;
-  panel.classList.remove('hidden');
-  _trHistoryLoad();
+function trHistoryOnSearchInput(tab) {
+  const el = document.querySelector(`.tr-history-search[data-search-for="${tab}"]`);
+  _trHistoryUiState[tab].search = (el?.value || '').trim().toLowerCase();
+  _trHistoryRenderTab(tab);
 }
 
-function trCloseHistoryPanel() {
-  const panel = document.getElementById('tr-history-panel');
-  if (panel) panel.classList.add('hidden');
+function trHistoryOnSortChange(tab) {
+  const el = document.querySelector(`.tr-history-sort[data-sort-for="${tab}"]`);
+  _trHistoryUiState[tab].sort = el?.value || 'date_desc';
+  _trHistoryRenderTab(tab);
 }
 
-async function _trHistoryLoad() {
-  const list = document.getElementById('tr-history-list');
-  if (!list) return;
-  list.innerHTML = '<div class="tr-history-empty">Loading…</div>';
+async function trHistoryRefresh() {
+  // Fetch once, render all four tabs from the same response.
   try {
     const data = await API.get('/v1/translate/history');
     _trHistoryEntries = data.entries || [];
-    _trHistoryRenderList(list);
+    _trHistoryIsAdmin = !!data.is_admin;
+    _trHistoryCurrentUser = data.current_user_id || '';
   } catch (e) {
-    list.innerHTML = `<div class="tr-history-empty">Error: ${escapeHtml(e.message)}</div>`;
+    _trHistoryEntries = [];
   }
+  ['text', 'document', 'media', 'live'].forEach(_trHistoryRenderTab);
 }
 
-function _trHistoryRenderList(list) {
-  list = list || document.getElementById('tr-history-list');
-  if (!_trHistoryEntries.length) {
-    list.innerHTML = '<div class="tr-history-empty">No history yet.</div>';
+function _trHistoryEntriesForTab(tab) {
+  // Map UI tab name to history `type` value.
+  const typeFor = { text: 'text', document: 'document', media: 'media', live: 'live' };
+  const t = typeFor[tab];
+  return _trHistoryEntries.filter(e => e.type === t);
+}
+
+function _trHistoryFilterAndSort(entries, tab) {
+  const ui = _trHistoryUiState[tab];
+  let out = entries;
+  if (ui.search) {
+    const q = ui.search;
+    out = out.filter(e => {
+      const hay = `${e.title || ''} ${e.source_lang || ''} ${e.target_lang || ''}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }
+  out = out.slice();
+  switch (ui.sort) {
+    case 'date_asc':  out.sort((a, b) => (a.created_at || 0) - (b.created_at || 0)); break;
+    case 'name_asc':  out.sort((a, b) => (a.title || '').localeCompare(b.title || '')); break;
+    case 'name_desc': out.sort((a, b) => (b.title || '').localeCompare(a.title || '')); break;
+    default:          out.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+  }
+  return out;
+}
+
+function _trHistoryRenderTab(tab) {
+  const list = document.getElementById(`tr-history-${tab}-list`);
+  if (!list) return;
+  const entries = _trHistoryFilterAndSort(_trHistoryEntriesForTab(tab), tab);
+  if (!entries.length) {
+    const ui = _trHistoryUiState[tab];
+    list.innerHTML = `<div class="tr-history-empty">${ui.search ? 'No matches.' : 'No history yet.'}</div>`;
     return;
   }
-  list.innerHTML = _trHistoryEntries.map(e => {
-    const icon = _trHistoryIcons[e.type] || _trHistoryIcons.text;
-    const date = new Date((e.created_at || 0) * 1000).toLocaleString(undefined, {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
-    const langs = [e.source_lang, e.target_lang].filter(Boolean).join(' → ') || '';
-    const typeLabel = {text:'Text', document:'Document', media:'Audio/Video', live:'Live Mic'}[e.type] || e.type;
-    return `<div class="tr-history-entry" onclick="_trHistoryOpen('${escapeHtml(e.id)}')">
-      <div class="tr-history-entry-icon">${icon}</div>
-      <div class="tr-history-entry-body">
-        <div class="tr-history-entry-title">${escapeHtml(e.title || '—')}</div>
-        <div class="tr-history-entry-meta">${typeLabel}${langs ? ' · ' + escapeHtml(langs) : ''} · ${escapeHtml(date)}</div>
+  list.innerHTML = entries.map(e => _trHistoryRowHtml(e, tab)).join('');
+}
+
+function _trHistoryRowHtml(entry, tab) {
+  const date = new Date((entry.created_at || 0) * 1000)
+    .toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const langs = [entry.source_lang, entry.target_lang].filter(Boolean).join(' → ');
+  const isOther = _trHistoryIsAdmin && entry.user_id && entry.user_id !== _trHistoryCurrentUser;
+  const ownerBadge = isOther
+    ? `<span class="tr-history-owner" title="Other user">${escapeHtml(entry.user_id)}</span>`
+    : '';
+  const expanded = !!_trHistoryExpanded[entry.id];
+  const detail = expanded ? _trHistoryDetailHtml(entry) : '';
+  return `<div class="tr-history-row${expanded ? ' expanded' : ''}">
+    <div class="tr-history-row-head" onclick="trHistoryToggle('${escapeHtml(entry.id)}','${tab}')">
+      <span class="tr-history-row-title">${escapeHtml(entry.title || '—')}</span>
+      <span class="tr-history-row-meta">${langs ? escapeHtml(langs) + ' · ' : ''}${escapeHtml(date)}</span>
+      ${ownerBadge}
+      <button class="tr-history-row-del" title="Delete"
+        onclick="event.stopPropagation();trHistoryDelete('${escapeHtml(entry.id)}')">×</button>
+    </div>
+    ${detail}
+  </div>`;
+}
+
+function _trHistoryDetailHtml(entry) {
+  let result = {};
+  try { result = JSON.parse(entry.result_json || '{}'); } catch (_) {}
+  if (entry.type === 'text')      return _trHistoryDetailText(entry, result);
+  if (entry.type === 'document')  return _trHistoryDetailDocument(entry, result);
+  if (entry.type === 'media')     return _trHistoryDetailMedia(entry, result);
+  if (entry.type === 'live')      return _trHistoryDetailLive(entry, result);
+  return '';
+}
+
+function _trHistoryDetailText(entry, result) {
+  const src = result.text || '';
+  const tgt = result.translation || '';
+  return `<div class="tr-history-detail-inline">
+    <div class="tr-history-text-cols">
+      <div class="tr-history-text-col">
+        <div class="tr-history-text-label">Source</div>
+        <div class="tr-history-text-body">${escapeHtml(src) || '<em>—</em>'}</div>
       </div>
-      <button class="tr-history-entry-del" onclick="event.stopPropagation();_trHistoryDelete('${escapeHtml(e.id)}')" title="Delete">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+      <div class="tr-history-text-col">
+        <div class="tr-history-text-label">Translation</div>
+        <div class="tr-history-text-body">${escapeHtml(tgt) || '<em>—</em>'}</div>
+      </div>
+    </div>
+    <div class="tr-history-detail-actions">
+      <button class="tr-btn tr-btn-primary" onclick="trHistoryRestoreText('${escapeHtml(entry.id)}')">
+        Load into editor
       </button>
-    </div>`;
+    </div>
+  </div>`;
+}
+
+// File-link factory — auth-aware (browser <a> can't carry Bearer headers, so
+// every link routes through trHistoryOpenFile which fetches as blob first).
+// Uses data- attributes + a delegated click handler — embedding the URL and
+// filename in the onclick string ran into HTML-attribute quoting issues
+// (JSON.stringify emits double-quotes that closed the onclick="..." early,
+// so the browser fell back to following the href and showed the raw 401).
+function _trHistoryFileLink(entryId, which, label, fileName, icon) {
+  if (!fileName) return '';
+  const url = `/v1/translate/history/${encodeURIComponent(entryId)}/file?which=${encodeURIComponent(which)}`;
+  return `<a class="tr-history-file" href="${url}"
+      data-tr-file="1"
+      data-tr-url="${escapeHtml(url)}"
+      data-tr-name="${escapeHtml(fileName)}">
+    <span class="tr-history-file-icon">${icon}</span>
+    <span class="tr-history-file-meta"><span class="tr-history-file-label">${escapeHtml(label)}</span><span class="tr-history-file-name">${escapeHtml(fileName)}</span></span>
+  </a>`;
+}
+
+// One delegated listener catches clicks on any history file link, no matter
+// when it was rendered. Installed once on first translation-view load.
+let _trHistoryFileClickInstalled = false;
+function _trHistoryInstallFileClickHandler() {
+  if (_trHistoryFileClickInstalled) return;
+  _trHistoryFileClickInstalled = true;
+  document.addEventListener('click', (ev) => {
+    const a = ev.target.closest('a[data-tr-file="1"]');
+    if (!a) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    trHistoryOpenFile(null, a.dataset.trUrl, a.dataset.trName);
+  });
+}
+
+function _trHistoryDetailDocument(entry, result) {
+  const srcName = result.source_filename || result.filename || '';
+  const outName = result.output_filename || '';
+  return `<div class="tr-history-detail-inline">
+    <div class="tr-history-files">
+      ${_trHistoryFileLink(entry.id, 'source', 'Source', srcName, '📄')}
+      ${_trHistoryFileLink(entry.id, 'output', 'Translated', outName, '📑')}
+    </div>
+  </div>`;
+}
+
+function _trHistoryDetailMedia(entry, result) {
+  const srcName = result.source_filename || result.filename || '';
+  const outFiles = result.output_files || {};
+  const formatLabels = {
+    transcript_txt: 'Transcript (TXT)',
+    transcript_srt: 'Transcript (SRT)',
+    transcript_vtt: 'Transcript (VTT)',
+    translation_txt: 'Translation (TXT)',
+    translation_srt: 'Translation (SRT)',
+    translation_vtt: 'Translation (VTT)',
+    bilingual_txt: 'Bilingual (TXT)',
+  };
+  const fileLinks = Object.keys(outFiles)
+    .filter(k => k !== 'primary')
+    .map(k => _trHistoryFileLink(entry.id, k, formatLabels[k] || k, outFiles[k], '🗒'))
+    .join('');
+  const transcript = result.transcript || (result.segments || []).map(s => s.text || '').filter(Boolean).join('\n');
+  return `<div class="tr-history-detail-inline">
+    <div class="tr-history-files">
+      ${_trHistoryFileLink(entry.id, 'source', 'Source media', srcName, '🎬')}
+      ${fileLinks}
+    </div>
+    ${transcript ? `<div class="tr-history-transcript"><div class="tr-history-text-label">Transcript</div><pre>${escapeHtml(transcript)}</pre></div>` : ''}
+  </div>`;
+}
+
+function _trHistoryDetailLive(entry, result) {
+  const segs = result.segments || [];
+  const summary = segs.map(s => s.translation || s.text || '').filter(Boolean).join(' ').slice(0, 600);
+  const outFiles = result.output_files || {};
+  const links = Object.keys(outFiles).map(k => {
+    const label = k === 'srt' ? 'SRT subtitles' : k === 'txt' ? 'Plain text' : k.toUpperCase();
+    const icon = k === 'srt' ? '🎞' : '📝';
+    return _trHistoryFileLink(entry.id, k, label, outFiles[k], icon);
   }).join('');
+  return `<div class="tr-history-detail-inline">
+    ${summary ? `<div class="tr-history-transcript"><div class="tr-history-text-label">Transcript summary</div><div class="tr-history-text-body">${escapeHtml(summary)}${summary.length === 600 ? '…' : ''}</div></div>` : ''}
+    <div class="tr-history-files">${links || '<em style="font-size:12px;color:var(--text-400)">No saved files.</em>'}</div>
+  </div>`;
 }
 
-async function _trHistoryDelete(id) {
-  try {
-    await API.delete(`/v1/translate/history/${encodeURIComponent(id)}`);
-    _trHistoryEntries = _trHistoryEntries.filter(e => e.id !== id);
-    _trHistoryRenderList();
-  } catch(e) { /* silent */ }
+function trHistoryToggle(id, tab) {
+  _trHistoryExpanded[id] = !_trHistoryExpanded[id];
+  _trHistoryRenderTab(tab);
 }
 
-function _trHistoryOpen(id) {
+function trHistoryRestoreText(id) {
   const entry = _trHistoryEntries.find(e => e.id === id);
   if (!entry) return;
-  const drawer = document.querySelector('.tr-history-drawer');
-  if (!drawer) return;
   let result = {};
-  try { result = JSON.parse(entry.result_json || '{}'); } catch(_) {}
-
-  if (entry.type === 'text') {
-    _trHistoryRestoreText(entry, result);
-    trCloseHistoryPanel();
-    return;
-  }
-  if (entry.type === 'document') {
-    _trHistoryShowDocDetail(drawer, entry, result);
-    return;
-  }
-  if (entry.type === 'media' || entry.type === 'live') {
-    _trHistoryShowSegDetail(drawer, entry, result);
-    return;
-  }
-}
-
-function _trHistoryRestoreText(entry, result) {
-  // Switch to text tab and restore source + translation.
+  try { result = JSON.parse(entry.result_json || '{}'); } catch (_) {}
   trSwitchTab('text');
   const src = document.getElementById('tr-source-textarea');
   const tgt = document.getElementById('tr-target-output');
@@ -2049,7 +2190,6 @@ function _trHistoryRestoreText(entry, result) {
     tgt.textContent = result.translation || '';
     tgt.dataset.translation = result.translation || '';
   }
-  // Update language pills.
   if (entry.source_lang && entry.source_lang !== 'auto') {
     trState.sourceLang = entry.source_lang;
     trRenderSourcePill();
@@ -2061,45 +2201,43 @@ function _trHistoryRestoreText(entry, result) {
   trUpdateCounts();
 }
 
-function _trHistoryShowDocDetail(drawer, entry, result) {
-  const list = drawer.querySelector('.tr-history-list') || document.getElementById('tr-history-list');
-  const detailId = 'tr-history-detail-' + entry.id;
-  // Replace list content with detail view.
-  list.innerHTML = `<div class="tr-history-detail" id="${detailId}">
-    <button class="tr-history-detail-back" onclick="_trHistoryBackToList()">
-      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg> Back
-    </button>
-    <div style="font-size:15px;font-weight:600;color:var(--text-000);margin-bottom:8px">${escapeHtml(entry.title)}</div>
-    <div style="font-size:12px;color:var(--text-400);margin-bottom:16px">${[entry.source_lang, entry.target_lang].filter(Boolean).join(' → ')}</div>
-    ${result.output_filename ? `<div style="font-size:13px;color:var(--text-200)">Output: <code>${escapeHtml(result.output_filename)}</code></div>` : ''}
-    ${entry.artifact_path ? `<div style="margin-top:12px"><em style="font-size:12px;color:var(--text-400)">File saved to Artifacts.</em></div>` : ''}
-  </div>`;
+async function trHistoryOpenFile(ev, url, suggestedName) {
+  // Browser <a href> can't carry the Authorization header, so swap the
+  // navigation for an authenticated fetch + blob URL. PDFs/images render
+  // inline; other types prompt download with the original filename.
+  if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+  try {
+    const resp = await fetch(url, { headers: trAuthHeaders() });
+    if (!resp.ok) {
+      showToast && showToast(`Open failed (${resp.status})`, true);
+      return false;
+    }
+    const blob = await resp.blob();
+    const objUrl = URL.createObjectURL(blob);
+    const win = window.open(objUrl, '_blank');
+    if (!win) {
+      // Popup blocked — fall back to download via anchor.
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = suggestedName || 'file';
+      a.click();
+    }
+    // Revoke after a minute — long enough for PDF viewers / large files to
+    // finish loading without leaking memory if the user keeps the tab open.
+    setTimeout(() => URL.revokeObjectURL(objUrl), 60000);
+  } catch (e) {
+    showToast && showToast('Open failed: ' + (e.message || e), true);
+  }
+  return false;
 }
 
-function _trHistoryShowSegDetail(drawer, entry, result) {
-  const list = drawer.querySelector('.tr-history-list') || document.getElementById('tr-history-list');
-  const segs = result.segments || [];
-  const hasTranslation = segs.some(s => s.translation);
-  const segHtml = segs.map(s => {
-    const t = typeof s.start === 'number' ? trFormatTimeShort(s.start) : '';
-    return `<div class="tr-history-seg">
-      <div class="tr-history-seg-time">${t}</div>
-      <div class="tr-history-seg-src">${escapeHtml(s.text || '')}</div>
-      ${s.translation ? `<div class="tr-history-seg-tgt">${escapeHtml(s.translation)}</div>` : ''}
-    </div>`;
-  }).join('');
-  const typeLabel = entry.type === 'live' ? 'Live Mic' : 'Audio/Video';
-  list.innerHTML = `<div class="tr-history-detail">
-    <button class="tr-history-detail-back" onclick="_trHistoryBackToList()">
-      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg> Back
-    </button>
-    <div style="font-size:15px;font-weight:600;color:var(--text-000);margin-bottom:4px">${escapeHtml(entry.title)}</div>
-    <div style="font-size:12px;color:var(--text-400);margin-bottom:14px">${typeLabel} · ${[entry.source_lang, entry.target_lang].filter(Boolean).join(' → ')}</div>
-    ${result.transcript ? `<div style="font-size:13px;color:var(--text-200);margin-bottom:12px;line-height:1.5">${escapeHtml(result.transcript)}</div>` : ''}
-    <div class="tr-history-seg-list">${segHtml}</div>
-  </div>`;
-}
-
-function _trHistoryBackToList() {
-  _trHistoryRenderList();
+async function trHistoryDelete(id) {
+  try {
+    await API.delete(`/v1/translate/history/${encodeURIComponent(id)}`);
+    _trHistoryEntries = _trHistoryEntries.filter(e => e.id !== id);
+    delete _trHistoryExpanded[id];
+    ['text', 'document', 'media', 'live'].forEach(_trHistoryRenderTab);
+  } catch (e) {
+    showToast && showToast('Delete failed: ' + e.message, true);
+  }
 }

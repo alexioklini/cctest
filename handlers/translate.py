@@ -216,7 +216,7 @@ class TranslateHandlerMixin:
             # Persist to translation history (fire-and-forget).
             if not result.get("noop") and result.get("translation"):
                 try:
-                    user_id = getattr(self, "_current_user_id", None) or ""
+                    user_id = ((getattr(self, "_auth_user", None) or {}).get("id") or "")
                     _tr_history_save_text(
                         user_id=user_id,
                         text=text,
@@ -235,24 +235,107 @@ class TranslateHandlerMixin:
     # ─── Translation History ─────────────────────────────────────────────────
 
     def _handle_translate_history_list(self):
-        """GET /v1/translate/history — return entries for the current user."""
+        """GET /v1/translate/history — entries for current user (admins see all).
+
+        Returns {entries: [...], current_user_id, is_admin}. Each entry carries
+        user_id so the UI can label other users' rows when admin is viewing.
+        """
         try:
-            user_id = getattr(self, "_current_user_id", None) or ""
+            user = getattr(self, "_auth_user", None) or {}
+            user_id = user.get("id") or ""
+            is_admin = user.get("role") == "admin"
             from server_lib.db import TranslateHistoryDB
-            entries = TranslateHistoryDB.list_for_user(user_id)
-            self._send_json({"entries": entries})
+            entries = TranslateHistoryDB.list_all() if is_admin else TranslateHistoryDB.list_for_user(user_id)
+            self._send_json({
+                "entries": entries,
+                "current_user_id": user_id,
+                "is_admin": is_admin,
+            })
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
     def _handle_translate_history_delete(self, entry_id: str):
-        """DELETE /v1/translate/history/<id>."""
+        """DELETE /v1/translate/history/<id>.
+
+        Admins can delete any entry; other users only their own.
+        """
         try:
-            user_id = getattr(self, "_current_user_id", None) or ""
+            user = getattr(self, "_auth_user", None) or {}
+            user_id = user.get("id") or ""
+            is_admin = user.get("role") == "admin"
             from server_lib.db import TranslateHistoryDB
-            TranslateHistoryDB.delete(entry_id, user_id)
+            TranslateHistoryDB.delete(entry_id, user_id, admin=is_admin)
             self._send_json({"ok": True})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
+
+    def _handle_translate_history_file(self, entry_id: str):
+        """GET /v1/translate/history/<id>/file?which=source|output|<format>
+
+        Serves a file (source upload, primary output, or for media a specific
+        format like srt/vtt/translation_txt) tied to a history entry. Admins
+        can fetch any entry's file; users only their own.
+        """
+        from urllib.parse import urlparse, parse_qs
+        try:
+            user = getattr(self, "_auth_user", None) or {}
+            user_id = user.get("id") or ""
+            is_admin = user.get("role") == "admin"
+            from server_lib.db import TranslateHistoryDB
+            entry = TranslateHistoryDB.get(entry_id, user_id, admin=is_admin)
+            if not entry:
+                self._send_json({"error": "not found"}, 404)
+                return
+            qs = parse_qs(urlparse(self.path).query)
+            which = (qs.get("which") or ["output"])[0]
+            try:
+                result = json.loads(entry.get("result_json") or "{}")
+            except Exception:
+                result = {}
+            target_path = ""
+            if which == "source":
+                target_path = result.get("source_artifact_path") or ""
+            elif which == "output":
+                target_path = entry.get("artifact_path") or ""
+            else:
+                # media: format-specific output
+                files_map = result.get("output_files_paths") or {}
+                target_path = files_map.get(which) or ""
+            if not target_path or not os.path.exists(target_path):
+                self._send_json({"error": "file unavailable"}, 404)
+                return
+            self._serve_file(target_path)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
+    def _serve_file(self, path: str) -> None:
+        """Stream a file with a sensible Content-Type and inline disposition."""
+        import mimetypes
+        ctype, _ = mimetypes.guess_type(path)
+        if not ctype:
+            ctype = "application/octet-stream"
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            self._send_json({"error": "file not readable"}, 404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(size))
+        # Inline so browsers display PDFs/images instead of forcing download;
+        # downloads still work via the download button.
+        fname = os.path.basename(path).replace('"', '')
+        self.send_header("Content-Disposition", f'inline; filename="{fname}"')
+        self.end_headers()
+        try:
+            with open(path, "rb") as f:
+                while True:
+                    chunk = f.read(64 * 1024)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
 
     # ─── Glossary CRUD ──────────────────────────────────────────────────────
 
@@ -361,7 +444,7 @@ class TranslateHandlerMixin:
         agent_id = (fields.get("agent_id") or "main").strip() or "main"
         session_id = (fields.get("session_id") or "").strip()
         try:
-            user_id = getattr(self, "_current_user_id", None) or ""
+            user_id = ((getattr(self, "_auth_user", None) or {}).get("id") or "")
         except Exception:
             user_id = ""
 
@@ -586,7 +669,7 @@ class TranslateHandlerMixin:
         transcribe_model = (fields.get("transcribe_model") or "").strip()
         agent_id = (fields.get("agent_id") or "main").strip() or "main"
         try:
-            media_user_id = getattr(self, "_current_user_id", None) or ""
+            media_user_id = ((getattr(self, "_auth_user", None) or {}).get("id") or "")
         except Exception:
             media_user_id = ""
 
@@ -646,7 +729,7 @@ class TranslateHandlerMixin:
         # Best-effort current user / agent — used for cleanup tracking.
         agent_id = (body.get("agent_id") or "main").strip() or "main"
         try:
-            user_id = getattr(self, "_current_user_id", None) or ""
+            user_id = ((getattr(self, "_auth_user", None) or {}).get("id") or "")
         except Exception:
             user_id = ""
         sess = LIVE_REGISTRY.create(
@@ -718,7 +801,7 @@ class TranslateHandlerMixin:
         sess.stop()
         # Persist to translation history.
         try:
-            user_id = getattr(self, "_current_user_id", None) or ""
+            user_id = ((getattr(self, "_auth_user", None) or {}).get("id") or "")
             _tr_history_save_live(user_id=user_id, sess=sess)
         except Exception:
             pass
@@ -818,6 +901,53 @@ def _parse_multipart(raw: bytes, boundary: str) -> tuple[dict[str, str], str, by
     return fields, file_name, file_bytes
 
 
+def _copy_source_to_artifacts(src_path: str, out_dir: str) -> str:
+    """Copy an uploaded source file into the artifact folder under `source/`.
+
+    Returns the destination path on success, '' on failure (history can still
+    function without a source link). Filenames are kept verbatim — duplicates
+    in the same folder get an `(N)` suffix to avoid clobber.
+    """
+    try:
+        if not src_path or not os.path.exists(src_path):
+            return ""
+        import shutil
+        dest_dir = os.path.join(out_dir, "source")
+        os.makedirs(dest_dir, exist_ok=True)
+        base = os.path.basename(src_path)
+        dest = os.path.join(dest_dir, base)
+        if os.path.exists(dest):
+            stem, ext = os.path.splitext(base)
+            i = 1
+            while True:
+                candidate = os.path.join(dest_dir, f"{stem} ({i}){ext}")
+                if not os.path.exists(candidate):
+                    dest = candidate
+                    break
+                i += 1
+        shutil.copy2(src_path, dest)
+        return dest
+    except Exception:
+        return ""
+
+
+def _prime_artifact_threadlocals(brain_mod, session_id: str) -> None:
+    """Make _after_file_write believe it's running inside a chat session.
+
+    The translate worker runs in a daemon thread that never went through the
+    chat dispatch, so `brain._thread_local` has neither current_session_id nor
+    event_callback. Both are gates inside _after_file_write — without priming,
+    the artifact would never be registered in the DB. The event callback is a
+    no-op: nobody is listening on this synthetic session's SSE stream.
+    """
+    try:
+        brain_mod._thread_local.current_session_id = session_id
+        if not getattr(brain_mod._thread_local, 'event_callback', None):
+            brain_mod._thread_local.event_callback = lambda *_args, **_kw: None
+    except Exception:
+        pass
+
+
 def _run_translate_job(job_id: str) -> None:
     """Background worker — runs translate_document_file and updates the job.
 
@@ -837,6 +967,11 @@ def _run_translate_job(job_id: str) -> None:
         out_dir = os.path.join(brain.AGENTS_DIR, job.agent_id, "artifacts", folder)
         os.makedirs(out_dir, exist_ok=True)
 
+        # Copy the source into the artifact folder so history can re-open it.
+        # Original lives in /tmp/brain-translate-* and gets cleaned on reboot;
+        # the artifact copy is the durable handle for the History UI.
+        source_artifact_path = _copy_source_to_artifacts(job.src_path, out_dir)
+
         result = translate_document_file(
             job.src_path,
             target_lang=job.target_lang,
@@ -848,11 +983,22 @@ def _run_translate_job(job_id: str) -> None:
         )
 
         # Promote as artifact so the artifact panel (and miner) sees it.
+        # _after_file_write reads thread-locals: current_session_id is required
+        # by _register_artifact_version, and event_callback gates the whole
+        # artifact registration block. Worker thread starts with neither set —
+        # without this priming the file lands on disk but never gets a DB row.
+        _prime_artifact_threadlocals(brain, job.session_id)
+        if source_artifact_path:
+            try:
+                brain._after_file_write(source_artifact_path, "created", job.agent_id)
+            except Exception:
+                pass
         try:
             brain._after_file_write(result["output_path"], "created", job.agent_id)
         except Exception:
             pass
 
+        job.source_artifact_path = source_artifact_path
         job.finish(
             output_path=result["output_path"],
             runs=result.get("runs", 0),
@@ -886,6 +1032,11 @@ def _run_media_job(job_id: str) -> None:
         out_dir = os.path.join(brain.AGENTS_DIR, job.agent_id, "artifacts", folder)
         os.makedirs(out_dir, exist_ok=True)
 
+        # Persist the source media into the artifact folder so history can
+        # re-play it later — same rationale as the document worker.
+        source_artifact_path = _copy_source_to_artifacts(job.src_path, out_dir)
+        job.source_artifact_path = source_artifact_path
+
         def _progress(stage: str, done: int, total: int) -> None:
             job.update_stage(stage, done, total)
 
@@ -904,6 +1055,12 @@ def _run_media_job(job_id: str) -> None:
 
         # Promote each emitted file as artifact (the bilingual TXT is the
         # "primary"; SRT/VTT live alongside).
+        _prime_artifact_threadlocals(brain, job.session_id)
+        if source_artifact_path:
+            try:
+                brain._after_file_write(source_artifact_path, "created", job.agent_id)
+            except Exception:
+                pass
         for path in {v for k, v in files.items() if k != "primary"}:
             try:
                 brain._after_file_write(path, "created", job.agent_id)
@@ -957,7 +1114,16 @@ def _tr_history_save_job(job) -> None:
     import uuid as _uuid
     from server_lib.db import TranslateHistoryDB
     title = os.path.basename(job.filename) if job.filename else f"Job {job.id}"
-    data: dict = {"job_id": job.id, "filename": job.filename}
+    src_artifact = getattr(job, "source_artifact_path", "") or ""
+    data: dict = {
+        "job_id": job.id,
+        "filename": job.filename,
+        # `source_artifact_path` is the durable copy under agents/<id>/artifacts.
+        # Empty when the source copy failed or wasn't kept (history still works,
+        # source link is just hidden).
+        "source_artifact_path": src_artifact,
+        "source_filename": os.path.basename(src_artifact) if src_artifact else "",
+    }
     artifact_path = ""
     if job.kind == "document":
         data["output_filename"] = os.path.basename(job.output_path) if job.output_path else ""
@@ -967,6 +1133,9 @@ def _tr_history_save_job(job) -> None:
         data["transcript"] = job.transcript or ""
         data["duration_s"] = job.duration_s
         data["output_files"] = {k: os.path.basename(v) for k, v in (job.output_files or {}).items()}
+        # Full paths for the file-serving endpoint (basename map above is for
+        # display; the resolver needs the absolute path).
+        data["output_files_paths"] = dict(job.output_files or {})
         artifact_path = job.output_path or ""
     TranslateHistoryDB.add(
         entry_id=_uuid.uuid4().hex,
@@ -983,11 +1152,59 @@ def _tr_history_save_job(job) -> None:
 def _tr_history_save_live(*, user_id: str, sess) -> None:
     import uuid as _uuid
     from server_lib.db import TranslateHistoryDB
-    segs = list(sess.segments) if hasattr(sess, "segments") else []
-    if not segs:
+    segs_raw = list(sess.segments) if hasattr(sess, "segments") else []
+    if not segs_raw:
         return
     from datetime import datetime as _dt
     title = f"Live mic — {_dt.now().strftime('%H:%M')}"
+    seg_dicts = [
+        {
+            "start": s.start if hasattr(s, "start") else s.get("start", 0),
+            "end": s.end if hasattr(s, "end") else s.get("end", 0),
+            "text": s.text if hasattr(s, "text") else s.get("text", ""),
+            "translation": s.translation if hasattr(s, "translation") else s.get("translation", ""),
+        }
+        for s in segs_raw
+    ]
+
+    # Write SRT + TXT into the agent's artifact folder so the live recording
+    # can be downloaded later from history (matches the doc/media behaviour).
+    output_files: dict = {}
+    artifact_path = ""
+    try:
+        import brain
+        from server_lib.translate import to_srt, to_vtt
+        agent_id = getattr(sess, "agent_id", "") or "main"
+        synth_session = f"tr{_uuid.uuid4().hex[:14]}"
+        folder = f"{_dt.now().strftime('%Y-%m-%d')}_{synth_session[:8]}"
+        out_dir = os.path.join(brain.AGENTS_DIR, agent_id, "artifacts", folder)
+        os.makedirs(out_dir, exist_ok=True)
+        base = f"live-mic-{_dt.now().strftime('%Y%m%d-%H%M%S')}"
+        text_key = "translation" if any(s.get("translation") for s in seg_dicts) else "text"
+        srt_path = os.path.join(out_dir, f"{base}.srt")
+        with open(srt_path, "w", encoding="utf-8") as f:
+            f.write(to_srt(seg_dicts, text_key))
+        output_files["srt"] = srt_path
+        txt_path = os.path.join(out_dir, f"{base}.txt")
+        lines = []
+        for s in seg_dicts:
+            line = s.get("translation") or s.get("text") or ""
+            if line:
+                lines.append(line)
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+        output_files["txt"] = txt_path
+        artifact_path = txt_path
+        _prime_artifact_threadlocals(brain, synth_session)
+        for p in output_files.values():
+            try:
+                brain._after_file_write(p, "created", agent_id)
+            except Exception:
+                pass
+    except Exception:
+        # Failing to write the artifact files shouldn't drop the history row.
+        pass
+
     TranslateHistoryDB.add(
         entry_id=_uuid.uuid4().hex,
         user_id=user_id,
@@ -996,14 +1213,9 @@ def _tr_history_save_live(*, user_id: str, sess) -> None:
         source_lang=getattr(sess, "source_lang", "") or "",
         target_lang=getattr(sess, "target_lang", "") or "",
         result_json=json.dumps({
-            "segments": [
-                {
-                    "start": s.start if hasattr(s, "start") else s.get("start", 0),
-                    "end": s.end if hasattr(s, "end") else s.get("end", 0),
-                    "text": s.text if hasattr(s, "text") else s.get("text", ""),
-                    "translation": s.translation if hasattr(s, "translation") else s.get("translation", ""),
-                }
-                for s in segs
-            ]
+            "segments": seg_dicts,
+            "output_files": {k: os.path.basename(v) for k, v in output_files.items()},
+            "output_files_paths": output_files,
         }, ensure_ascii=False),
+        artifact_path=artifact_path,
     )

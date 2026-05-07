@@ -1336,7 +1336,7 @@ class TranslateHistoryDB:
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
-                """SELECT id, type, title, source_lang, target_lang,
+                """SELECT id, user_id, type, title, source_lang, target_lang,
                           result_json, artifact_path, created_at
                    FROM translate_history
                    WHERE user_id = ?
@@ -1346,22 +1346,46 @@ class TranslateHistoryDB:
             return [dict(r) for r in rows]
 
     @staticmethod
-    @_db_safe(default=None)
-    def get(entry_id: str, user_id: str):
+    @_db_safe(default=list)
+    def list_all(limit: int = 500) -> list:
+        """Admin-only — return every entry across all users for RBAC."""
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                "SELECT * FROM translate_history WHERE id = ? AND user_id = ?",
-                (entry_id, user_id),
-            ).fetchone()
+            rows = conn.execute(
+                """SELECT id, user_id, type, title, source_lang, target_lang,
+                          result_json, artifact_path, created_at
+                   FROM translate_history
+                   ORDER BY created_at DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=None)
+    def get(entry_id: str, user_id: str, *, admin: bool = False):
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            if admin:
+                row = conn.execute(
+                    "SELECT * FROM translate_history WHERE id = ?",
+                    (entry_id,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM translate_history WHERE id = ? AND user_id = ?",
+                    (entry_id, user_id),
+                ).fetchone()
             return dict(row) if row else None
 
     @staticmethod
     @_db_safe(default=None)
-    def delete(entry_id: str, user_id: str) -> None:
+    def delete(entry_id: str, user_id: str, *, admin: bool = False) -> None:
         with _db_conn() as conn:
-            conn.execute(
-                "DELETE FROM translate_history WHERE id = ? AND user_id = ?",
-                (entry_id, user_id),
-            )
+            if admin:
+                conn.execute("DELETE FROM translate_history WHERE id = ?", (entry_id,))
+            else:
+                conn.execute(
+                    "DELETE FROM translate_history WHERE id = ? AND user_id = ?",
+                    (entry_id, user_id),
+                )
             conn.commit()
