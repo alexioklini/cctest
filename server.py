@@ -6459,6 +6459,17 @@ def main():
                 has_pending = bool(_project_sync_requests)
             if has_pending:
                 continue
+            # Sweep the ad-hoc extraction cache once per cycle (companions
+            # for chat attachments + arbitrary read_document paths). Project
+            # companions under .brain-extracted/ are managed by sweep_stale
+            # above and never touched here. 30-day atime LRU is plenty —
+            # an active chat re-touches its companions on every read.
+            if doc_convert is not None:
+                try:
+                    doc_convert.evict_adhoc_cache(log_prefix="[project-sync.conv]")
+                except Exception as e:
+                    print(f"[project-sync.conv] adhoc-evict: "
+                          f"{type(e).__name__}: {e}", flush=True)
             # Wait for the next interval, but wake up on demand. Default
             # is 6 hours (21600s) — incremental layers (doc_convert,
             # mp_miner, kg_extract, closet_regen) all cursor-skip on

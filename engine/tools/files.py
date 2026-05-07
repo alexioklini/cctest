@@ -415,6 +415,52 @@ def tool_read_document(args: dict) -> str:
 
         ext = os.path.splitext(path)[1].lower()
 
+        # Unified binary extraction: every supported binary format goes
+        # through doc_convert.convert_one(), which mirrors the project-sync
+        # daemon's pipeline (markitdown-first, per-format fallback). This
+        # eliminates the dual-path problem where a project file's mined
+        # companion text could disagree with what read_document re-extracted
+        # live. Project files reuse the existing .brain-extracted/<rel>.md;
+        # ad-hoc paths (chat attachments, arbitrary reads) get a cached
+        # companion under ~/.brain-agent/extracted-cache/ with 30-day LRU.
+        # Plain text formats (csv/svg/eml as text) and images are NOT routed
+        # here — they don't need extraction.
+        _BINARY_FORMATS = {".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".msg", ".epub", ".zip"}
+        if ext in _BINARY_FORMATS:
+            try:
+                from engine import doc_convert as _dc
+            except ImportError:
+                _dc = None
+            if _dc is not None:
+                # Find project_root by walking up for `.brain-extracted/` —
+                # if a parent contains that subdir, this file belongs to a
+                # project input folder and the daemon already manages it.
+                project_root = None
+                cur = os.path.dirname(path)
+                while cur and cur != os.path.dirname(cur):
+                    if os.path.isdir(os.path.join(cur, ".brain-extracted")):
+                        project_root = cur
+                        break
+                    cur = os.path.dirname(cur)
+                # .xls is not in doc_convert's SUPPORTED_EXTS — fall through
+                # to the legacy openpyxl path for it.
+                if ext != ".xls":
+                    md_path, conv_err = _dc.convert_one(path, project_root=project_root)
+                    if md_path:
+                        try:
+                            with open(md_path, "r", encoding="utf-8", errors="replace") as f:
+                                content = f.read()
+                        except OSError as e:
+                            return _err(f"read_document: companion read failed: {e}")
+                        # Strip frontmatter (HTML comments at top) so the model
+                        # sees clean markdown. Frontmatter is metadata for the
+                        # source-resolver, not content.
+                        content = re.sub(r"\A(\s*<!--[^>]*-->\s*\n)+", "", content)
+                        fmt = ext.lstrip(".")
+                        return _ok_and_cache({"path": path, "format": fmt, "content": content})
+                    if conv_err:
+                        return _err(f"read_document: extraction failed ({ext}): {conv_err}")
+
         if ext == ".pdf":
             try:
                 import fitz

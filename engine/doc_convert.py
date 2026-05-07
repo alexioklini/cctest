@@ -29,6 +29,7 @@ the whole pass.
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 from dataclasses import dataclass, field
@@ -37,6 +38,14 @@ from typing import Iterable
 EXTRACT_SUBDIR = ".brain-extracted"
 
 SUPPORTED_EXTS = {".pdf", ".docx", ".pptx", ".xlsx", ".eml", ".msg"}
+
+# Ad-hoc cache for files outside any project input folder (chat attachments,
+# arbitrary paths the agent reads via read_document). Each entry is a
+# companion .md keyed by (abs_path, mtime, size) so re-uploads with the
+# same temp filename get a fresh extraction automatically. 30-day LRU
+# eviction keyed on atime — see evict_adhoc_cache().
+ADHOC_CACHE_DIR = os.path.expanduser("~/.brain-agent/extracted-cache")
+ADHOC_CACHE_TTL_SECS = 30 * 24 * 3600
 
 # Per-sheet row policy for xlsx extraction. Bank operations rely on
 # medium-to-large lookup tables (retention schedules, role matrices,
@@ -162,6 +171,334 @@ import subprocess
 _MARKITDOWN_BIN = shutil.which("markitdown")
 _MARKITDOWN_TIMEOUT_SECS = 120
 _MARKITDOWN_EXTS = {".pdf", ".docx", ".pptx", ".xlsx"}
+
+# ── OCR fallback for scanned PDFs ────────────────────────────────────────────
+#
+# Markitdown + fitz both produce empty output on image-only PDFs (no text
+# layer). Without OCR these become unreadable to the agent — the companion
+# .md gets a 1-line "no extractable text" marker, MemPalace mines nothing,
+# the agent has no content to cite.
+#
+# Wired to Mistral OCR (`mistral-ocr-latest`): purpose-built model, ~1 USD
+# per 1000 pages, ~2-3s per page, returns structured markdown with tables
+# preserved. Routed via the configured Mistral provider — same auth path
+# as any other Mistral call, so PII routing applies normally.
+#
+# Triggers ONLY on PDFs that come back nearly empty from markitdown+fitz
+# (per-page chars below OCR_TRIGGER_CHARS_PER_PAGE). Per-cycle page cap
+# guards against runaway costs from someone pointing at a 10k-page archive.
+_OCR_TRIGGER_CHARS_PER_PAGE = 50
+_OCR_TIMEOUT_SECS = 300
+
+# Per-cycle counter (bumped by _extract_with_ocr, reset by callers that
+# want to rate-limit). Module-global so daemon cycles can read+reset.
+_ocr_pages_this_cycle = 0
+
+
+def _ocr_config() -> dict:
+    """Read the `ocr` block from config.json. Returns dict with sensible
+    defaults if the section is missing entirely."""
+    try:
+        cfg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        ocr = cfg.get("ocr") or {}
+    except (OSError, ValueError):
+        ocr = {}
+    # Defaults.
+    return {
+        "engine": ocr.get("engine", "mistral_ocr"),  # mistral_ocr | local_vision | auto | none
+        "provider": ocr.get("provider", "mistral-experimental"),
+        "model": ocr.get("model", "mistral-ocr-latest"),
+        "max_pages_per_cycle": int(ocr.get("max_pages_per_cycle", 1000)),
+        "trigger_chars_per_page": int(ocr.get("trigger_chars_per_page", _OCR_TRIGGER_CHARS_PER_PAGE)),
+        # USD per page for billing — Mistral OCR is $1 per 1000 pages today.
+        "cost_per_page_usd": float(ocr.get("cost_per_page_usd", 0.001)),
+        # Local-vision fallback: render PDF page → image → vision LLM with
+        # OCR prompt. Used when engine='local_vision' or when
+        # engine='auto' + GDPR/PII gate forces local.
+        "local_vision_model": ocr.get("local_vision_model", ""),
+        "local_vision_render_dpi": int(ocr.get("local_vision_render_dpi", 200)),
+        "local_vision_max_tokens": int(ocr.get("local_vision_max_tokens", 4096)),
+    }
+
+
+def reset_ocr_cycle_counter() -> int:
+    """Return + reset pages-OCR'd-this-cycle. Daemon hooks call at cycle
+    start to enforce per-cycle caps."""
+    global _ocr_pages_this_cycle
+    n = _ocr_pages_this_cycle
+    _ocr_pages_this_cycle = 0
+    return n
+
+
+def _extract_with_mistral_ocr(path: str) -> tuple[str, str | None, int]:
+    """OCR a PDF via Mistral's /v1/ocr endpoint. Returns (markdown, error,
+    pages_processed). On any failure returns ("", "<reason>", 0) so the
+    caller can fall through to the empty-marker path.
+
+    Reads provider config from config.json -> providers[<provider>] (api_key
+    + base_url). Per-cycle page cap honored via _ocr_pages_this_cycle.
+    """
+    global _ocr_pages_this_cycle
+    cfg = _ocr_config()
+    if cfg["engine"] != "mistral_ocr":
+        return "", "ocr disabled", 0
+    if _ocr_pages_this_cycle >= cfg["max_pages_per_cycle"]:
+        return "", f"per-cycle cap {cfg['max_pages_per_cycle']} reached", 0
+
+    # Provider lookup.
+    try:
+        cfg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            full = json.load(f)
+        prov = (full.get("providers") or {}).get(cfg["provider"]) or {}
+        api_key = prov.get("api_key", "")
+        base_url = prov.get("base_url", "https://api.mistral.ai/v1")
+    except (OSError, ValueError) as e:
+        return "", f"provider config read failed: {e}", 0
+    if not api_key:
+        return "", f"provider {cfg['provider']} has no api_key", 0
+
+    import base64
+    import urllib.request
+    import urllib.error
+    try:
+        with open(path, "rb") as f:
+            pdf_b64 = base64.b64encode(f.read()).decode("ascii")
+    except OSError as e:
+        return "", f"read failed: {e}", 0
+
+    payload = {
+        "model": cfg["model"],
+        "document": {
+            "type": "document_url",
+            "document_url": f"data:application/pdf;base64,{pdf_b64}",
+        },
+        "include_image_base64": False,
+    }
+    req = urllib.request.Request(
+        base_url.rstrip("/") + "/ocr",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_OCR_TIMEOUT_SECS) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        msg = e.read().decode("utf-8", errors="replace")[:200]
+        return "", f"ocr http {e.code}: {msg}", 0
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return "", f"ocr request failed: {type(e).__name__}: {e}", 0
+
+    pages = body.get("pages") or []
+    parts = []
+    for p in pages:
+        idx = p.get("index", 0)
+        md = (p.get("markdown") or "").strip()
+        if md:
+            parts.append(f"## Page {idx + 1}\n\n{md}")
+    text = "\n\n".join(parts)
+    pages_processed = int((body.get("usage_info") or {}).get("pages_processed") or len(pages))
+    _ocr_pages_this_cycle += pages_processed
+
+    # Cost row to costs.db. Fail-soft: OCR shouldn't error out because
+    # billing logging is unavailable.
+    try:
+        _log_ocr_cost(
+            model=cfg["model"],
+            provider=cfg["provider"],
+            pages=pages_processed,
+            cost_usd=pages_processed * cfg["cost_per_page_usd"],
+        )
+    except Exception as e:
+        print(f"[doc-convert] OCR cost-log failed: "
+              f"{type(e).__name__}: {e}", flush=True)
+
+    if not text:
+        return "", "ocr empty output", pages_processed
+    return text + "\n", None, pages_processed
+
+
+_LOCAL_OCR_PROMPT = (
+    "You are an OCR engine. Extract all text from this page image and return "
+    "it as clean markdown. Preserve heading levels, list bullets, and table "
+    "structure (use markdown tables with | separators). Do not add commentary, "
+    "do not describe images. If the page contains a table, output it as a "
+    "markdown table. If the page is empty, return an empty response."
+)
+
+
+def _extract_with_local_vision(path: str) -> tuple[str, str | None, int]:
+    """OCR a PDF locally by rendering each page to an image and sending it
+    to a vision-capable LLM (e.g. Gemma-4 via oMLX). Returns (markdown,
+    error, pages_processed). On any failure returns ("", "<reason>", 0).
+
+    Used when ocr.engine='local_vision' or when ocr.engine='auto' and the
+    GDPR gate forces a local model. Slower than Mistral OCR (~10-20s/page
+    on Gemma-4 26B) and lower quality on tables/multi-column layouts —
+    pick this only when data must not leave the host.
+    """
+    global _ocr_pages_this_cycle
+    cfg = _ocr_config()
+    model = cfg.get("local_vision_model") or ""
+    if not model:
+        return "", "local_vision_model not configured", 0
+    if _ocr_pages_this_cycle >= cfg["max_pages_per_cycle"]:
+        return "", f"per-cycle cap {cfg['max_pages_per_cycle']} reached", 0
+
+    try:
+        import fitz  # type: ignore
+    except ImportError:
+        return "", "pymupdf not installed (pip install pymupdf)", 0
+
+    # Direct provider lookup from config.json — same shape as
+    # _extract_with_mistral_ocr. Avoids depending on engine.provider's
+    # module-globals being initialized (the daemon thread is fine, but
+    # a bare import in a one-shot context isn't).
+    try:
+        cfg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            full = json.load(f)
+    except (OSError, ValueError) as e:
+        return "", f"config read failed: {e}", 0
+    model_cfg = (full.get("models") or {}).get(model) or {}
+    provider_name = model_cfg.get("provider", "")
+    if not provider_name:
+        return "", f"model '{model}' has no provider in config", 0
+    prov = (full.get("providers") or {}).get(provider_name) or {}
+    api_key = prov.get("api_key", "")
+    base_url = prov.get("base_url", "")
+    if not base_url:
+        return "", f"no base_url for provider '{provider_name}'", 0
+    # Strip provider prefix if model id is "provider/model_id" — the
+    # actual wire-level model name is base_model_id when present.
+    wire_model = model_cfg.get("base_model_id") or model.split("/", 1)[-1]
+
+    import base64
+    import urllib.request
+    import urllib.error
+
+    try:
+        doc = fitz.open(path)
+    except Exception as e:
+        return "", f"open failed: {type(e).__name__}: {e}", 0
+
+    parts: list[str] = []
+    pages_processed = 0
+    dpi = cfg["local_vision_render_dpi"]
+    max_tokens = cfg["local_vision_max_tokens"]
+    zoom = dpi / 72.0
+    matrix = fitz.Matrix(zoom, zoom)
+
+    try:
+        for i, page in enumerate(doc, 1):
+            if _ocr_pages_this_cycle >= cfg["max_pages_per_cycle"]:
+                # Don't fail the whole call — return what we have.
+                parts.append(f"## Page {i}\n\n_(skipped — OCR cycle cap reached)_")
+                continue
+            try:
+                pix = page.get_pixmap(matrix=matrix, alpha=False)
+                png_bytes = pix.tobytes("png")
+            except Exception as e:
+                parts.append(f"## Page {i}\n\n_(render failed: {type(e).__name__}: {e})_")
+                continue
+            img_b64 = base64.b64encode(png_bytes).decode("ascii")
+            data_uri = f"data:image/png;base64,{img_b64}"
+
+            payload = {
+                "model": wire_model,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": _LOCAL_OCR_PROMPT},
+                        {"type": "image_url", "image_url": {"url": data_uri}},
+                    ],
+                }],
+                "max_tokens": max_tokens,
+                "temperature": 0.0,
+                "stream": False,
+            }
+            req = urllib.request.Request(
+                base_url.rstrip("/") + "/chat/completions",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=_OCR_TIMEOUT_SECS) as resp:
+                    body = json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as e:
+                err_msg = e.read().decode("utf-8", errors="replace")[:200]
+                parts.append(f"## Page {i}\n\n_(OCR http {e.code}: {err_msg})_")
+                continue
+            except (urllib.error.URLError, OSError, ValueError) as e:
+                parts.append(f"## Page {i}\n\n_(OCR request failed: {type(e).__name__}: {e})_")
+                continue
+            choices = body.get("choices") or []
+            content = ""
+            if choices:
+                msg = choices[0].get("message") or {}
+                content = (msg.get("content") or "").strip()
+            if content:
+                parts.append(f"## Page {i}\n\n{content}")
+            else:
+                parts.append(f"## Page {i}\n\n_(empty OCR output)_")
+            pages_processed += 1
+            _ocr_pages_this_cycle += 1
+    finally:
+        doc.close()
+
+    text = "\n\n".join(parts).strip()
+    if not text or pages_processed == 0:
+        return "", "local-vision: no usable output", pages_processed
+
+    # Local OCR is free at the cost level (own GPU), but we still log it so
+    # ops can see throughput / per-cycle volume in the same dashboard.
+    try:
+        _log_ocr_cost(model=model, provider=provider_name,
+                      pages=pages_processed, cost_usd=0.0)
+    except Exception as e:
+        print(f"[doc-convert] local-vision OCR cost-log failed: "
+              f"{type(e).__name__}: {e}", flush=True)
+
+    return text + "\n", None, pages_processed
+
+
+def _log_ocr_cost(*, model: str, provider: str, pages: int, cost_usd: float) -> None:
+    """Forward to CostTracker.log_ocr if the analytics module + tracker are
+    initialized. Pulls agent/session/user from thread-locals when called
+    from a chat thread; falls back to ('main', '', '') for daemon calls."""
+    try:
+        from engine.analytics import costs as _costs
+    except ImportError:
+        return
+    tracker = getattr(_costs, "_cost_tracker", None)
+    if tracker is None:
+        return
+    # Thread-locals — set by chat workers, absent in the project-sync daemon.
+    try:
+        from engine.loop import _thread_local, _current_agent
+    except ImportError:
+        _thread_local = None
+        _current_agent = None
+    agent_id = "main"
+    session_id = ""
+    user_id = ""
+    if _thread_local is not None:
+        agent = getattr(_thread_local, "current_agent", None) or _current_agent
+        if agent is not None:
+            agent_id = getattr(agent, "agent_id", "main")
+        session_id = getattr(_thread_local, "current_session_id", "") or ""
+        user_id = getattr(_thread_local, "current_user_id", "") or ""
+    tracker.log_ocr(agent=agent_id, session_id=session_id, model=model,
+                    provider=provider, pages=pages, cost_usd=cost_usd,
+                    user_id=user_id)
 
 
 def _extract_with_markitdown(path: str) -> tuple[str, str | None]:
@@ -507,6 +844,181 @@ def _iter_source_files(root: str) -> Iterable[str]:
             ext = os.path.splitext(fn)[1].lower()
             if ext in SUPPORTED_EXTS:
                 yield os.path.join(dirpath, fn)
+
+
+# ── Single-file conversion (used by read_document + convert_folder) ──────────
+
+def _adhoc_cache_path(src: str, mtime: int, size: int) -> str:
+    """Companion-md path under ADHOC_CACHE_DIR for a file outside any
+    project input folder. Key includes (mtime, size) so re-uploads at the
+    same temp path get a fresh extraction automatically."""
+    import hashlib
+    key = f"{os.path.abspath(src)}:{mtime}:{size}".encode("utf-8")
+    return os.path.join(ADHOC_CACHE_DIR, hashlib.sha256(key).hexdigest() + ".md")
+
+
+def _do_extract(src: str, *, use_markitdown: bool = True
+                ) -> tuple[str, str, str | None]:
+    """Run markitdown (when enabled+supported) then per-format fallback,
+    then OCR if both came back empty for PDFs.
+    Returns (text, backend, error). Empty text + None error = no extractable
+    content even after OCR — caller writes a marker file."""
+    ext = os.path.splitext(src)[1].lower()
+    extractor = _EXTRACTORS.get(ext)
+    if extractor is None:
+        return "", "", f"unsupported extension: {ext}"
+    md_enabled = bool(use_markitdown and _MARKITDOWN_BIN)
+    text = ""
+    if md_enabled and ext in _MARKITDOWN_EXTS:
+        text, err = _extract_with_markitdown(src)
+        if not err and text:
+            return text, "markitdown", None
+    try:
+        text, err = extractor(src)
+    except Exception as e:
+        return "", "", f"{type(e).__name__}: {e}"
+    if err:
+        # Hard error from extractor (file corrupt, missing dep). Don't try
+        # OCR — OCR is for image-only PDFs, not broken files.
+        return "", "", err
+    if text:
+        return text, "fitz/legacy", None
+
+    # Empty output from both markitdown and per-format extractor. For PDFs,
+    # try OCR — this is the scanned-image-only case where markitdown sees
+    # rendered glyphs as pictures, fitz finds no text layer, but the page
+    # is full of readable text to a vision model.
+    if ext == ".pdf":
+        ocr_cfg = _ocr_config()
+        engine = ocr_cfg["engine"]
+        # Routing matrix:
+        #   mistral_ocr   → cloud only, fail → empty marker
+        #   local_vision  → local only, fail → empty marker
+        #   auto          → cloud first, on failure (timeout / config /
+        #                   PII block) → local fallback
+        ocr_text = ""
+        ocr_err = ""
+        pages = 0
+        backend = ""
+        if engine in ("mistral_ocr", "auto"):
+            ocr_text, ocr_err, pages = _extract_with_mistral_ocr(src)
+            if ocr_text:
+                backend = f"mistral-ocr ({pages}p)"
+        if not ocr_text and engine in ("local_vision", "auto"):
+            local_text, local_err, local_pages = _extract_with_local_vision(src)
+            if local_text:
+                ocr_text = local_text
+                pages = local_pages
+                backend = f"local-vision ({pages}p)"
+            else:
+                ocr_err = ocr_err or local_err or "no ocr engine produced output"
+        if ocr_text:
+            return ocr_text, backend, None
+        if engine != "none" and ocr_err:
+            print(f"[doc-convert] OCR fallback failed for {src}: {ocr_err}",
+                  flush=True)
+    return "", "fitz/legacy", None
+
+
+def convert_one(src: str, *, project_root: str | None = None,
+                use_markitdown: bool = True) -> tuple[str | None, str | None]:
+    """Convert a single binary document to a companion .md, idempotently.
+
+    Returns (md_path, error). md_path is None on hard failure; error is None
+    on success.
+
+    Companion location:
+      - If `project_root` is given AND `src` is inside it → standard
+        `<project_root>/.brain-extracted/<rel>.md` (matches the project-sync
+        daemon layout — same byte-for-byte output for the same source).
+      - Otherwise → ad-hoc cache under ADHOC_CACHE_DIR keyed by
+        (abs_path, mtime, size).
+
+    Idempotent: if the companion exists and its frontmatter (mtime, size)
+    matches the source, returns immediately without re-extracting.
+
+    Mirrors the convert_folder() logic for one file so behavior is identical
+    between bulk pre-mining and on-demand reads.
+    """
+    if not src or not os.path.isfile(src):
+        return None, f"source not a file: {src}"
+    src = os.path.abspath(src)
+    cur_mt, cur_sz = _stat_key(src)
+    if cur_mt == 0 and cur_sz == 0:
+        return None, "stat failed"
+
+    # Pick companion location. Project files reuse the daemon's layout so
+    # one PDF never has two companions.
+    if project_root and os.path.commonpath([project_root, src]) == os.path.abspath(project_root):
+        md_path = _md_path_for(os.path.abspath(project_root), src)
+    else:
+        md_path = _adhoc_cache_path(src, cur_mt, cur_sz)
+
+    # Fast path: companion exists with matching (mtime, size).
+    if os.path.isfile(md_path):
+        old_mt, old_sz = _read_md_source_stat(md_path)
+        if old_mt == cur_mt and old_sz == cur_sz:
+            # Touch atime so LRU eviction sees recent use.
+            try:
+                os.utime(md_path, None)
+            except OSError:
+                pass
+            return md_path, None
+
+    try:
+        os.makedirs(os.path.dirname(md_path), exist_ok=True)
+    except OSError as e:
+        return None, f"mkdir failed: {e}"
+
+    text, backend, err = _do_extract(src, use_markitdown=use_markitdown)
+    if err:
+        return None, err
+    if not text:
+        # Scanned PDF / empty doc — write a marker so we don't retry every
+        # call. Same behavior as convert_folder.
+        text = (
+            "# " + os.path.splitext(os.path.basename(src))[0] + "\n\n"
+            "_(no extractable text — possibly a scanned image; OCR not run)_\n"
+        )
+        backend = backend or "empty"
+
+    body = _frontmatter(src, cur_mt, cur_sz, backend=backend) + text
+    try:
+        tmp_path = md_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(body)
+        os.replace(tmp_path, md_path)
+    except OSError as e:
+        return None, f"write failed: {e}"
+    return md_path, None
+
+
+def evict_adhoc_cache(*, ttl_secs: int = ADHOC_CACHE_TTL_SECS,
+                      log_prefix: str = "[doc-convert]") -> int:
+    """Drop ad-hoc cache entries older than `ttl_secs` (atime-based).
+    Project companions under `.brain-extracted/` are never touched here.
+    Returns count removed. Safe to call from any periodic daemon."""
+    if not os.path.isdir(ADHOC_CACHE_DIR):
+        return 0
+    cutoff = time.time() - ttl_secs
+    removed = 0
+    for fn in os.listdir(ADHOC_CACHE_DIR):
+        if not fn.endswith(".md"):
+            continue
+        p = os.path.join(ADHOC_CACHE_DIR, fn)
+        try:
+            st = os.stat(p)
+        except OSError:
+            continue
+        if st.st_atime < cutoff:
+            try:
+                os.remove(p)
+                removed += 1
+            except OSError:
+                pass
+    if removed:
+        print(f"{log_prefix} adhoc-cache evicted={removed}", flush=True)
+    return removed
 
 
 # ── Public API ───────────────────────────────────────────────────────────────

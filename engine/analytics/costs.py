@@ -196,6 +196,27 @@ class CostTracker:
         except (sqlite3.Error, OSError) as e:
             logging.warning(f"Cost tracking error: {e}")
 
+    def log_ocr(self, agent: str, session_id: str, model: str, provider: str,
+                pages: int, cost_usd: float, user_id: str = "",
+                key_name: str = ""):
+        """Log an OCR call as a synthetic cost row. OCR is billed per-page,
+        not per-token, so we stash the page count in tokens_in (output stays
+        0) and write the explicit USD cost — bypassing _compute_cost which
+        only knows about tokens. Aggregates (per_provider_key_stats /
+        get_stats) sum cost_usd correctly without changes; per-token reports
+        will see 'tokens_in' weighted by pages, which is acceptable since
+        OCR is a small share of overall traffic and pages are interpretable
+        on their own."""
+        try:
+            with _cost_conn() as conn:
+                conn.execute("""
+                    INSERT INTO cost_log (agent, session_id, user_id, model, provider, key_name, tokens_in, tokens_out, cost_usd, tool_round)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (agent, session_id or "", user_id or "", model, provider, key_name or "", int(pages), 0, float(cost_usd), 0))
+                conn.commit()
+        except (sqlite3.Error, OSError) as e:
+            logging.warning(f"OCR cost tracking error: {e}")
+
     def per_provider_key_stats(self, days: int = 30) -> list[dict]:
         """Return per-provider + per-key call/token/cost aggregates."""
         try:
