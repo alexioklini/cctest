@@ -1096,6 +1096,21 @@ function renderMessages() {
 
   container.innerHTML = html;
 
+  // Hide hint-toggle chevron when the question fits without ellipsis.
+  // Expanded hints always show the chevron (so the user can collapse).
+  container.querySelectorAll('.turn-group-header').forEach(hdr => {
+    const hint = hdr.querySelector('.turn-group-collapsed-hint');
+    const toggle = hdr.querySelector('.turn-group-hint-toggle');
+    if (!hint || !toggle) return;
+    if (hint.classList.contains('expanded')) {
+      toggle.style.display = '';
+      return;
+    }
+    if (hint.clientWidth === 0) return; // not laid out yet — leave default
+    const truncated = hint.scrollWidth > hint.clientWidth + 1;
+    toggle.style.display = truncated ? '' : 'none';
+  });
+
   // Syntax highlight code blocks (skip tool-result blocks — pre-highlighted inline)
   container.querySelectorAll('pre:not(.tool-result-pre) code').forEach(block => {
     try { hljs.highlightElement(block); } catch(e) {}
