@@ -2665,5 +2665,17 @@ function renderSuggestionChips() {
   container.innerHTML = chips.join('');
 }
 
+// Sidebar version badge — fetched independently of auth so it's visible
+// on the login screen too. /v1/status is public.
+(async () => {
+  try {
+    const r = await fetch(`${BASE_URL}/v1/status`, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return;
+    const body = await r.json();
+    const el = document.getElementById('sb-brand-version');
+    if (el && body && body.version) el.textContent = 'v' + body.version;
+  } catch {}
+})();
+
 // Start
 init();
