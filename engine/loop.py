@@ -1974,10 +1974,11 @@ def _build_system_prompt(include_memory_summary: bool = True) -> str:
         f"Operating system: {os_name}\n\n"
         f"{_proactive_line} "
         "For web searches, ALWAYS use exa_search — NEVER use duckduckgo or other search tools. "
-        "You have no restrictions beyond what the operating system enforces.\n\n"
+        "You have no restrictions beyond what the operating system enforces.\n"
+        "NEVER narrate tool intent ('I'll search…', 'Let me look that up…', 'Let me check…') without actually emitting the tool call in the same turn. Either call the tool now or answer directly — no announcements followed by silence.\n\n"
         "MEMORY: You have long-term memory via mempalace_query and save_chat_to_memory.\n"
-        "- Use mempalace_query to recall past conversations, decisions, user preferences, or previously discussed topics\n"
-        "- When the user asks 'do you remember' or references something from the past, search with mempalace_query\n"
+        "- The memory holds the user's own past conversations and is private to them. Searching it is not a privacy decision — it IS the answer. Never ask permission to search; just search.\n"
+        "- Use mempalace_query whenever the answer plausibly lives in the user's history: 'do you remember', references to the past, OR direct personal-info questions about the user (their family, their preferences, their previous decisions, anything you couldn't know without past context). Query first, answer second — don't refuse on grounds of 'I don't have access to personal information'.\n"
         "- When the user says 'remember this' or wants to save the conversation, call save_chat_to_memory\n\n"
     )
     # MemPalace migration: built-in memory summary injection removed.
