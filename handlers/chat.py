@@ -40,6 +40,28 @@ class ChatHandlerMixin:
             return m2[1]
         return sf
 
+    @staticmethod
+    def _is_document_source(sf: str, room: str = "") -> bool:
+        """True if a MemPalace source_file points to a real, openable document.
+        Filters out synthetic addresses that aren't clickable files:
+        chat turns, chat summaries, user-profile sections, bare turn-ids.
+        Single choke point — used by both JSON-loop and regex-sweep so
+        non-document drawers can never leak through as references.
+        """
+        import re as _re
+        if not sf:
+            return False
+        if room in ("chat", "chat_summary", "chat_attachment", "user_profile"):
+            return False
+        # Synthetic MemPalace addresses (no filesystem path).
+        if sf.startswith(("session/", "user/", "team/")):
+            return False
+        if _re.match(r'^\d+$', sf):
+            return False  # bare turn-id
+        if _re.match(r'^[a-f0-9]+#summary$', sf, _re.IGNORECASE):
+            return False
+        return True
+
     @classmethod
     def _extract_references(cls, tool_name: str, result_str: str) -> list:
         """Extract normalized reference dicts from a tool result string.
@@ -71,10 +93,10 @@ class ChatHandlerMixin:
                 sf = it.get("source_file") or ""
                 if not sf or sf in seen:
                     continue
+                seen.add(sf)  # claim before predicate so regex sweep can't re-add
                 room = it.get("room") or ""
-                if room in ("chat", "chat_summary", "chat_attachment"):
+                if not cls._is_document_source(sf, room):
                     continue
-                seen.add(sf)
                 original = cls._resolve_original_path(sf)
                 basename = original.rsplit("/", 1)[-1] or original
                 snippet = ""
@@ -100,11 +122,11 @@ class ChatHandlerMixin:
                 sf = m.group(1)
                 if not sf or sf in seen:
                     continue
-                if _re.match(r'^\d+$', sf):
-                    continue  # bare turn-id, not a document
-                if _re.match(r'^[a-f0-9]+#summary$', sf, _re.IGNORECASE):
-                    continue
                 seen.add(sf)
+                # Regex sweep can't see the drawer's `room`; predicate
+                # rejects synthetic addresses on shape alone.
+                if not cls._is_document_source(sf):
+                    continue
                 original = cls._resolve_original_path(sf)
                 basename = original.rsplit("/", 1)[-1] or original
                 refs.append({

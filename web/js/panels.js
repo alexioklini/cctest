@@ -2845,12 +2845,29 @@ function closeArtifactPanel() {
    REFERENCES PANEL
    ═══════════════════════════════════════════════════════════ */
 
+// Mirror of ChatHandlerMixin._is_document_source — drops synthetic
+// MemPalace addresses (chat turns, summaries, user-profile sections)
+// that aren't openable file paths. Applied to BOTH live server-stored
+// refs and legacy-fallback parsing so persisted-bad refs don't render.
+function isDocumentRef(ref) {
+  const sf = ref && (ref.source_file || ref.link) || '';
+  if (!sf) return false;
+  if (sf.startsWith('session/') || sf.startsWith('user/') || sf.startsWith('team/')) return false;
+  if (/^\d+$/.test(sf)) return false;
+  if (/^[a-f0-9]+#summary$/i.test(sf)) return false;
+  return true;
+}
+
 function extractReferencesFromToolResult(msg) {
   // References are extracted server-side (ChatHandlerMixin._extract_references)
   // and stored in msg.references. The client just reads that field — no
   // per-tool name checks, no path resolution, no regex fallbacks here.
   if (msg.role !== 'tool_result') return [];
-  if (Array.isArray(msg.references) && msg.references.length) return msg.references;
+  if (Array.isArray(msg.references) && msg.references.length) {
+    // Filter persisted-bad refs from legacy server versions.
+    const onlyDocs = msg.references.filter(r => !r || r.domain !== 'project' || isDocumentRef(r));
+    return onlyDocs;
+  }
   // Legacy fallback: old persisted messages without server-side refs field.
   if (!msg.result) return [];
   const isWebTool = msg.name === 'exa_search' || msg.name === 'web_fetch';
@@ -2893,15 +2910,13 @@ function extractReferencesFromToolResult(msg) {
     for (const it of items) {
       const sf = it && it.source_file;
       if (!sf || seen.has(sf)) continue;
-      // Skip chat-derived drawers (room=chat | chat_summary | chat_attachment).
-      // They aren't documents — they're past conversation fragments and
-      // their source_file (e.g. bare turn-id "3247" from MemPalace's
-      // basename strip) isn't a clickable file path.
-      const room = (it.room || '');
-      if (room === 'chat' || room === 'chat_summary' || room === 'chat_attachment') {
+      seen.add(sf);  // claim before predicate so regex sweep can't re-add
+      // Drop chat-derived drawers and any other synthetic non-file
+      // sources (user-profile sections, team-wing addresses, …).
+      if (!isDocumentRef({ source_file: sf, ...(it.room ? {} : {}) }) ||
+          ['chat', 'chat_summary', 'chat_attachment', 'user_profile'].includes(it.room || '')) {
         continue;
       }
-      seen.add(sf);
       const original = resolveOriginal(sf);
       const basename = original.split('/').pop() || original;
       // Use the snippet from a drawer if present; otherwise format the
@@ -2933,13 +2948,8 @@ function extractReferencesFromToolResult(msg) {
       for (const m of sfMatches) {
         const sf = m[1];
         if (!sf || seen.has(sf)) continue;
-        // Defensive skip — bare-numeric source_files are chat-turn ids
-        // (MemPalace's searcher returns Path(source).name on a drawer
-        // stored as `session/<sid>#turn/<id>`). They aren't documents.
-        if (/^\d+$/.test(sf)) continue;
-        // Also skip the `<sid>#summary` shape from chat_summary drawers.
-        if (/^[a-f0-9]+#summary$/i.test(sf)) continue;
         seen.add(sf);
+        if (!isDocumentRef({ source_file: sf })) continue;
         const original = resolveOriginal(sf);
         const basename = original.split('/').pop() || original;
         refs.push({
