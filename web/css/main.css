@@ -721,7 +721,9 @@ textarea { resize: none; }
   align-items: center;
   gap: 12px;
   margin: 12px 0 4px;
-  user-select: none;
+}
+.turn-group-header:has(.turn-group-collapsed-hint.expanded) {
+  align-items: flex-start;
 }
 .turn-group-badge {
   display: inline-flex;
@@ -764,6 +766,39 @@ textarea { resize: none; }
   flex: 1;
   min-width: 0;
 }
+.turn-group-collapsed-hint.expanded {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: visible;
+  text-overflow: clip;
+  color: var(--text-200);
+}
+.turn-group-hint-toggle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-400);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, transform 0.15s;
+}
+.turn-group-hint-toggle:hover {
+  background: var(--bg-200);
+  color: var(--text-200);
+}
+.turn-group-hint-toggle svg {
+  width: 14px;
+  height: 14px;
+  transform: rotate(-90deg);
+  transition: transform 0.15s;
+}
+.turn-group-hint-toggle.expanded svg { transform: rotate(0deg); }
 .turn-group.collapsed .turn-body { display: none; }
 
 /* Turn-nav dropdown — wider than other dropdowns to fit question previews */

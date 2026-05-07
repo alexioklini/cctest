@@ -92,6 +92,8 @@ async function openSession(sessionId, agentId) {
   chat._lastSpeed = null;
   chat._lastApiIn = 0;
   chat._activityStates = new Map();
+  chat._collapsedTurns = new Set();
+  chat._expandedHints = new Set();
   // Real chat open — drop any sticky scheduled-run selection.
   state.activeScheduledRunId = null;
 
@@ -266,6 +268,8 @@ function newChat() {
   chat.streamingText = '';
   chat.thinkingText = '';
   chat.files = [];
+  chat._collapsedTurns = new Set();
+  chat._expandedHints = new Set();
   chat._tokensIn = 0;
   chat._tokensOut = 0;
   chat._lastSpeed = null;

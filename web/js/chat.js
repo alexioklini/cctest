@@ -1037,6 +1037,7 @@ function renderMessages() {
   if (!chat) { container.innerHTML = ''; return; }
 
   if (!chat._collapsedTurns) chat._collapsedTurns = new Set();
+  if (!chat._expandedHints) chat._expandedHints = new Set();
 
   // Active turn always expanded: while a stream is running, the most-
   // recent turn (= the one receiving deltas) gets dropped from the
@@ -1069,13 +1070,24 @@ function renderMessages() {
   for (const t of turns) {
     const isCollapsed = chat._collapsedTurns.has(t.turnNum);
     const cls = isCollapsed ? 'turn-group collapsed' : 'turn-group';
+    const fullQ = turnQuestionFull(t.userMsg);
+    const isHintExpanded = chat._expandedHints && chat._expandedHints.has(t.turnNum);
+    const hasQ = fullQ.length > 0;
+    const hintCls = 'turn-group-collapsed-hint' + (isHintExpanded ? ' expanded' : '');
+    const chevronTitle = isHintExpanded ? 'Anfrage einklappen' : 'Vollständige Anfrage anzeigen';
+    const chevron = hasQ
+      ? `<button class="turn-group-hint-toggle${isHintExpanded ? ' expanded' : ''}" onclick="toggleHintExpand(${t.turnNum})" title="${chevronTitle}" aria-label="${chevronTitle}">
+           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+         </button>`
+      : '';
     const badge = t.turnNum > 0
       ? `<div class="turn-group-header">
            <span class="turn-group-badge" onclick="toggleTurnCollapse(${t.turnNum})" title="Klick zum ${isCollapsed ? 'Aufklappen' : 'Zuklappen'} dieser Anfrage">
              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
              Anfrage ${t.turnNum}
            </span>
-           <span class="turn-group-collapsed-hint">${esc(turnQuestionPreview(t.userMsg, 200))}</span>
+           <span class="${hintCls}">${esc(fullQ)}</span>
+           ${chevron}
          </div>`
       : '';
     let body = renderTurnBody(chat.messages, t.memberIdxs, t.turnNum, chat);
@@ -1104,6 +1116,25 @@ function turnQuestionPreview(msg, maxChars) {
   txt = txt.replace(/\s+/g, ' ').trim();
   if (txt.length > maxChars) txt = txt.slice(0, maxChars - 1) + '…';
   return txt;
+}
+
+function turnQuestionFull(msg) {
+  if (!msg) return '';
+  let txt = '';
+  if (typeof msg.content === 'string') txt = msg.content;
+  else if (Array.isArray(msg.content)) {
+    for (const b of msg.content) if (b?.type === 'text') txt += (b.text || '');
+  }
+  return txt.trim();
+}
+
+function toggleHintExpand(turnNum) {
+  const chat = state.activeChat;
+  if (!chat) return;
+  if (!chat._expandedHints) chat._expandedHints = new Set();
+  if (chat._expandedHints.has(turnNum)) chat._expandedHints.delete(turnNum);
+  else chat._expandedHints.add(turnNum);
+  renderMessages();
 }
 
 function listTurns() {
