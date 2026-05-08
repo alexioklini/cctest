@@ -1580,6 +1580,35 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "name": "generate_image",
+        "description": (
+            "Generate an image from a text prompt using Mistral's native image generation service. "
+            "ALWAYS use this tool when the user asks to generate, create, or make an image — "
+            "do NOT use python_exec or write scripts for image generation. "
+            "The generated image is saved to the session artifact folder and shown in the Artifacts panel. "
+            "Be descriptive: include subject, mood, style, lighting, and composition details for best results."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Detailed description of the image to generate. Include subject, style, mood, lighting, composition.",
+                },
+                "aspect_ratio": {
+                    "type": "string",
+                    "enum": ["1:1", "16:9", "9:16", "4:3", "3:4"],
+                    "description": "Image aspect ratio. Use 16:9 for banners/landscapes, 9:16 for mobile/stories, 1:1 for square posts, 4:3 for classic format. Default: 1:1",
+                },
+                "style": {
+                    "type": "string",
+                    "description": "Optional style hint, e.g. 'photorealistic', 'flat illustration', 'minimalist', 'cinematic', 'watercolor'. Appended to the prompt.",
+                },
+            },
+            "required": ["prompt"],
+        },
+    },
 ]
 
 # Build OpenAI-compatible format automatically
@@ -1629,6 +1658,7 @@ TOOL_GROUPS = {
     "workers": {"get_artifact_detail", "worker_status", "worker_abort",
                 "worker_pause", "worker_resume", "worker_send",
                 "worker_ask_user"},
+    "image_gen": {"generate_image"},
 }
 
 # Default tool groups included for all agents (if no explicit config)
@@ -21763,6 +21793,7 @@ def tool_ask_user(args: dict) -> str:
         _ask_user_clear(session_id)
 
 
+from engine.tools.image_gen import tool_generate_image  # noqa: E402
 TOOL_DISPATCH = {
     "read_file": tool_read_file,
     "write_file": tool_write_file,
@@ -21830,6 +21861,7 @@ TOOL_DISPATCH = {
     "worker_send": tool_worker_send,
     "worker_ask_user": tool_worker_ask_user,
     "ask_user": tool_ask_user,
+    "generate_image": tool_generate_image,
 }
 
 

@@ -1441,9 +1441,10 @@ TOOL_DEFINITIONS = [
     {
         "name": "generate_image",
         "description": (
-            "Generate an image from a text prompt using Mistral's image generation service. "
+            "Generate an image from a text prompt using Mistral's native image generation service. "
+            "ALWAYS use this tool when the user asks to generate, create, or make an image — "
+            "do NOT use python_exec or write scripts for image generation. "
             "The generated image is saved to the session artifact folder and shown in the Artifacts panel. "
-            "Use for marketing visuals, illustrations, diagrams, product mockups, or any creative imagery. "
             "Be descriptive: include subject, mood, style, lighting, and composition details for best results."
         ),
         "input_schema": {
