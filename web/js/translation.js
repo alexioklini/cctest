@@ -869,6 +869,7 @@ async function trRunDocTranslation() {
   }
   if (trState.glossarySlug) fd.append('glossary', trState.glossarySlug);
   if (trState.model) fd.append('model', trState.model);
+  if (trState.tone) fd.append('tone', trState.tone);
 
   document.getElementById('tr-doc-translate-btn').disabled = true;
   status.textContent = 'Uploading…';

@@ -1577,6 +1577,7 @@ async function switchGeneralTab(tab, btn) {
       const cgCfg = cfg.code_graph || {};
       const taCfg = cfg.transcribe_audio || {};
       const ttsCfg = cfg.text_to_speech || {};
+      const trCfg = cfg.translation || {};
       // Transcription / TTS model lists come from the models config — filtered
       // by canonical capability ('audio' for STT, 'tts' for text-to-speech).
       // The local-only fallback dropdown for STT additionally requires is_local
@@ -1726,6 +1727,19 @@ async function switchGeneralTab(tab, btn) {
           </div>
         </div>
 
+        <!-- Translation -->
+        <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px">
+          ${tog('translation','Translation')}
+          <div style="${G('8px')}">
+            ${lbl('Translation Model')}
+            <select id="tool-tr-model" class="form-select" style="font-size:11px">
+              <option value="">Auto (refinement model → fallback)</option>
+              ${modelOpts(trCfg.default_model || '')}
+            </select>
+            <div style="font-size:10px;color:var(--text-400)">Chat-capable LLM used to translate text, documents, and audio/video segments. Separate from the transcription model (Voxtral/Whisper) and TTS.</div>
+          </div>
+        </div>
+
         <!-- Write Document -->
         <div style="border:1px solid var(--border-100);border-radius:8px;padding:14px">
           ${tog('write_document','Write Document')}
@@ -1812,6 +1826,10 @@ async function saveToolsConfig() {
       enabled: document.getElementById('tool-text_to_speech-enabled')?.checked ?? true,
       default_model: document.getElementById('tool-tts-model')?.value || 'mistral-experimental/voxtral-mini-tts-latest',
       voice: document.getElementById('tool-tts-voice')?.value || 'en_paul_neutral',
+    },
+    translation: {
+      enabled: document.getElementById('tool-translation-enabled')?.checked ?? true,
+      default_model: document.getElementById('tool-tr-model')?.value || '',
     },
   };
   try {

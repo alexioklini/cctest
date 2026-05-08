@@ -11,8 +11,7 @@ def _lang_label(code: str) -> str:
 
 
 def build_translate_system_prompt(source_lang: str, target_lang: str,
-                                  glossary: dict | None = None,
-                                  tone: str = "") -> str:
+                                  glossary: dict | None = None) -> str:
     """Self-contained — used by tool, HTTP wrapper, and document chunker."""
     src = _lang_label(source_lang) if source_lang else "the source language (auto-detect)"
     tgt = _lang_label(target_lang)
@@ -27,12 +26,34 @@ def build_translate_system_prompt(source_lang: str, target_lang: str,
         "- If the source contains text already in the target language, keep it as-is.",
         "- Do not summarise, expand, or improve — translate faithfully.",
     ]
-    if tone:
-        parts.append(f"- Tone hint: {tone}")
     block = glossary_to_system_block(glossary)
     if block:
         parts.append(block)
     return "\n".join(parts)
+
+
+def build_rewrite_system_prompt(lang: str, tone: str) -> str:
+    """System prompt for the tone-rewrite pass applied after translation (or instead of noop)."""
+    lang_label = _lang_label(lang) if lang else "the text's language"
+    tone_descriptions = {
+        "formal": "formal and professional — use precise vocabulary, full sentences, and avoid contractions or colloquialisms",
+        "informal": "informal and conversational — use everyday language, contractions, and a friendly register",
+        "plain": "plain and simple — use short sentences, common words, and remove jargon",
+        "marketing": "engaging and persuasive — use active voice, vivid language, and a positive tone",
+        "technical": "technical and precise — use domain-specific terminology, avoid ambiguity, and prefer noun phrases",
+    }
+    tone_desc = tone_descriptions.get(tone, tone)
+    return "\n".join([
+        f"You are a professional editor rewriting text in {lang_label}.",
+        f"Rewrite the text so that it sounds {tone_desc}.",
+        "",
+        "RULES:",
+        "- Output ONLY the rewritten text. No preamble, no explanation, no quotes around the result.",
+        "- Preserve all formatting: line breaks, lists, headings, code blocks, markdown, whitespace.",
+        "- Preserve numbers, dates, units, URLs, email addresses, and proper nouns verbatim.",
+        "- Keep the same meaning — do not add, remove, or distort information.",
+        "- Do not translate — the output must stay in the same language as the input.",
+    ])
 
 
 def translate_text(text: str, target_lang: str, *,
@@ -66,7 +87,9 @@ def translate_text(text: str, target_lang: str, *,
         detected = detect_language(text, fallback_model=auto_detect_fallback_model or None)
         src = detected.get("lang", "") if detected else ""
 
-    if src and src == target_lang:
+    same_lang = bool(src and src == target_lang)
+
+    if same_lang and not tone:
         return {
             "translation": text,
             "source_lang": src,
@@ -78,7 +101,6 @@ def translate_text(text: str, target_lang: str, *,
         }
 
     glossary = load_glossary(glossary_slug) if glossary_slug else None
-    system_prompt = build_translate_system_prompt(src, target_lang, glossary=glossary, tone=tone)
 
     import brain  # late import
     chosen_model = (model or "").strip()
@@ -99,21 +121,43 @@ def translate_text(text: str, target_lang: str, *,
     if not chosen_model:
         raise RuntimeError("no model available for translation — set tools_config.translation.default_model")
 
-    result = brain._run_delegate(
-        [{"role": "user", "content": text}],
-        chosen_model,
-        system_prompt,
-        tools=False,
-    )
-    if not result:
-        raise RuntimeError("translation returned empty result")
-    # _run_delegate returns error strings prefixed with "Delegation error:" instead
-    # of raising — surface that as an exception so callers don't store junk.
-    if isinstance(result, str) and result.startswith("Delegation error:"):
-        raise RuntimeError(result)
+    if same_lang:
+        # Same language + tone → rewrite only, no translation step.
+        translated = text
+    else:
+        system_prompt = build_translate_system_prompt(src, target_lang, glossary=glossary)
+        result = brain._run_delegate(
+            [{"role": "user", "content": text}],
+            chosen_model,
+            system_prompt,
+            tools=False,
+        )
+        if not result:
+            raise RuntimeError("translation returned empty result")
+        if isinstance(result, str) and result.startswith("Delegation error:"):
+            raise RuntimeError(result)
+        translated = result.strip()
+
+    if tone:
+        try:
+            tcfg = brain.get_tool_config() or {}
+            rewrite_model = ((tcfg.get("refinement") or {}).get("model") or "").strip()
+        except Exception:
+            rewrite_model = ""
+        rewrite_model = rewrite_model or chosen_model
+        rewrite_lang = target_lang or src
+        rewrite_prompt = build_rewrite_system_prompt(rewrite_lang, tone)
+        rewritten = brain._run_delegate(
+            [{"role": "user", "content": translated}],
+            rewrite_model,
+            rewrite_prompt,
+            tools=False,
+        )
+        if rewritten and not (isinstance(rewritten, str) and rewritten.startswith("Delegation error:")):
+            translated = rewritten.strip()
 
     return {
-        "translation": result.strip(),
+        "translation": translated,
         "source_lang": src,
         "target_lang": target_lang,
         "detected": detected,

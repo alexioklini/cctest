@@ -53,12 +53,12 @@
   },
   "transcribe_audio": {
     "enabled": true,
-    "default_model": "Cloud-Alterntive/voxtral-mini-latest",
+    "default_model": "voxtral-mini-latest",
     "fallback_model": "whisper-base"
   },
   "translation": {
     "enabled": true,
-    "default_model": "mistral-vibe/mistral-medium-3.5",
+    "default_model": "mistral-vibe-cli-fast",
     "detection_fallback_model": "mistral-vibe-cli-fast"
   },
   "text_to_speech": {

@@ -37,6 +37,7 @@ class TranslateJob:
     target_lang: str = ""
     source_lang: str = ""
     glossary: str = ""
+    tone: str = ""
     model: str = ""
     transcribe_model: str = ""     # media: voxtral / whisper id used
     runs_done: int = 0
@@ -74,6 +75,7 @@ class TranslateJob:
             "target_lang": self.target_lang,
             "source_lang": self.source_lang,
             "glossary": self.glossary,
+            "tone": self.tone,
             "model": self.model,
             "runs_done": self.runs_done,
             "runs_total": self.runs_total,

@@ -441,6 +441,7 @@ class TranslateHandlerMixin:
         source_lang = (fields.get("source_lang") or "").strip().lower()
         glossary_slug = (fields.get("glossary") or "").strip()
         model = (fields.get("model") or "").strip()
+        tone = (fields.get("tone") or "").strip()
         agent_id = (fields.get("agent_id") or "main").strip() or "main"
         session_id = (fields.get("session_id") or "").strip()
         try:
@@ -476,6 +477,7 @@ class TranslateHandlerMixin:
             target_lang=target_lang,
             source_lang=source_lang,
             glossary=glossary_slug,
+            tone=tone,
             model=model,
             agent_id=agent_id,
             session_id=session_id,
@@ -982,6 +984,7 @@ def _run_translate_job(job_id: str) -> None:
             source_lang=job.source_lang,
             glossary_slug=job.glossary,
             model=job.model,
+            tone=job.tone,
             output_dir=out_dir,
             progress=job.update_progress,
         )

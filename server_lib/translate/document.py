@@ -132,6 +132,77 @@ def _parse_chunk_response(response: str, expected: int) -> list[str] | None:
     return [out.get(i + 1, "") for i in range(expected)]
 
 
+def _build_rewrite_chunk_system_prompt(lang: str, tone: str) -> str:
+    from .text import build_rewrite_system_prompt
+    base = build_rewrite_system_prompt(lang, tone)
+    chunk_rules = "\n".join([
+        "",
+        "FORMAT:",
+        "- Input is a numbered list: `[1] ...`, `[2] ...`, etc.",
+        "- Output the SAME numbered list with the rewritten text on each line.",
+        "- Output EXACTLY the same number of entries. Do not merge, split, or skip any.",
+        "- Output ONLY the numbered list. No preamble, no explanation.",
+    ])
+    return base + chunk_rules
+
+
+def _resolve_rewrite_model(fallback: str) -> str:
+    """Prefer refinement model for tone rewrites; fall back to translation model."""
+    try:
+        import brain
+        tcfg = brain.get_tool_config() or {}
+        m = ((tcfg.get("refinement") or {}).get("model") or "").strip()
+        if m:
+            return m
+    except Exception:
+        pass
+    return fallback
+
+
+def _rewrite_chunks(runs: list[str], *,
+                    lang: str,
+                    tone: str,
+                    model: str,
+                    progress: Callable[[int, int], None] | None = None) -> list[str]:
+    """Rewrite `runs` in-place for tone, preserving count and order."""
+    import brain
+    if not runs:
+        return []
+    model = _resolve_rewrite_model(model)
+    system_prompt = _build_rewrite_chunk_system_prompt(lang, tone)
+    out: list[str] = list(runs)
+    total = len(runs)
+    done = 0
+    for start in range(0, len(runs), CHUNK_RUNS):
+        chunk = runs[start:start + CHUNK_RUNS]
+        if all(not r.strip() for r in chunk):
+            done += len(chunk)
+            if progress:
+                progress(done, total)
+            continue
+        prompt = _format_chunk_for_prompt(chunk)
+        response = brain._run_delegate(
+            [{"role": "user", "content": prompt}],
+            model,
+            system_prompt,
+            tools=False,
+        )
+        if isinstance(response, str) and not response.startswith("Delegation error:"):
+            parsed = _parse_chunk_response(response, len(chunk))
+            if parsed:
+                for j, r in enumerate(chunk):
+                    if not r.strip():
+                        continue
+                    t = parsed[j] if j < len(parsed) else ""
+                    lead = r[:len(r) - len(r.lstrip())]
+                    trail = r[len(r.rstrip()):]
+                    out[start + j] = f"{lead}{t.strip()}{trail}" if t.strip() else r
+        done += len(chunk)
+        if progress:
+            progress(done, total)
+    return out
+
+
 def _translate_chunks(runs: list[str], *,
                       source_lang: str, target_lang: str,
                       glossary: dict | None,
@@ -261,6 +332,7 @@ def _translate_office_zip(src_path: str, dst_path: str, *,
                           source_lang: str, target_lang: str,
                           glossary: dict | None,
                           model: str,
+                          tone: str = "",
                           progress: Callable[[int, int], None] | None) -> dict:
     """Generic docx/pptx pipeline — collect runs across all parts, translate
     once with a single shared chunk pass, write back, re-zip.
@@ -304,8 +376,17 @@ def _translate_office_zip(src_path: str, dst_path: str, *,
         target_lang=target_lang,
         glossary=glossary,
         model=model,
-        progress=progress,
+        progress=None if tone else progress,
     )
+
+    if tone:
+        translated = _rewrite_chunks(
+            translated,
+            lang=target_lang,
+            tone=tone,
+            model=model,
+            progress=progress,
+        )
 
     # Pass 2 — write translations back into their parts.
     for (part_name, idx), new_text in zip(run_origin, translated):
@@ -413,6 +494,7 @@ def translate_pdf(src_path: str, dst_path: str, *,
                   source_lang: str, target_lang: str,
                   glossary: dict | None,
                   model: str,
+                  tone: str = "",
                   progress: Callable[[int, int], None] | None) -> dict:
     """PDFs translate to DOCX with layout preserved.
 
@@ -460,6 +542,7 @@ def translate_pdf(src_path: str, dst_path: str, *,
                     target_lang=target_lang,
                     glossary=glossary,
                     model=model,
+                    tone=tone,
                     progress=progress,
                 )
                 try:
@@ -504,8 +587,16 @@ def translate_pdf(src_path: str, dst_path: str, *,
         target_lang=target_lang,
         glossary=glossary,
         model=model,
-        progress=progress,
+        progress=None if tone else progress,
     )
+    if tone:
+        translated = _rewrite_chunks(
+            translated,
+            lang=target_lang,
+            tone=tone,
+            model=model,
+            progress=progress,
+        )
     new_md = "\n\n".join(t for t in translated if t is not None)
 
     import brain  # late import
@@ -558,6 +649,7 @@ def translate_document_file(src_path: str, *,
                             source_lang: str = "",
                             glossary_slug: str = "",
                             model: str = "",
+                            tone: str = "",
                             output_dir: str = "",
                             progress: Callable[[int, int], None] | None = None,
                             ) -> dict:
@@ -593,7 +685,9 @@ def translate_document_file(src_path: str, *,
         except Exception:
             detected = None
 
-    if src and src == target_lang:
+    same_lang = bool(src and src == target_lang)
+
+    if same_lang and not tone:
         # No-op — copy and return. Callers can show "already in target".
         os.makedirs(output_dir or os.path.dirname(src_path) or ".", exist_ok=True)
         out_path = _build_output_path(src_path, target_lang, ext, output_dir)
@@ -624,6 +718,7 @@ def translate_document_file(src_path: str, *,
         target_lang=target_lang,
         glossary=glossary,
         model=chosen_model,
+        tone=tone,
         progress=progress,
     )
     if ext == ".docx":
