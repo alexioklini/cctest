@@ -149,46 +149,10 @@ def _node_submit_command(node_selector: str, tool: str, params: dict) -> dict:
         return {"error": f"Timeout waiting for node '{node_selector}'"}
 
 # --- Session Management with SQLite persistence ---
-
-CHAT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agents", "main", "chats.db")
-
-
-_db_pool = threading.local()
-
-
-def _db_conn(db_path=None):
-    """Get a thread-safe SQLite connection (reused per database path).
-
-    Connections are kept in thread-local storage so they're automatically
-    released when the thread exits — critical under ThreadingMixIn, where
-    every HTTP request spawns (and discards) its own thread.
-    """
-    path = db_path or CHAT_DB
-    conns = getattr(_db_pool, "conns", None)
-    if conns is None:
-        conns = {}
-        _db_pool.conns = conns
-    conn = conns.get(path)
-    if conn is None:
-        conn = sqlite3.connect(path, timeout=10, check_same_thread=False)
-        conn.execute("PRAGMA busy_timeout = 5000")
-        conn.execute("PRAGMA journal_mode = WAL")
-        conns[path] = conn
-    return conn
-
-
-def _db_safe(default=None):
-    """Decorator: catch SQLite errors and return default instead of crashing."""
-    def decorator(fn):
-        def wrapper(*args, **kwargs):
-            try:
-                return fn(*args, **kwargs)
-            except (sqlite3.Error, OSError) as e:
-                import traceback
-                traceback.print_exc()
-                return default() if callable(default) else default
-        return wrapper
-    return decorator
+# Single source of truth lives in server_lib/db.py. Re-exported here so handler
+# mixins (which resolve names from server.py's globals) keep working, and so
+# `from server import CHAT_DB / _db_conn / _db_safe` callers continue to work.
+from server_lib.db import CHAT_DB, _db_conn, _db_safe  # noqa: E402,F401
 
 
 # ---------------------------------------------------------------------------
