@@ -1043,6 +1043,7 @@ textarea { resize: none; }
 .tool-block-header .tool-name { font-weight: 500; font-size: 13px; }
 .tool-block-header .tool-timing { font-family: var(--font-mono); font-size: 11px; color: var(--text-400); margin-left: auto; }
 .tool-block-header .tool-badge-worker { font-size: 9px; font-weight: 600; background: #0891b2; color: #fff; padding: 1px 5px; border-radius: 3px; letter-spacing: 0.5px; }
+.tool-block-header .tool-badge-parallel { font-size: 9px; font-weight: 600; background: #7c3aed; color: #fff; padding: 1px 5px; border-radius: 3px; letter-spacing: 0.5px; }
 .worker-question-card {
   margin: 12px 0; border-radius: 10px; border: 2px solid #0891b2;
   background: var(--bg-100); overflow: hidden;

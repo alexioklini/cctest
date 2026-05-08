@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.24.4"
-VERSION_DATE = "2026-05-04"
+VERSION = "8.24.15"
+VERSION_DATE = "2026-05-08"
 CHANGELOG = [
     ("8.23.10", "2026-05-04", "Workflow history — delete entries (per-row + bulk). Schedules already had `delete_run` / `delete_history` / `delete_orphan_history` but workflows had nothing comparable, so the workflow_history table grew without bound and there was no way to clean up failed/test runs. Three new module-level helpers in brain.py: **`_workflow_history_delete_run(execution_id)`** purges a single row; refuses if the row's status is in the live set (`running`/`pending`/`waiting_approval`) — caller must Cancel first (and the cancel endpoint is zombie-aware since v8.23.8 so this is always reachable). **`_workflow_history_delete_for_workflow(workflow_name, user_id=None)`** bulk-purges every terminal row for a given workflow, optionally scoped to a single user (used by non-admin RBAC). **`_workflow_history_delete_all(user_id=None)`** purges every terminal row, optionally user-scoped. All three respect the same `_WF_LIVE_STATUSES` set so in-flight rows are never accidentally swept; module-level constant so it stays in sync with the cancel handler. Two new HTTP routes: **`DELETE /v1/workflows/history/{execution_id}`** (per-row) and **`DELETE /v1/workflows/history`** (bulk; query params: `workflow=<name>` for per-workflow, `mine=1` to scope to caller). RBAC: non-admins are always restricted to their own runs (their `user_id` becomes the scope filter regardless of `mine`); admins without `mine` get unrestricted scope. UI in workflows.js: new shared `wfHistoryRowActions(r)` already rendered View + Cancel; now also renders **Delete** (small ghost button that turns red on hover) for terminal rows. New `wfDeleteRunFromHistory` + `wfClearWorkflowHistory` + `wfClearAllRuns` helpers; all three confirm() before firing and call new `_wfRefreshOpenHistoryTables` helper that re-loads whichever tables are currently visible (per-workflow inline + All Runs) so the row vanishes immediately. Per-workflow inline history grows a **Clear history** button in a `wf-hist-toolbar` div that only appears when there's at least one terminal row to clear; All Runs filter bar grows a **Clear runs…** button respecting the current `Only mine` toggle. Confirmation copy explicitly tells the user that running entries are kept (\"cancel them first to delete\") so the in-flight protection isn't surprising. Verified end-to-end: per-row delete on a terminal row → row vanishes; bulk per-workflow delete (9 → 0, runs_removed: 9, no live rows touched); attempted delete of an in-flight row → 400 with `Cannot delete a running run; cancel it first`; cancel + delete → terminal cleanup."),
     ("8.23.9", "2026-05-04", "Workflow editor + history UX overhaul. Four user-reported pain points fixed in one ship. **(1) Title / Description / Agent inputs in the editor** — the modal previously had only a filename input + raw `.flow` script; the only way to set the display title, description, or agent was to write `WORKFLOW \"…\"` / `DESCRIPTION \"…\"` / `AGENT name` lines by hand. New `wf-editor-meta` strip above the script: 2-column row with **Title** and **Agent** (dropdown, populated from `/v1/agents` once per session), plus a full-width 2-row **Description** textarea. All three round-trip with the script: `wfApplyMetaFromSource` parses `WORKFLOW`/`DESCRIPTION`/`AGENT` header lines into the inputs on open and on direct script edits; `wfOnMetaChange` rewrites/inserts the corresponding header line in canonical position when an input changes. AGENT is emitted as a bare identifier when shaped that way, otherwise as a quoted string (matches the `.flow` lexer's accept-string-or-identifier rule). Empty values drop the line entirely. Custom agent ids not in the dropdown get added with a `(custom)` suffix so they don't silently disappear. Direction guard `_wfSyncDirection` prevents script-to-meta and meta-to-script cycles from echoing back. **(2) Cancel buttons on history-table rows** — was only available inside the View dialog (and that dialog used to be read-only on a finished row). New shared `wfHistoryRowActions(r)` renders **View** plus a red **Cancel** button on rows whose status is `running`/`pending`/`waiting_approval`. Used by both the per-workflow inline history and the All Runs table. `wfCancelFromHistory` POSTs to `/cancel` (which now handles zombie rows too, see v8.23.8) and refreshes whichever tables are visible without reloading the page. Stops event propagation so the row's underlying click doesn't navigate to View. **(3) History toggle is now actually a toggle** — the inline-history collapsing was already coded but the button label always read \"History\", giving no signal that a second click would close it. Button now flips to **Hide history** when the table is open, back to **History** on collapse. **(4) Cancel-by-zombie path stays intact** — the history-row Cancel uses the same `/cancel` endpoint, so v8.23.8's zombie-aware fallback applies here too. Verified end-to-end on the meeting_notes workflow: opened editor → fields populated from script; typed in Title → `WORKFLOW \"…\"` line rewrote in-place; chose Agent → `AGENT main` line inserted; edited DESCRIPTION line directly → field updated back. Started a run that blocks on `ask_user_for_file`; opened inline history on the card; red Cancel button visible on the running row; click → terminated cleanly with `failed — ask_user_for_file: cancelled by user`."),
@@ -4289,6 +4289,46 @@ def tool_gmail_reply(args: dict) -> str:
         return _err(f"gmail_reply: {e}")
 
 
+def _html_to_markdown(html: str) -> str:
+    """Convert HTML to clean markdown via markitdown stdin pipe, then strip nav boilerplate.
+    Returns empty string on failure so caller can fall back to raw text."""
+    import shutil, subprocess, re
+    bin_path = shutil.which("markitdown")
+    if not bin_path:
+        return ""
+    try:
+        proc = subprocess.run(
+            [bin_path],
+            input=html.encode("utf-8", errors="replace"),
+            capture_output=True,
+            timeout=15,
+        )
+        if proc.returncode != 0 or not proc.stdout:
+            return ""
+        md = proc.stdout.decode("utf-8", errors="replace").strip()
+        # Strip nav boilerplate: drop paragraphs/list-blocks where >60% of lines
+        # are markdown links — those are nav menus, breadcrumbs, footers.
+        # Split into logical blocks separated by blank lines, filter dense-link blocks.
+        blocks = re.split(r'\n{2,}', md)
+        clean = []
+        for block in blocks:
+            lines = [l for l in block.splitlines() if l.strip()]
+            if not lines:
+                continue
+            link_lines = sum(1 for l in lines if re.search(r'\[.+?\]\(.+?\)', l))
+            # Keep block if <60% links OR it has a heading OR it has a table row
+            if link_lines / len(lines) < 0.6 or block.lstrip().startswith('#') or '|' in block:
+                clean.append(block)
+        md = '\n\n'.join(clean)
+        # Additionally skip everything before the first H1/H2 if it's deep in the doc
+        m = re.search(r'^#{1,2} ', md, re.MULTILINE)
+        if m and m.start() > 500:
+            md = md[m.start():]
+        return md
+    except Exception:
+        return ""
+
+
 def tool_web_fetch(args: dict) -> str:
     url = args.get("url", "")
     method = args.get("method", "GET")
@@ -4325,9 +4365,13 @@ def tool_web_fetch(args: dict) -> str:
                 raw = gzip.decompress(raw)
             charset = resp.headers.get_content_charset() or "utf-8"
             text = raw.decode(charset, errors="replace")
+        final_url = resp.url if hasattr(resp, 'url') else url
+        content_type = resp.headers.get_content_type() or ""
+        if "html" in content_type or text.lstrip().startswith(("<html", "<!doc", "<!DOC")):
+            text = _html_to_markdown(text) or text
         if len(text) > max_length:
             text = text[:max_length] + "\n... (truncated)"
-        result = {"url": url, "status": resp.status, "length": len(text), "content": text}
+        result = {"url": final_url, "status": resp.status, "length": len(text), "content": text}
         if cache_key:
             _web_cache.put(cache_key, dict(result))
         return _ok(result)
@@ -4361,7 +4405,6 @@ def exa_search(query: str, num_results: int = 5, category: str | None = None,
         "query": query,
         "type": "auto",
         "num_results": num_results,
-        "contents": {"highlights": {"max_characters": 4000}},
     }
     if category:
         body["category"] = category
@@ -4392,12 +4435,9 @@ def exa_search(query: str, num_results: int = 5, category: str | None = None,
 
         results = []
         for r in response_data.get("results", []):
-            highlights = r.get("highlights", [])
-            snippet = " ".join(highlights) if highlights else ""
             results.append({
                 "title": r.get("title", ""),
                 "link": r.get("url", ""),
-                "snippet": snippet,
             })
 
         search_info = {"query": query, "results": results, "result_count": len(results)}

@@ -1251,7 +1251,7 @@ def _execute_tools_batch(tool_calls: list[dict], event_callback=None, tool_round
             with ThreadPoolExecutor(max_workers=min(5, len(batch))) as executor:
                 for tc in batch:
                     if event_callback:
-                        event_callback("tool_call", {"name": tc["name"], "args": tc["input"], "tool_round": tool_round})
+                        event_callback("tool_call", {"name": tc["name"], "args": tc["input"], "tool_round": tool_round, "tool_use_id": tc["id"]})
                     _display_tool_call(tc["name"], tc["input"])
                     future = executor.submit(_execute_tool_in_thread, tc["name"], tc["input"],
                                              tc["id"], event_callback, _parent_ctx)
@@ -1268,7 +1268,7 @@ def _execute_tools_batch(tool_calls: list[dict], event_callback=None, tool_round
                     result_map[tc["id"]] = result
                     _display_tool_result(tc["name"], result)
                     if event_callback:
-                        event_callback("tool_result", {"name": tc["name"], "result": result, "tool_round": tool_round})
+                        event_callback("tool_result", {"name": tc["name"], "result": result, "tool_round": tool_round, "tool_use_id": tc["id"]})
 
             # Append in original order
             for tc in batch:
@@ -1278,7 +1278,7 @@ def _execute_tools_batch(tool_calls: list[dict], event_callback=None, tool_round
             for tc in batch:
                 _display_tool_call(tc["name"], tc["input"])
                 if event_callback:
-                    event_callback("tool_call", {"name": tc["name"], "args": tc["input"], "tool_round": tool_round})
+                    event_callback("tool_call", {"name": tc["name"], "args": tc["input"], "tool_round": tool_round, "tool_use_id": tc["id"]})
                 _thread_local.event_callback = event_callback
                 _thread_local.tool_use_id = tc["id"]
                 try:
@@ -1288,7 +1288,7 @@ def _execute_tools_batch(tool_calls: list[dict], event_callback=None, tool_round
                     _thread_local.tool_use_id = None
                 _display_tool_result(tc["name"], result)
                 if event_callback:
-                    event_callback("tool_result", {"name": tc["name"], "result": result, "tool_round": tool_round})
+                    event_callback("tool_result", {"name": tc["name"], "result": result, "tool_round": tool_round, "tool_use_id": tc["id"]})
                 results.append({"tool_use_id": tc["id"], "result": result})
     return results
 

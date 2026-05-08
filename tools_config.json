@@ -53,7 +53,7 @@
   },
   "transcribe_audio": {
     "enabled": true,
-    "default_model": "mistral-experimental/voxtral-mini-latest",
+    "default_model": "Cloud-Alterntive/voxtral-mini-latest",
     "fallback_model": "whisper-base"
   },
   "translation": {
@@ -63,7 +63,7 @@
   },
   "text_to_speech": {
     "enabled": true,
-    "default_model": "mistral-experimental/voxtral-mini-tts-latest",
-    "voice": "en_paul_confident"
+    "default_model": "voxtral-mini-tts-latest",
+    "voice": "en_paul_neutral"
   }
 }

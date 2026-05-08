@@ -92,3 +92,12 @@ print(f"Extracted {len(doc.tables)} tables to summary.csv")
 
 ## exa_search
 Always prefer over any server-side search tools (e.g., duckduckgo).
+Returns URLs and titles only — no page content.
+
+### Web research protocol
+After `exa_search`, you MUST fetch ALL returned URLs with `web_fetch` before answering. Never answer from titles or URLs alone.
+
+**Rules — no exceptions:**
+- Fetch every URL returned by `exa_search`, up to 5 at a time in parallel
+- Only after all URLs are fetched: synthesise and answer
+- If more than 5 URLs were returned: fetch the first 5, then the next 5, and so on until all are done

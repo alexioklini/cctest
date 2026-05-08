@@ -209,9 +209,9 @@ async function sendMessage() {
       tool_call: (d) => {
         console.log('[SSE] tool_call:', d.name, 'showToolCalls:', state.showToolCalls);
         const last = chat.messages[chat.messages.length - 1];
-        const isNewToolCall = !(last && last.role === 'tool_call' && last.name === d.name && d.args && Object.keys(d.args).length);
+        const isNewToolCall = !(last && last.role === 'tool_call' && last.tool_use_id && d.tool_use_id && last.tool_use_id === d.tool_use_id);
         if (isNewToolCall) {
-          chat.messages.push({ role: 'tool_call', name: d.name, args: d.args || {}, _ts: Date.now() });
+          chat.messages.push({ role: 'tool_call', name: d.name, args: d.args || {}, tool_use_id: d.tool_use_id || null, tool_round: d.tool_round ?? null, _ts: Date.now() });
           _activityAutoUpdate(chat, currentTurnNum(chat), 'add');
         } else {
           last.args = d.args;
@@ -242,6 +242,7 @@ async function sendMessage() {
         // d.references is pre-extracted server-side; attach to the message so
         // extractReferencesFromToolResult reads from it directly (no re-parsing).
         const toolMsg = { role: 'tool_result', name: d.name, result: d.result,
+                          tool_use_id: d.tool_use_id || null,
                           references: d.references || undefined, _ts: Date.now() };
         chat.messages.push(toolMsg);
         // Live refs via the separate `references` event above — this path is
@@ -869,7 +870,7 @@ async function openInspectModal() {
             ${a.tokens_out ? `<span style="${MONO11}">&middot; ${a.tokens_out.toLocaleString()} tok out (API)</span>` : ''}
             ${a.thinking ? BADGE('thinking', '#ede9fe', '#8b5cf6') : ''}
             ${a.sdk ? BADGE('SDK', 'var(--bg-300)', 'var(--text-400)') : ''}
-            ${hasWorkerTool ? BADGE('WORKER', '#0891b2', '#fff') : ''}
+            ${hasWorkerTool ? BADGE('Hintergrund', '#0891b2', '#fff') : ''}
             ${toolBadges}
           </summary>
           <div style="max-height:400px;overflow-y:auto">`;
@@ -880,7 +881,7 @@ async function openInspectModal() {
             let tIsWorker = false;
             const rs = typeof t.result === 'string' ? t.result : JSON.stringify(t.result || '');
             if (rs.includes('"worker": true') || rs.includes('"worker":true')) tIsWorker = true;
-            const wBadge = tIsWorker ? ' <span style="font-size:9px;font-weight:600;background:#0891b2;color:#fff;padding:1px 5px;border-radius:3px;letter-spacing:0.5px" title="Executed via worker subagent">WORKER</span>' : '';
+            const wBadge = tIsWorker ? ' <span style="font-size:9px;font-weight:600;background:#0891b2;color:#fff;padding:1px 5px;border-radius:3px;letter-spacing:0.5px" title="Executed via worker subagent">Hintergrund</span>' : '';
             const wf = tIsWorker ? findWorkerFlow(t.name, rs) : null;
             const flowHtml = wf ? renderWorkerFlow(wf) : '';
             html += `<details style="margin-bottom:4px">
@@ -1419,12 +1420,16 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
       let isWorker = false;
       for (let j = i + 1; j < memberIdxs.length; j++) {
         const next = messages[memberIdxs[j]];
-        if (next.role === 'tool_result' && next.name === m.name) {
-          const rs = typeof next.result === 'string' ? next.result : JSON.stringify(next.result);
-          isWorker = rs.includes('"worker": true') || rs.includes('"worker":true');
-          break;
+        if (next.role === 'tool_result') {
+          const idMatch = m.tool_use_id && next.tool_use_id && m.tool_use_id === next.tool_use_id;
+          const nameMatch = !m.tool_use_id && next.name === m.name;
+          if (idMatch || nameMatch) {
+            const rs = typeof next.result === 'string' ? next.result : JSON.stringify(next.result);
+            isWorker = rs.includes('"worker": true') || rs.includes('"worker":true');
+            break;
+          }
         }
-        if (next.role === 'tool_call' || next.role === 'assistant' || next.role === 'user') break;
+        if (next.role === 'assistant' || next.role === 'user') break;
       }
       if (isWorker) workerCount++; else toolCount++;
     }
@@ -2257,14 +2262,19 @@ function fallbackCopy(text, cb) {
 
 function renderToolCall(msg, idx) {
   if (!state.showToolCalls) return '';
-  // Look ahead for matching tool_result
+  // Look ahead for matching tool_result — match by tool_use_id when available,
+  // fall back to name. Don't stop at sibling tool_calls (parallel batches interleave).
   const chat = state.activeChat;
   let resultMsg = null;
   if (chat) {
     for (let j = idx + 1; j < chat.messages.length; j++) {
       const next = chat.messages[j];
-      if (next.role === 'tool_result' && next.name === msg.name) { resultMsg = next; break; }
-      if (next.role === 'tool_call' || next.role === 'assistant' || next.role === 'user') break;
+      if (next.role === 'tool_result') {
+        const idMatch = msg.tool_use_id && next.tool_use_id && msg.tool_use_id === next.tool_use_id;
+        const nameMatch = !msg.tool_use_id && next.name === msg.name;
+        if (idMatch || nameMatch) { resultMsg = next; break; }
+      }
+      if (next.role === 'assistant' || next.role === 'user') break;
     }
   }
   const desc = toolDescribe(msg.name, msg.args);
@@ -2300,14 +2310,20 @@ function renderToolCall(msg, idx) {
     const wf = findWorkerFlow(msg.name, resultStrForFlow);
     if (wf) bodyHtml = renderWorkerFlow(wf) + bodyHtml;
   }
-  const workerBadge = (isWorker || isRunningWorker) ? '<span class="tool-badge-worker" title="Executed via worker subagent">WORKER</span>' : '';
+  const workerBadge = (isWorker || isRunningWorker) ? '<span class="tool-badge-worker" title="Executed via worker subagent">Hintergrund</span>' : '';
+  // Parallel badge: shown when 2+ tool_calls share the same tool_round
+  const toolRound = msg.tool_round;
+  const isParallel = toolRound != null && chat && chat.messages.filter(
+    m => m.role === 'tool_call' && m.tool_round === toolRound
+  ).length > 1;
+  const parallelBadge = isParallel ? '<span class="tool-badge-parallel" title="Executed in parallel">Parallel</span>' : '';
 
   return `
     <div class="tool-block${hasResult ? ' has-result' : ''}" onclick="this.classList.toggle('open')">
       <div class="tool-block-header">
         ${icon}
         <span class="tool-name">${desc}</span>
-        ${workerBadge}
+        ${workerBadge}${parallelBadge}
         ${timing}
         <span class="tool-chevron">&#9656;</span>
       </div>

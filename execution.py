@@ -26,7 +26,7 @@ from typing import Any, Callable
 
 DEFAULT_PROFILES: dict[str, dict] = {
     "exa_search":             {"heavy": True,  "timeout_seconds": 60},
-    "web_fetch":              {"heavy": True,  "timeout_seconds": 60},
+    "web_fetch":              {"heavy": False, "timeout_seconds": 60},
     "gmail_search":           {"heavy": True,  "timeout_seconds": 60},
     "gmail_inbox":            {"heavy": True,  "timeout_seconds": 60},
     "gmail_read":             {"heavy": True,  "timeout_seconds": 30},
@@ -701,6 +701,7 @@ def _static_summary(tool_name: str, artifact_meta: dict) -> str:
         f"stored as artifact '{artifact_meta['artifact_id']}'. "
         f"Use get_artifact_detail to retrieve content."
     )
+
 
 
 def _extract_web_references(tool_name: str, raw_result: str) -> list[dict]:

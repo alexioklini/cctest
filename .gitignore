@@ -50,3 +50,7 @@ packaging/mac/build/
 packaging/mac/dist/
 packaging/win/build/
 packaging/win/dist/
+
+# MemPalace per-project files (issue #185)
+mempalace.yaml
+entities.json
