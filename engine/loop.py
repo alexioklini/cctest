@@ -986,7 +986,7 @@ def _register_artifact_version(path: str, action: str, agent_id: str):
     """Register or update an artifact in the DB, capturing content snapshot.
     Returns (artifact_id, version, type) or None on failure."""
     try:
-        from server import ChatDB
+        from server_lib.db import ChatDB
         import uuid as _uuid_mod
 
         session_id = getattr(_thread_local, 'current_session_id', None) or ""

@@ -347,7 +347,7 @@ class Scheduler:
             return {"error": "Cannot delete a running task; cancel it first"}
         artifacts_removed = 0
         try:
-            from server import ChatDB
+            from server_lib.db import ChatDB
             artifacts_removed = ChatDB.delete_artifacts_for_session(f"sched-{run_id}") or 0
         except Exception as e:
             print(f"  [WARN] delete_run artifact purge: {e}", flush=True)
@@ -387,7 +387,7 @@ class Scheduler:
             if r.get("status") == "running":
                 continue  # leave in-flight alone
             try:
-                from server import ChatDB
+                from server_lib.db import ChatDB
                 n = ChatDB.delete_artifacts_for_session(f"sched-{rid}") or 0
                 total_artifacts += n
             except Exception:
@@ -437,7 +437,7 @@ class Scheduler:
                 continue  # never touch in-flight runs
             orphan_names.add(r.get("schedule_name") or "")
             try:
-                from server import ChatDB
+                from server_lib.db import ChatDB
                 n = ChatDB.delete_artifacts_for_session(f"sched-{rid}") or 0
                 total_artifacts += n
             except Exception:
