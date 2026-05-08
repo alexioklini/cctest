@@ -569,7 +569,7 @@ class ContextManager:
         """Search original messages in ChatDB by keyword/regex."""
         results = []
         try:
-            from server import _db_conn as chat_db_conn
+            from server_lib.db import _db_conn as chat_db_conn
             conn = chat_db_conn()
             conn.row_factory = sqlite3.Row
             if regex:
@@ -621,7 +621,7 @@ class ContextManager:
 
         # Load original messages from ChatDB
         try:
-            from server import _db_conn as chat_db_conn
+            from server_lib.db import _db_conn as chat_db_conn
             cconn = chat_db_conn()
             cconn.row_factory = sqlite3.Row
             msgs = cconn.execute(
