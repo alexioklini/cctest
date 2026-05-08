@@ -20,6 +20,7 @@ from engine.tools.code_graph import (
     tool_code_graph_impact, tool_code_graph_enhance,
 )
 from engine.tools.git import tool_git_command, tool_github_command
+from engine.tools.image_gen import tool_generate_image
 from engine.memory.mempalace import (
     tool_mempalace_query, tool_mempalace_kg_query,
     tool_mempalace_kg_search, tool_mempalace_kg_neighbors,
@@ -126,6 +127,7 @@ TOOL_DISPATCH = {
     "worker_send": tool_worker_send,
     "worker_ask_user": tool_worker_ask_user,
     "ask_user": tool_ask_user,
+    "generate_image": tool_generate_image,
 }
 
 

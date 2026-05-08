@@ -2,9 +2,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.24.4"
-VERSION_DATE = "2026-05-04"
+VERSION = "8.27.0"
+VERSION_DATE = "2026-05-08"
 CHANGELOG = [
+    ("8.27.0", "2026-05-08", "Image generation via Mistral Conversations API. New `generate_image` tool in a new `image_gen` tool group (opt-in, not in DEFAULT_TOOL_GROUPS). Tool accepts prompt, aspect_ratio (1:1/16:9/9:16/4:3/3:4), and optional style hint. On first call, lazily creates a Mistral-hosted image agent (mistral-medium-latest + image_generation tool) via POST /v1/agents and persists the agent_id to config.json. Subsequent calls reuse the cached ID (in-memory + on-disk). Image generation POSTs to /v1/conversations with the prompt, extracts tool_file chunks from the response, downloads each PNG via /v1/files/{id}/content, saves to the session artifact folder, and triggers _after_file_write for automatic artifact panel registration. Mistral API key resolved from the existing Mistral provider entry in config.json (any provider with api.mistral.ai base_url). Implementation in engine/tools/image_gen.py follows the same cross-module globals pattern as other tool modules (CONFIG_PATH, _ok, _err, _thread_local, _current_agent, AGENTS_DIR, _after_file_write from brain.py). Enable per agent by adding 'image_gen' to tool_groups in agent.json."),
     ("8.24.4", "2026-05-04", "Per-turn `[Files in this chat — ...]` block injected on every user message at round 0 of every turn (not gated by _has_assistant). Reads `artifacts` rows for the session_id and renders each as `path (role, size)`. Tells the model to call `read_document` for content rather than guess from filenames. Caps at 50 most-recent artifacts with a `(+N older)` tail. The block is stripped + re-injected fresh each turn (idempotent on retries; survives compaction). Symptom this fixes: long chats where a tool wrote a large file, the conversation grew, the original tool result got compacted out, and the model lost the path — follow-up questions about file content failed because the model didn't know what was on disk. Now every turn carries the full file inventory. Sentinel `_files_block_injected` stripped via existing _ALLOWED_MSG_KEYS whitelist."),
     ("8.24.3", "2026-05-04", "Workflow refs/artifacts go through the regular chat panels — banner stops duplicating UI. The wf-detail-files card inside the banner is gone; references appear in the right-panel References tab and outputs appear in the Artifacts tab, same as any other chat. **Server seeds at session-create time**: `_handle_workflow_get_or_create_session` runs `_seed_artifacts_for_run` on `created=true` — registers each output path as an `artifacts` row under the bound session_id (with a content snapshot ≤5MB so the viewer renders it; bigger files leave content NULL and the existing disk-fallback path serves bytes from `artifact.path`), and returns the input paths in the response so the client populates `state.chatReferences[sid]` BEFORE openSession runs. The promote handler now factors through the same helper (idempotent — repeats on a session created pre-v8.24.3 catch up; normally a no-op). Removed: `wfDetailRenderFilesHtml` + `wfDetailExtractFiles` + `_wfFileIcon` + `wfFilePreview` + `wfFileDownload` + the file preview modal + matching CSS — single source of truth for path classification now lives server-side in `_workflow_run_paths_classified`."),
     ("8.24.2", "2026-05-04", "Workflow run open: route through the regular chat view. The standalone wf-detail surface is gone — clicking a history row (or hitting Run) now opens the bound chat session in the regular chat view, with a workflow-run-banner above #messages-container that carries the run-specific UI (header, files, collapsed trace, actions). The composer is the regular chat composer, so file-attach / thinking levels / model selection / refs / artifacts all work identically to a normal chat. Header now shows agent + model + started/finished timestamps + duration + cost + workflow_name. Run trace is collapsed by default; expandable to show workflow source + tool-call/result pairs + return value. Save-to-chats stays in the banner; promoting flips status active and the banner switches to a 'Saved' affordance — chat is forever recognizable as workflow-derived. New endpoint POST /v1/workflows/history/<exec>/session looks up (or creates) the caller's bound chat session for this run; reopening the same run hands back the same session so conversations survive across visits. workflow_run_id flows through GET /v1/sessions/<id>/messages so openSession() restores it onto the chat object. sendMessage gates while the run is live (composer refuses with a toast). Removed: wf-detail container + ~300 lines of duplicated turn-rendering / follow-up-list / detail composer JS + matching CSS."),
@@ -1437,6 +1438,34 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "name": "generate_image",
+        "description": (
+            "Generate an image from a text prompt using Mistral's image generation service. "
+            "The generated image is saved to the session artifact folder and shown in the Artifacts panel. "
+            "Use for marketing visuals, illustrations, diagrams, product mockups, or any creative imagery. "
+            "Be descriptive: include subject, mood, style, lighting, and composition details for best results."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Detailed description of the image to generate. Include subject, style, mood, lighting, composition.",
+                },
+                "aspect_ratio": {
+                    "type": "string",
+                    "enum": ["1:1", "16:9", "9:16", "4:3", "3:4"],
+                    "description": "Image aspect ratio. Use 16:9 for banners/landscapes, 9:16 for mobile/stories, 1:1 for square posts, 4:3 for classic format. Default: 1:1",
+                },
+                "style": {
+                    "type": "string",
+                    "description": "Optional style hint, e.g. 'photorealistic', 'flat illustration', 'minimalist', 'cinematic', 'watercolor'. Appended to the prompt.",
+                },
+            },
+            "required": ["prompt"],
+        },
+    },
 ]
 
 # Build OpenAI-compatible format automatically
@@ -1482,6 +1511,7 @@ TOOL_GROUPS = {
     "workers": {"get_artifact_detail", "worker_status", "worker_abort",
                 "worker_pause", "worker_resume", "worker_send",
                 "worker_ask_user"},
+    "image_gen": {"generate_image"},
 }
 
 # Default tool groups included for all agents (if no explicit config)

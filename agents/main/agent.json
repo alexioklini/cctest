@@ -47,7 +47,8 @@
       "scheduler",
       "skills",
       "nodes",
-      "code_exec"
+      "code_exec",
+      "image_gen"
     ],
     "include_tools_guide": true,
     "include_memory_summary": true,
