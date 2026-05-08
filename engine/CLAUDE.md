@@ -12,15 +12,11 @@ Non-obvious invariants for this package. Root CLAUDE.md has the full architectur
 | `kg_extract.py` | LLM-driven triple extraction over project input folders | `handlers/admin.py`, `handlers/projects.py`, `server.py` |
 | `doc_convert.py` | binary → `.md` companion conversion | `engine/tools/files.py`, `server.py` |
 | `sync_log.py` | Sync run log table + helpers | `handlers/projects.py`, `server.py` |
-| `execution.py` | Worker-subagent routing | tests only |
 | `memory/` | MemPalace direct integration, daemons, chat-sync | `engine/tools/`, `brain.py` |
-| `analytics/` | Cost tracking, PII scanner, quota, audit, tracing | `engine/doc_convert.py`, `brain.py` |
 
-**Internal-only engine/ modules** (referenced by other engine/ files but not by anything outside): `agents.py`, `cli.py`, `context.py`, `mcp.py`, `models.py`, `provider.py`, `scheduler.py`, `tasks.py`. These were extracted from brain.py but never wired up — their counterparts in `brain.py` are what actually runs. Don't trust their contents as authoritative; treat them as historical fragments. Future work: either wire them in or delete them.
+**Deleted in 8.29.0**: `loop.py` (3819 LOC) and `constants.py` (878 LOC). **Deleted in 8.30.0**: `agents.py`, `cli.py`, `context.py`, `mcp.py`, `models.py`, `provider.py`, `scheduler.py`, `tasks.py` (8 modules, ~7573 LOC) plus the entire `analytics/` package — `audit.py`, `costs.py`, `pii.py`, `quotas.py`, `tracing.py` (~2345 LOC). Total ~9918 LOC of dead extraction. Same pattern as 8.29.0: brain.py owns the live equivalents (`CostTracker`, `AuditLog`, `TraceManager`, `PIIScanner`, `QuotaManager`, `MCPManager`, `LocalProviderQueue`, `Scheduler`, `AgentConfig`, `ContextManager`, scheduler/tasks/cli helpers). The 8.30.0 sweep also fixed silently-broken OCR cost tracking — `engine/doc_convert.py:_log_ocr_cost` was reading the dead `engine.analytics.costs._cost_tracker` singleton (always `None`); rewired to `brain._cost_tracker` and ported `log_ocr` onto brain's `CostTracker`.
 
-**Deleted in 8.29.0**: `loop.py` (3819 LOC) and `constants.py` (878 LOC) were entirely dead code — duplicate copies of brain.py's agentic loop and tool registry that nothing imported. The image_gen incident (8.27.0) revealed the trap when a new tool was added to engine/constants.py only and silently failed.
-
-The invariants below describe brain.py's runtime behavior — they used to live in engine/loop.py but the rules apply to whichever copy is actually used.
+The invariants below describe brain.py's runtime behavior.
 
 ## Agentic Loop (brain.py)
 
@@ -38,7 +34,7 @@ The invariants below describe brain.py's runtime behavior — they used to live 
 
 **Three-layer hooks**: tool pre/post (external subprocess), `after_file_write` (centralized), LLM-level (built-in middleware). External hook: timeout 5s, fail-open on crash, exit 1=block, exit 2=skip chain. `allowed_tools` restriction in workflows IS enforced — don't let it regress.
 
-## Provider & Warmup (provider.py)
+## Provider & Warmup (brain.py)
 
 `resolve_provider_for_model(model)` is the **single source of truth** for `{api_key, base_url, provider_name}`.
 
@@ -50,7 +46,7 @@ The invariants below describe brain.py's runtime behavior — they used to live 
 
 **oMLX gotcha**: Qwen3/Gemma-4 chat templates default `enable_thinking=true` when kwarg absent. `_apply_inference_to_payload` ALWAYS emits `enable_thinking` (true OR false) on every oMLX request whose model has non-`none` `thinking_format`. Warmup must mirror this byte-for-byte or KV prefix misses silently.
 
-## Model Config (models.py)
+## Model Config (brain.py)
 
 `init_models_config` does forward-looking re-detect of thinking format: `'none'` → real format upgrade, never reverse. **Must deep-copy `existing_models`** — shallow copy aliases dicts and silently breaks the diff-based persist gate.
 
@@ -58,7 +54,7 @@ The invariants below describe brain.py's runtime behavior — they used to live 
 
 **Deletion tombstones**: `config.json` → `deleted_models: []`. Honored on startup AND every `action: 'sync'`. Only `Full Resync` clears tombstones. Never wire automatic clear path.
 
-## Worker Subagents (execution.py)
+## Worker Subagents (brain.py)
 
 - `_summarise_tool_result` returns **3 values** (summary, sections, usage) — callers must unpack 3, not 2.
 - `"heavy": "auto"` only wraps when output > `auto_threshold_bytes`. Raw output never re-injected.
@@ -68,11 +64,11 @@ The invariants below describe brain.py's runtime behavior — they used to live 
 ## Concurrency & Thread Safety
 
 - **Thread-locals required** for every request/background thread: `current_agent`, `mcp_manager`, `current_session_id`, `current_user_id`. Never fall back to globals — concurrent requests bleed.
-- **MCPManager** (`mcp.py`): `clients`, `_tool_to_server` under `self._lock`; iteration via snapshot.
+- **MCPManager** (`brain.py`): `clients`, `_tool_to_server` under `self._lock`; iteration via snapshot.
 - **Background threads** (scheduler, TaskRunner, workflow engine): set + clean thread-locals in try/finally.
 - **`_run_delegate`** uses thread-local `max_tool_rounds` override — no global mutation.
 
-## Scheduled Tasks (scheduler.py)
+## Scheduled Tasks (brain.py)
 
 Each run = immutable `schedule_history` row + synthetic `session_id=sched-<run_id>`. Due tasks fire in **parallel**. Per-task `working_dir` overrides system prompt cwd; `python_exec` stays pinned to artifact folder by design — file-write tracking depends on it.
 

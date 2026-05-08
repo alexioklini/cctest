@@ -471,23 +471,15 @@ def _extract_with_local_vision(path: str) -> tuple[str, str | None, int]:
 
 
 def _log_ocr_cost(*, model: str, provider: str, pages: int, cost_usd: float) -> None:
-    """Forward to CostTracker.log_ocr if the analytics module + tracker are
-    initialized. Pulls agent/session/user from thread-locals when called
-    from a chat thread; falls back to ('main', '', '') for daemon calls."""
+    """Forward to brain's live CostTracker. Pulls agent/session/user from
+    thread-locals when called from a chat thread; falls back to ('main', '', '')
+    for daemon calls."""
     try:
-        from engine.analytics import costs as _costs
+        from brain import _cost_tracker, _thread_local, _current_agent
     except ImportError:
         return
-    tracker = getattr(_costs, "_cost_tracker", None)
-    if tracker is None:
+    if _cost_tracker is None:
         return
-    # Thread-locals — set by chat workers, absent in the project-sync daemon.
-    # brain.py is the runtime source of truth for these (engine/loop.py was deleted in 8.29.0).
-    try:
-        from brain import _thread_local, _current_agent
-    except ImportError:
-        _thread_local = None
-        _current_agent = None
     agent_id = "main"
     session_id = ""
     user_id = ""
@@ -497,9 +489,9 @@ def _log_ocr_cost(*, model: str, provider: str, pages: int, cost_usd: float) -> 
             agent_id = getattr(agent, "agent_id", "main")
         session_id = getattr(_thread_local, "current_session_id", "") or ""
         user_id = getattr(_thread_local, "current_user_id", "") or ""
-    tracker.log_ocr(agent=agent_id, session_id=session_id, model=model,
-                    provider=provider, pages=pages, cost_usd=cost_usd,
-                    user_id=user_id)
+    _cost_tracker.log_ocr(agent=agent_id, session_id=session_id, model=model,
+                          provider=provider, pages=pages, cost_usd=cost_usd,
+                          user_id=user_id)
 
 
 def _extract_with_markitdown(path: str) -> tuple[str, str | None]:
