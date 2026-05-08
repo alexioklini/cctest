@@ -2611,8 +2611,9 @@ async function init() {
       updateModelSelectorDisplay(state.activeChat.model);
     }
 
-    // Set suggestion chips
-    renderSuggestionChips();
+    // Render favourite cards on the welcome screen; re-render on any change
+    renderPromptCards();
+    window.addEventListener('favourites:changed', () => renderPromptCards());
 
   } catch(e) {
     console.error('Init failed:', e);
@@ -2646,23 +2647,43 @@ async function init() {
   QuotaMonitor.start();
 }
 
-function renderSuggestionChips() {
-  const container = document.getElementById('suggestion-chips');
+async function renderPromptCards() {
+  const container = document.getElementById('prompt-cards');
   if (!container) return;
 
-  // Show agent chips as suggestions
-  const chips = state.agents.slice(0, 5).map(agent => {
-    const aid4 = agent.id || agent.name;
-    const display = agent.display_name || aid4;
-    return `
-      <button class="suggestion-chip" onclick="selectAgent('${aid4}'); navigateTo('welcome')">
-        <span class="chip-icon">${agent.avatar || '&#129302;'}</span>
-        ${esc(display)}
-      </button>
-    `;
-  });
+  await FavouritesCache.load();
+  const favs = FavouritesCache.rows
+    .filter(r => r.available !== false)
+    .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0))
+    .slice(0, 6);
 
-  container.innerHTML = chips.join('');
+  if (!favs.length) {
+    container.innerHTML = '';
+    return;
+  }
+
+  container.innerHTML = favs.map((row, i) => {
+    const def = (typeof FAVOURITES_TYPE_DEFAULTS !== 'undefined' && FAVOURITES_TYPE_DEFAULTS[row.item_type]) || {};
+    const rawIcon = row.icon || row.source_icon || '';
+    const customIcon = (rawIcon && rawIcon !== def.icon) ? rawIcon : '';
+    const iconHtml = customIcon
+      ? esc(customIcon)
+      : (typeof favouriteTypeGlyphSvg === 'function' ? favouriteTypeGlyphSvg(row.item_type, 20) : '⭐');
+    const bg = row.color || row.source_color || def.color || 'var(--chip-bg)';
+    const title = (row.title || '(untitled)').slice(0, 50);
+    const subtitle = (row.subtitle || '').slice(0, 80);
+    return `<button class="prompt-card" data-fav-idx="${i}" style="--card-accent:${esc(bg)}">
+      <span class="prompt-card-icon">${iconHtml}</span>
+      <span class="prompt-card-title">${esc(title)}</span>
+      ${subtitle ? `<span class="prompt-card-body">${esc(subtitle)}</span>` : ''}
+    </button>`;
+  }).join('');
+
+  container.querySelectorAll('.prompt-card').forEach((btn, i) => {
+    btn.addEventListener('click', () => {
+      if (typeof openFavouriteRow === 'function') openFavouriteRow(favs[i]);
+    });
+  });
 }
 
 // Sidebar version badge — fetched independently of auth so it's visible

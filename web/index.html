@@ -223,8 +223,8 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <!-- welcome composer injected by initComposers() -->
       <div id="welcome-composer-mount"></div>
     </div>
-    <div class="suggestion-chips" id="suggestion-chips">
-      <!-- Populated dynamically -->
+    <div class="prompt-cards" id="prompt-cards">
+      <!-- Populated dynamically by renderPromptCards() -->
     </div>
     <input type="file" id="file-input" multiple accept="image/*,.pdf,.docx,.xlsx,.pptx,.eml,.msg,.epub,.zip,.txt,.md,.csv,.tsv,.json,.py,.js,.ts,.html,.css,.xml,.yaml,.yml,.toml,.sh,.go,.rs,.java,.rb,.swift,.kt,.c,.cpp,.h" style="display:none" onchange="handleFileSelect(event)">
   </div>

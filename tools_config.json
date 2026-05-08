@@ -32,7 +32,7 @@
   "read_document": {
     "enabled": true,
     "max_file_size_mb": 50,
-    "vision_model": ""
+    "vision_model": "Mistral/mistral-vibe-cli-latest"
   },
   "write_document": {
     "enabled": true
