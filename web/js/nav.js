@@ -34,6 +34,7 @@ function navigateTo(view, opts) {
       // there's no active session, so showing the previous chat's session
       // id / model / tokens / cost is misleading.
       document.getElementById('status-bar').style.display = 'none';
+      try { renderPromptCards(); } catch (_) {}
       break;
 
     case 'chat':
@@ -110,12 +111,14 @@ function navigateTo(view, opts) {
       if (typeof loadWorkflows === 'function') loadWorkflows();
       break;
 
-    case 'translation':
+    case 'translation': {
       document.getElementById('translation-view').classList.add('active');
-      updatePageHeader('Translation');
+      const activeTab = document.querySelector('.tr-tab.active')?.dataset?.tab || 'text';
+      _updateTranslationHeaderStar(activeTab);
       document.getElementById('status-bar').style.display = 'none';
       if (typeof loadTranslationView === 'function') loadTranslationView();
       break;
+    }
 
     case 'favourites':
       if (favView) favView.classList.add('active');
@@ -139,6 +142,23 @@ function navigateTo(view, opts) {
   }
 
   closeMobileSidebar();
+}
+
+const _TR_TAB_TITLES = {
+  text: 'Text Translation',
+  document: 'Document Translation',
+  audio: 'Audio / Video Translation',
+  live: 'Live Microphone Translation',
+};
+
+function _updateTranslationHeaderStar(tab) {
+  const title = _TR_TAB_TITLES[tab] || 'Translation';
+  updatePageHeader(title, null, null, {
+    item_type: 'translation',
+    item_id: tab,
+    agent_id: 'main',
+    title,
+  });
 }
 
 function updatePageHeader(title, breadcrumb, breadcrumbAgentId, favouriteOpts) {

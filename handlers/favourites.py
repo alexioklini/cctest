@@ -28,7 +28,6 @@ def _srv():
 
 def _hydrate_chat(item_id: str, agent_id: str, user, team_ids: list[str], is_admin: bool) -> dict:
     """Resolve a chat or project_chat to display metadata + access check."""
-    from server_lib.db import ChatDB
     info = ChatDB.get_session_info(item_id)
     if not info:
         return {"available": False, "title": "(deleted chat)"}
@@ -87,15 +86,27 @@ def _hydrate_project(item_id: str, agent_id: str, user, team_ids: list[str], is_
         agent = agent_id or "main"
         from urllib.parse import quote as _q
         source_image_url = f"/v1/agents/{_q(agent)}/projects/{_q(match.get('name', ''))}/image?v={int(updated)}"
+    # Read the human-readable display name from project.json (cfg["name"]).
+    # list_projects() sets "name" to the directory name; project.json may
+    # have a separate display name stored under the same key.
+    display_title = match.get("name", "Untitled")
+    try:
+        import json as _json
+        with open(proj_path, "r") as _f:
+            _cfg = _json.load(_f)
+        display_title = _cfg.get("name") or display_title
+    except Exception:
+        pass
+    dir_name = match.get("name", "")  # filesystem name, used for navigation
     return {
         "available": True,
-        "title": match.get("name", "Untitled"),
+        "title": display_title,
         "updated_at": updated,
         "subtitle": (match.get("description") or "")[:80],
         "visibility": match.get("visibility") or "user",
         "owner_user_id": match.get("owner_user_id") or "",
         "team_id": match.get("owner_team_id") or "",
-        "_project_name": match.get("name", ""),  # used for href
+        "_project_name": dir_name,  # used for href / openProject()
         "source_image_url": source_image_url,
         "source_icon": match.get("icon", "") or "",
         "source_color": match.get("color", "") or "",
@@ -109,7 +120,7 @@ def _hydrate_workflow(item_id: str, agent_id: str, user, team_ids, is_admin) -> 
         return {"available": False, "title": "(deleted workflow)"}
     return {
         "available": True,
-        "title": item_id,
+        "title": match.get("display_name") or item_id,
         "updated_at": float(match.get("mtime") or 0),
         "subtitle": (match.get("description") or "")[:80],
         "visibility": "general",  # workflows aren't user-scoped today
@@ -153,9 +164,30 @@ def _parse_iso(val) -> float:
         return 0.0
 
 
+_TRANSLATION_TAB_TITLES = {
+    "text": "Text Translation",
+    "document": "Document Translation",
+    "audio": "Audio / Video Translation",
+    "live": "Live Microphone Translation",
+}
+
+
+def _hydrate_translation(item_id: str, agent_id: str, user, team_ids, is_admin) -> dict:
+    """Translation tabs are static UI — always available, no DB lookup needed."""
+    title = _TRANSLATION_TAB_TITLES.get(item_id, "Translation")
+    return {
+        "available": True,
+        "title": title,
+        "subtitle": "",
+        "visibility": "user",
+        "owner_user_id": user.get("id") or "",
+        "team_id": "",
+    }
+
+
 def _hydrate_artifact(item_id: str, agent_id: str, user, team_ids, is_admin) -> dict:
     """item_id = artifact id. Latest version's created_at drives updated_at."""
-    from server_lib.db import ChatDB, _db_conn
+    from server_lib.db import _db_conn
     art = ChatDB.get_artifact(item_id)
     if not art:
         return {"available": False, "title": "(deleted artifact)"}
@@ -211,6 +243,7 @@ _HYDRATORS = {
     "workflow": _hydrate_workflow,
     "schedule": _hydrate_schedule,
     "artifact": _hydrate_artifact,
+    "translation": _hydrate_translation,
 }
 
 

@@ -544,7 +544,7 @@ async function loadChatsList() {
         const data = await API.getSessionsForAgent(aid, state.chatsFilter === 'archived' ? 'archived' : undefined);
         const sessions = data.sessions || [];
         for (const s of sessions) {
-          if ((s.message_count || 0) > 0) allSessions.push({...s, agentId: aid, agentDisplay: agent.display_name || aid});
+          if ((s.message_count || 0) > 0 && !(s.project || s.project_id)) allSessions.push({...s, agentId: aid, agentDisplay: agent.display_name || aid});
         }
         state.agentSessions[aid] = { sessions, loaded: true };
       } catch(e) {}
@@ -642,7 +642,8 @@ function renderProjectsList() {
       : (p.status || 'active') === 'archived';
     if (!statusMatch) return false;
     if (query) {
-      return (p.name || '').toLowerCase().includes(query) ||
+      return (p.display_name || p.name || '').toLowerCase().includes(query) ||
+             (p.name || '').toLowerCase().includes(query) ||
              (p.description || '').toLowerCase().includes(query);
     }
     return true;
@@ -650,7 +651,7 @@ function renderProjectsList() {
 
   // Sort
   if (sortBy === 'name') {
-    filtered.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    filtered.sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
   } else if (sortBy === 'created') {
     filtered.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
   }
@@ -682,6 +683,7 @@ function renderProjectsList() {
     const artStyle = hasImage
       ? `style="background-image:url('${esc(imgUrl)}');background-size:cover;background-position:center"`
       : '';
+    const displayName = p.display_name || p.name;
     const titleAttr = p.description ? ` title="${esc(p.description)}"` : '';
     item.innerHTML = `
       <div class="${artClass}" ${artStyle}>
@@ -693,7 +695,7 @@ function renderProjectsList() {
         </button>
       </div>
       <div class="project-card-info">
-        <div class="project-card-title"${titleAttr}>${esc(p.name)}</div>
+        <div class="project-card-title"${titleAttr}>${esc(displayName)}</div>
         <div class="project-card-meta">
           <span class="project-card-type">Project</span>
           ${timeAgo ? `<span>· ${esc(timeAgo)}</span>` : ''}

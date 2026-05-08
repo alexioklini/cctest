@@ -1383,6 +1383,10 @@ class ChatDB:
             elif project is not None:
                 conditions.append("project = ?")
                 params.append(project)
+            else:
+                # Global archive — never touch project-linked sessions.
+                conditions.append("(project IS NULL OR project = '')")
+                conditions.append("(project_id IS NULL OR project_id = '')")
             where = " WHERE " + " AND ".join(conditions)
             conn.execute(f"UPDATE sessions SET status = 'archived'{where}", params)
             conn.commit()
@@ -1402,6 +1406,10 @@ class ChatDB:
             elif project is not None:
                 conditions.append("project = ?")
                 params.append(project)
+            else:
+                # Global unarchive — never touch project-linked sessions.
+                conditions.append("(project IS NULL OR project = '')")
+                conditions.append("(project_id IS NULL OR project_id = '')")
             where = " WHERE " + " AND ".join(conditions)
             conn.execute(f"UPDATE sessions SET status = 'active'{where}", params)
             conn.commit()
@@ -1424,6 +1432,10 @@ class ChatDB:
             elif project is not None:
                 conditions.append("project = ?")
                 params.append(project)
+            else:
+                # Global delete — never touch project-linked sessions.
+                conditions.append("(project IS NULL OR project = '')")
+                conditions.append("(project_id IS NULL OR project_id = '')")
             where = " WHERE " + " AND ".join(conditions) if conditions else ""
             rows = conn.execute(f"SELECT id FROM sessions{where}", params).fetchall()
             sids = [r[0] for r in rows]

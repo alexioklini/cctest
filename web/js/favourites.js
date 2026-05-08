@@ -13,6 +13,7 @@ const FAVOURITES_TYPE_DEFAULTS = {
   workflow:     { icon: '🔀', color: '#10b981', label: 'Workflow' },
   schedule:     { icon: '⏰', color: '#f59e0b', label: 'Schedule' },
   artifact:     { icon: '📄', color: '#8b5cf6', label: 'Artifact' },
+  translation:  { icon: '🌐', color: '#0ea5e9', label: 'Translation' },
 };
 
 /* Sidebar-style line-art glyphs used as the *default* card icon when the user
@@ -26,6 +27,7 @@ const FAVOURITES_TYPE_GLYPH_SVG = {
   workflow:     '<polyline points="4 7 8 11 4 15"/><polyline points="20 7 16 11 20 15"/><line x1="9" y1="18" x2="15" y2="6"/>',
   schedule:     '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
   artifact:     '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>',
+  translation:  '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>',
 };
 
 function favouriteTypeGlyphSvg(itemType, sizePx) {
@@ -553,6 +555,11 @@ function openFavouriteRow(row) {
       }
       // Fallback for older rows without session metadata.
       if (typeof openArtifactPanel === 'function') return openArtifactPanel(id);
+    } else if (t === 'translation') {
+      navigateTo('translation');
+      const tab = id;
+      setTimeout(() => { try { trSwitchTab(tab); } catch(_){} }, 100);
+      return;
     }
   } catch (e) {
     console.warn('[favourites] open failed', e);

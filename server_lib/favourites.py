@@ -24,6 +24,7 @@ ITEM_TYPES = (
     "workflow",
     "schedule",
     "artifact",
+    "translation",
 )
 
 SCOPES = ("user", "team", "general")

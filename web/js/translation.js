@@ -116,6 +116,7 @@ function trSwitchTab(tab) {
   if (modeGroup) modeGroup.style.display = (tab === 'audio') ? '' : 'none';
   const liveModeGroup = document.getElementById('tr-toolbar-live-mode-group');
   if (liveModeGroup) liveModeGroup.style.display = (tab === 'live') ? '' : 'none';
+  if (typeof _updateTranslationHeaderStar === 'function') _updateTranslationHeaderStar(tab);
 }
 
 /* ─── Source / target language pills ──────────────────────── */
