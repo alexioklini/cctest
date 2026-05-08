@@ -7,7 +7,7 @@
 #   _scheduler                 — Scheduler singleton
 #   _mcp_manager               — MCPManager singleton
 #   MCPManager                 — class from engine/mcp.py
-#   AGENTS_DIR                 — from engine/constants.py
+#   AGENTS_DIR                 — from engine/agents.py
 #   _run_delegate_with_fallback, _resolve_model_with_fallback — from claude_cli.py
 #   _get_token_config          — from claude_cli.py
 #   send_message               — from claude_cli.py

@@ -2,27 +2,27 @@
 
 Non-obvious invariants for this package. Root CLAUDE.md has the full architecture picture.
 
-## Module Map
+**Runtime source of truth — IMPORTANT.** `brain.py` is the live monolith — everything that handlers/server.py reach via `import brain as engine` runs from `brain.py`'s namespace. The agentic loop, system-prompt builder, tool dispatch, provider routing, and all middleware live in `brain.py`. The `engine/` subtree is a **partial extraction** — only the modules below are actually imported at runtime.
 
-| File | Owns |
-|------|------|
-| `loop.py` | Agentic loop, tool dispatch, `send_message*`, all middleware |
-| `provider.py` | Provider resolution, concurrency queue, warmup, warm-session pool |
-| `models.py` | Model config, `init_models_config`, `_match_known_model`, thinking-format detection |
-| `agents.py` | Agent config, tool-group loading, skills/plugin management |
-| `scheduler.py` | `Scheduler` class, cron firing, per-task watchdog |
-| `tasks.py` | `TaskRunner`, `WorkflowEngine`, delegation tools (`_run_delegate`) |
-| `mcp.py` | MCP stdio/SSE client + `MCPManager` |
-| `context.py` | `ContextManager` (SQLite DAG), token helpers, cancellation primitives |
-| `execution.py` | Worker-subagent routing (`run_worker_subagent`, `route_tool_execution`) |
-| `constants.py` | `TOOL_DEFINITIONS`, `MODEL_PROFILES`, `_CONCURRENT_SAFE_TOOLS`, version |
-| `memory/` | MemPalace direct integration (no MCP), daemons, chat-sync |
-| `analytics/` | Cost tracking, PII scanner, quota manager, audit log, tracing |
-| `tools/` | Tool implementations: files, git, web, email, code graph |
-| `kg_extract.py` | LLM-driven triple extraction post-pass over project input folders |
-| `doc_convert.py` | binary → `.md` companion conversion (idempotent, `(mtime, size)` frontmatter) |
+**Live engine/ modules (imported externally):**
 
-## Agentic Loop (loop.py)
+| File | Owns | Importers |
+|------|------|-----------|
+| `tools/*.py` | Tool implementations (files, web, git, email, code_graph, image_gen) | `brain.py` TOOL_DISPATCH |
+| `kg_extract.py` | LLM-driven triple extraction over project input folders | `handlers/admin.py`, `handlers/projects.py`, `server.py` |
+| `doc_convert.py` | binary → `.md` companion conversion | `engine/tools/files.py`, `server.py` |
+| `sync_log.py` | Sync run log table + helpers | `handlers/projects.py`, `server.py` |
+| `execution.py` | Worker-subagent routing | tests only |
+| `memory/` | MemPalace direct integration, daemons, chat-sync | `engine/tools/`, `brain.py` |
+| `analytics/` | Cost tracking, PII scanner, quota, audit, tracing | `engine/doc_convert.py`, `brain.py` |
+
+**Internal-only engine/ modules** (referenced by other engine/ files but not by anything outside): `agents.py`, `cli.py`, `context.py`, `mcp.py`, `models.py`, `provider.py`, `scheduler.py`, `tasks.py`. These were extracted from brain.py but never wired up — their counterparts in `brain.py` are what actually runs. Don't trust their contents as authoritative; treat them as historical fragments. Future work: either wire them in or delete them.
+
+**Deleted in 8.29.0**: `loop.py` (3819 LOC) and `constants.py` (878 LOC) were entirely dead code — duplicate copies of brain.py's agentic loop and tool registry that nothing imported. The image_gen incident (8.27.0) revealed the trap when a new tool was added to engine/constants.py only and silently failed.
+
+The invariants below describe brain.py's runtime behavior — they used to live in engine/loop.py but the rules apply to whichever copy is actually used.
+
+## Agentic Loop (brain.py)
 
 - Entry: `send_message_with_fallback` → `send_message` → `_handle_openai_response`
 - Middleware between rounds: `_middleware_cancel_check`, `_tool_result_budget`, `_microcompact`, `_compress_old`, `_compaction`, `_pyexec_hint`
@@ -34,7 +34,7 @@ Non-obvious invariants for this package. Root CLAUDE.md has the full architectur
 
 **Tool-call dedup**: session-scoped (1h TTL, 100 entries). 1 dup = error, 2 dups = `TaskCancelled`. `reset_tool_dedup()` runs at turn start. Exempt: `memory_recall`, `memory_shared`, `delegate_task`, `task_status`, `schedule_list`, `schedule_history`, `read_document`, `read_file`. Worker threads must inherit `current_session_id`, `current_agent`, `mcp_manager`, `current_user_id` via `_execute_tool_in_thread`.
 
-**Parallel tool calls**: `_execute_tools_batch()` partitions into batches — consecutive concurrent-safe tools run in `ThreadPoolExecutor`, unsafe sequentially. `_CONCURRENT_SAFE_TOOLS` is in `constants.py`.
+**Parallel tool calls**: `_execute_tools_batch()` partitions into batches — consecutive concurrent-safe tools run in `ThreadPoolExecutor`, unsafe sequentially. `_CONCURRENT_SAFE_TOOLS` lives in `brain.py`.
 
 **Three-layer hooks**: tool pre/post (external subprocess), `after_file_write` (centralized), LLM-level (built-in middleware). External hook: timeout 5s, fail-open on crash, exit 1=block, exit 2=skip chain. `allowed_tools` restriction in workflows IS enforced — don't let it regress.
 

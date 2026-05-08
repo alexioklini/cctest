@@ -482,8 +482,9 @@ def _log_ocr_cost(*, model: str, provider: str, pages: int, cost_usd: float) -> 
     if tracker is None:
         return
     # Thread-locals — set by chat workers, absent in the project-sync daemon.
+    # brain.py is the runtime source of truth for these (engine/loop.py was deleted in 8.29.0).
     try:
-        from engine.loop import _thread_local, _current_agent
+        from brain import _thread_local, _current_agent
     except ImportError:
         _thread_local = None
         _current_agent = None
