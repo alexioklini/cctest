@@ -1746,6 +1746,48 @@ function renderAssistantMessage(msg, idx) {
     refsHtml += '</div>';
   }
 
+  // Per-turn stats line (model · duration · speed · cost).
+  // metadata.cost is *cumulative* session cost as of this turn; per-turn cost
+  // is the delta against the previous assistant turn's cumulative snapshot.
+  // Mirrors session-inspector header (chat.js:777).
+  let turnStatsHtml = '';
+  const meta = msg.metadata;
+  if (meta && (meta.model || meta.duration || meta.tokens_out || msg._cost !== undefined)) {
+    const allMsgs = state.activeChat?.messages || [];
+    let prevCum = 0;
+    for (let pi = idx - 1; pi >= 0; pi--) {
+      if (allMsgs[pi]?.role === 'assistant' && allMsgs[pi]._cost !== undefined) {
+        prevCum = allMsgs[pi]._cost || 0;
+        break;
+      }
+    }
+    const cum = (typeof msg._cost === 'number') ? msg._cost : (meta.cost || 0);
+    const turnCost = Math.max(0, cum - prevCum);
+    const dur = meta.duration || 0;
+    const tokOut = meta.tokens_out || 0;
+    const speed = (dur > 0 && tokOut > 0) ? Math.round(tokOut / dur) : null;
+    const parts = [];
+    if (meta.model) parts.push(esc(meta.model));
+    if (dur > 0) parts.push(dur.toFixed(1) + 's');
+    if (speed) parts.push(speed + ' tok/s');
+    if (turnCost > 0) parts.push('$' + turnCost.toFixed(4));
+    // Thinking level (mirrors session-inspector badges, chat.js:756–758).
+    // metadata.thinking_level is set per turn; absence with no _thinking → 'none'.
+    const tLvl = meta.thinking_level || (msg._thinking || meta.thinking ? 'on' : '');
+    if (tLvl && tLvl !== 'none') parts.push('thinking: ' + esc(tLvl));
+    // Caveman modes (sys / chat). Names mirror inspector (chat.js:762).
+    const cavName = n => ({1: 'lite', 2: 'full', 3: 'ultra'})[n] || '';
+    const cavSys = parseInt(meta.caveman_system) || 0;
+    const cavChat = parseInt(meta.caveman_chat) || 0;
+    const cavParts = [];
+    if (cavSys) cavParts.push('sys ' + cavName(cavSys));
+    if (cavChat) cavParts.push('chat ' + cavName(cavChat));
+    if (cavParts.length) parts.push('caveman: ' + cavParts.join(' / '));
+    if (parts.length) {
+      turnStatsHtml = `<span class="msg-turn-stats" title="Model · duration · speed · turn cost · thinking · caveman">${parts.join(' · ')}</span>`;
+    }
+  }
+
   return `
     <div class="msg-turn msg-turn-assistant">
       ${thinkingHtml}
@@ -1753,6 +1795,7 @@ function renderAssistantMessage(msg, idx) {
       ${filesHtml}
       ${refsHtml}
       <div class="msg-actions-bar">
+        ${turnStatsHtml}
         <button class="msg-action-btn" onclick="copyMessage(${idx})" title="Copy">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
         </button>

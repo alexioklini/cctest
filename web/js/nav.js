@@ -859,6 +859,30 @@ function toggleSidebar() {
   localStorage.setItem('sidebar-collapsed', sb.classList.contains('collapsed') ? '1' : '0');
 }
 
+// Collapsable sidebar sections: Navigate / Favourites / Recent.
+// Each section's open/closed state is persisted under sb-section-<id>; default
+// is open. Open sections share remaining vertical space via flex: 1 1 0;
+// collapsed sections shrink to header height (.collapsed → flex: 0 0 auto).
+function _sidebarSectionEl(id) {
+  return document.getElementById('sb-section-' + id);
+}
+function toggleSidebarSection(id) {
+  const el = _sidebarSectionEl(id);
+  if (!el) return;
+  el.classList.toggle('collapsed');
+  localStorage.setItem('sb-section-' + id, el.classList.contains('collapsed') ? '0' : '1');
+}
+function restoreSidebarSections() {
+  for (const id of ['nav', 'favourites', 'recent']) {
+    const el = _sidebarSectionEl(id);
+    if (!el) continue;
+    const saved = localStorage.getItem('sb-section-' + id);
+    // Default: all sections open. Only collapse when explicitly saved as '0'.
+    if (saved === '0') el.classList.add('collapsed');
+    else el.classList.remove('collapsed');
+  }
+}
+
 function openMobileSidebar() {
   document.getElementById('sidebar').classList.add('mobile-open');
   document.getElementById('sidebar-backdrop').classList.add('active');

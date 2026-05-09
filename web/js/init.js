@@ -2663,6 +2663,7 @@ async function init() {
   if (localStorage.getItem('sidebar-collapsed') === '1') {
     document.getElementById('sidebar').classList.add('collapsed');
   }
+  restoreSidebarSections();
 
   // Init artifact panel resize
   initArtifactResize();

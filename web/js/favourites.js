@@ -488,8 +488,8 @@ function escapeHtml(s) {
 */
 async function renderRecentFavourites() {
   const container = document.getElementById('sb-recent-favourites');
-  const title     = document.getElementById('sb-favourites-title');
-  if (!container || !title) return;
+  const section   = document.getElementById('sb-section-favourites');
+  if (!container || !section) return;
 
   await FavouritesCache.load();
   const all = FavouritesCache.rows
@@ -498,11 +498,11 @@ async function renderRecentFavourites() {
     .slice(0, 10);
 
   if (!all.length) {
-    title.style.display = 'none';
+    section.style.display = 'none';
     container.innerHTML = '';
     return;
   }
-  title.style.display = '';
+  section.style.display = '';
   container.innerHTML = '';
   for (const row of all) {
     const div = document.createElement('div');

@@ -95,59 +95,77 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <div class="sb-agent-dropdown hidden" id="sb-agent-dropdown"></div>
     </div>
 
-    <nav class="sb-nav">
-      <div class="sb-nav-item" onclick="newChat()" data-view="welcome">
-        <span class="sb-icon"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>
-        <span class="sb-label">New Chat</span>
-      </div>
-      <div class="sb-nav-item" onclick="openSearchModal()" data-view="search">
-        <span class="sb-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
-        <span class="sb-label">Search</span>
-      </div>
-      <div class="sb-nav-item" onclick="navigateTo('chats')" data-view="chats">
-        <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></span>
-        <span class="sb-label">Chats</span>
-      </div>
-      <div class="sb-nav-item" onclick="navigateTo('projects')" data-view="projects">
-        <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg></span>
-        <span class="sb-label">Projects</span>
-      </div>
-      <div class="sb-nav-item" onclick="navigateTo('favourites')" data-view="favourites">
-        <span class="sb-icon"><svg viewBox="0 0 24 24"><polygon points="12 2 15 8.5 22 9.3 17 14 18.2 21 12 17.8 5.8 21 7 14 2 9.3 9 8.5 12 2"/></svg></span>
-        <span class="sb-label">Favourites</span>
-      </div>
-      <div class="sb-nav-item" onclick="navigateTo('artifacts')" data-view="artifacts">
-        <span class="sb-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
-        <span class="sb-label">Artifacts</span>
-      </div>
-      <div class="sb-nav-item" onclick="navigateTo('scheduled')" data-view="scheduled">
-        <span class="sb-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
-        <span class="sb-label">Scheduled</span>
-      </div>
-      <div class="sb-nav-item" onclick="navigateTo('workflows')" data-view="workflows">
-        <span class="sb-icon"><svg viewBox="0 0 24 24"><polyline points="4 7 8 11 4 15"/><polyline points="20 7 16 11 20 15"/><line x1="9" y1="18" x2="15" y2="6"/></svg></span>
-        <span class="sb-label">Workflows</span>
-      </div>
-      <div class="sb-nav-item" onclick="navigateTo('translation')" data-view="translation">
-        <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/></svg></span>
-        <span class="sb-label">Translation</span>
-      </div>
-      <div class="sb-nav-item" id="sb-nav-customize" onclick="openAgentSettings()" data-view="settings">
-        <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
-        <span class="sb-label">Customize</span>
-      </div>
-    </nav>
-
-    <hr class="sb-divider">
-
-    <div class="sb-section-title sb-favourites-title" id="sb-favourites-title" style="display:none">Favourites</div>
-    <div class="sb-sessions-list" id="sb-recent-favourites">
-      <!-- Populated dynamically -->
+    <!-- Three collapsable + independently scrollable sections.
+         Each header toggles its body open/closed; open bodies share remaining
+         space via flex; each body has its own vertical scroll. State persisted
+         to localStorage in js/sidebar-sections.js. -->
+    <div class="sb-section" id="sb-section-nav" data-section="nav">
+      <button class="sb-section-header" onclick="toggleSidebarSection('nav')" type="button">
+        <svg class="sb-section-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        <span class="sb-section-label">Navigate</span>
+      </button>
+      <nav class="sb-section-body sb-nav">
+        <div class="sb-nav-item" onclick="newChat()" data-view="welcome">
+          <span class="sb-icon"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>
+          <span class="sb-label">New Chat</span>
+        </div>
+        <div class="sb-nav-item" onclick="openSearchModal()" data-view="search">
+          <span class="sb-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+          <span class="sb-label">Search</span>
+        </div>
+        <div class="sb-nav-item" onclick="navigateTo('chats')" data-view="chats">
+          <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></span>
+          <span class="sb-label">Chats</span>
+        </div>
+        <div class="sb-nav-item" onclick="navigateTo('projects')" data-view="projects">
+          <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg></span>
+          <span class="sb-label">Projects</span>
+        </div>
+        <div class="sb-nav-item" onclick="navigateTo('favourites')" data-view="favourites">
+          <span class="sb-icon"><svg viewBox="0 0 24 24"><polygon points="12 2 15 8.5 22 9.3 17 14 18.2 21 12 17.8 5.8 21 7 14 2 9.3 9 8.5 12 2"/></svg></span>
+          <span class="sb-label">Favourites</span>
+        </div>
+        <div class="sb-nav-item" onclick="navigateTo('artifacts')" data-view="artifacts">
+          <span class="sb-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
+          <span class="sb-label">Artifacts</span>
+        </div>
+        <div class="sb-nav-item" onclick="navigateTo('scheduled')" data-view="scheduled">
+          <span class="sb-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
+          <span class="sb-label">Scheduled</span>
+        </div>
+        <div class="sb-nav-item" onclick="navigateTo('workflows')" data-view="workflows">
+          <span class="sb-icon"><svg viewBox="0 0 24 24"><polyline points="4 7 8 11 4 15"/><polyline points="20 7 16 11 20 15"/><line x1="9" y1="18" x2="15" y2="6"/></svg></span>
+          <span class="sb-label">Workflows</span>
+        </div>
+        <div class="sb-nav-item" onclick="navigateTo('translation')" data-view="translation">
+          <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/></svg></span>
+          <span class="sb-label">Translation</span>
+        </div>
+        <div class="sb-nav-item" id="sb-nav-customize" onclick="openAgentSettings()" data-view="settings">
+          <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+          <span class="sb-label">Customize</span>
+        </div>
+      </nav>
     </div>
 
-    <div class="sb-section-title">Recent</div>
-    <div class="sb-sessions-list" id="sb-recent-chats">
-      <!-- Populated dynamically -->
+    <div class="sb-section sb-favourites-section" id="sb-section-favourites" data-section="favourites" style="display:none">
+      <button class="sb-section-header" onclick="toggleSidebarSection('favourites')" type="button">
+        <svg class="sb-section-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        <span class="sb-section-label">Favourites</span>
+      </button>
+      <div class="sb-section-body sb-sessions-list" id="sb-recent-favourites">
+        <!-- Populated dynamically -->
+      </div>
+    </div>
+
+    <div class="sb-section" id="sb-section-recent" data-section="recent">
+      <button class="sb-section-header" onclick="toggleSidebarSection('recent')" type="button">
+        <svg class="sb-section-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        <span class="sb-section-label">Recent</span>
+      </button>
+      <div class="sb-section-body sb-sessions-list" id="sb-recent-chats">
+        <!-- Populated dynamically -->
+      </div>
     </div>
   </div>
 

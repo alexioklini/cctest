@@ -140,8 +140,12 @@ class SessionsHandlerMixin:
             except Exception:
                 pass
 
-        # Build interaction pairs: user message + assistant response
+        # Build interaction pairs: user message + assistant response.
+        # metadata.cost stored on each assistant message is the *cumulative* session
+        # cost as of that turn (snapshot of get_session_cost), so per-turn cost is
+        # the delta against the previous turn.
         interactions = []
+        prev_cum_cost = 0.0
         i = 0
         while i < len(msgs):
             m = msgs[i]
@@ -164,6 +168,8 @@ class SessionsHandlerMixin:
                     content_out = " ".join(str(b.get("text", "")) for b in content_out if isinstance(b, dict))
                 # Extract request payloads (what was actually sent to API)
                 payloads = meta.get("request_payloads", [])
+                cum_cost = float(meta.get("cost") or 0.0) if assistant_msg else prev_cum_cost
+                turn_cost = max(0.0, cum_cost - prev_cum_cost)
                 interactions.append({
                     "turn": len(interactions) + 1,
                     "user": {"content": content_in, "tokens_est": len(str(content_in)) // 4},
@@ -175,7 +181,7 @@ class SessionsHandlerMixin:
                         "tokens_total": meta.get("tokens", 0),
                         "duration": meta.get("duration", 0),
                         "model": meta.get("model", ""),
-                        "cost": meta.get("cost", 0),
+                        "cost": round(turn_cost, 4),
                         "tools": meta.get("tools", []),
                         "thinking": bool(meta.get("thinking")),
                         "thinking_level": meta.get("thinking_level") or ("none" if meta.get("thinking") is None else None),
@@ -186,15 +192,18 @@ class SessionsHandlerMixin:
                     } if assistant_msg else None,
                     "compacted": bool(m.get("compacted")),
                 })
+                if assistant_msg:
+                    prev_cum_cost = cum_cost
                 i = (j + 1) if assistant_msg else (i + 1)
             else:
                 i += 1
 
-        # Totals
+        # Totals — total session cost is the latest cumulative snapshot, not a sum
+        # of (already-cumulative) per-message values.
         total_in = sum((ix["assistant"] or {}).get("tokens_in", 0) for ix in interactions if ix.get("assistant"))
         total_out = sum((ix["assistant"] or {}).get("tokens_out", 0) for ix in interactions if ix.get("assistant"))
         total_duration = sum((ix["assistant"] or {}).get("duration", 0) for ix in interactions if ix.get("assistant"))
-        total_cost = sum((ix["assistant"] or {}).get("cost", 0) for ix in interactions if ix.get("assistant"))
+        total_cost = prev_cum_cost
 
         self._send_json({
             "session_id": sid,
