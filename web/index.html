@@ -398,11 +398,35 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <div class="project-detail-panel-resize-handle" id="project-detail-panel-resize-handle"></div>
       <div class="project-panel-section">
         <div class="project-panel-section-header">
+          <span class="project-panel-section-title">Project mode</span>
+        </div>
+        <div class="project-panel-section-body">
+          <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px;line-height:1.4">
+            <input type="checkbox" id="project-research-mode-checkbox"
+                   onchange="toggleProjectResearchMode(this.checked)"
+                   style="margin-top:2px;flex-shrink:0">
+            <span>
+              <strong>Research / Q&amp;A project</strong>
+              <div style="color:var(--text-400);margin-top:3px;font-size:12px">
+                Enables strict retrieval discipline (forced 3-step
+                <code>mempalace_query</code> → <code>read_document</code>
+                flow), refusal on missing sources, and per-claim verbatim
+                citation enforcement (server-side validator + automatic
+                re-round). Turn this off for projects that USE indexed
+                content as input for tasks (writing code, drafting
+                documents, building tools).
+              </div>
+            </span>
+          </label>
+        </div>
+      </div>
+      <div class="project-panel-section">
+        <div class="project-panel-section-header">
           <span class="project-panel-section-title">Instructions</span>
           <span class="project-panel-section-action" onclick="editProjectInstructions()">Edit</span>
         </div>
         <div class="project-panel-section-body" id="project-panel-instructions">
-          <span class="project-panel-placeholder">Add instructions to customize Brain Agent's responses</span>
+          <span class="project-panel-placeholder">Add instructions to customize Brain Agent's responses (optional, additive)</span>
         </div>
       </div>
       <div class="project-panel-section">
@@ -1094,6 +1118,9 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         </button>
         <button class="composer-btn" data-id="btn-thinking" data-composer-toggle="btn-thinking" onclick="cycleThinkingLevel()" title="Thinking level">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/><line x1="9" y1="21" x2="15" y2="21"/></svg>
+        </button>
+        <button class="composer-btn" data-id="btn-research-mode" data-composer-toggle="btn-research-mode" onclick="toggleResearchModeOverride()" title="Research mode (project default)" style="display:none">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="13" y2="11"/></svg>
         </button>
         <button class="composer-btn" data-id="btn-refine" data-composer-toggle="btn-refine" onclick="refineInput()" title="Refine your message before sending">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>

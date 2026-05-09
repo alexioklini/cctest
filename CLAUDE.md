@@ -246,16 +246,33 @@ Tree-sitter AST parsing, SQLite in `code-graph.db`. 14 langs. Qualified names `{
 - Archive: `status: "archived"` (files preserved). Delete: soft to `.trash/`.
 - **Notes**: AI editing uses `write_file`/`edit_file` (not tag-based). Note-AI sessions use `status: note_chat`, hidden from project chat list.
 
-### Project Instructions (response disciplines, default)
+### Project Mode: `research_mode` (v8.31.0)
 
-`DEFAULT_PROJECT_INSTRUCTIONS` (brain.py) is the FALLBACK when `project.json.instructions` is empty. Override REPLACES default rather than appending.
+`project.json.research_mode` (bool) gates the strict retrieval/refusal regime independently of the `instructions` field. Per-session `sessions.research_mode_override` (sticky NULL/0/1) layers on top — set from the composer button or session settings; null = use project default.
 
-Three disciplines (designed against German bank-policy corpus failure modes; model-agnostic):
-- **REFUSAL**: when `mempalace_query` returns 0 relevant + follow-up `read_document` confirms absence, refuse with canonical sentence — never general-knowledge fallback. Cap rephrasings at 2-3.
-- **PRECISION**: bans plausible filler. Words like *regelmäßig*, *häufig* gated on immediate `> "..."` quote. Without source value: write `nicht spezifiziert` — never plausible defaults. ISO-27001-typical phrasing from training data is NOT a source.
-- **CITATION**: every factual claim paired with `[Quelle: <basename> — "<wörtliches Zitat 10-25 Wörter>"]`. `§N` paragraph markers FORBIDDEN — `.md` companions don't preserve original numbering. Cite `.brain-extracted/<name>.<ext>.md` as the original binary's name.
+Effective mode = `session.research_mode_override if not None else project.research_mode`. Resolution lives in `_build_system_prompt` (sets `_thread_local.research_mode_override` upstream so `handlers/chat.py` reads the same value when gating the citation validator + re-round).
 
-Brain mechanics (3-step retrieval flow, `read_path` vs `read_path_original`, binary→.md companion rule, KG hint block) STAY in system prompt — infrastructure facts, not editable.
+**Research mode ON** (Q&A / policy-reproduction / compliance projects):
+- Strict `PROJECT MEMORY` block — mandatory 3-step flow (`mempalace_query` → `read_document(path=read_path)` → answer); REFUSE-on-error.
+- KG decision rule (`mempalace_kg_search` first if research_mode AND `kg.enabled`).
+- `DEFAULT_PROJECT_INSTRUCTIONS` discipline block injected DIRECTLY by Brain (REFUSAL / PRECISION / CITATION / QUERY).
+- Server-side citation validator + synchronous re-round on threshold violation (>30% uncited or ≥2 unverified quotes), gated by `mempalace.citation_reround.enabled`.
+
+**Research mode OFF** (codegen / drafting / build-with-context projects):
+- Soft `PROJECT MEMORY` block — "memory is available, use `mempalace_query` when relevant", no forced flow, no refuse-on-error.
+- KG hint block skipped (model can still discover the tools from definitions).
+- `DEFAULT_PROJECT_INSTRUCTIONS` NOT injected.
+- Citation validator + re-round skipped entirely.
+
+**Owner `instructions` field is purely additive** in both modes — appended verbatim after the mode-specific blocks. Never used as a fallback for the disciplines (that was the v8.23 behavior; replaced because it conflated owner intent with Brain behavior). Editor lost the "Load default" button + helper text.
+
+**Migration for legacy projects**: `_project_research_mode(cfg)` infers default when `research_mode` field is absent — empty `instructions` → True (preserves v8.23 behavior); non-empty `instructions` → False (owner already overrode the disciplines). Owners flip the per-project default in the project settings panel.
+
+**Composer button** (`btn-research-mode`, hidden in non-project chats): two-state cycle — project default ↔ override-opposite-of-default. Clicking installs `not project_default` as `session.research_mode_override`; clicking again clears (back to default). Sticky across turns of the same session, mirrors `save_to_memory` semantics.
+
+Brain mechanics (3-step flow text body when ON, BINARY DOCUMENTS block, `read_path` vs `read_path_original`) STAY in system prompt regardless of mode — infrastructure facts.
+
+`DEFAULT_PROJECT_INSTRUCTIONS` constant kept as the source of the discipline text; injected only when research_mode is on. Endpoint `/v1/projects/default-instructions` removed.
 
 **Anti-room-name-guessing**: `mempalace_query` `room` parameter description enumerates real rooms (`general`/`artifacts`/`chat`/`chat_summary`/`chat_attachment`/`reference`) and forbids invention. Earlier permissive list got used as valid vocab by models.
 

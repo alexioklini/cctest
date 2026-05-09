@@ -108,6 +108,12 @@ async function openSession(sessionId, agentId) {
     const memVal = parseInt(data.save_to_memory) || 0;
     chat.saveToMemory = memVal === 1;
     chat.memoryMode = memVal === 1 ? 'on' : memVal === 2 ? 'auto' : 'off';
+    // Per-session research-mode override: null = use project default,
+    // true = force on, false = force off. Composer button reads this.
+    chat.researchModeOverride = (data.research_mode_override === null
+                                  || data.research_mode_override === undefined)
+      ? null
+      : !!data.research_mode_override;
     // Sync state.currentProject to the loaded chat's project. Without this,
     // sticky values from a previous project-detail visit leak into chats
     // opened from the chats list (and vice versa) — every outgoing turn

@@ -513,6 +513,13 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN caveman_mode INTEGER DEFAULT 0")
             except sqlite3.OperationalError:
                 pass
+            # Per-session research-mode override: NULL=use project default,
+            # 0=force off, 1=force on. Sticky across turns of the same session
+            # (mirrors save_to_memory). Toggled from composer or settings.
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN research_mode_override INTEGER DEFAULT NULL")
+            except sqlite3.OperationalError:
+                pass
             # Add team_id + visibility for session team-scoping
             try:
                 conn.execute("ALTER TABLE sessions ADD COLUMN team_id TEXT DEFAULT ''")
@@ -790,6 +797,24 @@ class ChatDB:
         with _db_conn() as conn:
             conn.execute("UPDATE sessions SET caveman_mode = ? WHERE id = ?",
                         (int(value), session_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_session_research_mode_override(session_id, value):
+        """Per-session research-mode override.
+
+        value: None  -> clear override (use project default)
+               True  -> force research mode ON for this session
+               False -> force research mode OFF for this session
+        """
+        if value is None:
+            stored = None
+        else:
+            stored = 1 if value else 0
+        with _db_conn() as conn:
+            conn.execute("UPDATE sessions SET research_mode_override = ? WHERE id = ?",
+                        (stored, session_id))
             conn.commit()
 
     @staticmethod

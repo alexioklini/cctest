@@ -926,6 +926,12 @@ async function loadProjectDetail(agentId, projectName) {
       descEl.innerHTML = '<span style="color:var(--text-400);font-style:italic">No description</span>';
     }
 
+    // Render the Research / Q&A project checkbox state.
+    const researchCb = document.getElementById('project-research-mode-checkbox');
+    if (researchCb) {
+      researchCb.checked = !!project.research_mode;
+    }
+
     // Render instructions panel — markdown rendered, capped height with
     // vertical scroll so long default disciplines don't push attachments
     // + input folders below the fold.
@@ -934,7 +940,7 @@ async function loadProjectDetail(agentId, projectName) {
       instrEl.innerHTML = `<div class="project-panel-instructions-rendered">${renderMarkdown(project.instructions)}</div>`;
       instrEl.classList.remove('project-panel-placeholder');
     } else {
-      instrEl.innerHTML = '<span class="project-panel-placeholder">Add instructions to customize Brain Agent\'s responses</span>';
+      instrEl.innerHTML = '<span class="project-panel-placeholder">Add instructions to customize Brain Agent\'s responses (optional, additive)</span>';
     }
 
     // Personalise the composer placeholder with the project name. Falls back
@@ -1749,13 +1755,13 @@ function editProjectInstructions() {
     <div class="modal-body" style="padding:16px">
       <p style="font-size:13px;color:var(--text-400);margin-bottom:12px">
         Add instructions to customize how Brain Agent responds within this project.
-        These instructions will be included in every conversation. Markdown is
-        supported — use the Preview tab to see how it will render.
+        These instructions are appended to every conversation as additive
+        owner guidance. Markdown is supported — use the Preview tab to see
+        how it will render.
         <br><br>
-        Leave this empty to use the Brain default — strict retrieval discipline
-        with verbatim citations, refusal on missing sources, and no plausible-sounding
-        filler. Click <em>Load default</em> below to start from the default and
-        edit it, or write your own from scratch.
+        Leave empty for no extra instructions. Strict retrieval / citation
+        discipline is a separate setting (<em>Research / Q&A project</em> in
+        project settings) and is not controlled here.
       </p>
       <div class="instr-tabs" role="tablist">
         <button class="instr-tab active" id="instr-tab-edit" role="tab" onclick="switchInstrTab('edit')">Edit</button>
@@ -1766,12 +1772,9 @@ function editProjectInstructions() {
       >${esc(project?.instructions || '')}</textarea>
       <div class="instr-preview-pane" id="project-instructions-preview" style="display:none"></div>
     </div>
-    <div style="display:flex;justify-content:space-between;gap:8px;padding:12px 16px;border-top:1px solid var(--border-100)">
-      <button class="btn-secondary" onclick="loadProjectInstructionsDefault()" title="Replace the textarea content with Brain's default retrieval-discipline instructions">Load default</button>
-      <div style="display:flex;gap:8px">
-        <button class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-        <button class="btn-primary" onclick="saveProjectInstructions()">Save</button>
-      </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--border-100)">
+      <button class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      <button class="btn-primary" onclick="saveProjectInstructions()">Save</button>
     </div>
   `;
   overlay.appendChild(content);
@@ -1805,31 +1808,26 @@ function switchInstrTab(mode) {
   }
 }
 
-async function loadProjectInstructionsDefault() {
-  const textarea = document.getElementById('project-instructions-textarea');
-  if (!textarea) return;
-  // Confirm overwrite when the textarea already has user content.
-  if (textarea.value.trim()) {
-    if (!confirm('Replace the current instructions with the Brain default? Your edits will be lost.')) return;
-  }
+async function toggleProjectResearchMode(enabled) {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
   try {
-    const r = await fetch(`${BASE_URL}/v1/projects/default-instructions`, {
-      headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth-token') || '') }
-    });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const data = await r.json();
-    textarea.value = data.instructions || '';
-    // If the user is currently on the Preview tab, refresh the rendered
-    // pane so they immediately see the loaded default. Otherwise focus
-    // the textarea.
-    const previewTab = document.getElementById('instr-tab-preview');
-    if (previewTab && previewTab.classList.contains('active')) {
-      switchInstrTab('preview');
-    } else {
-      textarea.focus();
+    await API.updateProject(agentId, projectName, { research_mode: !!enabled });
+    if (state._projectDetail) state._projectDetail.research_mode = !!enabled;
+    // Invalidate the composer button's cached project default so the
+    // next refresh in any open chat reads fresh state.
+    if (state._projectResearchModeCache) {
+      state._projectResearchModeCache[agentId + '::' + projectName] = !!enabled;
     }
+    if (typeof refreshResearchModeButton === 'function') refreshResearchModeButton();
+    showToast(enabled ? 'Research mode on for this project'
+                       : 'Research mode off for this project');
   } catch (e) {
-    showToast('Could not load default instructions', true);
+    showToast('Could not update project mode', true);
+    // Revert checkbox to the last known state on failure.
+    const cb = document.getElementById('project-research-mode-checkbox');
+    if (cb) cb.checked = !enabled;
   }
 }
 
@@ -1850,7 +1848,7 @@ async function saveProjectInstructions() {
       instrEl.innerHTML = `<div class="project-panel-instructions-rendered">${renderMarkdown(instructions)}</div>`;
       instrEl.classList.remove('project-panel-placeholder');
     } else {
-      instrEl.innerHTML = '<span class="project-panel-placeholder">Add instructions to customize Brain Agent\'s responses</span>';
+      instrEl.innerHTML = '<span class="project-panel-placeholder">Add instructions to customize Brain Agent\'s responses (optional, additive)</span>';
     }
     if (state._projectDetail) state._projectDetail.instructions = instructions;
   } catch(e) {

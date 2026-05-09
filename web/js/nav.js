@@ -77,6 +77,7 @@ function navigateTo(view, opts) {
       try {
         if (state.activeChat?.model) updateModelSelectorDisplay(state.activeChat.model);
         refreshThinkingButton();
+  if (typeof refreshResearchModeButton === 'function') refreshResearchModeButton();
         updateSendButton();
         renderFilePreviews();
         schedulePIIBadgeUpdate();
@@ -268,6 +269,7 @@ function updateModelSelectorDisplay(modelId) {
     }
   }
   refreshThinkingButton();
+  if (typeof refreshResearchModeButton === 'function') refreshResearchModeButton();
 }
 
 // Model locality helper — prefers the server-derived is_local flag exposed via
@@ -643,6 +645,7 @@ function toggleModelDropdown(event) {
         // refresh the icon (color/disabled state).
         try { _ensureValidThinkingLevel(); } catch(_) {}
         refreshThinkingButton();
+  if (typeof refreshResearchModeButton === 'function') refreshResearchModeButton();
         if (mid !== oldModel) {
           stopWarmupPoll(chat);
           updateStatusBar();

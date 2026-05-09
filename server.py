@@ -261,6 +261,11 @@ class Session:
         self._last_summary_at = 0  # Token count at last continuous summary
         self.save_to_memory: bool = False  # User toggle: always file to MemPalace
         self.caveman_mode: int = 0  # 0=off, 1=lite, 2=full, 3=ultra
+        # Per-session research-mode override (sticky across turns).
+        # None = use the project's `research_mode` default;
+        # True/False = force the override for this chat. Set from the composer
+        # button or session settings; persists in chats.db sessions table.
+        self.research_mode_override: bool | None = None
 
         # Warmup state
         self._warmup_done = threading.Event()
@@ -325,6 +330,9 @@ class Session:
                 self.user_id = info.get("user_id", "") or ""
                 self.save_to_memory = bool(info.get("save_to_memory", 0))
                 self.caveman_mode = int(info.get("caveman_mode", 0) or 0)
+                _rmo = info.get("research_mode_override", None)
+                self.research_mode_override = (None if _rmo is None
+                                                else bool(_rmo))
                 self.workflow_run_id = info.get("workflow_run_id", "") or ""
 
 
@@ -1394,16 +1402,6 @@ class BrainAgentHandler(
             self._handle_mcp_list()
         elif path == "/v1/mcp/registry":
             self._handle_mcp_registry()
-        elif path == "/v1/projects/default-instructions":
-            try:
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "instructions": engine.DEFAULT_PROJECT_INSTRUCTIONS,
-                }).encode("utf-8"))
-            except Exception as _e:
-                self.send_error(500, str(_e))
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/notes" in path:
             self._handle_notes(path, "GET")
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/docs" in path:

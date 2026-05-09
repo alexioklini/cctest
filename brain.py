@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.30.0"
-VERSION_DATE = "2026-05-08"
+VERSION = "8.31.0"
+VERSION_DATE = "2026-05-09"
 CHANGELOG = [
+    ("8.31.0", "2026-05-09", "Project research_mode flag — split projects into research/Q&A vs general-purpose. Until now every project chat got the strict v8.22.0 retrieval/citation regime: forced 3-step `mempalace_query`→`read_document`→answer flow, REFUSE-on-error, REFUSAL/PRECISION/CITATION discipline injection (via `DEFAULT_PROJECT_INSTRUCTIONS` fallback when `instructions` was empty), and the server-side citation validator + synchronous re-round on threshold violation. That regime is correct for policy/Q&A projects but actively wrong for projects whose chats USE indexed content as INPUT for tasks — codegen against a spec, drafting documents from sources, building tools from API references. Those chats need the documents available via `mempalace_query`, but not the per-claim verbatim-citation enforcement, refusal-on-empty, and re-round penalty cycles. (1) **`project.json.research_mode` (bool)** — per-project flag toggled by the owner in the project settings panel (new 'Research / Q&A project' checkbox above Instructions). When ON: full strict regime as today. When OFF: a soft `PROJECT MEMORY` block ('memory is available, use mempalace_query when relevant') with no forced flow, KG hint block skipped, `DEFAULT_PROJECT_INSTRUCTIONS` NOT injected, citation validator + re-round skipped entirely in `handlers/chat.py`. Owner `instructions` field is now purely additive in both modes — appended verbatim after the mode-specific blocks, never used as a fallback for the disciplines. Removes the v8.23 conflation of owner intent with Brain behavior. (2) **`sessions.research_mode_override` (NULL/0/1)** — per-session sticky override. Composer button (`btn-research-mode`, hidden in non-project chats) cycles two states: project default ↔ override-opposite-of-default. Click installs `not project_default` as the override; click again clears (back to default). Persists across turns of the same session, mirrors `save_to_memory` semantics. New `/v1/sessions/manage` action `research_mode_override` accepts `{value: null|true|false}`. (3) **Resolution flow**: `_build_system_prompt` reads `_thread_local.research_mode_override` (set in `handlers/chat.py` from `session.research_mode_override`); falls back to `proj_cfg.research_mode`; falls back to legacy migration helper `_project_research_mode(cfg)` which returns `not bool(instructions.strip())` — preserves v8.23 behavior for projects predating the flag. (4) **Strict block content unchanged** for research_mode=ON projects — same 3-step flow, same KG decision rule, same `DEFAULT_PROJECT_INSTRUCTIONS` discipline body. The disciplines are now injected DIRECTLY by Brain (under a 'RESEARCH MODE DISCIPLINES' header) rather than via the `instructions` fallback. (5) **`/v1/projects/default-instructions` endpoint removed** + 'Load default' button + helper text. The disciplines aren't a template owners edit — they're Brain behavior the flag turns on/off. Editor modal now reads: 'Strict retrieval / citation discipline is a separate setting (Research / Q&A project in project settings)'. (6) **UI plumbing**: `loadProjectDetail` reads `project.research_mode` into a checkbox above Instructions. `toggleProjectResearchMode` PUTs `{research_mode: bool}` to the project, invalidates the composer button's per-project cache, refreshes the button. Composer button in `init.js`: lazy-fetches project default via `_projectResearchModeDefault` (cached per agent::name), renders state with two indicators — color (blue when effective on) and bottom-border (when override is active vs default). Tooltip names the override state explicitly. `refreshResearchModeButton` called from every existing thinking-button refresh site (chat open, model switch, navigation). (7) **CLAUDE.md updated** — replaced the 'Project Instructions (response disciplines, default)' section with 'Project Mode: research_mode' covering the on/off split, instructions field semantics, migration default, and composer button mechanics. Brain mechanics (3-step body, BINARY DOCUMENTS, `read_path` vs `read_path_original`) stay infrastructure-level and weren't moved. Net effect: a project owner with a 'use these specs to build a tool' project flips one checkbox and stops getting scolded for not citing every code comment, without touching the `instructions` field at all."),
     ("8.30.0", "2026-05-08", "Phase-2 wire-or-delete sweep of dead engine/ extraction fragments. Continuation of v8.28.0 (tool-registry dedup) and v8.29.0 (loop.py + constants.py). The backlog memory flagged 8 internal-only modules — `agents.py`, `cli.py`, `context.py`, `mcp.py`, `models.py`, `provider.py`, `scheduler.py`, `tasks.py` (~7573 LOC) — that nothing outside engine/ imports; verification grep confirmed zero external importers. Audit also caught the entire `engine/analytics/` package (`__init__.py`, `audit.py`, `costs.py`, `pii.py`, `quotas.py`, `tracing.py`, ~2345 LOC) in the same dead-extraction state — its only consumer was a single lazy import inside `engine/doc_convert.py:_log_ocr_cost`, and that path was already silently broken (read `engine.analytics.costs._cost_tracker` which is always `None` because nothing in the runtime ever instantiates that module's tracker). All 12 modules + the analytics directory deleted in one commit (~9918 LOC total). brain.py is the verified source of truth for every duplicate symbol: `CostTracker`, `AuditLog`, `TraceManager`, `PIIScanner`, `QuotaManager`, `MCPManager`, `LocalProviderQueue`, `Scheduler`, `AgentConfig`, `ContextManager`, `init_models_config`, `MODEL_PROFILES`, `KNOWN_MODELS`, `_run_delegate`, `TaskRunner`, `resolve_provider_for_model`, `_pii_scan_text`, `list_agents`, `get_agent_summaries`, `scan_claude_code_skills`, `build_agent_registry`, etc. **Latent bug fix**: `engine/doc_convert.py:_log_ocr_cost` rewired from `engine.analytics.costs._cost_tracker` (always `None`, so OCR cost rows were silently dropped) to brain's live `_cost_tracker`. The `log_ocr` method (which only existed on the dead analytics CostTracker) ported to brain's `CostTracker` class — same `cost_log` table schema, pages stashed in `tokens_in`, explicit USD bypasses `_compute_cost`. After this commit OCR cost tracking actually writes rows. engine/CLAUDE.md updated: dropped the analytics row from the live-modules table, dropped the internal-only-modules paragraph, dropped the (already-stale, deleted in 8.24.15) `execution.py` row, retitled section headers that pointed to deleted files (`Provider & Warmup (provider.py)` → `(brain.py)`, etc.). Final engine/ surface: `tools/`, `memory/`, `kg_extract.py`, `doc_convert.py`, `sync_log.py`. Same image_gen-style trap that motivated v8.28.0 + v8.29.0 is now eliminated for the rest of the package — there are no more silent duplicate-extraction fragments waiting to fire when someone adds a new feature in the wrong place."),
     ("8.29.0", "2026-05-08", "Delete dead engine/loop.py + engine/constants.py (~4700 LOC). Continuation of v8.28.0 dedup audit. After removing the tool-registry duplicate from engine/constants.py, a wider sweep showed nothing outside engine/ ever imported `engine.loop` or `engine.constants` (verified by `grep -rn 'from engine.loop\\|from engine.constants'` returning zero hits). The single live cross-reference — `from engine.loop import _thread_local, _current_agent` inside engine/doc_convert.py's OCR cost-tracking helper — was already broken: `_thread_local` was never defined at module level in engine/loop.py, so the import always raised ImportError and fell into the silent fallback that defaulted `agent_id='main'` for every OCR cost row. Fixed by rewiring that import to `from brain import _thread_local, _current_agent` (the actual runtime source of truth). engine/loop.py was a verbatim extraction of brain.py's agentic loop that was never wired up — handlers/server.py call `engine.send_message_with_fallback` where `engine` is `brain` (`import brain as engine` in every handler module), so brain.py's copy is what runs. Same for engine/constants.py — its `MODEL_PROFILES`, `_CONCURRENT_SAFE_TOOLS`, `_ARTIFACT_TYPE_MAP`, `_MIME_TO_EXT`, `READONLY_TOOLS`, `PLAN_MODE_PROMPT`, `DEFAULT_PROJECT_INSTRUCTIONS`, `CAVEMAN_*` constants, etc. were all duplicates of brain.py's own copies. Both files deleted entirely. engine/CLAUDE.md updated to reflect actual runtime topology: brain.py is the runtime monolith; live engine/ submodules are tools/, kg_extract.py, doc_convert.py, sync_log.py, execution.py, memory/, analytics/. Internal-only engine/ modules (agents, cli, context, mcp, models, provider, scheduler, tasks) flagged as historical fragments that nothing outside engine/ imports — future work is either wire them in or delete them. Stale comment in engine/context.py header (claimed AGENTS_DIR comes from engine/constants.py — actually from engine/agents.py) corrected. Net: -4697 LOC, single source of truth for the agentic loop + tool registry, OCR cost-tracking now writes the real agent_id."),
     ("8.28.0", "2026-05-08", "Eliminate TOOL_DEFINITIONS/TOOL_GROUPS/TOKEN_CONFIG_DEFAULTS duplication. brain.py is the single source of truth for all tool registries. Removed the 1101-line duplicate block from engine/constants.py (TOOL_DEFINITIONS, TOOL_DEFINITIONS_OPENAI, _TOOL_DEF_INDEX, _TOOL_DEF_OPENAI_INDEX, TOOL_GROUPS, DEFAULT_TOOL_GROUPS, TOKEN_CONFIG_DEFAULTS) and replaced it with a comment block pointing to brain.py. The duplicates were dead code at runtime — engine/loop.py resolves these globals from brain.py's namespace via bare-name resolution, not from engine/constants.py imports. No external code imported them from engine/constants.py. The duplication caused silent divergence: the image_gen tool (v8.27.0) had to be added to both brain.py and engine/constants.py, and missing brain.py caused the model to never receive the tool schema. Future tool additions require only brain.py: TOOL_DEFINITIONS (~line 421), TOOL_GROUPS (~line 1635), TOOL_DISPATCH (~line 21797), plus the tool function import at the TOOL_DISPATCH site."),
@@ -231,27 +232,20 @@ PLAN_MODE_PROMPT = (
     "including specific file paths, commands, and steps.\n"
 )
 
-# Default body for the per-project Instructions field. Used when project.json
-# has no `instructions` value set — the v8.22.0 anti-hallucination disciplines
-# ship as the out-of-the-box content so every project gets sane defaults
-# without the owner having to know about them. Project owners can replace,
-# tighten, or remove any rule via the project Instructions textarea in the
-# right panel; the literal text below is what they will see pre-filled when
-# they first open the editor (see `_get_project_instructions`).
+# Research-mode disciplines: the v8.22.0 anti-hallucination rules
+# (REFUSAL / PRECISION / CITATION) plus query-shape guidance. Injected into
+# the system prompt by `_build_system_prompt` when the active project has
+# `research_mode=True` — research-mode chats need strict retrieval discipline
+# and verbatim citations. Non-research project chats (codegen, drafting,
+# anything that USES indexed content as input rather than reproducing it)
+# do NOT receive this block; they only see the soft "memory is available"
+# variant.
 #
-# Why these belong here, not in the system prompt:
-# - Disciplines are about the PROJECT'S desired answer style (refuse vs guess;
-#   cite verbatim vs paraphrase; "nicht spezifiziert" vs plausible filler).
-#   That's tenant policy, not Brain mechanics.
-# - Different projects need different disciplines (a brainstorming project
-#   doesn't want refusal-on-empty-retrieval; a marketing project may not need
-#   verbatim citations).
-# - Owner-editable means the user can tune behavior per project without
-#   touching code.
-#
-# Brain mechanics (the 3-step retrieval flow, `read_path` vs `read_path_original`,
-# the binary→.md companion explanation, the KG hint block) STAY in the system
-# prompt because they are infrastructure facts that don't change per project.
+# These rules are NOT user-editable — they are Brain behavior toggled by
+# the project's `research_mode` flag. The per-project `instructions` field
+# is a purely additive layer for owner-supplied guidance and is appended
+# AFTER this block when both are active. Editing `instructions` does not
+# replace or shadow these disciplines.
 DEFAULT_PROJECT_INSTRUCTIONS = (
     "**QUERY DISCIPLINE — keep mempalace_query short and content-bearing**:\n"
     "Queries are matched by vector similarity. Long, verbose queries with "
@@ -7534,6 +7528,32 @@ _memory_store: MemoryStore | None = None
 
 # ─── Projects System ──────────────────────────────────────────────────
 
+def _project_research_mode(cfg: dict) -> bool:
+    """Resolve a project's research_mode flag with backwards-compat migration.
+
+    `research_mode` toggles the strict retrieval/citation regime: forced
+    `mempalace_query` 3-step flow + REFUSAL/PRECISION/CITATION disciplines
+    + server-side citation validator + synchronous re-round on uncited
+    claims. Off for general-purpose project chats (build/research/codegen
+    that USES the project's documents as inputs rather than reproducing
+    them verbatim).
+
+    Migration: legacy projects predate the field. To preserve current
+    behavior we infer a sensible default from whether the owner has
+    customised `instructions`:
+      - empty instructions -> research_mode=True (they were getting the
+        v8.22 default disciplines via the old fallback; keep that)
+      - non-empty instructions -> research_mode=False (the owner already
+        wrote their own — the disciplines weren't applied anyway, so the
+        chat behaves like a non-research chat already)
+    Project owners can flip the flag in project settings.
+    """
+    if "research_mode" in cfg:
+        return bool(cfg.get("research_mode"))
+    # Backwards-compat default for projects predating the flag.
+    return not bool((cfg.get("instructions") or "").strip())
+
+
 class ProjectManager:
     """CRUD operations for per-agent projects."""
 
@@ -7593,6 +7613,7 @@ class ProjectManager:
                 "display_name": cfg.get("name") or name,
                 "description": cfg.get("description", ""),
                 "instructions": cfg.get("instructions", ""),
+                "research_mode": _project_research_mode(cfg),
                 "icon": cfg.get("icon", "folder"),
                 "image": cfg.get("image", ""),
                 "color": cfg.get("color", ""),
@@ -7714,6 +7735,10 @@ class ProjectManager:
             cfg["chunks"] = chunk_count
             cfg["dir"] = pdir
             cfg["folder_name"] = name   # filesystem name; display name is cfg["name"]
+            # Surface the resolved research_mode (with legacy migration) so
+            # every reader (system-prompt builder, chat handler, HTTP API)
+            # sees the same value without re-implementing the rule.
+            cfg["research_mode"] = _project_research_mode(cfg)
             return cfg
         except (OSError, json.JSONDecodeError):
             return None
@@ -7733,9 +7758,13 @@ class ProjectManager:
                        "status", "instructions",
                        "input_folders", "input_folders_last_scan", "sync_status",
                        "visibility", "owner_user_id", "owner_team_id",
-                       "extra_member_user_ids", "excluded_user_ids"):
+                       "extra_member_user_ids", "excluded_user_ids",
+                       "research_mode"):
                 if k in updates:
                     cfg[k] = updates[k]
+            # Coerce research_mode to bool so the on-disk shape is stable.
+            if "research_mode" in updates:
+                cfg["research_mode"] = bool(updates["research_mode"])
             with open(cfg_path, "w") as f:
                 json.dump(cfg, f, indent=2)
             return {"name": name, "status": "updated"}
@@ -23828,12 +23857,32 @@ def _build_system_prompt(include_memory_summary: bool = True,
                             "enabled", True))
                 except Exception:
                     _kg_enabled_for_prompt = True
+                # research_mode resolution: per-session override (sticky, set
+                # from composer / session settings) wins; otherwise the
+                # project's own `research_mode` (with legacy migration in
+                # _project_research_mode). Surfaced on _thread_local so the
+                # chat handler's citation validator + re-round read the same
+                # value without recomputing.
+                _rm_override = getattr(_thread_local, 'research_mode_override', None)
+                if _rm_override is None:
+                    _research_mode = bool(proj_cfg.get("research_mode", False))
+                else:
+                    _research_mode = bool(_rm_override)
                 # The dynamic counts + the on-disk input-folder list moved out
                 # of the system prompt into a per-session first-user-turn preamble
                 # (see _project_preamble_text() called from send_message round 0).
                 # Keeps this block KV-cache-stable across warm-pool sessions and
                 # avoids re-billing the index on every fresh project chat.
-                system_instruction += (
+                #
+                # research_mode gates the strict retrieval/refusal regime:
+                # forced 3-step flow, REFUSE-on-error, KG decision rules,
+                # citation discipline. Non-research projects (build/codegen
+                # that USES indexed content) get a softer variant — memory
+                # is available, use it when relevant — so the model can
+                # consume project facts as inputs without being forced to
+                # quote-and-cite everything it produces.
+                if _research_mode:
+                  system_instruction += (
                     "\nPROJECT MEMORY — IMPORTANT:\n"
                 "This project has a dedicated, isolated memory store. By default, "
                 "`mempalace_query` searches ONLY this knowledge layer (mined "
@@ -23895,7 +23944,34 @@ def _build_system_prompt(include_memory_summary: bool = True,
                 "Skipping Step 2 — or proceeding past a Step 2 error — is "
                 "the documented cause of wrong answers on this project.\n"
                 "\n")
-            if _kg_enabled_for_prompt:
+            else:
+                # Soft variant for non-research projects (research_mode=False).
+                # Project memory is still available; the model just isn't
+                # forced into the strict 3-step / refuse-on-error regime.
+                # Used for projects whose chats USE the indexed content as
+                # input for tasks (writing code, drafting docs, building
+                # tools) rather than reproducing it verbatim with citations.
+                system_instruction += (
+                    "\nPROJECT MEMORY:\n"
+                    "This project has a dedicated, isolated memory store. "
+                    "Call `mempalace_query` whenever the user's request "
+                    "could plausibly draw on the project's indexed "
+                    "documents, input folders, or prior facts — it returns "
+                    "short ~800-char drawer snippets that point at the "
+                    "underlying file. For deeper context, follow up with "
+                    "`read_document` on the drawer's `read_path` (the "
+                    "curated `.brain-extracted/<name>.<ext>.md` companion) "
+                    "or `read_path_original` (the original binary). "
+                    "`mempalace_query` searches ONLY the document layer; "
+                    "pass `include_chat_history=true` if the user "
+                    "explicitly references prior chat turns. Cite sources "
+                    "with `[Quelle: <basename> — \"<verbatim quote>\"]` "
+                    "when you reproduce material from project documents — "
+                    "but do not refuse to help when memory has nothing to "
+                    "offer; fall back to general capability and the user's "
+                    "own input as you normally would.\n\n"
+                )
+            if _research_mode and _kg_enabled_for_prompt:
                 system_instruction += (
                     "OPTIONAL STRUCTURED LOOKUP (knowledge graph):\n"
                     "  `mempalace_kg_search` — structured triple search by "
@@ -23952,18 +24028,12 @@ def _build_system_prompt(include_memory_summary: bool = True,
                     "chat ('what did we discuss about X', 'remember when I "
                     "said Y').\n"
                     "\n")
-            else:
+            elif _research_mode and not _kg_enabled_for_prompt:
+                # Research mode but KG turned off in deployment config.
                 system_instruction += (
                     "(The knowledge graph is currently disabled for this "
                     "deployment; only `mempalace_query` + `read_document` "
                     "are available for project knowledge.)\n\n")
-            # REFUSAL + PRECISION + CITATION discipline blocks moved into the
-            # per-project Instructions field (see DEFAULT_PROJECT_INSTRUCTIONS).
-            # They surface again below via the proj_instructions branch — the
-            # default kicks in for projects that haven't customised the field,
-            # and project owners can edit them in the right-pane Instructions
-            # textarea to tune behavior per project.
-            #
             # PROJECT INPUT FOLDERS list + path-join example moved into the
             # per-session preamble (see _project_preamble_text). Static
             # binary-companion guidance stays here because it doesn't depend
@@ -23981,25 +24051,26 @@ def _build_system_prompt(include_memory_summary: bool = True,
                 "extraction; use it only when you don't need the original "
                 "layout.\n\n"
             )
-            # Inject project Instructions. When the project hasn't set the
-            # field, fall back to DEFAULT_PROJECT_INSTRUCTIONS (the v8.22.0
-            # REFUSAL + PRECISION + CITATION disciplines) so every project
-            # gets sane defaults out of the box. Owners can override by
-            # writing their own text in the right-pane Instructions editor —
-            # the override REPLACES the default rather than appending, so a
-            # project owner can opt out of the citation requirement entirely
-            # by setting their own (shorter or different) instructions.
-            proj_instructions = (proj_cfg.get("instructions") or "").strip()
-            if not proj_instructions:
-                proj_instructions = DEFAULT_PROJECT_INSTRUCTIONS
-                _instr_label = (
-                    "PROJECT INSTRUCTIONS (Brain default; the project owner "
-                    "can replace these by editing the project's Instructions "
-                    "field):"
+            # Research-mode disciplines: REFUSAL + PRECISION + CITATION rules
+            # that gate the strict retrieval/refusal regime. Emitted by Brain
+            # directly when research_mode is on — NOT folded into the owner's
+            # editable Instructions field. Owner instructions remain a purely
+            # additive layer regardless of mode.
+            if _research_mode:
+                system_instruction += (
+                    "RESEARCH MODE DISCIPLINES (refusal, precision, citation):\n"
+                    f"{DEFAULT_PROJECT_INSTRUCTIONS}\n\n"
                 )
-            else:
-                _instr_label = "PROJECT INSTRUCTIONS (set by the user for this project):"
-            system_instruction += f"{_instr_label}\n{proj_instructions}\n\n"
+            # Inject project Instructions verbatim if the owner has set them.
+            # Instructions are purely additive owner-supplied guidance — they
+            # are NOT used as a fallback for the citation/refusal disciplines.
+            # When `instructions` is empty, no synthetic block is appended.
+            proj_instructions = (proj_cfg.get("instructions") or "").strip()
+            if proj_instructions:
+                system_instruction += (
+                    "PROJECT INSTRUCTIONS (set by the user for this project):\n"
+                    f"{proj_instructions}\n\n"
+                )
 
         # Inject note context for AI-assisted note editing
         note_context = getattr(_thread_local, 'note_context', None)

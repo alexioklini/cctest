@@ -59,6 +59,8 @@ class SessionsHandlerMixin:
             resp["save_to_memory"] = int(getattr(session, "save_to_memory", 0) or 0)
             resp["project"] = session.project or ""
             resp["workflow_run_id"] = getattr(session, "workflow_run_id", "") or ""
+            _rmo = getattr(session, "research_mode_override", None)
+            resp["research_mode_override"] = (None if _rmo is None else bool(_rmo))
         else:
             info = ChatDB.get_session_info(sid)
             if info:
@@ -68,6 +70,9 @@ class SessionsHandlerMixin:
                 resp["save_to_memory"] = int(info.get("save_to_memory", 0) or 0)
                 resp["project"] = info.get("project", "") or ""
                 resp["workflow_run_id"] = info.get("workflow_run_id", "") or ""
+                _rmo_db = info.get("research_mode_override", None)
+                resp["research_mode_override"] = (None if _rmo_db is None
+                                                   else bool(_rmo_db))
         self._send_json(resp)
 
     def _handle_next_prompt_suggestion(self, path):
@@ -549,6 +554,23 @@ class SessionsHandlerMixin:
             if s:
                 s.save_to_memory = mode
             self._send_json({"status": "ok", "save_to_memory": mode, "session_id": sid})
+        elif action == "research_mode_override":
+            # Per-session override of the project's research_mode default.
+            # Body: {value: null|true|false} — null clears the override
+            # (falls back to project default); true/false force on/off for
+            # this session, sticky across turns.
+            raw = body.get("value", None) if "value" in body else body.get("mode", None)
+            if raw is None or raw == "null":
+                normalised = None
+            else:
+                normalised = bool(raw)
+            ChatDB.update_session_research_mode_override(sid, normalised)
+            s = sessions.get(sid)
+            if s:
+                s.research_mode_override = normalised
+            self._send_json({"status": "ok",
+                              "research_mode_override": normalised,
+                              "session_id": sid})
         elif action == "purge_memory":
             # Remove every MemPalace drawer/closet filed from this session and
             # reset the sync cursor so re-enabling memory re-ingests from scratch.

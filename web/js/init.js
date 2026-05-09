@@ -247,6 +247,107 @@ async function toggleSaveToMemory() {
   } catch(e) { showToast('Failed: ' + e.message, true); }
 }
 
+// ─── Research-mode override (project chats only) ───────────────────────
+// Cache the project's `research_mode` default per agent+name so the
+// composer button can render the effective state without an extra
+// fetch on every chat open. Refreshed on demand from
+// API.getProject(...) — sub-second; the cache just absorbs repeat
+// reads in the same view.
+state._projectResearchModeCache = state._projectResearchModeCache || {};
+async function _projectResearchModeDefault(agentId, projectName) {
+  if (!agentId || !projectName) return null;
+  const key = agentId + '::' + projectName;
+  const cached = state._projectResearchModeCache[key];
+  if (cached !== undefined) return cached;
+  try {
+    const project = await API.getProject(agentId, projectName);
+    const v = !!(project && project.research_mode);
+    state._projectResearchModeCache[key] = v;
+    return v;
+  } catch {
+    return null;
+  }
+}
+
+// Composer button cycles between two states (per spec):
+//   project default ↔ override-opposite-of-default
+// Clicking when no override is set installs the opposite of the project
+// default; clicking again clears the override (back to project default).
+async function toggleResearchModeOverride() {
+  const chat = state.activeChat;
+  if (!chat) return;
+  if (!chat.project) return;  // button is hidden anyway in non-project chats
+  if (!chat.sessionId) {
+    try { await ensureSession(chat); } catch { return; }
+    if (!chat.sessionId) return;
+  }
+  const agentId = chat.agentId || state.activeAgentId || 'main';
+  const projectDefault = await _projectResearchModeDefault(agentId, chat.project);
+  if (projectDefault === null) {
+    showToast('Could not read project default', true);
+    return;
+  }
+  // Two-state cycle: if override is null, install !projectDefault. Else clear.
+  const cur = (chat.researchModeOverride === null
+                || chat.researchModeOverride === undefined)
+                ? null
+                : !!chat.researchModeOverride;
+  const next = (cur === null) ? !projectDefault : null;
+  try {
+    await API.post('/v1/sessions/manage', {
+      action: 'research_mode_override',
+      session_id: chat.sessionId,
+      value: next,
+    });
+    chat.researchModeOverride = next;
+    refreshResearchModeButton();
+    let effective = (next === null) ? projectDefault : next;
+    let label;
+    if (next === null) {
+      label = `Research mode: project default (${projectDefault ? 'on' : 'off'})`;
+    } else {
+      label = `Research mode: ${effective ? 'on' : 'off'} (overriding project default)`;
+    }
+    showToast(label);
+  } catch (e) {
+    showToast('Failed: ' + e.message, true);
+  }
+}
+
+async function refreshResearchModeButton() {
+  const btns = _composerToggleEls('btn-research-mode');
+  if (!btns.length) return;
+  const chat = state.activeChat;
+  // Hide entirely when not in a project chat — research mode is a
+  // per-project concept; non-project chats have nothing to override.
+  const inProject = !!(chat && chat.project);
+  for (const btn of btns) {
+    btn.style.display = inProject ? '' : 'none';
+  }
+  if (!inProject) return;
+  const agentId = chat.agentId || state.activeAgentId || 'main';
+  const projectDefault = await _projectResearchModeDefault(agentId, chat.project);
+  const override = (chat.researchModeOverride === null
+                     || chat.researchModeOverride === undefined)
+                     ? null
+                     : !!chat.researchModeOverride;
+  const effective = (override === null) ? !!projectDefault : override;
+  for (const btn of btns) {
+    btn.classList.toggle('active', effective);
+    btn.style.color = effective ? '#3b82f6' : '';  // blue when on
+    btn.style.opacity = (override === null) ? '' : '1';  // emphasised when overridden
+    let tip;
+    if (override === null) {
+      tip = `Research mode: ${effective ? 'on' : 'off'} (project default — click to override)`;
+    } else {
+      tip = `Research mode: ${effective ? 'on' : 'off'} (session override — click to revert to project default of ${projectDefault ? 'on' : 'off'})`;
+    }
+    btn.title = tip;
+    // Thin underline marker shows there's an active override.
+    btn.style.borderBottom = (override === null) ? '' : '2px solid #3b82f6';
+  }
+}
+
 // Caveman mode icon set — one per level. Metaphor: off = fastest/modern
 // (spaceship), down through car, horse, to campfire = primitive.
 // Shared icon-toggle button used by every refine-with-AI surface
@@ -2630,6 +2731,7 @@ async function init() {
   // mistral_blocks model that only accepts none/high).
   try { _ensureValidThinkingLevel(); } catch(_) {}
   refreshThinkingButton();
+  refreshResearchModeButton();
 
   // Start on welcome view
   navigateTo('welcome');

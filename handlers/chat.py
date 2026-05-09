@@ -836,6 +836,14 @@ class ChatHandlerMixin:
             else:
                 engine._thread_local.project = session.project  # Use session's existing project
 
+            # Per-session research-mode override (sticky). None = use the
+            # project's own `research_mode` default; True/False = force the
+            # override for this session. _build_system_prompt and the
+            # citation validator both read this off _thread_local so they
+            # never disagree mid-turn.
+            engine._thread_local.research_mode_override = getattr(
+                session, "research_mode_override", None)
+
             # Set note context for AI-assisted note editing
             if session.note_context:
                 engine._thread_local.note_context = session.note_context
@@ -964,7 +972,24 @@ class ChatHandlerMixin:
                     # synchronous re-round with feedback — the corrected text replaces
                     # `reply` before persistence and the `done` SSE event. Max 1 re-round
                     # per turn. Gated by mempalace.citation_reround.enabled in config.
-                    if getattr(engine._thread_local, 'project', None) and reply:
+                    #
+                    # Only runs in research-mode chats. Non-research project
+                    # chats (codegen, drafting, anything that uses indexed
+                    # content as input rather than reproducing it) skip
+                    # validation + re-round entirely — citation enforcement
+                    # is the wrong primitive for those workflows.
+                    _proj_active = getattr(engine._thread_local, 'project', None)
+                    _research_active = False
+                    if _proj_active:
+                        _rm_override = getattr(session, "research_mode_override", None)
+                        if _rm_override is not None:
+                            _research_active = bool(_rm_override)
+                        else:
+                            _proj_cfg_for_rm = engine.ProjectManager.get_project(
+                                session.agent_id, _proj_active)
+                            _research_active = bool(
+                                (_proj_cfg_for_rm or {}).get("research_mode", False))
+                    if _proj_active and _research_active and reply:
                         try:
                             _val = engine.validate_citations_in_response(reply, session_id=sid)
                             _cv_meta = {
@@ -1149,6 +1174,7 @@ class ChatHandlerMixin:
                 engine._thread_local.caveman_chat = 0
                 engine._thread_local.caveman_system = 0
                 engine._thread_local.execution_overrides = {}
+                engine._thread_local.research_mode_override = None
                 engine._thread_local._current_model = None
                 event_queue.put(None)  # sentinel
 
