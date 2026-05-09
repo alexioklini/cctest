@@ -1,7 +1,6 @@
 # Image generation via Mistral Conversations API
-# Cross-module deps resolved from brain.py globals at call time:
-#   _ok, _err, _thread_local, _current_agent, AGENTS_DIR, CONFIG_PATH,
-#   _after_file_write, resolve_provider_for_model
+# Cross-module deps imported lazily from brain at call time to avoid circular import
+# (brain.py imports tool_generate_image near end of module evaluation).
 
 import json
 import os
@@ -9,7 +8,14 @@ import threading
 import urllib.error
 import urllib.request
 
-from engine.tools.files import _get_artifact_session_folder
+
+def _ok(result: dict) -> str:
+    return json.dumps(result, ensure_ascii=False)
+
+
+def _err(msg: str) -> str:
+    return json.dumps({"error": msg}, ensure_ascii=False)
+
 
 _MISTRAL_BASE = "https://api.mistral.ai"
 _agent_id_lock = threading.Lock()
@@ -18,8 +24,9 @@ _cached_agent_id = None  # in-memory cache; persisted to config.json
 
 def _mistral_api_key() -> str:
     """Resolve the Mistral provider API key from config."""
+    import brain
     try:
-        with open(CONFIG_PATH) as f:  # CONFIG_PATH injected from brain.py globals
+        with open(brain.CONFIG_PATH) as f:
             cfg = json.load(f)
         for prov in cfg.get("providers", {}).values():
             if "mistral.ai" in prov.get("base_url", ""):
@@ -35,6 +42,7 @@ def _mistral_api_key() -> str:
 
 def _get_or_create_image_agent(api_key: str) -> str:
     """Return a cached Mistral image-generation agent ID, creating it on first call."""
+    import brain
     global _cached_agent_id
     with _agent_id_lock:
         if _cached_agent_id:
@@ -42,7 +50,7 @@ def _get_or_create_image_agent(api_key: str) -> str:
 
         # Try config.json first
         try:
-            with open(CONFIG_PATH) as f:
+            with open(brain.CONFIG_PATH) as f:
                 cfg = json.load(f)
             stored = cfg.get("mistral_image_agent_id", "")
             if stored:
@@ -80,7 +88,7 @@ def _get_or_create_image_agent(api_key: str) -> str:
         # Persist to config.json and in-memory cache
         try:
             cfg["mistral_image_agent_id"] = agent_id
-            with open(CONFIG_PATH, "w") as f:
+            with open(brain.CONFIG_PATH, "w") as f:
                 json.dump(cfg, f, indent=2, ensure_ascii=False)
         except Exception:
             pass  # non-fatal — will re-create next restart
@@ -90,6 +98,7 @@ def _get_or_create_image_agent(api_key: str) -> str:
 
 
 def tool_generate_image(args: dict) -> str:
+    import brain
     prompt = (args.get("prompt") or "").strip()
     if not prompt:
         return _err("generate_image: 'prompt' is required")
@@ -169,15 +178,15 @@ def tool_generate_image(args: dict) -> str:
         )
 
     # Resolve artifact save folder (same logic as tool_write_file)
-    session_id = getattr(_thread_local, "current_session_id", None)
-    agent = getattr(_thread_local, "current_agent", None) or _current_agent
+    session_id = getattr(brain._thread_local, "current_session_id", None)
+    agent = getattr(brain._thread_local, "current_agent", None) or brain._current_agent
     agent_id_local = agent.agent_id if agent else "main"
 
     if session_id and agent_id_local:
-        folder = _get_artifact_session_folder(session_id)
-        artifact_dir = os.path.join(AGENTS_DIR, agent_id_local, "artifacts", folder)
+        folder = brain._get_artifact_session_folder(session_id)
+        artifact_dir = os.path.join(brain.AGENTS_DIR, agent_id_local, "artifacts", folder)
     else:
-        artifact_dir = os.path.join(AGENTS_DIR, agent_id_local, "artifacts", "image_gen")
+        artifact_dir = os.path.join(brain.AGENTS_DIR, agent_id_local, "artifacts", "image_gen")
     os.makedirs(artifact_dir, exist_ok=True)
 
     saved: list[dict] = []
@@ -200,7 +209,7 @@ def tool_generate_image(args: dict) -> str:
         with open(save_path, "wb") as f:
             f.write(img_bytes)
 
-        _after_file_write(save_path, "created", agent_id_local)
+        brain._after_file_write(save_path, "created", agent_id_local)
         saved.append({"path": save_path, "size_kb": len(img_bytes) // 1024, "file_name": file_name})
 
     return _ok({
