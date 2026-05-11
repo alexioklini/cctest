@@ -508,7 +508,7 @@ def _store_worker_artifact(
     """Write the raw tool result to the agent's artifact folder. Returns
     artifact metadata dict."""
     from brain import (
-        _get_artifact_session_folder, _after_file_write,
+        _get_artifact_session_folder,
         AGENTS_DIR, _thread_local,
     )
 
@@ -534,10 +534,10 @@ def _store_worker_artifact(
     with open(artifact_path, "w") as f:
         json.dump(payload, f, indent=2, default=str)
 
-    try:
-        _after_file_write(artifact_path, "created", agent_id)
-    except Exception:
-        pass
+    # Deliberately NOT calling _after_file_write: worker JSON envelopes are
+    # internal plumbing accessed only via get_artifact_detail. Registering them
+    # with the code graph / artifact DB makes them discoverable via list_directory
+    # and causes the model to read them unnecessarily on subsequent turns.
 
     return {
         "artifact_id": os.path.basename(artifact_path),
