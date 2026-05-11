@@ -11384,8 +11384,105 @@ _GUIDED_DECOMPOSE_SYSTEM = (
     "\"fetch the top 3 weather URLs\", \"summarise the forecast for the user\"]"
 )
 
-# Max chars of prior results passed as context to the next task worker.
+# Inter-task hand-off cap (non-final tasks): when a prior task result is
+# larger than this, the FULL text is filed into MemPalace as a per-run drawer
+# and only a short pointer goes into the next task's prompt. The synthesis
+# (last) task always receives the full untruncated prior results — bypasses
+# both the cap and MemPalace indirection so the final answer has the complete
+# evidence to ground on.
 _GUIDED_CTX_CAP = 800
+
+# Slim-stub size used when a prior result is offloaded to MemPalace: keep the
+# first N chars in-prompt so the model has the gist + tells the model where to
+# query if it needs the rest.
+_GUIDED_STUB_HEAD_CHARS = 400
+
+
+def _guided_file_task_to_mempalace(
+    session_id: str | None,
+    task_index: int,
+    task_label: str,
+    content: str,
+) -> str:
+    """File a long task result into MemPalace under the current session's
+    wing/room. Returns the drawer's `source_file` on success, '' on failure.
+
+    Best-effort: any error falls through silently and the caller continues with
+    head-truncation. Never blocks the guided run.
+    """
+    if not content or not session_id:
+        return ""
+    try:
+        from mempalace.mcp_server import tool_add_drawer
+    except Exception:
+        return ""
+    # Resolve wing from current thread context — same priority as chat sync.
+    wing = ""
+    try:
+        from server_lib.db import _resolve_session_wing
+        info = {
+            "user_id": getattr(_thread_local, "current_user_id", "") or "",
+            "team_id": getattr(_thread_local, "team_id", "") or "",
+            "visibility": getattr(_thread_local, "visibility", "user") or "user",
+            "project": getattr(_thread_local, "project", "") or "",
+            "agent_id": getattr(getattr(_thread_local, "current_agent", None), "agent_id", "main") or "main",
+        }
+        wing = _resolve_session_wing(info) or ""
+    except Exception:
+        wing = ""
+    if not wing:
+        return ""
+    source_file = f"session/{session_id}#guided/{task_index}"
+    drawer_content = f"# Task {task_index + 1}\n{task_label}\n\n{content}"
+    try:
+        tool_add_drawer(
+            wing=wing,
+            room="guided_task_results",
+            content=drawer_content[:50000],
+            source_file=source_file,
+            added_by="brain-guided-execution",
+        )
+        return source_file
+    except Exception:
+        return ""
+
+
+def _build_guided_prior_results_block(
+    results: list[str],
+    tasks: list[str],
+    session_id: str | None,
+    is_last_task: bool,
+) -> str:
+    """Render the 'Prior task results:' prefix for a guided task's prompt.
+
+    - is_last_task=True: full untruncated results, no MemPalace indirection.
+    - Otherwise: results <= _GUIDED_CTX_CAP go inline verbatim; larger results
+      are filed into MemPalace and replaced by a head stub + drawer pointer.
+    """
+    if not results:
+        return ""
+    lines = ["Prior task results:"]
+    for j, res in enumerate(results):
+        label = tasks[j] if j < len(tasks) else f"task {j+1}"
+        if is_last_task:
+            body = res or "(no result)"
+        elif len(res) <= _GUIDED_CTX_CAP:
+            body = res
+        else:
+            source = _guided_file_task_to_mempalace(session_id, j, label, res)
+            head = res[:_GUIDED_STUB_HEAD_CHARS]
+            if source:
+                body = (
+                    f"{head}…\n"
+                    f"[full task result filed to memory; query mempalace_query "
+                    f"with source_file={source!r} or room='guided_task_results' "
+                    f"to retrieve the rest — {len(res)} chars total]"
+                )
+            else:
+                # MemPalace unreachable — fall back to head-truncation (legacy behavior)
+                body = res[:_GUIDED_CTX_CAP]
+        lines.append(f"Task {j+1} ({label}): {body}")
+    return "\n---\n".join(lines) + "\n\n"
 
 
 def run_guided_execution(
@@ -11514,15 +11611,12 @@ def run_guided_execution(
                             pass
             return _cb
 
-        # Pass prior results as context, capped to keep prompts small
-        ctx_prefix = ""
-        if results:
-            ctx_prefix = "Prior task results:\n" + "\n---\n".join(
-                f"Task {j+1} ({tasks[j]}): {results[j][:_GUIDED_CTX_CAP]}" for j in range(len(results))
-            ) + "\n\n"
-
-        # Last task: no tools — it synthesises from prior results only
+        # Build prior-results context. Non-final tasks: results <= cap go
+        # inline, larger results are offloaded to MemPalace as drawers and only
+        # a stub pointer is inlined. Final (synthesis) task: full untruncated
+        # results so the answer has all evidence directly in-prompt.
         is_last = (i == last_idx)
+        ctx_prefix = _build_guided_prior_results_block(results, tasks, session_id, is_last)
         task_content = ctx_prefix + "Task: " + task
         if is_last:
             task_content += (
