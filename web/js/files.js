@@ -318,7 +318,7 @@ async function deleteMessages(mode, idx) {
                 mode === 'after' ? `Remove ${count} message${count !== 1 ? 's' : ''} after this point?` :
                 mode === 'response' ? 'Remove this response?' :
                 'Remove this Q&A pair?';
-  if (!confirm(label)) return;
+  if (!await showConfirmDanger(label, 'Remove messages', 'Remove')) return;
 
   // Collect artifact IDs from messages being removed (for local cleanup)
   const artifactIds = new Set();

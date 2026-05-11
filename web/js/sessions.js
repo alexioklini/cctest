@@ -318,7 +318,7 @@ async function archiveSession(sessionId) {
 }
 
 async function deleteSession(sessionId) {
-  if (!confirm('Delete this chat?')) return;
+  if (!await showConfirmDanger('Delete this chat?', 'Delete chat', 'Delete')) return;
   try {
     await API.deleteSession(sessionId);
     if (state.activeChat?.sessionId === sessionId) {
@@ -337,7 +337,7 @@ async function deleteSession(sessionId) {
 
 async function archiveAllChats() {
   const scope = state.chatsFilter === 'archived' ? 'archived' : 'active';
-  if (!confirm(`Archive all ${scope} chats?`)) return;
+  if (!await showConfirm(`Archive all ${scope} chats?`, 'Archive chats')) return;
   try {
     await API.manageSession({action:'archive_all'});
     showToast('All chats archived');
@@ -349,7 +349,7 @@ async function archiveAllChats() {
 async function deleteAllChats() {
   const archived = state.chatsFilter === 'archived';
   const label = archived ? 'archived' : 'ALL';
-  if (!confirm(`Permanently delete ${label} chats? This cannot be undone.`)) return;
+  if (!await showConfirmDanger(`Permanently delete ${label} chats? This cannot be undone.`, 'Delete chats', 'Delete all')) return;
   try {
     const r = await API.manageSession({action:'delete_all', archived_only: archived});
     showToast(`Deleted ${r.count || 'all'} chats`);

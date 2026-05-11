@@ -261,6 +261,13 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     </div>
     <div class="chat-input-area">
       <div class="chat-composer-wrapper">
+        <!-- LCM context-warning banner — shown when context > 60% heading towards 80% -->
+        <div id="lcm-warn-banner" role="status" aria-live="polite">
+          <span class="lcm-warn-icon">⚠️</span>
+          <span class="lcm-warn-text" id="lcm-warn-text">Context window is getting full — the next turn may exceed 80%.</span>
+          <button class="lcm-warn-compact" onclick="triggerLCM();document.getElementById('lcm-warn-banner').classList.remove('visible')">Compact now</button>
+          <button class="lcm-warn-dismiss" onclick="document.getElementById('lcm-warn-banner').classList.remove('visible')" title="Dismiss">×</button>
+        </div>
         <!-- chat composer injected by initComposers() -->
         <div id="chat-composer-mount"></div>
         <div class="chat-disclaimer">Brain Agent can make mistakes. Please verify responses.</div>

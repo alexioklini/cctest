@@ -592,7 +592,7 @@ async function trEditGlossary(slug) {
         do_not_translate: g.do_not_translate || [],
       };
     } catch (e) {
-      alert('Failed to load glossary: ' + (e.message || ''));
+      await showAlert('Failed to load glossary: ' + (e.message || ''));
       return;
     }
   }
@@ -716,7 +716,7 @@ async function trSaveGlossary() {
   trReadGlossaryFormIntoState();
   const g = trState.modalEditing;
   if (!g.name.trim()) {
-    alert('Name is required.');
+    await showAlert('Name is required.');
     return;
   }
   // Strip empty rows.
@@ -739,13 +739,13 @@ async function trSaveGlossary() {
     const sel = document.getElementById('tr-glossary-select');
     if (sel) sel.value = saved.slug;
   } catch (e) {
-    alert('Save failed: ' + (e.message || ''));
+    await showAlert('Save failed: ' + (e.message || ''));
   }
 }
 
 async function trDeleteGlossary(slug, name) {
   if (!slug) return;
-  if (!confirm(`Delete glossary "${name || slug}"?`)) return;
+  if (!await showConfirmDanger(`Delete glossary "${name || slug}"?`, 'Delete Glossary', 'Delete')) return;
   try {
     await API.del(`/v1/translate/glossaries/${encodeURIComponent(slug)}`);
     if (trState.glossarySlug === slug) trState.glossarySlug = '';
@@ -753,7 +753,7 @@ async function trDeleteGlossary(slug, name) {
     trRenderGlossariesModal();
     await trLoadGlossaries();
   } catch (e) {
-    alert('Delete failed: ' + (e.message || ''));
+    await showAlert('Delete failed: ' + (e.message || ''));
   }
 }
 

@@ -14,6 +14,123 @@ function showToast(msg, isError) {
   setTimeout(() => t.remove(), 3000);
 }
 
+/**
+ * showDialog({ title, message, buttons, input, danger })
+ *
+ * Styled replacement for confirm() / alert() / prompt().
+ * Returns a Promise that resolves with:
+ *   - the clicked button's value (string) for confirm/alert dialogs
+ *   - the entered string for input dialogs (or null if cancelled)
+ *
+ * buttons: array of { label, value, primary?, danger? }
+ *          defaults to [{ label:'OK', value:'ok', primary:true }]
+ * input:   { placeholder?, defaultValue? }  — shows a text input
+ * danger:  boolean — adds a red accent to the primary action
+ */
+function showDialog({ title = '', message = '', buttons = null, input = null, danger = false } = {}) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay dialog-overlay';
+
+    const btns = buttons || [{ label: 'OK', value: 'ok', primary: true }];
+    const inputHtml = input ? `
+      <div class="dialog-input-wrap">
+        <input class="dialog-input" type="text" placeholder="${esc(input.placeholder || '')}" value="${esc(input.defaultValue || '')}" autocomplete="off">
+      </div>` : '';
+
+    const btnHtml = btns.map(b => {
+      const cls = b.primary ? (danger || b.danger ? 'dialog-btn dialog-btn-danger' : 'dialog-btn dialog-btn-primary') : 'dialog-btn dialog-btn-ghost';
+      return `<button class="${cls}" data-value="${esc(b.value)}">${esc(b.label)}</button>`;
+    }).join('');
+
+    overlay.innerHTML = `
+      <div class="dialog-card" role="dialog" aria-modal="true">
+        ${title ? `<div class="dialog-header"><span class="dialog-title">${esc(title)}</span></div>` : ''}
+        <div class="dialog-body">
+          ${message ? `<p class="dialog-message">${message.replace(/\n/g, '<br>')}</p>` : ''}
+          ${inputHtml}
+        </div>
+        <div class="dialog-footer">${btnHtml}</div>
+      </div>`;
+
+    const inputEl = overlay.querySelector('.dialog-input');
+    if (inputEl) setTimeout(() => { inputEl.focus(); inputEl.select(); }, 30);
+
+    const finish = (value) => {
+      overlay.classList.add('dialog-out');
+      setTimeout(() => overlay.remove(), 150);
+      resolve(value);
+    };
+
+    overlay.querySelectorAll('.dialog-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const val = btn.dataset.value;
+        finish(input ? (val === 'cancel' ? null : (inputEl?.value ?? '')) : val);
+      });
+    });
+
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay) finish(input ? null : (btns.find(b => !b.primary)?.value ?? 'cancel'));
+    });
+
+    overlay.addEventListener('keydown', e => {
+      if (e.key === 'Escape') finish(input ? null : (btns.find(b => !b.primary)?.value ?? 'cancel'));
+      if (e.key === 'Enter' && inputEl) {
+        finish(inputEl.value);
+      }
+    });
+
+    document.body.appendChild(overlay);
+    overlay.focus();
+  });
+}
+
+// Convenience wrappers matching the native API shape
+async function showConfirm(message, title = '') {
+  const result = await showDialog({
+    title,
+    message,
+    buttons: [
+      { label: 'Cancel', value: 'cancel' },
+      { label: 'OK', value: 'ok', primary: true },
+    ],
+  });
+  return result === 'ok';
+}
+
+async function showConfirmDanger(message, title = '', confirmLabel = 'Delete') {
+  const result = await showDialog({
+    title,
+    message,
+    danger: true,
+    buttons: [
+      { label: 'Cancel', value: 'cancel' },
+      { label: confirmLabel, value: 'ok', primary: true, danger: true },
+    ],
+  });
+  return result === 'ok';
+}
+
+async function showAlert(message, title = '') {
+  await showDialog({
+    title,
+    message,
+    buttons: [{ label: 'OK', value: 'ok', primary: true }],
+  });
+}
+
+async function showPrompt(message, defaultValue = '', title = '') {
+  return showDialog({
+    title,
+    message,
+    input: { defaultValue },
+    buttons: [
+      { label: 'Cancel', value: 'cancel' },
+      { label: 'OK', value: 'ok', primary: true },
+    ],
+  });
+}
+
 function relativeTime(ts) {
   if (!ts) return '';
   const diff = (Date.now() - new Date(ts).getTime()) / 1000;

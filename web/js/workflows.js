@@ -171,30 +171,30 @@ function _wfRefreshOpenHistoryTables() {
 
 async function wfDeleteRunFromHistory(executionId, ev) {
   if (ev && typeof ev.stopPropagation === 'function') ev.stopPropagation();
-  if (!confirm('Delete this history entry? This cannot be undone.')) return;
+  if (!await showConfirmDanger('Delete this history entry? This cannot be undone.', 'Delete Run', 'Delete')) return;
   try {
     const r = await API.del(`/v1/workflows/history/${executionId}`);
     if (r && r.error) {
-      alert('Delete failed: ' + r.error);
+      await showAlert('Delete failed: ' + r.error);
       return;
     }
     _wfRefreshOpenHistoryTables();
   } catch (e) {
-    alert('Delete error: ' + e.message);
+    await showAlert('Delete error: ' + e.message);
   }
 }
 
 async function wfClearWorkflowHistory(name) {
-  if (!confirm(`Delete ALL terminal runs for "${name}"? This cannot be undone. Running entries are kept (cancel them first to delete).`)) return;
+  if (!await showConfirmDanger(`Delete ALL terminal runs for "${name}"? This cannot be undone. Running entries are kept (cancel them first to delete).`, 'Clear History', 'Delete All')) return;
   try {
     const r = await API.del(`/v1/workflows/history?workflow=${encodeURIComponent(name)}`);
     if (r && r.error) {
-      alert('Clear failed: ' + r.error);
+      await showAlert('Clear failed: ' + r.error);
       return;
     }
     _wfRefreshOpenHistoryTables();
   } catch (e) {
-    alert('Clear error: ' + e.message);
+    await showAlert('Clear error: ' + e.message);
   }
 }
 
@@ -202,17 +202,17 @@ async function wfClearAllRuns() {
   const mine = document.getElementById('wf-runs-mine');
   const onlyMine = mine && mine.checked;
   const scope = onlyMine ? 'your runs' : 'all visible runs';
-  if (!confirm(`Delete ${scope}? This cannot be undone. Running entries are kept (cancel them first to delete).`)) return;
+  if (!await showConfirmDanger(`Delete ${scope}? This cannot be undone. Running entries are kept (cancel them first to delete).`, 'Clear Runs', 'Delete All')) return;
   try {
     const url = '/v1/workflows/history' + (onlyMine ? '?mine=1' : '');
     const r = await API.del(url);
     if (r && r.error) {
-      alert('Clear failed: ' + r.error);
+      await showAlert('Clear failed: ' + r.error);
       return;
     }
     _wfRefreshOpenHistoryTables();
   } catch (e) {
-    alert('Clear error: ' + e.message);
+    await showAlert('Clear error: ' + e.message);
   }
 }
 
@@ -241,12 +241,12 @@ async function wfCancelFromHistory(executionId, ev) {
   try {
     const r = await API.post(`/v1/workflows/executions/${executionId}/cancel`, {});
     if (r && r.error) {
-      alert('Cancel failed: ' + r.error);
+      await showAlert('Cancel failed: ' + r.error);
       return;
     }
     _wfRefreshOpenHistoryTables();
   } catch (e) {
-    alert('Cancel error: ' + e.message);
+    await showAlert('Cancel error: ' + e.message);
   }
 }
 
@@ -563,7 +563,7 @@ async function wfSaveCurrent() {
 }
 
 async function wfDelete(name) {
-  if (!confirm(`Delete workflow "${name}"?`)) return;
+  if (!await showConfirmDanger(`Delete workflow "${name}"?`, 'Delete Workflow', 'Delete')) return;
   try {
     await API.del(`/v1/agents/${WF_AGENT}/workflows/${encodeURIComponent(name)}`);
     loadWorkflows();
@@ -1223,13 +1223,13 @@ async function wfRun(name) {
   try {
     const data = await API.post(`/v1/agents/${WF_AGENT}/workflows/${encodeURIComponent(name)}/run`, { variables: {} });
     if (data.error) {
-      alert('Run failed: ' + data.error);
+      await showAlert('Run failed: ' + data.error);
       return;
     }
     // Drop straight into the inline detail view; live polling kicks in.
     wfOpenDetail(data.execution_id);
   } catch (e) {
-    alert('Run error: ' + e.message);
+    await showAlert('Run error: ' + e.message);
   }
 }
 
@@ -1266,9 +1266,9 @@ async function wfOpenDetail(executionId) {
     const model = (state.activeChat && state.activeChat.model) || '';
     info = await API.post(`/v1/workflows/history/${encodeURIComponent(executionId)}/session`,
                           model ? { model } : {});
-    if (info && info.error) { alert('Open failed: ' + info.error); return; }
+    if (info && info.error) { await showAlert('Open failed: ' + info.error); return; }
   } catch (e) {
-    alert('Open failed: ' + e.message);
+    await showAlert('Open failed: ' + e.message);
     return;
   }
   // Seed the References panel from the workflow's input files so the
@@ -1294,7 +1294,7 @@ async function wfOpenDetail(executionId) {
     state.chatReferences[info.session_id] = existing;
   }
   if (typeof openSession !== 'function') {
-    alert('Internal error: openSession not available');
+    await showAlert('Internal error: openSession not available');
     return;
   }
   const agentId = WF_AGENT;
@@ -1379,9 +1379,9 @@ async function wfBannerCancel() {
   if (!id) return;
   try {
     const r = await API.post(`/v1/workflows/executions/${id}/cancel`, {});
-    if (r && r.error) { alert('Cancel failed: ' + r.error); return; }
+    if (r && r.error) { await showAlert('Cancel failed: ' + r.error); return; }
     wfBannerFetch(false);
-  } catch (e) { alert('Cancel error: ' + e.message); }
+  } catch (e) { await showAlert('Cancel error: ' + e.message); }
 }
 
 async function wfBannerSaveToChats() {
@@ -1393,7 +1393,7 @@ async function wfBannerSaveToChats() {
   // a run for later reference even before asking anything.
   try {
     const r = await API.post(`/v1/workflows/history/${id}/promote-session/${sid}`, {});
-    if (r && r.error) { alert('Save failed: ' + r.error); return; }
+    if (r && r.error) { await showAlert('Save failed: ' + r.error); return; }
     // Seed the references panel from the input files the workflow read.
     const refs = (r && r.references) || [];
     if (refs.length) {
@@ -1414,7 +1414,7 @@ async function wfBannerSaveToChats() {
     if (typeof loadSessions === 'function') loadSessions();
     // Re-render the banner so the Save button switches to "Saved".
     renderWorkflowBanner();
-  } catch (e) { alert('Save error: ' + e.message); }
+  } catch (e) { await showAlert('Save error: ' + e.message); }
 }
 
 function wfBannerBack() {

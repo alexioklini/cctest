@@ -23276,22 +23276,6 @@ def _middleware_compress_old(messages, tool_round, event_callback, **ctx):
             _compress_old_tool_results(messages, keep_recent=4)
     return messages, True
 
-def _middleware_compaction(messages, tool_round, event_callback, **ctx):
-    """Full LLM summarization every 3 rounds (Layer 4)."""
-    if tool_round > 0 and tool_round % 3 == 0:
-        model = ctx.get("model", "")
-        api_key = ctx.get("api_key", "")
-        base_url = ctx.get("base_url", "")
-        session_id = ctx.get("session_id", "")
-        max_ctx = get_model_max_context(model)
-        messages, compacted = _check_and_compact(
-            messages, model, api_key, base_url,
-            max_tokens=max_ctx, session_id=session_id,
-        )
-        if compacted and event_callback:
-            event_callback("compacted", {})
-    return messages, True
-
 # Tools that python_exec can replace when chained
 _PYEXEC_CONSOLIDATABLE = {
     "read_file", "list_directory", "search_files",
@@ -23333,14 +23317,14 @@ def _middleware_pyexec_hint(messages, tool_round, event_callback, **ctx):
         messages.append({"role": "user", "content": hint})
     return messages, True
 
-# Ordered middleware pipeline — runs before each tool-loop iteration
+# Ordered middleware pipeline — runs between tool rounds (NOT for full LCM compaction,
+# which happens at turn boundaries in send_message before round 0)
 _MIDDLEWARE_PIPELINE = [
     _middleware_cancel_check,
     _middleware_tool_result_budget,
     _middleware_pyexec_hint,
     _middleware_microcompact,
     _middleware_compress_old,
-    _middleware_compaction,
 ]
 
 def _run_middleware(messages, tool_round, event_callback, **ctx):
@@ -24816,6 +24800,20 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     headers = make_headers(api_key)
     endpoint = f"{base_url}/chat/completions"
 
+    # Proactive compaction at the start of each new user turn (round 0).
+    # The middleware pipeline only runs between tool rounds, so a context that
+    # fills up between turns would otherwise slip through until the provider
+    # returns a 400 or the safety pre-flight fires.
+    if _tool_round == 0:
+        _sid_pre = session_id or getattr(_thread_local, 'current_session_id', None) or ""
+        max_ctx_pre = get_model_max_context(model)
+        messages, _pre_compacted = _check_and_compact(
+            messages, model, api_key, base_url,
+            max_tokens=max_ctx_pre, session_id=_sid_pre,
+        )
+        if _pre_compacted and event_callback:
+            event_callback("compacted", {})
+
     # Strip metadata from messages — API providers don't accept extra fields
     # Keep fields required by OpenAI tool call protocol.
     # Also drop internal roles: "thinking" is a transcript artifact we store for UI
@@ -25011,7 +25009,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
                                 "too many tokens" in error_msg.lower() or
                                 "context_length_exceeded" in error_msg.lower())
             _has_attempted = getattr(_thread_local, '_has_attempted_reactive_compact', False)
-            if _prompt_too_long and not _has_attempted and _tool_round > 0:
+            if _prompt_too_long and not _has_attempted:
                 _thread_local._has_attempted_reactive_compact = True
                 logging.info(f"Prompt too long at round {_tool_round}, attempting reactive compact")
                 if event_callback:

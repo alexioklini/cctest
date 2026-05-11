@@ -146,7 +146,7 @@ async function _createNewAgent() {
   } catch(e) { showToast('Create failed: ' + e.message, true); }
 }
 async function _deleteAgent(id) {
-  if (!confirm(`Delete agent "${id}"? It will be moved to .trash.`)) return;
+  if (!await showConfirmDanger(`Delete agent "${id}"? It will be moved to .trash.`, 'Delete Agent', 'Delete')) return;
   try {
     await API.deleteAgent(id);
     showToast(`Agent "${id}" deleted`);
@@ -171,7 +171,7 @@ async function _createTeam() {
   } catch(e) { showToast('Create team failed: ' + e.message, true); }
 }
 async function _dissolveTeam(teamId) {
-  if (!confirm(`Dissolve this team? Members will become standalone.`)) return;
+  if (!await showConfirmDanger(`Dissolve this team? Members will become standalone.`, 'Dissolve Team', 'Dissolve')) return;
   try {
     await API.manageTeams({ action: 'dissolve', team_id: teamId });
     showToast('Team dissolved');
@@ -358,7 +358,7 @@ async function switchGeneralTab(tab, btn) {
             <span class="mdl-warmup-dot" data-model-dot="${esc(mid)}" style="display:${cfg.warmup?'inline-block':'none'};width:8px;height:8px;border-radius:50%;background:var(--text-500);flex:none" title="Warmup state"></span>
             <label style="font-size:11px;color:var(--text-400)">P</label><input type="number" class="mdl-priority" value="${cfg.priority||0}" style="width:50px;padding:2px 4px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;text-align:center;background:var(--bg-000);color:var(--text-200)">
             <button class="btn-secondary" style="padding:2px 6px;font-size:12px" onclick="const d=document.getElementById('${detId}');d.style.display=d.style.display==='none'?'block':'none'" title="Model settings">&#9881;</button>
-            <button class="btn-secondary" style="padding:2px 6px;font-size:10px;color:var(--error)" onclick="if(confirm('Remove model ${esc(mid)}?'))removeModel('${esc(mid)}')">&#10005;</button>
+            <button class="btn-secondary" style="padding:2px 6px;font-size:10px;color:var(--error)" onclick="_confirmRemoveModel('${esc(mid)}')">&#10005;</button>
           </div>
           <div id="${detId}" style="display:none;padding:8px 12px;margin:0 0 6px 0;border:1px solid var(--border-100);border-top:none;border-radius:0 0 8px 8px;background:var(--bg-100)">
             <div style="margin-bottom:8px">
@@ -503,7 +503,7 @@ async function switchGeneralTab(tab, btn) {
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="testProvider('${esc(p.name)}')">Test</button>
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="document.getElementById('${pid}').style.display=document.getElementById('${pid}').style.display==='none'?'block':'none'">Settings</button>
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="renameProvider('${esc(p.name)}')" title="Rename this provider. Updates models, default_provider, tombstones, and provider-scoped model ids in one shot.">Rename</button>
-            <button class="btn-secondary" style="padding:2px 8px;font-size:11px;color:var(--error)" onclick="if(confirm('Delete provider ${esc(p.name)}?'))deleteProvider('${esc(p.name)}')">Delete</button>
+            <button class="btn-secondary" style="padding:2px 8px;font-size:11px;color:var(--error)" onclick="_confirmDeleteProvider('${esc(p.name)}')">Delete</button>
           </div>
           <div style="${MONO};overflow:hidden;text-overflow:ellipsis;margin-bottom:8px">${esc(p.base_url||'')}</div>
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;padding:6px 8px;background:var(--bg-100);border-radius:6px">
@@ -670,7 +670,7 @@ async function switchGeneralTab(tab, btn) {
           </div>
           <div style="display:flex;gap:6px;margin-top:8px">
             <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="API.post('/v1/nodes',{action:'${n.paused?'resume':'pause'}',name:'${esc(n.name)}'}).then(()=>{showToast('${n.paused?'Resumed':'Paused'}');switchGeneralTab('nodes')})">${n.paused?'Resume':'Pause'}</button>
-            <button class="btn-secondary" style="padding:2px 8px;font-size:11px;color:var(--error)" onclick="if(confirm('Remove node?'))API.post('/v1/nodes',{action:'remove',name:'${esc(n.name)}'}).then(()=>{showToast('Removed');switchGeneralTab('nodes')})">Remove</button>
+            <button class="btn-secondary" style="padding:2px 8px;font-size:11px;color:var(--error)" onclick="_confirmRemoveNode('${esc(n.name)}')">Remove</button>
           </div>
         </div>`;
       }
@@ -1528,7 +1528,7 @@ async function switchGeneralTab(tab, btn) {
 
         <div style="display:flex;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border-100)">
           <button class="btn-primary" id="gdpr-save-btn" onclick="saveGdprConfig()">Save all GDPR settings</button>
-          <button class="btn-secondary" onclick="if(confirm('Reset all categories and overrides to defaults? (Master switches and allowlist are kept.)')){resetGdprCategories()}">Reset categories to defaults</button>
+          <button class="btn-secondary" onclick="_confirmResetGdprCategories()">Reset categories to defaults</button>
         </div>
       </div>`);
     } catch(e) {
@@ -2041,7 +2041,7 @@ async function kgSearchPredicate(agentId, projectName, predicate) {
 }
 
 async function kgReextract(agentId, projectName) {
-  if (!confirm(`Purge all triples for "${projectName}" and re-extract from scratch?\n\nThis deletes existing triples + the extraction cursor, then queues the project for the next sync cycle (within 30 min, or trigger Sync now from the project panel).`)) return;
+  if (!await showConfirmDanger(`Purge all triples for "${projectName}" and re-extract from scratch?\n\nThis deletes existing triples + the extraction cursor, then queues the project for the next sync cycle (within 30 min, or trigger Sync now from the project panel).`, 'Re-extract KG', 'Purge & Re-extract')) return;
   try {
     const res = await API.post('/v1/mempalace/kg/reextract', {agent_id: agentId, project: projectName});
     showToast(`Purged ${res.triples_deleted||0} triples · queued for re-extraction`);
@@ -2187,8 +2187,13 @@ async function removeModel(mid) {
   } catch(e) { showToast('Failed: ' + e.message, true); }
 }
 
+async function _confirmRemoveModel(mid) {
+  if (!await showConfirmDanger(`Remove model ${mid}?`, 'Remove Model', 'Remove')) return;
+  removeModel(mid);
+}
+
 async function resyncProvider(btn, name) {
-  if (!confirm(`Full resync of "${name}"? This deletes ALL its models AND their deletion tombstones, then re-discovers from the provider's /models endpoint.`)) return;
+  if (!await showConfirmDanger(`Full resync of "${name}"? This deletes ALL its models AND their deletion tombstones, then re-discovers from the provider's /models endpoint.`, 'Full Resync', 'Resync')) return;
   btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Resyncing...';
   try {
     await API.post('/v1/models/config', { action: 'resync_provider', provider: name });
@@ -2412,7 +2417,7 @@ async function saveKeyFromModal(provName, oldKeyName) {
 }
 
 async function deleteProviderKey(provName, keyName) {
-  if (!confirm(`Delete key "${keyName}" from ${provName}?`)) return;
+  if (!await showConfirmDanger(`Delete key "${keyName}" from ${provName}?`, 'Delete Key', 'Delete')) return;
   try {
     await API.post('/v1/providers', { action: 'delete_key', name: provName, key_name: keyName });
     showToast('Key deleted');
@@ -2437,8 +2442,13 @@ async function deleteProvider(name) {
   } catch(e) { showToast('Delete failed: ' + e.message, true); }
 }
 
+async function _confirmDeleteProvider(name) {
+  if (!await showConfirmDanger(`Delete provider ${name}?`, 'Delete Provider', 'Delete')) return;
+  deleteProvider(name);
+}
+
 async function renameProvider(name) {
-  const next = prompt(`Rename provider "${name}" to:`, name);
+  const next = await showPrompt(`Rename provider "${name}" to:`, name);
   if (next === null) return;
   const trimmed = next.trim();
   if (!trimmed || trimmed === name) return;
@@ -2496,6 +2506,15 @@ async function createNode() {
     showToast('Node created');
     switchGeneralTab('nodes');
   } catch(e) { showToast('Create failed: ' + e.message, true); }
+}
+
+async function _confirmRemoveNode(name) {
+  if (!await showConfirmDanger('Remove node?', 'Remove Node', 'Remove')) return;
+  try {
+    await API.post('/v1/nodes', { action: 'remove', name });
+    showToast('Removed');
+    switchGeneralTab('nodes');
+  } catch(e) { showToast('Remove failed: ' + e.message, true); }
 }
 
 async function toggleCCSkill(agentId, slug, enabled) {
@@ -3458,7 +3477,7 @@ window._doAgentMcpAdd = async function(agentId) {
 };
 
 window._removeAgentMcp = async function(agentId, serverName) {
-  if (!confirm(`Remove MCP server "${serverName}"?`)) return;
+  if (!await showConfirmDanger(`Remove MCP server "${serverName}"?`, 'Remove MCP Server', 'Remove')) return;
   let mcp = {};
   try {
     const res = await API.get(`/v1/agents/${agentId}/file?name=mcp.json`);
@@ -3917,7 +3936,7 @@ async function _schedToggle(name, enable) {
 }
 
 async function _schedDelete(name) {
-  if (!confirm(`Delete scheduled task "${name}"?`)) return;
+  if (!await showConfirmDanger(`Delete scheduled task "${name}"?`, 'Delete Task', 'Delete')) return;
   const agentId = window._schedAgentId;
   try {
     await API.manageSchedule({ action: 'delete', name });
@@ -4081,7 +4100,7 @@ async function _schedViewCancel(name) {
 }
 
 async function _schedViewDelete(name) {
-  if (!confirm(`Delete scheduled task "${name}"?`)) return;
+  if (!await showConfirmDanger(`Delete scheduled task "${name}"?`, 'Delete Task', 'Delete')) return;
   try {
     await API.manageSchedule({ action: 'delete', name });
     showToast('Deleted');
@@ -4144,7 +4163,7 @@ function _schedRenderRuns(body, name, history) {
 }
 
 async function _schedDeleteRun(name, runId, btn) {
-  if (!confirm(`Delete run #${runId}?\n\nThis removes the history row and every artifact produced by this run (files included).`)) return;
+  if (!await showConfirmDanger(`Delete run #${runId}?\n\nThis removes the history row and every artifact produced by this run (files included).`, 'Delete Run', 'Delete')) return;
   btn.disabled = true;
   try {
     const res = await API.manageSchedule({ action: 'delete_run', run_id: runId });
@@ -4163,7 +4182,7 @@ async function _schedDeleteRun(name, runId, btn) {
 }
 
 async function _schedClearHistory(name, btn) {
-  if (!confirm(`Clear ALL run history for "${name}"?\n\nThis removes every past run and all produced artifacts.\nThe schedule itself stays in place.`)) return;
+  if (!await showConfirmDanger(`Clear ALL run history for "${name}"?\n\nThis removes every past run and all produced artifacts.\nThe schedule itself stays in place.`, 'Clear History', 'Clear All')) return;
   btn.disabled = true;
   try {
     const res = await API.manageSchedule({ action: 'clear_history', name });

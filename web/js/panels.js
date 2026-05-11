@@ -163,8 +163,23 @@ function updateStatusBar() {
     const fmtK = (n) => n >= 1000 ? (n/1000).toFixed(1) + 'K' : n.toString();
     label.textContent = `${fmtK(contextUsed)} / ${fmtK(effectiveMaxContext)} (${pct}%)`;
     label.title = `${contextUsed.toLocaleString()} / ${effectiveMaxContext.toLocaleString()} tokens (last API input)`;
+
+    // LCM warning banner: show when context is 60–79% (next turn likely > 80%).
+    // At 80%+ the proactive compaction fires automatically; banner is advisory only.
+    const banner = document.getElementById('lcm-warn-banner');
+    if (banner) {
+      const isStreaming = !!document.getElementById('stop-btn')?.offsetParent;
+      if (pct >= 60 && pct < 80 && !isStreaming) {
+        const txt = document.getElementById('lcm-warn-text');
+        if (txt) txt.textContent = `Context is ${pct}% full — the next turn may exceed the limit. Compact now to keep the conversation going.`;
+        banner.classList.add('visible');
+      } else if (pct >= 80 || pct < 60) {
+        banner.classList.remove('visible');
+      }
+    }
   } else {
     wrap.style.display = 'none';
+    document.getElementById('lcm-warn-banner')?.classList.remove('visible');
   }
 
   // Session cost indicator — shows current session $ spend. Quota state
@@ -763,7 +778,7 @@ function openProject(agentId, projectName) {
 async function _editProjectImageUpload(ev, agentId, projectName) {
   const file = ev?.target?.files?.[0];
   if (!file) return;
-  if (file.size > 2 * 1024 * 1024) { alert('Image too large (max 2 MB).'); return; }
+  if (file.size > 2 * 1024 * 1024) { await showAlert('Image too large (max 2 MB).'); return; }
   const fd = new FormData();
   fd.append('file', file);
   try {
@@ -772,7 +787,7 @@ async function _editProjectImageUpload(ev, agentId, projectName) {
       { method: 'POST',
         headers: { 'Authorization': `Bearer ${localStorage.getItem('auth-token') || ''}` },
         body: fd });
-    if (!r.ok) { alert(`Upload failed: ${r.status}`); return; }
+    if (!r.ok) { await showAlert(`Upload failed: ${r.status}`); return; }
     const data = await r.json();
     const preview = document.getElementById('edit-project-image-preview');
     const label   = document.getElementById('edit-project-image-label');
@@ -786,14 +801,14 @@ async function _editProjectImageUpload(ev, agentId, projectName) {
     // when the user closes the modal and returns to the list.
     try { await loadProjectsList(); } catch(_) {}
   } catch (e) {
-    alert(`Upload failed: ${e.message || e}`);
+    await showAlert(`Upload failed: ${e.message || e}`);
   } finally {
     ev.target.value = '';
   }
 }
 
 async function _editProjectImageClear(agentId, projectName) {
-  if (!confirm('Remove this project image?')) return;
+  if (!await showConfirmDanger('Remove this project image?', 'Remove Image', 'Remove')) return;
   try {
     await API.del(`/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(projectName)}/image`);
     const preview = document.getElementById('edit-project-image-preview');
@@ -806,7 +821,7 @@ async function _editProjectImageClear(agentId, projectName) {
     try { await window.Favourites?.reload?.(); } catch(_) {}
     try { await loadProjectsList(); } catch(_) {}
   } catch (e) {
-    alert(`Remove failed: ${e.message || e}`);
+    await showAlert(`Remove failed: ${e.message || e}`);
   }
 }
 
@@ -846,7 +861,7 @@ async function handleProjectImageUpload(ev) {
   const projectName = state._projectDetailName;
   if (!project || !agentId || !projectName) return;
   if (file.size > 2 * 1024 * 1024) {
-    alert('Image too large (max 2 MB).');
+    await showAlert('Image too large (max 2 MB).');
     return;
   }
   const fd = new FormData();
@@ -860,7 +875,7 @@ async function handleProjectImageUpload(ev) {
         body: fd,
       });
     if (!r.ok) {
-      alert(`Upload failed: ${r.status}`);
+      await showAlert(`Upload failed: ${r.status}`);
       return;
     }
     const data = await r.json();
@@ -870,7 +885,7 @@ async function handleProjectImageUpload(ev) {
     // the new source_image_url on next render.
     try { await window.Favourites?.reload?.(); } catch(_) {}
   } catch (e) {
-    alert(`Upload failed: ${e.message || e}`);
+    await showAlert(`Upload failed: ${e.message || e}`);
   } finally {
     ev.target.value = '';
   }
@@ -881,14 +896,14 @@ async function removeProjectImage() {
   const agentId = state._projectDetailAgent;
   const projectName = state._projectDetailName;
   if (!project || !agentId || !projectName) return;
-  if (!confirm('Remove this project image?')) return;
+  if (!await showConfirmDanger('Remove this project image?', 'Remove Image', 'Remove')) return;
   try {
     await API.del(`/v1/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(projectName)}/image`);
     project.image = '';
     paintProjectDetailBanner(agentId, projectName, project);
     try { await window.Favourites?.reload?.(); } catch(_) {}
   } catch (e) {
-    alert(`Remove failed: ${e.message || e}`);
+    await showAlert(`Remove failed: ${e.message || e}`);
   }
 }
 
@@ -1256,7 +1271,7 @@ async function projectFullResync() {
   const agentId = state._projectDetailAgent;
   const projectName = state._projectDetailName;
   if (!agentId || !projectName) return;
-  if (!confirm(`Full Resync will wipe all memory, knowledge graph triples, and sync state for "${projectName}", then re-index everything from scratch.\n\nContinue?`)) return;
+  if (!await showConfirmDanger(`Full Resync will wipe all memory, knowledge graph triples, and sync state for "${projectName}", then re-index everything from scratch.\n\nContinue?`, 'Full Resync', 'Resync')) return;
   const btn = document.getElementById('project-action-full-resync');
   if (btn) { btn.disabled = true; btn.textContent = 'Wiping…'; }
   try {
@@ -1681,7 +1696,7 @@ async function archiveAllProjectChats() {
   // On the Active tab → archive all active in this project.
   // On the Archived tab → unarchive all archived in this project.
   if (filter === 'archived') {
-    if (!confirm(`Unarchive all archived chats in "${projectName}"?`)) return;
+    if (!await showConfirm(`Unarchive all archived chats in "${projectName}"?`)) return;
     try {
       await API.manageSession({ action: 'unarchive_all', agent: agentId, project: projectName });
       showToast('All chats unarchived');
@@ -1690,7 +1705,7 @@ async function archiveAllProjectChats() {
     } catch(e) { showToast('Unarchive all failed', true); }
     return;
   }
-  if (!confirm(`Archive all active chats in "${projectName}"?`)) return;
+  if (!await showConfirm(`Archive all active chats in "${projectName}"?`)) return;
   try {
     await API.manageSession({ action: 'archive_all', agent: agentId, project: projectName });
     showToast('All chats archived');
@@ -1706,7 +1721,7 @@ async function deleteAllProjectChats() {
   const filter = state._projectChatsFilter || 'active';
   const archivedOnly = filter === 'archived';
   const label = archivedOnly ? 'archived chats' : 'ALL chats';
-  if (!confirm(`Permanently delete ${label} in "${projectName}"? This cannot be undone.`)) return;
+  if (!await showConfirmDanger(`Permanently delete ${label} in "${projectName}"? This cannot be undone.`, 'Delete Chats', 'Delete')) return;
   try {
     const r = await API.manageSession({
       action: 'delete_all', agent: agentId, project: projectName, archived_only: archivedOnly,
@@ -2344,7 +2359,7 @@ async function archiveProject(agentId, projectName) {
 }
 
 async function deleteProject(agentId, projectName) {
-  if (!confirm(`Delete project "${projectName}"? This cannot be undone.`)) return;
+  if (!await showConfirmDanger(`Delete project "${projectName}"? This cannot be undone.`, 'Delete Project', 'Delete')) return;
   try {
     await API.deleteProject(agentId, projectName);
     showToast('Project deleted');
@@ -4108,7 +4123,7 @@ function _applyScheduledReadonlyUI(runRow) {
 }
 
 async function _schedDeleteRunFromBanner(runId) {
-  if (!confirm(`Delete run #${runId}?\n\nThis removes the history row and every artifact produced by this run (files included).`)) return;
+  if (!await showConfirmDanger(`Delete run #${runId}?\n\nThis removes the history row and every artifact produced by this run (files included).`, 'Delete Run', 'Delete')) return;
   try {
     const res = await API.manageSchedule({ action: 'delete_run', run_id: runId });
     if (res && res.error) { showToast(res.error, true); return; }

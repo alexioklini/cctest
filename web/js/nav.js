@@ -410,6 +410,11 @@ function resetGdprCategories() {
   showToast('Defaults restored — click Save to apply');
 }
 
+async function _confirmResetGdprCategories() {
+  if (!await showConfirm('Reset all categories and overrides to defaults? (Master switches and allowlist are kept.)')) return;
+  resetGdprCategories();
+}
+
 /* ─── Quota config save + helpers ─── */
 
 async function saveQuotaConfig() {
@@ -441,11 +446,11 @@ async function saveQuotaConfig() {
   }
 }
 
-function quotaEditOverride(userId, displayName) {
+async function quotaEditOverride(userId, displayName) {
   // Quick prompt-driven override editor; full inline form would be heavier than worth it
-  const dailyStr = prompt(`Daily limit for ${displayName} (USD; blank = inherit role default; 0 = no limit):`, '');
+  const dailyStr = await showPrompt(`Daily limit for ${displayName} (USD; blank = inherit role default; 0 = no limit):`, '');
   if (dailyStr === null) return;
-  const cycleStr = prompt(`Cycle limit for ${displayName} (USD; blank = inherit; 0 = no limit):`, '');
+  const cycleStr = await showPrompt(`Cycle limit for ${displayName} (USD; blank = inherit; 0 = no limit):`, '');
   if (cycleStr === null) return;
   API.get('/v1/quotas/config').then(cfg => {
     const ov = Object.assign({}, cfg.user_overrides || {});

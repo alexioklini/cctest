@@ -721,7 +721,7 @@ async function triggerLCM() {
 
 async function restoreLCM(sessionId) {
   if (!sessionId) return;
-  if (!confirm('Restore original messages? The compacted summary will be replaced by the full history.')) return;
+  if (!await showConfirm('Restore original messages? The compacted summary will be replaced by the full history.', 'Restore history')) return;
   try {
     const result = await API.post('/v1/context/uncompact', { session_id: sessionId });
     if (result.status === 'no_originals') { showToast('No originals to restore'); return; }
@@ -2096,7 +2096,7 @@ async function runTurnMemoryAction(mode, scope, idx) {
   if (mode === 'purge') {
     const label = { all: 'all memory for this chat', this: "this response's memory",
                     above: 'memory for responses above', below: 'memory for responses below' }[scope] || scope;
-    if (!confirm(`Delete ${label}?\n\nThis permanently removes the matching MemPalace drawers and cannot be undone.`)) return;
+    if (!await showConfirmDanger(`Delete ${label}?\n\nThis permanently removes the matching MemPalace drawers and cannot be undone.`, 'Delete Memory', 'Delete')) return;
   }
 
   try {

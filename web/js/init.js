@@ -213,13 +213,15 @@ async function toggleSaveToMemory() {
   let purge = false;
   const hasHistory = (chat.messages || []).some(m => m.role === 'user' || m.role === 'assistant');
   if (next === 'off' && (cur === 'on' || cur === 'auto') && hasHistory) {
-    const choice = confirm(
-      'Memory turned off for this chat.\n\n' +
-      'Also delete previously stored memories of this chat from MemPalace?\n\n' +
-      'OK  — delete stored memories (cannot be undone)\n' +
-      'Cancel — just stop memorising new turns (existing memories stay)'
-    );
-    purge = !!choice;
+    const choice = await showDialog({
+      title: 'Memory turned off',
+      message: 'Also delete previously stored memories of this chat from MemPalace?',
+      buttons: [
+        { label: 'Keep memories', value: 'keep' },
+        { label: 'Delete memories', value: 'delete', primary: true, danger: true },
+      ],
+    });
+    purge = choice === 'delete';
   }
 
   try {
@@ -926,45 +928,45 @@ async function openUserManagement() {
       document.head.appendChild(st);
     }
     document.body.appendChild(modal);
-  } catch(e) { console.error('Failed to load users:', e); alert('Failed to load users: ' + e.message); }
+  } catch(e) { console.error('Failed to load users:', e); showAlert('Failed to load users: ' + e.message); }
 }
 
 async function changeUserRole(userId, role) {
   try {
     const r = await API.post('/v1/auth/users', {action:'update', user_id: userId, updates:{role}});
-    if (r && r.error) { alert(r.error); return; }
+    if (r && r.error) { await showAlert(r.error); return; }
     showToast?.('Role updated');
-  } catch(e) { alert('Failed to update role: ' + e.message); }
+  } catch(e) { await showAlert('Failed to update role: ' + e.message); }
 }
 
 async function deleteUser(userId, username) {
-  if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+  if (!await showConfirmDanger(`Delete user "${username}"? This cannot be undone.`, 'Delete user', 'Delete')) return;
   try {
     const r = await API.post('/v1/auth/users', {action:'delete', user_id: userId});
-    if (r && r.error) { alert(r.error); return; }
+    if (r && r.error) { await showAlert(r.error); return; }
     document.querySelector('.modal-overlay')?.remove();
     openUserManagement();
-  } catch(e) { alert('Failed to delete user: ' + e.message); }
+  } catch(e) { await showAlert('Failed to delete user: ' + e.message); }
 }
 
 async function adminResetPassword(userId, username) {
-  const pw = prompt(`Reset password for "${username}"?\n\nEnter new password (min 6 characters):`);
+  const pw = await showPrompt(`Enter new password (min 6 characters):`, '', `Reset password for "${username}"`);
   if (pw === null) return;
-  if (pw.length < 6) { alert('Password must be at least 6 characters'); return; }
+  if (pw.length < 6) { await showAlert('Password must be at least 6 characters', 'Invalid password'); return; }
   try {
     const r = await API.post('/v1/auth/users', {action:'reset_password', user_id: userId, new_password: pw});
-    if (r && r.error) { alert(r.error); return; }
-    alert(`Password reset for "${username}". Share the new password with them securely.`);
-  } catch(e) { alert('Failed to reset password: ' + e.message); }
+    if (r && r.error) { await showAlert(r.error); return; }
+    await showAlert(`Password reset for "${username}". Share the new password with them securely.`, 'Password reset');
+  } catch(e) { await showAlert('Failed to reset password: ' + e.message); }
 }
 
 async function setUserDisabled(userId, disabled) {
   try {
     const r = await API.post('/v1/auth/users', {action: disabled ? 'disable' : 'enable', user_id: userId});
-    if (r && r.error) { alert(r.error); return; }
+    if (r && r.error) { await showAlert(r.error); return; }
     document.querySelector('.modal-overlay')?.remove();
     openUserManagement();
-  } catch(e) { alert('Failed: ' + e.message); }
+  } catch(e) { await showAlert('Failed: ' + e.message); }
 }
 
 async function addUser() {
@@ -972,14 +974,14 @@ async function addUser() {
   const password = document.getElementById('new-user-pass')?.value;
   const display_name = document.getElementById('new-user-display')?.value.trim();
   const role = document.getElementById('new-user-role')?.value;
-  if (!username || !password) { alert('Username and password required'); return; }
-  if (password.length < 6) { alert('Password must be at least 6 characters'); return; }
+  if (!username || !password) { await showAlert('Username and password required'); return; }
+  if (password.length < 6) { await showAlert('Password must be at least 6 characters'); return; }
   try {
     const r = await API.post('/v1/auth/users', {action:'create', username, password, role, display_name});
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { await showAlert(r.error); return; }
     document.querySelector('.modal-overlay')?.remove();
     openUserManagement();
-  } catch(e) { alert('Failed to add user: ' + e.message); }
+  } catch(e) { await showAlert('Failed to add user: ' + e.message); }
 }
 
 // ── Per-user Permissions Modal (admin only) ──
@@ -1061,7 +1063,7 @@ async function openUserPermissions(userId, username) {
       </div>
     `;
     document.body.appendChild(modal);
-  } catch(e) { alert('Failed to load permissions: ' + e.message); }
+  } catch(e) { await showAlert('Failed to load permissions: ' + e.message); }
 }
 
 async function _togglePermission(userId, kind, id, checked, el) {
@@ -1069,8 +1071,8 @@ async function _togglePermission(userId, kind, id, checked, el) {
     const payload = {action: checked ? 'grant' : 'revoke', kind, user_id: userId};
     if (kind === 'agent') payload.agent_id = id; else payload.model_id = id;
     const r = await API.post('/v1/auth/permissions', payload);
-    if (r && r.error) { el.checked = !checked; alert(r.error); return; }
-  } catch(e) { el.checked = !checked; alert('Failed: ' + e.message); }
+    if (r && r.error) { el.checked = !checked; await showAlert(r.error); return; }
+  } catch(e) { el.checked = !checked; await showAlert('Failed: ' + e.message); }
 }
 
 async function _toggleCapability(userId, el) {
@@ -1080,8 +1082,8 @@ async function _toggleCapability(userId, el) {
   for (const cb of checkboxes) caps[cb.dataset.cap] = cb.checked;
   try {
     const r = await API.post('/v1/auth/users', {action:'update', user_id: userId, updates:{capabilities: caps}});
-    if (r && r.error) { el.checked = !el.checked; alert(r.error); return; }
-  } catch(e) { el.checked = !el.checked; alert('Failed: ' + e.message); }
+    if (r && r.error) { el.checked = !el.checked; await showAlert(r.error); return; }
+  } catch(e) { el.checked = !el.checked; await showAlert('Failed: ' + e.message); }
 }
 
 // ── User Teams Modal ──
@@ -1153,52 +1155,52 @@ async function openUserTeams() {
       </div>
     `;
     document.body.appendChild(modal);
-  } catch(e) { console.error('Failed to load teams:', e); alert('Failed to load teams: ' + e.message); }
+  } catch(e) { console.error('Failed to load teams:', e); await showAlert('Failed to load teams: ' + e.message); }
 }
 
 async function createUserTeam() {
   const name = document.getElementById('new-user-team-name')?.value.trim();
   const desc = document.getElementById('new-user-team-desc')?.value.trim();
   const head = document.getElementById('new-user-team-head')?.value;
-  if (!name) { alert('Team name required'); return; }
+  if (!name) { await showAlert('Team name required'); return; }
   try {
     const body = {action:'create', name, description: desc};
     if (head) body.head_user_id = head;
     const r = await API.post('/v1/user-teams', body);
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { await showAlert(r.error); return; }
     document.querySelector('.modal-overlay')?.remove();
     openUserTeams();
-  } catch(e) { alert('Failed to create team: ' + e.message); }
+  } catch(e) { await showAlert('Failed to create team: ' + e.message); }
 }
 
 async function dissolveUserTeam(teamId) {
-  if (!confirm('Dissolve this team? Members will be detached.')) return;
+  if (!await showConfirmDanger('Dissolve this team? Members will be detached.', 'Dissolve team', 'Dissolve')) return;
   try {
     await API.post('/v1/user-teams', {action:'dissolve', team_id: teamId});
     document.querySelector('.modal-overlay')?.remove();
     openUserTeams();
-  } catch(e) { alert('Failed to dissolve team: ' + e.message); }
+  } catch(e) { await showAlert('Failed to dissolve team: ' + e.message); }
 }
 
 async function removeUserTeamMember(teamId, userId) {
   try {
     const r = await API.post('/v1/user-teams', {action:'remove_member', team_id: teamId, user_id: userId});
-    if (r && r.error) { alert(r.error); return; }
+    if (r && r.error) { await showAlert(r.error); return; }
     document.querySelector('.modal-overlay')?.remove();
     openUserTeams();
-  } catch(e) { alert('Failed to remove member: ' + e.message); }
+  } catch(e) { await showAlert('Failed to remove member: ' + e.message); }
 }
 
 async function addUserTeamMember(teamId) {
   const sel = document.getElementById('ut-add-' + teamId);
   const uid = sel?.value;
-  if (!uid) { alert('Select a user to add'); return; }
+  if (!uid) { await showAlert('Select a user to add'); return; }
   try {
     const r = await API.post('/v1/user-teams', {action:'add_member', team_id: teamId, user_id: uid});
-    if (r && r.error) { alert(r.error); return; }
+    if (r && r.error) { await showAlert(r.error); return; }
     document.querySelector('.modal-overlay')?.remove();
     openUserTeams();
-  } catch(e) { alert('Failed to add member: ' + e.message); }
+  } catch(e) { await showAlert('Failed to add member: ' + e.message); }
 }
 
 // ── Change Password Modal ──
@@ -1225,14 +1227,14 @@ async function doChangePassword() {
   const old_password = document.getElementById('cp-old')?.value;
   const new_password = document.getElementById('cp-new')?.value;
   const new_password2 = document.getElementById('cp-new2')?.value;
-  if (!old_password || !new_password) { alert('All fields required'); return; }
-  if (new_password !== new_password2) { alert('Passwords do not match'); return; }
+  if (!old_password || !new_password) { await showAlert('All fields required'); return; }
+  if (new_password !== new_password2) { await showAlert('Passwords do not match'); return; }
   try {
     const r = await API.post('/v1/auth/password', {old_password, new_password});
-    if (r.error) { alert(r.error); return; }
-    alert('Password changed successfully');
+    if (r.error) { await showAlert(r.error); return; }
+    await showAlert('Password changed successfully', 'Password changed');
     document.querySelector('.modal-overlay')?.remove();
-  } catch(e) { alert('Failed: ' + e.message); }
+  } catch(e) { await showAlert('Failed: ' + e.message); }
 }
 
 // ═══ User Settings Modal ═══
@@ -1631,7 +1633,7 @@ async function userProfileUpdateNow() {
 }
 
 async function userProfileReset() {
-  if (!confirm('Reset your profile?\n\nDeletes the file + MemPalace drawers. The next daily run (or "Update now") will rebuild from scratch from your last 90 days of chats.\n\nProfile history is kept on disk for rollback.')) {
+  if (!await showConfirmDanger('Reset your profile?\n\nDeletes the file + MemPalace drawers. The next daily run (or "Update now") will rebuild from scratch from your last 90 days of chats.\n\nProfile history is kept on disk for rollback.', 'Reset Profile', 'Reset')) {
     return;
   }
   const msg = document.getElementById('us-profile-doc-msg');
@@ -2521,7 +2523,7 @@ async function cancelQueueTicket(ticketId, stateLabel) {
   const confirmMsg = stateLabel === 'running'
     ? 'Cancel this RUNNING LLM call? The active chat will abort.'
     : 'Cancel this waiting ticket?';
-  if (!confirm(confirmMsg)) return;
+  if (!await showConfirm(confirmMsg)) return;
   try {
     const resp = await fetch(`${BASE_URL}/v1/queue/cancel`, {
       method: 'POST', headers: {'Content-Type':'application/json', ...API._headers()},

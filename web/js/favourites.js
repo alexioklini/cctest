@@ -818,7 +818,7 @@ async function favViewClear() {
     flashToast('Pick a specific scope (Mine / Team / Everyone) before clearing.', true);
     return;
   }
-  if (!confirm(`Remove all ${label} favourites? This can't be undone.`)) return;
+  if (!await showConfirmDanger(`Remove all ${label} favourites? This can't be undone.`, 'Clear favourites', 'Remove all')) return;
   try {
     const r = await API.del(`/v1/favourites?scope=${encodeURIComponent(scope)}&scope_id=${encodeURIComponent(scope_id)}`);
     flashToast(`Removed ${r?.removed || 0} favourite(s)`);
