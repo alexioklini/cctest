@@ -513,9 +513,13 @@ async function sendMessage() {
         }
       },
       compacting: (d) => {
-        if (isActive()) {
-          const el = document.getElementById('spinner-label');
-          if (el) el.textContent = `Compacting context (${d.pct || 0}% full)…`;
+        const spinnerBar = document.getElementById('spinner-bar');
+        const el = document.getElementById('spinner-label');
+        if (el) el.textContent = `Compacting context${d.pct ? ` (${d.pct}% full)` : ''}…`;
+        if (spinnerBar && !spinnerBar.classList.contains('active')) {
+          document.getElementById('spinner-model').textContent = modelShortName(chat?.model);
+          document.getElementById('spinner-elapsed').textContent = '';
+          spinnerBar.classList.add('active');
         }
       },
       compacted: (d) => {
@@ -672,6 +676,11 @@ async function triggerLCM() {
   if (chat.streaming) { showToast('Wait for response to finish', true); return; }
   const btn = document.getElementById('status-lcm-btn');
   if (btn) btn.disabled = true;
+  const spinnerBar = document.getElementById('spinner-bar');
+  document.getElementById('spinner-model').textContent = modelShortName(chat?.model);
+  document.getElementById('spinner-label').textContent = 'Compacting context…';
+  document.getElementById('spinner-elapsed').textContent = '';
+  spinnerBar.classList.add('active');
   try {
     const result = await API.post('/v1/context/compact', { session_id: sessionId });
     if (result.status === 'no_change') {
@@ -706,6 +715,7 @@ async function triggerLCM() {
     showToast('LCM failed: ' + (e.message || e), true);
   } finally {
     if (btn) btn.disabled = false;
+    spinnerBar.classList.remove('active');
   }
 }
 
