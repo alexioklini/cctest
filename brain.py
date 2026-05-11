@@ -11463,7 +11463,7 @@ def run_guided_execution(
     for i, task in enumerate(tasks):
         _emit("guided_task_start", {"index": i, "task": task, "total": total, "state": "running"})
 
-        def _make_progress_cb(task_index):
+        def _make_progress_cb(task_index, is_last_task):
             def _cb(etype, data):
                 if etype == "tool_result":
                     # Cap result to avoid giant SSE payloads; keep enough for URL/ref extraction
@@ -11473,6 +11473,13 @@ def run_guided_execution(
                         data["result"] = result_str[:2000]
                     _emit("guided_task_progress", {"index": task_index, "event": etype, "data": data})
                 elif etype in ("tool_call", "references"):
+                    _emit("guided_task_progress", {"index": task_index, "event": etype, "data": data})
+                elif etype == "text_delta" and not is_last_task:
+                    # Non-final tasks: route narration into the task card body so it
+                    # doesn't bleed into the main chat area (where each task would
+                    # overwrite the previous one, ending in the synthesis text).
+                    # The synthesis task (is_last) keeps the normal upstream path so
+                    # its output IS the final assistant reply in the main flow.
                     _emit("guided_task_progress", {"index": task_index, "event": etype, "data": data})
                 elif etype == "usage":
                     # Accumulate per-task token totals across tool rounds. _run_delegate
@@ -11493,11 +11500,11 @@ def run_guided_execution(
                             pass
                 else:
                     # Forward all other events (worker.started, worker.progress,
-                    # worker.finished, thinking_*, text_delta, etc.) upstream
-                    # untouched. Without this, web_fetch/exa_search worker
-                    # subagents emit no live progress during their 30-60s runs
-                    # and the UI looks frozen at "Task N läuft…" until the next
-                    # tool_call lands. handlers/chat.py knows how to forward
+                    # worker.finished, thinking_*, text_delta on the synthesis task,
+                    # etc.) upstream untouched. Without this, web_fetch/exa_search
+                    # worker subagents emit no live progress during their 30-60s
+                    # runs and the UI looks frozen at "Task N läuft…" until the
+                    # next tool_call lands. handlers/chat.py knows how to forward
                     # these to SSE for the right-panel worker flow + thinking
                     # panel.
                     if event_callback:
@@ -11548,7 +11555,7 @@ def run_guided_execution(
             tools=not is_last,
             session_id=session_id,
             inference_params=inference_params,
-            event_callback=_capture_cb(_make_progress_cb(i)),
+            event_callback=_capture_cb(_make_progress_cb(i, is_last)),
         )
         task_stats[i]["duration"] = round(time.time() - _task_t0, 2)
         # Fallback: model called tools but generated no narrative text. Hand

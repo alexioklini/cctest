@@ -806,6 +806,11 @@ class ChatHandlerMixin:
                         for r in _gt_refs:
                             if not any(x.get("link") == r.get("link") for x in entry["references"]):
                                 entry["references"].append(r)
+                elif ev == "text_delta":
+                    # Accumulate non-final task narration so it persists in
+                    # metadata.guided_tasks[i].narration and renders inside the
+                    # task card on reload (mirror of the client-side accumulator).
+                    entry["narration"] = (entry.get("narration") or "") + (ev_data.get("text") or "")
             elif event_type == "guided_task_done":
                 idx = data.get("index", 0)
                 if idx in _guided_tasks_live:
@@ -1035,6 +1040,7 @@ class ChatHandlerMixin:
                                 "state": "done",
                                 "toolCalls": _guided_tasks_live[i].get("toolCalls", []),
                                 "references": _guided_tasks_live[i].get("references", []),
+                                "narration": _guided_tasks_live[i].get("narration") or "",
                                 "stats": _guided_tasks_live[i].get("stats")
                                          or (_tl_tasks.get(i) or {}).get("stats")
                                          or {},

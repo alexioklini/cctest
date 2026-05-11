@@ -280,6 +280,11 @@ async function sendMessage() {
             if (!t.references.find(r => r.link === ref.link)) t.references.push(ref);
           }
           _mirrorRefsToChatRefs(chat, incoming);
+        } else if (d.event === 'text_delta') {
+          // Non-final tasks stream their narration into the task card body so it
+          // doesn't bleed into the main chat area. Synthesis task uses the normal
+          // text_delta path and renders in the main bubble as the final reply.
+          t.narration = (t.narration || '') + (d.data?.text || '');
         }
         if (isActive()) { renderStreamingMessage(chat); scrollToBottom(); }
       },
@@ -2781,12 +2786,18 @@ function renderGuidedTasksBlock(tasks, isOpen, sessionId, msgIdx) {
       }
     }
 
+    // Per-task narration: text the model wrote while the task ran (non-final
+    // tasks only — synthesis task lives in the main chat bubble).
+    const narrationHtml = t.narration
+      ? `<div class="guided-task-narration msg-content">${renderMarkdown(t.narration)}</div>`
+      : '';
+
     // Auto rule: open while running, closed when done or pending.
     // User override (manual click) pins the card open or closed regardless of state.
     const override = bodyOverrides && (t.index in bodyOverrides) ? bodyOverrides[t.index] : null;
     const bodyOpen = override !== null ? override : isRunning;
     const bodyClass = `guided-task-body${bodyOpen ? ' guided-task-body-open' : ''}`;
-    const bodyContent = toolRows + (refRows ? `<div class="guided-refs">${refRows}</div>` : '') + statsHtml;
+    const bodyContent = toolRows + (refRows ? `<div class="guided-refs">${refRows}</div>` : '') + narrationHtml + statsHtml;
     const cardToggle = msgIdx != null
       ? `window._gtBodyToggle(${msgIdx}, ${t.index}, this)`
       : `window._gtBodyToggleStream(${JSON.stringify(sessionId || '')}, ${t.index}, this)`;

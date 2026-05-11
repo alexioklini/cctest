@@ -1924,6 +1924,16 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   color: var(--text-500);
   font-variant-numeric: tabular-nums;
 }
+.guided-task-narration {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-100);
+  font-size: 12px;
+  color: var(--text-300);
+  line-height: 1.45;
+}
+.guided-task-narration p { margin: 0 0 6px; }
+.guided-task-narration p:last-child { margin-bottom: 0; }
 .guided-tool-worker-badge {
   font-size: 9px;
   font-weight: 600;
