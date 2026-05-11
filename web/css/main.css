@@ -1939,8 +1939,18 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   text-transform: uppercase;
   color: var(--text-500);
   margin-bottom: 4px;
+  user-select: none;
 }
+.guided-task-output-header:hover { color: var(--text-300); }
 .guided-task-output-header span { flex: 1; }
+.guided-task-output-chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s;
+  color: var(--text-500);
+}
+.guided-task-output-open .guided-task-output-chevron { transform: rotate(-180deg); }
+.guided-task-output-block .guided-task-narration { display: none; }
+.guided-task-output-block.guided-task-output-open .guided-task-narration { display: block; }
 .guided-task-copy-btn {
   background: transparent;
   border: 1px solid var(--border-100);

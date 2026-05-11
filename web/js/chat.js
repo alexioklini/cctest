@@ -161,6 +161,7 @@ async function sendMessage() {
   chat._guidedTasksOpen = false;
   chat._guidedTasksUserToggled = false;
   chat._guidedTaskBodyOpen = {};
+  chat._guidedTaskResultOpen = {};
   chat.files = [];
   const streamGen = (chat._streamGen = (chat._streamGen || 0) + 1);
   updateStreamingUI(true, chat);
@@ -2685,12 +2686,15 @@ function renderGuidedTasksBlock(tasks, isOpen, sessionId, msgIdx) {
   // Resolve per-task body overrides (set when the user manually toggles a card).
   // Persisted: state.guidedTaskBodyOpen[msgIdx]; streaming: chat._guidedTaskBodyOpen.
   let bodyOverrides = null;
+  let resultOverrides = null;
   if (msgIdx != null) {
     bodyOverrides = (state.guidedTaskBodyOpen && state.guidedTaskBodyOpen[msgIdx]) || null;
+    resultOverrides = (state.guidedTaskResultOpen && state.guidedTaskResultOpen[msgIdx]) || null;
   } else {
     // Streaming path: read overrides off the active chat.
     const chat = state.activeChat;
     bodyOverrides = chat && chat._guidedTaskBodyOpen ? chat._guidedTaskBodyOpen : null;
+    resultOverrides = chat && chat._guidedTaskResultOpen ? chat._guidedTaskResultOpen : null;
   }
   const total = tasks[0]?.total || tasks.length;
   const doneCount = tasks.filter(t => t.state === 'done').length;
@@ -2796,8 +2800,18 @@ function renderGuidedTasksBlock(tasks, isOpen, sessionId, msgIdx) {
     let narrationHtml = '';
     if (taskOutput) {
       const copyKey = `${msgIdx != null ? msgIdx : 'live'}-${t.index}`;
-      narrationHtml = `<div class="guided-task-output-block">
-        <div class="guided-task-output-header">
+      // Auto rule for the Ergebnis block: expanded while the task is running
+      // (so the user can watch the stream), auto-collapsed when done. Persisted
+      // (re-opened) renders are always done → closed by default. A manual click
+      // pins the state for the rest of the session.
+      const rOverride = resultOverrides && (t.index in resultOverrides) ? resultOverrides[t.index] : null;
+      const resultOpen = rOverride !== null ? rOverride : (msgIdx == null && isRunning);
+      const resultToggle = msgIdx != null
+        ? `window._gtResultToggle(${msgIdx}, ${t.index}, this)`
+        : `window._gtResultToggleStream(${JSON.stringify(sessionId || '')}, ${t.index}, this)`;
+      narrationHtml = `<div class="guided-task-output-block${resultOpen ? ' guided-task-output-open' : ''}">
+        <div class="guided-task-output-header" onclick="event.stopPropagation();${resultToggle}" style="cursor:pointer">
+          <svg class="guided-task-output-chevron" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,4.5 6,7.5 9,4.5"/></svg>
           <span>Ergebnis</span>
           <button class="guided-task-copy-btn" onclick="event.stopPropagation();window._gtCopyTaskOutput('${esc(copyKey)}',this)" title="Copy task output">
             <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
@@ -3264,6 +3278,33 @@ window._gtBodyToggle = function(msgIdx, taskIdx, el) {
     state.guidedTaskBodyOpen[msgIdx][taskIdx] = nextOpen;
   }
 };
+// Toggle for the per-task Ergebnis (output) block. Persisted messages store
+// state in state.guidedTaskResultOpen[msgIdx][taskIdx]; streaming stores it
+// on chat._guidedTaskResultOpen[taskIdx]. A manual click pins the block for
+// the rest of the session — auto-collapse-on-done stops touching it.
+window._gtResultToggle = function(msgIdx, taskIdx, el) {
+  const block = el.closest('.guided-task-output-block');
+  if (!block) return;
+  const nextOpen = !block.classList.contains('guided-task-output-open');
+  block.classList.toggle('guided-task-output-open', nextOpen);
+  if (msgIdx != null && msgIdx !== '') {
+    if (!state.guidedTaskResultOpen) state.guidedTaskResultOpen = {};
+    if (!state.guidedTaskResultOpen[msgIdx]) state.guidedTaskResultOpen[msgIdx] = {};
+    state.guidedTaskResultOpen[msgIdx][taskIdx] = nextOpen;
+  }
+};
+window._gtResultToggleStream = function(sessionId, taskIdx, el) {
+  const block = el.closest('.guided-task-output-block');
+  if (!block) return;
+  const nextOpen = !block.classList.contains('guided-task-output-open');
+  block.classList.toggle('guided-task-output-open', nextOpen);
+  const chat = state.activeChat;
+  if (chat && (!sessionId || chat.sessionId === sessionId)) {
+    if (!chat._guidedTaskResultOpen) chat._guidedTaskResultOpen = {};
+    chat._guidedTaskResultOpen[taskIdx] = nextOpen;
+  }
+};
+
 // Copy a task's rendered output to the clipboard. Reads innerText off the
 // data-task-output-key element so the user gets formatted text (markdown
 // rendered to readable plain) rather than raw HTML or the un-rendered source.
