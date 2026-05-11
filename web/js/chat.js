@@ -512,6 +512,21 @@ async function sendMessage() {
           showToast(d.message, true);
         }
       },
+      compacting: (d) => {
+        if (isActive()) {
+          const el = document.getElementById('spinner-label');
+          if (el) el.textContent = `Compacting context (${d.pct || 0}% full)…`;
+        }
+      },
+      compacted: (d) => {
+        // Inject a visual divider at the start of the message list so the user
+        // sees where the auto-compacted history ends and the fresh tail begins.
+        const existing = chat.messages[0]?.role === 'compacted';
+        if (!existing) {
+          chat.messages.unshift({ role: 'compacted' });
+        }
+        if (isActive()) renderMessages();
+      },
       done: (d) => {
         console.log('[SSE] done event received', {textLen: (d.text||'').length, tokens: d.tokens, model: d.model, msgCount: chat.messages.length});
         // Finalize assistant message (always update data)
@@ -531,6 +546,7 @@ async function sendMessage() {
         chat._tokensOut = (chat._tokensOut || 0) + (tokOut || estOut);
         assistantMsg.metadata = {
           ...(assistantMsg.metadata || {}),
+          model: d.model || chat.model,
           tokens_in: tokIn,
           last_tokens_in: lastTokIn,
           tokens_out: tokOut || estOut,
@@ -646,6 +662,86 @@ async function sendMessage() {
         showToast('Send failed: ' + msg, true);
       }
     }
+  }
+}
+
+async function triggerLCM() {
+  const chat = state.activeChat;
+  const sessionId = chat?.sessionId;
+  if (!sessionId) { showToast('No active session', true); return; }
+  if (chat.streaming) { showToast('Wait for response to finish', true); return; }
+  const btn = document.getElementById('status-lcm-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const result = await API.post('/v1/context/compact', { session_id: sessionId });
+    if (result.status === 'no_change') {
+      showToast('Nothing to compact');
+      return;
+    }
+    // Reload messages from server, then inject a visual divider at the start
+    // so the user sees where the compacted history ends and the fresh tail begins.
+    const data = await API.getSessionMessages(sessionId);
+    const rawMessages = data.messages || [];
+    chat.messages = [{ role: 'compacted', before: result.before_tokens, after: result.after_tokens }];
+    chat._tokensIn = 0;
+    chat._tokensOut = 0;
+    for (const msg of rawMessages) {
+      const meta = msg.metadata;
+      if (meta && msg.role === 'assistant') {
+        if (meta.thinking) msg._thinking = meta.thinking;
+        if (meta.thinking_summary) msg._thinkingSummary = meta.thinking_summary;
+        if (meta.cost) msg._cost = meta.cost;
+        if (meta.files) msg._files = meta.files;
+        if (meta.tokens_in) chat._tokensIn += meta.tokens_in;
+        if (meta.tokens_out) chat._tokensOut += meta.tokens_out;
+      }
+      chat.messages.push(msg);
+    }
+    if (data.total_tokens) chat.totalTokens = data.total_tokens;
+    if (data.max_context) chat.maxContext = data.max_context;
+    renderMessages();
+    updateStatusBar();
+    showToast(`Compacted ${result.before_tokens}→${result.after_tokens} tokens`);
+  } catch(e) {
+    showToast('LCM failed: ' + (e.message || e), true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function restoreLCM(sessionId) {
+  if (!sessionId) return;
+  if (!confirm('Restore original messages? The compacted summary will be replaced by the full history.')) return;
+  try {
+    const result = await API.post('/v1/context/uncompact', { session_id: sessionId });
+    if (result.status === 'no_originals') { showToast('No originals to restore'); return; }
+    // Re-fetch messages in place without re-initialising the whole session
+    const data = await API.getSessionMessages(sessionId);
+    const chat = state.activeChat;
+    if (chat) {
+      chat.messages = [];
+      chat._tokensIn = 0;
+      chat._tokensOut = 0;
+      for (const msg of (data.messages || [])) {
+        const meta = msg.metadata;
+        if (meta && msg.role === 'assistant') {
+          if (meta.thinking) msg._thinking = meta.thinking;
+          if (meta.cost) msg._cost = meta.cost;
+          if (meta.files) msg._files = meta.files;
+          if (meta.tokens_in) chat._tokensIn += meta.tokens_in;
+          if (meta.tokens_out) chat._tokensOut += meta.tokens_out;
+        }
+        chat.messages.push(msg);
+      }
+      if (data.total_tokens) chat.totalTokens = data.total_tokens;
+      if (data.max_context) chat.maxContext = data.max_context;
+      renderMessages();
+      scrollToBottom();
+      updateStatusBar();
+    }
+    showToast('Original messages restored');
+  } catch(e) {
+    showToast('Restore failed: ' + (e.message || e), true);
   }
 }
 
@@ -1053,10 +1149,20 @@ function renderMessages() {
   // Group flat messages[] into turns. A turn opens at every user/human role
   // and closes at the next one. Pre-user messages (rare) become turn 0.
   const turns = []; // { turnNum, userIdx, userMsg, memberIdxs: [...] }
+  // Extract leading compacted-divider marker (injected by triggerLCM, not a real turn).
+  let lcmDividerHtml = '';
+  const msgs = chat.messages[0]?.role === 'compacted'
+    ? (lcmDividerHtml = (() => {
+        const { before, after } = chat.messages[0];
+        const saved = before && after ? ` — ${before.toLocaleString()}→${after.toLocaleString()} tokens` : '';
+        return `<div class="lcm-divider"><span class="lcm-divider-label">Context compacted${saved}</span></div>`;
+      })(), chat.messages.slice(1))
+    : chat.messages;
+
   let cur = null;
   let nextTurnNum = 1;
-  for (let i = 0; i < chat.messages.length; i++) {
-    const m = chat.messages[i];
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
     if (m.role === 'user' || m.role === 'human') {
       if (cur) turns.push(cur);
       cur = { turnNum: nextTurnNum++, userIdx: i, userMsg: m, memberIdxs: [i] };
@@ -1067,7 +1173,12 @@ function renderMessages() {
   }
   if (cur) turns.push(cur);
 
-  let html = '';
+  // renderTurnBody references chat.messages by index; patch the reference so
+  // indices into msgs (compacted-marker stripped) are still correct.
+  const _savedMessages = chat.messages;
+  if (lcmDividerHtml) chat.messages = msgs;
+
+  let html = lcmDividerHtml;
   for (const t of turns) {
     const isCollapsed = chat._collapsedTurns.has(t.turnNum);
     const cls = isCollapsed ? 'turn-group collapsed' : 'turn-group';
@@ -1091,9 +1202,34 @@ function renderMessages() {
            ${chevron}
          </div>`
       : '';
-    let body = renderTurnBody(chat.messages, t.memberIdxs, t.turnNum, chat);
-    html += `<div class="${cls}" data-turn="${t.turnNum}">${badge}<div class="turn-body">${body}</div></div>`;
+    // Detect compacted-context turns: user msg starts with "[Conversation Context]"
+    const userContent = typeof t.userMsg?.content === 'string' ? t.userMsg.content : '';
+    if (userContent.startsWith('[Conversation Context]')) {
+      // Extract summary text (strip the preamble header and tool-hint sentence)
+      const summaryRaw = userContent
+        .replace(/^\[Conversation Context\]\s*/, '')
+        .replace(/^## Compacted Conversation History\s*/, '')
+        .replace(/The following summaries cover[^\n]*\n?/g, '')
+        .replace(/Use context_search[^\n]*\n?/g, '')
+        .trim();
+      const isOpen = !chat._collapsedTurns.has(t.turnNum);
+      const toggleFn = `toggleTurnCollapse(${t.turnNum})`;
+      const sessionId = chat.sessionId || '';
+      html += `<div class="lcm-summary-block" data-turn="${t.turnNum}">
+        <div class="lcm-summary-header" onclick="${toggleFn}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0;transition:transform .2s;transform:rotate(${isOpen?'0':'-90'}deg)"><polyline points="6 9 12 15 18 9"/></svg>
+          <span style="flex:1">Context compacted</span>
+          <button class="lcm-restore-btn" onclick="event.stopPropagation();restoreLCM('${sessionId}')" title="Restore original messages">Restore</button>
+        </div>
+        ${isOpen ? `<div class="lcm-summary-body">${marked.parse(summaryRaw)}</div>` : ''}
+      </div>`;
+    } else {
+      let body = renderTurnBody(chat.messages, t.memberIdxs, t.turnNum, chat);
+      html += `<div class="${cls}" data-turn="${t.turnNum}">${badge}<div class="turn-body">${body}</div></div>`;
+    }
   }
+
+  if (lcmDividerHtml) chat.messages = _savedMessages;
 
   container.innerHTML = html;
 
@@ -1767,7 +1903,7 @@ function renderAssistantMessage(msg, idx) {
     const tokOut = meta.tokens_out || 0;
     const speed = (dur > 0 && tokOut > 0) ? Math.round(tokOut / dur) : null;
     const parts = [];
-    if (meta.model) parts.push(esc(meta.model));
+    if (meta.model) parts.push(esc(modelShortName(meta.model, false) || meta.model));
     if (dur > 0) parts.push(dur.toFixed(1) + 's');
     if (speed) parts.push(speed + ' tok/s');
     if (turnCost > 0) parts.push('$' + turnCost.toFixed(4));

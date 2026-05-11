@@ -1705,6 +1705,8 @@ class BrainAgentHandler(
             self._handle_hooks_save(path)
         elif path == "/v1/context/compact":
             self._handle_context_compact()
+        elif path == "/v1/context/uncompact":
+            self._handle_context_uncompact()
         elif path == "/v1/context/config":
             self._handle_context_config_save()
         elif path == "/v1/channels":

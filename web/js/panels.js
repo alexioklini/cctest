@@ -66,7 +66,7 @@ function updateStatusBar() {
   if (!chat) return;
 
   document.getElementById('status-agent').textContent = state.activeAgentId || '';
-  document.getElementById('status-model').textContent = modelShortName(chat.model);
+  document.getElementById('status-model').textContent = '';
   document.getElementById('status-session').textContent = chat.sessionId ? chat.sessionId.substring(0,8) : '';
 
   // Save-to-memory toggle: green=on, amber=auto, grey=off
@@ -153,14 +153,16 @@ function updateStatusBar() {
   }
   if (chat._lastApiIn) lastApiIn = chat._lastApiIn;
   const contextUsed = lastApiIn || chat.totalTokens || 0;
-  if (contextUsed > 0 && chat.maxContext) {
-    const pct = Math.min(100, Math.round(contextUsed / chat.maxContext * 100));
+  const modelMaxContext = (state.modelsConfig?.models?.[chat.model]?.max_context) || 0;
+  const effectiveMaxContext = modelMaxContext || chat.maxContext;
+  if (contextUsed > 0 && effectiveMaxContext) {
+    const pct = Math.min(100, Math.round(contextUsed / effectiveMaxContext * 100));
     wrap.style.display = '';
     fill.style.width = Math.max(pct, 1) + '%';
     fill.className = 'context-fill' + (pct >= 80 ? ' danger' : pct >= 50 ? ' warn' : '');
     const fmtK = (n) => n >= 1000 ? (n/1000).toFixed(1) + 'K' : n.toString();
-    label.textContent = `${fmtK(contextUsed)} / ${fmtK(chat.maxContext)} (${pct}%)`;
-    label.title = `${contextUsed.toLocaleString()} / ${(chat.maxContext).toLocaleString()} tokens (last API input)`;
+    label.textContent = `${fmtK(contextUsed)} / ${fmtK(effectiveMaxContext)} (${pct}%)`;
+    label.title = `${contextUsed.toLocaleString()} / ${effectiveMaxContext.toLocaleString()} tokens (last API input)`;
   } else {
     wrap.style.display = 'none';
   }

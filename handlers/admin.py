@@ -3667,6 +3667,64 @@ class AdminHandlerMixin:
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
+    def _handle_context_uncompact(self):
+        """POST /v1/context/uncompact — restore original messages for a session."""
+        body = self._read_json()
+        session_id = body.get("session_id", "")
+        if not session_id:
+            self._send_json({"error": "Missing session_id"}, 400)
+            return
+        if self._session_access_check(session_id, require_manage=True) is None:
+            return
+        try:
+            with _db_conn() as conn:
+                # Originals are rows with compacted=1. Find the highest original id —
+                # everything above it was inserted by LCM and must be deleted.
+                row = conn.execute(
+                    "SELECT MAX(id) FROM messages WHERE session_id = ? AND compacted = 1",
+                    (session_id,)
+                ).fetchone()
+                max_orig_id = row[0] if row and row[0] else None
+                if max_orig_id is None:
+                    self._send_json({"status": "no_originals"})
+                    return
+                # Delete LCM-inserted rows (id > max original id)
+                conn.execute(
+                    "DELETE FROM messages WHERE session_id = ? AND id > ?",
+                    (session_id, max_orig_id)
+                )
+                # Restore originals
+                conn.execute(
+                    "UPDATE messages SET compacted = 0 WHERE session_id = ? AND compacted = 1",
+                    (session_id,)
+                )
+                conn.commit()
+                orig_count = conn.execute(
+                    "SELECT COUNT(*) FROM messages WHERE session_id = ?",
+                    (session_id,)
+                ).fetchone()[0]
+            # Clear summaries from context.db
+            if engine._context_manager:
+                try:
+                    ctx_conn = engine._context_conn()
+                    ctx_conn.execute("DELETE FROM summaries WHERE session_id = ?", (session_id,))
+                    ctx_conn.commit()
+                except Exception:
+                    pass
+            # Reload session messages in memory
+            session = sessions.get(session_id)
+            if session:
+                fresh = ChatDB.load_messages(session_id)
+                with session.lock:
+                    session.messages = [
+                        {"role": m["role"], "content": m["content"],
+                         **({"metadata": m["metadata"]} if m.get("metadata") else {})}
+                        for m in fresh
+                    ]
+            self._send_json({"status": "restored", "message_count": orig_count})
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+
     def _handle_context_stats(self):
         """GET /v1/context/stats?session_id=X — context stats for a session."""
         from urllib.parse import parse_qs, urlparse

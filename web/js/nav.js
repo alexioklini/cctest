@@ -259,7 +259,7 @@ async function loadAgentProjects(agentId) {
 function updateModelSelectorDisplay(modelId) {
   const name = modelShortName(modelId);
   const tip = modelDescription(modelId);
-  for (const id of ['model-selector-name', 'welcome-model-name', 'chat-model-name', 'project-model-name', 'status-model']) {
+  for (const id of ['model-selector-name', 'welcome-model-name', 'chat-model-name', 'project-model-name']) {
     const el = document.getElementById(id);
     if (el) {
       el.textContent = name;
@@ -270,6 +270,7 @@ function updateModelSelectorDisplay(modelId) {
   }
   refreshThinkingButton();
   if (typeof refreshResearchModeButton === 'function') refreshResearchModeButton();
+  if (typeof updateStatusBar === 'function') updateStatusBar();
 }
 
 // Model locality helper — prefers the server-derived is_local flag exposed via

@@ -1040,6 +1040,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     </div>
     <div class="status-item" style="margin-left:auto;gap:6px">
       <span class="status-value" id="status-session"></span>
+      <button class="compact-btn" id="status-lcm-btn" onclick="triggerLCM()" title="Lossless Context Manager — compress chat history" style="font-size:13px;padding:1px 6px">&#x2702;&#xFE0F;</button>
       <button class="compact-btn" id="status-inspect-btn" onclick="openInspectModal()" title="Inspect session" style="font-size:13px;padding:1px 6px">&#x1F50D;</button>
     </div>
   </div>

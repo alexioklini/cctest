@@ -801,6 +801,66 @@ textarea { resize: none; }
 .msg-turn + .msg-turn { border-top: none; }
 
 /* Turn group — wraps one user message and its assistant reply chain */
+.lcm-summary-block {
+  margin: 8px 0 12px;
+  border: 1px solid var(--border-100, #e5e7eb);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13px;
+}
+.lcm-summary-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  background: var(--bg-100, #f9fafb);
+  color: var(--text-300, #6b7280);
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  font-weight: 500;
+}
+.lcm-summary-header:hover { background: var(--bg-200, #f3f4f6); color: var(--text-100); }
+.lcm-restore-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-100);
+  border-radius: 4px;
+  background: var(--bg-000);
+  color: var(--text-300);
+  cursor: pointer;
+  line-height: 1.4;
+}
+.lcm-restore-btn:hover { border-color: var(--text-300); color: var(--text-100); }
+.lcm-summary-body {
+  padding: 12px 16px;
+  color: var(--text-200, #4b5563);
+  border-top: 1px solid var(--border-100, #e5e7eb);
+  line-height: 1.6;
+}
+.lcm-summary-body h3 { font-size: 12px; font-weight: 600; color: var(--text-300); margin: 12px 0 4px; }
+.lcm-summary-body h3:first-child { margin-top: 0; }
+.lcm-summary-body p { margin: 4px 0; }
+.lcm-summary-body ul, .lcm-summary-body ol { margin: 4px 0; padding-left: 20px; }
+.lcm-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 12px;
+  color: var(--text-300, #9ca3af);
+  font-size: 11px;
+}
+.lcm-divider::before,
+.lcm-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-100, #e5e7eb);
+}
+.lcm-divider-label {
+  white-space: nowrap;
+  padding: 0 4px;
+}
 .turn-group { position: relative; }
 .turn-group-header {
   display: flex;

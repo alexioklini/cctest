@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.31.0"
-VERSION_DATE = "2026-05-09"
+VERSION = "8.32.0"
+VERSION_DATE = "2026-05-10"
 CHANGELOG = [
+    ("8.32.0", "2026-05-10", "Final dead-extraction sweep — eliminate ALL remaining duplication between brain.py and engine/. Continuation of v8.28.0 / v8.29.0 / v8.30.0. The earlier sweeps cleared the loop, constants, internal-only modules, and analytics package; this sweep deletes the rest of `engine/tools/` (everything except `image_gen.py`) and the entire `engine/memory/` subpackage. Verified zero live importers via `grep -rn 'from engine.tools.X\\|from engine.memory'`. Deleted: `engine/tools/files.py` (1381 LOC — brain.py defines all 11 file/shell/python tools `tool_read_file/tool_write_file/tool_edit_file/tool_read_attachment/tool_read_document/tool_write_document/tool_edit_document/tool_list_directory/tool_search_files/tool_execute_command/tool_python_exec`), `engine/tools/email.py` (324 LOC — brain.py defines all 5 gmail tools), `engine/tools/git.py` (407 LOC — brain.py defines `tool_git_command`+`tool_github_command`), `engine/tools/code_graph.py` (1221 LOC — brain.py defines all 4 code_graph tools), `engine/tools/web.py` (141 LOC — already drifted, missing the `_html_to_markdown` step that brain.py's live `tool_web_fetch` performs). Also deleted entire `engine/memory/` subpackage: `store.py` (2135 LOC — brain.py defines `class MemoryStore` at line 7141), `autodream.py` (2162 LOC — brain.py has the live `_autodream_*` helpers), `mempalace.py` (901 LOC — never imported; MemPalace functionality always used the `mempalace` pip package directly). Surviving live engine/ modules: `tools/image_gen.py` (only live tool-extraction, imported at brain.py:21845), `kg_extract.py`, `doc_convert.py`, `sync_log.py`. Also removed: 3 broken `tests/test_worker_phase*.py` files that imported `from engine import execution` (execution.py lives at repo root, not under engine/ — tests had been failing at import since the engine extraction sweep) and the entire `backup/` directory (38K LOC of historical snapshots `claude_cli_original.py`+`server_original_backup.py`, audit-trail-only, git history covers them). engine/CLAUDE.md updated to reflect the final surface and the rule going forward: new tool implementations go in brain.py only — 4 edit sites (TOOL_DEFINITIONS, TOOL_GROUPS, tool_* function, TOOL_DISPATCH). Net: ~10K LOC of true duplication eliminated; ~38K LOC of backup snapshots removed; smoke-tested brain.py + server.py + handlers.{chat,admin,projects} all import clean. The drift trap that motivated v8.28.0/v8.29.0/v8.30.0 — and that produced the v8.27.0 image_gen registration bug — is now structurally impossible for files/email/git/code_graph/web tools and MemoryStore: there is no second copy left to drift from."),
     ("8.31.0", "2026-05-09", "Project research_mode flag — split projects into research/Q&A vs general-purpose. Until now every project chat got the strict v8.22.0 retrieval/citation regime: forced 3-step `mempalace_query`→`read_document`→answer flow, REFUSE-on-error, REFUSAL/PRECISION/CITATION discipline injection (via `DEFAULT_PROJECT_INSTRUCTIONS` fallback when `instructions` was empty), and the server-side citation validator + synchronous re-round on threshold violation. That regime is correct for policy/Q&A projects but actively wrong for projects whose chats USE indexed content as INPUT for tasks — codegen against a spec, drafting documents from sources, building tools from API references. Those chats need the documents available via `mempalace_query`, but not the per-claim verbatim-citation enforcement, refusal-on-empty, and re-round penalty cycles. (1) **`project.json.research_mode` (bool)** — per-project flag toggled by the owner in the project settings panel (new 'Research / Q&A project' checkbox above Instructions). When ON: full strict regime as today. When OFF: a soft `PROJECT MEMORY` block ('memory is available, use mempalace_query when relevant') with no forced flow, KG hint block skipped, `DEFAULT_PROJECT_INSTRUCTIONS` NOT injected, citation validator + re-round skipped entirely in `handlers/chat.py`. Owner `instructions` field is now purely additive in both modes — appended verbatim after the mode-specific blocks, never used as a fallback for the disciplines. Removes the v8.23 conflation of owner intent with Brain behavior. (2) **`sessions.research_mode_override` (NULL/0/1)** — per-session sticky override. Composer button (`btn-research-mode`, hidden in non-project chats) cycles two states: project default ↔ override-opposite-of-default. Click installs `not project_default` as the override; click again clears (back to default). Persists across turns of the same session, mirrors `save_to_memory` semantics. New `/v1/sessions/manage` action `research_mode_override` accepts `{value: null|true|false}`. (3) **Resolution flow**: `_build_system_prompt` reads `_thread_local.research_mode_override` (set in `handlers/chat.py` from `session.research_mode_override`); falls back to `proj_cfg.research_mode`; falls back to legacy migration helper `_project_research_mode(cfg)` which returns `not bool(instructions.strip())` — preserves v8.23 behavior for projects predating the flag. (4) **Strict block content unchanged** for research_mode=ON projects — same 3-step flow, same KG decision rule, same `DEFAULT_PROJECT_INSTRUCTIONS` discipline body. The disciplines are now injected DIRECTLY by Brain (under a 'RESEARCH MODE DISCIPLINES' header) rather than via the `instructions` fallback. (5) **`/v1/projects/default-instructions` endpoint removed** + 'Load default' button + helper text. The disciplines aren't a template owners edit — they're Brain behavior the flag turns on/off. Editor modal now reads: 'Strict retrieval / citation discipline is a separate setting (Research / Q&A project in project settings)'. (6) **UI plumbing**: `loadProjectDetail` reads `project.research_mode` into a checkbox above Instructions. `toggleProjectResearchMode` PUTs `{research_mode: bool}` to the project, invalidates the composer button's per-project cache, refreshes the button. Composer button in `init.js`: lazy-fetches project default via `_projectResearchModeDefault` (cached per agent::name), renders state with two indicators — color (blue when effective on) and bottom-border (when override is active vs default). Tooltip names the override state explicitly. `refreshResearchModeButton` called from every existing thinking-button refresh site (chat open, model switch, navigation). (7) **CLAUDE.md updated** — replaced the 'Project Instructions (response disciplines, default)' section with 'Project Mode: research_mode' covering the on/off split, instructions field semantics, migration default, and composer button mechanics. Brain mechanics (3-step body, BINARY DOCUMENTS, `read_path` vs `read_path_original`) stay infrastructure-level and weren't moved. Net effect: a project owner with a 'use these specs to build a tool' project flips one checkbox and stops getting scolded for not citing every code comment, without touching the `instructions` field at all."),
     ("8.30.0", "2026-05-08", "Phase-2 wire-or-delete sweep of dead engine/ extraction fragments. Continuation of v8.28.0 (tool-registry dedup) and v8.29.0 (loop.py + constants.py). The backlog memory flagged 8 internal-only modules — `agents.py`, `cli.py`, `context.py`, `mcp.py`, `models.py`, `provider.py`, `scheduler.py`, `tasks.py` (~7573 LOC) — that nothing outside engine/ imports; verification grep confirmed zero external importers. Audit also caught the entire `engine/analytics/` package (`__init__.py`, `audit.py`, `costs.py`, `pii.py`, `quotas.py`, `tracing.py`, ~2345 LOC) in the same dead-extraction state — its only consumer was a single lazy import inside `engine/doc_convert.py:_log_ocr_cost`, and that path was already silently broken (read `engine.analytics.costs._cost_tracker` which is always `None` because nothing in the runtime ever instantiates that module's tracker). All 12 modules + the analytics directory deleted in one commit (~9918 LOC total). brain.py is the verified source of truth for every duplicate symbol: `CostTracker`, `AuditLog`, `TraceManager`, `PIIScanner`, `QuotaManager`, `MCPManager`, `LocalProviderQueue`, `Scheduler`, `AgentConfig`, `ContextManager`, `init_models_config`, `MODEL_PROFILES`, `KNOWN_MODELS`, `_run_delegate`, `TaskRunner`, `resolve_provider_for_model`, `_pii_scan_text`, `list_agents`, `get_agent_summaries`, `scan_claude_code_skills`, `build_agent_registry`, etc. **Latent bug fix**: `engine/doc_convert.py:_log_ocr_cost` rewired from `engine.analytics.costs._cost_tracker` (always `None`, so OCR cost rows were silently dropped) to brain's live `_cost_tracker`. The `log_ocr` method (which only existed on the dead analytics CostTracker) ported to brain's `CostTracker` class — same `cost_log` table schema, pages stashed in `tokens_in`, explicit USD bypasses `_compute_cost`. After this commit OCR cost tracking actually writes rows. engine/CLAUDE.md updated: dropped the analytics row from the live-modules table, dropped the internal-only-modules paragraph, dropped the (already-stale, deleted in 8.24.15) `execution.py` row, retitled section headers that pointed to deleted files (`Provider & Warmup (provider.py)` → `(brain.py)`, etc.). Final engine/ surface: `tools/`, `memory/`, `kg_extract.py`, `doc_convert.py`, `sync_log.py`. Same image_gen-style trap that motivated v8.28.0 + v8.29.0 is now eliminated for the rest of the package — there are no more silent duplicate-extraction fragments waiting to fire when someone adds a new feature in the wrong place."),
     ("8.29.0", "2026-05-08", "Delete dead engine/loop.py + engine/constants.py (~4700 LOC). Continuation of v8.28.0 dedup audit. After removing the tool-registry duplicate from engine/constants.py, a wider sweep showed nothing outside engine/ ever imported `engine.loop` or `engine.constants` (verified by `grep -rn 'from engine.loop\\|from engine.constants'` returning zero hits). The single live cross-reference — `from engine.loop import _thread_local, _current_agent` inside engine/doc_convert.py's OCR cost-tracking helper — was already broken: `_thread_local` was never defined at module level in engine/loop.py, so the import always raised ImportError and fell into the silent fallback that defaulted `agent_id='main'` for every OCR cost row. Fixed by rewiring that import to `from brain import _thread_local, _current_agent` (the actual runtime source of truth). engine/loop.py was a verbatim extraction of brain.py's agentic loop that was never wired up — handlers/server.py call `engine.send_message_with_fallback` where `engine` is `brain` (`import brain as engine` in every handler module), so brain.py's copy is what runs. Same for engine/constants.py — its `MODEL_PROFILES`, `_CONCURRENT_SAFE_TOOLS`, `_ARTIFACT_TYPE_MAP`, `_MIME_TO_EXT`, `READONLY_TOOLS`, `PLAN_MODE_PROMPT`, `DEFAULT_PROJECT_INSTRUCTIONS`, `CAVEMAN_*` constants, etc. were all duplicates of brain.py's own copies. Both files deleted entirely. engine/CLAUDE.md updated to reflect actual runtime topology: brain.py is the runtime monolith; live engine/ submodules are tools/, kg_extract.py, doc_convert.py, sync_log.py, execution.py, memory/, analytics/. Internal-only engine/ modules (agents, cli, context, mcp, models, provider, scheduler, tasks) flagged as historical fragments that nothing outside engine/ imports — future work is either wire them in or delete them. Stale comment in engine/context.py header (claimed AGENTS_DIR comes from engine/constants.py — actually from engine/agents.py) corrected. Net: -4697 LOC, single source of truth for the agentic loop + tool registry, OCR cost-tracking now writes the real agent_id."),
@@ -19165,14 +19166,16 @@ class ContextManager:
         return merged_any
 
     def assemble_context(self, session_id: str, messages: list[dict],
-                         system_prompt: str = "", max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS) -> list[dict]:
+                         system_prompt: str = "", max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS,
+                         fresh_tail_count: int = None) -> list[dict]:
         """Assemble context: summaries + fresh tail within token budget."""
         cfg = self.get_config()
-        fresh_tail_count = cfg.get("fresh_tail_count", 32)
+        if fresh_tail_count is None:
+            fresh_tail_count = cfg.get("fresh_tail_count", 32)
 
         # Ensure we don't exceed available messages
         fresh_tail_count = min(fresh_tail_count, len(messages))
-        fresh_tail = messages[-fresh_tail_count:] if fresh_tail_count > 0 else messages
+        fresh_tail = messages[-fresh_tail_count:] if fresh_tail_count > 0 else []
 
         # Calculate token budget
         system_tokens = len(system_prompt) // CHARS_PER_TOKEN if system_prompt else 0
@@ -19244,18 +19247,17 @@ class ContextManager:
             if estimated < threshold:
                 return messages, False
 
-        fresh_tail_count = cfg.get("fresh_tail_count", 32)
-        msgs_per_summary = cfg.get("messages_per_summary", 10)
+        if not messages:
+            return messages, False
 
-        # Determine which messages to summarize (everything before fresh tail)
-        if len(messages) <= fresh_tail_count:
-            if force and len(messages) > msgs_per_summary:
-                # Force mode: use half the messages as tail to allow some summarization
-                fresh_tail_count = len(messages) // 2
-            else:
-                return messages, False
-
-        old_messages = messages[:-fresh_tail_count]
+        # With only 1 message, summarize it entirely (no tail to keep).
+        # With 2+, keep half as fresh tail.
+        if len(messages) == 1:
+            fresh_tail_count = 0
+            old_messages = messages
+        else:
+            fresh_tail_count = min(cfg.get("fresh_tail_count", 32), max(1, len(messages) // 2))
+            old_messages = messages[:-fresh_tail_count]
 
         # Find what's already summarized (by checking existing summary ranges)
         conn = _context_conn()
@@ -19265,17 +19267,13 @@ class ContextManager:
         ).fetchone()
         already_summarized = existing[0] if existing and existing[0] else 0
 
-        # Calculate message indices (1-based, relative to session)
-        total_msg_count = len(messages)
-        old_count = len(old_messages)
+        unsummarized_msgs = old_messages[already_summarized:]
 
-        # Only summarize messages not yet covered
-        unsummarized_start = already_summarized
-        unsummarized_msgs = old_messages[unsummarized_start:]
-
-        if len(unsummarized_msgs) < msgs_per_summary:
-            # Not enough new messages to summarize, just assemble
+        if not unsummarized_msgs:
             return self.assemble_context(session_id, messages, system_prompt, max_tokens), True
+
+        # Summarize in chunks; use all unsummarized as one chunk if smaller than chunk size
+        msgs_per_summary = min(cfg.get("messages_per_summary", 10), len(unsummarized_msgs))
 
         # Use summary model (Gemini Flash default, Haiku fallback)
         summary_model, summary_model_fallback = self._resolve_summary_model()
@@ -19288,10 +19286,8 @@ class ContextManager:
         # Create leaf summaries in chunks
         for i in range(0, len(unsummarized_msgs), msgs_per_summary):
             chunk = unsummarized_msgs[i:i + msgs_per_summary]
-            if len(chunk) < 3:  # skip tiny remnants
-                continue
-            range_start = unsummarized_start + i
-            range_end = unsummarized_start + i + len(chunk)
+            range_start = already_summarized + i
+            range_end = already_summarized + i + len(chunk)
             self.summarize_chunk(chunk, session_id, range_start, range_end,
                                  summary_model, api_key, base_url,
                                  fallback_model=summary_model_fallback)
@@ -19299,8 +19295,10 @@ class ContextManager:
         # Try condensation
         self.condense(session_id)
 
-        # Assemble final context
-        assembled = self.assemble_context(session_id, messages, system_prompt, max_tokens)
+        # Assemble final context. When force=True, drop the fresh tail entirely —
+        # the caller wants summaries only, not summaries + original messages on top.
+        assembled = self.assemble_context(session_id, messages, system_prompt, max_tokens,
+                                          fresh_tail_count=0 if force else None)
         new_estimated = _estimate_conversation_tokens(assembled, system_prompt)
         new_pct = int(new_estimated / max_tokens * 100)
         logging.info(f"Compacted: {pct}% → {new_pct}% (~{new_estimated:,} tokens)")
