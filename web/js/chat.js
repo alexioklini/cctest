@@ -295,6 +295,7 @@ async function sendMessage() {
         const entry = { index: d.index, task: d.task, total: d.total || (existing?.total ?? tasks.length),
                         state: 'done', result: d.result, toolCalls: existing?.toolCalls || [],
                         references: existing?.references || [],
+                        narration: existing?.narration || '',
                         stats: d.stats || existing?.stats || null };
         if (idx >= 0) tasks[idx] = entry; else tasks.push(entry);
         // Auto-close outer block once every task is done, unless the user has toggled it.
@@ -2786,11 +2787,25 @@ function renderGuidedTasksBlock(tasks, isOpen, sessionId, msgIdx) {
       }
     }
 
-    // Per-task narration: text the model wrote while the task ran (non-final
-    // tasks only — synthesis task lives in the main chat bubble).
-    const narrationHtml = t.narration
-      ? `<div class="guided-task-narration msg-content">${renderMarkdown(t.narration)}</div>`
-      : '';
+    // Per-task LLM output: prefer the final task result if persisted, else the
+    // streaming narration accumulated mid-task. Non-final tasks only — the
+    // synthesis task's text lives in the main chat bubble.
+    // Copy button targets the raw text via window._gtCopyTaskOutput so
+    // markdown rendering in DOM doesn't strip code-fences / structure.
+    const taskOutput = t.result || t.narration || '';
+    let narrationHtml = '';
+    if (taskOutput) {
+      const copyKey = `${msgIdx != null ? msgIdx : 'live'}-${t.index}`;
+      narrationHtml = `<div class="guided-task-output-block">
+        <div class="guided-task-output-header">
+          <span>Ergebnis</span>
+          <button class="guided-task-copy-btn" onclick="event.stopPropagation();window._gtCopyTaskOutput('${esc(copyKey)}',this)" title="Copy task output">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          </button>
+        </div>
+        <div class="guided-task-narration msg-content" data-task-output-key="${esc(copyKey)}">${renderMarkdown(taskOutput)}</div>
+      </div>`;
+    }
 
     // Auto rule: open while running, closed when done or pending.
     // User override (manual click) pins the card open or closed regardless of state.
@@ -3249,6 +3264,34 @@ window._gtBodyToggle = function(msgIdx, taskIdx, el) {
     state.guidedTaskBodyOpen[msgIdx][taskIdx] = nextOpen;
   }
 };
+// Copy a task's rendered output to the clipboard. Reads innerText off the
+// data-task-output-key element so the user gets formatted text (markdown
+// rendered to readable plain) rather than raw HTML or the un-rendered source.
+window._gtCopyTaskOutput = function(copyKey, btn) {
+  const el = document.querySelector(`[data-task-output-key="${copyKey}"]`);
+  if (!el) return;
+  const text = el.innerText || el.textContent || '';
+  if (!text) return;
+  const restore = btn?.innerHTML;
+  const flash = (ok) => {
+    if (!btn) return;
+    btn.innerHTML = ok
+      ? '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="20 6 9 17 4 12"/></svg>'
+      : '!';
+    setTimeout(() => { if (btn && restore) btn.innerHTML = restore; }, 900);
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(() => flash(true), () => flash(false));
+  } else {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+      flash(true);
+    } catch(e) { flash(false); }
+  }
+};
+
 window._gtBodyToggleStream = function(sessionId, taskIdx, el) {
   const card = el.closest('.guided-task-card');
   const body = card && card.querySelector('.guided-task-body');

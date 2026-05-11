@@ -1924,10 +1924,39 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   color: var(--text-500);
   font-variant-numeric: tabular-nums;
 }
-.guided-task-narration {
+.guided-task-output-block {
   margin-top: 6px;
   padding-top: 6px;
   border-top: 1px solid var(--border-100);
+}
+.guided-task-output-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-500);
+  margin-bottom: 4px;
+}
+.guided-task-output-header span { flex: 1; }
+.guided-task-copy-btn {
+  background: transparent;
+  border: 1px solid var(--border-100);
+  color: var(--text-400);
+  padding: 2px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+.guided-task-copy-btn:hover {
+  background: var(--bg-200);
+  color: var(--text-200);
+}
+.guided-task-narration {
   font-size: 12px;
   color: var(--text-300);
   line-height: 1.45;

@@ -817,6 +817,14 @@ class ChatHandlerMixin:
                     _guided_tasks_live[idx]["state"] = "done"
                     if isinstance(data.get("stats"), dict):
                         _guided_tasks_live[idx]["stats"] = data["stats"]
+                    # Persist the task's final LLM output (the same text passed
+                    # to the next task as context). For non-final tasks this is
+                    # what the model emitted before stopping; for the synthesis
+                    # task this IS the assistant reply (and would be redundant
+                    # with msg.content, but kept for completeness so the panel
+                    # can render and copy the per-task result uniformly).
+                    if data.get("result"):
+                        _guided_tasks_live[idx]["result"] = data["result"]
             elif event_type == "request_payload":
                 _request_payloads.append(data)
                 return  # internal only, don't send to client
@@ -1041,6 +1049,9 @@ class ChatHandlerMixin:
                                 "toolCalls": _guided_tasks_live[i].get("toolCalls", []),
                                 "references": _guided_tasks_live[i].get("references", []),
                                 "narration": _guided_tasks_live[i].get("narration") or "",
+                                "result": _guided_tasks_live[i].get("result")
+                                          or (_tl_tasks.get(i) or {}).get("result")
+                                          or "",
                                 "stats": _guided_tasks_live[i].get("stats")
                                          or (_tl_tasks.get(i) or {}).get("stats")
                                          or {},
