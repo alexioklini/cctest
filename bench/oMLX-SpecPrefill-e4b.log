@@ -1,0 +1,32 @@
+[oMLX-SpecPrefill-e4b] base=http://localhost:8000/v1 model=gemma-4-e4b-it-4bit reps=3
+warmup probe (cold first-token)...
+  warmup wall=6.51s ttft=6.49s
+
+[PP_heavy rep 1/3] sys=85c usr=8072c max=100
+  ttft=2.38s decode=0.15s pp_tok=2185 tg_tok=9 pp_tps=918.9 tg_tps=60.8
+
+[PP_heavy rep 2/3] sys=85c usr=8072c max=100
+  ttft=1.89s decode=0.14s pp_tok=2185 tg_tok=9 pp_tps=1153.7 tg_tps=65.9
+
+[PP_heavy rep 3/3] sys=85c usr=8072c max=100
+  ttft=0.25s decode=0.14s pp_tok=2185 tg_tok=9 pp_tps=8594.7 tg_tps=64.2
+
+[balanced rep 1/3] sys=71c usr=2142c max=800
+  ttft=0.70s decode=10.98s pp_tok=586 tg_tok=800 pp_tps=840.3 tg_tps=72.9
+
+[balanced rep 2/3] sys=71c usr=2142c max=800
+  ttft=0.18s decode=11.03s pp_tok=586 tg_tok=800 pp_tps=3273.7 tg_tps=72.5
+
+[balanced rep 3/3] sys=71c usr=2142c max=800
+  ttft=0.17s decode=11.01s pp_tok=586 tg_tok=800 pp_tps=3356.8 tg_tps=72.7
+
+[TG_heavy rep 1/3] sys=26c usr=186c max=2000
+  ttft=0.13s decode=16.61s pp_tok=58 tg_tok=1228 pp_tps=440.4 tg_tps=73.9
+
+[TG_heavy rep 2/3] sys=26c usr=186c max=2000
+  ttft=0.14s decode=16.60s pp_tok=58 tg_tok=1228 pp_tps=411.8 tg_tps=74.0
+
+[TG_heavy rep 3/3] sys=26c usr=186c max=2000
+  ttft=0.13s decode=16.63s pp_tok=58 tg_tok=1228 pp_tps=435.9 tg_tps=73.8
+
+→ wrote 10 rows to bench/results.csv

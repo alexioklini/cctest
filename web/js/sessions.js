@@ -188,6 +188,7 @@ async function openSession(sessionId, agentId) {
         if (meta.thinking_summary) msg._thinkingSummary = meta.thinking_summary;
         if (meta.cost) msg._cost = meta.cost;
         if (meta.files) msg._files = meta.files;
+        if (meta.guided_tasks) msg._guidedTasks = meta.guided_tasks;
         if (meta.model && !data.model) chat.model = meta.model;
         if (!data.total_tokens && meta.tokens) chat.totalTokens = meta.tokens;
         // Accumulate token in/out for status bar

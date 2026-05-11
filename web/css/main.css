@@ -1781,6 +1781,172 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 }
 .thinking-block.open .thinking-block-body { display: block; }
 
+/* Guided execution task panel */
+.guided-tasks-block {
+  margin: 8px 0;
+  border-radius: 8px;
+  border: 1px solid var(--border-100);
+  background: var(--bg-100);
+  overflow: hidden;
+}
+.guided-tasks-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--accent-brand);
+  font-weight: 500;
+  user-select: none;
+}
+.guided-tasks-header:hover { background: var(--bg-200); }
+.guided-tasks-chevron { margin-left: auto; font-size: 10px; color: var(--text-400); transition: transform 0.15s; }
+.guided-tasks-block.open .guided-tasks-chevron { transform: rotate(90deg); }
+.guided-tasks-body {
+  display: none;
+  padding: 6px 10px 10px;
+  border-top: 1px solid var(--border-100);
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+}
+.guided-tasks-block.open .guided-tasks-body { display: flex; }
+
+/* Individual task card */
+.guided-task-card {
+  border-radius: 6px;
+  border: 1px solid var(--border-100);
+  background: var(--bg-000);
+  overflow: hidden;
+  margin-top: 4px;
+}
+.guided-task-card-running { border-color: #0891b240; background: #0891b208; }
+.guided-task-card-done { opacity: 0.85; }
+.guided-task-card-pending { opacity: 0.5; }
+.guided-task-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-200);
+}
+.guided-task-card-running .guided-task-header { color: var(--text-100); }
+.guided-task-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+.guided-task-badge-running {
+  background: #0891b220;
+  color: #0891b2;
+  border: 1px solid #0891b240;
+}
+.guided-task-badge-done {
+  background: #16a34a18;
+  color: #16a34a;
+  border: 1px solid #16a34a30;
+}
+.guided-task-badge-pending {
+  background: var(--bg-200);
+  color: var(--text-400);
+  border: 1px solid var(--border-100);
+}
+.guided-task-label { flex: 1; font-size: 12px; }
+
+/* Tool call rows inside a task card */
+.guided-task-body {
+  display: none;
+  border-top: 1px solid var(--border-100);
+  padding: 4px 10px 6px;
+}
+.guided-task-body-open { display: block; }
+.guided-tool-row {
+  padding: 3px 0;
+  font-size: 11px;
+  color: var(--text-400);
+  border-bottom: 1px solid var(--border-100);
+}
+.guided-tool-row:last-child { border-bottom: none; }
+.guided-tool-name {
+  color: var(--accent-brand);
+  font-size: 11px;
+  font-weight: 500;
+  margin-right: 6px;
+}
+.guided-tool-arg {
+  color: var(--text-400);
+  font-size: 10px;
+  font-family: var(--font-mono, monospace);
+  word-break: break-all;
+}
+.guided-tool-result {
+  color: var(--text-500);
+  font-size: 10px;
+  margin-top: 1px;
+  word-break: break-word;
+}
+.guided-refs {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-100);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.guided-ref-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+}
+.guided-ref-link {
+  color: var(--accent-brand);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 340px;
+}
+.guided-ref-link:hover { text-decoration: underline; }
+.guided-task-stats {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-100);
+  font-size: 10.5px;
+  color: var(--text-500);
+  font-variant-numeric: tabular-nums;
+}
+.guided-tool-worker-badge {
+  font-size: 9px;
+  font-weight: 600;
+  background: #0891b2;
+  color: #fff;
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.guided-task-spinner {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid #0891b240;
+  border-top-color: #0891b2;
+  border-radius: 50%;
+  animation: guided-spin 0.7s linear infinite;
+  vertical-align: -1px;
+}
+@keyframes guided-spin { to { transform: rotate(360deg); } }
+
 /* Activity summary — collapsed wrapper for thinking + tool calls before a response */
 .activity-summary {
   margin: 4px 0 8px 0;

@@ -1,5 +1,6 @@
 # Extracted from server.py — chat/inference handlers
 import base64
+import copy
 import json
 import mimetypes
 import os
@@ -688,6 +689,7 @@ class ChatHandlerMixin:
         _thinking_summary = {}  # opaque-reasoning summary (format + reasoning_tokens)
         _usage_totals = {"tokens_in": 0, "tokens_out": 0, "last_tokens_in": 0}  # cumulative across tool rounds; last_tokens_in = most recent round only
         _request_payloads = []  # capture request snapshots per tool round
+        _guided_tasks_live = {}  # index -> {task, toolCalls, references} accumulated from SSE events
         def event_callback(event_type, data):
             if event_type == "text_delta":
                 _partial_reply.append(data.get("text", ""))
@@ -774,6 +776,42 @@ class ChatHandlerMixin:
                 _usage_totals["tokens_in"] += data.get("tokens_in", 0)
                 _usage_totals["tokens_out"] += data.get("tokens_out", 0)
                 # (fall through so the event reaches the SSE queue)
+            elif event_type == "request_payload":
+                _request_payloads.append(data)
+                return  # internal only, don't send to client
+            elif event_type == "guided_task_start":
+                idx = data.get("index", 0)
+                if idx not in _guided_tasks_live:
+                    _guided_tasks_live[idx] = {"task": data.get("task", ""), "total": data.get("total", 1), "toolCalls": [], "references": []}
+            elif event_type == "guided_task_progress":
+                idx = data.get("index", 0)
+                entry = _guided_tasks_live.setdefault(idx, {"task": "", "total": 1, "toolCalls": [], "references": []})
+                ev = data.get("event")
+                ev_data = data.get("data") or {}
+                if ev == "tool_call":
+                    entry["toolCalls"].append({"name": ev_data.get("name", ""), "args": ev_data.get("args", {})})
+                elif ev == "tool_result":
+                    # Attach result to last matching tool call entry
+                    tc_name = ev_data.get("name", "")
+                    result_str = str(ev_data.get("result", ""))
+                    for tc in reversed(entry["toolCalls"]):
+                        if tc["name"] == tc_name and "result" not in tc:
+                            tc["result"] = result_str[:500]
+                            break
+                    # Extract and inject references
+                    _gt_refs = ChatHandlerMixin._extract_references(tc_name, result_str)
+                    if _gt_refs:
+                        data = dict(data)
+                        data["refs"] = _gt_refs
+                        for r in _gt_refs:
+                            if not any(x.get("link") == r.get("link") for x in entry["references"]):
+                                entry["references"].append(r)
+            elif event_type == "guided_task_done":
+                idx = data.get("index", 0)
+                if idx in _guided_tasks_live:
+                    _guided_tasks_live[idx]["state"] = "done"
+                    if isinstance(data.get("stats"), dict):
+                        _guided_tasks_live[idx]["stats"] = data["stats"]
             elif event_type == "request_payload":
                 _request_payloads.append(data)
                 return  # internal only, don't send to client
@@ -902,16 +940,34 @@ class ChatHandlerMixin:
                 _wants_thinking = bool(inf_params.get("thinking"))
                 engine.maybe_reprime_for_thinking(session.model, _wants_thinking,
                                                   agent_id=session.agent_id)
-                reply = engine.send_message_with_fallback(
-                    session.messages, session.model, session.api_key,
-                    session.base_url,
-                    silent=True, escape_watcher=session.cancel_token,
-                    event_callback=event_callback,
-                    provider_resolver=handler_self._resolve_provider,
-                    inference_params=inf_params,
-                    purpose=purpose,
-                    session_id=sid,
-                )
+
+                # Guided Prompt Execution: for models with guided_execution=true,
+                # decompose into subtasks, run each sequentially, last task = final answer.
+                # When guided execution returns is_final=True, skip the main LLM call.
+                reply = None
+                if _model_cfg.get("guided_execution") and message:
+                    _guided_answer, _guided_final = engine.run_guided_execution(
+                        user_message=message,
+                        model=session.model,
+                        session_id=sid,
+                        event_callback=event_callback,
+                        cancel_token=session.cancel_token,
+                        inference_params=inf_params,
+                    )
+                    if _guided_final and _guided_answer:
+                        reply = _guided_answer
+
+                if reply is None:
+                    reply = engine.send_message_with_fallback(
+                        session.messages, session.model, session.api_key,
+                        session.base_url,
+                        silent=True, escape_watcher=session.cancel_token,
+                        event_callback=event_callback,
+                        provider_resolver=handler_self._resolve_provider,
+                        inference_params=inf_params,
+                        purpose=purpose,
+                        session_id=sid,
+                    )
                 if reply:
                     # Compute cost before saving
                     session_cost = None
@@ -964,6 +1020,31 @@ class ChatHandlerMixin:
                         msg_metadata["caveman_chat"] = _cav_chat
                     if _cav_sys:
                         msg_metadata["caveman_system"] = _cav_sys
+                    # Guided execution task list — persisted so the UI can re-render on reload.
+                    # Prefer _guided_tasks_live (accumulated in event_callback, includes toolCalls
+                    # and references) over the brain.py thread-local stash (task names only).
+                    if _guided_tasks_live:
+                        _tl_tasks = getattr(engine._thread_local, '_guided_tasks_for_msg', None) or {}
+                        if isinstance(_tl_tasks, list):
+                            _tl_tasks = {t["index"]: t for t in _tl_tasks}
+                        msg_metadata["guided_tasks"] = [
+                            {
+                                "index": i,
+                                "task": _guided_tasks_live[i].get("task") or (_tl_tasks.get(i) or {}).get("task", ""),
+                                "total": _guided_tasks_live[i].get("total", len(_guided_tasks_live)),
+                                "state": "done",
+                                "toolCalls": _guided_tasks_live[i].get("toolCalls", []),
+                                "references": _guided_tasks_live[i].get("references", []),
+                                "stats": _guided_tasks_live[i].get("stats")
+                                         or (_tl_tasks.get(i) or {}).get("stats")
+                                         or {},
+                            }
+                            for i in sorted(_guided_tasks_live)
+                        ]
+                        try:
+                            engine._thread_local._guided_tasks_for_msg = None
+                        except Exception:
+                            pass
                     # --- Citation validator (Phase 1+2: validate + optional re-round) ---
                     # Phase 1: scans reply for [Quelle: X — "Y"] brackets, verifies each
                     # quote against the actual source files, counts uncited claims.

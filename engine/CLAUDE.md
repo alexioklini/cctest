@@ -8,13 +8,16 @@ Non-obvious invariants for this package. Root CLAUDE.md has the full architectur
 
 | File | Owns | Importers |
 |------|------|-----------|
-| `tools/*.py` | Tool implementations (files, web, git, email, code_graph, image_gen) | `brain.py` TOOL_DISPATCH |
+| `tools/image_gen.py` | Image generation via Mistral Conversations API (only live tool extraction) | `brain.py` TOOL_DISPATCH (line ~21845) |
 | `kg_extract.py` | LLM-driven triple extraction over project input folders | `handlers/admin.py`, `handlers/projects.py`, `server.py` |
-| `doc_convert.py` | binary → `.md` companion conversion | `engine/tools/files.py`, `server.py` |
+| `doc_convert.py` | binary → `.md` companion conversion | `server.py`, brain.py via lazy import |
 | `sync_log.py` | Sync run log table + helpers | `handlers/projects.py`, `server.py` |
-| `memory/` | MemPalace direct integration, daemons, chat-sync | `engine/tools/`, `brain.py` |
 
-**Deleted in 8.29.0**: `loop.py` (3819 LOC) and `constants.py` (878 LOC). **Deleted in 8.30.0**: `agents.py`, `cli.py`, `context.py`, `mcp.py`, `models.py`, `provider.py`, `scheduler.py`, `tasks.py` (8 modules, ~7573 LOC) plus the entire `analytics/` package — `audit.py`, `costs.py`, `pii.py`, `quotas.py`, `tracing.py` (~2345 LOC). Total ~9918 LOC of dead extraction. Same pattern as 8.29.0: brain.py owns the live equivalents (`CostTracker`, `AuditLog`, `TraceManager`, `PIIScanner`, `QuotaManager`, `MCPManager`, `LocalProviderQueue`, `Scheduler`, `AgentConfig`, `ContextManager`, scheduler/tasks/cli helpers). The 8.30.0 sweep also fixed silently-broken OCR cost tracking — `engine/doc_convert.py:_log_ocr_cost` was reading the dead `engine.analytics.costs._cost_tracker` singleton (always `None`); rewired to `brain._cost_tracker` and ported `log_ocr` onto brain's `CostTracker`.
+Anything else under `engine/` is dead. brain.py owns the live equivalent.
+
+**Deleted in 8.29.0**: `loop.py` + `constants.py` (~4700 LOC). **8.30.0**: 8 internal modules + `analytics/` package (~9918 LOC). **8.32.0**: rest of `tools/` (`files.py`, `email.py`, `git.py`, `code_graph.py`, `web.py`) and entire `memory/` subpackage (`store.py`, `autodream.py`, `mempalace.py`) — ~9700 LOC. brain.py was already the live source for every symbol: all 11 file/shell/python tools, all 5 gmail tools, both git tools, all 4 code_graph tools, web_fetch (with `_html_to_markdown` that the dead `engine/tools/web.py` was missing), `MemoryStore` class, `_autodream_*` helpers. MemPalace functionality uses the **`mempalace` pip package directly** (`mempalace.searcher`, `mempalace.palace`, `mempalace.knowledge_graph`, `mempalace.closet_llm`) — never `engine.memory.mempalace`. Also dropped: 3 broken `tests/test_worker_phase*.py` files (imported `from engine import execution` — `execution.py` lives at repo root, so they failed at import), entire `backup/` directory (38K LOC of historical snapshots, audit-trail-only).
+
+**Rule going forward**: new tool implementations go in **brain.py only**. Adding a tool means editing 4 sites in brain.py: `TOOL_DEFINITIONS` (~line 421), `TOOL_GROUPS` (~line 1635), the `tool_*` function definition, `TOOL_DISPATCH` (~line 21862). No engine/tools/ directory entries unless the tool is genuinely large enough to warrant its own module (only `image_gen.py` qualifies today).
 
 The invariants below describe brain.py's runtime behavior.
 

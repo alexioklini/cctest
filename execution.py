@@ -25,8 +25,8 @@ from typing import Any, Callable
 # ---------- Configuration ----------
 
 DEFAULT_PROFILES: dict[str, dict] = {
-    "exa_search":             {"heavy": True,  "timeout_seconds": 60},
-    "web_fetch":              {"heavy": False, "timeout_seconds": 60},
+    "exa_search":             {"heavy": "auto", "timeout_seconds": 60},
+    "web_fetch":              {"heavy": "auto", "timeout_seconds": 60},
     "gmail_search":           {"heavy": True,  "timeout_seconds": 60},
     "gmail_inbox":            {"heavy": True,  "timeout_seconds": 60},
     "gmail_read":             {"heavy": True,  "timeout_seconds": 30},

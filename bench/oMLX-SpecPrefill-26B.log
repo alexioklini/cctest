@@ -1,0 +1,30 @@
+[oMLX-SpecPrefill-26B] base=http://localhost:8000/v1 model=gemma-4-26B-A4B-it-MLX-4bit reps=3
+
+[PP_heavy rep 1/3] sys=85c usr=8072c max=100
+  ttft=4.87s decode=0.17s pp_tok=2189 tg_tok=9 pp_tps=449.6 tg_tps=54.1
+
+[PP_heavy rep 2/3] sys=85c usr=8072c max=100
+  ttft=4.48s decode=0.17s pp_tok=2189 tg_tok=9 pp_tps=488.9 tg_tps=54.2
+
+[PP_heavy rep 3/3] sys=85c usr=8072c max=100
+  ttft=0.55s decode=0.15s pp_tok=2189 tg_tok=9 pp_tps=3965.8 tg_tps=59.7
+
+[balanced rep 1/3] sys=71c usr=2142c max=800
+  ttft=1.24s decode=12.40s pp_tok=590 tg_tok=800 pp_tps=475.1 tg_tps=64.5
+
+[balanced rep 2/3] sys=71c usr=2142c max=800
+  ttft=1.27s decode=12.42s pp_tok=590 tg_tok=800 pp_tps=463.0 tg_tps=64.4
+
+[balanced rep 3/3] sys=71c usr=2142c max=800
+  ttft=1.25s decode=12.40s pp_tok=590 tg_tok=800 pp_tps=473.7 tg_tps=64.5
+
+[TG_heavy rep 1/3] sys=26c usr=186c max=2000
+  ttft=0.30s decode=30.68s pp_tok=62 tg_tok=2000 pp_tps=204.2 tg_tps=65.2
+
+[TG_heavy rep 2/3] sys=26c usr=186c max=2000
+  ttft=0.32s decode=30.79s pp_tok=62 tg_tok=2000 pp_tps=196.2 tg_tps=65.0
+
+[TG_heavy rep 3/3] sys=26c usr=186c max=2000
+  ttft=0.30s decode=30.71s pp_tok=62 tg_tok=2000 pp_tps=203.9 tg_tps=65.1
+
+→ wrote 9 rows to bench/results.csv

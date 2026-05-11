@@ -1,6 +1,40 @@
 /* ═══════════════════════════════════════════════════════════
    MESSAGE SENDING & STREAMING
    ═══════════════════════════════════════════════════════════ */
+
+// Mirror live tool-call refs (from either the top-level `references` SSE event
+// or guided_task_progress.tool_result/references) into state.chatReferences so
+// the right-panel "References" tab + badges populate during streaming. Guided
+// execution doesn't emit standalone `references` events, so without this the
+// panel stays empty until reload.
+function _mirrorRefsToChatRefs(chat, refs) {
+  try {
+    if (!refs || !refs.length || !chat?.sessionId) return false;
+    if (!state.chatReferences[chat.sessionId]) state.chatReferences[chat.sessionId] = { cited: [], searched: [] };
+    const cache = state.chatReferences[chat.sessionId];
+    const allLinks = new Set([...cache.cited.map(r => r.link), ...cache.searched.map(r => r.link)]);
+    let added = false;
+    for (const ref of refs) {
+      if (!ref || !ref.link || allLinks.has(ref.link)) continue;
+      cache.searched.push(ref);
+      allLinks.add(ref.link);
+      added = true;
+    }
+    if (added && state.activeChat?.sessionId === chat.sessionId) {
+      if (typeof renderReferencesPane === 'function' && state.rightPanelOpen && state.rightPanelTab === 'references') {
+        try { renderReferencesPane(); } catch(e) { console.warn('renderReferencesPane failed', e); }
+      }
+      if (typeof updateRightPanelBadges === 'function') {
+        try { updateRightPanelBadges(); } catch(e) { console.warn('updateRightPanelBadges failed', e); }
+      }
+    }
+    return added;
+  } catch(e) {
+    console.warn('_mirrorRefsToChatRefs failed', e);
+    return false;
+  }
+}
+
 async function sendMessage() {
   const input = _composerInputEl();
 
@@ -123,6 +157,10 @@ async function sendMessage() {
   chat.thinkingText = '';
   chat.thinkingSummary = null;
   chat.queueStatus = null;
+  chat.guidedTasks = [];
+  chat._guidedTasksOpen = false;
+  chat._guidedTasksUserToggled = false;
+  chat._guidedTaskBodyOpen = {};
   chat.files = [];
   const streamGen = (chat._streamGen = (chat._streamGen || 0) + 1);
   updateStreamingUI(true, chat);
@@ -202,12 +240,75 @@ async function sendMessage() {
       queue_released: (d) => {
         chat.queueStatus = null;
       },
+      guided_task_start: (d) => {
+        const tasks = chat.guidedTasks || (chat.guidedTasks = []);
+        const idx = tasks.findIndex(t => t.index === d.index);
+        const state = d.state || 'running';
+        const entry = { index: d.index, task: d.task, total: d.total, state, toolCalls: idx >= 0 ? (tasks[idx].toolCalls || []) : [] };
+        if (idx >= 0) tasks[idx] = entry; else tasks.push(entry);
+        // Auto-open outer block while tasks run, unless the user has explicitly toggled it
+        // during this stream (chat._guidedTasksUserToggled stays true after any click).
+        if (!chat._guidedTasksUserToggled) chat._guidedTasksOpen = true;
+        if (isActive()) { renderStreamingMessage(chat); scrollToBottom(); }
+      },
+      guided_task_progress: (d) => {
+        const tasks = chat.guidedTasks || (chat.guidedTasks = []);
+        const t = tasks.find(t => t.index === d.index);
+        if (!t) return;
+        if (!t.toolCalls) t.toolCalls = [];
+        if (d.event === 'tool_call') {
+          // upsert by tool_use_id
+          const existing = d.data?.tool_use_id && t.toolCalls.find(c => c.tool_use_id === d.data.tool_use_id);
+          if (existing) { existing.args = d.data.args; }
+          else t.toolCalls.push({ name: d.data?.name || '', args: d.data?.args, tool_use_id: d.data?.tool_use_id, result: null });
+        } else if (d.event === 'tool_result') {
+          const tc = d.data?.tool_use_id && t.toolCalls.find(c => c.tool_use_id === d.data.tool_use_id);
+          if (tc) tc.result = d.data?.result;
+          else if (t.toolCalls.length) t.toolCalls[t.toolCalls.length - 1].result = d.data?.result;
+          // References extracted server-side and injected into the event
+          if (d.refs?.length) {
+            if (!t.references) t.references = [];
+            for (const ref of d.refs) {
+              if (!t.references.find(r => r.link === ref.link)) t.references.push(ref);
+            }
+            _mirrorRefsToChatRefs(chat, d.refs);
+          }
+        } else if (d.event === 'references') {
+          if (!t.references) t.references = [];
+          const incoming = d.data?.references || [];
+          for (const ref of incoming) {
+            if (!t.references.find(r => r.link === ref.link)) t.references.push(ref);
+          }
+          _mirrorRefsToChatRefs(chat, incoming);
+        }
+        if (isActive()) { renderStreamingMessage(chat); scrollToBottom(); }
+      },
+      guided_task_done: (d) => {
+        const tasks = chat.guidedTasks || (chat.guidedTasks = []);
+        const idx = tasks.findIndex(t => t.index === d.index);
+        const existing = idx >= 0 ? tasks[idx] : null;
+        const entry = { index: d.index, task: d.task, total: d.total || (existing?.total ?? tasks.length),
+                        state: 'done', result: d.result, toolCalls: existing?.toolCalls || [],
+                        references: existing?.references || [],
+                        stats: d.stats || existing?.stats || null };
+        if (idx >= 0) tasks[idx] = entry; else tasks.push(entry);
+        // Auto-close outer block once every task is done, unless the user has toggled it.
+        const total = entry.total || tasks.length;
+        const doneCount = tasks.filter(t => t.state === 'done').length;
+        if (doneCount >= total && !chat._guidedTasksUserToggled) chat._guidedTasksOpen = false;
+        if (isActive()) { renderStreamingMessage(chat); scrollToBottom(); }
+      },
       text_delta: (d) => {
         chat.streamingText += d.text || '';
         if (isActive()) { renderStreamingMessage(chat); scrollToBottom(); }
       },
       tool_call: (d) => {
-        console.log('[SSE] tool_call:', d.name, 'showToolCalls:', state.showToolCalls);
+        // While a guided execution is in flight, raw tool_call events should arrive
+        // wrapped as guided_task_progress on the server side. This guard suppresses
+        // any that slip through so the panel stays the single source of truth.
+        const _guidedActive = Array.isArray(chat.guidedTasks) && chat.guidedTasks.length > 0
+          && chat.guidedTasks.some(t => t.state === 'running' || t.state === 'pending');
+        if (_guidedActive) return;
         const last = chat.messages[chat.messages.length - 1];
         const isNewToolCall = !(last && last.role === 'tool_call' && last.tool_use_id && d.tool_use_id && last.tool_use_id === d.tool_use_id);
         if (isNewToolCall) {
@@ -238,7 +339,9 @@ async function sendMessage() {
         if (added && isActive()) { openRightPanel('references'); updateRightPanelBadges(); }
       },
       tool_result: (d) => {
-        console.log('[SSE] tool_result:', d.name, 'hasResult:', !!d.result);
+        const _guidedActive = Array.isArray(chat.guidedTasks) && chat.guidedTasks.length > 0
+          && chat.guidedTasks.some(t => t.state === 'running' || t.state === 'pending');
+        if (_guidedActive) return;
         // d.references is pre-extracted server-side; attach to the message so
         // extractReferencesFromToolResult reads from it directly (no re-parsing).
         const toolMsg = { role: 'tool_result', name: d.name, result: d.result,
@@ -565,6 +668,13 @@ async function sendMessage() {
         else if (chat.files.length) assistantMsg._files = chat.files;
         if (chat.thinkingText) assistantMsg._thinking = chat.thinkingText;
         if (chat.thinkingSummary) assistantMsg._thinkingSummary = chat.thinkingSummary;
+        if (chat.guidedTasks?.length) {
+          assistantMsg._guidedTasks = chat.guidedTasks;
+          // Also mirror into metadata.guided_tasks so collectChatReferences /
+          // getReferencesForMessage (which iterate msg.metadata.guided_tasks)
+          // find them on the live message — same shape as the reload path.
+          assistantMsg.metadata.guided_tasks = chat.guidedTasks;
+        }
 
         // Auto-close activity summary now that the response is finalised
         _activityAutoUpdate(chat, currentTurnNum(chat), 'response');
@@ -701,6 +811,7 @@ async function triggerLCM() {
         if (meta.thinking_summary) msg._thinkingSummary = meta.thinking_summary;
         if (meta.cost) msg._cost = meta.cost;
         if (meta.files) msg._files = meta.files;
+        if (meta.guided_tasks) msg._guidedTasks = meta.guided_tasks;
         if (meta.tokens_in) chat._tokensIn += meta.tokens_in;
         if (meta.tokens_out) chat._tokensOut += meta.tokens_out;
       }
@@ -738,6 +849,7 @@ async function restoreLCM(sessionId) {
           if (meta.thinking) msg._thinking = meta.thinking;
           if (meta.cost) msg._cost = meta.cost;
           if (meta.files) msg._files = meta.files;
+          if (meta.guided_tasks) msg._guidedTasks = meta.guided_tasks;
           if (meta.tokens_in) chat._tokensIn += meta.tokens_in;
           if (meta.tokens_out) chat._tokensOut += meta.tokens_out;
         }
@@ -1910,6 +2022,7 @@ function renderAssistantMessage(msg, idx) {
     const cum = (typeof msg._cost === 'number') ? msg._cost : (meta.cost || 0);
     const turnCost = Math.max(0, cum - prevCum);
     const dur = meta.duration || 0;
+    const tokIn = meta.tokens_in || 0;
     const tokOut = meta.tokens_out || 0;
     const speed = (dur > 0 && tokOut > 0) ? Math.round(tokOut / dur) : null;
     const parts = [];
@@ -1917,6 +2030,7 @@ function renderAssistantMessage(msg, idx) {
     if (dur > 0) parts.push(dur.toFixed(1) + 's');
     if (speed) parts.push(speed + ' tok/s');
     if (turnCost > 0) parts.push('$' + turnCost.toFixed(4));
+    if (tokIn || tokOut) parts.push(`${tokIn.toLocaleString()} in / ${tokOut.toLocaleString()} out`);
     // Thinking level (mirrors session-inspector badges, chat.js:756–758).
     // metadata.thinking_level is set per turn; absence with no _thinking → 'none'.
     const tLvl = meta.thinking_level || (msg._thinking || meta.thinking ? 'on' : '');
@@ -1930,12 +2044,22 @@ function renderAssistantMessage(msg, idx) {
     if (cavChat) cavParts.push('chat ' + cavName(cavChat));
     if (cavParts.length) parts.push('caveman: ' + cavParts.join(' / '));
     if (parts.length) {
-      turnStatsHtml = `<span class="msg-turn-stats" title="Model · duration · speed · turn cost · thinking · caveman">${parts.join(' · ')}</span>`;
+      turnStatsHtml = `<span class="msg-turn-stats" title="Model · duration · speed · turn cost · tokens in/out · thinking · caveman">${parts.join(' · ')}</span>`;
     }
   }
 
+  // Default closed on reopen; user can expand — state persisted in state.guidedTasksOpen keyed by msgIdx
+  if (!(idx in (state.guidedTasksOpen || {}))) {
+    if (!state.guidedTasksOpen) state.guidedTasksOpen = {};
+    state.guidedTasksOpen[idx] = false;
+  }
+  const guidedHtml = msg._guidedTasks?.length
+    ? renderGuidedTasksBlock(msg._guidedTasks, state.guidedTasksOpen[idx], null, idx)
+    : '';
+
   return `
     <div class="msg-turn msg-turn-assistant">
+      ${guidedHtml}
       ${thinkingHtml}
       <div class="msg-assistant msg-content">${rendered}</div>
       ${filesHtml}
@@ -2549,6 +2673,152 @@ function renderToolResult(msg, idx) {
   `;
 }
 
+// msgIdx: message index for persisted messages (enables stable open/close state).
+//         Pass null for the streaming bubble (uses chat._guidedTasksOpen instead).
+function renderGuidedTasksBlock(tasks, isOpen, sessionId, msgIdx) {
+  // Resolve per-task body overrides (set when the user manually toggles a card).
+  // Persisted: state.guidedTaskBodyOpen[msgIdx]; streaming: chat._guidedTaskBodyOpen.
+  let bodyOverrides = null;
+  if (msgIdx != null) {
+    bodyOverrides = (state.guidedTaskBodyOpen && state.guidedTaskBodyOpen[msgIdx]) || null;
+  } else {
+    // Streaming path: read overrides off the active chat.
+    const chat = state.activeChat;
+    bodyOverrides = chat && chat._guidedTaskBodyOpen ? chat._guidedTaskBodyOpen : null;
+  }
+  const total = tasks[0]?.total || tasks.length;
+  const doneCount = tasks.filter(t => t.state === 'done').length;
+  const running = tasks.find(t => t.state === 'running');
+  const allDone = doneCount >= total && doneCount > 0;
+
+  const headerLabel = allDone
+    ? `Aufgabenplan — ${total} Task${total !== 1 ? 's' : ''} ausgeführt`
+    : running
+      ? `Aufgabenplan — Task ${running.index + 1} von ${total} läuft…`
+      : `Aufgabenplan — wird vorbereitet…`;
+
+  const TOOL_LABELS = {
+    exa_search: 'Websuche', web_fetch: 'Webseite abrufen', web_search: 'Websuche',
+    read_file: 'Datei lesen', read_document: 'Dokument lesen', write_file: 'Datei schreiben',
+    edit_file: 'Datei bearbeiten', list_directory: 'Ordner anzeigen', search_files: 'Dateien suchen',
+    execute_command: 'Befehl ausführen', python_exec: 'Code ausführen',
+    mempalace_query: 'Gedächtnis abfragen', save_chat_to_memory: 'In Gedächtnis speichern',
+    delegate: 'Aufgabe delegieren', run_task: 'Aufgabe starten',
+  };
+
+  const taskCards = tasks.map(t => {
+    const isDone = t.state === 'done';
+    const isRunning = t.state === 'running';
+    const isPending = t.state === 'pending';
+
+    const spinner = isRunning ? '<span class="guided-task-spinner"></span>' : '';
+    const check = isDone
+      ? '<svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.2" style="vertical-align:-1px;flex-shrink:0"><polyline points="1.5,6 4.5,9 10.5,3"/></svg>'
+      : '';
+    const badgeClass = `guided-task-badge ${isDone ? 'guided-task-badge-done' : isPending ? 'guided-task-badge-pending' : 'guided-task-badge-running'}`;
+
+    const toolRows = (t.toolCalls || []).map(tc => {
+      const label = TOOL_LABELS[tc.name] || tc.name || '';
+      // Extract the most meaningful arg as a one-liner
+      const args = tc.args || {};
+      let argLine = '';
+      if (args.query) argLine = esc(String(args.query).slice(0, 100));
+      else if (args.url) argLine = esc(String(args.url).slice(0, 100));
+      else if (args.path) argLine = esc(String(args.path).slice(0, 100));
+      else if (args.command) argLine = esc(String(args.command).slice(0, 100));
+      else if (args.prompt) argLine = esc(String(args.prompt).slice(0, 100));
+      else {
+        // Try to extract URL from result if args were empty (web_fetch with url in result)
+        if (tc.result && (tc.name === 'web_fetch' || tc.name === 'exa_search')) {
+          const urlMatch = String(tc.result).match(/https?:\/\/[^\s"'<>]{4,80}/);
+          if (urlMatch) argLine = esc(urlMatch[0]);
+        }
+      }
+      const argHtml = argLine ? `<span class="guided-tool-arg">${argLine}</span>` : '';
+      // Worker badge: same teal "Hintergrund" pill used in the session inspector
+      // when a tool was executed via the worker-subagent path. The envelope
+      // marker `"worker": true` is added by execution.py for heavy/auto-isolated
+      // tools.
+      const rs = typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result || '');
+      const tIsWorker = rs.includes('"worker": true') || rs.includes('"worker":true');
+      const wBadge = tIsWorker
+        ? ' <span class="guided-tool-worker-badge" title="Executed via worker subagent">Hintergrund</span>'
+        : '';
+      return `<div class="guided-tool-row">
+        <span class="guided-tool-name">${esc(label)}${wBadge}</span>${argHtml}
+      </div>`;
+    }).join('');
+
+    const refs = t.references || [];
+    const refRows = refs.map(r => {
+      const domain = r.domain || (r.link || '').replace(/^https?:\/\/([^/]+).*/, '$1');
+      const favicon = r.favicon || (domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=16` : '');
+      const title = r.title || domain || r.link || '';
+      return `<div class="guided-ref-row">
+        ${favicon ? `<img src="${esc(favicon)}" width="12" height="12" style="border-radius:2px;flex-shrink:0" onerror="this.style.display='none'">` : ''}
+        <a href="${esc(r.link || '#')}" target="_blank" class="guided-ref-link" title="${esc(r.snippet || '')}">${esc(title)}</a>
+      </div>`;
+    }).join('');
+
+    // Per-task stats (model · duration · tok/s · cost · tokens in/out).
+    // Mirrors the turn-stats line below the assistant message.
+    let statsHtml = '';
+    const s = t.stats || null;
+    if (s && (s.model || s.duration || s.tokens_in || s.tokens_out || s.cost)) {
+      const dur = +s.duration || 0;
+      const tin = +s.tokens_in || 0;
+      const tout = +s.tokens_out || 0;
+      const cost = +s.cost || 0;
+      const speed = (dur > 0 && tout > 0) ? Math.round(tout / dur) : null;
+      const sp = [];
+      if (s.model) sp.push(esc((typeof modelShortName === 'function' ? modelShortName(s.model, false) : '') || s.model));
+      if (dur > 0) sp.push(dur.toFixed(1) + 's');
+      if (speed) sp.push(speed + ' tok/s');
+      if (cost > 0) sp.push('$' + cost.toFixed(4));
+      if (tin || tout) sp.push(`${tin.toLocaleString()} in / ${tout.toLocaleString()} out`);
+      if (sp.length) {
+        statsHtml = `<div class="guided-task-stats" title="Model · duration · speed · cost · tokens in/out">${sp.join(' · ')}</div>`;
+      }
+    }
+
+    // Auto rule: open while running, closed when done or pending.
+    // User override (manual click) pins the card open or closed regardless of state.
+    const override = bodyOverrides && (t.index in bodyOverrides) ? bodyOverrides[t.index] : null;
+    const bodyOpen = override !== null ? override : isRunning;
+    const bodyClass = `guided-task-body${bodyOpen ? ' guided-task-body-open' : ''}`;
+    const bodyContent = toolRows + (refRows ? `<div class="guided-refs">${refRows}</div>` : '') + statsHtml;
+    const cardToggle = msgIdx != null
+      ? `window._gtBodyToggle(${msgIdx}, ${t.index}, this)`
+      : `window._gtBodyToggleStream(${JSON.stringify(sessionId || '')}, ${t.index}, this)`;
+    const headerCursor = bodyContent ? 'cursor:pointer' : '';
+    const headerOnclick = bodyContent ? `onclick="event.stopPropagation();${cardToggle}"` : '';
+    return `<div class="guided-task-card ${isDone ? 'guided-task-card-done' : isRunning ? 'guided-task-card-running' : 'guided-task-card-pending'}">
+      <div class="guided-task-header" ${headerOnclick} style="${headerCursor}">
+        <span class="${badgeClass}">${check}${spinner}Task ${t.index + 1}</span>
+        <span class="guided-task-label">${esc(t.task)}</span>
+      </div>
+      ${bodyContent ? `<div class="${bodyClass}">${bodyContent}</div>` : ''}
+    </div>`;
+  }).join('');
+
+  const openClass = isOpen ? ' open' : '';
+  // onclick on the header only — avoids event bubbling from task card bodies
+  // For persisted messages: toggle state.guidedTasksOpen[msgIdx] and the CSS class on the parent block
+  // For streaming: toggle CSS class directly and persist to chat._guidedTasksOpen
+  const toggleFn = msgIdx != null
+    ? `window._gtToggle(${msgIdx}, this.parentElement)`
+    : `this.parentElement.classList.toggle('open');window._gtSetOpen&&window._gtSetOpen(${JSON.stringify(sessionId||'')},this.parentElement.classList.contains('open'))`;
+
+  return `<div class="guided-tasks-block${openClass}">
+    <div class="guided-tasks-header" onclick="${toggleFn}" style="cursor:pointer">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" style="flex-shrink:0"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>
+      <span>${esc(headerLabel)}</span>
+      <span class="guided-tasks-chevron">▸</span>
+    </div>
+    <div class="guided-tasks-body">${taskCards}</div>
+  </div>`;
+}
+
 function renderStreamingMessage(chat) {
   const container = document.getElementById('messages-container');
   // Remove previous streaming element if any
@@ -2582,9 +2852,15 @@ function renderStreamingMessage(chat) {
   }
 
   // Nothing to show yet — don't emit an empty wrapper.
-  if (!chat.thinkingText && !chat.streamingText) return;
+  const guidedTasks = chat.guidedTasks || [];
+  if (!chat.thinkingText && !chat.streamingText && !guidedTasks.length) return;
 
   let html = '<div class="msg-turn msg-turn-assistant msg-streaming">';
+
+  // Guided execution task panel — shown while subtasks run before the final reply.
+  if (guidedTasks.length) {
+    html += renderGuidedTasksBlock(guidedTasks, chat._guidedTasksOpen, chat.sessionId || '');
+  }
 
   // Show the thinking panel during streaming. Default collapsed — header shows
   // "Thinking..." progress, click to peek at the chain-of-thought as it arrives.
@@ -2928,4 +3204,50 @@ function renderCitationBadge({ file, locator, quote }) {
   const quoteSpan = quote ? `<span class="citation-badge-quote">${esc(quote)}</span>` : '';
   return `<span class="citation-badge" title="${esc(file)}${locator ? ' · ' + esc(locator) : ''}">${icon}<span class="citation-badge-body">${fileSpan}${locSpan}${quoteSpan}</span></span>`;
 }
+
+// Persist the guided-tasks-block open/closed state across re-renders.
+// Setting _guidedTasksUserToggled disables the auto open-on-start / close-on-done logic
+// for the remainder of this stream — once the user touches it, it stays where they put it.
+window._gtSetOpen = function(sessionId, isOpen) {
+  const chat = state.activeChat;
+  if (chat && (!sessionId || chat.sessionId === sessionId)) {
+    chat._guidedTasksOpen = isOpen;
+    chat._guidedTasksUserToggled = true;
+  }
+};
+
+// Toggle for persisted messages (keyed by message index in state.guidedTasksOpen)
+window._gtToggle = function(msgIdx, el) {
+  if (!state.guidedTasksOpen) state.guidedTasksOpen = {};
+  state.guidedTasksOpen[msgIdx] = !state.guidedTasksOpen[msgIdx];
+  el.classList.toggle('open', state.guidedTasksOpen[msgIdx]);
+};
+
+// Per-task body toggle. Persisted messages: state.guidedTaskBodyOpen[msgIdx][taskIdx].
+// Streaming: chat._guidedTaskBodyOpen[taskIdx]. A manual toggle pins that card —
+// the auto rule (open while running, close when done) stops applying to it.
+window._gtBodyToggle = function(msgIdx, taskIdx, el) {
+  const card = el.closest('.guided-task-card');
+  const body = card && card.querySelector('.guided-task-body');
+  if (!body) return;
+  const nextOpen = !body.classList.contains('guided-task-body-open');
+  body.classList.toggle('guided-task-body-open', nextOpen);
+  if (msgIdx != null && msgIdx !== '') {
+    if (!state.guidedTaskBodyOpen) state.guidedTaskBodyOpen = {};
+    if (!state.guidedTaskBodyOpen[msgIdx]) state.guidedTaskBodyOpen[msgIdx] = {};
+    state.guidedTaskBodyOpen[msgIdx][taskIdx] = nextOpen;
+  }
+};
+window._gtBodyToggleStream = function(sessionId, taskIdx, el) {
+  const card = el.closest('.guided-task-card');
+  const body = card && card.querySelector('.guided-task-body');
+  if (!body) return;
+  const nextOpen = !body.classList.contains('guided-task-body-open');
+  body.classList.toggle('guided-task-body-open', nextOpen);
+  const chat = state.activeChat;
+  if (chat && (!sessionId || chat.sessionId === sessionId)) {
+    if (!chat._guidedTaskBodyOpen) chat._guidedTaskBodyOpen = {};
+    chat._guidedTaskBodyOpen[taskIdx] = nextOpen;
+  }
+};
 

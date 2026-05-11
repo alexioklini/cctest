@@ -1,9 +1,28 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.32.1"
+VERSION = "8.33.18"
 VERSION_DATE = "2026-05-11"
 CHANGELOG = [
+    ("8.33.18", "2026-05-11", "feat: 'Hintergrund' worker badge inside guided-task tool rows. When a tool inside a guided-execution task ran via the worker-subagent path (heavy=true or auto-isolated by size), the tool row now shows the same teal 'Hintergrund' pill that the session inspector uses. Detection mirrors the existing inspector logic: result envelope contains `\"worker\": true`. Pure CSS+JS, no server change. Lets you see at a glance which tool calls within a task ran in-context vs offloaded to a worker."),
+    ("8.33.17", "2026-05-11", "fix: Better web tool execution mode. exa_search was hard-pinned heavy=true (always wraps in worker subagent) even though its output is only {title, link} pairs × num_results ≈ 500-1000 bytes — well below the 8KB auto-threshold. Conversely web_fetch was hard-pinned heavy=false even though typical pages are 10-50KB of markdown that flood the main context. Switched both to heavy='auto': small outputs stay direct, large outputs get retroactively wrapped (artifact + LLM summary + reference pre-extraction). exa_search now runs direct (faster, no worker overhead); web_fetch automatically isolates oversized pages."),
+    ("8.33.16", "2026-05-11", "fix: Guided execution UI froze at 'Task N läuft…' during long tool calls. _make_progress_cb only forwarded tool_call/tool_result/references/usage events upstream — all other events (worker.started/progress/finished, thinking_*, text_delta) were silently dropped, so when an exa_search or web_fetch worker subagent ran 30-60s the right-panel worker flow saw no updates and the user thought the chat had hung. Fix: catch-all else branch forwards every remaining event to the outer event_callback. Right-panel worker flow + thinking panel now live-update during guided execution like they do for normal chat."),
+    ("8.33.15", "2026-05-11", "fix: Guided execution synthesis missing tool results. Small models (Gemma-4-e4b) frequently call a tool, see the result, and generate no follow-up narrative text — _run_delegate returns empty string, so the synthesis task's Prior-task-results block is empty and the model says 'I don't have the results'. Fix: run_guided_execution wraps each task's event_callback to capture tool_result events; when _run_delegate returns empty/whitespace AND there are captured tool results, fall back to passing the raw tool outputs (capped at _GUIDED_CTX_CAP each) as the task's result. Synthesis task now sees the data the tool fetched even if the producer task didn't narrate it. Session a933c860 was the canonical repro: exa_search succeeded, task 0 result was '', task 1 refused."),
+    ("8.33.14", "2026-05-11", "fix: Defensive try/catch around _mirrorRefsToChatRefs and its nested renderReferencesPane / updateRightPanelBadges calls. A throw inside the live SSE handler aborted further updates until reload — symptom: 'display stops after task 1 starts'. Each handler now logs and continues instead of breaking the SSE event loop."),
+    ("8.33.13", "2026-05-11", "fix: Two guided-execution bugs. (1) Turn-stats tokens in/out always 0: run_guided_execution's _make_progress_cb consumed `usage` events into task_stats[i] but never forwarded them to the outer event_callback, so handlers/chat.py's _usage_totals never saw guided-execution tokens — msg_metadata.tokens_in/out stayed at 0 even though per-task stats had real numbers. Fix: re-emit usage events from inside the callback. (2) Reference panel empty right after stream (worked after reload): the live `done` handler stored chat.guidedTasks on assistantMsg._guidedTasks but not on assistantMsg.metadata.guided_tasks; collectChatReferences/getReferencesForMessage iterate msg.metadata.guided_tasks, so the freshly-finalised message yielded nothing until DB reload reinstated the metadata field. Fix: mirror chat.guidedTasks onto metadata.guided_tasks in the done handler — same shape as the reload path."),
+    ("8.33.12", "2026-05-11", "fix: Per-guided-task stats were never persisted. handlers/chat.py builds msg_metadata.guided_tasks via a dict-comprehension that explicitly lists each field — added `stats` to it (falling back to the brain.py thread-local stash). Without this, even though guided_task_done carried the stats payload AND _guided_tasks_live[i]['stats'] was set by the event_callback, the persisted shape dropped it on the floor, so the per-task footer rendered empty (no model, no duration, no tokens). v8.33.11 wired the producer end; this wires the consumer end."),
+    ("8.33.11", "2026-05-11", "feat: Per-guided-task stats line (model · duration · tok/s · cost · tokens in/out) + tokens in/out on the turn-stats line. Server: run_guided_execution accumulates per-task usage events from the existing _run_delegate event_callback (sums tokens_in/tokens_out across tool rounds, _compute_cost'd, wall-clocked) and emits them via guided_task_done's new stats field; same dict stashed on thread-local for metadata persistence. Handler: guided_task_done's stats copied into _guided_tasks_live so msg.metadata.guided_tasks[i].stats is saved. Client: renderGuidedTasksBlock renders a stats footer per task card mirroring the existing turn-stats format; turn-stats line gained 'N in / M out' segment. Reload path needed no changes — sessions.js's direct meta.guided_tasks assignment passes the new stats field through."),
+    ("8.33.10", "2026-05-11", "fix: Guided execution — references missing from message badges + right panel. Root cause: getReferencesForMessage and collectChatReferences only read msg.metadata.tools[]; guided execution stores tool calls + pre-extracted refs under msg.metadata.guided_tasks[i].toolCalls[j] + .references, so both paths returned empty. Also the live guided_task_progress SSE handler only pushed refs into the inline task card, never mirrored to state.chatReferences, so the right-panel References tab stayed empty during streaming. Fix (web/js/panels.js + chat.js): both extractors now iterate guided_tasks toolCalls + pre-extracted refs; new _mirrorRefsToChatRefs helper mirrors live guided refs into state.chatReferences so badges + panel populate in real time."),
+    ("8.33.9", "2026-05-11", "fix: Guided execution — web_fetch refs missing + synthesis leaks planning text. (1) References: tool_result events carried 50KB page content through SSE which likely caused parsing issues; capped result payload in progress callback at 2000 chars (enough for URL/ref extraction in the handler). (2) Synthesis task leaks 'Plan:' / 'Self-Correction' meta-commentary: added explicit instruction to the last-task prompt — 'Write the final answer directly. Do NOT write a plan, do NOT write Self-Correction sections.' Targets small local models (Gemma-4-e4b) that narrate their approach before answering."),
+    ("8.33.8", "2026-05-11", "fix: Guided execution — toolCalls and references lost on reload. Root cause: brain.py's _guided_tasks_for_msg stash only saved task names/state, not toolCalls or references (those only existed client-side). Fix: accumulate full task state in handlers/chat.py event_callback via _guided_tasks_live dict — guided_task_start seeds the entry, guided_task_progress appends toolCalls and extracts references via _extract_references, guided_task_done marks state=done. At persist time, _guided_tasks_live (with toolCalls+references) takes priority over the brain.py thread-local stash. On reload, sessions.js already restores meta.guided_tasks onto msg._guidedTasks, and renderGuidedTasksBlock already reads t.toolCalls and t.references — no JS changes needed."),
+    ("8.33.7", "2026-05-11", "fix: Guided execution — references not shown. Root cause: _extract_references lives in handlers/chat.py as a ChatHandlerMixin class method; guided task tool_result events bypass the event_callback closure entirely (brain.py emits them directly onto event_queue). Fix: intercept guided_task_progress+event=tool_result inside event_callback, call _extract_references there, and inject refs into the outgoing event data. JS guided_task_progress handler reads d.refs from tool_result events and accumulates them on t.references. UI renders per-task reference rows with favicon + clickable title below the tool call rows."),
+    ("8.33.6", "2026-05-11", "fix: Guided execution display polish. (1) All tasks shown immediately: emit all tasks as 'pending' before the loop starts, then update to 'running'/'done' — user sees the full plan at once. (2) Friendly tool names: TOOL_LABELS map replaces raw names (exa_search→Websuche, web_fetch→Webseite abrufen, etc.). (3) Args as one-liner: extract query/url/path/command/prompt from args dict; if args were empty (web_fetch with url in result), extract first URL from result text. (4) References forwarded: progress callback now includes 'references' events; JS accumulates per-task refs for display. CSS: pending badge (muted), pending card (50% opacity), tool-arg inline mono style."),
+    ("8.33.5", "2026-05-11", "fix: Guided execution — duplicate done event caused missing response. The guided path called event_callback('done', ...) immediately after run_guided_execution, then the normal metadata-build path at the end of the handler also called event_queue.put(('done', done_data)). The JS done handler pushed a new assistantMsg on every done event — so the first done landed with correct text, the second pushed a duplicate with full metadata but the streaming bubble was already gone. Fix: remove the early event_callback('done') call from the guided path entirely. The single done emitted by the metadata-build path at line 1101 carries text=reply plus all real metadata (cost, tokens, duration) so the client gets exactly one complete done event."),
+    ("8.33.4", "2026-05-11", "fix: Guided execution — three bugs. (1) Persistence: sessions.js primary load path was missing meta.guided_tasks restore (only the two LCM paths had it); fixed by adding the same restore line in sessions.js. (2) Streaming bubble starts collapsed: chat._guidedTasksOpen was undefined until the user clicked, so the panel rendered closed on first appearance; fixed by defaulting to true on guided_task_start. (3) Expand/collapse: onclick moved from outer .guided-tasks-block to .guided-tasks-header only (passes this.parentElement to _gtToggle/classList.toggle), preventing task card body click bubbling from unintentionally toggling the panel."),
+    ("8.33.3", "2026-05-11", "fix: Guided execution — expand/collapse and reload persistence. Three bugs: (1) clicking the guided-tasks panel header had no effect (window._gtToggle was called in the onclick but never defined); (2) state couldn't be toggled after the response finished; (3) the guided-tasks block disappeared after page reload. Fixes: window._gtToggle defined — toggles state.guidedTasksOpen[msgIdx] and the 'open' CSS class on the header element; task metadata persisted to msg_metadata.guided_tasks via _thread_local._guided_tasks_for_msg side-channel from run_guided_execution to handlers/chat.py; both JS session-load paths restore _guidedTasks from meta.guided_tasks; renderAssistantMessage now uses state.guidedTasksOpen keyed by message index for stable expand/collapse state across re-renders."),
+    ("8.33.2", "2026-05-11", "fix: Guided execution — last task IS the final answer, no second LLM call. Root cause of <eos>: injecting 3× 1200-char task results into the user message overwhelmed the local model. New architecture: decomposer mandates the last task is always a synthesis/summary task with tools=False; its result is returned directly as the reply. run_guided_execution now returns (answer, is_final) tuple; handler skips send_message_with_fallback when is_final=True and emits the done SSE event directly with the synthesis result."),
+    ("8.33.1", "2026-05-11", "fix: Guided Prompt Execution — four bugs fixed. (1) 1-task bail-out: decomposer now returns [] for single-step requests, and run_guided_execution skips if ≤1 task, falling through to normal execution. (2) Empty final response (<eos>): context block injected into final call was unbounded raw tool output; each task result now capped at 1200 chars with truncation notice. Prior task context passed between workers also capped at 600 chars each. (3) No live updates during tool execution: run_guided_execution now passes a per-task event_callback wrapper to _run_delegate that forwards tool_call/tool_result events as guided_task_progress SSE events; JS handler accumulates them into task.toolCalls[]. (4) Tasks disappear after response: guidedTasks saved onto assistantMsg._guidedTasks at done event and rendered by renderAssistantMessage. UI redesign: structured task cards with tool call rows inside, running task auto-expanded, completed tasks collapsed but visible; renderGuidedTasksBlock() shared between streaming and persisted rendering."),
+    ("8.33.0", "2026-05-11", "feat: Guided Prompt Execution — per-model opt-in (guided_execution: true in model config) that decomposes the user's message into up to 5 subtasks before the final reply. The same model first runs a no-tools decompose call (returns JSON task list), then executes each task sequentially via _run_delegate with full tools and prior results as context, then injects a [Guided execution context] block into the final model call. Designed for small/MoE local models that struggle with multi-expert prompts. SSE events guided_task_start / guided_task_done emitted per task. UI: collapsible 'Guided execution' panel in the streaming bubble shows Task 1…N badges with spinning indicator while running and green checkmark when done; open/closed state persists across re-renders."),
     ("8.32.1", "2026-05-11", "feat(ui): spinner bar shown during compaction. triggerLCM (manual ✂️ button) now shows the spinner bar with 'Compacting context…' before the API call and hides it in finally — previously the button was just disabled with no visual feedback during what can be a multi-second LLM summarisation. The compacting SSE handler is also hardened to show the spinner if it isn't already visible (defensive, for any future between-round compaction that fires before a stream starts)."),
     ("8.32.0", "2026-05-10", "Final dead-extraction sweep — eliminate ALL remaining duplication between brain.py and engine/. Continuation of v8.28.0 / v8.29.0 / v8.30.0. The earlier sweeps cleared the loop, constants, internal-only modules, and analytics package; this sweep deletes the rest of `engine/tools/` (everything except `image_gen.py`) and the entire `engine/memory/` subpackage. Verified zero live importers via `grep -rn 'from engine.tools.X\\|from engine.memory'`. Deleted: `engine/tools/files.py` (1381 LOC — brain.py defines all 11 file/shell/python tools `tool_read_file/tool_write_file/tool_edit_file/tool_read_attachment/tool_read_document/tool_write_document/tool_edit_document/tool_list_directory/tool_search_files/tool_execute_command/tool_python_exec`), `engine/tools/email.py` (324 LOC — brain.py defines all 5 gmail tools), `engine/tools/git.py` (407 LOC — brain.py defines `tool_git_command`+`tool_github_command`), `engine/tools/code_graph.py` (1221 LOC — brain.py defines all 4 code_graph tools), `engine/tools/web.py` (141 LOC — already drifted, missing the `_html_to_markdown` step that brain.py's live `tool_web_fetch` performs). Also deleted entire `engine/memory/` subpackage: `store.py` (2135 LOC — brain.py defines `class MemoryStore` at line 7141), `autodream.py` (2162 LOC — brain.py has the live `_autodream_*` helpers), `mempalace.py` (901 LOC — never imported; MemPalace functionality always used the `mempalace` pip package directly). Surviving live engine/ modules: `tools/image_gen.py` (only live tool-extraction, imported at brain.py:21845), `kg_extract.py`, `doc_convert.py`, `sync_log.py`. Also removed: 3 broken `tests/test_worker_phase*.py` files that imported `from engine import execution` (execution.py lives at repo root, not under engine/ — tests had been failing at import since the engine extraction sweep) and the entire `backup/` directory (38K LOC of historical snapshots `claude_cli_original.py`+`server_original_backup.py`, audit-trail-only, git history covers them). engine/CLAUDE.md updated to reflect the final surface and the rule going forward: new tool implementations go in brain.py only — 4 edit sites (TOOL_DEFINITIONS, TOOL_GROUPS, tool_* function, TOOL_DISPATCH). Net: ~10K LOC of true duplication eliminated; ~38K LOC of backup snapshots removed; smoke-tested brain.py + server.py + handlers.{chat,admin,projects} all import clean. The drift trap that motivated v8.28.0/v8.29.0/v8.30.0 — and that produced the v8.27.0 image_gen registration bug — is now structurally impossible for files/email/git/code_graph/web tools and MemoryStore: there is no second copy left to drift from."),
     ("8.31.0", "2026-05-09", "Project research_mode flag — split projects into research/Q&A vs general-purpose. Until now every project chat got the strict v8.22.0 retrieval/citation regime: forced 3-step `mempalace_query`→`read_document`→answer flow, REFUSE-on-error, REFUSAL/PRECISION/CITATION discipline injection (via `DEFAULT_PROJECT_INSTRUCTIONS` fallback when `instructions` was empty), and the server-side citation validator + synchronous re-round on threshold violation. That regime is correct for policy/Q&A projects but actively wrong for projects whose chats USE indexed content as INPUT for tasks — codegen against a spec, drafting documents from sources, building tools from API references. Those chats need the documents available via `mempalace_query`, but not the per-claim verbatim-citation enforcement, refusal-on-empty, and re-round penalty cycles. (1) **`project.json.research_mode` (bool)** — per-project flag toggled by the owner in the project settings panel (new 'Research / Q&A project' checkbox above Instructions). When ON: full strict regime as today. When OFF: a soft `PROJECT MEMORY` block ('memory is available, use mempalace_query when relevant') with no forced flow, KG hint block skipped, `DEFAULT_PROJECT_INSTRUCTIONS` NOT injected, citation validator + re-round skipped entirely in `handlers/chat.py`. Owner `instructions` field is now purely additive in both modes — appended verbatim after the mode-specific blocks, never used as a fallback for the disciplines. Removes the v8.23 conflation of owner intent with Brain behavior. (2) **`sessions.research_mode_override` (NULL/0/1)** — per-session sticky override. Composer button (`btn-research-mode`, hidden in non-project chats) cycles two states: project default ↔ override-opposite-of-default. Click installs `not project_default` as the override; click again clears (back to default). Persists across turns of the same session, mirrors `save_to_memory` semantics. New `/v1/sessions/manage` action `research_mode_override` accepts `{value: null|true|false}`. (3) **Resolution flow**: `_build_system_prompt` reads `_thread_local.research_mode_override` (set in `handlers/chat.py` from `session.research_mode_override`); falls back to `proj_cfg.research_mode`; falls back to legacy migration helper `_project_research_mode(cfg)` which returns `not bool(instructions.strip())` — preserves v8.23 behavior for projects predating the flag. (4) **Strict block content unchanged** for research_mode=ON projects — same 3-step flow, same KG decision rule, same `DEFAULT_PROJECT_INSTRUCTIONS` discipline body. The disciplines are now injected DIRECTLY by Brain (under a 'RESEARCH MODE DISCIPLINES' header) rather than via the `instructions` fallback. (5) **`/v1/projects/default-instructions` endpoint removed** + 'Load default' button + helper text. The disciplines aren't a template owners edit — they're Brain behavior the flag turns on/off. Editor modal now reads: 'Strict retrieval / citation discipline is a separate setting (Research / Q&A project in project settings)'. (6) **UI plumbing**: `loadProjectDetail` reads `project.research_mode` into a checkbox above Instructions. `toggleProjectResearchMode` PUTs `{research_mode: bool}` to the project, invalidates the composer button's per-project cache, refreshes the button. Composer button in `init.js`: lazy-fetches project default via `_projectResearchModeDefault` (cached per agent::name), renders state with two indicators — color (blue when effective on) and bottom-border (when override is active vs default). Tooltip names the override state explicitly. `refreshResearchModeButton` called from every existing thinking-button refresh site (chat open, model switch, navigation). (7) **CLAUDE.md updated** — replaced the 'Project Instructions (response disciplines, default)' section with 'Project Mode: research_mode' covering the on/off split, instructions field semantics, migration default, and composer button mechanics. Brain mechanics (3-step body, BINARY DOCUMENTS, `read_path` vs `read_path_original`) stay infrastructure-level and weren't moved. Net effect: a project owner with a 'use these specs to build a tool' project flips one checkbox and stops getting scolded for not citing every code comment, without touching the `instructions` field at all."),
@@ -11352,6 +11371,213 @@ def _resolve_delegate_tools(tools: bool | str) -> list:
     else:
         allowed = _get_agent_tool_names()
     return _filter_tools(TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
+
+
+_GUIDED_DECOMPOSE_SYSTEM = (
+    "You are a task planner. Given a user request, break it into a short ordered list of "
+    "self-contained subtasks. The LAST task must always be a synthesis/summary task that "
+    "uses the prior results to answer the original request — it should NOT use external tools. "
+    "Reply with ONLY a JSON array of strings — one string per task, no explanation. "
+    "Minimum 2 tasks, maximum 5 tasks. If the request can be answered in a single step, "
+    "reply with an empty array []. "
+    "Example: [\"search for weather URLs for Vorarlberg next weekend\", "
+    "\"fetch the top 3 weather URLs\", \"summarise the forecast for the user\"]"
+)
+
+# Max chars of prior results passed as context to the next task worker.
+_GUIDED_CTX_CAP = 800
+
+
+def run_guided_execution(
+    user_message: str,
+    model: str,
+    session_id: str | None,
+    event_callback=None,
+    cancel_token=None,
+    inference_params: dict | None = None,
+) -> tuple[str, bool]:
+    """Decompose user_message into tasks and execute each sequentially.
+
+    The last task is always a synthesis task — its result IS the final answer,
+    so no second model call is needed after guided execution completes.
+
+    Returns (answer, True) when guided execution produced a final answer.
+    Returns ('', False) when decomposition yielded ≤1 task — caller falls through normally.
+
+    Emits guided_task_start / guided_task_progress / guided_task_done SSE events.
+    """
+    def _emit(etype, data):
+        if event_callback:
+            try:
+                event_callback(etype, data)
+            except Exception:
+                pass
+
+    # Step 1: decompose — no tools, tiny output
+    decomp_result = _run_delegate(
+        messages=[{"role": "user", "content": user_message}],
+        model=model,
+        system_prompt=_GUIDED_DECOMPOSE_SYSTEM,
+        cancel_token=cancel_token,
+        tools=False,
+        session_id=session_id,
+    )
+    if not decomp_result:
+        return "", False
+
+    # Parse JSON task list
+    try:
+        raw = decomp_result.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        tasks = json.loads(raw)
+        if not isinstance(tasks, list):
+            return "", False
+        tasks = [str(t).strip() for t in tasks if str(t).strip()][:5]
+    except Exception:
+        return "", False
+
+    # Skip if the model decided this is a single-step request
+    if len(tasks) <= 1:
+        return "", False
+
+    # Step 2: execute each task sequentially
+    results: list[str] = []
+    task_system = _build_system_prompt()
+    total = len(tasks)
+    last_idx = total - 1
+
+    # Emit all tasks immediately so the UI shows the full plan before execution starts
+    for i, task in enumerate(tasks):
+        _emit("guided_task_start", {"index": i, "task": task, "total": total, "state": "pending"})
+
+    # Per-task aggregated stats (model, duration, tokens_in/out, cost). Populated from
+    # the event_callback's `usage` events and the wall-clock around _run_delegate.
+    task_stats: list[dict] = [
+        {"model": model, "duration": 0.0, "tokens_in": 0, "tokens_out": 0, "cost": 0.0}
+        for _ in tasks
+    ]
+
+    for i, task in enumerate(tasks):
+        _emit("guided_task_start", {"index": i, "task": task, "total": total, "state": "running"})
+
+        def _make_progress_cb(task_index):
+            def _cb(etype, data):
+                if etype == "tool_result":
+                    # Cap result to avoid giant SSE payloads; keep enough for URL/ref extraction
+                    result_str = str(data.get("result", ""))
+                    if len(result_str) > 2000:
+                        data = dict(data)
+                        data["result"] = result_str[:2000]
+                    _emit("guided_task_progress", {"index": task_index, "event": etype, "data": data})
+                elif etype in ("tool_call", "references"):
+                    _emit("guided_task_progress", {"index": task_index, "event": etype, "data": data})
+                elif etype == "usage":
+                    # Accumulate per-task token totals across tool rounds. _run_delegate
+                    # emits one "usage" event per round; sum into task_stats[task_index].
+                    ti = int(data.get("tokens_in", 0) or 0)
+                    to = int(data.get("tokens_out", 0) or 0)
+                    task_stats[task_index]["tokens_in"] += ti
+                    task_stats[task_index]["tokens_out"] += to
+                    task_stats[task_index]["cost"] += _compute_cost(model, ti, to)
+                    # Also forward upstream so handlers/chat.py's _usage_totals
+                    # (which feeds msg_metadata.tokens_in/out and the done event)
+                    # accumulates guided-execution tokens too. Without this, the
+                    # turn-stats line shows 0 in/out for guided turns.
+                    if event_callback:
+                        try:
+                            event_callback("usage", data)
+                        except Exception:
+                            pass
+                else:
+                    # Forward all other events (worker.started, worker.progress,
+                    # worker.finished, thinking_*, text_delta, etc.) upstream
+                    # untouched. Without this, web_fetch/exa_search worker
+                    # subagents emit no live progress during their 30-60s runs
+                    # and the UI looks frozen at "Task N läuft…" until the next
+                    # tool_call lands. handlers/chat.py knows how to forward
+                    # these to SSE for the right-panel worker flow + thinking
+                    # panel.
+                    if event_callback:
+                        try:
+                            event_callback(etype, data)
+                        except Exception:
+                            pass
+            return _cb
+
+        # Pass prior results as context, capped to keep prompts small
+        ctx_prefix = ""
+        if results:
+            ctx_prefix = "Prior task results:\n" + "\n---\n".join(
+                f"Task {j+1} ({tasks[j]}): {results[j][:_GUIDED_CTX_CAP]}" for j in range(len(results))
+            ) + "\n\n"
+
+        # Last task: no tools — it synthesises from prior results only
+        is_last = (i == last_idx)
+        task_content = ctx_prefix + "Task: " + task
+        if is_last:
+            task_content += (
+                "\n\nOriginal user request: " + user_message +
+                "\n\nIMPORTANT: Write the final answer directly. Do NOT write a plan, "
+                "do NOT write 'Self-Correction' sections, do NOT explain your approach. "
+                "Just answer the user's question concisely based on the prior task results."
+            )
+        _task_t0 = time.time()
+        # Track tool results emitted during this task so the synthesis step
+        # still has data when small models call a tool but produce no follow-up
+        # narrative text (common Gemma-4-e4b failure mode).
+        _captured_tool_results: list[tuple[str, str]] = []
+        def _capture_cb(_orig_cb):
+            def _wrapped(etype, data):
+                if etype == "tool_result":
+                    try:
+                        _captured_tool_results.append(
+                            (data.get("name", "") or "", str(data.get("result", "")))
+                        )
+                    except Exception:
+                        pass
+                _orig_cb(etype, data)
+            return _wrapped
+        task_result = _run_delegate(
+            messages=[{"role": "user", "content": task_content}],
+            model=model,
+            system_prompt=task_system,
+            cancel_token=cancel_token,
+            tools=not is_last,
+            session_id=session_id,
+            inference_params=inference_params,
+            event_callback=_capture_cb(_make_progress_cb(i)),
+        )
+        task_stats[i]["duration"] = round(time.time() - _task_t0, 2)
+        # Fallback: model called tools but generated no narrative text. Hand
+        # the tool results directly to the next task so synthesis has data.
+        if (not task_result or not task_result.strip()) and _captured_tool_results:
+            _fallback = "\n\n".join(
+                f"[{name} result]\n{res[:_GUIDED_CTX_CAP]}"
+                for name, res in _captured_tool_results
+            )
+            task_result = _fallback or task_result
+        result_text = task_result or "(no result)"
+        results.append(result_text)
+        _emit("guided_task_done", {
+            "index": i, "task": task, "total": total, "result": result_text,
+            "stats": task_stats[i],
+        })
+
+    # Stash completed task list on thread-local so the chat handler can persist it in metadata
+    try:
+        _thread_local._guided_tasks_for_msg = [
+            {"index": i, "task": tasks[i], "total": total,
+             "state": "done", "result": results[i], "stats": task_stats[i]}
+            for i in range(len(results))
+        ]
+    except Exception:
+        pass
+
+    # The last task result is the final answer — return it directly
+    return results[-1], True
 
 
 def _run_delegate(messages: list[dict], model: str, system_prompt: str,

@@ -1,6 +1,6 @@
 {
   "description": "General-purpose main agent",
-  "model": "Cloud/mistral-medium-3.5",
+  "model": "Mistral/mistral-medium-3.5",
   "avatar": "captain",
   "display_name": "Main",
   "memory_summary": {
