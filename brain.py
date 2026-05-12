@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.35.0"
+VERSION = "8.36.0"
 VERSION_DATE = "2026-05-12"
 CHANGELOG = [
+    ("8.36.0", "2026-05-12", "feat: Guided execution — granularity knob + needs_prior flag (fan-out without a DAG). Two additions to the v8.33.x guided-prompt-execution feature, both confined to brain.py + handlers/chat.py (no UI, no new endpoints, fully backward-compatible with bare-string plans). (1) Granularity knob: `run_guided_execution(..., granularity=\"coarse\"|\"fine\")`. `coarse` (default, existing behaviour) = `_GUIDED_DECOMPOSE_SYSTEM`, 2–5 self-contained subtasks. `fine` = new `_GUIDED_DECOMPOSE_SYSTEM_FINE`, up to 12 TINY ATOMIC subtasks (one tool call / lookup / transform each — the planner is told 'if you are tempted to use the word and, split it into two tasks') — for small local models that stay on track / avoid hallucination better one step at a time. handlers/chat.py picks it: per-model `guided_execution_granularity` in config.json wins; otherwise defaults `fine` when `engine.is_model_local(model)`, else `coarse`. (2) `needs_prior` flag: the planner may now emit elements as `{\"task\": str, \"needs_prior\": bool}` instead of bare strings (a bare string == `needs_prior:true` == legacy linear chain — old plans still parse). A subtask with `needs_prior:false` (and not the synthesis/last task) runs with NO 'Prior task results:' block at all — lean prompt for independent fan-out steps (e.g. 'summarise document A' / 'summarise document B' in parallel, only the final 'compare the two' needs both). The synthesis task always receives the full untruncated union regardless (existing rule, unchanged). The win is correctness + token cost on local models, not wall-clock — one local model serialises every call anyway, so this is parallel-in-intent / sequential-in-execution by design; no DAG (explicit decision — a flat list + per-task boolean covers the fan-out→fan-in case, a diamond DAG would be over-engineering). `_build_guided_prior_results_block(..., needs_prior=...)` short-circuits to '' when `not needs_prior and not is_last_task`; the parse loop in `run_guided_execution` builds parallel `tasks` (labels) + `needs_prior_flags` lists, raises the task ceiling to 12 in fine mode, and falls back cleanly (returns ('', False)) on any malformed planner output. `needs_prior` is not yet surfaced in SSE/metadata/UI — cosmetic, deferred."),
     ("8.35.0", "2026-05-12", "feat: Generic sharing / visibility model (P0–P5) — one mechanism (`private` · `users` · `team` · `global`) applied to chats, projects, scheduled tasks, workflows and artifacts; creator is always the owner; only owner/admin sets visibility; ownership is transferable. **P0 core** — new `server_lib/auth.py` primitives: `VISIBILITY_VALUES`, `normalize_visibility` (aliases legacy `\"user\"`→`\"private\"`), `can_access(user, block, legacy_open=)`, `can_manage(user, block)` (strictly owner-or-admin — no team-head shortcut for items), `normalize_share_block` (drops grants/excludes the chosen visibility makes meaningless; owner never excludable). `can_access_project`/`can_manage_project` rewritten over the new primitives (behaviour-preserving + `\"users\"` arm). `ProjectManager.get_project` backfills nothing destructive but lazily aliases `visibility:\"user\"`→`\"private\"` on read alongside the existing id backfill. **P1 chats** — `sessions` migration adds `extra_member_user_ids`/`excluded_user_ids` TEXT(JSON `[]`); `session_share_block(info)` maps `user_id`→owner; `ChatDB.update_session_share(**)`; `_session_access_check` routes through `can_access`/`can_manage` (legacy owner-less chats stay all-authed read+manage until adopted); `list_sessions` gains the `global` arm + a `caller_user_id` post-filter for the `users` (extra-grant) tier and global exclusions; `_resolve_session_wing` unchanged (private/users/global all fall to `user__`, team→`team__`). **P2 projects** — share dialog + transfer + `\"users\"` accepted in `create_project`. **P3 schedules** — `schedules` migration adds `visibility`/`owner_team_id`/`extra_member_user_ids`/`excluded_user_ids`; `schedule_history` adds denormalised `visibility`/`owner_user_id`/`owner_team_id` snapshot cols written at fire time by `begin_execution`; `_schedule_get_row`/`_schedule_share_block`/`_schedule_update_share` module helpers; `_handle_list_schedule` non-admin scoping switched from own-only to `can_access(_schedule_share_block(row))` (legacy owner-less stay admin-only); billing already follows the owner (the scheduled-run `ExecutionContext` reads `task_row.user_id`). **P4 workflows** — `<name>.flow.meta.json` sidecar (`WorkflowEngine.get_workflow_meta`/`update_workflow_meta`/`workflow_block`); `list_workflows` filtered via `can_access(workflow_block(meta))` in `handlers/admin.py`; first-edit-by-non-admin on an owner-less workflow claims ownership (inline notice). **P5 artifacts** — `artifacts.visibility_override` TEXT (empty = inherit parent); `ChatDB.get_artifact_with_parent_block` resolves parent (session OR `sched-<run>` synthetic session → schedule_history snapshot → live schedule) + `set_artifact_visibility_override`; override may only narrow (`private` always allowed, otherwise must equal parent) — validated on save. **Endpoints** — new `handlers/share.py` (`ShareHandlerMixin` registered in server.py): `GET /v1/share?item_type=&item_id=&agent_id=` → block + `caller_can_manage`; `POST /v1/share` → update ACL (owner/admin; legacy-claim path for chats/workflows; admin-only adoption for schedules; `normalize_share_block` on save; favourites cleanup of orphaned team/general pins via new `FavouritesDB.remove_by_item_scope`; audit `share_update`); `POST /v1/share/transfer` → transfer (owner/admin, new owner must exist + have agent access, dropped from extras/excluded, audit `ownership_transfer`); `POST /v1/share` with `item_type:artifact` → narrow-only override. **Web** — `web/js/share.js`: `shareDialog(itemType, itemId, agentId, opts)` (owner-editable / read-only-summary), `shareTransferDialog` (type-to-confirm + memory-wing/quota warnings), `shareButton(...)` people-icon, `shareVisibilityPillHtml(...)`; `nav.js updatePageHeader` now mounts the Share button + an at-a-glance visibility pill beside the favourite star for chat/project_chat/project/schedule/workflow/artifact; `panels.js` passes a `title` through. CSS for `.share-*` + the previously-missing `.fav-modal-foot`/`.fav-btn-primary`/`.fav-btn-sm`/`.fav-btn-danger`. **Not done (follow-ups)**: schedule-editor 'Sharing' row + workflow-editor toolbar Share button (dialog reachable via header / API); `workflow_history` visibility snapshot cols; artifact list/download/version endpoints don't yet gate on `visibility_override` (parent-session access still applies); Phase 6 team document-ingestion pipeline. Smoke-tested end-to-end (server import clean, share GET/POST/transfer for chat/project/workflow/schedule/artifact, list-scoping, browser: header Share button opens dialog, set→global updates pill, artifact narrow-only radios)."),
     ("8.34.0", "2026-05-12", "feat: Resumable streaming — a chat turn now survives navigating away, reopening, and being watched from multiple tabs as if the chat had been open the whole time, and reopening never interferes with the running turn. Root cause: streaming was point-to-point + memory-only — POST /v1/chat spawned a worker thread that pushed SSE events into a queue.Queue consumed by that one HTTP connection, and the assistant text was persisted only at finish_reason; navigating away → events went to a dead queue, reopening → GET /messages read SQLite which had nothing yet, and a second tab couldn't watch at all. New design: (1) `LiveStream` (server.py) — an ordered replay log + a set of subscriber queues per in-progress turn, held on `session.live_stream`; `emit()` appends to the log AND fans out to current subscribers, `attach()` returns (queue, replay_snapshot, already_done) under one lock so no event is lost or duplicated across the attach boundary. The worker emits every SSE event into it; the originating POST connection is just one subscriber (`_stream_live_to_client(live, worker_thread=t)` — replay then drain). (2) `GET /v1/chat/stream?session_id=X` (handlers/chat.py) — re-attach to a running turn: replays the buffer from turn start, then follows live events until terminal done/error; emits a single `idle` event if no turn is running. Any number of tabs may attach concurrently. Client disconnect here NEVER cancels the worker — only POST /v1/chat/cancel does (unchanged: explicit cancel_token.cancel(), never connection-close). (3) Incremental persistence — new `sessions.streaming_text` / `streaming_meta` columns hold the in-flight assistant reply, written by event_callback on text_delta (throttled ~0.4s), cleared in the worker's finally; GET /v1/sessions/<id>/messages now returns `streaming: true` + `streaming_text` while a turn is live (read only when _streaming is True so a post-restart stale value is never surfaced). (4) Worker finally invariants: emit `error` if not live.done (covers a worker that died without a terminal event), then session._streaming = False, then session.live_stream = None (order matters — when live_stream is None, _streaming is already False, so the GET /chat/stream `idle` reload path can't loop), then clear streaming_text. (5) Client (web/js/) — extracted the SSE callback map into `buildStreamCallbacks(chat, isActive)` shared by API.streamChat (originating send) and the new API.attachStream/abortStreamAttach (reconnect); openSession() re-attaches when GET /messages reports streaming:true, drops trailing `thinking` DB rows on reconnect (the replay re-emits them via thinking_done — avoids duplicates) and does NOT pre-seed streamingText from streaming_text (replay rebuilds it fully — pre-seeding would double it); removed the old '(cancelled)' partial-bubble hack on session switch. New DB helpers: ChatDB.save_message returns lastrowid, update_message, delete_message, set_streaming_text, get_streaming_text. Smoke-tested end-to-end: mid-stream GET /messages → streaming:true + partial; GET /v1/chat/stream from a second connection mid-stream → full replay + live tail; cancel still works and both the sender and an attached viewer get the terminal event; partial reply persisted with metadata.partial; after completion streaming gone, assistant message persisted, streaming_text cleared, GET /v1/chat/stream → idle. Note: send_message mutates the in-memory messages list only — intermediate tool messages are NOT persisted mid-turn (only the user msg, thinking rows from event_callback, and the final assistant msg reach the DB); _rollback_messages' DB-delete arm is a defensive no-op in the common case."),
     ("8.33.18", "2026-05-11", "feat: 'Hintergrund' worker badge inside guided-task tool rows. When a tool inside a guided-execution task ran via the worker-subagent path (heavy=true or auto-isolated by size), the tool row now shows the same teal 'Hintergrund' pill that the session inspector uses. Detection mirrors the existing inspector logic: result envelope contains `\"worker\": true`. Pure CSS+JS, no server change. Lets you see at a glance which tool calls within a task ran in-context vs offloaded to a worker."),
@@ -11390,11 +11391,38 @@ _GUIDED_DECOMPOSE_SYSTEM = (
     "You are a task planner. Given a user request, break it into a short ordered list of "
     "self-contained subtasks. The LAST task must always be a synthesis/summary task that "
     "uses the prior results to answer the original request — it should NOT use external tools. "
-    "Reply with ONLY a JSON array of strings — one string per task, no explanation. "
+    "Each subtask may optionally declare \"needs_prior\": false if it does NOT depend on any "
+    "earlier subtask's output (e.g. independent searches/reads done in parallel) — this keeps "
+    "its prompt lean. The synthesis task always implicitly depends on everything. "
+    "Reply with ONLY a JSON array, no explanation. Each element is either a plain string "
+    "(task description) or an object {\"task\": str, \"needs_prior\": bool}. "
     "Minimum 2 tasks, maximum 5 tasks. If the request can be answered in a single step, "
     "reply with an empty array []. "
-    "Example: [\"search for weather URLs for Vorarlberg next weekend\", "
-    "\"fetch the top 3 weather URLs\", \"summarise the forecast for the user\"]"
+    "Example: [{\"task\": \"summarise document A\", \"needs_prior\": false}, "
+    "{\"task\": \"summarise document B\", \"needs_prior\": false}, "
+    "\"compare the two summaries and answer the user\"]"
+)
+
+# Aggressive variant: many small atomic subtasks. Used for small local models that
+# stay on track / avoid hallucination better when each step does exactly one thing.
+_GUIDED_DECOMPOSE_SYSTEM_FINE = (
+    "You are a task planner for a small local model that works best when each subtask is "
+    "TINY and ATOMIC — one tool call, one lookup, or one transform per task. NEVER write a "
+    "compound task: if you are tempted to use the word 'and', split it into two tasks. "
+    "Break the user request into an ordered list of such atomic subtasks. The LAST task must "
+    "always be a synthesis/summary task that uses the prior results to answer the original "
+    "request — it should NOT use external tools. "
+    "Each subtask may optionally declare \"needs_prior\": false if it does NOT depend on any "
+    "earlier subtask's output (independent lookups) — this keeps its prompt lean. The synthesis "
+    "task always implicitly depends on everything. "
+    "Reply with ONLY a JSON array, no explanation. Each element is either a plain string "
+    "(task description) or an object {\"task\": str, \"needs_prior\": bool}. "
+    "Minimum 2 tasks, maximum 12 tasks. If the request can be answered in a single step, "
+    "reply with an empty array []. "
+    "Example: [{\"task\": \"search the web for the Vorarlberg weather page URL\", \"needs_prior\": false}, "
+    "\"fetch that URL\", \"extract Saturday's forecast from the fetched page\", "
+    "\"extract Sunday's forecast from the fetched page\", "
+    "\"write the two-day forecast for the user\"]"
 )
 
 # Inter-task hand-off cap (non-final tasks): when a prior task result is
@@ -11465,14 +11493,19 @@ def _build_guided_prior_results_block(
     tasks: list[str],
     session_id: str | None,
     is_last_task: bool,
+    needs_prior: bool = True,
 ) -> str:
     """Render the 'Prior task results:' prefix for a guided task's prompt.
 
+    - needs_prior=False (and not the synthesis task): no prior-results block at
+      all — the task is independent of earlier ones, keep its prompt lean.
     - is_last_task=True: full untruncated results, no MemPalace indirection.
     - Otherwise: results <= _GUIDED_CTX_CAP go inline verbatim; larger results
       are filed into MemPalace and replaced by a head stub + drawer pointer.
     """
     if not results:
+        return ""
+    if not needs_prior and not is_last_task:
         return ""
     lines = ["Prior task results:"]
     for j, res in enumerate(results):
@@ -11505,11 +11538,20 @@ def run_guided_execution(
     event_callback=None,
     cancel_token=None,
     inference_params: dict | None = None,
+    granularity: str = "coarse",
 ) -> tuple[str, bool]:
     """Decompose user_message into tasks and execute each sequentially.
 
     The last task is always a synthesis task — its result IS the final answer,
     so no second model call is needed after guided execution completes.
+
+    granularity: "coarse" (2–5 self-contained subtasks, default) or "fine"
+    (up to 12 tiny atomic subtasks — for small local models that stay on track
+    better one step at a time).
+
+    Each subtask may declare needs_prior=False (independent of earlier tasks) —
+    such tasks run with no prior-results block, keeping their prompt lean. The
+    synthesis (last) task always receives all prior results regardless.
 
     Returns (answer, True) when guided execution produced a final answer.
     Returns ('', False) when decomposition yielded ≤1 task — caller falls through normally.
@@ -11523,11 +11565,14 @@ def run_guided_execution(
             except Exception:
                 pass
 
+    fine = (granularity == "fine")
+    max_tasks = 12 if fine else 5
+
     # Step 1: decompose — no tools, tiny output
     decomp_result = _run_delegate(
         messages=[{"role": "user", "content": user_message}],
         model=model,
-        system_prompt=_GUIDED_DECOMPOSE_SYSTEM,
+        system_prompt=_GUIDED_DECOMPOSE_SYSTEM_FINE if fine else _GUIDED_DECOMPOSE_SYSTEM,
         cancel_token=cancel_token,
         tools=False,
         session_id=session_id,
@@ -11535,17 +11580,33 @@ def run_guided_execution(
     if not decomp_result:
         return "", False
 
-    # Parse JSON task list
+    # Parse JSON task list. Each element is either a plain string (task label,
+    # implicitly needs_prior=True) or an object {"task": str, "needs_prior": bool}.
     try:
         raw = decomp_result.strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):
                 raw = raw[4:]
-        tasks = json.loads(raw)
-        if not isinstance(tasks, list):
+        parsed = json.loads(raw)
+        if not isinstance(parsed, list):
             return "", False
-        tasks = [str(t).strip() for t in tasks if str(t).strip()][:5]
+        tasks: list[str] = []
+        needs_prior_flags: list[bool] = []
+        for item in parsed:
+            if isinstance(item, dict):
+                label = str(item.get("task", "")).strip()
+                np = item.get("needs_prior", True)
+                np = bool(np) if isinstance(np, bool) else True
+            else:
+                label = str(item).strip()
+                np = True
+            if not label:
+                continue
+            tasks.append(label)
+            needs_prior_flags.append(np)
+            if len(tasks) >= max_tasks:
+                break
     except Exception:
         return "", False
 
@@ -11629,7 +11690,10 @@ def run_guided_execution(
         # a stub pointer is inlined. Final (synthesis) task: full untruncated
         # results so the answer has all evidence directly in-prompt.
         is_last = (i == last_idx)
-        ctx_prefix = _build_guided_prior_results_block(results, tasks, session_id, is_last)
+        ctx_prefix = _build_guided_prior_results_block(
+            results, tasks, session_id, is_last,
+            needs_prior=needs_prior_flags[i] if i < len(needs_prior_flags) else True,
+        )
         task_content = ctx_prefix + "Task: " + task
         if is_last:
             task_content += (
