@@ -11507,6 +11507,25 @@ def _resolve_delegate_tools(tools: bool | str) -> list:
     return _filter_tools(TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
 
 
+# Shared rule: a request that asks for a FILE artifact (report, document,
+# spreadsheet, image, ...) is NEVER single-step — the synthesis (last) task
+# runs WITHOUT tools and cannot create files, so the file must be produced by a
+# dedicated non-final subtask. Surfacing this explicitly stops the planner from
+# bailing with [] on "turn this into an HTML report", which then forces a
+# weak local model to either inline the file content as prose or hallucinate
+# a write that never happened.
+_GUIDED_FILE_OUTPUT_RULE = (
+    "If the request asks you to PRODUCE, SAVE, WRITE, EXPORT or GENERATE a file or document "
+    "(an HTML/Markdown report, a .docx/.xlsx/.pptx/.pdf, an image, a script, a data file, ...), "
+    "it is NOT single-step — never reply []. The final synthesis task runs with NO tools and "
+    "cannot create files, so emit a dedicated non-final task that writes the file "
+    "(e.g. \"write the report to report.html using write_file\" — prefer write_file for static "
+    "text/HTML/markdown; use python_exec only when the file needs to be computed/built from data), "
+    "then a final task that confirms the file was created and tells the user its name. "
+    "For static text/HTML/markdown a 2-task plan is enough: [\"write X to <file> with write_file\", "
+    "\"confirm <file> was created and tell the user\"]."
+)
+
 _GUIDED_DECOMPOSE_SYSTEM = (
     "You are a task planner. Given a user request, break it into a short ordered list of "
     "self-contained subtasks. The LAST task must always be a synthesis/summary task that "
@@ -11514,10 +11533,11 @@ _GUIDED_DECOMPOSE_SYSTEM = (
     "Each subtask may optionally declare \"needs_prior\": false if it does NOT depend on any "
     "earlier subtask's output (e.g. independent searches/reads done in parallel) — this keeps "
     "its prompt lean. The synthesis task always implicitly depends on everything. "
+    + _GUIDED_FILE_OUTPUT_RULE + " "
     "Reply with ONLY a JSON array, no explanation. Each element is either a plain string "
     "(task description) or an object {\"task\": str, \"needs_prior\": bool}. "
-    "Minimum 2 tasks, maximum 5 tasks. If the request can be answered in a single step, "
-    "reply with an empty array []. "
+    "Minimum 2 tasks, maximum 5 tasks. If the request can genuinely be answered in a single "
+    "step (no file output, no multi-source research), reply with an empty array []. "
     "Example: [{\"task\": \"summarise document A\", \"needs_prior\": false}, "
     "{\"task\": \"summarise document B\", \"needs_prior\": false}, "
     "\"compare the two summaries and answer the user\"]"
@@ -11535,11 +11555,14 @@ _GUIDED_DECOMPOSE_SYSTEM_FINE = (
     "Each subtask may optionally declare \"needs_prior\": false if it does NOT depend on any "
     "earlier subtask's output (independent lookups) — this keeps its prompt lean. The synthesis "
     "task always implicitly depends on everything. "
+    + _GUIDED_FILE_OUTPUT_RULE + " "
     "Reply with ONLY a JSON array, no explanation. Each element is either a plain string "
     "(task description) or an object {\"task\": str, \"needs_prior\": bool}. "
-    "Minimum 2 tasks, maximum 12 tasks. If the request can be answered in a single step, "
-    "reply with an empty array []. "
-    "Example: [{\"task\": \"search the web for the Vorarlberg weather page URL\", \"needs_prior\": false}, "
+    "Minimum 2 tasks, maximum 12 tasks. If the request can genuinely be answered in a single "
+    "step (no file output, no lookup, no transform), reply with an empty array []. "
+    "Example (file output): [\"write the NIS-2 summary as an HTML report to NIS2_Report.html using write_file\", "
+    "\"confirm NIS2_Report.html was created and tell the user its name\"]. "
+    "Example (research): [{\"task\": \"search the web for the Vorarlberg weather page URL\", \"needs_prior\": false}, "
     "\"fetch that URL\", \"extract Saturday's forecast from the fetched page\", "
     "\"extract Sunday's forecast from the fetched page\", "
     "\"write the two-day forecast for the user\"]"
