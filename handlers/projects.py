@@ -63,7 +63,7 @@ class ProjectsHandlerMixin:
             owner_uid = requested_owner
         else:
             owner_uid = auth_user["id"] if not is_system else (requested_owner or "")
-        visibility = body.get("visibility", "global" if is_admin else "user")
+        visibility = _auth_mod.normalize_visibility(body.get("visibility", "global" if is_admin else "private"))
         owner_tid = body.get("owner_team_id", "")
         # Scope-based gating
         if visibility == "global" and not is_admin:
@@ -79,7 +79,7 @@ class ProjectsHandlerMixin:
                 if not any(t["id"] == owner_tid and t["head_user_id"] == auth_user["id"] for t in my_teams):
                     self._send_json({"error": "Only the team head can create team-scoped projects"}, 403)
                     return
-        elif visibility not in ("user", "global"):
+        elif visibility not in ("private", "users", "global"):
             self._send_json({"error": f"Invalid visibility '{visibility}'"}, 400)
             return
         # Member lists: validated against existing users
@@ -101,35 +101,30 @@ class ProjectsHandlerMixin:
     def _session_access_check(self, sid: str, *, require_manage: bool = False):
         """Load session metadata and verify the caller can access it.
         Returns the session info dict on success; sends 403/404 and returns None on fail.
-        `require_manage` gates mutations: only owner, team head (for team sessions), or admin."""
+        `require_manage` gates mutations through the generic can_manage (owner
+        or admin — no team-head shortcut, matching the project model)."""
         from brain import ChatDB
+        from server_lib.db import session_share_block
         info = ChatDB.get_session_info(sid)
         if not info:
             self._send_json({"error": "Session not found"}, 404)
             return None
         user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
-        owner_uid = info.get("user_id") or ""
-        team_id = info.get("team_id") or ""
-        visibility = info.get("visibility") or "user"
+        block = session_share_block(info)
         # Admin bypass
         if user["role"] == "admin" or user["id"] == "__system__":
             return info
-        # Owner
-        if owner_uid and owner_uid == user["id"]:
+        # Legacy anonymous sessions (no owner): keep the pre-ownership
+        # behaviour — readable AND manageable by anyone authed until adopted.
+        if not block.get("owner_user_id"):
             return info
-        # Legacy anonymous sessions (no owner): allow read by anyone authenticated
-        if not owner_uid:
-            return info
-        # Team-scoped: members can read, only team head can manage
-        if visibility == "team" and team_id:
-            my_teams = {t["id"]: t for t in _auth_mod.AuthDB.get_user_teams(user["id"])}
-            if team_id in my_teams:
-                if require_manage and my_teams[team_id]["head_user_id"] != user["id"]:
-                    self._send_json({"error": "Only team head or session owner can modify"}, 403)
-                    return None
-                return info
-        self._send_json({"error": "Access to this session is not permitted"}, 403)
-        return None
+        if not _auth_mod.can_access(user, block):
+            self._send_json({"error": "Access to this session is not permitted"}, 403)
+            return None
+        if require_manage and not _auth_mod.can_manage(user, block):
+            self._send_json({"error": "Only the chat owner (or admin) can modify"}, 403)
+            return None
+        return info
 
     def _project_access_check(self, agent_id: str, proj_name: str, *, require_manage: bool = False):
         """Load project.json, enforce visibility/ownership. Returns project dict on success,

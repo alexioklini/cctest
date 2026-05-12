@@ -181,17 +181,44 @@ function updatePageHeader(title, breadcrumb, breadcrumbAgentId, favouriteOpts) {
     el.textContent = title;
   }
 
-  // Mount / refresh the favourite-star button in the header-right area.
-  // favouriteOpts: { item_type, item_id, agent_id } or null/undefined to clear.
+  // Mount / refresh the favourite-star button + share button in the
+  // header-right area. favouriteOpts: { item_type, item_id, agent_id, title }
+  // or null/undefined to clear.
   const right = document.getElementById('page-header-right');
   if (right) {
     const existing = right.querySelector('.fav-star-btn');
     if (existing) existing.remove();
+    const existingShare = right.querySelector('.share-btn');
+    if (existingShare) existingShare.remove();
+    const existingPill = right.querySelector('.share-pill');
+    if (existingPill) existingPill.remove();
     if (favouriteOpts && favouriteOpts.item_id && window.Favourites?.mount) {
       const btn = window.Favourites.mount(right, favouriteOpts);
-      if (btn) {
-        btn.style.order = '-1';  // place before the panel toggle
-      }
+      if (btn) btn.style.order = '-1';
+    }
+    // Share button — supported for chat / project_chat / project / schedule /
+    // workflow / artifact (not translation). The visibility pill is hydrated
+    // asynchronously after the button mounts.
+    const SHAREABLE = ['chat', 'project_chat', 'project', 'schedule', 'workflow', 'artifact'];
+    if (favouriteOpts && favouriteOpts.item_id && SHAREABLE.includes(favouriteOpts.item_type) && typeof shareButton === 'function') {
+      const sb = shareButton(favouriteOpts.item_type, favouriteOpts.item_id, favouriteOpts.agent_id || '',
+                             { title: favouriteOpts.title, onChange: () => updatePageHeader(title, breadcrumb, breadcrumbAgentId, favouriteOpts) });
+      sb.style.order = '-1';
+      right.insertBefore(sb, right.firstChild);
+      // Hydrate the pill (best-effort, ignore failures).
+      const qs = `item_type=${encodeURIComponent(favouriteOpts.item_type)}&item_id=${encodeURIComponent(favouriteOpts.item_id)}` + (favouriteOpts.agent_id ? `&agent_id=${encodeURIComponent(favouriteOpts.agent_id)}` : '');
+      API.get(`/v1/share?${qs}`).then(d => {
+        if (!d || d.error) return;
+        const vis = favouriteOpts.item_type === 'artifact' ? (d.effective_visibility || 'private') : (d.visibility || 'private');
+        const pillHtml = (typeof shareVisibilityPillHtml === 'function')
+          ? shareVisibilityPillHtml(vis, (d.extra_members || []).length, d.owner_team_name) : '';
+        if (pillHtml) {
+          const span = document.createElement('span');
+          span.innerHTML = pillHtml;
+          const pill = span.firstChild;
+          if (pill) { pill.style.order = '-1'; pill.style.marginRight = '4px'; right.insertBefore(pill, right.firstChild); }
+        }
+      }).catch(() => {});
     }
   }
 }

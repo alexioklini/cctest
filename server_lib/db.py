@@ -400,6 +400,28 @@ def _memorize_mempalace_turns(session_id: str, turn_ids: list[int]):
     return filed
 
 
+def session_share_block(info: dict) -> dict:
+    """Map a session-info row to the generic five-field sharing block.
+    Sessions reuse `user_id` as the owner. JSON list columns are decoded."""
+    def _list(v):
+        if isinstance(v, list):
+            return v
+        if not v:
+            return []
+        try:
+            d = json.loads(v)
+            return d if isinstance(d, list) else []
+        except Exception:
+            return []
+    return {
+        "owner_user_id": info.get("user_id") or "",
+        "visibility": info.get("visibility") or "user",
+        "owner_team_id": info.get("team_id") or "",
+        "extra_member_user_ids": _list(info.get("extra_member_user_ids")),
+        "excluded_user_ids": _list(info.get("excluded_user_ids")),
+    }
+
+
 class ChatDB:
     """SQLite persistence for chat sessions and messages."""
 
@@ -501,6 +523,13 @@ class ChatDB:
                 conn.execute("ALTER TABLE artifacts ADD COLUMN role TEXT DEFAULT 'output'")
             except sqlite3.OperationalError:
                 pass
+            # Per-artifact visibility override (generic sharing model). Empty
+            # string = inherit the parent session/project/run's visibility.
+            # When set, may only NARROW (validated at the handler).
+            try:
+                conn.execute("ALTER TABLE artifacts ADD COLUMN visibility_override TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             conn.execute("CREATE INDEX IF NOT EXISTS idx_session_user ON sessions(user_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_artifact_user ON artifacts(user_id)")
             # Add save_to_memory flag (migration)
@@ -526,10 +555,19 @@ class ChatDB:
             except sqlite3.OperationalError:
                 pass
             try:
-                # visibility: 'user' (default - private to owner + admin) or 'team' (team members + admin)
+                # visibility: one of private (alias of legacy 'user') / users /
+                # team / global. See server_lib/auth.VISIBILITY_VALUES.
                 conn.execute("ALTER TABLE sessions ADD COLUMN visibility TEXT DEFAULT 'user'")
             except sqlite3.OperationalError:
                 pass
+            # Generic sharing block: individual grants (always widens) and
+            # individual exclusions (only meaningful when visibility='global').
+            # JSON-encoded list of user ids; '[]' default.
+            for _col in ("extra_member_user_ids", "excluded_user_ids"):
+                try:
+                    conn.execute(f"ALTER TABLE sessions ADD COLUMN {_col} TEXT DEFAULT '[]'")
+                except sqlite3.OperationalError:
+                    pass
             try:
                 # project_id: stable uuid4 hex[:12] from project.json. Replaces the
                 # display-name `project` column as the join key. Storing both
@@ -661,6 +699,61 @@ class ChatDB:
             return d
 
     @staticmethod
+    @_db_safe(default=None)
+    def set_artifact_visibility_override(artifact_id, override):
+        with _db_conn() as conn:
+            conn.execute("UPDATE artifacts SET visibility_override = ? WHERE id = ?",
+                         (override or "", artifact_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def get_artifact_with_parent_block(artifact_id):
+        """Resolve an artifact to (parent_block, visibility_override, parent_label).
+        The parent is the producing session (or, for sched-<run> synthetic
+        sessions, the schedule). Returns None if the artifact doesn't exist."""
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM artifacts WHERE id = ?", (artifact_id,)).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+        override = d.get("visibility_override") or ""
+        sid = d.get("session_id") or ""
+        if sid.startswith("sched-"):
+            # synthetic scheduled-run session — parent is the schedule run/def
+            import brain as engine
+            run_id = sid[len("sched-"):]
+            try:
+                sconn = engine._sched_conn()
+                sconn.row_factory = sqlite3.Row
+                hr = sconn.execute("SELECT * FROM schedule_history WHERE id = ?", (run_id,)).fetchone()
+            except Exception:
+                hr = None
+            if hr:
+                hr = dict(hr)
+                vis = hr.get("visibility") or ""
+                if vis:
+                    blk = {"owner_user_id": hr.get("owner_user_id") or "",
+                           "visibility": vis, "owner_team_id": hr.get("owner_team_id") or "",
+                           "extra_member_user_ids": [], "excluded_user_ids": []}
+                    return blk, override, f"scheduled run #{run_id}"
+                # no snapshot — fall back to the live schedule
+                name = hr.get("schedule_name") or ""
+                srow = engine._schedule_get_row(name) if name else None
+                if srow:
+                    return engine._schedule_share_block(srow), override, f"schedule “{name}”"
+            return ({"owner_user_id": "", "visibility": "private", "owner_team_id": "",
+                     "extra_member_user_ids": [], "excluded_user_ids": []}, override, f"scheduled run #{run_id}")
+        info = ChatDB.get_session_info(sid)
+        if not info:
+            return ({"owner_user_id": d.get("user_id") or "", "visibility": "private",
+                     "owner_team_id": "", "extra_member_user_ids": [], "excluded_user_ids": []},
+                    override, "(deleted parent)")
+        label = (info.get("title") or "").strip() or "untitled chat"
+        return session_share_block(info), override, f"“{label}”"
+
+    @staticmethod
     @_db_safe(default=list)
     def get_all_artifacts(agent_id=None, limit=100):
         """Get all artifacts across sessions, optionally filtered by agent. Ordered by most recent."""
@@ -789,6 +882,32 @@ class ChatDB:
     def update_session_user(session_id, user_id):
         with _db_conn() as conn:
             conn.execute("UPDATE sessions SET user_id = ? WHERE id = ?", (user_id, session_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_session_share(session_id, *, visibility=None, team_id=None,
+                             extra_member_user_ids=None, excluded_user_ids=None,
+                             owner_user_id=None):
+        """Update the generic sharing block on a session. Only the kwargs
+        passed (non-None) are written. List args are JSON-encoded."""
+        import json as _json
+        sets, params = [], []
+        if visibility is not None:
+            sets.append("visibility = ?"); params.append(visibility)
+        if team_id is not None:
+            sets.append("team_id = ?"); params.append(team_id)
+        if extra_member_user_ids is not None:
+            sets.append("extra_member_user_ids = ?"); params.append(_json.dumps(list(extra_member_user_ids)))
+        if excluded_user_ids is not None:
+            sets.append("excluded_user_ids = ?"); params.append(_json.dumps(list(excluded_user_ids)))
+        if owner_user_id is not None:
+            sets.append("user_id = ?"); params.append(owner_user_id)
+        if not sets:
+            return
+        params.append(session_id)
+        with _db_conn() as conn:
+            conn.execute(f"UPDATE sessions SET {', '.join(sets)} WHERE id = ?", params)
             conn.commit()
 
     @staticmethod
@@ -1076,7 +1195,7 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=list)
-    def list_sessions(agent_id=None, status=None, project=None, visible_user_ids=None, visible_team_ids=None, project_id=None):
+    def list_sessions(agent_id=None, status=None, project=None, visible_user_ids=None, visible_team_ids=None, project_id=None, caller_user_id=None):
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
             q = ("SELECT s.*, "
@@ -1085,22 +1204,35 @@ class ChatDB:
                  "FROM sessions s WHERE 1=1")
             params = []
             # Multi-user: filter by visible user IDs (None = admin sees all).
-            # Visibility matrix:
-            #  - user_id IN visible → always visible
+            # Visibility matrix (generic sharing model):
+            #  - user_id IN visible → always visible (owner / team-head's members)
             #  - visibility='team' AND team_id IN visible_team_ids → visible
+            #  - visibility='global' → visible (then post-filtered for exclusions)
+            #  - caller ∈ extra_member_user_ids → visible (post-filtered, JSON col)
             #  - no user_id (legacy) → visible (legacy anonymous sessions)
+            _post_filter_grants = False
             if visible_user_ids is not None:
                 placeholders = ",".join("?" * len(visible_user_ids)) or "''"
                 team_clause = ""
                 if visible_team_ids:
                     tplaceholders = ",".join("?" * len(visible_team_ids))
                     team_clause = f" OR (s.visibility = 'team' AND s.team_id IN ({tplaceholders}))"
+                # Over-fetch: include global + anything that *might* carry an
+                # extra-grant for the caller (cheap JSON LIKE pre-filter), then
+                # decode JSON in Python below to confirm.
+                grant_clause = ""
+                if caller_user_id:
+                    grant_clause = " OR s.extra_member_user_ids LIKE ?"
+                    _post_filter_grants = True
                 q += (f" AND (s.user_id IN ({placeholders})"
                       f" OR s.user_id = '' OR s.user_id IS NULL"
-                      f"{team_clause})")
+                      f" OR s.visibility = 'global'"
+                      f"{team_clause}{grant_clause})")
                 params.extend(visible_user_ids)
                 if visible_team_ids:
                     params.extend(visible_team_ids)
+                if caller_user_id:
+                    params.append(f'%"{caller_user_id}"%')
             if agent_id:
                 q += " AND s.agent_id = ?"
                 params.append(agent_id)
@@ -1143,6 +1275,40 @@ class ChatDB:
             params.append(stale_cutoff)
             q += " ORDER BY s.last_active DESC"
             rows = conn.execute(q, params).fetchall()
+            # Confirm the JSON over-fetch + drop global rows that exclude the
+            # caller. Admin (visible_user_ids is None) skips this entirely.
+            if visible_user_ids is not None:
+                vset = set(visible_user_ids)
+                vteams = set(visible_team_ids or [])
+                def _row_visible(d):
+                    owner = d.get("user_id") or ""
+                    if not owner:
+                        return True
+                    if owner in vset:
+                        return True
+                    vis = d.get("visibility") or "user"
+                    extras = []
+                    raw = d.get("extra_member_user_ids")
+                    if raw:
+                        try:
+                            extras = json.loads(raw) if isinstance(raw, str) else (raw or [])
+                        except Exception:
+                            extras = []
+                    if caller_user_id and caller_user_id in extras:
+                        return True
+                    if vis == "team":
+                        return (d.get("team_id") or "") in vteams
+                    if vis == "global":
+                        excl = []
+                        rawx = d.get("excluded_user_ids")
+                        if rawx:
+                            try:
+                                excl = json.loads(rawx) if isinstance(rawx, str) else (rawx or [])
+                            except Exception:
+                                excl = []
+                        return not (caller_user_id and caller_user_id in excl)
+                    return False
+                rows = [r for r in rows if _row_visible(dict(r))]
             results = []
             # Build index status cache per agent
             _idx_cache = {}

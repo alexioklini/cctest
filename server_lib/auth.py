@@ -961,38 +961,120 @@ def can_access_session(user: dict, session_user_id: str) -> bool:
     return visible is None or session_user_id in visible
 
 
+# ── Generic sharing / visibility model ───────────────────────────────
+# One mechanism — private · users · team · global — applied to chats,
+# projects, scheduled tasks, workflows, and artifacts. The "block" is a
+# dict with keys: owner_user_id, visibility, owner_team_id,
+# extra_member_user_ids, excluded_user_ids.
+
+VISIBILITY_VALUES = ("private", "users", "team", "global")
+_LEGACY_VIS_ALIAS = {"user": "private"}  # legacy project.json value
+
+# Total order for narrow-only comparisons (artifacts). "users" and "team"
+# are not directly comparable; callers handle that case explicitly.
+_VIS_RANK = {"private": 0, "users": 1, "team": 1, "global": 2}
+
+
+def normalize_visibility(v) -> str:
+    v = (v or "private")
+    return _LEGACY_VIS_ALIAS.get(v, v)
+
+
+def can_access(user: dict, block: dict, legacy_open: bool = False) -> bool:
+    """Generic read-access check over a five-field visibility block.
+
+    block = {owner_user_id, visibility, owner_team_id,
+             extra_member_user_ids, excluded_user_ids}
+
+    legacy_open: when True and the block has no owner_user_id, grant access
+    to any authenticated user (the pre-ownership behaviour for chats /
+    workflows). When False, an owner-less block is admin-only.
+    """
+    if not user:
+        return False
+    if user["role"] == "admin" or user["id"] == "__system__":
+        return True
+    owner = block.get("owner_user_id") or ""
+    if owner and owner == user["id"]:
+        return True
+    if not owner:
+        return bool(legacy_open)
+    extras = block.get("extra_member_user_ids") or []
+    if user["id"] in extras:
+        return True
+    vis = normalize_visibility(block.get("visibility"))
+    if vis == "global":
+        return user["id"] not in (block.get("excluded_user_ids") or [])
+    if vis in ("private", "users"):
+        return False  # owner + extras only (handled above)
+    if vis == "team":
+        tid = block.get("owner_team_id") or ""
+        if not tid:
+            return False
+        return any(t["id"] == tid for t in AuthDB.get_user_teams(user["id"]))
+    return False
+
+
+def can_manage(user: dict, block: dict) -> bool:
+    """Edit metadata, change visibility, edit ACL, transfer, delete.
+    Strictly owner-or-admin — no team-head shortcut for items."""
+    if not user:
+        return False
+    if user["role"] == "admin" or user["id"] == "__system__":
+        return True
+    owner = block.get("owner_user_id") or ""
+    return bool(owner) and owner == user["id"]
+
+
+def normalize_share_block(block: dict) -> dict:
+    """Normalise a block on save: drop grants/excludes that the chosen
+    visibility makes meaningless, and the owner is never excludable."""
+    out = dict(block)
+    vis = normalize_visibility(out.get("visibility"))
+    out["visibility"] = vis
+    owner = out.get("owner_user_id") or ""
+    extras = [u for u in (out.get("extra_member_user_ids") or []) if u and u != owner]
+    excluded = [u for u in (out.get("excluded_user_ids") or []) if u and u != owner]
+    if vis == "global":
+        extras = []  # everyone already has access
+    else:
+        excluded = []  # no allow-list to subtract from
+    out["extra_member_user_ids"] = extras
+    out["excluded_user_ids"] = excluded
+    if vis != "team":
+        out["owner_team_id"] = ""
+    return out
+
+
 def can_access_project(user: dict, project_config: dict) -> bool:
     if user["role"] == "admin" or user["id"] == "__system__":
         return True
-    visibility = project_config.get("visibility", "global")
     owner_uid = project_config.get("owner_user_id", "")
     extras = project_config.get("extra_member_user_ids") or []
     excluded = project_config.get("excluded_user_ids") or []
-    # Owner always has access (even if they appear in excluded somehow)
     if owner_uid and owner_uid == user["id"]:
         return True
     if user["id"] in extras:
         return True
-    if visibility == "global":
+    # Visibility arms apply regardless of whether owner is set (legacy
+    # projects may lack owner_user_id but still carry team/global visibility).
+    vis = normalize_visibility(project_config.get("visibility", "global"))
+    if vis == "global":
         return user["id"] not in excluded
-    if visibility == "user":
-        return False  # only owner + extras (handled above)
-    if visibility == "team":
+    if vis in ("private", "users"):
+        return False  # owner + extras only (handled above)
+    if vis == "team":
         team_id = project_config.get("owner_team_id", "")
         if not team_id:
             return False
-        teams = AuthDB.get_user_teams(user["id"])
-        return any(t["id"] == team_id for t in teams)
+        return any(t["id"] == team_id for t in AuthDB.get_user_teams(user["id"]))
     return False
 
 
 def can_manage_project(user: dict, project_config: dict) -> bool:
     """Project management (edit, add/remove members, archive, delete).
     Owner-centric: only the named owner_user_id or admin."""
-    if user["role"] == "admin" or user["id"] == "__system__":
-        return True
-    owner_uid = project_config.get("owner_user_id", "")
-    return bool(owner_uid) and owner_uid == user["id"]
+    return can_manage(user, {"owner_user_id": project_config.get("owner_user_id", "")})
 
 
 def can_delete_resource(user: dict, owner_user_id: str, owner_team_id: str = "") -> bool:

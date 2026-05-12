@@ -22,8 +22,10 @@ class SessionsHandlerMixin:
         auth_user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
         visible = _auth_mod.get_visible_user_ids(auth_user)
         vteam = None
+        caller_uid = None
         if visible is not None:
             vteam = [t["id"] for t in _auth_mod.AuthDB.get_user_teams(auth_user["id"])]
+            caller_uid = auth_user["id"]
         if agent or project:
             if project:
                 # Resolve name → id once. New sessions filter by id; legacy
@@ -32,14 +34,16 @@ class SessionsHandlerMixin:
                 pid = _project_id_for_name(agent or "main", project)
                 all_sessions = ChatDB.list_sessions(agent_id=agent or None, status=status or None,
                                                    project=project, project_id=pid or None,
-                                                   visible_user_ids=visible, visible_team_ids=vteam)
+                                                   visible_user_ids=visible, visible_team_ids=vteam,
+                                                   caller_user_id=caller_uid)
                 self._send_json({"sessions": all_sessions})
             else:
                 all_sessions = ChatDB.list_sessions(agent_id=agent, status=status or None,
-                                                   visible_user_ids=visible, visible_team_ids=vteam)
+                                                   visible_user_ids=visible, visible_team_ids=vteam,
+                                                   caller_user_id=caller_uid)
                 self._send_json({"sessions": all_sessions})
         else:
-            self._send_json({"sessions": ChatDB.list_sessions(visible_user_ids=visible, visible_team_ids=vteam)})
+            self._send_json({"sessions": ChatDB.list_sessions(visible_user_ids=visible, visible_team_ids=vteam, caller_user_id=caller_uid)})
 
     def _handle_get_messages(self, path):
         """GET /v1/sessions/<id>/messages"""

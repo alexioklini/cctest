@@ -18,6 +18,7 @@ function updateChatView() {
     item_type: state.currentProject ? 'project_chat' : 'chat',
     item_id: sid,
     agent_id: chat.agentId || state.activeAgentId || 'main',
+    title: chatTitle || 'Untitled chat',
   } : null;
   if (state.currentProject) {
     const projAgent = chat.agentId || state._projectDetailAgent || state.activeAgentId;
@@ -918,12 +919,13 @@ async function loadProjectDetail(agentId, projectName) {
     }
     state._projectDetail = project;
 
-    // Mount the favourite star into the page-header for this project.
+    // Mount the favourite star + share button into the page-header.
     if (project.id) {
       updatePageHeader(project.name || projectName, null, null, {
         item_type: 'project',
         item_id: project.id,
         agent_id: agentId || 'main',
+        title: project.name || projectName,
       });
     }
 

@@ -259,6 +259,17 @@ class AdminHandlerMixin:
             self._send_json({"agent": agent_id, "name": name, "source": src})
             return
         workflows = engine.WorkflowEngine.list_workflows(agent_id)
+        # Filter to workflows the caller can see (generic sharing model).
+        # Legacy workflows with no sidecar (owner='') stay all-authenticated.
+        user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+        if user and user["role"] != "admin" and user["id"] != "__system__":
+            visible = []
+            for wf in workflows:
+                meta = engine.WorkflowEngine.get_workflow_meta(agent_id, wf["name"])
+                blk = engine.WorkflowEngine.workflow_block(meta or {})
+                if _auth_mod.can_access(user, blk, legacy_open=True):
+                    visible.append(wf)
+            workflows = visible
         self._send_json({"agent": agent_id, "workflows": workflows})
 
     def _handle_workflow_save(self, path):

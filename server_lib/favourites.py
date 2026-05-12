@@ -143,6 +143,28 @@ class FavouritesDB:
 
     @staticmethod
     @_db_safe(default=0)
+    def remove_by_item_scope(item_type: str, item_id: str, agent_id: str, scope: str) -> int:
+        """Delete every favourite pointing at (item_type, item_id, agent_id)
+        in a given scope. Used by the sharing model to clean up pins that an
+        item's narrowed visibility has orphaned. Returns count removed."""
+        with _db_conn() as conn:
+            rows = conn.execute("""
+                SELECT id, image_path FROM favourites
+                WHERE item_type = ? AND item_id = ? AND agent_id = ? AND scope = ?
+            """, (item_type, item_id, agent_id or "", scope)).fetchall()
+            n = len(rows)
+            if n:
+                conn.execute("""DELETE FROM favourites
+                    WHERE item_type = ? AND item_id = ? AND agent_id = ? AND scope = ?""",
+                    (item_type, item_id, agent_id or "", scope))
+                conn.commit()
+        for _, img in rows:
+            if img:
+                _safe_delete_image(img)
+        return n
+
+    @staticmethod
+    @_db_safe(default=0)
     def remove_bulk(scope: str, scope_id: str) -> int:
         """Delete every favourite in (scope, scope_id). Returns count."""
         if scope not in SCOPES:

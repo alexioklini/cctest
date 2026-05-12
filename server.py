@@ -887,6 +887,7 @@ from handlers.projects import ProjectsHandlerMixin
 from handlers.admin import AdminHandlerMixin
 from handlers.favourites import FavouritesHandlerMixin
 from handlers.translate import TranslateHandlerMixin
+from handlers.share import ShareHandlerMixin
 
 # Inject server-level globals into handler modules (they were originally
 # defined in the same file and relied on shared module globals).
@@ -908,6 +909,7 @@ def _inject_server_globals():
         AdminHandlerMixin.__module__,
         FavouritesHandlerMixin.__module__,
         TranslateHandlerMixin.__module__,
+        ShareHandlerMixin.__module__,
     ]
     # All names from server module that handlers reference as bare globals.
     # Include modules aliased as simple names (e.g. engine, _auth_mod) since
@@ -933,6 +935,7 @@ class BrainAgentHandler(
     AdminHandlerMixin,
     FavouritesHandlerMixin,
     TranslateHandlerMixin,
+    ShareHandlerMixin,
     BaseHTTPRequestHandler,
 ):
     """HTTP request handler for Brain Agent API."""
@@ -1515,6 +1518,8 @@ class BrainAgentHandler(
             self._handle_favourites_list()
         elif path.startswith("/v1/favourites/image/"):
             self._handle_favourites_image_get(path)
+        elif path == "/v1/share":
+            self._handle_share_get()
         elif path == "/v1/artifacts":
             self._handle_artifacts_list()
         elif path == "/v1/artifacts/browse":
@@ -1585,6 +1590,10 @@ class BrainAgentHandler(
             self._handle_favourites_add()
         elif path.startswith("/v1/favourites/") and path.endswith("/image"):
             self._handle_favourites_image_upload(path)
+        elif path == "/v1/share":
+            self._handle_share_update()
+        elif path == "/v1/share/transfer":
+            self._handle_share_transfer()
         elif (path.startswith("/v1/agents/") and "/projects/" in path
               and path.endswith("/image")):
             self._handle_project_image_upload(path)
@@ -2024,8 +2033,14 @@ class BrainAgentHandler(
             running_names = {r["name"] for r in running}
             user = getattr(self, "_auth_user", None)
             if user and user.get("role") != "admin" and user.get("id") != "__system__":
-                uid = user.get("id", "")
-                schedules = [s for s in schedules if (s.get("user_id") or "") == uid]
+                # Generic sharing model: own + team-visible + global + extra-granted.
+                # Legacy owner-less schedules stay admin-only (not in this list).
+                def _sched_visible(s):
+                    if not (s.get("user_id") or ""):
+                        return False  # legacy → admin-only
+                    blk = engine._schedule_share_block(s)
+                    return _auth_mod.can_access(user, blk)
+                schedules = [s for s in schedules if _sched_visible(s)]
             for s in schedules:
                 s["is_running"] = s.get("name", "") in running_names
             self._send_json({"schedules": schedules, "running": [
