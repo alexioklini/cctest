@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brain — Multi-User Capabilities Code Review</title>
+<style>
+  :root {
+    --bg:#0f1117; --panel:#171a23; --panel2:#1d2230; --ink:#e6e8ee; --muted:#9aa3b2;
+    --accent:#7aa2f7; --good:#8fd98f; --warn:#e8c07d; --bad:#f0908a; --border:#262c3a;
+    --code-bg:#10131b;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  .wrap { max-width:1080px; margin:0 auto; padding:32px 24px 80px; }
+  header { border-bottom:1px solid var(--border); padding-bottom:18px; margin-bottom:8px; }
+  h1 { font-size:28px; margin:0 0 6px; }
+  h2 { font-size:21px; margin:38px 0 12px; padding-top:14px; border-top:1px solid var(--border); }
+  h3 { font-size:16px; margin:24px 0 8px; color:var(--accent); }
+  h4 { font-size:14px; margin:16px 0 6px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  p { margin:8px 0; }
+  .sub { color:var(--muted); font-size:13.5px; }
+  code { background:var(--code-bg); padding:1.5px 5px; border-radius:4px; font:13px/1.5 "SF Mono",Menlo,Consolas,monospace; color:#c8d3f5; }
+  pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px; padding:14px 16px; overflow-x:auto; font:12.5px/1.55 "SF Mono",Menlo,Consolas,monospace; }
+  pre code { background:none; padding:0; color:#c8d3f5; }
+  table { border-collapse:collapse; width:100%; margin:14px 0; font-size:13.5px; }
+  th,td { border:1px solid var(--border); padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:var(--panel2); color:var(--ink); font-weight:600; }
+  tr:nth-child(even) td { background:#13161e; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px 18px; margin:14px 0; }
+  .pill { display:inline-block; font-size:11px; padding:2px 8px; border-radius:999px; font-weight:600; letter-spacing:.03em; }
+  .pill.good { background:rgba(143,217,143,.14); color:var(--good); border:1px solid rgba(143,217,143,.3); }
+  .pill.warn { background:rgba(232,192,125,.14); color:var(--warn); border:1px solid rgba(232,192,125,.3); }
+  .pill.bad  { background:rgba(240,144,138,.14); color:var(--bad); border:1px solid rgba(240,144,138,.3); }
+  .pill.info { background:rgba(122,162,247,.14); color:var(--accent); border:1px solid rgba(122,162,247,.3); }
+  ul,ol { margin:8px 0 8px 22px; } li { margin:4px 0; }
+  .fileref { color:var(--muted); font-size:12px; font-family:"SF Mono",Menlo,monospace; }
+  .toc { columns:2; column-gap:32px; font-size:14px; }
+  .toc a { color:var(--accent); text-decoration:none; }
+  .toc a:hover { text-decoration:underline; }
+  .kv { display:grid; grid-template-columns:180px 1fr; gap:4px 14px; font-size:13.5px; margin:10px 0; }
+  .kv dt { color:var(--muted); }
+  .kv dd { margin:0; }
+  .flow { background:var(--panel2); border-left:3px solid var(--accent); padding:10px 14px; border-radius:0 8px 8px 0; margin:12px 0; font-size:13.5px; }
+  .note { background:rgba(232,192,125,.07); border:1px solid rgba(232,192,125,.25); border-radius:8px; padding:10px 14px; margin:12px 0; font-size:13.5px; }
+  .danger { background:rgba(240,144,138,.07); border:1px solid rgba(240,144,138,.25); border-radius:8px; padding:10px 14px; margin:12px 0; font-size:13.5px; }
+  .ok { background:rgba(143,217,143,.07); border:1px solid rgba(143,217,143,.25); border-radius:8px; padding:10px 14px; margin:12px 0; font-size:13.5px; }
+  hr { border:none; border-top:1px solid var(--border); margin:30px 0; }
+  .small { font-size:12.5px; color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Brain — Multi-User Capabilities Code Review</h1>
+  <p class="sub">Scope: user &amp; team management, RBAC, post-login data access (chats / projects), MemPalace memory isolation for individual users, and team-shared knowledge.<br>
+  Repository: <code>cctest</code> · Review date: 2026-05-12 · Reviewer: automated code walk-through</p>
+</header>
+
+<div class="card">
+  <h4>Table of contents</h4>
+  <div class="toc">
+    <a href="#summary">0. Executive summary</a><br>
+    <a href="#users">1. User management</a><br>
+    <a href="#teams">2. Teams &amp; team heads</a><br>
+    <a href="#rbac">3. RBAC &amp; capability gating</a><br>
+    <a href="#login">4. Auth flow / login</a><br>
+    <a href="#postlogin">5. Post-login: accessing chats &amp; projects</a><br>
+    <a href="#mem-user">6. MemPalace — per-user memory</a><br>
+    <a href="#mem-team">7. MemPalace — team knowledge</a><br>
+    <a href="#mem-acl">8. MemPalace — access control &amp; wing scheme</a><br>
+    <a href="#findings">9. Findings, gaps &amp; recommendations</a><br>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="summary">0. Executive summary</h2>
+
+<p>Brain has a <strong>complete, layered multi-tenant model</strong> bolted on top of what was originally a single-user agent server. Identity lives in a dedicated SQLite database (<code>agents/main/auth.db</code>); authorization is enforced both by <em>path-based gates</em> in the HTTP layer and by <em>per-resource ownership checks</em> in handlers. Memory is isolated by namespacing every drawer into a "wing" derived from the session's owner / team / project.</p>
+
+<table>
+  <tr><th>Layer</th><th>Mechanism</th><th>Maturity</th></tr>
+  <tr><td>Authentication</td><td>Stateless JWT (HS256, 24 h default), bcrypt password hashes, optional self-registration (default off)</td><td><span class="pill good">solid</span></td></tr>
+  <tr><td>Authorization — coarse</td><td>3 roles (<code>admin</code> / <code>poweruser</code> / <code>user</code>) + 4 capability flags; path allowlists for admin-only endpoints</td><td><span class="pill good">solid</span></td></tr>
+  <tr><td>Authorization — fine</td><td>Per-session / per-project ownership &amp; visibility checks; team-head delegation; agent &amp; model ACL tables</td><td><span class="pill good">solid</span></td></tr>
+  <tr><td>Chat / project scoping</td><td>Every session row carries <code>user_id</code>, <code>team_id</code>, <code>visibility</code>; listing &amp; access funnel through <code>get_visible_user_ids()</code></td><td><span class="pill good">solid</span></td></tr>
+  <tr><td>Per-user memory</td><td>Profile doc on disk + mirrored into <code>user__&lt;uid&gt;</code> wing; chat-sync files turns into the same wing</td><td><span class="pill good">solid</span></td></tr>
+  <tr><td>Team memory</td><td><code>team__&lt;tid&gt;</code> wing, populated <em>only</em> by chat-sync of team-visible sessions</td><td><span class="pill warn">partial — no team-artifact miner</span></td></tr>
+  <tr><td>Auth disabled mode</td><td>Falls back to <code>SYNTHETIC_ADMIN</code> (<code>id=__system__</code>) — single-user convenience</td><td><span class="pill info">by design</span></td></tr>
+</table>
+
+<p class="small">Key files referenced throughout: <code>server_lib/auth.py</code> (1110 LOC — AuthDB, JWT, authz helpers), <code>handlers/auth.py</code> (681 LOC — auth/user/team endpoints), <code>server.py</code> (auth middleware, path gates), <code>server_lib/db.py</code> (session schema, <code>_resolve_session_wing</code>, chat-sync cursor), <code>handlers/projects.py</code> &amp; <code>handlers/sessions_handler.py</code> (resource access checks), <code>brain.py</code> (ProjectManager, <code>tool_mempalace_query</code>, user-profile mirroring).</p>
+
+<!-- ============================================================ -->
+<h2 id="users">1. User management</h2>
+
+<h3>1.1 Storage</h3>
+<p>Users live in <code>agents/main/auth.db</code>, managed by the <code>AuthDB</code> class in <span class="fileref">server_lib/auth.py</span>. The <code>users</code> table schema:</p>
+<pre><code>users(
+  id            TEXT PRIMARY KEY,   -- uuid4 hex[:12]
+  username      TEXT UNIQUE NOT NULL,
+  password_hash TEXT,               -- bcrypt
+  display_name  TEXT DEFAULT '',
+  email         TEXT DEFAULT '',
+  role          TEXT DEFAULT 'user',-- 'admin' | 'poweruser' | 'user'
+  created_at    REAL,
+  last_login    REAL,
+  disabled      INTEGER DEFAULT 0,
+  capabilities  TEXT,               -- JSON: per-user feature-flag overrides
+  preferences   TEXT                -- JSON: user-controlled settings (see §1.3)
+)</code></pre>
+
+<h3>1.2 Lifecycle</h3>
+<dl class="kv">
+  <dt>Create</dt><dd><code>AuthDB.create_user(username, password, role="", display_name="", email="")</code> — mints a 12-char hex id, bcrypt-hashes the password, applies <code>default_role()</code> if role is blank, and auto-grants the new user access to the configured default agents (default <code>["main"]</code>).</dd>
+  <dt>First-run admin</dt><dd>If the table is empty on init, a default <code>admin</code> / <code>admin</code> user (role <code>admin</code>) is created and a "change immediately" warning is printed to the server log.</dd>
+  <dt>Admin update</dt><dd><code>update_user(user_id, updates)</code> — admin-only; can change <code>display_name</code>, <code>email</code>, <code>role</code>, <code>disabled</code>, <code>capabilities</code>. Does <em>not</em> touch <code>preferences</code>.</dd>
+  <dt>Self-service</dt><dd><code>update_self_profile</code> (display name / email), <code>update_preferences</code> (see §1.3), <code>change_password</code> (requires old password).</dd>
+  <dt>Admin password reset</dt><dd><code>admin_reset_password(user_id, new_password)</code> — no old password required.</dd>
+  <dt>Disable</dt><dd><code>disabled=1</code> — token verification rejects the user on next request (no session revocation table needed since JWT is stateless, but <code>refresh_token</code> and <code>verify_token</code> both re-load the user and bail on <code>disabled</code>).</dd>
+</dl>
+
+<h3>1.3 Per-user preferences (<code>users.preferences</code> JSON)</h3>
+<p>Validated against <code>PREFERENCE_DEFAULTS</code> via <code>_coerce_pref</code>; default-valued keys are pruned on write. Surfaced to the agent in the round-0 first-user-message preamble (kept <em>out</em> of the system prompt to preserve warm-pool KV-prefix stability).</p>
+<table>
+  <tr><th>Key</th><th>Type / limit</th><th>Effect</th></tr>
+  <tr><td><code>greeting_name</code></td><td>str ≤64</td><td>What the agent calls the user</td></tr>
+  <tr><td><code>job_description</code></td><td>str ≤500</td><td>User's role, surfaced on first turn</td></tr>
+  <tr><td><code>communication_preferences</code></td><td>str ≤4000</td><td>Tone/style guidance (~1k tokens)</td></tr>
+  <tr><td><code>memory_chats_default</code></td><td>0|1|2|null</td><td>Per-user override of the server-wide chat-memory classifier default (off / on / auto)</td></tr>
+  <tr><td><code>memory_sched_default</code></td><td>0|1|null</td><td>Gates the miner from filing this user's scheduled-run artifacts</td></tr>
+  <tr><td><code>daily_summary_enabled</code></td><td>bool</td><td>Enables the user-profile / daily-summary daemon for this user</td></tr>
+  <tr><td><code>daily_summary_hour_local</code></td><td>0–23</td><td>Local hour the daemon fires</td></tr>
+</table>
+
+<h3>1.4 Capabilities (<code>users.capabilities</code> JSON)</h3>
+<p>Sparse per-user overrides on top of role defaults (<code>CAPABILITY_DEFAULTS</code>). Admin bypasses every capability check.</p>
+<table>
+  <tr><th>Capability</th><th>admin</th><th>poweruser</th><th>user</th><th>Gates</th></tr>
+  <tr><td><code>allow_projects</code></td><td>✔</td><td>✔</td><td>✘</td><td>Creating / managing projects under an agent</td></tr>
+  <tr><td><code>allow_artifacts</code></td><td>✔</td><td>✔</td><td>✔</td><td>Artifact creation</td></tr>
+  <tr><td><code>allow_workflows</code></td><td>✔</td><td>✘</td><td>✘</td><td><code>/v1/agents/&lt;id&gt;/workflows*</code></td></tr>
+  <tr><td><code>allow_skills_install</code></td><td>✔</td><td>✘</td><td>✘</td><td><code>/v1/skills/*</code> install</td></tr>
+</table>
+
+<h3>1.5 Self-registration</h3>
+<p><code>POST /v1/auth/register</code> exists but is <strong>disabled by default</strong> — gated by <code>registration_enabled()</code> ⇐ <code>config.auth.registration_enabled</code>. When enabled it creates a user with <code>default_role()</code> and returns a token immediately. The server prints <code>Auth: enabled (registration: open|closed)</code> at startup so the operator knows the posture.</p>
+
+<!-- ============================================================ -->
+<h2 id="teams">2. Teams &amp; team heads</h2>
+
+<h3>2.1 Schema</h3>
+<p>Two tables in <code>auth.db</code>:</p>
+<pre><code>user_teams(
+  id           TEXT PRIMARY KEY,    -- uuid4 hex[:12]  → this is the MemPalace team wing key
+  name         TEXT UNIQUE NOT NULL,
+  description  TEXT DEFAULT '',
+  head_user_id TEXT NOT NULL,       -- FK users.id
+  created_at   REAL
+)
+user_team_members(
+  user_id  TEXT NOT NULL,           -- FK users.id
+  team_id  TEXT NOT NULL,           -- FK user_teams.id
+  joined_at REAL DEFAULT (now),
+  PRIMARY KEY (user_id, team_id)
+)  -- indexed on user_id and team_id</code></pre>
+
+<h3>2.2 Team head — what makes it special</h3>
+<table>
+  <tr><th>Aspect</th><th>Behaviour</th></tr>
+  <tr><td>Who can be head</td><td><code>can_create_team()</code> requires the creator to be <code>poweruser</code> or <code>admin</code>; the head is the creator.</td></tr>
+  <tr><td>Auto-membership</td><td>The head is inserted into <code>user_team_members</code> at team creation.</td></tr>
+  <tr><td>Cannot be removed</td><td><code>remove_team_member()</code> refuses to remove the head.</td></tr>
+  <tr><td>Management rights</td><td><code>can_manage_team(user, team_id)</code> ⇒ <code>admin</code> OR the team's <code>head_user_id</code>. Gates add/remove member, update team, delete/dissolve team.</td></tr>
+  <tr><td>Cross-user visibility</td><td><code>get_visible_user_ids(user)</code> returns <code>[user_id] + members-of-every-team-where-user-is-head</code>. So a team head can <em>see and read</em> the chats &amp; projects of all their team members. Regular members do <strong>not</strong> get this — they only see their own.</td></tr>
+  <tr><td>Session/project management of team resources</td><td>A session/project with <code>visibility='team'</code> can be <em>read</em> by any team member but <em>managed</em> (deleted, settings changed) only by the head (or admin, or original owner).</td></tr>
+</table>
+
+<h3>2.3 Relationship to <em>agent</em> teams</h3>
+<p class="note">There are <strong>two distinct "team" concepts</strong> in this codebase — don't conflate them:
+<br>• <strong>User teams</strong> (this section) — groups of human users in <code>auth.db</code>, with a <code>head_user_id</code>. Drive RBAC visibility and the <code>team__&lt;tid&gt;</code> memory wing.
+<br>• <strong>Agent teams</strong> — the <code>team</code> field in <code>agents/&lt;name&gt;/agent.json</code> + <code>team.members</code>. This is about which <em>agents</em> can delegate to which other <em>agents</em> (orchestration topology: <code>main</code> → heads + standalone; heads → their members; members → peers + head). Unrelated to human users.</p>
+
+<h3>2.4 Team-scoped resources</h3>
+<dl class="kv">
+  <dt>Sessions</dt><dd><code>sessions</code> table has <code>team_id TEXT DEFAULT ''</code> and <code>visibility TEXT DEFAULT 'user'</code>. A team chat is <code>visibility='team'</code> + <code>team_id</code> set.</dd>
+  <dt>Projects</dt><dd><code>project.json</code> carries <code>owner_user_id</code>, <code>owner_team_id</code>, <code>visibility</code> (<code>user</code>/<code>team</code>/<code>global</code>), plus exception lists (<code>extra_member_user_ids</code>, <code>excluded_user_ids</code>). Creating a team-visible project requires the caller to be that team's head.</dd>
+  <dt>Agent / model ACLs</dt><dd><code>user_agent_permissions</code>, <code>team_agent_permissions</code>, <code>user_model_permissions</code>, <code>team_model_permissions</code> — grant tables. Effective access = direct grant ∪ any-team grant ∪ admin.</dd>
+</dl>
+
+<!-- ============================================================ -->
+<h2 id="rbac">3. RBAC &amp; capability gating</h2>
+
+<h3>3.1 Two enforcement points</h3>
+<div class="flow">
+<strong>① Path-based gate</strong> — <code>BrainAgentHandler._auth_gate(path, public_paths, admin_paths, method)</code> in <code>server.py</code>. Called at the top of <code>do_GET</code> / <code>do_POST</code> / <code>do_PUT</code> / <code>do_DELETE</code>. Logic:
+<ol>
+  <li>If <code>path ∈ public_paths</code> → return current user (or <code>SYNTHETIC_ADMIN</code> if auth disabled), no auth required.</li>
+  <li>Else <code>_require_auth()</code> — 401 if no valid token.</li>
+  <li>If the path is admin-only (via per-method <code>_is_admin_get/post/delete()</code> prefix/exact matching OR explicit <code>admin_paths</code> set) and <code>user.role != 'admin'</code> and <code>user.id != '__system__'</code> → <strong>403 "Admin access required"</strong>.</li>
+  <li>If the path requires a capability (<code>_path_requires_capability</code>) and the user lacks it → <strong>403 "Capability 'X' not granted"</strong>.</li>
+</ol>
+</div>
+<div class="flow">
+<strong>② Per-resource ownership check</strong> — invoked inside handlers once the path gate passes:
+<ul>
+  <li><code>_session_access_check(sid, require_manage=…)</code> — admin/<code>__system__</code> ⇒ ok; owner ⇒ ok; legacy ownerless session ⇒ ok (anyone authenticated); <code>visibility='team'</code> + caller in team ⇒ read ok, manage only if caller is head; otherwise 403.</li>
+  <li><code>_project_access_check(agent, proj, require_manage=…)</code> ⇒ <code>can_access_project()</code> / <code>can_manage_project()</code>.</li>
+</ul>
+</div>
+
+<h3>3.2 Roles</h3>
+<table>
+  <tr><th>Role</th><th>Can do</th><th>Cannot do</th></tr>
+  <tr><td><code>admin</code></td><td>Everything. Bypasses every capability check and every per-resource ownership check. Manages users, teams, providers/models, agents (hooks/commands/workflows), permissions, sees all chats &amp; projects, reads audit log, backups.</td><td>—</td></tr>
+  <tr><td><code>poweruser</code></td><td>Chat; create &amp; manage own projects; create user-teams &amp; act as team head; see/read team members' resources (when head).</td><td>Server/agent config, provider/model management, workflows, skills install, user management, audit log.</td></tr>
+  <tr><td><code>user</code></td><td>Chat with permitted agents/models; create artifacts; edit own profile/preferences/password; join teams (when added by a head).</td><td>Create projects (default), workflows, skills install, anything admin, see other users' resources.</td></tr>
+</table>
+
+<h3>3.3 Admin-only endpoints (representative)</h3>
+<p class="small">Source of truth: <code>_is_admin_get/post/delete()</code> + the <code>_ADMIN_*_PATHS</code> sets in <code>server.py</code>. Highlights:</p>
+<ul>
+  <li><strong>GET:</strong> <code>/v1/auth/users</code>, <code>/v1/auth/audit</code>, <code>/v1/providers</code>, <code>/v1/mempalace/*</code> (memory stats / classifier config), <code>/v1/agents/*</code> config endpoints.</li>
+  <li><strong>POST:</strong> <code>/v1/auth/users</code> (create/update/disable/reset-password), <code>/v1/auth/permissions</code> (grant/revoke agent &amp; model access), <code>/v1/auth/migrate</code>, <code>/v1/agents/create</code>, <code>/v1/agents/delete</code>, <code>/v1/providers</code>, <code>/v1/models/config</code>, workflows, skills, backup.</li>
+  <li><strong>Scheduler:</strong> <code>_schedule_owner_check(name)</code> — non-admins may only mutate schedules they own; legacy schedules with an empty <code>user_id</code> stay admin-only.</li>
+</ul>
+
+<h3>3.4 Audit log</h3>
+<p>Append-only <code>audit_log(ts, actor_user_id, actor_username, action, target, details_json, ip)</code>, indexed on <code>ts</code> / <code>actor_user_id</code> / <code>action</code>. Written on: login success/failure, user create/update/delete, password reset, team create/update/delete/member-change, permission grant/revoke. Queryable at <code>GET /v1/auth/audit?limit=&amp;actor=&amp;action=&amp;since=</code> (admin-only).</p>
+
+<!-- ============================================================ -->
+<h2 id="login">4. Auth flow / login</h2>
+
+<h3>4.1 Configuration (<code>config.auth.*</code>)</h3>
+<dl class="kv">
+  <dt><code>enabled</code></dt><dd>Master switch. Default <strong>false</strong> → every request gets <code>SYNTHETIC_ADMIN</code> (<code>{id:"__system__", username:"system", role:"admin"}</code>); single-user mode.</dd>
+  <dt><code>registration_enabled</code></dt><dd>Default false.</dd>
+  <dt><code>default_role</code></dt><dd>Default <code>"user"</code>.</dd>
+  <dt><code>token_expiry_seconds</code></dt><dd>Default 86400 (24 h).</dd>
+  <dt>JWT secret</dt><dd>Read from config; auto-generated and persisted on first <code>init_auth()</code> if absent.</dd>
+</dl>
+
+<h3>4.2 Login</h3>
+<div class="flow">
+<code>POST /v1/auth/login</code> &nbsp;<span class="pill info">public</span><br>
+Body <code>{"username","password"}</code> →
+<ol>
+  <li><code>AuthDB.authenticate(username, password)</code> — look up by username, reject if <code>disabled</code>, <code>bcrypt.checkpw</code> on the hash.</li>
+  <li>On success: <code>update_last_login</code>, audit <code>auth.login</code>, <code>generate_token(user)</code> → <code>{"user":{…}, "token":"…"}</code> 200.</li>
+  <li>On failure: audit <code>auth.login_failed</code> (with IP), <code>{"error":"Invalid credentials"}</code> 401.</li>
+</ol>
+</div>
+
+<h3>4.3 Token</h3>
+<dl class="kv">
+  <dt>Format</dt><dd>JWT HS256. Payload <code>{user_id, username, role, iat, exp}</code>.</dd>
+  <dt>Transport</dt><dd><code>Authorization: Bearer &lt;token&gt;</code> header. No cookies, no server-side session table — fully stateless.</dd>
+  <dt>Verify</dt><dd><code>verify_token()</code> decodes, checks <code>exp</code>; <code>_get_auth_user()</code> then re-loads the user from <code>auth.db</code> and returns <code>None</code> if the user is missing or <code>disabled</code>.</dd>
+  <dt>Refresh</dt><dd><code>POST /v1/auth/refresh</code> <span class="pill info">public</span> — verifies the current token, re-loads the user, issues a new token with fresh <code>exp</code>. (Disabled users cannot refresh.)</dd>
+  <dt>Logout</dt><dd>Client-side only — discard the token. Tokens self-expire after <code>token_expiry_seconds</code>. There is no revocation list, so a leaked token is valid until expiry (mitigation: short expiry, or disable the user which kills future <em>refreshes</em> but not the in-flight token until it expires).</dd>
+  <dt>Public paths</dt><dd><code>GET /v1/status</code>, <code>GET /v1/auth/me</code> (returns <code>SYNTHETIC_ADMIN</code> or the current user), <code>POST /v1/auth/login</code>, <code>POST /v1/auth/refresh</code>. Everything else flows through <code>_require_auth()</code>.</dd>
+</dl>
+
+<!-- ============================================================ -->
+<h2 id="postlogin">5. Post-login: accessing chats &amp; projects</h2>
+
+<h3>5.1 Stamping ownership</h3>
+<p>Sessions are created <em>lazily</em> on the first <code>POST /v1/chat/message</code> (not on model switch / <code>newChat()</code> / PII swap — see "Empty-Session Cleanup"). At creation the handler reads <code>self._auth_user</code> and stamps:</p>
+<pre><code>uid = auth_user["id"] if auth_user and auth_user["id"] != "__system__" else ""
+session.user_id = uid
+ChatDB.update_session_user(session.id, uid)</code></pre>
+<p>So under <code>__system__</code> (auth disabled) sessions are written with an empty <code>user_id</code> — the "legacy / anonymous" bucket that everyone authenticated can later read. When a team chat is started, <code>team_id</code> + <code>visibility='team'</code> are also written.</p>
+
+<h3>5.2 Listing chats</h3>
+<div class="flow">
+<code>GET /v1/sessions</code> → <code>_handle_list_sessions()</code> in <code>handlers/sessions_handler.py</code>:
+<ol>
+  <li><code>visible_user_ids = get_visible_user_ids(auth_user)</code> — <code>None</code> for admin (⇒ "all"), else <code>[own_id] + team-members-where-I'm-head</code>.</li>
+  <li><code>visible_team_ids</code> = the user's team ids.</li>
+  <li><code>ChatDB.list_sessions(visible_user_ids=…, visible_team_ids=…)</code> — SQL filters to <code>user_id ∈ visible_user_ids</code> OR (<code>visibility='team'</code> AND <code>team_id ∈ visible_team_ids</code>) OR <code>user_id = ''</code> (legacy).</li>
+  <li>Plus the standard hygiene filters: hide 0-message sessions older than 60 s, hide <code>note_chat</code> / hidden-status sessions, etc.</li>
+</ol>
+</div>
+
+<h3>5.3 Opening / mutating a specific chat</h3>
+<p>Every per-session endpoint (history, rename, delete, settings, memory toggles, …) calls <code>_session_access_check(sid, require_manage=…)</code> first — the ladder is: admin → owner → ownerless-legacy → team-member-can-read / team-head-can-manage → 403. So a team member cannot delete a teammate's private chat, and cannot delete a team chat unless they're the head.</p>
+
+<h3>5.4 Projects</h3>
+<div class="flow">
+<code>GET /v1/agents/&lt;id&gt;/projects</code> → <code>_handle_list_projects()</code> → <code>ProjectManager.list_projects(user_id=…, user_team_ids=…)</code> (skips the user filter entirely for admin). A project is visible if:
+<ul>
+  <li><code>visibility='user'</code> — caller is <code>owner_user_id</code> or in <code>extra_member_user_ids</code>;</li>
+  <li><code>visibility='team'</code> — caller is a member of <code>owner_team_id</code>'s team;</li>
+  <li><code>visibility='global'</code> — everyone except those in <code>excluded_user_ids</code>.</li>
+</ul>
+Mutating a project (settings, input folders, delete, ingest) requires <code>can_manage_project()</code> ⇒ <code>admin</code> OR <code>owner_user_id</code> only — note even a team head cannot manage a team project they don't own (only the owner or an admin can).</div>
+
+<p class="small">Capability interlock: a <code>user</code> (no <code>allow_projects</code>) is 403'd by the path gate on <code>/v1/agents/&lt;id&gt;/projects*</code> before any ownership logic runs.</p>
+
+<h3>5.5 Other per-user surfaces</h3>
+<ul>
+  <li><strong>My Schedules</strong> — non-admins see only their own; legacy schedules (empty <code>user_id</code>) are admin-only; mutating ops gated by <code>_schedule_owner_check</code>.</li>
+  <li><strong>User profile doc</strong> — <code>GET/POST /v1/auth/profile-doc</code> (self), <code>…/update-now</code> (kick the daemon), <code>…/reset</code> (delete the file + the MemPalace mirror drawers).</li>
+  <li><strong>Preferences</strong> — <code>POST /v1/auth/me/preferences</code>; <strong>password</strong> — <code>POST /v1/auth/me/password</code>.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="mem-user">6. MemPalace — per-user memory</h2>
+
+<p>MemPalace is imported as an in-process Python package (no MCP, no subprocess). Every drawer carries a <strong>wing</strong> (namespace) and a <strong>room</strong> (topic bucket). Per-user memory uses the wing <code>user__&lt;user_id&gt;</code>.</p>
+
+<h3>6.1 The user-profile document (auto-maintained memory from chat history)</h3>
+<dl class="kv">
+  <dt>On disk</dt><dd><code>agents/main/user_profiles/&lt;uid&gt;.md</code> — six fixed sections (Work context / Personal context / Top of mind / Recent months / Earlier context / Long-term background). Filesystem is the source of truth; gitignored. Versioned into <code>&lt;uid&gt;.history/&lt;ISO&gt;.md</code> (capped 30, kept on reset).</dd>
+  <dt>MemPalace mirror</dt><dd>Wing <code>user__&lt;uid&gt;</code>, room <code>user_profile</code>, one drawer per <code>## section</code>, <code>source_file = user/&lt;uid&gt;#profile/&lt;section_slug&gt;</code>. Updated by <em>purge-then-add</em> (<code>_mirror_user_profile_to_mempalace</code> → <code>_purge_user_profile_drawers</code> then <code>tool_add_drawer</code> per section), so renamed/removed sections don't linger. Only the current profile is mirrored — disk history is not.</dd>
+  <dt>Daemon</dt><dd><code>user-profile</code> daemon polls every ~30 min; per-user gate = <code>daily_summary_enabled</code> AND local hour matches <code>daily_summary_hour_local</code> AND ≥23 h since last run (cooldown in <code>auth.db.user_daily_summary</code>).</dd>
+  <dt>Worker</dt><dd>Takes the 100 most-recently-active chats from the last 90 days, runs a delegate with <code>_PROFILE_SYSTEM_PROMPT</code> (never invent / third-person / match the user's language / edit in place / demote stale Top→Recent / no timestamps / 2–6 sentences per section), model picked by <code>_profile_pick_model</code> (refinement → cheapest haiku → cheapest enabled → default). GDPR auto-fallback to a local model if PII is detected in the chat texts. Atomic write via temp + <code>os.replace</code>.</dd>
+  <dt>Injection</dt><dd>Round 0 reads <code>&lt;uid&gt;.md</code> (4 KB cap) and prepends <code>[Auto-maintained user profile: …]</code> on the first user message. Stripped before the wire by <code>_ALLOWED_MSG_KEYS</code>. <strong>KV-cache invariant:</strong> <code>_build_system_prompt</code> stays user-agnostic — per-user content lives only in the first-user-message preamble.</dd>
+</dl>
+
+<h3>6.2 Chat turns filed into the user's wing</h3>
+<p>The <code>mempalace-chat-sync</code> daemon (poll ~60 s) mirrors qualifying chat content into whatever wing <code>_resolve_session_wing()</code> returns — for an ordinary owned chat that's <code>user__&lt;uid&gt;</code>. Rooms / source_file conventions:</p>
+<table>
+  <tr><th>Content</th><th>Room</th><th><code>source_file</code></th></tr>
+  <tr><td>Chat turn (user+assistant pair)</td><td><code>chat</code></td><td><code>session/&lt;sid&gt;#turn/&lt;opening_user_msg_id&gt;</code></td></tr>
+  <tr><td>Session summary</td><td><code>chat_summary</code></td><td><code>session/&lt;sid&gt;#summary</code> (content-hashed)</td></tr>
+  <tr><td>Attachment <em>metadata</em> (filename/mime/size — never bytes)</td><td><code>chat_attachment</code></td><td><code>session/&lt;sid&gt;…#attach/&lt;mid&gt;/&lt;fname&gt;</code></td></tr>
+  <tr><td>Allowlisted tool results (default <code>exa_search</code>, <code>web_fetch</code>, <code>read_document</code>)</td><td><code>reference</code></td><td><code>session/&lt;sid&gt;…#tool/&lt;tool&gt;/&lt;mid&gt;/&lt;idx&gt;</code></td></tr>
+</table>
+<p><strong>Classifier gate:</strong> filing requires the session's <code>save_to_memory</code> mode &gt; 0 (<code>0=off</code>, <code>1=on</code>, <code>2=auto</code>). In <code>auto</code> mode each pair is classified (<code>fact</code>/<code>preference</code>/<code>decision</code>/<code>reference</code> filed; <code>generic</code>/<code>refusal</code>/<code>chitchat</code> skipped) — non-streaming, <code>max_tokens:20</code>, fail-open. The per-user <code>memory_chats_default</code> preference overrides the server-wide classifier default. The <code>save_chat_to_memory</code> tool lets the model flip a session to <code>on</code> when the user says "remember this"; per-turn control is via the palace-icon menu (memorise/remove × complete/this/above/below) → <code>memorize_turns</code> / <code>purge_turns</code>.</p>
+<p><strong>Cursor:</strong> <code>chat_mempalace_sync(session_id PK, last_message_id, last_summary_hash, updated_at)</code> in <code>chats.db</code>. <strong>Incognito</strong> sessions (<code>status='incognito'</code>) are excluded from the sync pass entirely. <strong>Session delete</strong> purges drawers + closets where <code>source_file LIKE 'session/&lt;sid&gt;%'</code>; <strong>archive</strong> leaves drawers intact (memory persists).</p>
+
+<h3>6.3 Default scoping of <code>mempalace_query</code></h3>
+<p>When an agent calls <code>mempalace_query</code> with no explicit <code>wing</code> and no project context, the tool defaults the wing to <code>user__&lt;current_user_id&gt;</code> (read from <code>_thread_local.current_user_id</code>, set per-request by the handler). So an agent acting on behalf of user A naturally searches A's private memory and nothing else.</p>
+
+<!-- ============================================================ -->
+<h2 id="mem-team">7. MemPalace — team knowledge</h2>
+
+<h3>7.1 How it works today</h3>
+<dl class="kv">
+  <dt>Wing</dt><dd><code>team__&lt;team_id&gt;</code> — the <code>team_id</code> is the uuid4 hex[:12] from <code>user_teams.id</code> (stable; renaming the team doesn't strand drawers, same-named teams don't collide).</dd>
+  <dt>Populated by</dt><dd><em>Only</em> the <code>mempalace-chat-sync</code> daemon, and only for sessions whose row has <code>visibility='team'</code> AND a non-empty <code>team_id</code>. Same rooms / source_file scheme as §6.2 — the difference is purely which wing the drawers land in. So "team knowledge" = the accumulated content of team-visible chats.</dd>
+  <dt>Visibility</dt><dd>A cross-wing <code>mempalace_query</code> (explicit <code>wing=null</code>) returns a <code>team__&lt;tid&gt;</code> drawer only if <code>"team__"+tid ∈ caller's current_team_ids</code> (<code>_thread_local.current_team_ids</code>, set from <code>AuthDB.get_user_teams</code>). Project wings are <em>never</em> returned cross-wing; untyped wings (e.g. <code>brain_code</code>) are treated as shared/everyone.</dd>
+  <dt>Session-list parity</dt><dd>The same <code>visible_team_ids</code> that scopes the chat list (§5.2) is what scopes team-memory visibility — consistent boundary.</dd>
+</dl>
+
+<h3>7.2 What's missing</h3>
+<div class="note"><strong>No team-artifact miner.</strong> Projects get a dedicated <code>mempalace-project-sync</code> daemon that mines on-disk input folders + ingested files into <code>project__&lt;id&gt;</code>; scheduled-task artifacts get mined into <code>&lt;agent&gt;_artifacts</code> by the <code>mempalace-miner</code>. <strong>Teams get neither</strong> — there is no folder or artifact pipeline that feeds <code>team__&lt;tid&gt;</code>. If a team wants a shared knowledge base of documents (not just chat history), today the only path is to create a team-<em>visible project</em> and use its <code>project__&lt;id&gt;</code> wing — which is then governed by project ACLs, not team ACLs. Worth deciding whether that's the intended story or whether a "team input folders" feature should mirror the project one.</div>
+
+<!-- ============================================================ -->
+<h2 id="mem-acl">8. MemPalace — access control &amp; the wing scheme</h2>
+
+<h3>8.1 Wing resolution (<code>_resolve_session_wing(info)</code> — <code>server_lib/db.py</code>)</h3>
+<p>ID-only scheme. Priority, first match wins:</p>
+<ol>
+  <li><strong>Project-scoped session</strong> (session's <code>project</code> field set, resolves to a project id) → <code>project_chat__&lt;project_id&gt;</code> &nbsp;<span class="small">(note: chat content from a project chat goes to the <em>chat</em> wing <code>project_chat__</code>, kept separate from the <em>knowledge</em> wing <code>project__</code> so a stale chat answer never out-ranks a source document)</span></li>
+  <li><strong>Team-scoped session</strong> (<code>visibility='team'</code> + <code>team_id</code>) → <code>team__&lt;team_id&gt;</code></li>
+  <li><strong>User-owned session</strong> (<code>user_id</code> non-empty) → <code>user__&lt;user_id&gt;</code></li>
+  <li><strong>Legacy / anonymous</strong> (no owner, not team) → <code>""</code> → chat-sync <em>skips filing</em> and just advances the cursor (silent — intentional, so the global namespace isn't polluted, but it means anonymous-mode chats are never recoverable from memory)</li>
+</ol>
+
+<h3>8.2 Wing taxonomy</h3>
+<table>
+  <tr><th>Wing pattern</th><th>Owner</th><th>Cross-wing visibility</th><th>Filled by</th></tr>
+  <tr><td><code>user__&lt;uid&gt;</code></td><td>One user</td><td>Only that user</td><td>chat-sync (owned chats) + user-profile mirror</td></tr>
+  <tr><td><code>team__&lt;tid&gt;</code></td><td>One user-team</td><td>Members of that team</td><td>chat-sync (team-visible chats)</td></tr>
+  <tr><td><code>project__&lt;pid&gt;</code></td><td>One project (knowledge)</td><td><strong>Never</strong> — always private; <code>mempalace_query</code> force-scopes when in project context, refuses if the id is missing rather than leak</td><td>project-sync (input folders + ingested files) + project KG extraction</td></tr>
+  <tr><td><code>project_chat__&lt;pid&gt;</code></td><td>One project (chat history)</td><td><strong>Never</strong>; only reachable via <code>mempalace_query(include_chat_history=true)</code> inside that project</td><td>chat-sync (project chats)</td></tr>
+  <tr><td><code>&lt;agent&gt;_artifacts</code></td><td>An agent</td><td>Treated as shared</td><td><code>mempalace-miner</code> (scheduled-run output artifacts; intermediates skipped)</td></tr>
+  <tr><td>bare name (<code>brain_code</code>, …)</td><td>Nobody — shared</td><td>Everyone</td><td>Manual / out-of-band</td></tr>
+</table>
+
+<h3>8.3 The visibility filter (cross-wing search)</h3>
+<p>When an agent calls <code>mempalace_query</code> with an <em>explicit</em> <code>wing=null</code> (search everywhere), the result set is post-filtered in <code>tool_mempalace_query</code> (<code>brain.py</code>):</p>
+<pre><code>def _visible(r):
+    w = r["wing"]
+    if w.startswith("project__") or w.startswith("project_chat__"):
+        return False                       # projects never leak
+    if w.startswith("user__"):
+        return w == f"user__{current_user_id}"
+    if w.startswith("team__"):
+        return w in {f"team__{t}" for t in current_team_ids}
+    return True                            # untyped wing ⇒ shared</code></pre>
+<p>And when an agent is operating inside a project (<code>_thread_local.project</code> set), <code>mempalace_query</code> <strong>force-scopes</strong> to <code>project__&lt;id&gt;</code> (or <code>project_chat__&lt;id&gt;</code> with <code>include_chat_history</code>) and <em>refuses</em> if the project has no id — it never falls back to a broader wing.</p>
+
+<h3>8.4 Tools the agent sees</h3>
+<table>
+  <tr><th>Tool</th><th>Scoping</th><th>Notes</th></tr>
+  <tr><td><code>mempalace_query</code></td><td>Defaults to <code>user__&lt;uid&gt;</code>; force-scoped to <code>project__&lt;id&gt;</code> in project context; explicit <code>wing</code> allowed (e.g. shared <code>brain_code</code>); cross-wing search post-filtered as §8.3</td><td><code>room</code> param enumerates the real rooms (<code>general/artifacts/chat/chat_summary/chat_attachment/reference</code>) and forbids inventing room names — earlier permissive examples got mis-used as vocab by models</td></tr>
+  <tr><td><code>mempalace_get_drawer</code> / <code>mempalace_list_drawers</code></td><td>Same wing rules</td><td>Drill-down after a query</td></tr>
+  <tr><td><code>save_chat_to_memory</code></td><td>Current session only</td><td>Flips the session's <code>save_to_memory</code> to <code>on</code> and triggers the callback</td></tr>
+  <tr><td><code>mempalace_kg_query</code> / <code>kg_search</code> / <code>kg_neighbors</code></td><td>Auto-scoped to the caller's project; <em>refused outside a project</em></td><td>In the <code>memory_kg</code> group, off by default; predicates restricted to the 12-term normative vocabulary for KG-search</td></tr>
+</table>
+
+<h3>8.5 Project research-mode interaction</h3>
+<p class="small">Inside a project the system prompt also injects a PROJECT MEMORY block. With <code>research_mode</code> ON it's the strict 3-step flow (<code>mempalace_query</code> → <code>read_document(path=read_path)</code> → answer, REFUSE-on-error, KG-first if <code>kg.enabled</code>) plus a server-side citation validator + synchronous re-round on threshold violation. With it OFF it's a soft "memory is available, use it when relevant". Effective mode = <code>session.research_mode_override</code> if set, else the project default. This is orthogonal to the multi-user wing isolation above but worth noting because it's the other half of "how memory behaves per session".</p>
+
+<!-- ============================================================ -->
+<h2 id="findings">9. Findings, gaps &amp; recommendations</h2>
+
+<h3>9.1 Strengths</h3>
+<div class="ok">
+<ul>
+  <li><strong>Two-layer authz</strong> (path gate + per-resource ownership) means a missed path entry doesn't silently expose a resource — the ownership check is a second net.</li>
+  <li><strong>Single funnel for visibility</strong> — <code>get_visible_user_ids()</code> + <code>visible_team_ids</code> drive both the chat list and team-memory visibility, so there's one consistent boundary, not a per-endpoint reimplementation.</li>
+  <li><strong>ID-only wings</strong> — using uuid hex[:12] for user/team/project wing keys makes renames and same-name collisions non-issues; projects are <em>structurally</em> incapable of leaking via cross-wing search (hard-coded <code>return False</code>).</li>
+  <li><strong>KV-cache discipline</strong> — per-user content (profile, preferences, greeting) is deliberately kept out of <code>_build_system_prompt</code> and injected only in the first-user-message preamble; this is the right call for warm-pool reuse and is documented as an invariant.</li>
+  <li><strong>Audit trail</strong> on all identity-affecting operations, with IP capture on login attempts.</li>
+  <li><strong>GDPR interlock with memory</strong> — the user-profile worker auto-falls-back to a local model when chat texts contain PII, so the auto-maintained memory pipeline doesn't ship PII to cloud models.</li>
+</ul>
+</div>
+
+<h3>9.2 Gaps / risks</h3>
+<table>
+  <tr><th>#</th><th>Item</th><th>Severity</th><th>Notes</th></tr>
+  <tr><td>1</td><td>No JWT revocation list</td><td><span class="pill warn">medium</span></td><td>Disabling a user blocks future <em>refreshes</em> but the in-flight token is valid until <code>exp</code> (default 24 h). For a leaked-token scenario the only lever is shortening <code>token_expiry_seconds</code> or rotating the JWT secret (nukes <em>all</em> sessions). Consider a per-user <code>token_epoch</code> in <code>auth.db</code> checked in <code>verify_token</code>.</td></tr>
+  <tr><td>2</td><td>Default <code>admin/admin</code> on first run</td><td><span class="pill warn">medium</span></td><td>Mitigated by a startup warning, but easy to forget. Consider forcing a password change on first admin login when <code>auth.enabled</code>.</td></tr>
+  <tr><td>3</td><td>No team-knowledge ingestion pipeline</td><td><span class="pill warn">medium</span></td><td>Teams can only accumulate <em>chat-derived</em> memory; document-level shared knowledge has to go through a team-visible project (project ACLs ≠ team ACLs). Decide if "team input folders" should mirror project input folders, or document the project-as-team-KB pattern explicitly.</td></tr>
+  <tr><td>4</td><td>Untyped wings are world-readable</td><td><span class="pill info">by design</span></td><td>Any wing without a <code>user__</code>/<code>team__</code>/<code>project__</code> prefix (e.g. <code>brain_code</code>, <code>&lt;agent&gt;_artifacts</code>) is visible to every authenticated user via cross-wing search. Fine for the current shared dev wings, but a footgun if someone hand-creates a wing expecting it to be private — there's no "private custom wing" concept.</td></tr>
+  <tr><td>5</td><td>Legacy ownerless sessions are readable by everyone authenticated</td><td><span class="pill info">by design</span></td><td><code>_session_access_check</code> returns OK for any session with empty <code>user_id</code>. Intentional migration affordance, but it means anything created while <code>auth.enabled=false</code> is shared the moment you flip auth on. A one-shot "assign legacy sessions to admin" migration would close this.</td></tr>
+  <tr><td>6</td><td>Team head sees <em>all</em> member resources</td><td><span class="pill info">by design</span></td><td><code>get_visible_user_ids</code> gives the head read access to every team member's chats &amp; projects, not just team-visible ones. This is a deliberate "team lead" model but should be surfaced to members (privacy expectation).</td></tr>
+  <tr><td>7</td><td>Anonymous-session memory is silently dropped</td><td><span class="pill info">low</span></td><td><code>_resolve_session_wing</code> → <code>""</code> → chat-sync advances the cursor without filing. Correct behaviour, just invisible — a log line at debug level would help operators understand why an incognito/anonymous chat "didn't get remembered".</td></tr>
+  <tr><td>8</td><td>Two "team" concepts</td><td><span class="pill info">low</span></td><td>User-teams (RBAC) vs agent-teams (delegation topology) share a word. Code keeps them separate cleanly, but it's a documentation hazard — call out the distinction in CLAUDE.md.</td></tr>
+</table>
+
+<h3>9.3 Suggested next steps (in priority order)</h3>
+<ol>
+  <li><strong>Token epoch</strong> — add <code>users.token_epoch</code> (bumped on disable / "log out everywhere"), check it in <code>verify_token</code>. Closes the revocation gap with minimal change.</li>
+  <li><strong>Force first-admin password change</strong> when auth is enabled and the admin still has the default hash.</li>
+  <li><strong>Decide the team-KB story</strong> — either build "team input folders" (mirror the project-sync daemon onto <code>team__&lt;tid&gt;</code>), or formally document "use a team-visible project as the team knowledge base" and make sure the project-create flow nudges team heads toward it.</li>
+  <li><strong>Legacy-session migration</strong> — a one-shot pass that assigns ownerless sessions to the admin user when <code>auth.enabled</code> flips to true, so the "everyone can read" window closes.</li>
+  <li><strong>Docs</strong> — a short "Multi-user model" section in CLAUDE.md covering: the two team concepts, the team-head visibility model, the untyped-wing = shared rule, and the legacy-session affordance.</li>
+</ol>
+
+<hr>
+<p class="small">Report generated 2026-05-12. Line numbers omitted where the underlying functions are large or likely to drift; file paths are stable. Verify against the working tree before acting on any recommendation.</p>
+
+</div>
+</body>
+</html>
