@@ -11651,6 +11651,55 @@ def _build_guided_prior_results_block(
     return "\n---\n".join(lines) + "\n\n"
 
 
+def _should_guide(model: str, tools: bool | str) -> str | None:
+    """Decide whether a `_run_delegate`-style LLM call should be routed through
+    guided execution. Returns the granularity ("coarse"|"fine") if it should,
+    else None.
+
+    Single source of truth — used by `_run_delegate` (so scheduled tasks,
+    delegate_task, etc. behave like interactive chat) and by `handlers/chat.py`.
+
+    Bails when:
+      - the model has no `guided_execution` flag in config
+      - `tools` is falsy ("transform" callers — vision describe, memory
+        extraction, code-graph summaries, ask_llm — stay single-shot; guided
+        execution only makes sense for tool-using agentic turns)
+      - we're already inside a guided run (re-entrancy guard — run_guided_execution
+        itself calls _run_delegate per subtask)
+    """
+    if getattr(_thread_local, "_in_guided_execution", False):
+        return None
+    if not tools:
+        return None
+    cfg = _models_config.get(model, {})
+    if not cfg.get("guided_execution"):
+        return None
+    gran = cfg.get("guided_execution_granularity")
+    if gran not in ("coarse", "fine"):
+        gran = "fine" if is_model_local(model) else "coarse"
+    return gran
+
+
+def _extract_user_text(messages: list[dict]) -> str:
+    """Pull the plain-text content of the last user message out of an OpenAI-shape
+    messages list. Returns '' when there's no plain-text user turn (e.g. a
+    vision call with only image blocks) — caller should then skip guiding."""
+    for _m in reversed(messages or []):
+        if not isinstance(_m, dict) or _m.get("role") != "user":
+            continue
+        _c = _m.get("content")
+        if isinstance(_c, str):
+            return _c
+        if isinstance(_c, list):
+            parts = [
+                _b.get("text") for _b in _c
+                if isinstance(_b, dict) and _b.get("type") == "text" and isinstance(_b.get("text"), str)
+            ]
+            return "\n".join(p for p in parts if p)
+        return ""
+    return ""
+
+
 def run_guided_execution(
     user_message: str,
     model: str,
@@ -11659,6 +11708,7 @@ def run_guided_execution(
     cancel_token=None,
     inference_params: dict | None = None,
     granularity: str = "coarse",
+    task_system_prompt: str | None = None,
 ) -> tuple[str, bool]:
     """Decompose user_message into tasks and execute each sequentially.
 
@@ -11669,6 +11719,11 @@ def run_guided_execution(
     (up to 12 tiny atomic subtasks — for small local models that stay on track
     better one step at a time).
 
+    task_system_prompt: when provided, used verbatim as each subtask's system
+    prompt instead of rebuilding the interactive one via `_build_system_prompt()`.
+    Non-interactive callers (the scheduler) pass their `mode="scheduled"` prompt
+    here so subtasks run under the same directive as the un-guided path.
+
     Each subtask may declare needs_prior=False (independent of earlier tasks) —
     such tasks run with no prior-results block, keeping their prompt lean. The
     synthesis (last) task always receives all prior results regardless.
@@ -11678,6 +11733,30 @@ def run_guided_execution(
 
     Emits guided_task_start / guided_task_progress / guided_task_done SSE events.
     """
+    # Re-entrancy guard: this function calls _run_delegate per subtask, and
+    # _run_delegate now consults _should_guide() — without this flag every
+    # subtask would recurse back into guided execution.
+    _prev_guard = getattr(_thread_local, "_in_guided_execution", False)
+    _thread_local._in_guided_execution = True
+    try:
+        return _run_guided_execution_impl(
+            user_message, model, session_id, event_callback, cancel_token,
+            inference_params, granularity, task_system_prompt,
+        )
+    finally:
+        _thread_local._in_guided_execution = _prev_guard
+
+
+def _run_guided_execution_impl(
+    user_message: str,
+    model: str,
+    session_id: str | None,
+    event_callback,
+    cancel_token,
+    inference_params: dict | None,
+    granularity: str,
+    task_system_prompt: str | None,
+) -> tuple[str, bool]:
     def _emit(etype, data):
         if event_callback:
             try:
@@ -11736,7 +11815,7 @@ def run_guided_execution(
 
     # Step 2: execute each task sequentially
     results: list[str] = []
-    task_system = _build_system_prompt()
+    task_system = task_system_prompt if task_system_prompt else _build_system_prompt()
     total = len(tasks)
     last_idx = total - 1
 
@@ -11918,6 +11997,30 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
         raise  # never swallow a block
     except Exception:
         pass
+
+    # Guided execution: route through the decompose→sequential-subtasks loop when
+    # the model is configured for it. Single choke point — covers scheduled tasks,
+    # delegate_task, agent-to-agent delegation, etc. (interactive chat is gated
+    # separately in handlers/chat.py). `_should_guide` excludes no-tools callers
+    # and guards against re-entrancy. The model picked up by gdpr_pick_model_for_background
+    # (possibly a local fallback) is the one we check.
+    _guide_gran = _should_guide(model, tools)
+    if _guide_gran:
+        _gu_text = _extract_user_text(messages)
+        if _gu_text:
+            _gu_answer, _gu_final = run_guided_execution(
+                user_message=_gu_text,
+                model=model,
+                session_id=session_id,
+                event_callback=event_callback,
+                cancel_token=cancel_token,
+                inference_params=inference_params,
+                granularity=_guide_gran,
+                task_system_prompt=system_prompt,
+            )
+            if _gu_final and _gu_answer:
+                return _gu_answer
+            # else: decomposition yielded ≤1 task — fall through to the normal single call
 
     _prov = resolve_provider_for_model(model)
 

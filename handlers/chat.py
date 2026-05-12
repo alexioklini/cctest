@@ -982,13 +982,8 @@ class ChatHandlerMixin:
                 # decompose into subtasks, run each sequentially, last task = final answer.
                 # When guided execution returns is_final=True, skip the main LLM call.
                 reply = None
-                if _model_cfg.get("guided_execution") and message:
-                    # Granularity: "coarse" (2–5 self-contained subtasks) vs "fine"
-                    # (up to 12 tiny atomic subtasks — keeps small local models on
-                    # track). Per-model config wins; otherwise default fine for local.
-                    _gran = _model_cfg.get("guided_execution_granularity")
-                    if _gran not in ("coarse", "fine"):
-                        _gran = "fine" if engine.is_model_local(session.model) else "coarse"
+                _gran = engine._should_guide(session.model, True) if message else None
+                if _gran:
                     _guided_answer, _guided_final = engine.run_guided_execution(
                         user_message=message,
                         model=session.model,

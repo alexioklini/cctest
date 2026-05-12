@@ -265,6 +265,16 @@ Sidebar peer of Translation/Projects — an in-house data workbench. A workbench
 
 Full invariants in `engine/CLAUDE.md`. Key gotcha: `_summarise_tool_result` returns **3 values** (summary, sections, usage) — callers must unpack 3, not 2.
 
+## Guided Prompt Execution
+
+Per-model opt-in (`guided_execution: true` + optional `guided_execution_granularity` `coarse`/`fine` in model config). Decomposes the user message into ≤5 (coarse) / ≤12 (fine) sequential subtasks; the last subtask is a synthesis task whose result IS the final answer. `run_guided_execution()` in brain.py.
+
+- **Single decision point**: `_should_guide(model, tools)` → granularity or `None`. Bails when the model has no `guided_execution` flag, when `tools` is falsy (transform callers — vision-describe, memory-extract, code-graph summaries, `ask_llm` — stay single-shot), or when `_thread_local._in_guided_execution` is set (re-entrancy guard — `run_guided_execution` calls `_run_delegate` per subtask).
+- **Applies to ALL LLM paths, not just chat**: the gate lives **inside `_run_delegate`** (after the GDPR fallback, before payload build), so scheduled tasks, `delegate_task`, agent-to-agent delegation, etc. behave the same as interactive chat. Interactive chat (`handlers/chat.py`, which goes through `send_message`, not `_run_delegate`) is gated separately at its own call site but uses the same `_should_guide`. Workflows' only LLM entry (`tool_ask_llm`) passes `tools=False`, so it's auto-excluded — decomposition inside a workflow node would conflict with the `.flow` DAG (intentional).
+- **`task_system_prompt` param**: when a non-interactive caller (the scheduler) passes its `mode="scheduled"` system prompt, `run_guided_execution` uses it verbatim for each subtask instead of rebuilding the interactive prompt via `_build_system_prompt()`. Chat passes `None` → interactive prompt (unchanged behavior).
+- **No-SSE is fine**: `event_callback` is fully optional throughout — scheduled tasks forward their `on_event` (it ignores the new `guided_task_*` event types harmlessly); other callers pass nothing.
+- **Decomposer safety valve**: returns `[]` for single-step requests → `run_guided_execution` returns `('', False)` → caller falls through to the normal single LLM call. So even callers whose prompts shouldn't decompose (profile-gen, skill-gen JSON tasks) are safe.
+
 ## Provider Concurrency Queue
 
 `LocalProviderQueue` in `engine/provider.py`. Key numbers: `omlx=2` (continuous batching sweet spot), `cliproxyapi=2` (serialized, no batching), cloud=0 (unlimited). Queue key is `provider_name`, not `base_url`.
