@@ -8,10 +8,6 @@
 <link id="hljs-theme-light" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
 <link id="hljs-theme-dark" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" disabled>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-<!-- Vega-Lite (Data Workbench chart pane) — loaded eagerly; cheap, ~0.5MB gzip total -->
-<script src="https://cdn.jsdelivr.net/npm/vega@5"></script>
-<script src="https://cdn.jsdelivr.net/npm/vega-lite@5"></script>
-<script src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
 <link rel="stylesheet" href="css/main.css">
 <script>
 // Electron: inject platform CSS for window dragging and title bar inset
@@ -903,109 +899,8 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     </div>
   </div>
 
-  <!-- ═══ Data Workbench View ═══ -->
-  <div id="data-view">
-    <div class="dv-container">
-      <div class="dv-header">
-        <h1 class="dv-title">Data Workbench</h1>
-        <div class="dv-header-actions">
-          <select id="dv-session-select" class="dv-select" onchange="dvSwitchSession(this.value)"></select>
-          <button class="dv-btn" onclick="dvNewSession()">+ New workbench</button>
-        </div>
-      </div>
-      <div class="dv-body">
-        <div class="dv-sources">
-          <div class="dv-section-title">Sources</div>
-          <div class="dv-upload" id="dv-upload-zone">
-            <input type="file" id="dv-upload-input" accept=".csv,.tsv,.xlsx,.xlsm" style="display:none" onchange="dvUploadSelected(this)">
-            <button class="dv-btn dv-btn-primary" onclick="document.getElementById('dv-upload-input').click()">Upload .csv / .xlsx</button>
-            <div class="dv-upload-hint">Files become DuckDB tables you can query in chat.</div>
-          </div>
-          <div id="dv-tables"></div>
-        </div>
-        <div class="dv-right-col">
-          <div class="dv-chat-cta">
-            <div id="dv-chat-cta-inner">
-              <div class="dv-cta-text">Create or pick a workbench, upload data, then chat with it.</div>
-              <button class="dv-btn dv-btn-primary" id="dv-open-chat-btn" onclick="dvOpenChat()" disabled>Chat with this data →</button>
-              <button class="dv-btn" id="dv-scan-btn" onclick="dvOpenScanModal()" disabled style="margin-top:8px">Scan for GDPR…</button>
-              <button class="dv-btn" id="dv-anon-btn" onclick="dvOpenAnonModal()" disabled style="margin-top:8px">Anonymise…</button>
-              <button class="dv-btn" id="dv-deanon-btn" onclick="dvOpenDeanonModal()" disabled style="margin-top:8px">Deanonymise (restore)…</button>
-            </div>
-          </div>
-          <div class="dv-chart-pane">
-            <div class="dv-section-title">Chart builder (Vega-Lite)</div>
-            <div class="dv-anon-toolbar" style="margin-bottom:8px">
-              <label>Table</label>
-              <select id="dv-chart-table"></select>
-              <button class="dv-btn" onclick="dvChartInsertTemplate('bar')">bar</button>
-              <button class="dv-btn" onclick="dvChartInsertTemplate('line')">line</button>
-              <button class="dv-btn" onclick="dvChartInsertTemplate('scatter')">scatter</button>
-            </div>
-            <textarea id="dv-chart-spec" class="dv-chart-spec" spellcheck="false" placeholder='{"mark":"bar","encoding":{"x":{"field":"...","type":"nominal"},"y":{"field":"...","type":"quantitative"}}}'></textarea>
-            <div style="display:flex;gap:8px;margin-top:8px">
-              <button class="dv-btn" onclick="dvChartPreview()">Preview (client)</button>
-              <button class="dv-btn dv-btn-primary" onclick="dvChartRenderServer()">Render PNG (server)</button>
-            </div>
-            <div id="dv-chart-status" class="dv-modal-status" style="margin-top:6px"></div>
-            <div id="dv-chart-out" class="dv-chart-out"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ═══ Data: Anonymise Modal ═══ -->
-  <div id="dv-anon-modal" class="dv-modal hidden">
-    <div class="dv-modal-backdrop" onclick="dvCloseAnonModal()"></div>
-    <div class="dv-modal-card">
-      <div class="dv-modal-header">
-        <h3 id="dv-anon-title">Anonymise</h3>
-        <button class="dv-modal-x" onclick="dvCloseAnonModal()">×</button>
-      </div>
-      <div class="dv-modal-body" id="dv-anon-body"><!-- built by dvOpenAnonModal --></div>
-      <div class="dv-modal-foot">
-        <span id="dv-anon-status" class="dv-modal-status"></span>
-        <button class="dv-btn" onclick="dvCloseAnonModal()">Cancel</button>
-        <button class="dv-btn dv-btn-primary" id="dv-anon-run" onclick="dvRunAnonymise()">Run anonymise</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ═══ Data: GDPR file-scan triage Modal (§17) ═══ -->
-  <div id="dv-scan-modal" class="dv-modal hidden">
-    <div class="dv-modal-backdrop" onclick="dvCloseScanModal()"></div>
-    <div class="dv-modal-card" style="max-width:880px">
-      <div class="dv-modal-header">
-        <h3>GDPR file scan</h3>
-        <button class="dv-modal-x" onclick="dvCloseScanModal()">×</button>
-      </div>
-      <div class="dv-modal-body" id="dv-scan-body"><!-- built by dvOpenScanModal --></div>
-      <div class="dv-modal-foot">
-        <span id="dv-scan-status" class="dv-modal-status"></span>
-        <button class="dv-btn" id="dv-scan-fixall" onclick="dvScanFixAll()" disabled>Auto-fix all dirty</button>
-        <button class="dv-btn" onclick="dvCloseScanModal()">Close</button>
-        <button class="dv-btn dv-btn-primary" id="dv-scan-run" onclick="dvRunScan()">Re-scan</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ═══ Data: Deanonymise Modal ═══ -->
-  <div id="dv-deanon-modal" class="dv-modal hidden">
-    <div class="dv-modal-backdrop" onclick="dvCloseDeanonModal()"></div>
-    <div class="dv-modal-card">
-      <div class="dv-modal-header">
-        <h3>Deanonymise — restore from index file</h3>
-        <button class="dv-modal-x" onclick="dvCloseDeanonModal()">×</button>
-      </div>
-      <div class="dv-modal-body" id="dv-deanon-body"><!-- built by dvOpenDeanonModal --></div>
-      <div class="dv-modal-foot">
-        <span id="dv-deanon-status" class="dv-modal-status"></span>
-        <button class="dv-btn" onclick="dvCloseDeanonModal()">Cancel</button>
-        <button class="dv-btn dv-btn-primary" id="dv-deanon-run" onclick="dvRunDeanonymise()">Run deanonymise</button>
-      </div>
-    </div>
-  </div>
+  <!-- ═══ Data View (placeholder — to be filled later) ═══ -->
+  <div id="data-view"></div>
 
   <!-- ═══ Glossaries Modal ═══ -->
   <div id="tr-glossaries-modal" class="tr-modal hidden">
@@ -1305,7 +1200,6 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 <script src="js/favourites.js"></script>
 <script src="js/share.js"></script>
 <script src="js/translation.js"></script>
-<script src="js/data.js"></script>
 <script src="js/init.js"></script>
 </body>
 </html>

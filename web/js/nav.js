@@ -125,9 +125,8 @@ function navigateTo(view, opts) {
 
     case 'data': {
       document.getElementById('data-view').classList.add('active');
-      updatePageHeader('Data Workbench');
+      updatePageHeader('Data');
       document.getElementById('status-bar').style.display = 'none';
-      if (typeof loadDataView === 'function') loadDataView();
       break;
     }
 

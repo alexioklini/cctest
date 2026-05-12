@@ -321,10 +321,6 @@ class Session:
         # True/False = force the override for this chat. Set from the composer
         # button or session settings; persists in chats.db sessions table.
         self.research_mode_override: bool | None = None
-        # True when this session was created via /v1/data/sessions — gates the
-        # DATA WORKBENCH system-prompt block + the data_viz tool group. Set at
-        # create time and re-derived on load from DataSessionDB.
-        self.is_data_workbench: bool = False
 
         self._streaming = False  # True while a chat turn worker is running
 
@@ -395,11 +391,6 @@ class Session:
                 self.research_mode_override = (None if _rmo is None
                                                 else bool(_rmo))
                 self.workflow_run_id = info.get("workflow_run_id", "") or ""
-                try:
-                    from server_lib.db import DataSessionDB
-                    self.is_data_workbench = DataSessionDB.get(self.id) is not None
-                except Exception:
-                    pass
 
 
 class SessionManager:
@@ -414,8 +405,6 @@ class SessionManager:
         ChatDB.init()
         from server_lib.favourites import FavouritesDB
         FavouritesDB.init()
-        from server_lib.db import DataSessionDB
-        DataSessionDB.init()
 
     def create(self, **kwargs) -> Session:
         session = Session(**kwargs)
@@ -899,7 +888,6 @@ from handlers.admin import AdminHandlerMixin
 from handlers.favourites import FavouritesHandlerMixin
 from handlers.translate import TranslateHandlerMixin
 from handlers.share import ShareHandlerMixin
-from handlers.data_viz import DataVizHandlerMixin
 
 # Inject server-level globals into handler modules (they were originally
 # defined in the same file and relied on shared module globals).
@@ -922,7 +910,6 @@ def _inject_server_globals():
         FavouritesHandlerMixin.__module__,
         TranslateHandlerMixin.__module__,
         ShareHandlerMixin.__module__,
-        DataVizHandlerMixin.__module__,
     ]
     # All names from server module that handlers reference as bare globals.
     # Include modules aliased as simple names (e.g. engine, _auth_mod) since
@@ -949,7 +936,6 @@ class BrainAgentHandler(
     FavouritesHandlerMixin,
     TranslateHandlerMixin,
     ShareHandlerMixin,
-    DataVizHandlerMixin,
     BaseHTTPRequestHandler,
 ):
     """HTTP request handler for Brain Agent API."""
@@ -1385,15 +1371,6 @@ class BrainAgentHandler(
         elif path.startswith("/v1/translate/live/"):
             sid = path[len("/v1/translate/live/"):]
             self._handle_live_stream(sid)
-        elif path == "/v1/data/sessions":
-            self._handle_data_list_sessions()
-        elif path.startswith("/v1/data/sessions/") and path.endswith("/tables"):
-            sid = path[len("/v1/data/sessions/"):-len("/tables")]
-            self._handle_data_tables(sid)
-        elif path.startswith("/v1/data/sessions/") and "/mapping/" in path:
-            tail = path[len("/v1/data/sessions/"):]
-            sid, _, fname = tail.partition("/mapping/")
-            self._handle_data_mapping(sid, fname)
         elif path == "/v1/tasks":
             self._handle_list_tasks()
         elif path == "/v1/schedule/running":
@@ -1760,23 +1737,6 @@ class BrainAgentHandler(
             self._handle_live_stop(sid)
         elif path == "/v1/translate/glossaries":
             self._handle_glossary_save()
-        elif path == "/v1/data/sessions":
-            self._handle_data_create_session()
-        elif path.startswith("/v1/data/sessions/") and path.endswith("/upload"):
-            sid = path[len("/v1/data/sessions/"):-len("/upload")]
-            self._handle_data_upload(sid)
-        elif path.startswith("/v1/data/sessions/") and path.endswith("/anonymise"):
-            sid = path[len("/v1/data/sessions/"):-len("/anonymise")]
-            self._handle_data_anonymise(sid)
-        elif path.startswith("/v1/data/sessions/") and path.endswith("/deanonymise"):
-            sid = path[len("/v1/data/sessions/"):-len("/deanonymise")]
-            self._handle_data_deanonymise(sid)
-        elif path.startswith("/v1/data/sessions/") and path.endswith("/scan"):
-            sid = path[len("/v1/data/sessions/"):-len("/scan")]
-            self._handle_data_scan(sid)
-        elif path.startswith("/v1/data/sessions/") and path.endswith("/render"):
-            sid = path[len("/v1/data/sessions/"):-len("/render")]
-            self._handle_data_render(sid)
         elif path.startswith("/v1/agents/") and path.endswith("/commands"):
             self._handle_agent_commands_post(path)
         elif path == "/v1/mcp/connect":

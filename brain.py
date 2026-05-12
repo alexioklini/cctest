@@ -369,10 +369,6 @@ DEFAULT_PROJECT_INSTRUCTIONS = (
     "A.pdf — \"...\"] [Quelle: B.docx — \"...\"]."
 )
 
-# Data Workbench system-prompt block (engine/tools/data_viz_prompts.py is the
-# source of truth; imported here so _build_system_prompt can reference it).
-from engine.tools.data_viz_prompts import DATA_WORKBENCH_PROMPT  # noqa: E402
-
 CAVEMAN_CHAT_PROMPTS = {
     1: (  # lite
         "\n\nRESPONSE STYLE — LITE COMPRESSION: "
@@ -1635,115 +1631,6 @@ TOOL_DEFINITIONS = [
             "required": ["prompt"],
         },
     },
-    {
-        "name": "data_query",
-        "description": (
-            "DATA WORKBENCH ONLY. Run a read-only SQL query against the tables in "
-            "the current workbench session's DuckDB database (uploaded .xlsx/.csv "
-            "files became tables). Only SELECT / WITH / DESCRIBE / SHOW / PRAGMA / "
-            "SUMMARIZE / EXPLAIN are allowed — use python_exec for anything that "
-            "modifies the database. Returns {columns, rows (first 200), n_total}. "
-            "Pass `register_as` to materialise the result as a named table the "
-            "rest of the turn can reference."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "sql": {"type": "string", "description": "A read-only SQL query (DuckDB dialect)."},
-                "register_as": {"type": "string", "description": "Optional: name a new table to hold the result (letters/digits/underscores; must not start with a digit)."},
-            },
-            "required": ["sql"],
-        },
-    },
-    {
-        "name": "data_anonymise",
-        "description": (
-            "DATA WORKBENCH ONLY. De-identify (or restore) data — deterministic Python, "
-            "no LLM in the loop; you supply the column→strategy plan. mode='anonymise' "
-            "(default): per-column treatment with strategies hash (salted SHA-256, optional "
-            "keep_prefix) / tokenise (consistent surrogate IDs, reversible via the index file) / "
-            "redact (regex-replace PII inside free-text columns with [REDACTED:rule] tags) / "
-            "generalise (coarsen: opts.kind = date_month|date_quarter|age_band|postcode_district|"
-            "bucket+opts.size) / nullify / shuffle / noise (opts.epsilon). NEVER mutates the "
-            "source — writes a new DuckDB table and a new output file; when a reversible strategy "
-            "is used it also writes a 3-sheet index workbook (mapping/schema/info) you need for "
-            "deanonymise; re-runs the GDPR scanner on the output and returns residual_scan (must "
-            "be clean — if not it names exactly what still leaked, treat that column too); warns "
-            "if generalisation leaves quasi-identifier groups below k. output_format: 'preserve' "
-            "(rewrite the original .xlsx/.csv keeping layout — needs source_file) / 'csv' / 'xlsx' "
-            "/ 'markdown'. mode='deanonymise': pass source_file + index_file → reversible strategies "
-            "restored, one-way ones left as-is (returned in not_reversible). One audit line per run."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "mode": {"type": "string", "enum": ["anonymise", "deanonymise"], "description": "Default 'anonymise'."},
-                "table": {"type": "string", "description": "(anonymise) Source DuckDB table name."},
-                "columns": {
-                    "type": "array",
-                    "description": "(anonymise) Per-column plan.",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string"},
-                            "strategy": {"type": "string", "enum": ["hash", "tokenise", "redact", "generalise", "nullify", "shuffle", "noise"]},
-                            "opts": {"type": "object", "description": "Strategy options (keep_prefix / prefix / kind / size / epsilon)."},
-                        },
-                        "required": ["name", "strategy"],
-                    },
-                },
-                "output_format": {"type": "string", "enum": ["preserve", "csv", "xlsx", "markdown"], "description": "Default 'preserve' (falls back to csv when there's no source file)."},
-                "new_table": {"type": "string", "description": "(anonymise) Name for the new DuckDB table. Default <table>_anon."},
-                "mapping_out": {"type": "string", "description": "(anonymise) Filename for the index workbook. Default <table>_anon_map.xlsx."},
-                "source_file": {"type": "string", "description": "(anonymise: needed for output_format='preserve'; deanonymise: the anonymised file to restore) Filename of an uploaded/produced file in this workbench."},
-                "index_file": {"type": "string", "description": "(deanonymise) Filename of the index workbook produced by the anonymise run."},
-                "embed_salt": {"type": "boolean", "description": "(anonymise) Embed the hash salt in the index file (makes hash reversible). Default false."},
-                "k": {"type": "integer", "description": "(anonymise) k-anonymity threshold for the generalisation warning. Default 5."},
-            },
-        },
-    },
-    {
-        "name": "data_render_chart",
-        "description": (
-            "DATA WORKBENCH ONLY. Render a Vega-Lite chart bound to one of the workbench's tables. "
-            "Pass {spec: <vega-lite v5 spec object>, table: '<table name>'}. The tool inlines a "
-            "≤5000-row sample of the table as the chart's data (do NOT put a `data` key in your "
-            "spec — it's bound for you), validates the spec, checks every encoded `field` exists "
-            "in the table, renders a PNG server-side (vl-convert — no node), and saves it as an "
-            "artifact. Returns {ok, table, spec, png_b64, n_rows}. If the spec is invalid or "
-            "references a column the table doesn't have it returns an error — fix the spec and "
-            "call again. Tip: shape an aggregated table with data_query/register_as first, then "
-            "chart that table. Optional `scale` (default 2.0) for PNG resolution."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "spec": {"type": "object", "description": "A Vega-Lite v5 spec. Omit the `data` key — the table is bound automatically. `mark`, `encoding`, `title`, `width`, `height` go at the top level."},
-                "table": {"type": "string", "description": "Name of a DuckDB table in this workbench to bind as the chart's data."},
-                "scale": {"type": "number", "description": "PNG resolution scale factor. Default 2.0."},
-            },
-            "required": ["spec", "table"],
-        },
-    },
-    {
-        "name": "data_scan_files",
-        "description": (
-            "DATA WORKBENCH ONLY. File-level GDPR scan — run the 71-detector PII scanner over "
-            "the workbench's tables and report which ones leak, where (which column), how bad, "
-            "and a suggested per-column anonymise strategy. Modifies nothing. Pure code, no LLM. "
-            "Returns {files: [{name, type, status: clean|dirty|error, findings: [{where, column, "
-            "category, count, examples, suggested_strategy}], worst_category, total_hits}], "
-            "summary: {scanned, clean, dirty, error}}. Pass `tables` to scope to specific tables; "
-            "omit it to scan everything in the workbench. To fix a dirty table, call data_anonymise "
-            "with the suggested strategies, then re-scan to confirm it comes back clean."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "tables": {"type": "array", "items": {"type": "string"}, "description": "Optional: table names to scan. Omit = scan all tables in the workbench."},
-            },
-        },
-    },
 ]
 
 # Build OpenAI-compatible format automatically
@@ -1794,7 +1681,6 @@ TOOL_GROUPS = {
                 "worker_pause", "worker_resume", "worker_send",
                 "worker_ask_user"},
     "image_gen": {"generate_image"},
-    "data_viz": {"data_query", "data_anonymise", "data_scan_files", "data_render_chart"},
 }
 
 # Default tool groups included for all agents (if no explicit config)
@@ -2021,20 +1907,14 @@ def _get_agent_tool_names(agent_id: str | None = None) -> set[str] | None:
     tcfg = _get_token_config(agent_id)
     tool_groups = tcfg.get("tool_groups")
     extra_tools = tcfg.get("extra_tools")
-    # In a Data Workbench session the `data_viz` group is enabled on top of
-    # whatever the agent normally has — it's invisible in ordinary chats so
-    # the warm-pool KV prefix stays workbench-agnostic.
-    workbench = bool(getattr(_thread_local, "data_workbench", False))
     if not tool_groups and not extra_tools:
-        return None  # No filtering — all tools (already includes data_viz)
+        return None  # No filtering — all tools
     names = set()
     if tool_groups:
         for g in tool_groups:
             names.update(TOOL_GROUPS.get(g, set()))
     if extra_tools:
         names.update(extra_tools)
-    if workbench:
-        names |= TOOL_GROUPS.get("data_viz", set())
     return names
 
 
@@ -22636,7 +22516,6 @@ def tool_ask_user(args: dict) -> str:
 
 
 from engine.tools.image_gen import tool_generate_image  # noqa: E402
-from engine.tools.data_viz import tool_data_query, tool_data_anonymise, tool_data_scan_files, tool_data_render_chart  # noqa: E402
 TOOL_DISPATCH = {
     "read_file": tool_read_file,
     "write_file": tool_write_file,
@@ -22705,10 +22584,6 @@ TOOL_DISPATCH = {
     "worker_ask_user": tool_worker_ask_user,
     "ask_user": tool_ask_user,
     "generate_image": tool_generate_image,
-    "data_query": tool_data_query,
-    "data_anonymise": tool_data_anonymise,
-    "data_scan_files": tool_data_scan_files,
-    "data_render_chart": tool_data_render_chart,
 }
 
 
@@ -22839,12 +22714,7 @@ def _check_tool_dedup(name: str, args: dict) -> str | None:
                      # cache that returns a "already read in turn N, unchanged"
                      # stub on duplicate calls — the bare-string dedup would
                      # otherwise abort the loop on the second cache-hit case.
-                     "read_document", "read_file",
-                     # data_query is read-only and legitimately called with the
-                     # same SQL repeatedly during data-workbench exploration
-                     # (SHOW TABLES / DESCRIBE / re-running a probe); the dedup
-                     # would otherwise kill the turn before the model charts.
-                     "data_query"}
+                     "read_document", "read_file"}
     if name in _DEDUP_EXEMPT:
         return None
 
@@ -24858,13 +24728,6 @@ def _build_system_prompt(include_memory_summary: bool = True,
                     "PROJECT INSTRUCTIONS (set by the user for this project):\n"
                     f"{proj_instructions}\n\n"
                 )
-
-        # DATA WORKBENCH mode — gated on the data_workbench thread-local
-        # (set by handlers/data_viz.py before calling send_message), mirrors
-        # the `project` gating so the warm-pool KV prefix stays
-        # workbench-agnostic for ordinary chats.
-        if getattr(_thread_local, 'data_workbench', None):
-            system_instruction += DATA_WORKBENCH_PROMPT + "\n\n"
 
         # Inject note context for AI-assisted note editing
         note_context = getattr(_thread_local, 'note_context', None)
