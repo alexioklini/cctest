@@ -484,7 +484,7 @@
 <tr><td><code>data_transform</code></td><td><code>source_table, ops[], new_table</code> → <code>{new_table, schema, n_rows, sample[:20], lineage}</code></td><td>Declarative transform pipeline — <code>filter</code> / <code>derive</code> (a new column from an expression) / <code>aggregate</code> / <code>join</code> / <code>pivot</code> / <code>window</code> / <code>bucket</code> / <code>rename</code> / <code>cast</code>. Compiles to one DuckDB SQL statement. <b>Always</b> writes a <i>new</i> table; source is immutable. Returns a <code>lineage</code> blob (which ops, which source cols feed each new col) — that's the audit record.</td><td><span class="pill new">PHASE A/B</span></td></tr>
 <tr><td><code>data_verify</code></td><td><code>table, checks[]</code> → <code>{passed, results[], failing_rows_sample}</code></td><td>Data-quality / reconciliation assertions: <code>not_null</code>, <code>unique</code>, <code>range</code>, <code>regex</code>, <code>in_set</code>, <code>sum_equals</code> (column total == an expected value, ± tolerance — the reconciliation case), <code>row_count_equals</code>, <code>foreign_key</code> (every value exists in another table's column), <code>balanced</code> (debits == credits within a group), <code>monotonic</code>. Each check → pass/fail + a sample of offending rows. Pure code, no LLM (Rule 5).</td><td><span class="pill new">PHASE B</span></td></tr>
 <tr><td><code>data_compare</code></td><td><code>table_a, table_b, key_cols, value_cols?, mode</code> → <code>{added, removed, changed[], unchanged_count, value_deltas, summary}</code></td><td>Diff two tables (this-period vs last-period, actual vs budget, source vs reconciled). <code>mode</code>: <code>rows</code> (set diff on keys) / <code>values</code> (per-key field-level deltas) / <code>aggregate</code> (group totals delta). Returns added/removed/changed plus a numeric-delta breakdown. The "what moved" question, structured.</td><td><span class="pill new">PHASE B</span></td></tr>
-<tr><td><code>data_anonymise</code></td><td><code>table, columns[]{name, strategy, opts?}, new_table?, mapping_out?</code> → <code>{new_table, columns_treated[], strategy_summary, mapping_file, residual_scan}</code></td><td>Apply per-column de-identification — strategies: <code>hash</code> (salted SHA-256, optional <code>keep_prefix</code>), <code>tokenise</code> (consistent surrogate IDs, reversible only via the mapping file), <code>nullify</code>, <code>redact</code> (regex-replace inside free text — e.g. emails/IBANs inside a "notes" column), <code>generalise</code> (date→month, age→band, postcode→district, salary→bucket), <code>shuffle</code> (break the row-link for a single column), <code>noise</code> (numeric jitter, ε-bounded), <code>fpe</code> (format-preserving encryption for IDs that must keep their shape). <b>Invariants:</b> writes a new table, never mutates the source; if <code>tokenise</code>/<code>fpe</code>/<code>hash-with-salt</code>, writes the salt/mapping to <code>mapping_file</code> inside the artifact folder (so it's per-session-scoped, RBAC'd, auto-cleaned — or pinned deliberately); re-runs the GDPR scanner on the output and returns the <code>residual_scan</code> (must be clean or it tells you what leaked).</td><td><span class="pill new">PHASE B — see §16</span></td></tr>
+<tr><td><code>data_anonymise</code></td><td><code>table, columns[]{name, strategy, opts?}, output_format ("preserve"\|"csv"\|"xlsx"\|"markdown"), source_file?, new_table?, mapping_out?</code> → <code>{new_table, output_artifact, output_format, columns_treated[], strategy_summary, mapping_file, residual_scan}</code></td><td>Apply per-column de-identification — strategies: <code>hash</code> (salted SHA-256, optional <code>keep_prefix</code>), <code>tokenise</code> (consistent surrogate IDs, reversible only via the mapping file), <code>nullify</code>, <code>redact</code> (regex-replace inside free text — e.g. emails/IBANs inside a "notes" column), <code>generalise</code> (date→month, age→band, postcode→district, salary→bucket), <code>shuffle</code> (break the row-link for a single column), <code>noise</code> (numeric jitter, ε-bounded), <code>fpe</code> (format-preserving encryption for IDs that must keep their shape). <b>Output format</b> — same model as the Translation feature: <code>preserve</code> rewrites the <i>original file in place</i> (xlsx → xlsx with the same sheets/layout/formatting, only the treated cells changed — reuses the chunked-OOXML rewrite path from <code>handlers/translate.py</code>; csv → csv) and is the default when <code>source_file</code> was an Office/CSV doc; <code>csv</code>/<code>xlsx</code>/<code>markdown</code> emit a fresh artifact in that format from the DuckDB table. <b>Invariants:</b> writes a new DuckDB table, never mutates the source table/file (the in-place "rewrite" produces a <i>new</i> file, original kept unless config says drop); if <code>tokenise</code>/<code>fpe</code>/<code>hash-with-salt</code>, writes the salt/mapping to <code>mapping_file</code> inside the artifact folder (per-session-scoped, RBAC'd, auto-cleaned — or pinned deliberately, download is an audit event); re-runs the GDPR scanner on the output and returns <code>residual_scan</code> (must be clean or it tells you exactly what leaked); k-anon warning if generalisation leaves quasi-identifier groups below <code>k</code>.</td><td><span class="pill new">PHASE B — see §16</span></td></tr>
 <tr><td><code>data_render_chart</code></td><td><code>spec, table</code> → <code>{ok, table, spec, png_b64, n_rows}</code></td><td>Validate a Vega-Lite spec against the JSON schema, check every encoded field exists in the bound table, sample ≤5k rows, render a PNG server-side. Raise on invalid spec / missing field → the loop hands the error back, model retries. Drives the <code>data_chart</code> SSE event.</td><td><span class="pill new">PHASE A</span></td></tr>
 <tr><td><code>data_report</code></td><td><code>title, sections[]{kind, ...}</code> → <code>{artifact_path, html, png_thumbs[]}</code></td><td>Assemble a report artifact from ordered sections — <code>heading</code> / <code>markdown</code> (narrative the model wrote) / <code>chart</code> (a spec+table, rendered inline) / <code>table</code> (a DuckDB table, rendered as HTML, row-capped) / <code>kpi</code> (a single number + label + optional delta) / <code>verify_block</code> (the result of a <code>data_verify</code> run, as a pass/fail panel) / <code>provenance</code> (auto-filled: source files, their scan status, the transform lineage, the model + timestamp). Writes one self-contained HTML file into the session's artifact folder → auto-promoted, versioned, mined, governed by the sharing model — i.e. it <i>is</i> the "Pin as Report" output, just constructed by the model in-loop instead of by a UI button.</td><td><span class="pill new">PHASE B</span></td></tr>
 </table>
@@ -511,8 +511,9 @@
     <span class="v">return</span> {<span class="s">"passed"</span>: <span class="y">all</span>(r[<span class="s">"passed"</span>] <span class="v">for</span> r <span class="v">in</span> out), <span class="s">"results"</span>: out}</pre>
 </div>
 <div class="card">
-<h4>data_anonymise — never mutates, always logs, re-scans</h4>
-<pre><span class="v">def</span> tool_data_anonymise(table, columns, new_table=<span class="v">None</span>, mapping_out=<span class="v">None</span>):
+<h4>data_anonymise — never mutates, always logs, re-scans, format-preserving</h4>
+<pre><span class="v">def</span> tool_data_anonymise(table, columns, output_format=<span class="s">"preserve"</span>,
+                         source_file=<span class="v">None</span>, new_table=<span class="v">None</span>, mapping_out=<span class="v">None</span>):
     new_table   = new_table   <span class="v">or</span> f<span class="s">"{table}_anon"</span>
     mapping_out = mapping_out <span class="v">or</span> f<span class="s">"{table}_anon_map.json"</span>   <span class="c"># in artifact folder</span>
     con = duckdb.connect(<span class="s">"_data.duckdb"</span>); df = con.sql(f<span class="s">"SELECT * FROM {table}"</span>).df()
@@ -522,12 +523,21 @@
         df[col], m = _apply_strategy(df[col], strat, spec.get(<span class="s">"opts"</span>,{}), salt)
         <span class="v">if</span> m: mapping[col] = m            <span class="c"># tokenise/hash/fpe → reversible map</span>
     con.register(new_table, df)
+    <span class="c"># --- emit the output artifact in the requested shape ---</span>
+    <span class="v">if</span> output_format == <span class="s">"preserve"</span> <span class="v">and</span> source_file <span class="v">and</span> _is_office_or_csv(source_file):
+        out = rewrite_in_place(source_file, df, columns)   <span class="c"># reuses translate.py's chunked-OOXML path:</span>
+                                                           <span class="c"># xlsx→xlsx, same sheets/layout/formatting, only treated cells changed</span>
+    <span class="v">elif</span> output_format == <span class="s">"xlsx"</span>:     out = write_xlsx(df, f<span class="s">"{table}_anon.xlsx"</span>)
+    <span class="v">elif</span> output_format == <span class="s">"markdown"</span>: out = write_markdown_table(df, f<span class="s">"{table}_anon.md"</span>)
+    <span class="v">else</span>:                              out = write_csv(df, f<span class="s">"{table}_anon.csv"</span>)
     _write_mapping(mapping_out, {<span class="s">"salt"</span>:salt, <span class="s">"strategies"</span>:columns, <span class="s">"map"</span>:mapping})
     residual = pii_scan_dataframe_sample(df)          <span class="c"># the SAME 71-detector scanner</span>
-    audit(<span class="s">"data_anonymise"</span>, table=table, new_table=new_table,
-          columns=[c[<span class="s">"name"</span>] <span class="v">for</span> c <span class="v">in</span> columns], residual_clean=residual.clean)
-    <span class="v">return</span> {<span class="s">"new_table"</span>:new_table, <span class="s">"mapping_file"</span>:mapping_out,
-            <span class="s">"strategy_summary"</span>:columns, <span class="s">"residual_scan"</span>:residual.to_dict()}</pre>
+    audit(<span class="s">"data_anonymise"</span>, table=table, new_table=new_table, output=out,
+          output_format=output_format, columns=[c[<span class="s">"name"</span>] <span class="v">for</span> c <span class="v">in</span> columns],
+          residual_clean=residual.clean)
+    <span class="v">return</span> {<span class="s">"new_table"</span>:new_table, <span class="s">"output_artifact"</span>:out, <span class="s">"output_format"</span>:output_format,
+            <span class="s">"mapping_file"</span>:mapping_out, <span class="s">"strategy_summary"</span>:columns,
+            <span class="s">"residual_scan"</span>:residual.to_dict()}</pre>
 </div>
 </div>
 
@@ -578,7 +588,7 @@
 <h3 style="margin-top:0">Phase B — the data-prep + governance layer (transform · verify · compare · anonymise · report)</h3>
 <ul>
 <li><code>data_transform</code> (full op vocabulary + lineage), <code>data_verify</code> (assertion engine), <code>data_compare</code> (table diff, 3 modes) — each landed when a real workflow needs it, not all at once (§15).</li>
-<li><code>data_anonymise</code> (per-column strategies, mapping-file, re-scan, k-anon warning) + the deliberate anonymisation workflow + the <code>/anonymise</code> and <code>/mapping</code> endpoints (§16.1–16.2).</li>
+<li><code>data_anonymise</code> (per-column strategies, mapping-file, re-scan, k-anon warning, <code>output_format</code> — <code>preserve</code> reuses translate.py's OOXML rewrite) + the deliberate anonymisation workflow + the <code>/anonymise</code> and <code>/mapping</code> endpoints (§16.1–16.2).</li>
 <li><code>data_report</code> (section assembler → self-contained HTML artifact with provenance + verify panels); the <code>/pin</code> button calls the same body; auto-promoted, shows in global Artifacts, governed by the v8.35 sharing model.</li>
 <li>History &amp; Reports sub-tab (mirror Translation History UI). <code>/memorize</code> → MemPalace drawer in the user's wing. <code>/render</code> server-side PNG endpoint for edited specs.</li>
 <li>SSE events for <code>data_verify</code> result panels and <code>data_report</code> artifact-ready.</li>
@@ -612,7 +622,7 @@
 <table>
 <tr><th>File</th><th>Change</th><th>Kind</th></tr>
 <tr><td><code>handlers/data_viz.py</code></td><td>New <code>DataVizHandlerMixin</code> — routes, multipart upload → DuckDB, <code>/ask</code> SSE worker that primes thread-locals and calls <code>send_message()</code> (modeled on <code>translate.py</code>'s <code>_run_translate_job</code>), <code>/pin</code>, <code>/render</code>.</td><td><span class="pill new">NEW</span> ~500–700 LOC</td></tr>
-<tr><td><code>engine/tools/data_viz.py</code></td><td>The <code>data_viz</code> tool group bodies — <code>tool_data_query</code>, <code>tool_data_transform</code> (op-pipeline → SQL compiler), <code>tool_data_verify</code> (assertion engine), <code>tool_data_compare</code> (table diff), <code>tool_data_anonymise</code> (per-column strategies + mapping-file + re-scan), <code>tool_data_render_chart</code> (Vega-Lite validate + <code>vega_to_png</code>), <code>tool_data_report</code> (section assembler → HTML artifact). Phased: query+render_chart Phase A; transform Phase A/B; verify/compare/anonymise/report Phase B.</td><td><span class="pill new">NEW</span> ~250 LOC Phase A; ~600–900 LOC by Phase B</td></tr>
+<tr><td><code>engine/tools/data_viz.py</code></td><td>The <code>data_viz</code> tool group bodies — <code>tool_data_query</code>, <code>tool_data_transform</code> (op-pipeline → SQL compiler), <code>tool_data_verify</code> (assertion engine), <code>tool_data_compare</code> (table diff), <code>tool_data_anonymise</code> (per-column strategies + mapping-file + re-scan + <code>output_format</code> → reuses <code>handlers/translate.py</code>'s chunked-OOXML rewrite for <code>preserve</code>), <code>tool_data_render_chart</code> (Vega-Lite validate + <code>vega_to_png</code>), <code>tool_data_report</code> (section assembler → HTML artifact). Phased: query+render_chart Phase A; transform Phase A/B; verify/compare/anonymise/report Phase B.</td><td><span class="pill new">NEW</span> ~250 LOC Phase A; ~600–900 LOC by Phase B (anonymise's format-preserve arm is a thin call into the existing translate OOXML code)</td></tr>
 <tr><td><code>engine/tools/data_viz_prompts.py</code></td><td>Vendored — DataAgent loop text, transform prompt, chart-semantics map (MIT-attribution header) — plus the Brain-original system-prompt text describing the transform/verify/compare/anonymise/report tools and when to chain them.</td><td><span class="pill new">NEW</span> ~700 LOC vendored + ~200 original</td></tr>
 <tr><td><code>brain.py</code></td><td>Register <code>data_viz</code> in <code>TOOL_DEFINITIONS</code> + <code>TOOL_GROUPS</code> + <code>TOOL_DISPATCH</code> (all three — per <code>feedback_brain_tool_duplication</code>). Add "DATA WORKBENCH" block to <code>_build_system_prompt</code>, gated by a <code>_thread_local.data_workbench</code> flag (mirrors the <code>project</code> gating) so KV prefix stays workbench-agnostic for normal chats.</td><td><span class="pill touch">TOUCH</span> ~60 LOC</td></tr>
 <tr><td><code>engine/tools/__init__.py</code> (or wherever the engine tool mirror lives)</td><td>Mirror the new tool defs (engine keeps its own copy per CLAUDE.md).</td><td><span class="pill touch">TOUCH</span> ~20 LOC</td></tr>
@@ -995,49 +1005,264 @@
 <figcaption>The workbench turn is a chain of <code>data_viz</code> tools, each producing a structured, audited result — not a wall of model-written pandas. That's the difference that makes it bank-deployable.</figcaption>
 </figure>
 
+<p class="small" style="margin-top:18px">The four subsections below follow <b>one running scenario</b> — Credit Risk building the quarterly portfolio pack — so the mockups chain: a transform, a verify gate on the result, a quarter-on-quarter compare, and the report that bundles all three. Each mockup shows what the user types (left, the chat composer) and what comes back (right, the relevant pane / tool result).</p>
+
 <h3>15.1 — Data manipulation &amp; transformation</h3>
-<p>The <code>data_transform</code> tool is the workhorse: a declarative op-pipeline (filter/derive/aggregate/join/pivot/window/bucket/rename/cast) that compiles to one DuckDB statement, always writes a <i>new</i> table, and returns a <code>lineage</code> blob. Examples in our world:</p>
-<ul>
-<li><b>Credit risk:</b> <i>"join the loan book to the rating master, derive <code>ead_drawn = limit − available</code>, bucket <code>vintage</code> into FY-cohorts, aggregate EAD by cohort × rating."</i> → one transform call, one new table <code>loan_by_cohort_rating</code>, lineage shows the join keys + the derived-column formula.</li>
-<li><b>Finance:</b> <i>"unpivot the budget sheet from wide-by-month to long, cast <code>period</code> to date, join to actuals on (cost_centre, account, period), derive <code>variance</code> and <code>variance_pct</code>."</i></li>
-<li><b>Treasury:</b> <i>"bucket cash flows into the regulatory time bands, sign assets +/liabilities −, window-sum for the cumulative gap."</i></li>
-<li><b>AML:</b> <i>"derive <code>days_to_disposition</code>, bucket into ageing bands, aggregate alert count + SAR count by scenario × month, derive <code>sar_rate</code>."</i></li>
-</ul>
-<p class="small">When a transform is genuinely beyond the op vocabulary (a gnarly recursive CTE, a stats library call), the model drops to <code>python_exec</code> — but then the structured-lineage benefit is lost, so the system prompt nudges it to prefer <code>data_transform</code> and only escape when it must. (Rule 2: don't grow the op vocabulary speculatively — add an op when a real workflow needs it.)</p>
+<p><code>data_transform</code> is the workhorse: a declarative op-pipeline (filter / derive / aggregate / join / pivot / window / bucket / rename / cast) that compiles to one DuckDB statement, always writes a <i>new</i> table, and returns a <code>lineage</code> blob (which ops, which source columns feed each new column — the audit record).</p>
+
+<figure>
+<svg viewBox="0 0 940 360" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="12">
+  <rect x="0" y="0" width="940" height="360" rx="10" fill="#0e1116" stroke="#2b3340"/>
+  <text x="16" y="24" fill="#e6edf3" font-weight="800" font-size="13">Data Workbench · session "FY26 Q2 — credit-risk portfolio pack"</text>
+  <text x="16" y="40" fill="#6b7682" font-size="10.5">sources: loan_book_q2.xlsx (facility-level, 12 411 rows) · rating_master.xlsx (214 rows) · loan_book_q1.xlsx (12 088 rows) → DuckDB</text>
+
+  <!-- LEFT: chat -->
+  <rect x="16" y="52" width="392" height="292" rx="10" fill="#11151c" stroke="#2b3340"/>
+  <text x="30" y="72" fill="#6b7682" font-size="10">CONVERSATION</text>
+  <!-- user bubble -->
+  <rect x="30" y="80" width="364" height="62" rx="8" fill="#1b2330"/>
+  <text x="42" y="98" fill="#cdd7e1" font-size="11.5">▸ "Build a portfolio table: join loan_book_q2 to</text>
+  <text x="42" y="113" fill="#cdd7e1" font-size="11.5">  rating_master on entity_id, derive ead_drawn =</text>
+  <text x="42" y="128" fill="#cdd7e1" font-size="11.5">  limit − available, bucket vintage into FY cohorts,</text>
+  <text x="42" y="140" fill="#cdd7e1" font-size="11">  aggregate EAD by cohort × internal_rating × segment."</text>
+  <!-- assistant: tool call -->
+  <rect x="30" y="150" width="364" height="120" rx="8" fill="#10231a" stroke="#2f5d3f"/>
+  <text x="42" y="168" fill="#7ee787" font-size="11">⚙ data_transform(source=loan_book_q2, ops=[…], new_table=portfolio_q2)</text>
+  <text x="42" y="186" fill="#9aa7b4" font-size="10">  join   rating_master ON entity_id  (left)</text>
+  <text x="42" y="200" fill="#9aa7b4" font-size="10">  derive ead_drawn = limit - available</text>
+  <text x="42" y="214" fill="#9aa7b4" font-size="10">  bucket vintage → {FY22-,FY23,FY24,FY25,FY26}</text>
+  <text x="42" y="228" fill="#9aa7b4" font-size="10">  aggregate sum(ead_drawn) BY cohort, internal_rating, segment</text>
+  <text x="42" y="246" fill="#7ee787" font-size="10.5">  ✓ wrote portfolio_q2 — 92 rows × 4 cols · lineage attached</text>
+  <text x="42" y="262" fill="#cdd7e1" font-size="10.5">  "Done. 92 cohort×rating×segment rows. Want me to verify it ties to the BS?"</text>
+  <!-- composer -->
+  <rect x="30" y="278" width="364" height="24" rx="8" fill="#1b2330"/><text x="42" y="294" fill="#9aa7b4" font-size="11">▸ type a follow-up…</text>
+  <text x="30" y="320" fill="#6b7682" font-size="9.5">suggestions: ▸ verify it ties out  ▸ chart EAD by rating  ▸ compare to Q1</text>
+  <text x="30" y="336" fill="#6b7682" font-size="9.5">tool calls visible inline · cancellable · cost logged — like any chat</text>
+
+  <!-- RIGHT: result pane (table + lineage) -->
+  <rect x="424" y="52" width="500" height="200" rx="10" fill="#11151c" stroke="#2b3340"/>
+  <text x="438" y="72" fill="#6b7682" font-size="10">NEW TABLE — portfolio_q2  (preview, 92 rows)</text>
+  <!-- table header -->
+  <rect x="438" y="80" width="472" height="20" fill="#1c2230"/>
+  <text x="446" y="94" fill="#9aa7b4" font-size="10">cohort       internal_rating   segment       ead_drawn (€m)</text>
+  <g font-size="10" fill="#cdd7e1">
+    <rect x="438" y="100" width="472" height="18" fill="#161b22"/><text x="446" y="113">FY26          BBB              Corporate          412.6</text>
+    <rect x="438" y="118" width="472" height="18" fill="#11151c"/><text x="446" y="131">FY26          BB               Corporate          298.1</text>
+    <rect x="438" y="136" width="472" height="18" fill="#161b22"/><text x="446" y="149">FY26          BB               SME                 87.4</text>
+    <rect x="438" y="154" width="472" height="18" fill="#11151c"/><text x="446" y="167">FY25          B                Corporate          204.8</text>
+    <rect x="438" y="172" width="472" height="18" fill="#161b22"/><text x="446" y="185">FY25          BBB              SME                116.2</text>
+    <rect x="438" y="190" width="472" height="18" fill="#11151c"/><text x="446" y="203">…  87 more rows</text>
+  </g>
+  <text x="438" y="230" fill="#7ee787" font-size="10">▸ this table is now addressable as "portfolio_q2" for the rest of the session</text>
+  <text x="438" y="244" fill="#9aa7b4" font-size="10">▸ source loan_book_q2 is untouched — transforms never mutate inputs</text>
+  <!-- lineage box -->
+  <rect x="424" y="260" width="500" height="84" rx="10" fill="#0b0e13" stroke="#2b3340"/>
+  <text x="438" y="278" fill="#6b7682" font-size="10">LINEAGE (the audit record — what produced each column)</text>
+  <text x="438" y="294" fill="#bc8cff" font-size="9.5" font-family="monospace">ead_drawn ← derive(limit − available)   [from loan_book_q2.limit, .available]</text>
+  <text x="438" y="308" fill="#bc8cff" font-size="9.5" font-family="monospace">cohort    ← bucket(vintage, FY-edges)   [from loan_book_q2.vintage]</text>
+  <text x="438" y="322" fill="#bc8cff" font-size="9.5" font-family="monospace">internal_rating ← join(rating_master ON entity_id)   segment ← loan_book_q2.segment</text>
+  <text x="438" y="337" fill="#9aa7b4" font-size="9.5">→ this lineage is carried into the report's provenance section automatically (§15.4)</text>
+</svg>
+<figcaption>15.1 — the user describes the shaping in plain language; <code>data_transform</code> compiles it to one DuckDB statement, writes a new named table, and returns a lineage blob. Same pattern for the Finance unpivot-and-join-budget case, the Treasury time-band bucketing, the AML ageing-bands derivation — different ops, identical interaction shape.</figcaption>
+</figure>
+<p class="small">When a transform genuinely exceeds the op vocabulary (a recursive CTE, a stats-library call), the model drops to <code>python_exec</code> — but then the structured-lineage benefit is lost, so the system prompt nudges it to prefer <code>data_transform</code> and escape only when it must. (Rule 2: grow the op vocabulary when a real workflow needs an op, not before.)</p>
 
 <h3>15.2 — Verification &amp; reconciliation</h3>
-<p><code>data_verify</code> runs assertions as pure code — no LLM judgement (Rule 5). The banking flavour is reconciliation and data-quality gating:</p>
-<ul>
-<li><b>Reg reporting:</b> <i>"verify: sum of <code>rwa</code> in the transformed table equals the COREP control total ±€1k; every <code>entity_id</code> exists in the legal-entity master; <code>cet1_ratio</code> is between 8% and 30% (sanity)."</i> → a pass/fail panel; on fail, a sample of the offending rows so the analyst sees <i>which</i> entity broke the FK.</li>
-<li><b>Finance:</b> <i>"verify the GL extract balances: debits == credits within each journal; row count matches the trial-balance line count; no null cost-centres."</i> — a gate before any chart is even drawn.</li>
-<li><b>Credit risk:</b> <i>"verify EAD is never negative; PD ∈ (0,1); every facility has a rating; total EAD ties to the balance-sheet number ±0.5%."</i></li>
-<li><b>Op risk / AML:</b> <i>"verify no loss event has gross &lt; net; every SAR ref in <code>case_outcomes</code> appears in <code>tm_alerts</code> (no orphan SARs); dates are monotonic within a case."</i></li>
-</ul>
-<p>A failed <code>data_verify</code> can be wired as a hard stop in the workflow ("don't render the chart, don't write the report — the numbers don't tie out") — the model gets the failing rows and either fixes the transform or tells the user the source data is broken. <b>That's the difference between "AI made a pretty chart" and "the figure in this report was checked."</b></p>
+<p><code>data_verify</code> runs assertions as pure code — no LLM judgement (Rule 5). A failed verify can be wired as a <b>hard stop</b>: don't chart it, don't report it, the numbers don't tie out — the model gets the offending rows and either fixes the transform or tells the user the source is broken.</p>
+
+<figure>
+<svg viewBox="0 0 940 340" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="12">
+  <rect x="0" y="0" width="940" height="340" rx="10" fill="#0e1116" stroke="#2b3340"/>
+  <text x="16" y="24" fill="#e6edf3" font-weight="800" font-size="13">…continuing the same session — verify the portfolio table before anything is drawn</text>
+
+  <!-- LEFT chat -->
+  <rect x="16" y="36" width="392" height="288" rx="10" fill="#11151c" stroke="#2b3340"/>
+  <rect x="30" y="48" width="364" height="74" rx="8" fill="#1b2330"/>
+  <text x="42" y="66" fill="#cdd7e1" font-size="11.5">▸ "Before we chart it: verify total ead_drawn in</text>
+  <text x="42" y="81" fill="#cdd7e1" font-size="11.5">  portfolio_q2 ties to the balance-sheet figure</text>
+  <text x="42" y="96" fill="#cdd7e1" font-size="11.5">  €1.732bn ±0.5%, every entity_id is in rating_master,</text>
+  <text x="42" y="111" fill="#cdd7e1" font-size="11.5">  no negative EAD, every facility has a rating."</text>
+  <!-- tool result: one pass, one FAIL -->
+  <rect x="30" y="130" width="364" height="128" rx="8" fill="#241616" stroke="#5c2a26"/>
+  <text x="42" y="148" fill="#ffb454" font-size="11">⚙ data_verify(table=portfolio_q2, checks=[5])</text>
+  <text x="42" y="164" fill="#7ee787" font-size="10">  ✓ sum_equals  ead_drawn = €1.7287bn  (target 1.732bn, −0.19%)</text>
+  <text x="42" y="178" fill="#ff7b72" font-size="10">  ✗ foreign_key entity_id → rating_master.entity_id  — 2 rows fail</text>
+  <text x="42" y="192" fill="#7ee787" font-size="10">  ✓ range      ead_drawn ≥ 0  — all pass</text>
+  <text x="42" y="206" fill="#7ee787" font-size="10">  ✓ not_null   internal_rating  — all pass</text>
+  <text x="42" y="220" fill="#7ee787" font-size="10">  ✓ unique     (cohort,rating,segment)  — all pass</text>
+  <text x="42" y="236" fill="#ff7b72" font-size="10.5">  ▶ STOP — 1 check failed. Failing rows on the right. Not charting yet.</text>
+  <text x="42" y="252" fill="#cdd7e1" font-size="10">  "E0148/E0203 aren't in rating_master — new entities? stale master?"</text>
+  <rect x="30" y="266" width="364" height="22" rx="8" fill="#1b2330"/><text x="42" y="281" fill="#9aa7b4" font-size="10.5">▸ "those are two new SPVs onboarded last week — drop them for now"</text>
+  <text x="30" y="308" fill="#6b7682" font-size="9.5">…agent re-runs the transform with a filter, re-verifies → all green → proceeds</text>
+
+  <!-- RIGHT: failing-rows panel -->
+  <rect x="424" y="36" width="500" height="158" rx="10" fill="#11151c" stroke="#2b3340"/>
+  <text x="438" y="56" fill="#ff7b72" font-size="11">VERIFY FAILED — foreign_key · sample of offending rows</text>
+  <rect x="438" y="64" width="472" height="20" fill="#1c2230"/><text x="446" y="78" fill="#9aa7b4" font-size="10">facility_id   entity_id   segment      ead_drawn   (entity in master?)</text>
+  <g font-size="10" fill="#cdd7e1">
+    <rect x="438" y="84" width="472" height="18" fill="#241616"/><text x="446" y="97">F-93118      E0148       Corporate        14.2       ✗ missing</text>
+    <rect x="438" y="102" width="472" height="18" fill="#241616"/><text x="446" y="115">F-93204      E0203       SME               3.9       ✗ missing</text>
+  </g>
+  <text x="438" y="138" fill="#9aa7b4" font-size="10">▸ verify is pure code — deterministic, no model in the loop, fully auditable</text>
+  <text x="438" y="152" fill="#9aa7b4" font-size="10">▸ the failing-row sample is what turns "it failed" into "here's exactly what to fix"</text>
+  <text x="438" y="172" fill="#7ee787" font-size="10">▸ this verify result becomes a pass/fail panel in the report (§15.4) — the figure is *checked*, visibly</text>
+  <text x="438" y="186" fill="#6b7682" font-size="9.5">other flavours: GL debits==credits per journal · PD∈(0,1) · no orphan SAR refs · dates monotonic within a case</text>
+
+  <!-- bottom strip: the gate concept -->
+  <rect x="424" y="202" width="500" height="122" rx="10" fill="#10231a" stroke="#2f5d3f"/>
+  <text x="438" y="222" fill="#7ee787" font-size="11">THE GATE</text>
+  <text x="438" y="240" fill="#9aef9a" font-size="10.5">transform → <tspan fill="#ffb454">verify</tspan> → (pass) chart / compare / report</text>
+  <text x="438" y="258" fill="#9aef9a" font-size="10.5">                  ↘ (fail) hand failing rows back to the agent → fix transform → re-verify</text>
+  <text x="438" y="280" fill="#cdd7e1" font-size="10">The system-prompt "DATA WORKBENCH" block tells the model: <i>after any non-trivial transform,</i></text>
+  <text x="438" y="294" fill="#cdd7e1" font-size="10"><i>verify before you visualise.</i> A red verify is a stop, not a warning. The user can override</text>
+  <text x="438" y="308" fill="#cdd7e1" font-size="10">("ship it anyway, I know why those fail") — but then the report's provenance records the override.</text>
+  <text x="438" y="322" fill="#6b7682" font-size="9.5">"AI made a pretty chart" → "the figure in this report was checked, and here's the check."</text>
+</svg>
+<figcaption>15.2 — the user asks for a set of assertions; <code>data_verify</code> returns pass/fail per check plus a sample of the rows that broke each failing check. A red result halts the chain; the agent fixes the transform (here: a filter), re-verifies, and only then continues. The same verify result is later embedded in the report as a visible pass/fail panel.</figcaption>
+</figure>
 
 <h3>15.3 — Comparison</h3>
-<p><code>data_compare</code> is the "what moved?" tool — diff two tables on keys, in three modes (<code>rows</code> set-diff / <code>values</code> field-level deltas / <code>aggregate</code> group-total deltas):</p>
-<ul>
-<li><b>Period-over-period:</b> this quarter's loan book vs last quarter's — added facilities, repaid facilities, rating migrations (the <code>values</code> mode on the <code>rating</code> column), net EAD delta by segment. Feeds the credit-risk QoQ commentary directly.</li>
-<li><b>Actual vs plan:</b> <code>aggregate</code> mode on (cost_centre) → the variance table, already broken into the bridge components.</li>
-<li><b>Source vs reconciled:</b> the raw extract vs the post-adjustments table — exactly which rows the manual adjustments touched, and by how much. An auditor's dream: the diff <i>is</i> the adjustment journal.</li>
-<li><b>Two model runs / two scenarios:</b> base-case RWA vs stressed RWA, per portfolio — the stress impact, line by line.</li>
-<li><b>Snapshot drift:</b> last month's control-testing tracker vs this month's — which controls flipped from effective→deficient.</li>
-</ul>
+<p><code>data_compare</code> is the "what moved?" tool — diff two tables on keys in three modes: <code>rows</code> (set-diff: what's added/removed), <code>values</code> (per-key field-level deltas — e.g. rating migrations), <code>aggregate</code> (group-total deltas — e.g. net EAD by segment).</p>
+
+<figure>
+<svg viewBox="0 0 940 350" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="12">
+  <rect x="0" y="0" width="940" height="350" rx="10" fill="#0e1116" stroke="#2b3340"/>
+  <text x="16" y="24" fill="#e6edf3" font-weight="800" font-size="13">…still the same session — quarter-on-quarter movement for the commentary</text>
+
+  <!-- LEFT chat -->
+  <rect x="16" y="36" width="392" height="298" rx="10" fill="#11151c" stroke="#2b3340"/>
+  <rect x="30" y="48" width="364" height="52" rx="8" fill="#1b2330"/>
+  <text x="42" y="66" fill="#cdd7e1" font-size="11.5">▸ "Compare this quarter's loan book to last</text>
+  <text x="42" y="81" fill="#cdd7e1" font-size="11.5">  quarter's: which facilities were added/repaid,</text>
+  <text x="42" y="96" fill="#cdd7e1" font-size="11.5">  which migrated rating, and net EAD delta by segment."</text>
+  <rect x="30" y="108" width="364" height="186" rx="8" fill="#10231a" stroke="#2f5d3f"/>
+  <text x="42" y="126" fill="#7ee787" font-size="11">⚙ data_compare(a=loan_book_q2, b=loan_book_q1, key=[facility_id])</text>
+  <text x="42" y="142" fill="#9aa7b4" font-size="10">  mode=rows      → +247 added · −182 repaid · 11 982 unchanged-key</text>
+  <text x="42" y="156" fill="#9aa7b4" font-size="10">  mode=values    → on column "internal_rating": 138 migrated</text>
+  <text x="42" y="170" fill="#9aa7b4" font-size="10">                     ↳ 31 upgrades · 107 downgrades  (worst: 4× BB→B)</text>
+  <text x="42" y="184" fill="#9aa7b4" font-size="10">  mode=aggregate → sum(ead_drawn) BY segment, Δ vs Q1:</text>
+  <text x="42" y="198" fill="#9aa7b4" font-size="10">                     Corporate +€41.2m · SME +€8.7m · FI −€3.1m</text>
+  <text x="42" y="214" fill="#7ee787" font-size="10.5">  ✓ wrote tables: book_added, book_repaid, rating_migrations, ead_delta_by_seg</text>
+  <text x="42" y="232" fill="#cdd7e1" font-size="10.5">  "Net book +€46.8m. Downgrades outnumber upgrades 3.5:1 —</text>
+  <text x="42" y="246" fill="#cdd7e1" font-size="10.5">  concentrated in the FY24/FY25 vintages. Chart the migration matrix?"</text>
+  <text x="42" y="262" fill="#9aa7b4" font-size="10">  suggestions: ▸ chart the migration matrix  ▸ list the 4 BB→B names</text>
+  <text x="42" y="276" fill="#9aa7b4" font-size="10">               ▸ build the report</text>
+  <rect x="30" y="306" width="364" height="22" rx="8" fill="#1b2330"/><text x="42" y="321" fill="#9aa7b4" font-size="11">▸ "chart the migration matrix, then build the report"</text>
+
+  <!-- RIGHT: the diff, rendered -->
+  <rect x="424" y="36" width="500" height="174" rx="10" fill="#11151c" stroke="#2b3340"/>
+  <text x="438" y="56" fill="#6b7682" font-size="10">RATING MIGRATION MATRIX  (rows = Q1 rating, cols = Q2 rating · diagonal = held)</text>
+  <g transform="translate(470,64)" font-size="9">
+    <g fill="#9aa7b4" text-anchor="middle"><text x="40" y="-2">AAA-A</text><text x="100" y="-2">BBB</text><text x="160" y="-2">BB</text><text x="220" y="-2">B</text><text x="280" y="-2">CCC↓</text></g>
+    <g fill="#9aa7b4" text-anchor="end"><text x="8" y="22">AAA-A</text><text x="8" y="46">BBB</text><text x="8" y="70">BB</text><text x="8" y="94">B</text><text x="8" y="118">CCC↓</text></g>
+    <!-- diagonal strong blue, downgrades (below diag) orange, upgrades (above) green -->
+    <rect x="14" y="8" width="52" height="20" fill="#2f5d8f"/><rect x="74" y="8" width="52" height="20" fill="#16331f"/><rect x="134" y="8" width="52" height="20" fill="#11151c"/><rect x="194" y="8" width="52" height="20" fill="#11151c"/><rect x="254" y="8" width="52" height="20" fill="#11151c"/>
+    <rect x="14" y="32" width="52" height="20" fill="#16331f"/><rect x="74" y="32" width="52" height="20" fill="#2f5d8f"/><rect x="134" y="32" width="52" height="20" fill="#5c3b14"/><rect x="194" y="32" width="52" height="20" fill="#11151c"/><rect x="254" y="32" width="52" height="20" fill="#11151c"/>
+    <rect x="14" y="56" width="52" height="20" fill="#11151c"/><rect x="74" y="56" width="52" height="20" fill="#16331f"/><rect x="134" y="56" width="52" height="20" fill="#2f5d8f"/><rect x="194" y="56" width="52" height="20" fill="#7a4f12"/><rect x="254" y="56" width="52" height="20" fill="#3a2410"/>
+    <rect x="14" y="80" width="52" height="20" fill="#11151c"/><rect x="74" y="80" width="52" height="20" fill="#11151c"/><rect x="134" y="80" width="52" height="20" fill="#16331f"/><rect x="194" y="80" width="52" height="20" fill="#2f5d8f"/><rect x="254" y="80" width="52" height="20" fill="#5c3b14"/>
+    <rect x="14" y="104" width="52" height="20" fill="#11151c"/><rect x="74" y="104" width="52" height="20" fill="#11151c"/><rect x="134" y="104" width="52" height="20" fill="#11151c"/><rect x="194" y="104" width="52" height="20" fill="#16331f"/><rect x="254" y="104" width="52" height="20" fill="#2f5d8f"/>
+    <rect x="133" y="55" width="54" height="22" fill="none" stroke="#ff7b72" stroke-width="1.5"/><text x="160" y="70" fill="#ffd699" text-anchor="middle" font-size="8.5">4× BB→B</text>
+  </g>
+  <rect x="438" y="190" width="12" height="11" fill="#2f5d8f"/><text x="455" y="200" fill="#9aa7b4" font-size="9">held</text>
+  <rect x="498" y="190" width="12" height="11" fill="#16331f"/><text x="515" y="200" fill="#9aa7b4" font-size="9">upgrade</text>
+  <rect x="572" y="190" width="12" height="11" fill="#5c3b14"/><text x="589" y="200" fill="#9aa7b4" font-size="9">downgrade (darker = bigger drop)</text>
+
+  <!-- diff tables -->
+  <rect x="424" y="218" width="500" height="116" rx="10" fill="#0b0e13" stroke="#2b3340"/>
+  <text x="438" y="236" fill="#6b7682" font-size="10">DIFF OUTPUT — four addressable tables, ready for the report</text>
+  <text x="438" y="252" fill="#bc8cff" font-size="9.5" font-family="monospace">book_added           247 rows  (new facilities this quarter)</text>
+  <text x="438" y="266" fill="#bc8cff" font-size="9.5" font-family="monospace">book_repaid          182 rows  (gone since Q1)</text>
+  <text x="438" y="280" fill="#bc8cff" font-size="9.5" font-family="monospace">rating_migrations    138 rows  facility_id · rating_q1 · rating_q2 · ead_drawn · notches</text>
+  <text x="438" y="294" fill="#bc8cff" font-size="9.5" font-family="monospace">ead_delta_by_seg       3 rows  segment · ead_q1 · ead_q2 · delta · delta_pct</text>
+  <text x="438" y="314" fill="#9aa7b4" font-size="10">▸ "source vs reconciled" works the same way — the diff *is* the adjustment journal (auditor-ready)</text>
+  <text x="438" y="328" fill="#6b7682" font-size="9.5">also: base-case vs stressed RWA per portfolio · last-month vs this-month control-testing tracker</text>
+</svg>
+<figcaption>15.3 — one ask, three diff modes, four output tables. The migration matrix is just the <code>values</code>-mode result rendered as a heatmap. The same tool answers actual-vs-plan, source-vs-reconciled (the diff = the adjustment journal), scenario-vs-scenario, and snapshot drift — the interaction is always "compare A to B on these keys".</figcaption>
+</figure>
 
 <h3>15.4 — Report generation</h3>
-<p><code>data_report</code> assembles an ordered list of sections — headings, model-written narrative, inline charts, row-capped tables, KPI tiles, <code>data_verify</code> result panels, and an auto-filled <code>provenance</code> section (source files + their scan status, the transform lineage, the model + timestamp, the verify outcomes) — into one self-contained HTML file in the session's artifact folder. Because it lands in that folder it's <b>already</b> promoted, versioned, mined, and governed by the v8.35 sharing model (private by default; share to users/team/global explicitly). It <i>is</i> the "Pin as Report" output — the UI button and the tool call hit the same body.</p>
-<ul>
-<li><b>Credit-risk quarterly pack:</b> EAD-by-rating chart, the QoQ-migration table from <code>data_compare</code>, a KPI tile for total EAD + the delta, a verify-panel showing "ties to balance sheet ✓", a narrative paragraph the model drafted, provenance. One artefact, reproducible, auditable.</li>
-<li><b>ICAAP capital figure:</b> the bps waterfall + a one-paragraph explanation of each step + the verify-panel ("RWA ties to COREP control total ✓") → pinned as <i>the</i> figure the narrative references.</li>
-<li><b>AML MI:</b> the alert→SAR funnel, the low-yield-scenario flag table, backlog-ageing KPIs, the verify-panel ("no orphan SARs ✓").</li>
-<li><b>Reconciliation evidence:</b> the <code>data_compare</code> source-vs-reconciled diff + the verify results + provenance → an audit-evidence artefact, not a screenshot.</li>
-</ul>
-<div class="callout good"><b>The "verify-panel in the report" detail matters.</b> A bank report whose figures are accompanied by the machine-checked assertions that produced them — and whose provenance section names the source files, their PII-scan status, and the transformation lineage — is qualitatively different from a chart pasted into a deck. That's the bit that makes this defensible in front of internal audit, and it falls out of the tool design for free.</div>
+<p><code>data_report</code> assembles ordered sections — headings, model-written narrative, inline charts, row-capped tables, KPI tiles, <code>data_verify</code> result panels, and an auto-filled <code>provenance</code> section (source files + scan status, the transform lineage, the model + timestamp, the verify outcomes) — into one self-contained HTML file in the session's artifact folder. It's then <b>already</b> promoted, versioned, mined, and governed by the v8.35 sharing model (private by default). The "Pin as Report" button and the <code>data_report</code> tool call hit the same body.</p>
+
+<figure>
+<svg viewBox="0 0 940 470" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="12">
+  <rect x="0" y="0" width="940" height="470" rx="10" fill="#0e1116" stroke="#2b3340"/>
+  <text x="16" y="24" fill="#e6edf3" font-weight="800" font-size="13">…the report — built from everything the session already produced</text>
+
+  <!-- LEFT chat -->
+  <rect x="16" y="36" width="330" height="420" rx="10" fill="#11151c" stroke="#2b3340"/>
+  <rect x="28" y="48" width="306" height="68" rx="8" fill="#1b2330"/>
+  <text x="40" y="66" fill="#cdd7e1" font-size="11">▸ "Build the Q2 credit-risk portfolio pack:</text>
+  <text x="40" y="80" fill="#cdd7e1" font-size="11">  the EAD-by-rating chart, the migration matrix,</text>
+  <text x="40" y="94" fill="#cdd7e1" font-size="11">  total-EAD KPI with the QoQ delta, the tie-out</text>
+  <text x="40" y="108" fill="#cdd7e1" font-size="11">  verify panel, a short commentary paragraph."</text>
+  <rect x="28" y="124" width="306" height="200" rx="8" fill="#10231a" stroke="#2f5d3f"/>
+  <text x="40" y="142" fill="#7ee787" font-size="10.5">⚙ data_report(title="FY26 Q2 — Credit Risk Portfolio", sections=[…])</text>
+  <text x="40" y="158" fill="#9aa7b4" font-size="9.5">  heading "Portfolio composition"</text>
+  <text x="40" y="171" fill="#9aa7b4" font-size="9.5">  chart  (spec=ead_by_rating, table=portfolio_q2)</text>
+  <text x="40" y="184" fill="#9aa7b4" font-size="9.5">  kpi    "Total drawn EAD" = €1.729bn  Δ +€46.8m (+2.8%)</text>
+  <text x="40" y="197" fill="#9aa7b4" font-size="9.5">  heading "Rating migration"</text>
+  <text x="40" y="210" fill="#9aa7b4" font-size="9.5">  chart  (migration matrix heatmap)</text>
+  <text x="40" y="223" fill="#9aa7b4" font-size="9.5">  table  (rating_migrations, cap 50 rows)</text>
+  <text x="40" y="236" fill="#9aa7b4" font-size="9.5">  verify_block (the §15.2 result — 1 fail overridden, recorded)</text>
+  <text x="40" y="249" fill="#9aa7b4" font-size="9.5">  markdown (model-drafted commentary)</text>
+  <text x="40" y="262" fill="#9aa7b4" font-size="9.5">  provenance (auto: sources, scans, lineage, model, ts)</text>
+  <text x="40" y="280" fill="#7ee787" font-size="10">  ✓ wrote artifacts/2026-07-05_a1f3/portfolio_q2_pack.html</text>
+  <text x="40" y="294" fill="#7ee787" font-size="10">  ✓ promoted · versioned · mined · visibility = private (you)</text>
+  <text x="40" y="310" fill="#cdd7e1" font-size="10">  "Report's in the Reports tab. Share it? (users / team / global)"</text>
+  <rect x="28" y="332" width="306" height="22" rx="8" fill="#1b2330"/><text x="40" y="347" fill="#9aa7b4" font-size="10.5">▸ "share with the credit-risk team"</text>
+  <text x="28" y="372" fill="#6b7682" font-size="9.5">→ one call to the v8.35 /v1/share endpoint · audit-logged</text>
+  <text x="28" y="392" fill="#6b7682" font-size="9.5">the report is just an artifact — History tab, Artifacts panel,</text>
+  <text x="28" y="406" fill="#6b7682" font-size="9.5">the miner files its insight, the sharing model governs it.</text>
+  <text x="28" y="430" fill="#6b7682" font-size="9.5">"Pin as Report" button = the same data_report body, current pane state.</text>
+  <text x="28" y="448" fill="#6b7682" font-size="9.5">re-runnable nightly via the scheduler (Phase C) for a live source.</text>
+
+  <!-- RIGHT: rendered report preview -->
+  <rect x="362" y="36" width="562" height="420" rx="10" fill="#13161c" stroke="#2b3340"/>
+  <rect x="362" y="36" width="562" height="34" rx="10" fill="#1c2230"/>
+  <text x="378" y="58" fill="#e6edf3" font-weight="800" font-size="13">FY26 Q2 — Credit Risk Portfolio Pack</text>
+  <text x="900" y="58" fill="#6b7682" font-size="9.5" text-anchor="end">generated 2026-07-05 · Mistral Small · private</text>
+  <!-- KPI tiles -->
+  <rect x="378" y="80" width="160" height="50" rx="8" fill="#0e1116" stroke="#2b3340"/><text x="388" y="98" fill="#6b7682" font-size="9">TOTAL DRAWN EAD</text><text x="388" y="118" fill="#e6edf3" font-weight="800" font-size="16">€1.729bn</text><text x="470" y="118" fill="#7ee787" font-size="10">▲ +€46.8m (+2.8%)</text>
+  <rect x="548" y="80" width="160" height="50" rx="8" fill="#0e1116" stroke="#2b3340"/><text x="558" y="98" fill="#6b7682" font-size="9">RATING MIGRATIONS</text><text x="558" y="118" fill="#e6edf3" font-weight="800" font-size="16">138</text><text x="600" y="118" fill="#ff7b72" font-size="10">107 ↓ / 31 ↑</text>
+  <rect x="718" y="80" width="190" height="50" rx="8" fill="#0e1116" stroke="#2b3340"/><text x="728" y="98" fill="#6b7682" font-size="9">TIE-OUT TO BALANCE SHEET</text><text x="728" y="118" fill="#7ee787" font-weight="800" font-size="15">✓ −0.19% (within ±0.5%)</text>
+  <!-- chart block -->
+  <text x="378" y="150" fill="#9aa7b4" font-size="10.5" font-weight="700">Portfolio composition — drawn EAD by internal rating × segment</text>
+  <g transform="translate(390,158)">
+    <line x1="0" y1="92" x2="500" y2="92" stroke="#2b3340"/>
+    <g>
+      <rect x="20" y="44" width="40" height="48" fill="#5aa9ff"/><rect x="20" y="30" width="40" height="14" fill="#7ee787"/>
+      <rect x="90" y="34" width="40" height="58" fill="#5aa9ff"/><rect x="90" y="18" width="40" height="16" fill="#7ee787"/>
+      <rect x="160" y="50" width="40" height="42" fill="#5aa9ff"/><rect x="160" y="34" width="40" height="16" fill="#7ee787"/>
+      <rect x="230" y="58" width="40" height="34" fill="#5aa9ff"/><rect x="230" y="46" width="40" height="12" fill="#7ee787"/><rect x="227" y="43" width="46" height="49" fill="none" stroke="#ff7b72" stroke-width="1.5"/><text x="250" y="36" fill="#ff7b72" font-size="9" text-anchor="middle">▲ migrations in</text>
+      <rect x="300" y="68" width="40" height="24" fill="#5aa9ff"/><rect x="300" y="60" width="40" height="8" fill="#7ee787"/>
+      <rect x="370" y="76" width="40" height="16" fill="#5aa9ff"/><rect x="370" y="71" width="40" height="5" fill="#7ee787"/>
+    </g>
+    <g font-size="9" fill="#6b7682"><text x="40" y="106" text-anchor="middle">AAA-A</text><text x="110" y="106" text-anchor="middle">BBB</text><text x="180" y="106" text-anchor="middle">BB</text><text x="250" y="106" text-anchor="middle">B</text><text x="320" y="106" text-anchor="middle">CCC↓</text><text x="390" y="106" text-anchor="middle">D</text></g>
+    <rect x="420" y="0" width="10" height="10" fill="#5aa9ff"/><text x="434" y="9" fill="#9aa7b4" font-size="9">Corporate</text>
+    <rect x="420" y="14" width="10" height="10" fill="#7ee787"/><text x="434" y="23" fill="#9aa7b4" font-size="9">SME</text>
+  </g>
+  <!-- verify panel -->
+  <rect x="378" y="278" width="530" height="40" rx="8" fill="#10231a" stroke="#2f5d3f"/>
+  <text x="388" y="295" fill="#7ee787" font-size="10" font-weight="700">DATA CHECKS — 4/5 pass · 1 override (recorded)</text>
+  <text x="388" y="310" fill="#9aa7b4" font-size="9.5">✓ EAD ties to BS −0.19%  ✓ EAD ≥ 0  ✓ rating not-null  ✓ keys unique  ⚠ FK: 2 new-SPV rows excluded by user</text>
+  <!-- narrative -->
+  <text x="378" y="338" fill="#9aa7b4" font-size="10.5" font-weight="700">Commentary</text>
+  <text x="378" y="354" fill="#cdd7e1" font-size="10">Drawn EAD rose €46.8m (+2.8%) QoQ, led by Corporate (+€41.2m). Rating quality weakened:</text>
+  <text x="378" y="368" fill="#cdd7e1" font-size="10">downgrades outnumbered upgrades 3.5:1 (107 vs 31), concentrated in the FY24/FY25 vintages,</text>
+  <text x="378" y="382" fill="#cdd7e1" font-size="10">with four facilities migrating BB→B. Sub-investment-grade exposure now 22.1% of the book (Q1: 20.4%).</text>
+  <!-- provenance -->
+  <rect x="378" y="396" width="530" height="48" rx="8" fill="#0b0e13" stroke="#2b3340"/>
+  <text x="388" y="412" fill="#6b7682" font-size="9" font-weight="700">PROVENANCE (auto-generated)</text>
+  <text x="388" y="425" fill="#9aa7b4" font-size="9">sources: loan_book_q2.xlsx (scan: clean) · rating_master.xlsx (clean) · loan_book_q1.xlsx (clean) — all on-prem, no external egress</text>
+  <text x="388" y="437" fill="#9aa7b4" font-size="9">portfolio_q2 ← transform[join,derive ead_drawn,bucket vintage,aggregate] · model Mistral Small · 2026-07-05 14:22 UTC · session a1f3</text>
+</svg>
+<figcaption>15.4 — one ask assembles the pack from artefacts the session already produced (the transformed table, the chart spec, the compare output, the verify result). The rendered report carries KPI tiles, the chart, a visible data-checks panel (including the recorded override), a model-drafted commentary, and an auto-generated provenance footer naming every source and its scan status. It lands as a private artifact; "share with the team" is one call to the v8.35 sharing endpoint.</figcaption>
+</figure>
+<div class="callout good"><b>The "data-checks panel + provenance footer" detail is the whole point.</b> A bank report whose figures sit next to the machine-checked assertions that produced them — and whose provenance names the source files, their PII-scan status, the transform lineage, the model, and any override — is qualitatively different from a chart pasted into a deck. That's what makes it defensible in front of internal audit, and it falls out of the tool design for free: every <code>data_viz</code> tool already returns the structured record the report just collects.</div>
 
 <!-- ============================================================ -->
 <h2 id="anon">16 · Automatic anonymisation — workflow &amp; GDPR-triggered redaction</h2>
-<p class="lead">Two distinct things, both built on the <code>data_anonymise</code> tool: (a) a <b>deliberate</b> "anonymise this before it leaves the bank" workflow the user or agent invokes; (b) an <b>automatic</b> path where the GDPR scanner detecting PII <i>offers — or, in strict mode, performs —</i> redaction instead of just blocking. For a bank, "the scanner said no" is often less useful than "the scanner anonymised the two offending columns and let the safe analysis through." This section is the design for both.</p>
+<p class="lead">Three things, all built on the <code>data_anonymise</code> tool: (a) a <b>deliberate</b> "anonymise this before it leaves the bank" workflow the user or agent invokes; (b) an <b>automatic</b> path where the GDPR scanner detecting PII <i>offers — or, in strict mode, performs —</i> redaction instead of just blocking; and (c) <b>format preservation</b> — the output comes back in the source's shape (xlsx → xlsx, formatting intact) by default, or as CSV / XLSX / Markdown if the user prefers, reusing the Translation feature's chunked-OOXML rewrite machinery. For a bank, "the scanner said no" is often less useful than "the scanner anonymised the two offending columns, rewrote the workbook in place, and let the safe analysis through." This section is the design for all three.</p>
 
 <h3>16.1 — Strategies (what <code>data_anonymise</code> can do per column)</h3>
 <table>
@@ -1051,38 +1276,92 @@
 <tr><td><code>noise</code></td><td>Add ε-bounded numeric jitter</td><td>No</td><td>Aggregate figures shared externally where exact numbers are MNPI but the shape is fine</td></tr>
 <tr><td><code>fpe</code></td><td>Format-preserving encryption — output keeps the input's shape (16-digit stays 16-digit)</td><td>Yes — with the key (kept in mapping file)</td><td>Card PANs / account numbers that must remain syntactically valid for a downstream system to ingest the test extract</td></tr>
 </table>
-<p class="small"><b>Hard invariants of the tool</b> (enforced in code, not prompt): never mutates the source table — always writes <code>&lt;table&gt;_anon</code>; if any strategy is reversible, the salt/key/map goes to a mapping file <i>inside the artifact folder</i> (per-session-scoped, RBAC'd to the session owner, auto-cleaned with the session, downloadable only via an endpoint that logs the download as an audit event); re-runs the full GDPR scanner on the output and returns <code>residual_scan</code> — if it's not clean, the tool says exactly what still leaked so the model can treat another column. k-anonymity warning: if generalising leaves quasi-identifier combos with group size &lt; <code>k</code> (default 5), the tool flags it (it doesn't silently claim "anonymous").</p>
+<p class="small"><b>Hard invariants of the tool</b> (enforced in code, not prompt): never mutates the source table or source file — always writes a <i>new</i> DuckDB table and a <i>new</i> output file; if any strategy is reversible, the salt/key/map goes to a mapping file <i>inside the artifact folder</i> (per-session-scoped, RBAC'd to the session owner, auto-cleaned with the session, downloadable only via an endpoint that logs the download as an audit event); re-runs the full GDPR scanner on the output and returns <code>residual_scan</code> — if it's not clean, the tool says exactly what still leaked so the model can treat another column; k-anonymity warning if generalising leaves quasi-identifier combos with group size &lt; <code>k</code> (default 5).</p>
+
+<h3>16.1a — Output format — preserve the original, or CSV / XLSX / Markdown</h3>
+<p>Borrowed straight from the Translation feature's design: anonymising a document shouldn't downgrade it to a flat CSV unless the user wants that. <code>data_anonymise</code> takes an <code>output_format</code>:</p>
+<table>
+<tr><th><code>output_format</code></th><th>What you get</th><th>Reuses</th><th>When it's the default</th></tr>
+<tr><td><code>preserve</code></td><td>The <b>original file, rewritten in place</b>: an <code>.xlsx</code> source → an <code>.xlsx</code> output with the same sheets, column order, headers, number formats, frozen panes — only the treated cells changed (e.g. the <code>owner_email</code> column now reads <code>[REDACTED:email]</code>, the <code>borrower_id</code> column now reads <code>CUST_00417</code>). A <code>.csv</code> source → a <code>.csv</code> with the same columns.</td><td>The chunked-OOXML in-place rewrite path from <code>handlers/translate.py</code> (Phase B of Translation — docx/pptx/xlsx) — same machinery, different cell content (a redaction/token instead of a translation)</td><td>Source was an Office/CSV doc</td></tr>
+<tr><td><code>xlsx</code></td><td>A fresh <code>.xlsx</code> built from the (anonymised) DuckDB table — one sheet, plain formatting</td><td><code>openpyxl</code> writer (same as the Translation doc path uses)</td><td>Source was a DB connection or a join of several files (no single "original" to preserve)</td></tr>
+<tr><td><code>csv</code></td><td>A fresh <code>.csv</code> from the table</td><td>DuckDB <code>COPY … TO</code></td><td>User explicitly asks; or the consumer is a pipeline</td></tr>
+<tr><td><code>markdown</code></td><td>A Markdown table (row-capped) — for dropping into a chat, a ticket, a wiki page</td><td>tiny formatter</td><td>User asks for "something I can paste"</td></tr>
+</table>
+<p class="small">The choice surfaces three ways: (1) the user states it ("anonymise this and give me back the xlsx"); (2) the agent proposes the sensible default and the user confirms/changes it; (3) a dropdown in the workbench's anonymise dialog (the same dialog the "Anonymise column" button opens). Either way it's one parameter on <code>data_anonymise</code> — no separate codepath. <b>Note:</b> when the source is multi-sheet, <code>preserve</code> treats only the sheet(s) the flagged columns live in and rewrites them; the others pass through byte-for-byte.</p>
 
 <h3>16.2 — Workflow A — deliberate anonymisation ("I need to share this extract")</h3>
 <figure>
-<svg viewBox="0 0 940 230" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="11.5">
-  <defs><marker id="a6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#bc8cff"/></marker></defs>
-  <rect x="0" y="0" width="940" height="230" rx="10" fill="#0e1116" stroke="#2b3340"/>
-  <rect x="16" y="20" width="150" height="56" rx="9" fill="#1c2230" stroke="#2b3340"/><text x="91" y="40" fill="#cdd7e1" text-anchor="middle">user: "anonymise the</text><text x="91" y="55" fill="#cdd7e1" text-anchor="middle">findings table to share</text><text x="91" y="70" fill="#cdd7e1" text-anchor="middle">with the external auditor"</text>
-  <rect x="190" y="20" width="160" height="56" rx="9" fill="#10231a" stroke="#2f5d3f"/><text x="270" y="40" fill="#7ee787" text-anchor="middle">agent proposes a plan</text><text x="270" y="56" fill="#9aa7b4" text-anchor="middle" font-size="10">scanner already flagged 2 cols;</text><text x="270" y="70" fill="#9aa7b4" text-anchor="middle" font-size="10">suggests strategy per col</text>
-  <rect x="374" y="20" width="150" height="56" rx="9" fill="#1c2230" stroke="#2b3340"/><text x="449" y="40" fill="#cdd7e1" text-anchor="middle">user reviews / edits</text><text x="449" y="56" fill="#9aa7b4" text-anchor="middle" font-size="10">owner_email → redact</text><text x="449" y="70" fill="#9aa7b4" text-anchor="middle" font-size="10">borrower_id → tokenise</text>
-  <rect x="548" y="20" width="160" height="56" rx="9" fill="#1c1430" stroke="#45356b"/><text x="628" y="40" fill="#bc8cff" text-anchor="middle">data_anonymise</text><text x="628" y="56" fill="#9aa7b4" text-anchor="middle" font-size="10">→ findings_anon + map.json</text><text x="628" y="70" fill="#9aa7b4" text-anchor="middle" font-size="10">+ residual_scan</text>
-  <rect x="732" y="20" width="190" height="56" rx="9" fill="#10231a" stroke="#2f5d3f"/><text x="827" y="38" fill="#7ee787" text-anchor="middle" font-size="10.5">residual clean? ✓</text><text x="827" y="54" fill="#9aa7b4" text-anchor="middle" font-size="10">data_report / export the</text><text x="827" y="68" fill="#9aa7b4" text-anchor="middle" font-size="10">anon table as an artifact</text>
-  <line x1="166" y1="48" x2="188" y2="48" stroke="#bc8cff" marker-end="url(#a6)"/>
-  <line x1="350" y1="48" x2="372" y2="48" stroke="#bc8cff" marker-end="url(#a6)"/>
-  <line x1="524" y1="48" x2="546" y2="48" stroke="#bc8cff" marker-end="url(#a6)"/>
-  <line x1="708" y1="48" x2="730" y2="48" stroke="#bc8cff" marker-end="url(#a6)"/>
-  <!-- not-clean loop -->
-  <path d="M827 76 Q827 130 628 130 Q628 95 628 78" fill="none" stroke="#ff7b72" stroke-dasharray="4 3" marker-end="url(#a6)"/>
-  <text x="727" y="146" fill="#ff7b72" text-anchor="middle" font-size="10">residual NOT clean → tool names what leaked → agent treats another column → re-run</text>
-  <!-- audit -->
-  <rect x="16" y="160" width="908" height="34" rx="8" fill="#161b22" stroke="#2b3340"/><text x="470" y="181" fill="#9aa7b4" text-anchor="middle" font-size="10.5">audit log gets: who · which table · which columns · which strategies · residual-clean yes/no · (later) who downloaded the mapping file. Mapping file is RBAC'd to the session owner and auto-cleaned with the session unless deliberately pinned.</text>
-  <text x="16" y="216" fill="#6b7682" font-size="10">"clean" is decided by the same 71-detector scanner — there's no separate, weaker definition of anonymous floating around</text>
+<svg viewBox="0 0 940 430" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="12">
+  <rect x="0" y="0" width="940" height="430" rx="10" fill="#0e1116" stroke="#2b3340"/>
+  <text x="16" y="24" fill="#e6edf3" font-weight="800" font-size="13">Anonymise &amp; share — session "Op-risk loss register Q2"</text>
+  <text x="16" y="40" fill="#6b7682" font-size="10.5">source: loss_register_q2.xlsx (3 sheets · "Events" 1 842 rows × 14 cols · scanner flagged 2 cols at upload)</text>
+
+  <!-- LEFT chat -->
+  <rect x="16" y="52" width="392" height="362" rx="10" fill="#11151c" stroke="#2b3340"/>
+  <rect x="28" y="64" width="368" height="40" rx="8" fill="#1b2330"/>
+  <text x="40" y="82" fill="#cdd7e1" font-size="11.5">▸ "Anonymise the Events sheet so I can send it to</text>
+  <text x="40" y="97" fill="#cdd7e1" font-size="11.5">  the external auditor — and give me back the xlsx."</text>
+  <!-- agent proposes plan -->
+  <rect x="28" y="112" width="368" height="120" rx="8" fill="#10231a" stroke="#2f5d3f"/>
+  <text x="40" y="130" fill="#7ee787" font-size="11">Proposed plan — 2 flagged columns + 2 you may want to coarsen:</text>
+  <text x="40" y="146" fill="#cdd7e1" font-size="10">  • owner_email      → redact   (it's PII; not needed for the analysis)</text>
+  <text x="40" y="160" fill="#cdd7e1" font-size="10">  • root_cause_notes → redact   (free text — scrub emails/IBANs inside it,</text>
+  <text x="40" y="172" fill="#9aa7b4" font-size="9.5">                                  keep the prose)</text>
+  <text x="40" y="188" fill="#cdd7e1" font-size="10">  • event_date       → generalise → month   (exact dates can re-identify)</text>
+  <text x="40" y="202" fill="#cdd7e1" font-size="10">  • business_unit    → keep as-is   (not PII)</text>
+  <text x="40" y="218" fill="#9aa7b4" font-size="10">  output: <tspan fill="#bc8cff">preserve</tspan> (xlsx in place) · mapping: none (no reversible strategy)</text>
+  <!-- user edits -->
+  <rect x="28" y="240" width="368" height="48" rx="8" fill="#1b2330"/>
+  <text x="40" y="258" fill="#cdd7e1" font-size="11">▸ "Good — but tokenise the counterparty column too (the</text>
+  <text x="40" y="273" fill="#cdd7e1" font-size="11">  auditor needs to group by counterparty), and keep the map."</text>
+  <!-- run -->
+  <rect x="28" y="296" width="368" height="86" rx="8" fill="#1c1430" stroke="#45356b"/>
+  <text x="40" y="314" fill="#bc8cff" font-size="11">⚙ data_anonymise(table=events, output_format="preserve",</text>
+  <text x="40" y="328" fill="#bc8cff" font-size="11">     source_file=loss_register_q2.xlsx, columns=[5 specs], mapping_out=…)</text>
+  <text x="40" y="344" fill="#9aa7b4" font-size="9.5">  ✓ rewrote loss_register_q2_anon.xlsx — sheet "Events" treated, sheets 2-3 untouched</text>
+  <text x="40" y="357" fill="#9aa7b4" font-size="9.5">  ✓ mapping → events_anon_map.json (counterparty surrogates, RBAC'd to you)</text>
+  <text x="40" y="370" fill="#7ee787" font-size="10">  ✓ re-scan of the output: CLEAN — 0 detections</text>
+  <text x="28" y="402" fill="#6b7682" font-size="9.5">"Done — clean xlsx in Artifacts, mapping file alongside (audit-logged on download)."</text>
+
+  <!-- RIGHT: the anonymise dialog + before/after -->
+  <rect x="424" y="52" width="500" height="178" rx="10" fill="#11151c" stroke="#2b3340"/>
+  <text x="438" y="72" fill="#6b7682" font-size="10">ANONYMISE DIALOG  (also reachable via the "Anonymise…" button on a flagged column)</text>
+  <!-- column rows with strategy dropdowns -->
+  <rect x="438" y="80" width="472" height="22" rx="5" fill="#1c2230"/><text x="446" y="95" fill="#cdd7e1" font-size="10">owner_email          <tspan fill="#ff7b72">⚑ flagged</tspan>   strategy ▾ <tspan fill="#7ee787">redact</tspan></text>
+  <rect x="438" y="104" width="472" height="22" rx="5" fill="#161b22"/><text x="446" y="119" fill="#cdd7e1" font-size="10">root_cause_notes     <tspan fill="#ff7b72">⚑ flagged</tspan>   strategy ▾ <tspan fill="#7ee787">redact</tspan></text>
+  <rect x="438" y="128" width="472" height="22" rx="5" fill="#161b22"/><text x="446" y="143" fill="#cdd7e1" font-size="10">counterparty                       strategy ▾ <tspan fill="#7ee787">tokenise</tspan>  <tspan fill="#bc8cff">↻ keep map</tspan></text>
+  <rect x="438" y="152" width="472" height="22" rx="5" fill="#161b22"/><text x="446" y="167" fill="#cdd7e1" font-size="10">event_date                         strategy ▾ <tspan fill="#7ee787">generalise → month</tspan></text>
+  <!-- output format selector -->
+  <rect x="438" y="182" width="472" height="40" rx="6" fill="#0e1116" stroke="#2b3340"/>
+  <text x="446" y="198" fill="#6b7682" font-size="9.5">OUTPUT FORMAT</text>
+  <rect x="446" y="202" width="118" height="16" rx="8" fill="#1c1430" stroke="#45356b"/><text x="505" y="214" fill="#bc8cff" text-anchor="middle" font-size="9.5">● preserve (xlsx)</text>
+  <rect x="572" y="202" width="58" height="16" rx="8" fill="#161b22" stroke="#2b3340"/><text x="601" y="214" fill="#9aa7b4" text-anchor="middle" font-size="9.5">○ xlsx</text>
+  <rect x="638" y="202" width="56" height="16" rx="8" fill="#161b22" stroke="#2b3340"/><text x="666" y="214" fill="#9aa7b4" text-anchor="middle" font-size="9.5">○ csv</text>
+  <rect x="702" y="202" width="88" height="16" rx="8" fill="#161b22" stroke="#2b3340"/><text x="746" y="214" fill="#9aa7b4" text-anchor="middle" font-size="9.5">○ markdown</text>
+  <rect x="800" y="200" width="100" height="20" rx="10" fill="#16331f" stroke="#2f5d3f"/><text x="850" y="214" fill="#7ee787" text-anchor="middle" font-size="10">Run anonymise</text>
+
+  <!-- before / after -->
+  <rect x="424" y="238" width="500" height="176" rx="10" fill="#11151c" stroke="#2b3340"/>
+  <text x="438" y="258" fill="#6b7682" font-size="10">BEFORE → AFTER  (sheet "Events", first rows · layout/formatting identical)</text>
+  <text x="438" y="276" fill="#9aa7b4" font-size="9.5" font-weight="700">before</text>
+  <rect x="438" y="282" width="472" height="18" fill="#241616"/><text x="446" y="295" fill="#cdd7e1" font-size="9">2026-04-12 | a.weber@bank.de | "called J. Klein re IBAN DE89… mismatch" | ACME Ltd | 14,200</text>
+  <rect x="438" y="300" width="472" height="18" fill="#241616"/><text x="446" y="313" fill="#cdd7e1" font-size="9">2026-05-03 | r.fox@bank.de   | "duplicate posting, see ticket OPS-4471"        | Globex SA | 3,900</text>
+  <text x="438" y="334" fill="#7ee787" font-size="9.5" font-weight="700">after  (loss_register_q2_anon.xlsx · same sheet, same columns, same formats)</text>
+  <rect x="438" y="340" width="472" height="18" fill="#10231a"/><text x="446" y="353" fill="#cdd7e1" font-size="9">2026-04 | [REDACTED:email] | "called J. Klein re IBAN [REDACTED:iban] mismatch" | CPTY_0007 | 14,200</text>
+  <rect x="438" y="358" width="472" height="18" fill="#10231a"/><text x="446" y="371" fill="#cdd7e1" font-size="9">2026-05 | [REDACTED:email] | "duplicate posting, see ticket OPS-4471"            | CPTY_0019 | 3,900</text>
+  <text x="438" y="392" fill="#9aa7b4" font-size="9.5">▸ date coarsened to month · emails &amp; the embedded IBAN redacted · counterparty → stable surrogate (map kept) · amounts/business-unit untouched</text>
+  <text x="438" y="406" fill="#6b7682" font-size="9">▸ sheets "Controls" and "RootCauseTaxonomy" in the workbook pass through byte-for-byte — only "Events" was treated</text>
 </svg>
-<figcaption>Deliberate anonymisation: agent proposes per-column strategies (informed by what the scanner already flagged), user adjusts, the tool runs + re-scans, the loop closes only when the output is scanner-clean.</figcaption>
+<figcaption>Deliberate anonymisation: the agent proposes per-column strategies (the two scanner-flagged columns pre-filled), the user adjusts (here: adds a tokenise + keep-map for counterparty) and picks the output format (here: <b>preserve</b> → the xlsx is rewritten in place). The tool runs, re-scans the output (must come back clean), and drops the anonymised workbook + the mapping file into Artifacts — every step audit-logged.</figcaption>
 </figure>
+<p class="small"><b>The not-clean loop:</b> if the post-anonymise re-scan still finds PII (a column the user didn't flag, or a stubborn pattern inside a free-text field), the tool returns <code>residual_scan</code> naming exactly what leaked; the agent proposes treating that column too and re-runs. The loop closes only when the output is scanner-clean — "clean" being decided by the same 71-detector scanner, no weaker side definition.</p>
 
 <h3>16.3 — Workflow B — GDPR-scanner-triggered automatic anonymisation</h3>
 <p>Today the GDPR scanner's outcomes (per the existing <code>gdpr_scanner</code> config: <code>ignore</code> / <code>warn</code> / <code>block</code>, plus the <code>default_local_fallback_model</code> swap) are about <i>routing the request</i>. The Data section adds a fourth, data-native outcome: <b>anonymise the offending columns and let the safe analysis proceed</b>. This is gated by a new per-category option value, <code>auto_anonymise</code>, slotting into the same config the bank already tunes — no new config surface, just one more enum value.</p>
 
 <table>
 <tr><th>Scanner fires on…</th><th>Existing behaviour</th><th>New <code>auto_anonymise</code> behaviour</th></tr>
-<tr><td><b>An uploaded table's sample</b> (a column looks like emails / IDs / national IDs)</td><td>Column flagged; that column masked in the <i>sample shown to the model</i> — but the full column is still in DuckDB, so a transform/chart over it still exposes it</td><td>The flagged column is <code>data_anonymise</code>d <i>at ingest</i> with a sensible default strategy (email→redact, ID-like→tokenise, free-text→redact); the workbench works on the anonymised table; the original is kept only if config permits, else dropped. Audit: <code>pii_auto_anonymised</code>.</td></tr>
+<tr><td><b>An uploaded table's sample</b> (a column looks like emails / IDs / national IDs)</td><td>Column flagged; that column masked in the <i>sample shown to the model</i> — but the full column is still in DuckDB, so a transform/chart over it still exposes it</td><td>The flagged column is <code>data_anonymise</code>d <i>at ingest</i> with the configured default strategy per detector category (email→redact, ID-like→tokenise, free-text→redact); the workbench works on the anonymised table; if the upload was a doc, the <code>preserve</code> output rewrites that file in place too, so what lands in Artifacts is already the cleaned <code>.xlsx</code>. The pre-anonymise original is kept only if config permits (default: dropped). Audit: <code>pii_auto_anonymised</code> (table · columns · strategies · output format · residual-clean).</td></tr>
 <tr><td><b>The assembled prompt</b> at round-0 pre-flight (a sample row carrying PII reaches the message)</td><td><code>warn</code> → proceed · local-fallback configured → swap to on-prem model · else <code>server_block</code> → refuse the whole turn</td><td>If the PII is traceable to specific table columns, the agent is handed a structured "these columns are why" and re-runs after a <code>data_anonymise</code> on them — the turn completes on anonymised data instead of being blocked. If it can't be localised to columns, falls back to the existing behaviour (local-swap or block).</td></tr>
 <tr><td><b>A report / export artifact</b> about to be written</td><td>n/a (no pre-write scan today)</td><td><code>data_report</code> and the export endpoints run a final scan on what they're about to persist; if it's dirty and the policy is <code>auto_anonymise</code>, the offending columns/cells are redacted in the artifact (with a visible "[REDACTED]" marker + a provenance note); if the policy is <code>block</code>, the write is refused loudly (Rule 12).</td></tr>
 </table>
@@ -1119,6 +1398,7 @@
 <ul>
 <li><b>Per-category policy</b> (existing <code>gdpr_scanner</code> config, new value): e.g. <code>email: auto_anonymise</code>, <code>national_id: block</code>, <code>name: warn</code>. Same shape the bank already configures; no new settings page.</li>
 <li><b>Default strategy per detector category</b> (new, small): email→redact, IBAN→hash-keep-country-prefix, customer-name→tokenise, DOB→generalise-to-month, etc. Sensible defaults shipped; the bank can override. The agent can also propose a different strategy in the deliberate workflow — the auto path uses the default.</li>
+<li><b>Default output format</b> for the deliberate workflow: <code>preserve</code> for Office/CSV sources, <code>xlsx</code> for DB/joined sources. The bank can pin a different default (e.g. "always emit csv for the data-lake pipeline"); the auto-at-ingest path always uses <code>preserve</code> when the upload was a doc.</li>
 <li><b>Keep-or-drop the original</b> after auto-anonymise at ingest: config flag. Default = drop (safest); some teams may need the original retained under tighter RBAC for a reconciliation step.</li>
 <li><b>k threshold</b> for the k-anonymity warning on generalisation (default 5).</li>
 <li><b>Mapping-file retention</b>: per-session-auto-clean (default) vs. pin-on-request. Downloading one is always an audit event.</li>
