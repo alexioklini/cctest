@@ -105,6 +105,7 @@
   <a href="#files">11 · File-by-file change list</a>
   <a href="#risk">12 · Risks, scope cuts, open questions</a>
   <a href="#checklist">13 · Definition of done</a>
+  <a href="#usecases">14 · Use cases — banking · finance · risk · compliance</a>
 </div>
 
 <!-- ============================================================ -->
@@ -620,6 +621,305 @@
 <li>No regression: a normal chat session's system prompt is byte-identical to before (the <code>data_workbench</code> gate is off → no "DATA WORKBENCH" block, KV prefix unchanged).</li>
 <li><code>CLAUDE.md</code> has the "Data Workbench" section with the DuckDB-in-artifact-folder invariant.</li>
 </ul>
+
+<!-- ============================================================ -->
+<h2 id="usecases">14 · Use cases — banking · finance · risk · compliance</h2>
+<p class="lead">Concrete "is this worth it for us" scenarios, framed for a bank's risk / finance / regulatory-reporting / internal-audit / compliance teams. Each is a thing one of those teams does today in Excel + a BI tool + a lot of copy-paste — and which becomes a single chat turn in the Data Workbench, <i>inside</i> Brain's GDPR / quota / audit envelope.</p>
+
+<div class="callout"><b>Reading the cards.</b> Each use case lists: <span class="pill touch">WHO</span> the team · <span class="pill new">ASK</span> what they type · <span class="pill reuse">DATA</span> the source file/table they upload · the chart Brain produces · and <b>why on-prem matters</b> for that specific data. The mini-charts are illustrative of the <i>kind</i> of output, not real numbers.</p></div>
+
+<!-- ===== 14.1 credit risk portfolio ===== -->
+<h3>14.1 — Credit-risk portfolio monitoring</h3>
+<div class="grid2">
+<div class="card">
+<p><span class="pill touch">WHO</span> Credit Risk / Portfolio Management</p>
+<p><span class="pill new">ASK</span> <i>"Loan book by rating bucket and segment — stacked bars, flag where exposure in sub-investment-grade grew vs last quarter."</i></p>
+<p><span class="pill reuse">DATA</span> <code>loan_book_q.xlsx</code> (facility-level: borrower, segment, internal rating, EAD, drawn/undrawn, vintage) — joined client-side in DuckDB against last quarter's snapshot.</p>
+<p><b>Output:</b> stacked exposure-by-rating chart + a delta column; follow-ups: "split corporate vs SME", "show only watchlist names", "expected-loss view using these PDs/LGDs".</p>
+<p class="small"><b>Why on-prem:</b> facility-level data is borrower-identifying. The scanned sample masks borrower names/IDs before the model sees it; bulk EAD numbers never leave DuckDB-in-the-sandbox.</p>
+</div>
+<figure style="margin:0">
+<svg viewBox="0 0 440 240" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="11">
+  <rect x="0" y="0" width="440" height="240" rx="10" fill="#0e1116" stroke="#2b3340"/>
+  <text x="16" y="24" fill="#e6edf3" font-weight="700">Exposure by internal rating × segment</text>
+  <text x="16" y="40" fill="#6b7682" font-size="10">€bn drawn EAD · Q vs Q-1 delta annotated</text>
+  <line x1="40" y1="200" x2="420" y2="200" stroke="#2b3340"/>
+  <line x1="40" y1="56" x2="40" y2="200" stroke="#2b3340"/>
+  <!-- AAA..A : mostly blue (corp) + green (SME) -->
+  <g transform="translate(60,0)">
+    <rect x="0" y="120" width="34" height="80" fill="#5aa9ff"/><rect x="0" y="96" width="34" height="24" fill="#7ee787"/>
+    <text x="17" y="214" fill="#9aa7b4" text-anchor="middle">AAA-A</text>
+  </g>
+  <g transform="translate(130,0)">
+    <rect x="0" y="110" width="34" height="90" fill="#5aa9ff"/><rect x="0" y="80" width="34" height="30" fill="#7ee787"/>
+    <text x="17" y="214" fill="#9aa7b4" text-anchor="middle">BBB</text>
+  </g>
+  <g transform="translate(200,0)">
+    <rect x="0" y="130" width="34" height="70" fill="#5aa9ff"/><rect x="0" y="100" width="34" height="30" fill="#7ee787"/>
+    <text x="17" y="214" fill="#9aa7b4" text-anchor="middle">BB</text>
+  </g>
+  <!-- B : grew -> red outline + arrow -->
+  <g transform="translate(270,0)">
+    <rect x="0" y="120" width="34" height="80" fill="#5aa9ff"/><rect x="0" y="84" width="34" height="36" fill="#7ee787"/>
+    <rect x="-3" y="81" width="40" height="122" fill="none" stroke="#ff7b72" stroke-width="2"/>
+    <text x="17" y="74" fill="#ff7b72" text-anchor="middle" font-size="10">▲ +18% QoQ</text>
+    <text x="17" y="214" fill="#9aa7b4" text-anchor="middle">B</text>
+  </g>
+  <g transform="translate(340,0)">
+    <rect x="0" y="166" width="34" height="34" fill="#5aa9ff"/><rect x="0" y="150" width="34" height="16" fill="#7ee787"/>
+    <rect x="-3" y="147" width="40" height="56" fill="none" stroke="#ff7b72" stroke-width="2"/>
+    <text x="17" y="140" fill="#ff7b72" text-anchor="middle" font-size="10">▲ +9%</text>
+    <text x="17" y="214" fill="#9aa7b4" text-anchor="middle">CCC↓</text>
+  </g>
+  <rect x="300" y="46" width="11" height="11" fill="#5aa9ff"/><text x="316" y="56" fill="#9aa7b4">Corporate</text>
+  <rect x="300" y="60" width="11" height="11" fill="#7ee787"/><text x="316" y="70" fill="#9aa7b4">SME</text>
+</svg>
+<figcaption>Sub-investment-grade buckets ringed in red where QoQ growth exceeds a threshold — the model writes the join + the delta calc, the chart is just the result.</figcaption>
+</figure>
+</div>
+
+<!-- ===== 14.2 regulatory capital / RWA waterfall ===== -->
+<h3>14.2 — Regulatory capital — RWA / capital-ratio waterfall</h3>
+<div class="grid2">
+<figure style="margin:0">
+<svg viewBox="0 0 440 240" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="11">
+  <rect x="0" y="0" width="440" height="240" rx="10" fill="#0e1116" stroke="#2b3340"/>
+  <text x="16" y="24" fill="#e6edf3" font-weight="700">CET1 ratio bridge — FY-end → current</text>
+  <text x="16" y="40" fill="#6b7682" font-size="10">basis points · profit · dividend · RWA moves · model change</text>
+  <line x1="20" y1="190" x2="424" y2="190" stroke="#2b3340"/>
+  <!-- start bar -->
+  <rect x="30" y="90" width="46" height="100" fill="#5aa9ff"/><text x="53" y="204" fill="#9aa7b4" text-anchor="middle" font-size="9">FY 14.2%</text><text x="53" y="84" fill="#cdd7e1" text-anchor="middle" font-size="9">14.2</text>
+  <!-- +profit (green float up) -->
+  <rect x="92" y="66" width="40" height="24" fill="#7ee787"/><line x1="76" y1="90" x2="92" y2="90" stroke="#6b7682" stroke-dasharray="3 2"/><text x="112" y="60" fill="#7ee787" text-anchor="middle" font-size="9">+38 profit</text><text x="112" y="204" fill="#9aa7b4" text-anchor="middle" font-size="9">profit</text>
+  <!-- -dividend -->
+  <rect x="148" y="66" width="40" height="20" fill="#ff7b72"/><line x1="132" y1="66" x2="148" y2="66" stroke="#6b7682" stroke-dasharray="3 2"/><text x="168" y="100" fill="#ff7b72" text-anchor="middle" font-size="9">−21 div</text><text x="168" y="204" fill="#9aa7b4" text-anchor="middle" font-size="9">dividend</text>
+  <!-- -RWA growth -->
+  <rect x="204" y="86" width="40" height="30" fill="#ff7b72"/><line x1="188" y1="86" x2="204" y2="86" stroke="#6b7682" stroke-dasharray="3 2"/><text x="224" y="128" fill="#ff7b72" text-anchor="middle" font-size="9">−27 RWA↑</text><text x="224" y="204" fill="#9aa7b4" text-anchor="middle" font-size="9">RWA growth</text>
+  <!-- +model change -->
+  <rect x="260" y="74" width="40" height="12" fill="#7ee787"/><line x1="244" y1="86" x2="260" y2="86" stroke="#6b7682" stroke-dasharray="3 2"/><text x="280" y="68" fill="#7ee787" text-anchor="middle" font-size="9">+8 model</text><text x="280" y="204" fill="#9aa7b4" text-anchor="middle" font-size="9">model upd.</text>
+  <!-- end bar -->
+  <rect x="320" y="78" width="46" height="112" fill="#bc8cff"/><line x1="300" y1="78" x2="320" y2="78" stroke="#6b7682" stroke-dasharray="3 2"/><text x="343" y="204" fill="#9aa7b4" text-anchor="middle" font-size="9">now 14.5%</text><text x="343" y="72" fill="#cdd7e1" text-anchor="middle" font-size="9">14.5</text>
+</svg>
+<figcaption>A waterfall is one of the vendored chart templates — the model maps the GL/RWA movement file onto it; the analyst tweaks the bucket order in the spec textarea.</figcaption>
+</figure>
+<div class="card">
+<p><span class="pill touch">WHO</span> Regulatory Reporting / Capital Management</p>
+<p><span class="pill new">ASK</span> <i>"Waterfall: CET1 ratio from year-end to now — profit, dividend accrual, RWA growth, the IRB model change. Annotate each step in bps."</i></p>
+<p><span class="pill reuse">DATA</span> <code>capital_movements.xlsx</code> (own-funds line items, RWA by approach, period over period) — already an internal artefact for the COREP submission.</p>
+<p><b>Output:</b> a bps waterfall; follow-ups: "do the same for the leverage ratio", "split the RWA move into credit / market / op-risk", "pin this as the figure for the ICAAP narrative".</p>
+<p class="small"><b>Why on-prem:</b> pre-publication regulatory figures. This must not touch a third-party LLM endpoint at all — local-model routing or block, per the bank's policy, enforced by the same GDPR config that governs every chat.</p>
+</div>
+</div>
+
+<!-- ===== 14.3 liquidity / ALM ===== -->
+<h3>14.3 — Liquidity &amp; ALM — LCR composition and maturity ladder</h3>
+<div class="grid2">
+<div class="card">
+<p><span class="pill touch">WHO</span> Treasury / ALM</p>
+<p><span class="pill new">ASK</span> <i>"Contractual maturity ladder: assets vs liabilities by time bucket, plus the cumulative gap line."</i> &nbsp;then&nbsp; <i>"now LCR — HQLA Level 1 / 2A / 2B as a stacked bar against net outflows."</i></p>
+<p><span class="pill reuse">DATA</span> <code>maturity_ladder.csv</code> + <code>lcr_components.csv</code> (the same extracts that feed the daily LCR report).</p>
+<p><b>Output:</b> dual-axis bar + cumulative-gap line; a second HQLA-composition chart. Follow-ups: "stress: haircut Level 2B by 25%", "show the 30-day point only", "trend the LCR daily over the quarter".</p>
+<p class="small"><b>Why on-prem:</b> intraday liquidity position is highly market-sensitive. Stays in DuckDB inside the sandbox; only the schema + a masked sample is ever in the prompt.</p>
+</div>
+<figure style="margin:0">
+<svg viewBox="0 0 440 240" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="11">
+  <rect x="0" y="0" width="440" height="240" rx="10" fill="#0e1116" stroke="#2b3340"/>
+  <text x="16" y="24" fill="#e6edf3" font-weight="700">Maturity ladder + cumulative gap</text>
+  <text x="16" y="40" fill="#6b7682" font-size="10">assets ▲ / liabilities ▼ per bucket · gap line right axis</text>
+  <line x1="40" y1="130" x2="424" y2="130" stroke="#3a4350"/>
+  <text x="30" y="58" fill="#7ee787" font-size="9" text-anchor="end">+</text><text x="30" y="200" fill="#ff7b72" font-size="9" text-anchor="end">−</text>
+  <!-- buckets -->
+  <g font-size="9" fill="#9aa7b4" text-anchor="middle">
+    <text x="70" y="216">o/n</text><text x="130" y="216">≤1m</text><text x="190" y="216">≤3m</text><text x="250" y="216">≤1y</text><text x="310" y="216">≤5y</text><text x="370" y="216">&gt;5y</text>
+  </g>
+  <!-- assets up bars (blue) -->
+  <rect x="56" y="96" width="28" height="34" fill="#5aa9ff"/>
+  <rect x="116" y="72" width="28" height="58" fill="#5aa9ff"/>
+  <rect x="176" y="84" width="28" height="46" fill="#5aa9ff"/>
+  <rect x="236" y="62" width="28" height="68" fill="#5aa9ff"/>
+  <rect x="296" y="78" width="28" height="52" fill="#5aa9ff"/>
+  <rect x="356" y="100" width="28" height="30" fill="#5aa9ff"/>
+  <!-- liabilities down bars (orange) -->
+  <rect x="56" y="130" width="28" height="48" fill="#ffb454"/>
+  <rect x="116" y="130" width="28" height="40" fill="#ffb454"/>
+  <rect x="176" y="130" width="28" height="56" fill="#ffb454"/>
+  <rect x="236" y="130" width="28" height="44" fill="#ffb454"/>
+  <rect x="296" y="130" width="28" height="36" fill="#ffb454"/>
+  <rect x="356" y="130" width="28" height="22" fill="#ffb454"/>
+  <!-- cumulative gap line (violet) -->
+  <polyline points="70,150 130,138 190,142 250,118 310,108 370,116" fill="none" stroke="#bc8cff" stroke-width="2"/>
+  <g fill="#bc8cff"><circle cx="70" cy="150" r="2.5"/><circle cx="130" cy="138" r="2.5"/><circle cx="190" cy="142" r="2.5"/><circle cx="250" cy="118" r="2.5"/><circle cx="310" cy="108" r="2.5"/><circle cx="370" cy="116" r="2.5"/></g>
+  <text x="372" y="106" fill="#bc8cff" font-size="9">cum. gap</text>
+</svg>
+<figcaption>A bidirectional bar + overlaid line — both are in the chart-semantics library; the dual-axis is one spec edit away.</figcaption>
+</figure>
+</div>
+
+<!-- ===== 14.4 op risk / incidents ===== -->
+<h3>14.4 — Operational-risk &amp; incident analytics</h3>
+<div class="grid2">
+<figure style="margin:0">
+<svg viewBox="0 0 440 240" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="11">
+  <rect x="0" y="0" width="440" height="240" rx="10" fill="#0e1116" stroke="#2b3340"/>
+  <text x="16" y="24" fill="#e6edf3" font-weight="700">Loss events — frequency × severity heatmap</text>
+  <text x="16" y="40" fill="#6b7682" font-size="10">Basel event-type rows × business-line cols · darker = higher aggregate loss</text>
+  <!-- grid 5x5 heat -->
+  <g transform="translate(110,52)">
+    <!-- col labels -->
+    <g font-size="8.5" fill="#9aa7b4" text-anchor="middle"><text x="30" y="-6">Retail</text><text x="90" y="-6">Corp</text><text x="150" y="-6">Mkts</text><text x="210" y="-6">PaySettle</text><text x="270" y="-6">AssetMgmt</text></g>
+    <!-- row labels -->
+    <g font-size="8.5" fill="#9aa7b4" text-anchor="end"><text x="-8" y="22">Int. Fraud</text><text x="-8" y="52">Ext. Fraud</text><text x="-8" y="82">Clients/Prod</text><text x="-8" y="112">Exec/Deliv</text><text x="-8" y="142">Bus.Disrupt</text></g>
+    <!-- cells: vary fill -->
+    <g>
+      <rect x="0" y="8" width="56" height="28" fill="#1d2937"/><rect x="60" y="8" width="56" height="28" fill="#2a1f12"/><rect x="120" y="8" width="56" height="28" fill="#3a2410"/><rect x="180" y="8" width="56" height="28" fill="#1d2937"/><rect x="240" y="8" width="56" height="28" fill="#161b22"/>
+      <rect x="0" y="38" width="56" height="28" fill="#5c3b14"/><rect x="60" y="38" width="56" height="28" fill="#2a1f12"/><rect x="120" y="38" width="56" height="28" fill="#1d2937"/><rect x="180" y="38" width="56" height="28" fill="#3a2410"/><rect x="240" y="38" width="56" height="28" fill="#161b22"/>
+      <rect x="0" y="68" width="56" height="28" fill="#2a1f12"/><rect x="60" y="68" width="56" height="28" fill="#7a4f12"/><rect x="120" y="68" width="56" height="28" fill="#a85c10"/><rect x="180" y="68" width="56" height="28" fill="#2a1f12"/><rect x="240" y="68" width="56" height="28" fill="#1d2937"/>
+      <rect x="0" y="98" width="56" height="28" fill="#1d2937"/><rect x="60" y="98" width="56" height="28" fill="#3a2410"/><rect x="120" y="98" width="56" height="28" fill="#5c3b14"/><rect x="180" y="98" width="56" height="28" fill="#5c3b14"/><rect x="240" y="98" width="56" height="28" fill="#2a1f12"/>
+      <rect x="0" y="128" width="56" height="28" fill="#161b22"/><rect x="60" y="128" width="56" height="28" fill="#1d2937"/><rect x="120" y="128" width="56" height="28" fill="#2a1f12"/><rect x="180" y="128" width="56" height="28" fill="#3a2410"/><rect x="240" y="128" width="56" height="28" fill="#161b22"/>
+    </g>
+    <!-- highlight worst cell -->
+    <rect x="120" y="68" width="56" height="28" fill="none" stroke="#ff7b72" stroke-width="2"/>
+    <text x="148" y="86" fill="#ffd699" font-size="9" text-anchor="middle">€4.1m</text>
+  </g>
+  <text x="110" y="226" fill="#6b7682" font-size="9">scale: ▢ low → ▣ high aggregate loss · worst cell ringed</text>
+</svg>
+<figcaption>A heatmap of the loss-event register — the kind of thing op-risk hand-builds for the quarterly committee pack, here in one ask.</figcaption>
+</figure>
+<div class="card">
+<p><span class="pill touch">WHO</span> Operational Risk / Internal Control</p>
+<p><span class="pill new">ASK</span> <i>"Heatmap: Basel event-type × business line, colour by total gross loss this year; ring the single worst cell."</i></p>
+<p><span class="pill reuse">DATA</span> <code>loss_event_register.xlsx</code> (date, event type, business line, gross/net loss, recovery, root cause, status).</p>
+<p><b>Output:</b> the heatmap; follow-ups: "Pareto of root causes", "near-misses only", "monthly loss run-rate vs the op-risk appetite line", "drill into the 'Clients & Products / Markets' cell — list the events".</p>
+<p class="small"><b>Why on-prem:</b> loss events often reference named staff, counterparties, legal matters. The scanner masks names/emails in the sample; the register itself stays in the sandbox.</p>
+</div>
+</div>
+
+<!-- ===== 14.5 AML / financial crime ===== -->
+<h3>14.5 — AML / financial-crime — alerts &amp; SAR funnel</h3>
+<div class="grid2">
+<div class="card">
+<p><span class="pill touch">WHO</span> Financial Crime / AML Operations</p>
+<p><span class="pill new">ASK</span> <i>"Funnel: transaction-monitoring alerts → triaged → escalated → SAR filed, by month. And a side chart: alert volume by scenario, flag scenarios with a &lt;2% SAR-conversion rate."</i></p>
+<p><span class="pill reuse">DATA</span> <code>tm_alerts.csv</code> (alert id, scenario, generated/closed dates, disposition, SAR ref) + <code>case_outcomes.csv</code>.</p>
+<p><b>Output:</b> stage funnel + a conversion-rate bar with low-yield scenarios highlighted (a classic "is this rule producing only noise?" question). Follow-ups: "median days alert→disposition", "backlog ageing buckets", "which analyst queue is the bottleneck".</p>
+<p class="small"><b>Why on-prem:</b> this is SAR-adjacent data — tipping-off-sensitive, names of subjects. Hard requirement that no row reaches an external endpoint; the sample sent to the model is masked, the bulk stays sandboxed. Exactly the case the GDPR/PII routing was built for.</p>
+</div>
+<figure style="margin:0">
+<svg viewBox="0 0 440 240" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="11">
+  <rect x="0" y="0" width="440" height="240" rx="10" fill="#0e1116" stroke="#2b3340"/>
+  <text x="16" y="24" fill="#e6edf3" font-weight="700">Alert → SAR funnel (this quarter)</text>
+  <!-- funnel trapezoids -->
+  <g transform="translate(40,40)">
+    <polygon points="0,0 320,0 286,30 34,30" fill="#5aa9ff"/><text x="160" y="20" fill="#0e1116" text-anchor="middle" font-weight="700" font-size="10">Alerts generated · 18 420</text>
+    <polygon points="34,34 286,34 250,64 70,64" fill="#7ee787"/><text x="160" y="54" fill="#0e1116" text-anchor="middle" font-weight="700" font-size="10">Triaged / reviewed · 18 420</text>
+    <polygon points="70,68 250,68 196,98 124,98" fill="#ffb454"/><text x="160" y="88" fill="#0e1116" text-anchor="middle" font-weight="700" font-size="10">Escalated to case · 1 240</text>
+    <polygon points="124,102 196,102 178,132 142,132" fill="#ff7b72"/><text x="160" y="121" fill="#0e1116" text-anchor="middle" font-weight="700" font-size="9">SAR · 312</text>
+  </g>
+  <!-- side: scenario conversion -->
+  <text x="40" y="200" fill="#6b7682" font-size="9.5">SAR conversion by scenario — bars under 2% ringed red</text>
+  <g transform="translate(40,206)">
+    <rect x="0" y="0" width="60" height="10" fill="#7ee787"/><text x="66" y="9" fill="#9aa7b4" font-size="8.5">structuring 6.1%</text>
+    <rect x="170" y="0" width="14" height="10" fill="#ff7b72"/><rect x="169" y="-1" width="16" height="12" fill="none" stroke="#ff7b72" stroke-width="1.5"/><text x="190" y="9" fill="#9aa7b4" font-size="8.5">rapid-movement 1.2%</text>
+    <rect x="330" y="0" width="10" height="10" fill="#ff7b72"/><rect x="329" y="-1" width="12" height="12" fill="none" stroke="#ff7b72" stroke-width="1.5"/><text x="346" y="9" fill="#9aa7b4" font-size="8.5">dormant 0.7%</text>
+  </g>
+</svg>
+<figcaption>Funnel + low-yield-scenario flag — the model writes the per-scenario conversion calc; the funnel itself is a vendored template.</figcaption>
+</figure>
+</div>
+
+<!-- ===== 14.6 compliance obligations / controls ===== -->
+<h3>14.6 — Compliance — obligations coverage &amp; control testing</h3>
+<div class="grid2">
+<figure style="margin:0">
+<svg viewBox="0 0 440 240" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="11">
+  <rect x="0" y="0" width="440" height="240" rx="10" fill="#0e1116" stroke="#2b3340"/>
+  <text x="16" y="24" fill="#e6edf3" font-weight="700">Control testing outcomes by regulation</text>
+  <text x="16" y="40" fill="#6b7682" font-size="10">100% stacked · effective / deficiency / not-tested · ordered by % effective</text>
+  <line x1="120" y1="56" x2="120" y2="210" stroke="#2b3340"/>
+  <g transform="translate(120,0)">
+    <!-- rows -->
+    <g font-size="9" fill="#9aa7b4" text-anchor="end">
+      <text x="-8" y="74">MiFID II</text><text x="-8" y="104">EMIR</text><text x="-8" y="134">MAR</text><text x="-8" y="164">AMLD</text><text x="-8" y="194">GDPR</text>
+    </g>
+    <!-- bars (width 280) -->
+    <g>
+      <rect x="0" y="62" width="246" height="22" fill="#7ee787"/><rect x="246" y="62" width="22" height="22" fill="#ffb454"/><rect x="268" y="62" width="12" height="22" fill="#3a4350"/>
+      <rect x="0" y="92" width="224" height="22" fill="#7ee787"/><rect x="224" y="92" width="34" height="22" fill="#ffb454"/><rect x="258" y="92" width="22" height="22" fill="#3a4350"/>
+      <rect x="0" y="122" width="196" height="22" fill="#7ee787"/><rect x="196" y="122" width="56" height="22" fill="#ffb454"/><rect x="252" y="122" width="28" height="22" fill="#3a4350"/>
+      <rect x="0" y="152" width="168" height="22" fill="#7ee787"/><rect x="168" y="152" width="84" height="22" fill="#ffb454"/><rect x="252" y="152" width="28" height="22" fill="#3a4350"/>
+      <rect x="0" y="182" width="252" height="22" fill="#7ee787"/><rect x="252" y="182" width="16" height="22" fill="#ffb454"/><rect x="268" y="182" width="12" height="22" fill="#3a4350"/>
+    </g>
+    <!-- worst row marker -->
+    <text x="290" y="167" fill="#ff7b72" font-size="9">← lowest coverage</text>
+  </g>
+  <rect x="120" y="222" width="11" height="11" fill="#7ee787"/><text x="136" y="231" fill="#9aa7b4" font-size="9">effective</text>
+  <rect x="210" y="222" width="11" height="11" fill="#ffb454"/><text x="226" y="231" fill="#9aa7b4" font-size="9">deficiency</text>
+  <rect x="310" y="222" width="11" height="11" fill="#3a4350"/><text x="326" y="231" fill="#9aa7b4" font-size="9">not tested</text>
+</svg>
+<figcaption>The compliance-monitoring-plan output — which regulation has the weakest control coverage this cycle, in one chart for the board pack.</figcaption>
+</figure>
+<div class="card">
+<p><span class="pill touch">WHO</span> Compliance Monitoring / Assurance</p>
+<p><span class="pill new">ASK</span> <i>"100% stacked bar: control-test outcomes (effective / deficiency / not-tested) per regulation, sorted by % effective. Then list the overdue tests."</i></p>
+<p><span class="pill reuse">DATA</span> <code>control_testing.xlsx</code> (control id, mapped regulation/obligation, test date, result, owner, remediation status) — the monitoring-plan tracker.</p>
+<p><b>Output:</b> the coverage chart; follow-ups: "obligations with zero mapped controls", "remediation ageing", "trend % effective over the last 4 cycles", "pin as the compliance-committee figure".</p>
+<p class="small"><b>Why on-prem:</b> less PII-heavy, but pre-committee assurance findings are confidential. Stays inside Brain; the artifact (pinned report) lands in the user's own artifact space, governed by the sharing model.</p>
+</div>
+</div>
+
+<!-- ===== 14.7 finance / FP&A ===== -->
+<h3>14.7 — Finance / FP&amp;A — variance &amp; cost-base analysis</h3>
+<div class="grid2">
+<div class="card">
+<p><span class="pill touch">WHO</span> Finance / FP&amp;A / Cost Management</p>
+<p><span class="pill new">ASK</span> <i>"Actual vs budget by cost centre, year-to-date — sorted by absolute variance, red where over budget &gt;5%. Then a bridge from budget to actual at the total level."</i></p>
+<p><span class="pill reuse">DATA</span> <code>gl_actuals.xlsx</code> + <code>budget.xlsx</code> (cost centre, account, period, amount) — straight off the GL.</p>
+<p><b>Output:</b> ranked variance bar + a budget→actual waterfall. Follow-ups: "split FTE vs non-FTE", "phasing — variance by month", "which accounts drive the IT cost-centre overrun", "forecast full-year run-rate".</p>
+<p class="small"><b>Why on-prem:</b> management accounts are MNPI for a listed bank. No external LLM egress — local routing/block per policy.</p>
+</div>
+<figure style="margin:0">
+<svg viewBox="0 0 440 240" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="11">
+  <rect x="0" y="0" width="440" height="240" rx="10" fill="#0e1116" stroke="#2b3340"/>
+  <text x="16" y="24" fill="#e6edf3" font-weight="700">YTD variance by cost centre (Actual − Budget)</text>
+  <text x="16" y="40" fill="#6b7682" font-size="10">€m · over budget ▶ red · under ◀ green · sorted by |variance|</text>
+  <line x1="220" y1="56" x2="220" y2="220" stroke="#3a4350"/>
+  <text x="220" y="234" fill="#6b7682" font-size="9" text-anchor="middle">0</text>
+  <g font-size="9" fill="#9aa7b4">
+    <text x="10" y="74">Technology</text>
+    <text x="10" y="100">Operations</text>
+    <text x="10" y="126">Risk &amp; Compliance</text>
+    <text x="10" y="152">Front Office</text>
+    <text x="10" y="178">Corporate Centre</text>
+    <text x="10" y="204">Property</text>
+  </g>
+  <!-- bars: tech over (+), ops over, risk over slightly, FO under, CC under, prop under -->
+  <rect x="220" y="64" width="150" height="16" fill="#ff7b72"/><text x="376" y="76" fill="#ff7b72" font-size="9">+8.2 (+9%)</text>
+  <rect x="220" y="90" width="86" height="16" fill="#ff7b72"/><text x="312" y="102" fill="#ff7b72" font-size="9">+4.1</text>
+  <rect x="220" y="116" width="40" height="16" fill="#ffb454"/><text x="266" y="128" fill="#ffb454" font-size="9">+1.6</text>
+  <rect x="160" y="142" width="60" height="16" fill="#7ee787"/><text x="118" y="154" fill="#7ee787" font-size="9" text-anchor="end">−2.7</text>
+  <rect x="132" y="168" width="88" height="16" fill="#7ee787"/><text x="92" y="180" fill="#7ee787" font-size="9" text-anchor="end">−3.9</text>
+  <rect x="184" y="194" width="36" height="16" fill="#7ee787"/><text x="146" y="206" fill="#7ee787" font-size="9" text-anchor="end">−1.1</text>
+</svg>
+<figcaption>The monthly cost-review staple — ranked variance, threshold colouring — built from the GL extract with one sentence.</figcaption>
+</figure>
+</div>
+
+<!-- ===== summary table ===== -->
+<h3>14.8 — At a glance: is it worth it for us?</h3>
+<table>
+<tr><th>Team</th><th>What they do today</th><th>In the Data Workbench</th><th>Sensitivity → why on-prem</th></tr>
+<tr><td>Credit Risk</td><td>Excel pivots over the loan book; chart pasted into a deck</td><td>"exposure by rating × segment, flag QoQ growth" → chart + delta in one turn</td><td>Borrower-identifying — names masked in sample, bulk in sandbox</td></tr>
+<tr><td>Regulatory Reporting</td><td>Manual capital-ratio bridge for ICAAP/COREP narrative</td><td>bps waterfall from the movements file; pin as the report figure</td><td>Pre-publication reg figures — local-model-only / block</td></tr>
+<tr><td>Treasury / ALM</td><td>Maturity ladder & LCR composition rebuilt each cycle</td><td>bidirectional bar + cumulative gap; HQLA stack; stress tweaks</td><td>Market-sensitive liquidity position — never leaves the sandbox</td></tr>
+<tr><td>Operational Risk</td><td>Hand-built heatmap of the loss register for the committee</td><td>event-type × business-line heatmap; Pareto of root causes</td><td>Names staff/counterparties/legal matters — scanner masks them</td></tr>
+<tr><td>AML / Fin-Crime</td><td>Alert→SAR funnel and scenario-yield stats in Excel</td><td>funnel + low-conversion-scenario flag; backlog ageing</td><td>SAR-adjacent, tipping-off-sensitive — hard external-egress block</td></tr>
+<tr><td>Compliance</td><td>Control-testing coverage table for the monitoring plan</td><td>100%-stacked coverage by regulation; overdue-test list</td><td>Pre-committee assurance findings — confidential, stays in Brain</td></tr>
+<tr><td>Finance / FP&amp;A</td><td>Actual-vs-budget variance deck, budget→actual bridge</td><td>ranked variance bar + waterfall; phasing & run-rate follow-ups</td><td>Management accounts = MNPI — local routing/block</td></tr>
+</table>
+
+<div class="callout good"><b>The decision framing.</b> Every one of these is being done <i>somewhere</i> in the bank right now — in Excel, in a BI tool the data has to be exported to, or by a data analyst on a ticket queue. The Data Workbench doesn't add a capability the bank lacks; it moves that work <i>inside the perimeter you already trust</i> — the same GDPR scanner, quota gate, audit log, sandbox, and (with the v8.35 sharing model) the same private-by-default artifact space. The build cost is four small components and zero core-path changes. If even two of these seven teams adopt it, that's the BI-tool data-export step removed for their sensitive datasets — which is the part the security review actually cares about.</div>
+
+<div class="callout warn"><b>Where it is <i>not</i> worth it (be honest).</b> Pixel-perfect, recurring board-pack visuals with house styling → keep the BI tool. Real-time dashboards over a streaming source → out of scope (this is ask-driven, not a live tile). 50-page COREP/FINREP templated returns → that's a reporting engine, not a chart workbench. The Data Workbench's sweet spot is the <i>ad-hoc, exploratory, "I need to see this cut of the data now, on data too sensitive to export"</i> question — which, for risk/compliance/finance, is a large fraction of the actual day.</div>
 
 <div class="footer">
 Plan authored for <code>/Users/alexander/Documents/dev/cctest</code> (Brain). Inspiration: <a href="https://github.com/microsoft/data-formulator">microsoft/data-formulator</a> (MIT, ~15.5k★). Design principle throughout: <b>reuse the engine, add four small components, change zero core paths.</b> Not yet implemented — this document is the proposal.
