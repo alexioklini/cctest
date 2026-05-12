@@ -80,6 +80,7 @@
 <a href="#transfer">4. Ownership transfer</a><br>
 <a href="#wings">5. MemPalace wing routing under the new model</a><br>
 <a href="#ui">6. GUI — the share dialog</a><br>
+<a href="#mockups">6A. End-user walkthrough (mockups)</a><br>
 <a href="#phases">7. Implementation phases</a><br>
 <a href="#files">8. Files touched (by phase)</a><br>
 <a href="#edge">9. Edge cases &amp; invariants</a><br>
@@ -263,6 +264,259 @@ def can_manage(user: dict, block: dict) -> bool:
   <li><strong>Transfer flow</strong> = a confirm sub-dialog: pick new owner, show the warnings from §4 (memory wing asymmetry / quota billing for schedules), type-to-confirm.</li>
   <li>The <strong>star/favourite</strong> button's scope dropdown filters to {scopes the item is now visible in}; if you change visibility down and it orphans your favourite, a toast offers to remove it.</li>
 </ul>
+
+<!-- ============================================================ -->
+<h2 id="mockups">6A. End-user walkthrough (mockups)</h2>
+<p class="sub">SVG wireframes of every place the sharing model surfaces to a user. Dark-theme to match the Brain web UI. These are layout sketches, not pixel-final design.</p>
+
+<style>
+  .mock { width:100%; max-width:760px; height:auto; display:block; margin:8px auto 4px; background:#0d1016; border:1px solid var(--line); border-radius:10px; }
+  .mock-cap { text-align:center; font-size:13px; color:var(--muted); margin:0 0 22px; }
+  .mock-grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  @media (max-width:840px){ .mock-grid { grid-template-columns:1fr; } }
+</style>
+
+<svg class="mock" viewBox="0 0 760 96" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,sans-serif">
+  <defs>
+    <style>
+      .lbl{fill:#9aa3b2;font-size:11px}.ink{fill:#e8eaf0;font-size:13px}.ico{stroke:#9aa3b2;stroke-width:1.4;fill:none}
+      .btn{fill:#1d212b;stroke:#2a2f3a}.btnt{fill:#cfd6e4;font-size:12px}.accentf{fill:#6ea8fe}.callout{fill:#6ea8fe;font-size:11px}
+    </style>
+  </defs>
+  <rect x="0" y="0" width="760" height="96" fill="#11151c"/>
+  <!-- header bar -->
+  <rect x="0" y="0" width="760" height="56" fill="#0f1218"/>
+  <line x1="0" y1="56" x2="760" y2="56" stroke="#2a2f3a"/>
+  <text x="24" y="26" class="ink" font-size="15" font-weight="600">Q3 planning chat</text>
+  <text x="24" y="44" class="lbl">edited 12:04 · 18 messages</text>
+  <!-- pencil -->
+  <path class="ico" d="M540 20 l10 0 0 10 -10 0 z M543 18 l4 4"/>
+  <!-- star -->
+  <path d="M576 16 l3 7 7.5 .6 -5.7 5 1.8 7.3 -6.6 -4 -6.6 4 1.8 -7.3 -5.7 -5 7.5 -.6 z" class="ico"/>
+  <!-- NEW share/people icon, highlighted -->
+  <circle cx="620" cy="22" r="13" fill="#1b2433" stroke="#6ea8fe"/>
+  <circle cx="615" cy="20" r="3.2" class="ico" stroke="#6ea8fe"/>
+  <circle cx="624" cy="24" r="3.2" class="ico" stroke="#6ea8fe"/>
+  <path d="M610 30 q5 -4 10 0 M620 28 q4 -3 8 0" stroke="#6ea8fe" stroke-width="1.4" fill="none"/>
+  <text x="620" y="50" text-anchor="middle" class="callout">Share</text>
+  <!-- visibility pill, current state -->
+  <rect x="650" y="14" width="92" height="18" rx="9" fill="rgba(110,168,254,.15)" stroke="rgba(110,168,254,.35)"/>
+  <text x="696" y="26" text-anchor="middle" class="accentf" font-size="11" font-weight="700">TEAM · ENG</text>
+  <!-- callout line -->
+  <text x="24" y="80" class="callout">▲ New "Share" button sits beside the existing pencil + star. A small pill shows the current visibility at a glance (PRIVATE / 3 PEOPLE / TEAM · ENG / GLOBAL).</text>
+</svg>
+<p class="mock-cap">1 — Chat header: the new Share button + at-a-glance visibility pill (also appears on project / schedule / workflow / artifact headers).</p>
+
+<svg class="mock" viewBox="0 0 760 470" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,sans-serif">
+  <defs><style>
+    .lbl{fill:#9aa3b2;font-size:12px}.ink{fill:#e8eaf0;font-size:13px}.h{fill:#e8eaf0;font-size:15px;font-weight:600}
+    .field{fill:#11151c;stroke:#2a2f3a}.radio{fill:none;stroke:#5a6376;stroke-width:1.6}.radioOn{fill:#6ea8fe}
+    .chip{fill:#1d2533;stroke:#37425a}.chipt{fill:#cfd6e4;font-size:11px}.x{fill:#7c8699;font-size:11px}
+    .btn{fill:#1d212b;stroke:#2a2f3a}.btnt{fill:#cfd6e4;font-size:12px}.btnP{fill:#2b4a7e;stroke:#3b6fb8}.btnPt{fill:#e8f0ff;font-size:12px;font-weight:600}
+    .muted{fill:#7c8699;font-size:11px}.accentf{fill:#6ea8fe;font-size:11px}.sect{fill:#1a1e27}
+    .disc{fill:#3a3f4b}
+  </style></defs>
+  <rect x="0" y="0" width="760" height="470" rx="12" fill="#171a21" stroke="#2a2f3a"/>
+  <!-- title -->
+  <text x="28" y="34" class="h">Share — “Q3 planning chat”</text>
+  <line x1="28" y1="48" x2="732" y2="48" stroke="#2a2f3a"/>
+  <!-- owner row -->
+  <text x="28" y="76" class="lbl">Owner</text>
+  <circle cx="92" cy="71" r="9" fill="#33415c"/><text x="92" y="75" text-anchor="middle" fill="#cfd6e4" font-size="10">AK</text>
+  <text x="110" y="75" class="ink">Alexander Klinsky</text>
+  <rect x="572" y="60" width="160" height="22" rx="6" class="btn"/><text x="652" y="75" text-anchor="middle" class="btnt">Transfer ownership…</text>
+  <text x="572" y="96" class="muted">(owner / admin only)</text>
+  <!-- divider -->
+  <line x1="28" y1="108" x2="732" y2="108" stroke="#23272f"/>
+  <!-- visibility heading -->
+  <text x="28" y="132" class="lbl" font-weight="600">VISIBILITY</text>
+  <!-- option: private -->
+  <circle cx="40" cy="158" r="7" class="radio"/>
+  <text x="58" y="162" class="ink">Private — only me</text>
+  <!-- option: specific people -->
+  <circle cx="40" cy="190" r="7" class="radio"/>
+  <text x="58" y="194" class="ink">Specific people</text>
+  <!-- option: team (SELECTED) -->
+  <circle cx="40" cy="222" r="7" class="radio"/><circle cx="40" cy="222" r="3.5" class="radioOn"/>
+  <text x="58" y="226" class="ink">Team:</text>
+  <rect x="108" y="212" width="170" height="20" rx="5" class="field"/><text x="120" y="226" class="ink" font-size="12">Engineering ▾</text>
+  <text x="292" y="226" class="muted">(only teams you belong to)</text>
+  <!-- option: global -->
+  <circle cx="40" cy="254" r="7" class="radio"/>
+  <text x="58" y="258" class="ink">Everyone (global)</text>
+  <!-- divider -->
+  <line x1="28" y1="276" x2="732" y2="276" stroke="#23272f"/>
+  <!-- extra-share section (shown for private/team) -->
+  <rect x="20" y="288" width="720" height="78" rx="8" class="sect"/>
+  <text x="36" y="310" class="lbl">▾ Also share with (extra people)</text>
+  <!-- chips -->
+  <rect x="36" y="320" width="118" height="22" rx="11" class="chip"/><circle cx="50" cy="331" r="7" fill="#3a4a3a"/><text x="50" y="335" text-anchor="middle" fill="#cfd6e4" font-size="9">MR</text><text x="64" y="335" class="chipt">Mara Roth</text><text x="142" y="335" class="x">✕</text>
+  <rect x="162" y="320" width="132" height="22" rx="11" class="chip"/><circle cx="176" cy="331" r="7" fill="#4a3a4a"/><text x="176" y="335" text-anchor="middle" fill="#cfd6e4" font-size="9">JD</text><text x="190" y="335" class="chipt">Jonas Demir</text><text x="282" y="335" class="x">✕</text>
+  <rect x="302" y="320" width="74" height="22" rx="11" fill="none" stroke="#37425a" stroke-dasharray="3 3"/><text x="339" y="335" text-anchor="middle" class="accentf">+ add</text>
+  <text x="36" y="358" class="muted">Granted regardless of the team setting — only ever widens access.</text>
+  <!-- exclude section, shown disabled (greyed) because not 'global' -->
+  <text x="36" y="388" class="disc" font-size="12">▸ Exclude these people  —  available only when visibility = Everyone</text>
+  <!-- footer -->
+  <line x1="28" y1="406" x2="732" y2="406" stroke="#2a2f3a"/>
+  <rect x="556" y="420" width="80" height="30" rx="7" class="btn"/><text x="596" y="439" text-anchor="middle" class="btnt">Cancel</text>
+  <rect x="646" y="420" width="86" height="30" rx="7" class="btnP"/><text x="689" y="439" text-anchor="middle" class="btnPt">Save</text>
+</svg>
+<p class="mock-cap">2 — The Share dialog (owner's view). Radio picks the base tier; "Also share with" adds individuals on top; "Exclude" is greyed unless the tier is Everyone. Identical component for every item type — only the title changes.</p>
+
+<div class="mock-grid">
+<div>
+<svg class="mock" viewBox="0 0 380 300" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,sans-serif">
+  <defs><style>.lbl{fill:#9aa3b2;font-size:11px}.ink{fill:#e8eaf0;font-size:12px}.h{fill:#e8eaf0;font-size:13px;font-weight:600}.field{fill:#11151c;stroke:#2a2f3a}.warn{fill:#f5b14c;font-size:10.5px}.btn{fill:#1d212b;stroke:#2a2f3a}.btnt{fill:#cfd6e4;font-size:11px}.btnD{fill:#5a2b2b;stroke:#8a3b3b}.btnDt{fill:#ffecec;font-size:11px;font-weight:600}.muted{fill:#7c8699;font-size:10px}</style></defs>
+  <rect x="0" y="0" width="380" height="300" rx="11" fill="#171a21" stroke="#2a2f3a"/>
+  <text x="20" y="28" class="h">Transfer ownership</text>
+  <line x1="20" y1="40" x2="360" y2="40" stroke="#2a2f3a"/>
+  <text x="20" y="62" class="lbl">New owner</text>
+  <rect x="20" y="70" width="340" height="26" rx="6" class="field"/><text x="32" y="87" class="ink">Mara Roth (mara@…) ▾</text>
+  <!-- warnings -->
+  <rect x="14" y="106" width="352" height="92" rx="7" fill="rgba(245,177,76,.08)" stroke="rgba(245,177,76,.3)"/>
+  <text x="26" y="124" class="warn" font-weight="700">Heads up:</text>
+  <text x="26" y="140" class="warn">• This chat's saved memory stays in your wing;</text>
+  <text x="26" y="153" class="warn">  new memory from future turns goes to Mara's.</text>
+  <text x="26" y="170" class="warn">• Mara becomes the only one who can re-share</text>
+  <text x="26" y="183" class="warn">  or delete this chat.</text>
+  <!-- type to confirm -->
+  <text x="20" y="216" class="lbl">Type the chat name to confirm</text>
+  <rect x="20" y="224" width="340" height="24" rx="6" class="field"/><text x="32" y="240" class="muted">Q3 planning chat</text>
+  <line x1="20" y1="258" x2="360" y2="258" stroke="#2a2f3a"/>
+  <rect x="196" y="266" width="74" height="26" rx="7" class="btn"/><text x="233" y="283" text-anchor="middle" class="btnt">Cancel</text>
+  <rect x="280" y="266" width="80" height="26" rx="7" class="btnD"/><text x="320" y="283" text-anchor="middle" class="btnDt">Transfer</text>
+</svg>
+<p class="mock-cap">3 — Transfer sub-dialog: pick the new owner, see the consequences (memory-wing asymmetry; for schedules it also says "quota billing moves to the new owner"), type-to-confirm.</p>
+</div>
+<div>
+<svg class="mock" viewBox="0 0 380 300" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,sans-serif">
+  <defs><style>.lbl{fill:#9aa3b2;font-size:11px}.ink{fill:#e8eaf0;font-size:12px}.h{fill:#e8eaf0;font-size:13px;font-weight:600}.muted{fill:#7c8699;font-size:11px}.row{fill:#11151c;stroke:#23272f}.pillG{fill:rgba(61,220,151,.13);stroke:rgba(61,220,151,.3)}.pillGt{fill:#3ddc97;font-size:10px;font-weight:700}.pillI{fill:rgba(110,168,254,.13);stroke:rgba(110,168,254,.3)}.pillIt{fill:#6ea8fe;font-size:10px;font-weight:700}.pillN{fill:#23272f}.pillNt{fill:#9aa3b2;font-size:10px;font-weight:700}</style></defs>
+  <rect x="0" y="0" width="380" height="300" rx="11" fill="#171a21" stroke="#2a2f3a"/>
+  <text x="20" y="26" class="h">Read-only view  (you're not the owner)</text>
+  <line x1="20" y1="38" x2="360" y2="38" stroke="#2a2f3a"/>
+  <text x="20" y="60" class="lbl">Owner</text>
+  <text x="80" y="60" class="ink">Alexander Klinsky</text>
+  <text x="20" y="84" class="lbl">Visibility</text>
+  <rect x="80" y="73" width="92" height="16" rx="8" class="pillI"/><text x="126" y="85" text-anchor="middle" class="pillIt">TEAM · ENG</text>
+  <text x="20" y="112" class="lbl">Shared with</text>
+  <!-- list rows -->
+  <rect x="20" y="120" width="340" height="22" class="row"/><text x="30" y="135" class="ink">Engineering (12 members)</text><rect x="270" y="124" width="80" height="14" rx="7" class="pillG"/><text x="310" y="135" text-anchor="middle" class="pillGt">VIA TEAM</text>
+  <rect x="20" y="142" width="340" height="22" class="row"/><text x="30" y="157" class="ink">Mara Roth</text><rect x="270" y="146" width="80" height="14" rx="7" class="pillN"/><text x="310" y="157" text-anchor="middle" class="pillNt">EXTRA GRANT</text>
+  <rect x="20" y="164" width="340" height="22" class="row"/><text x="30" y="179" class="ink">Jonas Demir</text><rect x="270" y="168" width="80" height="14" rx="7" class="pillN"/><text x="310" y="179" text-anchor="middle" class="pillNt">EXTRA GRANT</text>
+  <text x="20" y="210" class="muted">Only the owner (or an admin) can change who this</text>
+  <text x="20" y="225" class="muted">is shared with. Ask Alexander if you need to add</text>
+  <text x="20" y="240" class="muted">someone.</text>
+</svg>
+<p class="mock-cap">4 — Non-owner opening the same dialog: a read-only summary of who can see it and why (via team / via extra grant), no controls — mirrors how project visibility is admin-gated today.</p>
+</div>
+</div>
+
+<svg class="mock" viewBox="0 0 760 280" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,sans-serif">
+  <defs><style>.lbl{fill:#9aa3b2;font-size:11px}.ink{fill:#e8eaf0;font-size:12px}.h{fill:#e8eaf0;font-size:13px;font-weight:600}.row{fill:#11151c;stroke:#23272f}.rowH{fill:#161a22;stroke:#23272f}
+    .pillI{fill:rgba(110,168,254,.13);stroke:rgba(110,168,254,.3)}.pillIt{fill:#6ea8fe;font-size:9.5px;font-weight:700}
+    .pillN{fill:#23272f}.pillNt{fill:#9aa3b2;font-size:9.5px;font-weight:700}
+    .pillG{fill:rgba(61,220,151,.13);stroke:rgba(61,220,151,.3)}.pillGt{fill:#3ddc97;font-size:9.5px;font-weight:700}
+    .pillW{fill:rgba(245,177,76,.13);stroke:rgba(245,177,76,.3)}.pillWt{fill:#f5b14c;font-size:9.5px;font-weight:700}
+    .ico{stroke:#7c8699;stroke-width:1.3;fill:none}.muted{fill:#7c8699;font-size:10px}</style></defs>
+  <rect x="0" y="0" width="760" height="280" rx="11" fill="#171a21" stroke="#2a2f3a"/>
+  <text x="24" y="30" class="h">Chats</text>
+  <text x="640" y="30" class="muted">filter:  ▾ all I can see   ☐ only mine</text>
+  <!-- column header -->
+  <rect x="16" y="44" width="728" height="22" class="rowH"/>
+  <text x="32" y="59" class="lbl">TITLE</text><text x="430" y="59" class="lbl">VISIBILITY</text><text x="600" y="59" class="lbl">OWNER</text><text x="700" y="59" class="lbl">★</text>
+  <!-- rows -->
+  <rect x="16" y="66" width="728" height="30" class="row"/>
+  <text x="32" y="85" class="ink">Q3 planning chat</text>
+  <rect x="430" y="72" width="96" height="16" rx="8" class="pillI"/><text x="478" y="84" text-anchor="middle" class="pillIt">TEAM · ENG</text>
+  <text x="600" y="85" class="ink" font-size="11">Alexander K.</text>
+  <path d="M712 73 l2.5 5 5.5 .4 -4 3.6 1.2 5.3 -4.7-2.9 -4.7 2.9 1.2-5.3 -4-3.6 5.5-.4 z" fill="#f5b14c"/>
+  <rect x="16" y="96" width="728" height="30" fill="#0f1218" stroke="#23272f"/>
+  <text x="32" y="115" class="ink">Roadmap brainstorm</text>
+  <rect x="430" y="102" width="64" height="16" rx="8" class="pillN"/><text x="462" y="114" text-anchor="middle" class="pillNt">PRIVATE</text>
+  <text x="600" y="115" class="ink" font-size="11">you</text>
+  <path d="M712 103 l2.5 5 5.5 .4 -4 3.6 1.2 5.3 -4.7-2.9 -4.7 2.9 1.2-5.3 -4-3.6 5.5-.4 z" class="ico"/>
+  <rect x="16" y="126" width="728" height="30" class="row"/>
+  <text x="32" y="145" class="ink">Onboarding FAQ draft</text>
+  <rect x="430" y="132" width="84" height="16" rx="8" class="pillG"/><text x="472" y="144" text-anchor="middle" class="pillGt">GLOBAL</text>
+  <text x="600" y="145" class="ink" font-size="11">Mara Roth</text>
+  <path d="M712 133 l2.5 5 5.5 .4 -4 3.6 1.2 5.3 -4.7-2.9 -4.7 2.9 1.2-5.3 -4-3.6 5.5-.4 z" class="ico"/>
+  <rect x="16" y="156" width="728" height="30" fill="#0f1218" stroke="#23272f"/>
+  <text x="32" y="175" class="ink">Hiring loop notes</text>
+  <rect x="430" y="162" width="100" height="16" rx="8" class="pillW"/><text x="480" y="174" text-anchor="middle" class="pillWt">3 PEOPLE</text>
+  <text x="600" y="175" class="ink" font-size="11">Jonas Demir</text>
+  <path d="M712 163 l2.5 5 5.5 .4 -4 3.6 1.2 5.3 -4.7-2.9 -4.7 2.9 1.2-5.3 -4-3.6 5.5-.4 z" class="ico"/>
+  <rect x="16" y="186" width="728" height="30" class="row"/>
+  <text x="32" y="205" class="ink">DSGVO policy Q&amp;A</text>
+  <rect x="430" y="192" width="96" height="16" rx="8" class="pillI"/><text x="478" y="204" text-anchor="middle" class="pillIt">TEAM · LEGAL</text>
+  <text x="600" y="205" class="ink" font-size="11">Alexander K.</text>
+  <path d="M712 193 l2.5 5 5.5 .4 -4 3.6 1.2 5.3 -4.7-2.9 -4.7 2.9 1.2-5.3 -4-3.6 5.5-.4 z" class="ico"/>
+  <text x="24" y="244" class="muted">The list now mixes your own items with team-shared, globally-shared, and individually-shared ones. A visibility column + the "only mine" toggle keep it legible. Same pattern in the Projects / Schedules / Workflows lists.</text>
+</svg>
+<p class="mock-cap">5 — Sidebar / list view: items you own sit alongside ones shared to you. A visibility column makes the reach obvious; "only mine" collapses back to the old view.</p>
+
+<div class="mock-grid">
+<div>
+<svg class="mock" viewBox="0 0 380 260" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,sans-serif">
+  <defs><style>.lbl{fill:#9aa3b2;font-size:11px}.ink{fill:#e8eaf0;font-size:12px}.h{fill:#e8eaf0;font-size:13px;font-weight:600}.muted{fill:#7c8699;font-size:10px}.field{fill:#11151c;stroke:#2a2f3a}.btn{fill:#1d212b;stroke:#2a2f3a}.btnt{fill:#cfd6e4;font-size:11px}.pillN{fill:#23272f}.pillNt{fill:#9aa3b2;font-size:9.5px;font-weight:700}.pillI{fill:rgba(110,168,254,.13);stroke:rgba(110,168,254,.3)}.pillIt{fill:#6ea8fe;font-size:9.5px;font-weight:700}</style></defs>
+  <rect x="0" y="0" width="380" height="260" rx="11" fill="#171a21" stroke="#2a2f3a"/>
+  <text x="20" y="26" class="h">Edit scheduled task — “Daily DSGVO digest”</text>
+  <line x1="20" y1="38" x2="360" y2="38" stroke="#2a2f3a"/>
+  <text x="20" y="58" class="lbl">Schedule</text><rect x="20" y="64" width="220" height="22" rx="6" class="field"/><text x="30" y="79" class="ink" font-size="11">every day · 07:30 Europe/Berlin</text>
+  <text x="20" y="106" class="lbl">Prompt</text><rect x="20" y="112" width="340" height="40" rx="6" class="field"/><text x="30" y="128" class="muted">Summarise overnight changes to the DSGVO…</text>
+  <!-- sharing row -->
+  <line x1="20" y1="166" x2="360" y2="166" stroke="#23272f"/>
+  <text x="20" y="186" class="lbl">Sharing</text>
+  <rect x="80" y="175" width="100" height="16" rx="8" class="pillI"/><text x="130" y="187" text-anchor="middle" class="pillIt">TEAM · LEGAL</text>
+  <rect x="200" y="174" width="92" height="20" rx="6" class="btn"/><text x="246" y="188" text-anchor="middle" class="btnt">Change…</text>
+  <text x="20" y="210" class="muted">Team members can see this task and its run history.</text>
+  <text x="20" y="223" class="muted">Runs bill against the owner's quota.</text>
+  <line x1="20" y1="234" x2="360" y2="234" stroke="#2a2f3a"/>
+</svg>
+<p class="mock-cap">6 — Scheduled-task editor gains a "Sharing" row → opens the same dialog. Note the explicit "runs bill against the owner's quota" line.</p>
+</div>
+<div>
+<svg class="mock" viewBox="0 0 380 260" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,sans-serif">
+  <defs><style>.lbl{fill:#9aa3b2;font-size:11px}.ink{fill:#e8eaf0;font-size:12px}.h{fill:#e8eaf0;font-size:13px;font-weight:600}.muted{fill:#7c8699;font-size:10px}.btn{fill:#1d212b;stroke:#2a2f3a}.btnt{fill:#cfd6e4;font-size:11px}.disc{fill:#3a3f4b;font-size:11px}
+    .pillI{fill:rgba(110,168,254,.13);stroke:rgba(110,168,254,.3)}.pillIt{fill:#6ea8fe;font-size:9.5px;font-weight:700}.pillN{fill:#23272f}.pillNt{fill:#9aa3b2;font-size:9.5px;font-weight:700}
+    .lock{stroke:#7c8699;stroke-width:1.3;fill:none}</style></defs>
+  <rect x="0" y="0" width="380" height="260" rx="11" fill="#171a21" stroke="#2a2f3a"/>
+  <text x="20" y="26" class="h">Artifact — q3-deck.pdf</text>
+  <line x1="20" y1="38" x2="360" y2="38" stroke="#2a2f3a"/>
+  <text x="20" y="60" class="lbl">Produced by</text><text x="100" y="60" class="ink" font-size="11">“Q3 planning chat”</text>
+  <text x="20" y="84" class="lbl">Visible to</text>
+  <rect x="100" y="73" width="96" height="16" rx="8" class="pillI"/><text x="148" y="85" text-anchor="middle" class="pillIt">TEAM · ENG</text>
+  <text x="206" y="85" class="muted">(inherited from the chat)</text>
+  <!-- restrict control -->
+  <line x1="20" y1="104" x2="360" y2="104" stroke="#23272f"/>
+  <rect x="20" y="116" width="160" height="22" rx="6" class="btn"/>
+  <path d="M30 124 a4 4 0 0 1 8 0 v3 M28 127 h12 v8 h-12 z" class="lock"/>
+  <text x="56" y="131" class="btnt">Restrict further…</text>
+  <text x="190" y="131" class="muted">owner of the chat only</text>
+  <text x="20" y="156" class="disc">Choices:  Private (only the owner)  ·  keep TEAM · ENG</text>
+  <text x="20" y="172" class="muted">An artifact can only be made <tspan font-style="italic">narrower</tspan> than its parent —</text>
+  <text x="20" y="186" class="muted">never wider. There's no way to expose a private chat's</text>
+  <text x="20" y="200" class="muted">file to the team from here.</text>
+</svg>
+<p class="mock-cap">7 — Artifact panel: shows the inherited visibility + a narrow-only "Restrict further" control (owner of the parent only). Widening is structurally impossible.</p>
+</div>
+</div>
+
+<svg class="mock" viewBox="0 0 760 110" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,sans-serif">
+  <defs><style>.ink{fill:#e8eaf0;font-size:12px}.muted{fill:#7c8699;font-size:11px}.btn{fill:#1d212b;stroke:#2a2f3a}.btnt{fill:#cfd6e4;font-size:11px}.warnf{fill:#f5b14c}</style></defs>
+  <rect x="0" y="0" width="760" height="110" fill="#0d1016"/>
+  <!-- toast -->
+  <rect x="200" y="22" width="500" height="64" rx="10" fill="#1d212b" stroke="#3a3f4b"/>
+  <circle cx="228" cy="46" r="9" fill="rgba(245,177,76,.18)"/><text x="228" y="50" text-anchor="middle" class="warnf" font-size="12" font-weight="700">!</text>
+  <text x="248" y="42" class="ink">Visibility narrowed to <tspan font-weight="600">Private</tspan>.</text>
+  <text x="248" y="58" class="muted">This chat was pinned to the Engineering team's favourites — that pin is no longer valid.</text>
+  <rect x="496" y="56" width="86" height="20" rx="6" class="btn"/><text x="539" y="70" text-anchor="middle" class="btnt">Remove pin</text>
+  <rect x="592" y="56" width="74" height="20" rx="6" fill="none" stroke="#2a2f3a"/><text x="629" y="70" text-anchor="middle" class="btnt">Keep (stale)</text>
+</svg>
+<p class="mock-cap">8 — When narrowing a visibility orphans someone's favourite, a toast surfaces it and offers to clean up (Open Q5 decides whether "Keep (stale)" exists or it's auto-removed).</p>
+
+<div class="note">
+<strong>Recap of the user-visible surface:</strong> one new <em>Share</em> button (header / row-action / editor toolbar across all five item types) → one shared dialog (owner-editable / read-only-summary for everyone else) → one transfer sub-dialog with consequence warnings → a visibility column + "only mine" toggle in every list → an inherited-but-narrowable badge on artifacts → toasts for favourite cleanup. No new top-level nav, no new section.
+</div>
 
 <!-- ============================================================ -->
 <h2 id="phases">7. Implementation phases</h2>
