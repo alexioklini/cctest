@@ -6756,3 +6756,81 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
 }
 .share-warn > div { margin: 2px 0; }
 
+
+/* ═══ Data Workbench ═══ */
+#data-view { display: none; flex: 1; overflow: auto; }
+#data-view.active { display: block; }
+.dv-container { max-width: 1200px; margin: 0 auto; padding: 32px 24px; width: 100%; }
+.dv-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+.dv-title { font-size: 28px; font-weight: 600; color: var(--text-000); }
+.dv-header-actions { display: flex; gap: 8px; align-items: center; }
+.dv-select { padding: 6px 10px; border-radius: 8px; background: var(--bg-200); color: var(--text-100); border: 1px solid var(--border-200); font-size: 13px; }
+.dv-btn { padding: 7px 14px; border-radius: 8px; background: var(--bg-200); color: var(--text-100); border: 1px solid var(--border-200); font-size: 13px; cursor: pointer; }
+.dv-btn:hover { background: var(--bg-300); }
+.dv-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.dv-btn-primary { background: var(--accent-500, #e87949); color: #fff; border-color: transparent; }
+.dv-btn-primary:hover { filter: brightness(1.08); }
+.dv-body { display: grid; grid-template-columns: 1fr 320px; gap: 24px; align-items: start; }
+.dv-section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-400); margin-bottom: 10px; }
+.dv-upload { border: 1px dashed var(--border-200); border-radius: 12px; padding: 18px; text-align: center; margin-bottom: 18px; }
+.dv-upload-hint { font-size: 12px; color: var(--text-400); margin-top: 8px; }
+.dv-table-card { border: 1px solid var(--border-200); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; background: var(--bg-100); }
+.dv-table-name { font-weight: 600; color: var(--text-100); font-size: 14px; }
+.dv-table-meta { font-size: 12px; color: var(--text-400); margin-top: 2px; }
+.dv-flagged { color: #ff7b72; font-size: 11px; margin-top: 4px; }
+.dv-sample-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
+.dv-sample-table th, .dv-sample-table td { border: 1px solid var(--border-200); padding: 3px 6px; text-align: left; white-space: nowrap; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.dv-sample-table th { background: var(--bg-200); color: var(--text-300); }
+.dv-chat-cta { border: 1px solid var(--border-200); border-radius: 12px; padding: 18px; background: var(--bg-100); position: sticky; top: 24px; }
+.dv-cta-text { font-size: 13px; color: var(--text-300); margin-bottom: 12px; }
+.dv-pii { color: #ff7b72; font-style: italic; }
+
+/* ═══ Data Workbench — modals ═══ */
+.dv-modal { position: fixed; inset: 0; z-index: 9000; }
+.dv-modal.hidden { display: none; }
+.dv-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.55); backdrop-filter: blur(3px); }
+.dv-modal-card { position: relative; max-width: 760px; margin: 6vh auto; background: var(--bg-100); border: 1px solid var(--border-200); border-radius: 14px; max-height: 86vh; display: flex; flex-direction: column; }
+.dv-modal-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border-200); }
+.dv-modal-header h3 { font-size: 16px; font-weight: 600; color: var(--text-000); margin: 0; }
+.dv-modal-x { background: none; border: none; color: var(--text-400); font-size: 22px; cursor: pointer; line-height: 1; }
+.dv-modal-body { padding: 16px 20px; overflow: auto; }
+.dv-modal-foot { display: flex; align-items: center; gap: 8px; justify-content: flex-end; padding: 12px 20px; border-top: 1px solid var(--border-200); }
+.dv-modal-status { flex: 1; font-size: 12px; color: var(--text-400); }
+.dv-modal-status.error { color: #ff7b72; }
+.dv-modal-status.ok { color: #7ee787; }
+.dv-anon-row { display: grid; grid-template-columns: 24px 1fr 110px 130px 1fr; gap: 8px; align-items: center; padding: 6px 0; font-size: 12px; border-bottom: 1px solid var(--border-200); }
+.dv-anon-row.header { font-weight: 600; color: var(--text-400); text-transform: uppercase; letter-spacing: 0.04em; font-size: 10px; border-bottom: 1px solid var(--border-200); }
+.dv-anon-row select, .dv-anon-row input { padding: 4px 6px; border-radius: 6px; background: var(--bg-200); color: var(--text-100); border: 1px solid var(--border-200); font-size: 12px; width: 100%; }
+.dv-anon-row .dv-flag { color: #ff7b72; }
+.dv-anon-sample { color: var(--text-400); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dv-anon-toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.dv-anon-toolbar label { font-size: 12px; color: var(--text-400); }
+.dv-anon-toolbar select { padding: 4px 8px; border-radius: 6px; background: var(--bg-200); color: var(--text-100); border: 1px solid var(--border-200); font-size: 12px; }
+.dv-result-block { margin-top: 14px; padding: 12px; border-radius: 10px; border: 1px solid var(--border-200); background: var(--bg-200); font-size: 12px; }
+.dv-result-block .ok { color: #7ee787; }
+.dv-result-block .warn { color: #ffb454; }
+.dv-result-block .bad { color: #ff7b72; }
+.dv-result-block a { color: var(--accent-500, #e87949); }
+
+/* ═══ Data Workbench — GDPR triage ═══ */
+.dv-scan-summary { display: flex; gap: 16px; font-size: 12px; margin-bottom: 12px; color: var(--text-300); }
+.dv-scan-summary .ok { color: #7ee787; }
+.dv-scan-summary .bad { color: #ff7b72; }
+.dv-scan-row { border: 1px solid var(--border-200); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; background: var(--bg-200); font-size: 12px; }
+.dv-scan-row.clean { opacity: 0.65; }
+.dv-scan-row .dv-scan-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dv-scan-row .dv-scan-name { font-weight: 600; color: var(--text-100); }
+.dv-scan-row .dv-scan-name.bad { color: #ff7b72; }
+.dv-scan-row .dv-scan-actions { display: flex; gap: 6px; }
+.dv-scan-row .dv-scan-detail { margin-top: 6px; color: var(--text-400); }
+.dv-scan-row .dv-scan-detail code { color: var(--text-300); }
+.dv-scan-row.fixed { border-color: #2f5d3f; }
+.dv-scan-row .dv-scan-fixmark { color: #7ee787; font-size: 11px; }
+
+/* ═══ Data Workbench — chart pane ═══ */
+.dv-right-col { display: flex; flex-direction: column; gap: 16px; }
+.dv-chart-pane { border: 1px solid var(--border-200); border-radius: 12px; padding: 14px; background: var(--bg-100); }
+.dv-chart-spec { width: 100%; min-height: 130px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; background: var(--bg-200); color: var(--text-100); border: 1px solid var(--border-200); border-radius: 8px; padding: 8px; resize: vertical; }
+.dv-chart-out { margin-top: 10px; }
+.dv-chart-out img { max-width: 100%; border: 1px solid var(--border-200); border-radius: 8px; background: #fff; }
+.dv-chart-out .vega-embed { background: #fff; border-radius: 8px; padding: 6px; }

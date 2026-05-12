@@ -1619,3 +1619,108 @@ class TranslateHistoryDB:
                     (entry_id, user_id),
                 )
             conn.commit()
+
+
+class DataSessionDB:
+    """Metadata for Data Workbench sessions — which tables live in each
+    session's per-session DuckDB file, plus title/owner for the History UI.
+
+    The DuckDB file itself lives inside the session's artifact folder
+    (CLAUDE.md invariant: python_exec's cwd is that folder, so generated
+    code reaches `_data.duckdb` via a bare relative path). This table only
+    holds the index of what's in it.
+    """
+
+    @staticmethod
+    def init():
+        with _db_conn() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS data_sessions (
+                    sid TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL DEFAULT 'main',
+                    user_id TEXT NOT NULL DEFAULT '',
+                    title TEXT NOT NULL DEFAULT '',
+                    tables_json TEXT NOT NULL DEFAULT '[]',
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_data_sessions_user ON data_sessions(user_id)")
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def create(*, sid: str, agent_id: str, user_id: str, title: str = "") -> None:
+        now = time.time()
+        with _db_conn() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO data_sessions
+                   (sid, agent_id, user_id, title, tables_json, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, '[]', ?, ?)""",
+                (sid, agent_id, user_id, title, now, now),
+            )
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def get(sid: str):
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM data_sessions WHERE sid = ?", (sid,)).fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    @_db_safe(default=list)
+    def list_for_user(user_id: str, limit: int = 200) -> list:
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT sid, agent_id, user_id, title, tables_json, created_at, updated_at
+                   FROM data_sessions WHERE user_id = ?
+                   ORDER BY updated_at DESC LIMIT ?""",
+                (user_id, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=list)
+    def list_all(limit: int = 500) -> list:
+        """Admin-only — every workbench session across users (for RBAC)."""
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT sid, agent_id, user_id, title, tables_json, created_at, updated_at
+                   FROM data_sessions ORDER BY updated_at DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=None)
+    def set_tables(sid: str, tables: list) -> None:
+        with _db_conn() as conn:
+            conn.execute(
+                "UPDATE data_sessions SET tables_json = ?, updated_at = ? WHERE sid = ?",
+                (json.dumps(tables), time.time(), sid),
+            )
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def set_title(sid: str, title: str) -> None:
+        with _db_conn() as conn:
+            conn.execute(
+                "UPDATE data_sessions SET title = ?, updated_at = ? WHERE sid = ?",
+                (title, time.time(), sid),
+            )
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def delete(sid: str, user_id: str, *, admin: bool = False) -> None:
+        with _db_conn() as conn:
+            if admin:
+                conn.execute("DELETE FROM data_sessions WHERE sid = ?", (sid,))
+            else:
+                conn.execute("DELETE FROM data_sessions WHERE sid = ? AND user_id = ?", (sid, user_id))
+            conn.commit()

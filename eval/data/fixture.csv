@@ -1,0 +1,16 @@
+entity,tier,status,findings_open,findings_closed,opened_month,region
+ACME Bank,1,open,12,3,2026-01,North
+ACME Bank,1,closed,0,8,2026-02,North
+Globex SA,2,open,5,2,2026-01,South
+Globex SA,2,open,7,1,2026-03,South
+Initech,3,open,2,0,2026-02,East
+Initech,3,closed,0,4,2026-04,East
+Umbrella Corp,1,open,9,2,2026-01,West
+Umbrella Corp,1,open,4,3,2026-03,West
+Soylent Ltd,2,open,3,1,2026-02,North
+Soylent Ltd,2,closed,0,6,2026-04,North
+Wayne Ent,1,open,15,1,2026-03,East
+Wayne Ent,1,open,6,4,2026-04,East
+Stark Ind,3,open,1,0,2026-01,South
+Stark Ind,3,closed,0,2,2026-02,South
+Hooli,2,open,8,3,2026-03,West

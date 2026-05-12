@@ -920,6 +920,11 @@ class ChatHandlerMixin:
             else:
                 engine._thread_local.note_context = None
 
+            # Data Workbench mode — when this session was created via
+            # /v1/data/sessions, _build_system_prompt injects the DATA
+            # WORKBENCH block (gated on this thread-local, mirrors `project`).
+            engine._thread_local.data_workbench = bool(getattr(session, "is_data_workbench", False))
+
             # Workflow-run binding: when this session was created from the
             # inline workflow detail view, expose the execution_id so the
             # round-0 preamble can pull a compact summary of the run.
@@ -1309,6 +1314,7 @@ class ChatHandlerMixin:
                 engine._thread_local.caveman_system = 0
                 engine._thread_local.execution_overrides = {}
                 engine._thread_local.research_mode_override = None
+                engine._thread_local.data_workbench = False
                 engine._thread_local._current_model = None
 
 

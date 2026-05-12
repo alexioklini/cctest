@@ -406,6 +406,13 @@ async function switchGeneralTab(tab, btn) {
                 </select>
               </div>
               <div style="display:flex;align-items:center;gap:6px;padding-top:14px"><input type="checkbox" class="mdl-guided-execution" ${cfg.guided_execution ? 'checked' : ''} style="margin:0"><label class="form-label" style="font-size:11px;margin:0;cursor:pointer" title="Decompose the user prompt into subtasks and execute each sequentially before the final reply. Designed for small/MoE local models that struggle with multi-step prompts.">Guided Execution</label></div>
+              <div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px" title="Decomposition granularity when Guided Execution is on. coarse = 2–5 self-contained subtasks. fine = up to 12 tiny atomic subtasks (one tool call / lookup / transform each) — better for small local models that stay on track one step at a time. (auto) = fine for local models, coarse for cloud.">Guided Granularity</label>
+                <select class="mdl-guided-granularity" style="width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)">
+                  <option value="" ${!cfg.guided_execution_granularity?'selected':''}>(auto)</option>
+                  <option value="coarse" ${cfg.guided_execution_granularity==='coarse'?'selected':''}>coarse (2–5 subtasks)</option>
+                  <option value="fine" ${cfg.guided_execution_granularity==='fine'?'selected':''}>fine (≤12 atomic)</option>
+                </select>
+              </div>
               <div style="display:flex;align-items:center;gap:6px;padding-top:14px"><input type="checkbox" class="mdl-parallel-tools" ${cfg.parallel_tool_calls !== false ? 'checked' : ''} style="margin:0"><label class="form-label" style="font-size:11px;margin:0;cursor:pointer">Parallel Tool Calls</label></div>
               <div style="display:flex;align-items:center;gap:6px;padding-top:14px"><input type="checkbox" class="mdl-warmup" ${cfg.warmup ? 'checked' : ''} style="margin:0"><label class="form-label" style="font-size:11px;margin:0;cursor:pointer" title="Prime this model's KV cache once so first-token latency is minimal. The warm state is held until the model is evicted — no periodic re-priming.">Warmup</label></div>
               <div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px" title="Full: prefill system+tools into KV cache (~5-6s first response, costs GPU memory). Minimal: load weights only (~10-15s first response, tiny memory footprint). Full-primed models may evict each other if GPU memory is tight.">Warmup Mode</label>
@@ -2119,6 +2126,10 @@ async function saveModelsConfig() {
       // Guided execution
       const ge = row.querySelector('.mdl-guided-execution')?.checked;
       if (ge) mc[mid].guided_execution = true; else delete mc[mid].guided_execution;
+      // Guided execution granularity ("" = auto: fine for local, coarse for cloud)
+      const gg = row.querySelector('.mdl-guided-granularity')?.value || '';
+      if (gg === 'coarse' || gg === 'fine') mc[mid].guided_execution_granularity = gg;
+      else delete mc[mid].guided_execution_granularity;
       // Parallel tool calls
       const ptc = row.querySelector('.mdl-parallel-tools')?.checked;
       if (ptc === false) mc[mid].parallel_tool_calls = false; else delete mc[mid].parallel_tool_calls;

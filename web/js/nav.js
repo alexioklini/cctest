@@ -20,6 +20,8 @@ function navigateTo(view, opts) {
   if (wfView) wfView.classList.remove('active');
   const trView = document.getElementById('translation-view');
   if (trView) trView.classList.remove('active');
+  const dvView = document.getElementById('data-view');
+  if (dvView) dvView.classList.remove('active');
 
   // Update sidebar active state
   document.querySelectorAll('.sb-nav-item').forEach(n => n.classList.remove('active'));
@@ -118,6 +120,14 @@ function navigateTo(view, opts) {
       _updateTranslationHeaderStar(activeTab);
       document.getElementById('status-bar').style.display = 'none';
       if (typeof loadTranslationView === 'function') loadTranslationView();
+      break;
+    }
+
+    case 'data': {
+      document.getElementById('data-view').classList.add('active');
+      updatePageHeader('Data Workbench');
+      document.getElementById('status-bar').style.display = 'none';
+      if (typeof loadDataView === 'function') loadDataView();
       break;
     }
 
