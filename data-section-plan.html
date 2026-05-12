@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Brain — "Data" Section: Implementation Plan (Data-Formulator-style AI viz)</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel2:#1c2230; --line:#2b3340;
+    --ink:#e6edf3; --mut:#9aa7b4; --dim:#6b7682;
+    --acc:#5aa9ff; --acc2:#7ee787; --warn:#ffb454; --bad:#ff7b72; --vio:#bc8cff;
+    --code:#0b0e13;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:48px 28px 120px}
+  h1{font-size:30px;margin:0 0 6px;letter-spacing:-.4px}
+  h2{font-size:22px;margin:54px 0 14px;padding-top:18px;border-top:1px solid var(--line);letter-spacing:-.2px}
+  h3{font-size:17px;margin:28px 0 8px;color:var(--acc)}
+  h4{font-size:14px;margin:20px 0 6px;color:var(--vio);text-transform:uppercase;letter-spacing:.06em}
+  p{margin:10px 0}
+  .sub{color:var(--mut);font-size:16px;margin:0 0 4px}
+  .tagrow{margin:14px 0 0}
+  .tag{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:3px 11px;font-size:12.5px;color:var(--mut);margin:0 6px 6px 0}
+  .tag.k{color:var(--acc2);border-color:#2f5d3f}
+  .tag.w{color:var(--warn);border-color:#5c4a26}
+  code,kbd{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+  code{background:#1b2330;border:1px solid var(--line);border-radius:5px;padding:1px 5px;color:#cfe3ff}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.55;color:#c9d6e2}
+  pre .c{color:#6b7682}
+  pre .s{color:#a5d6ff}
+  pre .y{color:#ffd699}
+  pre .g{color:#7ee787}
+  pre .v{color:#bc8cff}
+  a{color:var(--acc)}
+  ul,ol{margin:10px 0;padding-left:22px}
+  li{margin:5px 0}
+  .lead{font-size:16.5px;color:#cdd7e1}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:16px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+  @media(max-width:820px){.grid2,.grid3{grid-template-columns:1fr}}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:var(--mut);font-weight:600}
+  td code{font-size:12px}
+  .pill{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;letter-spacing:.04em}
+  .pill.reuse{background:#16331f;color:var(--acc2);border:1px solid #2f5d3f}
+  .pill.new{background:#33260f;color:var(--warn);border:1px solid #5c4a26}
+  .pill.touch{background:#1d2937;color:var(--acc);border:1px solid #2f4d6e}
+  .callout{border-left:3px solid var(--acc);background:#13202e;padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  .callout.warn{border-color:var(--warn);background:#241c0e}
+  .callout.bad{border-color:var(--bad);background:#2a1715}
+  .callout.good{border-color:var(--acc2);background:#10231a}
+  .callout b{color:var(--ink)}
+  figure{margin:22px 0;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;overflow:hidden}
+  figcaption{color:var(--dim);font-size:12.5px;margin-top:10px;text-align:center}
+  svg{display:block;max-width:100%;height:auto;margin:0 auto}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;justify-content:center;margin-top:10px;font-size:12px;color:var(--mut)}
+  .legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+  .toc{columns:2;column-gap:30px;font-size:14px}
+  .toc a{display:block;padding:3px 0;color:var(--mut);text-decoration:none}
+  .toc a:hover{color:var(--acc)}
+  .phase{display:flex;gap:14px;align-items:flex-start;margin:14px 0}
+  .phase .n{flex:0 0 38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px}
+  .phase.p1 .n{background:#13202e;color:var(--acc);border:1px solid #2f4d6e}
+  .phase.p2 .n{background:#241c0e;color:var(--warn);border:1px solid #5c4a26}
+  .phase.p3 .n{background:#1c1430;color:var(--vio);border:1px solid #45356b}
+  .phase.p4 .n{background:#10231a;color:var(--acc2);border:1px solid #2f5d3f}
+  .small{font-size:13px;color:var(--mut)}
+  hr{border:0;border-top:1px solid var(--line);margin:30px 0}
+  .kbd{background:#0b0e13;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-size:12px;color:#cfe3ff}
+  .checklist li{list-style:none;margin-left:-18px}
+  .checklist li::before{content:"☐ ";color:var(--dim)}
+  .footer{margin-top:60px;color:var(--dim);font-size:12.5px;border-top:1px solid var(--line);padding-top:18px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Brain — "Data" Section</h1>
+<p class="sub">An in-house, Data-Formulator-style AI data-visualization workspace — built as a first-class section like <b>Translation</b>, reusing the existing engine end-to-end. No fork, no second app, no parallel auth.</p>
+<div class="tagrow">
+  <span class="tag k">Reuse: agentic loop · python_exec sandbox · artifacts · GDPR scanner · quota · provider routing · history DB pattern · MemPalace</span>
+  <span class="tag w">New: DuckDB session store · Vega-Lite renderer · 2 thin tools · 1 handler mixin · 1 web view</span>
+  <span class="tag">Source of inspiration: <code>microsoft/data-formulator</code> (MIT) — concept &amp; prompts vendored, not the codebase</span>
+</div>
+
+<div class="callout">
+<b>The one-line pitch.</b> The bank's risk / finance / regulatory-reporting teams upload a spreadsheet (or point at a Postgres view), describe a chart in plain language, and Brain writes the pandas/SQL, runs it in the sandbox we already have, and renders an interactive chart — every LLM call passing through the GDPR scanner, quota gate, and provider router that already protect every other Brain feature.
+</div>
+
+<h2 id="toc">Contents</h2>
+<div class="toc card">
+  <a href="#why">1 · Why build, not embed</a>
+  <a href="#what-df">2 · What Data Formulator actually is</a>
+  <a href="#arch">3 · Target architecture (reuse map)</a>
+  <a href="#ux">4 · User experience &amp; mockups</a>
+  <a href="#flow">5 · Request flow (sequence)</a>
+  <a href="#api">6 · Server API surface</a>
+  <a href="#tools">7 · The two new tools</a>
+  <a href="#data">8 · Session data store (DuckDB)</a>
+  <a href="#guard">9 · Bank guardrails — what we get for free</a>
+  <a href="#phases">10 · Phased delivery (A → D)</a>
+  <a href="#files">11 · File-by-file change list</a>
+  <a href="#risk">12 · Risks, scope cuts, open questions</a>
+  <a href="#checklist">13 · Definition of done</a>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="why">1 · Why build, not embed</h2>
+<p class="lead">Data Formulator ships as <code>pip install data_formulator</code> → <code>uv run data_formulator</code>: a self-contained TS+Python web app on its own port, with its own auth, its own session store, its own LiteLLM config. Three integration options were considered:</p>
+
+<table>
+<tr><th>Option</th><th>Effort</th><th>Verdict</th></tr>
+<tr><td><b>A — Launch it as a companion app</b> (like the TUI). Brain's <code>launcher.py</code> already launches frontends.</td><td>Low</td><td><span class="pill new">REJECTED</span> Bank data would flow through <i>its</i> LLM config — bypassing the GDPR scanner, per-user quota, provider routing, audit log. Non-starter for bank data.</td></tr>
+<tr><td><b>B — Port the concept</b> as a new Brain section ("Data"), reusing the agentic loop, sandbox, artifacts, guardrails. Vendor Data Formulator's prompts + chart-semantics module (MIT).</td><td>Medium</td><td><span class="pill reuse">CHOSEN</span> The only version where bank data stays inside Brain's safety envelope. Matches how Translation / Workflows / Projects were all built.</td></tr>
+<tr><td><b>C — Wrap their <code>DataAgent.run()</code> as an MCP server.</b></td><td>Medium</td><td><span class="pill new">REJECTED</span> The LLM calls still happen inside Data Formulator's process with its own config → re-inherits A's GDPR problem. No benefit.</td></tr>
+</table>
+
+<div class="callout good"><b>Decision:</b> Option B. The expensive, distinctive part of Data Formulator's frontend — the drag-and-drop "encoding shelf" — is also the least essential; Brain's chat-first UX replaces it with "describe the chart" + an editable spec preview. The valuable, transferable parts are the <b>prompts</b> and the <b>chart-semantics layer</b>, both MIT-licensed and small enough to vendor with attribution.</div>
+
+<!-- ============================================================ -->
+<h2 id="what-df">2 · What Data Formulator actually is</h2>
+<div class="grid2">
+<div class="card">
+<h4>The core trick</h4>
+<p>You build a chart by dropping field names onto encoding shelves (x / y / color / size / …). Crucially you can drop fields <i>that don't exist yet</i> ("profit_margin", "rolling_30d_avg"). The AI then writes the pandas/SQL that <b>materializes those columns</b>, runs it in a sandbox, stores the result as Parquet, and renders a Vega-Lite chart whose encodings reference the new columns.</p>
+</div>
+<div class="card">
+<h4>v0.7 (alpha, Mar 2026)</h4>
+<ul>
+<li>Unified <code>DataAgent</code> — observe→think→act loop, actions: <code>visualize</code> / <code>clarify</code> / <code>present</code>, max 5 iterations.</li>
+<li>30 chart types via a "semantic chart engine" (<code>workflows/chart_semantics.py</code>).</li>
+<li>Workspace / data-lake (DuckDB local + Azure Blob), identity-based.</li>
+<li>Sandboxed exec, code signing, auth, rate limiting — i.e. they re-built half of what Brain already has.</li>
+<li>LiteLLM → OpenAI / Azure / Anthropic / Ollama.</li>
+</ul>
+</div>
+</div>
+
+<figure>
+<svg viewBox="0 0 920 250" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="12.5">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#5aa9ff"/></marker>
+  </defs>
+  <text x="10" y="20" fill="#9aa7b4" font-weight="700">Data Formulator's own pipeline (for reference — we reuse its shape, not its code)</text>
+
+  <rect x="10" y="40" width="150" height="56" rx="9" fill="#1c2230" stroke="#2b3340"/><text x="85" y="64" fill="#e6edf3" text-anchor="middle">Encoding shelf UI</text><text x="85" y="82" fill="#9aa7b4" text-anchor="middle" font-size="11">drag fields → x/y/color</text>
+
+  <rect x="200" y="40" width="160" height="56" rx="9" fill="#1c2230" stroke="#2b3340"/><text x="280" y="64" fill="#e6edf3" text-anchor="middle">DataAgent</text><text x="280" y="82" fill="#9aa7b4" text-anchor="middle" font-size="11">plan · clarify · visualize</text>
+
+  <rect x="400" y="40" width="170" height="56" rx="9" fill="#1c2230" stroke="#2b3340"/><text x="485" y="60" fill="#e6edf3" text-anchor="middle">LLM (LiteLLM)</text><text x="485" y="78" fill="#9aa7b4" text-anchor="middle" font-size="11">emits Vega-Lite spec</text><text x="485" y="92" fill="#9aa7b4" text-anchor="middle" font-size="11">+ pandas/SQL code</text>
+
+  <rect x="610" y="40" width="150" height="56" rx="9" fill="#1c2230" stroke="#2b3340"/><text x="685" y="60" fill="#e6edf3" text-anchor="middle">Sandbox</text><text x="685" y="78" fill="#9aa7b4" text-anchor="middle" font-size="11">run python →</text><text x="685" y="92" fill="#9aa7b4" text-anchor="middle" font-size="11">Parquet in workspace</text>
+
+  <rect x="800" y="40" width="110" height="56" rx="9" fill="#1c2230" stroke="#2b3340"/><text x="855" y="64" fill="#e6edf3" text-anchor="middle">Vega-Lite</text><text x="855" y="82" fill="#9aa7b4" text-anchor="middle" font-size="11">render chart</text>
+
+  <line x1="160" y1="68" x2="198" y2="68" stroke="#5aa9ff" marker-end="url(#ar)"/>
+  <line x1="360" y1="68" x2="398" y2="68" stroke="#5aa9ff" marker-end="url(#ar)"/>
+  <line x1="570" y1="68" x2="608" y2="68" stroke="#5aa9ff" marker-end="url(#ar)"/>
+  <line x1="760" y1="68" x2="798" y2="68" stroke="#5aa9ff" marker-end="url(#ar)"/>
+
+  <path d="M685 96 Q685 150 280 150 Q280 110 280 98" fill="none" stroke="#7ee787" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+  <text x="470" y="166" fill="#7ee787" text-anchor="middle" font-size="11">observation (data sample + chart img) → next turn</text>
+
+  <text x="10" y="210" fill="#6b7682" font-size="11">Brain already owns the boxes "DataAgent", "LLM router", "Sandbox", "(artifact) store". We add: a chat-driven replacement for "Encoding shelf UI", a Vega-Lite renderer, and a DuckDB-backed</text>
+  <text x="10" y="228" fill="#6b7682" font-size="11">session table store. Net new code is small.</text>
+</svg>
+<figcaption>Data Formulator's loop — the parts we keep are its <i>prompts</i> and <i>chart semantics</i>; the boxes are all things Brain already runs.</figcaption>
+</figure>
+
+<!-- ============================================================ -->
+<h2 id="arch">3 · Target architecture — the reuse map</h2>
+<p class="lead">Everything below the dashed line already exists in Brain. The Data section adds only the four boxed-orange components.</p>
+
+<figure>
+<svg viewBox="0 0 940 470" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="12.5">
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#5aa9ff"/></marker>
+    <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#7ee787"/></marker>
+  </defs>
+
+  <!-- top: web UI -->
+  <rect x="20" y="14" width="900" height="92" rx="12" fill="#161b22" stroke="#2b3340"/>
+  <text x="36" y="34" fill="#9aa7b4" font-weight="700">web/index.html — sidebar nav</text>
+  <rect x="40" y="44" width="120" height="48" rx="8" fill="#1c2230" stroke="#2b3340"/><text x="100" y="73" fill="#9aa7b4" text-anchor="middle">Chats</text>
+  <rect x="172" y="44" width="120" height="48" rx="8" fill="#1c2230" stroke="#2b3340"/><text x="232" y="73" fill="#9aa7b4" text-anchor="middle">Translation</text>
+  <rect x="304" y="44" width="120" height="48" rx="8" fill="#1c2230" stroke="#2b3340"/><text x="364" y="73" fill="#9aa7b4" text-anchor="middle">Projects</text>
+  <rect x="436" y="44" width="150" height="48" rx="8" fill="#241c0e" stroke="#5c4a26" stroke-width="2"/><text x="511" y="67" fill="#ffb454" text-anchor="middle" font-weight="700">Data ◀ NEW</text><text x="511" y="83" fill="#9aa7b4" text-anchor="middle" font-size="10.5">web/js/data.js</text>
+  <rect x="598" y="44" width="120" height="48" rx="8" fill="#1c2230" stroke="#2b3340"/><text x="658" y="73" fill="#9aa7b4" text-anchor="middle">Schedules</text>
+  <rect x="730" y="44" width="170" height="48" rx="8" fill="#1c2230" stroke="#2b3340"/><text x="815" y="73" fill="#9aa7b4" text-anchor="middle">Settings</text>
+
+  <!-- handlers -->
+  <rect x="20" y="128" width="900" height="78" rx="12" fill="#161b22" stroke="#2b3340"/>
+  <text x="36" y="148" fill="#9aa7b4" font-weight="700">server.py routes  →  handlers/*</text>
+  <rect x="40" y="158" width="150" height="38" rx="7" fill="#1c2230" stroke="#2b3340"/><text x="115" y="182" fill="#9aa7b4" text-anchor="middle">handlers/chat.py</text>
+  <rect x="202" y="158" width="180" height="38" rx="7" fill="#1c2230" stroke="#2b3340"/><text x="292" y="182" fill="#9aa7b4" text-anchor="middle">handlers/translate.py</text>
+  <rect x="394" y="158" width="200" height="38" rx="7" fill="#241c0e" stroke="#5c4a26" stroke-width="2"/><text x="494" y="182" fill="#ffb454" text-anchor="middle" font-weight="700">handlers/data_viz.py ◀ NEW</text>
+  <rect x="606" y="158" width="160" height="38" rx="7" fill="#1c2230" stroke="#2b3340"/><text x="686" y="182" fill="#9aa7b4" text-anchor="middle">handlers/projects.py</text>
+
+  <!-- dashed reuse line -->
+  <line x1="20" y1="224" x2="920" y2="224" stroke="#3a4654" stroke-dasharray="6 4"/>
+  <text x="470" y="240" fill="#7ee787" text-anchor="middle" font-size="11.5" font-weight="700">▼ everything below already exists — Data section calls it, adds nothing ▼</text>
+
+  <!-- engine row -->
+  <rect x="20" y="252" width="440" height="200" rx="12" fill="#10231a" stroke="#2f5d3f"/>
+  <text x="36" y="272" fill="#7ee787" font-weight="700">brain.py / engine/ — REUSED AS-IS</text>
+  <rect x="40" y="284" width="190" height="40" rx="7" fill="#16331f" stroke="#2f5d3f"/><text x="135" y="308" fill="#9aef9a" text-anchor="middle">send_message() loop</text>
+  <rect x="244" y="284" width="200" height="40" rx="7" fill="#16331f" stroke="#2f5d3f"/><text x="344" y="308" fill="#9aef9a" text-anchor="middle">python_exec sandbox</text>
+  <rect x="40" y="332" width="190" height="40" rx="7" fill="#16331f" stroke="#2f5d3f"/><text x="135" y="356" fill="#9aef9a" text-anchor="middle">resolve_provider_for_model</text>
+  <rect x="244" y="332" width="200" height="40" rx="7" fill="#16331f" stroke="#2f5d3f"/><text x="344" y="356" fill="#9aef9a" text-anchor="middle">GDPR / PII scanner</text>
+  <rect x="40" y="380" width="190" height="40" rx="7" fill="#16331f" stroke="#2f5d3f"/><text x="135" y="404" fill="#9aef9a" text-anchor="middle">QuotaManager · CostTracker</text>
+  <rect x="244" y="380" width="200" height="40" rx="7" fill="#16331f" stroke="#2f5d3f"/><text x="344" y="404" fill="#9aef9a" text-anchor="middle">artifact versioning + miner</text>
+
+  <!-- storage row -->
+  <rect x="480" y="252" width="440" height="200" rx="12" fill="#161b22" stroke="#2b3340"/>
+  <text x="496" y="272" fill="#9aa7b4" font-weight="700">storage</text>
+  <rect x="500" y="284" width="190" height="40" rx="7" fill="#1c2230" stroke="#2b3340"/><text x="595" y="308" fill="#9aa7b4" text-anchor="middle">chats.db / artifacts</text>
+  <rect x="704" y="284" width="196" height="40" rx="7" fill="#1c2230" stroke="#2b3340"/><text x="802" y="308" fill="#9aa7b4" text-anchor="middle">MemPalace (insights)</text>
+  <rect x="500" y="332" width="190" height="40" rx="7" fill="#1c2230" stroke="#2b3340"/><text x="595" y="356" fill="#9aa7b4" text-anchor="middle">server_lib/db.py</text>
+  <rect x="704" y="332" width="196" height="40" rx="7" fill="#241c0e" stroke="#5c4a26" stroke-width="2"/><text x="802" y="350" fill="#ffb454" text-anchor="middle" font-weight="700">DataSessionDB ◀ NEW</text><text x="802" y="364" fill="#9aa7b4" text-anchor="middle" font-size="10">metadata row in server_lib/db.py</text>
+  <rect x="500" y="380" width="400" height="40" rx="7" fill="#241c0e" stroke="#5c4a26" stroke-width="2"/><text x="700" y="398" fill="#ffb454" text-anchor="middle" font-weight="700">per-session DuckDB file ◀ NEW</text><text x="700" y="413" fill="#9aa7b4" text-anchor="middle" font-size="10">agents/&lt;a&gt;/artifacts/&lt;date&gt;_&lt;sid&gt;/_data.duckdb — sits inside the artifact folder, auto-cleaned with it</text>
+
+  <!-- arrows -->
+  <line x1="511" y1="92" x2="494" y2="156" stroke="#5aa9ff" marker-end="url(#a2)"/>
+  <line x1="494" y1="198" x2="300" y2="284" stroke="#7ee787" marker-end="url(#a3)"/>
+  <line x1="494" y1="198" x2="600" y2="380" stroke="#7ee787" marker-end="url(#a3)"/>
+</svg>
+<div class="legend">
+  <span><i style="background:#241c0e;border:1px solid #5c4a26"></i>new code (≈ 4 components)</span>
+  <span><i style="background:#10231a;border:1px solid #2f5d3f"></i>reused engine, untouched</span>
+  <span><i style="background:#1c2230"></i>existing, untouched</span>
+</div>
+<figcaption>Reuse map. New code: <code>web/js/data.js</code>, <code>handlers/data_viz.py</code>, two tools in <code>engine/tools</code>+<code>brain.py</code>, a metadata table + DuckDB file. Everything else is a function call into code that already runs in production.</figcaption>
+</figure>
+
+<h3>Why a per-session DuckDB file inside the artifact folder</h3>
+<ul>
+<li>Brain already creates <code>agents/&lt;name&gt;/artifacts/&lt;date&gt;_&lt;session_prefix&gt;/</code> per session and the empty-session cleanup / artifact promotion machinery already manages that folder. Dropping <code>_data.duckdb</code> there means it's cleaned up, scoped, and per-user for free.</li>
+<li><code>python_exec</code>'s working dir <b>is</b> that artifact folder (CLAUDE.md: "Working dir = artifact session folder"). So generated pandas/SQL can do <code>duckdb.connect('_data.duckdb')</code> with a bare relative path — no path plumbing needed.</li>
+<li>DuckDB is already a transitive dep (Data Formulator uses it; Brain's project ingest path touches it). One pinned line in <code>requirements.txt</code>.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="ux">4 · User experience &amp; mockups</h2>
+
+<h3>4.1 — Entry point: the sidebar</h3>
+<p>A new <code>data-view</code> registered exactly like <code>translation-view</code> in <code>web/js/nav.js</code> — same <code>switchView()</code> dispatch, same per-section collapse persistence, same header-star (favourite) plumbing. Sub-tabs mirror Translation's <code>text / document / audio / live</code> pattern.</p>
+
+<figure>
+<svg viewBox="0 0 940 360" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="12.5">
+  <rect x="0" y="0" width="940" height="360" rx="10" fill="#0e1116" stroke="#2b3340"/>
+  <!-- sidebar -->
+  <rect x="0" y="0" width="210" height="360" fill="#11151c"/>
+  <text x="18" y="28" fill="#e6edf3" font-weight="800" font-size="14">🧠 Brain</text>
+  <rect x="10" y="44" width="190" height="26" rx="6" fill="none"/><text x="22" y="62" fill="#9aa7b4">💬 Chats</text>
+  <rect x="10" y="74" width="190" height="26" rx="6" fill="none"/><text x="22" y="92" fill="#9aa7b4">🌐 Translation</text>
+  <rect x="10" y="104" width="190" height="26" rx="6" fill="none"/><text x="22" y="122" fill="#9aa7b4">📁 Projects</text>
+  <rect x="10" y="134" width="190" height="26" rx="6" fill="#1d2937" stroke="#2f4d6e"/><text x="22" y="152" fill="#5aa9ff" font-weight="700">📊 Data</text>
+  <rect x="22" y="164" width="178" height="22" rx="5" fill="#161b22"/><text x="34" y="180" fill="#cdd7e1" font-size="11.5">▸ Workbench</text>
+  <rect x="22" y="190" width="178" height="22" rx="5" fill="none"/><text x="34" y="206" fill="#9aa7b4" font-size="11.5">▸ Sources</text>
+  <rect x="22" y="216" width="178" height="22" rx="5" fill="none"/><text x="34" y="232" fill="#9aa7b4" font-size="11.5">▸ History &amp; Reports</text>
+  <rect x="10" y="246" width="190" height="26" rx="6" fill="none"/><text x="22" y="264" fill="#9aa7b4">⏰ Schedules</text>
+  <rect x="10" y="304" width="190" height="26" rx="6" fill="none"/><text x="22" y="322" fill="#9aa7b4">⚙️ Settings</text>
+  <text x="18" y="350" fill="#6b7682" font-size="10">admin · cloud quota 41%</text>
+
+  <!-- main: workbench -->
+  <text x="232" y="30" fill="#e6edf3" font-weight="800" font-size="15">Data Workbench</text>
+  <text x="232" y="48" fill="#9aa7b4" font-size="11.5">session: "FY26 IT-risk by entity" · source: risk_register.xlsx (4 sheets, 12.4k rows → DuckDB)</text>
+  <rect x="232" y="58" width="120" height="22" rx="11" fill="#13202e" stroke="#2f4d6e"/><text x="292" y="73" fill="#5aa9ff" text-anchor="middle" font-size="11">model: Mistral Small</text>
+  <rect x="360" y="58" width="150" height="22" rx="11" fill="#16331f" stroke="#2f5d3f"/><text x="435" y="73" fill="#7ee787" text-anchor="middle" font-size="11">GDPR scan: clean ✓</text>
+  <rect x="518" y="58" width="120" height="22" rx="11" fill="#1c2230" stroke="#2b3340"/><text x="578" y="73" fill="#9aa7b4" text-anchor="middle" font-size="11">⌘K commands</text>
+
+  <!-- left: chat thread -->
+  <rect x="232" y="92" width="330" height="240" rx="10" fill="#11151c" stroke="#2b3340"/>
+  <text x="246" y="112" fill="#6b7682" font-size="10.5">CONVERSATION (Brain agentic loop)</text>
+  <rect x="246" y="120" width="300" height="46" rx="8" fill="#1b2330"/><text x="258" y="138" fill="#cdd7e1" font-size="11.5">▸ "Stacked bar: open findings per</text><text x="258" y="153" fill="#cdd7e1" font-size="11.5">  entity, split by risk tier, top 8"</text>
+  <rect x="246" y="172" width="300" height="80" rx="8" fill="#10231a" stroke="#2f5d3f"/><text x="258" y="190" fill="#7ee787" font-size="11">⚙ ran python_exec → _data.duckdb</text><text x="258" y="205" fill="#9aa7b4" font-size="10.5">SQL: SELECT entity, tier, count(*) … GROUP BY</text><text x="258" y="219" fill="#9aa7b4" font-size="10.5">→ wrote findings_by_entity (8×3)</text><text x="258" y="234" fill="#9aa7b4" font-size="10.5">→ emitted Vega-Lite spec (bar, stacked)</text><text x="258" y="248" fill="#cdd7e1" font-size="10.5">"Done — chart on the right. Want a % view?"</text>
+  <rect x="246" y="258" width="300" height="24" rx="8" fill="#1b2330"/><text x="258" y="274" fill="#9aa7b4" font-size="11">▸ ask a follow-up or pick a suggestion…</text>
+  <rect x="246" y="288" width="146" height="20" rx="10" fill="#13202e" stroke="#2f4d6e"/><text x="319" y="302" fill="#5aa9ff" text-anchor="middle" font-size="10">＋ Pin as Report</text>
+  <rect x="398" y="288" width="148" height="20" rx="10" fill="#1c1430" stroke="#45356b"/><text x="472" y="302" fill="#bc8cff" text-anchor="middle" font-size="10">＋ Save insight to memory</text>
+  <text x="246" y="324" fill="#6b7682" font-size="10">suggestions: ▸ % share view  ▸ trend over quarters  ▸ drill into entity</text>
+
+  <!-- right: chart + spec -->
+  <rect x="572" y="92" width="356" height="170" rx="10" fill="#11151c" stroke="#2b3340"/>
+  <text x="586" y="112" fill="#6b7682" font-size="10.5">CHART (Vega-Lite via vega-embed)</text>
+  <!-- mini stacked bars -->
+  <g transform="translate(596,124)">
+    <line x1="0" y1="108" x2="310" y2="108" stroke="#2b3340"/>
+    <line x1="0" y1="0" x2="0" y2="108" stroke="#2b3340"/>
+    <!-- bars -->
+    <g>
+      <rect x="14" y="40" width="26" height="40" fill="#5aa9ff"/><rect x="14" y="22" width="26" height="18" fill="#ffb454"/><rect x="14" y="14" width="26" height="8" fill="#ff7b72"/>
+      <rect x="52" y="50" width="26" height="30" fill="#5aa9ff"/><rect x="52" y="34" width="26" height="16" fill="#ffb454"/><rect x="52" y="28" width="26" height="6" fill="#ff7b72"/>
+      <rect x="90" y="44" width="26" height="36" fill="#5aa9ff"/><rect x="90" y="30" width="26" height="14" fill="#ffb454"/><rect x="90" y="22" width="26" height="8" fill="#ff7b72"/>
+      <rect x="128" y="58" width="26" height="22" fill="#5aa9ff"/><rect x="128" y="46" width="26" height="12" fill="#ffb454"/><rect x="128" y="40" width="26" height="6" fill="#ff7b72"/>
+      <rect x="166" y="54" width="26" height="26" fill="#5aa9ff"/><rect x="166" y="42" width="26" height="12" fill="#ffb454"/><rect x="166" y="36" width="26" height="6" fill="#ff7b72"/>
+      <rect x="204" y="62" width="26" height="18" fill="#5aa9ff"/><rect x="204" y="52" width="26" height="10" fill="#ffb454"/><rect x="204" y="46" width="26" height="6" fill="#ff7b72"/>
+      <rect x="242" y="66" width="26" height="14" fill="#5aa9ff"/><rect x="242" y="58" width="26" height="8" fill="#ffb454"/><rect x="242" y="53" width="26" height="5" fill="#ff7b72"/>
+      <rect x="280" y="70" width="26" height="10" fill="#5aa9ff"/><rect x="280" y="63" width="26" height="7" fill="#ffb454"/><rect x="280" y="59" width="26" height="4" fill="#ff7b72"/>
+    </g>
+    <text x="0" y="122" fill="#6b7682" font-size="9">Entity A  B  C  D  E  F  G  H</text>
+    <rect x="250" y="-4" width="10" height="10" fill="#5aa9ff"/><text x="263" y="5" fill="#9aa7b4" font-size="9">Low</text>
+    <rect x="250" y="10" width="10" height="10" fill="#ffb454"/><text x="263" y="19" fill="#9aa7b4" font-size="9">Med</text>
+    <rect x="290" y="-4" width="10" height="10" fill="#ff7b72"/><text x="303" y="5" fill="#9aa7b4" font-size="9">High</text>
+  </g>
+
+  <!-- spec editor -->
+  <rect x="572" y="270" width="356" height="62" rx="10" fill="#0b0e13" stroke="#2b3340"/>
+  <text x="586" y="288" fill="#6b7682" font-size="10.5">SPEC (editable — tweak &amp; re-render, no LLM)</text>
+  <text x="586" y="304" fill="#7ee787" font-size="10" font-family="monospace">{ "mark":"bar", "encoding":{ "x":{"field":"entity"},</text>
+  <text x="586" y="317" fill="#7ee787" font-size="10" font-family="monospace">  "y":{"field":"n","stack":"zero"}, "color":{"field":"tier"} } }</text>
+  <rect x="836" y="320" width="84" height="0" fill="none"/>
+</svg>
+<figcaption>The <b>Workbench</b> sub-tab. Left = the Brain agentic loop (same SSE stream, tool calls visible inline like any chat). Right = live Vega-Lite chart + an editable spec textarea (edit → re-render client-side, zero LLM cost). "Pin as Report" and "Save insight to memory" reuse the artifact pin + MemPalace memorize machinery wholesale.</figcaption>
+</figure>
+
+<h3>4.2 — Sources sub-tab</h3>
+<p>Two ways to get data in. Both feed the same per-session DuckDB.</p>
+<div class="grid2">
+<div class="card">
+<h4>Upload a file</h4>
+<p>CSV / TSV / XLSX (multi-sheet) / Parquet / JSON. Goes through the <b>existing</b> multipart upload path used by Translation's document tab and the project ingest — we don't write a new uploader. On arrival: each sheet/table → a DuckDB table; a 20-row sample + schema is computed and shown.</p>
+<p class="small">Behind the curtain: a <code>POST /v1/data/sessions/&lt;sid&gt;/upload</code> that calls the same <code>_parse_multipart</code> helper translate.py uses, then <code>duckdb.read_csv / read_parquet / pandas.read_excel → con.register</code>.</p>
+</div>
+<div class="card">
+<h4>Connect a source (Phase C)</h4>
+<p>Postgres / MSSQL / a project's already-ingested folder. Reuses the connection-string handling Data Formulator's data-loader module formalized — but the credentials live in Brain's existing per-user secret store, and the connection is read-only. The agent sees only the schema + a sample, never raw bulk rows in context.</p>
+<p class="small">Bank reality: this is where the GDPR scanner matters most. The sample shown to the model is scanned before it ever reaches the LLM (see §9).</p>
+</div>
+</div>
+
+<figure>
+<svg viewBox="0 0 940 230" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="12">
+  <rect x="0" y="0" width="940" height="230" rx="10" fill="#0e1116" stroke="#2b3340"/>
+  <text x="20" y="28" fill="#e6edf3" font-weight="800" font-size="14">Sources — current session</text>
+  <!-- dropzone -->
+  <rect x="20" y="40" width="280" height="120" rx="12" fill="#11151c" stroke="#2f4d6e" stroke-dasharray="6 4"/>
+  <text x="160" y="92" fill="#5aa9ff" text-anchor="middle" font-size="13">⬆  Drop a spreadsheet here</text>
+  <text x="160" y="112" fill="#6b7682" text-anchor="middle" font-size="11">csv · tsv · xlsx · parquet · json — up to 200 MB</text>
+  <rect x="100" y="124" width="120" height="22" rx="11" fill="#13202e" stroke="#2f4d6e"/><text x="160" y="139" fill="#5aa9ff" text-anchor="middle" font-size="11">or browse…</text>
+  <!-- loaded tables -->
+  <rect x="320" y="40" width="600" height="170" rx="12" fill="#11151c" stroke="#2b3340"/>
+  <text x="334" y="60" fill="#6b7682" font-size="10.5">TABLES IN _data.duckdb</text>
+  <rect x="334" y="68" width="572" height="30" rx="6" fill="#1b2330"/><text x="346" y="87" fill="#cdd7e1" font-size="11.5">📄 findings  &nbsp;·&nbsp; 12 411 rows × 18 cols  &nbsp;·&nbsp; from risk_register.xlsx › "Findings"  &nbsp;·&nbsp; <tspan fill="#7ee787">scanned: clean</tspan></text>
+  <rect x="334" y="102" width="572" height="30" rx="6" fill="#161b22"/><text x="346" y="121" fill="#cdd7e1" font-size="11.5">📄 entities  &nbsp;·&nbsp; 214 rows × 6 cols  &nbsp;·&nbsp; from risk_register.xlsx › "Entities"  &nbsp;·&nbsp; <tspan fill="#7ee787">scanned: clean</tspan></text>
+  <rect x="334" y="136" width="572" height="30" rx="6" fill="#161b22"/><text x="346" y="155" fill="#cdd7e1" font-size="11.5">📄 controls  &nbsp;·&nbsp; 3 902 rows × 11 cols  &nbsp;·&nbsp; from risk_register.xlsx › "Controls"  &nbsp;·&nbsp; <tspan fill="#ffb454">2 cols look like emails — masked in samples</tspan></text>
+  <text x="334" y="190" fill="#6b7682" font-size="10.5">SAMPLE (first 5 rows of "findings" — what the model sees)</text>
+  <text x="334" y="204" fill="#9aa7b4" font-size="10" font-family="monospace">finding_id | entity | tier | status | opened | owner_role | … </text>
+</svg>
+<figcaption>Sources tab. The "2 cols look like emails — masked in samples" line is the GDPR scanner doing its job <i>before</i> any sample reaches the model — same scanner, same rules, applied at data-ingest time.</figcaption>
+</figure>
+
+<h3>4.3 — History &amp; Reports</h3>
+<p>1:1 the Translation History pattern (<code>TranslateHistoryDB</code> → <code>DataSessionDB</code>). Every workbench session is a row; "Pin as Report" produces an HTML/PNG artifact in the session's artifact folder — already promoted, already visible in the global Artifacts panel, already mined by the artifact miner. A pinned report is just an artifact with role <code>output</code>.</p>
+
+<h3>4.4 — The agentic loop, concretely</h3>
+<p>This is <b>not</b> a new agent. It's the normal Brain chat loop, in a session whose system prompt has a "DATA WORKBENCH" block (the way project chats get a "PROJECT MEMORY" block) and whose tool set includes <code>code_exec</code> + the two new data tools. The DataAgent <i>behavior</i> (plan → maybe clarify → visualize → present) is achieved by vendoring Data Formulator's prompt text into that block, not by writing a state machine.</p>
+
+<figure>
+<svg viewBox="0 0 920 220" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="12.5">
+  <defs><marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#7ee787"/></marker></defs>
+  <rect x="20" y="20" width="160" height="50" rx="9" fill="#1b2330" stroke="#2b3340"/><text x="100" y="42" fill="#cdd7e1" text-anchor="middle">user describes</text><text x="100" y="58" fill="#9aa7b4" text-anchor="middle" font-size="11">chart / question</text>
+  <rect x="220" y="20" width="180" height="50" rx="9" fill="#10231a" stroke="#2f5d3f"/><text x="310" y="38" fill="#7ee787" text-anchor="middle">Brain loop, round N</text><text x="310" y="54" fill="#9aa7b4" text-anchor="middle" font-size="11">plan · clarify? · act</text>
+  <rect x="440" y="20" width="180" height="50" rx="9" fill="#10231a" stroke="#2f5d3f"/><text x="530" y="38" fill="#7ee787" text-anchor="middle">python_exec</text><text x="530" y="54" fill="#9aa7b4" text-anchor="middle" font-size="11">DuckDB SQL/pandas → table</text>
+  <rect x="660" y="20" width="160" height="50" rx="9" fill="#241c0e" stroke="#5c4a26"/><text x="740" y="38" fill="#ffb454" text-anchor="middle">data_render_chart</text><text x="740" y="54" fill="#9aa7b4" text-anchor="middle" font-size="11">validate Vega-Lite spec</text>
+
+  <line x1="180" y1="45" x2="218" y2="45" stroke="#7ee787" marker-end="url(#a4)"/>
+  <line x1="400" y1="45" x2="438" y2="45" stroke="#7ee787" marker-end="url(#a4)"/>
+  <line x1="620" y1="45" x2="658" y2="45" stroke="#7ee787" marker-end="url(#a4)"/>
+
+  <path d="M740 70 Q740 130 310 130 Q310 95 310 72" fill="none" stroke="#7ee787" stroke-dasharray="4 3" marker-end="url(#a4)"/>
+  <text x="525" y="146" fill="#7ee787" text-anchor="middle" font-size="11">observation (sample of new table + spec valid?) → next round, max ~5</text>
+
+  <rect x="220" y="160" width="400" height="44" rx="9" fill="#1c1430" stroke="#45356b"/><text x="420" y="178" fill="#bc8cff" text-anchor="middle">SSE events you already have: tool_call, tool_result, text delta…</text><text x="420" y="194" fill="#9aa7b4" text-anchor="middle" font-size="11">+ one new event type: data_chart {table, spec, png_b64}</text>
+  <line x1="740" y1="70" x2="620" y2="160" stroke="#bc8cff" stroke-dasharray="3 3"/>
+</svg>
+<figcaption>The loop is the existing one. Only two things are genuinely new: the <code>data_render_chart</code> tool and one extra SSE event (<code>data_chart</code>) so the frontend can update the chart pane. Everything else — streaming, tool-call display, cancellation, compaction, cost logging — is inherited.</figcaption>
+</figure>
+
+<!-- ============================================================ -->
+<h2 id="flow">5 · Request flow (sequence)</h2>
+<figure>
+<svg viewBox="0 0 920 430" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="11.5">
+  <!-- lifelines -->
+  <g stroke="#2b3340"><line x1="90" y1="40" x2="90" y2="410"/><line x1="280" y1="40" x2="280" y2="410"/><line x1="470" y1="40" x2="470" y2="410"/><line x1="640" y1="40" x2="640" y2="410"/><line x1="820" y1="40" x2="820" y2="410"/></g>
+  <g font-weight="700" text-anchor="middle">
+    <rect x="40" y="14" width="100" height="24" rx="6" fill="#1c2230" stroke="#2b3340"/><text x="90" y="31" fill="#cdd7e1">web/js/data.js</text>
+    <rect x="222" y="14" width="116" height="24" rx="6" fill="#241c0e" stroke="#5c4a26"/><text x="280" y="31" fill="#ffb454">data_viz.py</text>
+    <rect x="412" y="14" width="116" height="24" rx="6" fill="#10231a" stroke="#2f5d3f"/><text x="470" y="31" fill="#7ee787">send_message()</text>
+    <rect x="582" y="14" width="116" height="24" rx="6" fill="#10231a" stroke="#2f5d3f"/><text x="640" y="31" fill="#7ee787">GDPR · quota</text>
+    <rect x="762" y="14" width="116" height="24" rx="6" fill="#10231a" stroke="#2f5d3f"/><text x="820" y="31" fill="#7ee787">python_exec</text>
+  </g>
+  <g fill="#9aa7b4">
+    <text x="95" y="58">1 POST /v1/data/sessions/&lt;sid&gt;/ask {prompt}  ──────────────►</text>
+    <line x1="90" y1="62" x2="280" y2="62" stroke="#5aa9ff" stroke-width="1.4"/>
+    <text x="285" y="80">2 ensure DuckDB exists · build system prompt w/ DATA block</text>
+    <text x="285" y="96">  + table schemas + samples (scanned)  ───────►</text>
+    <line x1="280" y1="100" x2="470" y2="100" stroke="#5aa9ff" stroke-width="1.4"/>
+    <text x="475" y="118">3 round 0: pre-flight GDPR scan of the sample text</text>
+    <text x="475" y="134">  ───────────────────────────────►</text>
+    <line x1="470" y1="138" x2="640" y2="138" stroke="#7ee787" stroke-width="1.4"/>
+    <text x="475" y="152">   ◄── clean → proceed  (or: swap to local model / block)</text>
+    <line x1="640" y1="156" x2="470" y2="156" stroke="#7ee787" stroke-dasharray="3 2"/>
+    <text x="475" y="174">4 model emits tool_call: python_exec(sql)  ──────────►</text>
+    <line x1="470" y1="178" x2="820" y2="178" stroke="#5aa9ff" stroke-width="1.4"/>
+    <text x="475" y="192">   ◄── stdout: "wrote table findings_by_entity (8×3)"</text>
+    <line x1="820" y1="196" x2="470" y2="196" stroke="#5aa9ff" stroke-dasharray="3 2"/>
+    <text x="475" y="210">5 model emits tool_call: data_render_chart(spec)</text>
+    <text x="285" y="226">   ◄─── tool runs in data_viz.py: validate spec, attach</text>
+    <text x="285" y="242">        last-table sample → returns ok  ◄────────</text>
+    <line x1="470" y1="246" x2="280" y2="246" stroke="#5aa9ff" stroke-dasharray="3 2"/>
+    <text x="95" y="262">6 SSE data_chart {table:"findings_by_entity", spec, png_b64}  ◄───</text>
+    <line x1="280" y1="266" x2="90" y2="266" stroke="#bc8cff" stroke-width="1.4"/>
+    <text x="95" y="280">   → vega-embed renders right pane; spec textarea populated</text>
+    <text x="95" y="300">7 model: "Done. Want a % view?" + suggestions  ◄── (normal text deltas)</text>
+    <line x1="280" y1="304" x2="90" y2="304" stroke="#5aa9ff" stroke-dasharray="3 2"/>
+    <text x="95" y="322">8 user clicks "Pin as Report"  ──► POST /v1/data/sessions/&lt;sid&gt;/pin</text>
+    <line x1="90" y1="326" x2="280" y2="326" stroke="#5aa9ff" stroke-width="1.4"/>
+    <text x="285" y="340">   write report.html into artifact folder → _after_file_write()</text>
+    <text x="285" y="356">   → artifact row + SSE artifact_updated + miner picks it up</text>
+    <text x="285" y="382" fill="#7ee787">All cost rows logged by CostTracker · all calls counted by RateLimiter · all on auth'd user_id</text>
+  </g>
+</svg>
+<figcaption>End-to-end. Steps 3, 4, and 8's machinery (GDPR pre-flight, sandbox exec, artifact promotion) are <b>verbatim the existing code paths</b> — <code>data_viz.py</code> just kicks off <code>send_message()</code> with the right system prompt and tool set, exactly as <code>handlers/translate.py</code>'s document worker primes thread-locals and calls into <code>brain</code>.</figcaption>
+</figure>
+
+<!-- ============================================================ -->
+<h2 id="api">6 · Server API surface</h2>
+<p>Mirrors the <code>/v1/translate/*</code> shape. All under <code>/v1/data/*</code>, all gated by the same auth + RBAC the rest of the API uses.</p>
+<table>
+<tr><th>Method · path</th><th>Purpose</th><th>Reuses</th></tr>
+<tr><td><code>POST /v1/data/sessions</code></td><td>Create a workbench session (mints artifact folder + empty DuckDB)</td><td>session-creation helper, artifact-folder convention</td></tr>
+<tr><td><code>POST /v1/data/sessions/&lt;sid&gt;/upload</code></td><td>Multipart file → DuckDB table(s); returns schema + scanned sample</td><td><code>_parse_multipart</code> (translate.py), GDPR scanner</td></tr>
+<tr><td><code>GET /v1/data/sessions/&lt;sid&gt;/tables</code></td><td>List tables, row counts, schemas, sample, scan flags</td><td>—</td></tr>
+<tr><td><code>POST /v1/data/sessions/&lt;sid&gt;/ask</code> (SSE)</td><td>The agentic turn — streams tool calls, text, <code>data_chart</code> events</td><td><code>send_message()</code> loop, SSE keepalive, cancellation</td></tr>
+<tr><td><code>POST /v1/data/sessions/&lt;sid&gt;/render</code></td><td>Re-render an edited spec (no LLM) — returns PNG for the pane</td><td>Vega CLI / <code>altair_saver</code>-style render (new, tiny)</td></tr>
+<tr><td><code>POST /v1/data/sessions/&lt;sid&gt;/pin</code></td><td>Pin current chart+data as an HTML report artifact</td><td><code>_after_file_write()</code>, artifact versioning, miner</td></tr>
+<tr><td><code>GET /v1/data/history</code> · <code>…/&lt;id&gt;</code> · <code>…/&lt;id&gt;/file</code></td><td>List / open / fetch past sessions &amp; reports</td><td><code>TranslateHistoryDB</code> pattern → <code>DataSessionDB</code></td></tr>
+<tr><td><code>POST /v1/data/sessions/&lt;sid&gt;/memorize</code></td><td>Save an insight to MemPalace</td><td><code>memorize_turns</code> / direct <code>tool_add_drawer</code> path</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="tools">7 · The two new tools</h2>
+<p>Added to <code>TOOL_DEFINITIONS</code> in <code>brain.py</code> <b>and</b> the engine mirror (per <code>feedback_brain_tool_duplication</code> — brain.py keeps its own <code>TOOL_DEFINITIONS</code>/<code>TOOL_GROUPS</code>/<code>TOOL_DISPATCH</code>, all three must be updated). New group: <code>data_viz</code>. Only enabled in a data-workbench session's token_config — invisible everywhere else, so zero KV-prefix impact on normal chats.</p>
+
+<div class="grid2">
+<div class="card">
+<h4>data_query — optional thin wrapper</h4>
+<p>Honestly, <code>python_exec</code> already does this: the model writes <code>duckdb.connect('_data.duckdb').sql(...)</code>. We add <code>data_query(sql)</code> only as ergonomic sugar so the model doesn't have to remember the connect boilerplate every turn — it returns <code>{columns, rows[:200], n_total, registered_as}</code>. <b>If eval shows the model does fine with bare python_exec, we cut this entirely</b> (Rule 2: minimum code).</p>
+<pre><span class="c"># engine/tools/data_viz.py</span>
+<span class="v">def</span> tool_data_query(sql: <span class="y">str</span>, register_as: <span class="y">str</span>|<span class="v">None</span>=<span class="v">None</span>):
+    con = duckdb.connect(<span class="s">"_data.duckdb"</span>)   <span class="c"># cwd = artifact folder</span>
+    df  = con.sql(sql).df()
+    <span class="v">if</span> register_as: con.register(register_as, df)
+    <span class="v">return</span> {<span class="s">"columns"</span>: <span class="y">list</span>(df.columns),
+            <span class="s">"rows"</span>: df.head(<span class="g">200</span>).values.tolist(),
+            <span class="s">"n_total"</span>: <span class="y">len</span>(df),
+            <span class="s">"registered_as"</span>: register_as}</pre>
+</div>
+<div class="card">
+<h4>data_render_chart — the one that matters</h4>
+<p>Takes a Vega-Lite spec (the model emits it) + the name of the DuckDB table to bind. Validates the spec against the JSON schema, checks every encoded field exists in that table, pulls a capped row sample, renders a PNG server-side, and returns a payload the handler forwards as the <code>data_chart</code> SSE event.</p>
+<pre><span class="c"># spec validity is *code*, not a judgment call (Rule 5)</span>
+<span class="v">def</span> tool_data_render_chart(spec: <span class="y">dict</span>, table: <span class="y">str</span>):
+    _validate_vega_lite(spec)              <span class="c"># jsonschema</span>
+    cols = duckdb_columns(<span class="s">"_data.duckdb"</span>, table)
+    _check_encoded_fields(spec, cols)      <span class="c"># raise → model retries</span>
+    rows = sample_rows(table, n=<span class="g">5000</span>)
+    png  = vega_to_png({**spec, <span class="s">"data"</span>:{<span class="s">"values"</span>:rows}})
+    <span class="v">return</span> {<span class="s">"ok"</span>:<span class="v">True</span>, <span class="s">"table"</span>:table, <span class="s">"spec"</span>:spec,
+            <span class="s">"png_b64"</span>:b64(png), <span class="s">"n_rows"</span>:<span class="y">len</span>(rows)}</pre>
+</div>
+</div>
+
+<div class="callout"><b>Vendored from Data Formulator (MIT):</b> the data-transform system-prompt text, the DataAgent action-loop instructions, and <code>workflows/chart_semantics.py</code> (the 30-chart-type → Vega-Lite mapping). Land them in a single <code>engine/tools/data_viz_prompts.py</code> with a header: <code>"# Adapted from microsoft/data-formulator (MIT) — chart semantics &amp; transform prompt"</code>. ~600–900 lines vendored, vs. re-deriving 30 chart specs from scratch.</div>
+
+<!-- ============================================================ -->
+<h2 id="data">8 · Session data store (DuckDB)</h2>
+<table>
+<tr><th>Concern</th><th>Decision</th></tr>
+<tr><td>Where the file lives</td><td><code>agents/&lt;agent&gt;/artifacts/&lt;date&gt;_&lt;sid_prefix&gt;/_data.duckdb</code> — inside the existing per-session artifact folder. Cleaned up by the same empty-session purge that already runs at startup.</td></tr>
+<tr><td>How generated code reaches it</td><td>Bare relative path. <code>python_exec</code>'s cwd is already that folder (CLAUDE.md invariant). No path injection, no env var.</td></tr>
+<tr><td>Metadata (which tables, schemas, source files, scan results)</td><td>One new table in <code>server_lib/db.py</code>: <code>data_sessions(sid PK, agent_id, user_id, title, tables_json, created_at, updated_at)</code>. Same module that owns <code>TranslateHistoryDB</code>. <b>Not</b> in <code>server.py</code>'s copy (per <code>backlog_chatdb_dedup</code> — but this is a brand-new table, so it goes straight into <code>server_lib/db.py</code> as the single source).</td></tr>
+<tr><td>Size cap</td><td>Per-upload cap (default 200 MB raw → DuckDB compresses). Refuse beyond; surface loudly (Rule 12).</td></tr>
+<tr><td>Concurrency</td><td>One DuckDB connection per request, opened in the handler/tool, closed in <code>finally</code>. DuckDB single-file is fine for the single-writer-per-session pattern; workbench turns are serialized within a session anyway (it's a chat).</td></tr>
+<tr><td>Persistence vs. cleanup</td><td>File persists as long as the session does. Archive a session → keep it. Delete → goes with the artifact folder. Matches how chat artifacts already behave.</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="guard">9 · Bank guardrails — what we get for free</h2>
+<p class="lead">This is the entire reason for Option B. Every one of these is an <i>existing</i> Brain mechanism that the Data section inherits by virtue of routing through <code>send_message()</code> and the standard handlers.</p>
+<div class="grid2">
+<div class="card"><h4>GDPR / PII scanner</h4><p>Fires at two points: (1) when an uploaded sample is computed — email/ID-bearing columns flagged &amp; masked in the sample shown to the model; (2) round-0 pre-flight in <code>send_message()</code> on the assembled prompt. <code>gdpr_pick_model_for_background</code>-style routing: clean → proceed; findings + a configured local fallback → silent swap to on-prem model; else <code>server_block</code> → refuse. Same 71 detectors, same config (<code>gdpr_scanner</code>), same audit events (<code>pii_detected</code> / <code>pii_auto_fallback</code> / <code>pii_blocked</code>).</p></div>
+<div class="card"><h4>Per-user cost quota</h4><p><code>QuotaManager</code> pre-flight gate already runs in <code>send_message()</code> round 0. A risk analyst running 40 chart iterations hits the same daily/cycle cap as any other usage. <code>force_local</code> mode swaps to the local model silently; <code>hard_block</code> raises. Local models always bypass — data stays on-prem and free.</p></div>
+<div class="card"><h4>Provider routing &amp; fallback</h4><p><code>resolve_provider_for_model()</code> is the single source of truth — already used by chat, delegate, scheduler. The Data section picks a model the same way (default Mistral Small for this kind of structured work, per memory; user can switch). Provider down → standard fallback ordering kicks in.</p></div>
+<div class="card"><h4>Audit, cost, rate limiting</h4><p><code>CostTracker</code> logs every LLM call to <code>costs.db</code> with the authenticated <code>user_id</code> (thread-local already set by the auth layer). <code>RateLimiter</code> sliding window per agent applies. The audit log already records tool calls. Nothing new to build for compliance reporting.</p></div>
+<div class="card"><h4>Sandbox isolation</h4><p>Generated pandas/SQL runs in <code>python_exec</code> — subprocess (<code>sys.executable</code>), timeout-killed, working dir pinned to the artifact folder. We do <b>not</b> hand the model arbitrary shell. DuckDB connection is opened by the generated code inside that sandbox; it can't reach outside the folder.</p></div>
+<div class="card"><h4>RBAC</h4><p><code>/v1/data/*</code> routes sit behind the same auth the rest of the API uses. A <code>user</code>-role account that can chat can use the workbench; config stays admin-only. Per-user schedules / history visibility rules apply if we later let workbench reports be scheduled.</p></div>
+</div>
+<div class="callout good"><b>Net:</b> the bank's security review of the Data section is mostly "it's the chat loop with a chart renderer" — there is no new trust boundary, no new credential store, no new LLM egress path. That is worth far more than the few weeks Option A would have saved.</div>
+
+<!-- ============================================================ -->
+<h2 id="phases">10 · Phased delivery</h2>
+
+<div class="phase p1"><div class="n">A</div><div>
+<h3 style="margin-top:0">Phase A — Workbench MVP (text → chart)</h3>
+<ul>
+<li>New <code>data-view</code> in <code>web/js/nav.js</code> + <code>web/js/data.js</code> (Workbench + Sources sub-tabs only).</li>
+<li><code>handlers/data_viz.py</code>: <code>POST /sessions</code>, <code>/upload</code> (CSV/XLSX → DuckDB), <code>/tables</code>, <code>/ask</code> (SSE → <code>send_message()</code>).</li>
+<li>Tools: <code>data_render_chart</code> (and optionally <code>data_query</code>); group <code>data_viz</code>; vendored prompt + chart-semantics.</li>
+<li>One new SSE event <code>data_chart</code>; vega-embed from CDN in the chart pane; editable spec textarea + client-side re-render.</li>
+<li><code>DataSessionDB</code> in <code>server_lib/db.py</code>; DuckDB file in the artifact folder.</li>
+<li>System-prompt "DATA WORKBENCH" block (vendored DataAgent loop text).</li>
+</ul>
+<p class="small"><b>Done when:</b> upload <code>risk_register.xlsx</code> → "stacked bar of open findings per entity by tier, top 8" → correct chart renders, GDPR scan visible, cost row logged. Eval: a 10-question canary (5 chart asks, 3 follow-ups, 2 deliberate ambiguities that should trigger <code>clarify</code>) judged against a hand-built gold set — same harness pattern as <code>eval/</code>.</p>
+</div></div>
+
+<div class="phase p2"><div class="n">B</div><div>
+<h3 style="margin-top:0">Phase B — Reports, History, Memory</h3>
+<ul>
+<li><code>/pin</code> → <code>report.html</code> artifact (chart PNG + data table + the SQL + a one-paragraph caption the model writes); auto-promoted, shows in global Artifacts.</li>
+<li>History &amp; Reports sub-tab (mirror Translation History UI).</li>
+<li><code>/memorize</code> → MemPalace drawer ("insight: open High-tier findings concentrated in Entity A, 38% of total") in the user's wing.</li>
+<li><code>/render</code> server-side PNG endpoint for edited specs (so pinned reports embed a static image, not a live JS chart).</li>
+</ul>
+<p class="small"><b>Done when:</b> a pinned report opens from History, appears in the Artifacts panel, and the miner has filed it; an insight is retrievable via <code>mempalace_query</code>.</p>
+</div></div>
+
+<div class="phase p3"><div class="n">C</div><div>
+<h3 style="margin-top:0">Phase C — Live sources</h3>
+<ul>
+<li>Connect read-only to Postgres / MSSQL (credentials in Brain's existing per-user secret store) or to a project's already-ingested folder.</li>
+<li>Schema + sample pulled and scanned <i>before</i> anything reaches the model — the GDPR interlock is the hard requirement here.</li>
+<li>Optional auto-refresh (cron-style, reusing the scheduler) for a pinned report that should re-run nightly — this is the one place a <code>/schedule</code> follow-up genuinely fits.</li>
+</ul>
+<p class="small"><b>Done when:</b> a Postgres view → workbench session → chart, with the connection never returning bulk rows into LLM context, only schema + N-row sample.</p>
+</div></div>
+
+<div class="phase p4"><div class="n">D</div><div>
+<h3 style="margin-top:0">Phase D — Polish (only if used)</h3>
+<ul>
+<li>Optional lightweight encoding shelf (drag a column chip onto x/y/color) as a <i>shortcut</i> that just composes a prompt — not a parallel codepath.</li>
+<li>"Recommend a chart" button → the DataRecAgent-style suggestion turn (already mostly there via the suggestions row).</li>
+<li>Multi-chart dashboards in one report.</li>
+</ul>
+<p class="small">Gate on real usage. If the risk team is happy with chat-driven, Phase D may never ship — and that's fine.</p>
+</div></div>
+
+<!-- ============================================================ -->
+<h2 id="files">11 · File-by-file change list</h2>
+<table>
+<tr><th>File</th><th>Change</th><th>Kind</th></tr>
+<tr><td><code>handlers/data_viz.py</code></td><td>New <code>DataVizHandlerMixin</code> — routes, multipart upload → DuckDB, <code>/ask</code> SSE worker that primes thread-locals and calls <code>send_message()</code> (modeled on <code>translate.py</code>'s <code>_run_translate_job</code>), <code>/pin</code>, <code>/render</code>.</td><td><span class="pill new">NEW</span> ~500–700 LOC</td></tr>
+<tr><td><code>engine/tools/data_viz.py</code></td><td><code>tool_data_render_chart</code> (+ optional <code>tool_data_query</code>); Vega-Lite validation; <code>vega_to_png</code> helper.</td><td><span class="pill new">NEW</span> ~200 LOC</td></tr>
+<tr><td><code>engine/tools/data_viz_prompts.py</code></td><td>Vendored — DataAgent loop text, transform prompt, chart-semantics map. MIT-attribution header.</td><td><span class="pill new">NEW</span> ~700 LOC vendored</td></tr>
+<tr><td><code>brain.py</code></td><td>Register <code>data_viz</code> in <code>TOOL_DEFINITIONS</code> + <code>TOOL_GROUPS</code> + <code>TOOL_DISPATCH</code> (all three — per <code>feedback_brain_tool_duplication</code>). Add "DATA WORKBENCH" block to <code>_build_system_prompt</code>, gated by a <code>_thread_local.data_workbench</code> flag (mirrors the <code>project</code> gating) so KV prefix stays workbench-agnostic for normal chats.</td><td><span class="pill touch">TOUCH</span> ~60 LOC</td></tr>
+<tr><td><code>engine/tools/__init__.py</code> (or wherever the engine tool mirror lives)</td><td>Mirror the new tool defs (engine keeps its own copy per CLAUDE.md).</td><td><span class="pill touch">TOUCH</span> ~20 LOC</td></tr>
+<tr><td><code>server.py</code></td><td>Add <code>/v1/data/*</code> route dispatch + <code>from handlers.data_viz import DataVizHandlerMixin</code>; add mixin to the handler class. ~20 lines, same shape as the translate block at line 1289.</td><td><span class="pill touch">TOUCH</span> ~25 LOC</td></tr>
+<tr><td><code>server_lib/db.py</code></td><td><code>DataSessionDB</code> class — <code>data_sessions</code> table, <code>@_db_safe</code>, <code>threading.local()</code> pool — copy <code>TranslateHistoryDB</code>'s shape.</td><td><span class="pill touch">TOUCH</span> ~120 LOC</td></tr>
+<tr><td><code>web/index.html</code></td><td>Add <code>&lt;div id="data-view"&gt;</code> shell (sub-tab buttons, chat pane, chart pane, spec textarea, sources panel); add the sidebar nav item; load <code>web/js/data.js</code> and vega-embed from CDN.</td><td><span class="pill touch">TOUCH</span> ~120 LOC markup</td></tr>
+<tr><td><code>web/js/data.js</code></td><td>The view: <code>loadDataView()</code>, sub-tab switching, upload UI, the SSE consumer (reuses the chat SSE helpers), vega-embed render on <code>data_chart</code>, spec-edit re-render, pin/memorize buttons.</td><td><span class="pill new">NEW</span> ~600–900 LOC</td></tr>
+<tr><td><code>web/js/nav.js</code></td><td>Register <code>data</code> in <code>switchView()</code> (one <code>case</code>, mirror line 115's <code>translation</code> case); add <code>_DATA_TAB_TITLES</code> for the header star.</td><td><span class="pill touch">TOUCH</span> ~20 LOC</td></tr>
+<tr><td><code>requirements.txt</code></td><td>Pin <code>duckdb</code>, <code>vl-convert-python</code> (Vega→PNG, no node needed), <code>jsonschema</code> (if not already present).</td><td><span class="pill touch">TOUCH</span> 3 lines</td></tr>
+<tr><td><code>CLAUDE.md</code></td><td>New "## Data Workbench" section documenting the DuckDB-in-artifact-folder invariant, the <code>data_workbench</code> thread-local gating, and the vendored-prompt provenance.</td><td><span class="pill touch">TOUCH</span></td></tr>
+<tr><td><code>eval/</code></td><td>New <code>eval/data/</code> canary (10 questions + gold charts/specs); a thin judge on chart-spec correctness + retrieval correctness.</td><td><span class="pill new">NEW</span></td></tr>
+</table>
+<p class="small"><b>Net new code:</b> roughly 2.5–3.5k LOC, of which ~700 is vendored. <b>Zero changes</b> to: the agentic loop, the sandbox, the GDPR scanner, the quota manager, the provider router, the artifact pipeline, the miner, MemPalace. They're called, not modified.</p>
+
+<!-- ============================================================ -->
+<h2 id="risk">12 · Risks, scope cuts, open questions</h2>
+<table>
+<tr><th>Risk / question</th><th>Stance</th></tr>
+<tr><td><b>Will Mistral Small reliably emit valid Vega-Lite?</b></td><td>Unknown until eval. Mitigations baked in: schema validation in <code>data_render_chart</code> → the model gets the error and retries (the loop does this for free); vendored chart-semantics gives canonical templates; the editable spec textarea is the human escape hatch. If a model is hopeless at it, that's a per-model config choice, not a redesign.</td></tr>
+<tr><td><b>Big files in context.</b></td><td>The model never sees bulk rows — only schema + ≤20-row sample (scanned). The chart renderer samples ≤5k rows for the PNG. All real data movement is SQL inside DuckDB inside the sandbox. Context cost per turn is roughly that of a normal chat turn.</td></tr>
+<tr><td><b>Is <code>data_query</code> redundant with <code>python_exec</code>?</b></td><td>Probably. Build <code>data_render_chart</code> first; add <code>data_query</code> only if Phase-A eval shows the model fumbles the DuckDB connect boilerplate. Rule 2 — don't ship it speculatively.</td></tr>
+<tr><td><b>vl-convert vs. a node-based Vega renderer.</b></td><td><code>vl-convert-python</code> is a self-contained Rust wheel — no node, no headless browser. Preferred. Fallback: render client-side only and skip server PNGs (pinned reports would embed the live JS chart instead — acceptable).</td></tr>
+<tr><td><b>Scope creep toward Data Formulator's workspace/data-lake/Azure-Blob layer.</b></td><td>Explicitly out. Brain already has per-user scoping, artifacts, and the project-ingest folder mechanism. Re-implementing their data lake would be the exact duplication this plan exists to avoid.</td></tr>
+<tr><td><b>Code-signing / sandboxed-exec that Data Formulator added.</b></td><td>Out — Brain already has the sandbox. We don't need their version.</td></tr>
+<tr><td><b>Concurrent writes to one DuckDB file.</b></td><td>Not a real concern: a workbench session is a chat, turns are serialized; each request opens its own connection and closes it. If we ever parallelize, switch to DuckDB's read-only attach for the renderer.</td></tr>
+<tr><td><b>License hygiene.</b></td><td>Data Formulator is MIT. Vendored snippets get a provenance header; the repo is credited in <code>CLAUDE.md</code> and the new module. No GPL contamination risk.</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="checklist">13 · Definition of done (Phase A)</h2>
+<ul class="checklist">
+<li>"Data" appears in the sidebar; <code>switchView('data')</code> shows the Workbench.</li>
+<li>Upload <code>.xlsx</code> with multiple sheets → each becomes a DuckDB table; schema + scanned sample shown in Sources.</li>
+<li>A column that looks like email/ID is flagged and masked in the sample the model receives — verified by reading the prompt sent to the LLM.</li>
+<li>"Stacked bar of open findings per entity by tier, top 8" → the model writes SQL, runs it in <code>python_exec</code>, emits a Vega-Lite spec, the chart renders in the right pane.</li>
+<li>The spec textarea is populated; editing it and clicking re-render updates the chart with no LLM call.</li>
+<li>A deliberately ambiguous prompt ("show me the risky stuff") triggers a <code>clarify</code> turn, not a guess.</li>
+<li>The turn produces a <code>CostTracker</code> row with the authenticated <code>user_id</code>; over-quota users hit the gate.</li>
+<li>Cancellation mid-turn works (it's the existing loop's cancel).</li>
+<li>10-question eval run committed under <code>eval/data/</code>, baseline scores recorded in a memory note.</li>
+<li>No regression: a normal chat session's system prompt is byte-identical to before (the <code>data_workbench</code> gate is off → no "DATA WORKBENCH" block, KV prefix unchanged).</li>
+<li><code>CLAUDE.md</code> has the "Data Workbench" section with the DuckDB-in-artifact-folder invariant.</li>
+</ul>
+
+<div class="footer">
+Plan authored for <code>/Users/alexander/Documents/dev/cctest</code> (Brain). Inspiration: <a href="https://github.com/microsoft/data-formulator">microsoft/data-formulator</a> (MIT, ~15.5k★). Design principle throughout: <b>reuse the engine, add four small components, change zero core paths.</b> Not yet implemented — this document is the proposal.
+</div>
+
+</div>
+</body>
+</html>
