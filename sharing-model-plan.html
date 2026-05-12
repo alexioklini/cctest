@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Plan — Generic Sharing / Visibility Model (chats · projects · schedules · workflows · artifacts)</title>
+<style>
+  :root {
+    --bg:#0f1115; --panel:#171a21; --panel2:#1d212b; --ink:#e8eaf0; --muted:#9aa3b2;
+    --line:#2a2f3a; --accent:#6ea8fe; --good:#3ddc97; --warn:#f5b14c; --bad:#f47373;
+    --code:#11151c;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  .wrap { max-width:1080px; margin:0 auto; padding:40px 28px 120px; }
+  h1 { font-size:30px; margin:0 0 4px; letter-spacing:-0.01em; }
+  h2 { font-size:22px; margin:42px 0 12px; padding-bottom:6px; border-bottom:1px solid var(--line); }
+  h3 { font-size:17px; margin:26px 0 8px; color:#cfd6e4; }
+  h4 { font-size:15px; margin:18px 0 6px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; font-weight:600; }
+  p, li { color:var(--ink); }
+  .sub { color:var(--muted); margin:0 0 24px; font-size:14px; }
+  code { background:var(--code); border:1px solid var(--line); border-radius:4px; padding:1px 5px; font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; color:#d9e2f1; }
+  pre { background:var(--code); border:1px solid var(--line); border-radius:8px; padding:14px 16px; overflow:auto; font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; color:#d9e2f1; }
+  pre code { background:none; border:none; padding:0; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px 20px; margin:16px 0; }
+  .card.alt { background:var(--panel2); }
+  .pill { display:inline-block; font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:2px 8px; border-radius:999px; vertical-align:middle; }
+  .pill.good { background:rgba(61,220,151,.15); color:var(--good); border:1px solid rgba(61,220,151,.35); }
+  .pill.warn { background:rgba(245,177,76,.15); color:var(--warn); border:1px solid rgba(245,177,76,.35); }
+  .pill.bad  { background:rgba(244,115,115,.15); color:var(--bad); border:1px solid rgba(244,115,115,.35); }
+  .pill.info { background:rgba(110,168,254,.15); color:var(--accent); border:1px solid rgba(110,168,254,.35); }
+  table { border-collapse:collapse; width:100%; margin:14px 0; font-size:14px; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.06em; }
+  tr:last-child td { border-bottom:none; }
+  ul, ol { padding-left:22px; }
+  li { margin:4px 0; }
+  .toc { columns:2; column-gap:32px; font-size:14px; }
+  .toc a { color:var(--accent); text-decoration:none; }
+  .toc a:hover { text-decoration:underline; }
+  .note { border-left:3px solid var(--accent); background:rgba(110,168,254,.07); padding:10px 14px; border-radius:0 6px 6px 0; margin:14px 0; font-size:14px; }
+  .note.warn { border-left-color:var(--warn); background:rgba(245,177,76,.07); }
+  .note.bad { border-left-color:var(--bad); background:rgba(244,115,115,.07); }
+  .kv { display:grid; grid-template-columns:170px 1fr; gap:6px 16px; margin:10px 0; font-size:14px; }
+  .kv dt { color:var(--muted); }
+  .kv dd { margin:0; }
+  .small { font-size:13px; color:var(--muted); }
+  .file { font:12.5px ui-monospace,Menlo,monospace; color:var(--accent); }
+  hr { border:none; border-top:1px solid var(--line); margin:36px 0; }
+  .phase { border:1px solid var(--line); border-radius:10px; padding:0; margin:18px 0; overflow:hidden; }
+  .phase > .head { background:var(--panel2); padding:12px 18px; font-weight:700; display:flex; justify-content:space-between; align-items:center; }
+  .phase > .body { padding:14px 18px; }
+  .tag { font-size:11px; color:var(--muted); font-weight:500; }
+  .check { color:var(--good); }
+  .x { color:var(--bad); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Generic Sharing / Visibility Model</h1>
+<p class="sub">One mechanism — <code>private</code> · <code>users</code> · <code>team</code> · <code>global</code> — applied to <strong>chats, projects, scheduled tasks, workflows, and artifacts</strong>. Creator is always the owner; only the owner (or admin) sets visibility; ownership is transferable. Plan only — nothing implemented yet.</p>
+
+<div class="card alt">
+<h4>TL;DR</h4>
+<ul>
+  <li><strong>Projects already have the full model.</strong> <code>project.json</code> carries <code>visibility</code> (<code>user|team|global</code>) + <code>owner_user_id</code> + <code>owner_team_id</code> + <code>extra_member_user_ids</code> (individual grants) + <code>excluded_user_ids</code>. The work is to <em>generalise</em> that shape, not invent it.</li>
+  <li><strong>Chats have a 2-state subset</strong> (<code>visibility = user|team</code> + <code>team_id</code>). No <code>global</code>, no individual grants, no explicit owner-vs-creator separation.</li>
+  <li><strong>Schedules &amp; workflows have nothing</strong> — only <code>user_id</code> (creator), owner-only access via <code>_schedule_owner_check</code> / RBAC scoping.</li>
+  <li><strong>Artifacts have nothing</strong> — they inherit the visibility of the chat / project / scheduled-run that produced them, transitively. We'll keep that inheritance but make it explicit and let it be <em>narrowed</em> per-artifact (never broadened beyond the parent).</li>
+  <li><strong>Favourites already model <code>scope = user|team|general</code></strong> but only as a <em>reference</em> that mirrors the item's visibility — it never sets it. That stays true; the star button just won't let you favourite into a scope the item isn't visible in.</li>
+  <li>The big functional add behind <em>finding 3</em> — a team document-ingestion pipeline (<code>team__&lt;tid&gt;</code> wing fed by folders, like <code>project__&lt;id&gt;</code>) — is folded in as Phase 6, optional.</li>
+</ul>
+</div>
+
+<h2>Table of contents</h2>
+<div class="toc">
+<a href="#concepts">1. The shared concept (data shape)</a><br>
+<a href="#current">2. Where each item type stands today</a><br>
+<a href="#access">3. Access &amp; manage rules (one function family)</a><br>
+<a href="#transfer">4. Ownership transfer</a><br>
+<a href="#wings">5. MemPalace wing routing under the new model</a><br>
+<a href="#ui">6. GUI — the share dialog</a><br>
+<a href="#phases">7. Implementation phases</a><br>
+<a href="#files">8. Files touched (by phase)</a><br>
+<a href="#edge">9. Edge cases &amp; invariants</a><br>
+<a href="#open">10. Open questions</a><br>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="concepts">1. The shared concept</h2>
+
+<p>Every shareable item gets the same five-field block (names chosen to match what <code>project.json</code> already uses, so projects need zero rename):</p>
+
+<table>
+<tr><th>Field</th><th>Type</th><th>Meaning</th></tr>
+<tr><td><code>owner_user_id</code></td><td>string (user id)</td><td>The creator, set once at creation. Only this user (or an admin) can change visibility, edit the ACL, or transfer ownership. Never empty for items created after this lands; legacy rows may be empty → treated as "admin-owned".</td></tr>
+<tr><td><code>visibility</code></td><td><code>private</code> · <code>users</code> · <code>team</code> · <code>global</code></td><td>The base reach. <code>private</code> = owner + admin only. <code>users</code> = owner + the explicit grant list. <code>team</code> = owner + everyone in <code>owner_team_id</code> (+ optional extra individual grants). <code>global</code> = everyone except <code>excluded_user_ids</code>.</td></tr>
+<tr><td><code>owner_team_id</code></td><td>string (team id) or <code>""</code></td><td>Only meaningful when <code>visibility = team</code>. The uuid hex[:12] from <code>user_teams.id</code>.</td></tr>
+<tr><td><code>extra_member_user_ids</code></td><td>list[user id]</td><td>Individual people granted access regardless of base visibility (the "share with specific users" capability). Additive — only ever <em>widens</em>. Meaningful for every visibility except <code>global</code> (where everyone already has it).</td></tr>
+<tr><td><code>excluded_user_ids</code></td><td>list[user id]</td><td>Individual people <em>denied</em> access. Only meaningful when <code>visibility = global</code> (an allow-list everywhere else makes exclusions moot). The owner is never excludable from their own item.</td></tr>
+</table>
+
+<div class="note">
+<strong>Naming note:</strong> projects currently use <code>visibility = "user"</code> for "owner-only". We rename that value to <code>"private"</code> in the vocabulary going forward, but keep a read-time alias (<code>"user" → "private"</code>) so existing <code>project.json</code> files don't need rewriting. The new <code>"users"</code> value (plural) is the "specific users" tier — distinct from <code>"private"</code>. Yes, <code>"user"</code> vs <code>"users"</code> is a confusing one-letter difference in legacy data; the migration normalises legacy <code>"user"</code>→<code>"private"</code> lazily on next write.
+</div>
+
+<h3>1.1 Where the block lives, per item type</h3>
+<table>
+<tr><th>Item</th><th>Storage today</th><th>Where the block goes</th></tr>
+<tr><td>Project</td><td><code>agents/&lt;a&gt;/projects/&lt;name&gt;/project.json</code></td><td>Already there — keep as-is, add <code>owner_user_id</code> backfill + value alias.</td></tr>
+<tr><td>Chat session</td><td><code>chats.db → sessions</code> row</td><td>New columns: <code>owner_user_id</code> (alias of existing <code>user_id</code> at first; see §2.2), <code>extra_member_user_ids</code> TEXT(JSON), <code>excluded_user_ids</code> TEXT(JSON). <code>visibility</code> + <code>team_id</code> already exist — extend the <code>visibility</code> domain.</td></tr>
+<tr><td>Scheduled task</td><td><code>chats.db → schedules</code> row</td><td>New columns: <code>visibility</code> TEXT DEFAULT 'private', <code>owner_team_id</code> TEXT DEFAULT '', <code>extra_member_user_ids</code> TEXT(JSON), <code>excluded_user_ids</code> TEXT(JSON). <code>user_id</code> already exists = creator.</td></tr>
+<tr><td>Workflow (definition)</td><td><code>agents/&lt;a&gt;/workflows/&lt;name&gt;.workflow</code> (source file) — <strong>no metadata sidecar today</strong></td><td>New sidecar <code>&lt;name&gt;.workflow.meta.json</code> holding the five-field block + <code>created_at</code>. (Alternative: a <code>workflows_meta</code> table in chats.db — see §10 Q3.)</td></tr>
+<tr><td>Workflow run</td><td><code>chats.db → workflow_history</code> row</td><td>Runs inherit the workflow definition's visibility at fire time; store a denormalised snapshot (<code>visibility</code>, <code>owner_user_id</code>, <code>owner_team_id</code>) on the row so a later visibility change to the definition doesn't retroactively expose old runs.</td></tr>
+<tr><td>Artifact</td><td><code>chats.db → artifacts</code> + <code>artifact_versions</code>; files on disk under the producing session/run's folder</td><td>New column on <code>artifacts</code>: <code>visibility_override</code> TEXT DEFAULT '' (empty = inherit parent). When non-empty it may only be <em>narrower</em> than the parent's effective visibility. No owner field — the artifact's owner is always its parent's owner.</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="current">2. Where each item type stands today</h2>
+
+<h3>2.1 Projects — <span class="pill good">complete</span></h3>
+<p><code>brain.py → ProjectManager.list_projects / create_project / update_project</code> already filter on the five-field block; <code>server_lib/auth.py → can_access_project / can_manage_project</code> already encode "owner or admin manages, members read". <strong>Gap:</strong> no <code>owner_user_id</code> backfill for legacy projects (some <code>project.json</code> have empty owner), and the value <code>"user"</code> needs aliasing to <code>"private"</code>. <code>can_manage_project</code> is already strictly owner-or-admin — that's the model we want everywhere.</p>
+
+<h3>2.2 Chats — <span class="pill warn">partial</span></h3>
+<div class="kv">
+  <dt>Has</dt><dd><code>sessions.user_id</code> (creator), <code>sessions.visibility ∈ {user, team}</code>, <code>sessions.team_id</code>. <code>list_sessions(visible_user_ids, visible_team_ids)</code> already does UNION-style scoping; <code>handlers/projects.py → _session_access_check</code> already does owner / team-member / team-head-manages.</dd>
+  <dt>Missing</dt><dd><code>global</code> tier; <code>users</code> tier (individual grants); explicit <code>owner_user_id</code> separate from <code>user_id</code> (they're the same today — fine, but the share dialog talks about "owner", so we expose <code>user_id</code> under that name and add transfer); <code>excluded_user_ids</code>.</dd>
+  <dt>Decision</dt><dd>Don't add an <code>owner_user_id</code> column — reuse <code>user_id</code> as the owner. Transfer = UPDATE <code>user_id</code> (+ re-point the MemPalace wing, see §5). Add the three JSON columns + extend <code>visibility</code> domain.</dd>
+</div>
+
+<h3>2.3 Scheduled tasks — <span class="pill bad">none</span></h3>
+<p><code>schedules.user_id</code> = creator. <code>_schedule_owner_check(name)</code> gates every mutating op to creator-or-admin; non-admins see only their own schedules in the list. Legacy schedules with empty <code>user_id</code> are admin-only. <strong>No sharing dimension at all.</strong> Adding the five-field block here is the biggest net-new surface — both the task definition (who can see/edit/run it) and the runs (whose artifacts land where, who can view the run history).</p>
+
+<h3>2.4 Workflows — <span class="pill bad">none (definition)</span> / <span class="pill warn">user-scoped (runs)</span></h3>
+<p>Workflow <em>definitions</em> are bare <code>.workflow</code> source files in <code>agents/&lt;a&gt;/workflows/</code> with <strong>no metadata at all</strong> — no owner, no visibility. Any authenticated user who can reach the agent can list/run them. Workflow <em>runs</em> (<code>workflow_history</code> rows) carry <code>user_id</code> and the v8.23.10 delete helpers already scope non-admins to their own runs. So: definitions need a metadata sidecar (or table); runs need the denormalised visibility snapshot.</p>
+
+<h3>2.5 Artifacts — <span class="pill bad">inherits, implicitly</span></h3>
+<p>An artifact is visible to whoever can see the session / project / scheduled-run that wrote it (the artifact folder lives inside that parent's tree, and listing artifacts goes through the parent). There's no per-artifact control. We keep inheritance as the default and add an optional <code>visibility_override</code> that can only <em>narrow</em>. (Use case: a scheduled task is team-visible, but one run produced a draft the owner wants to keep private until polished.)</p>
+
+<h3>2.6 Favourites — <span class="pill good">already scoped, stays a mirror</span></h3>
+<p><code>favourites</code> table has <code>scope ∈ {user, team, general}</code> + <code>scope_id</code>. Its docstring is explicit: a favourite "never broadens visibility, only references it." That stays true. The only change: the star button's scope options are filtered to scopes the item is actually visible in (you can't pin a <code>private</code> chat into the <code>general</code> favourites bar). When an item's visibility is narrowed and orphans a favourite, a cleanup pass removes the now-invalid favourite rows (or marks them stale — see §10 Q5).</p>
+
+<!-- ============================================================ -->
+<h2 id="access">3. Access &amp; manage rules — one function family</h2>
+
+<p>Today there are bespoke checks: <code>can_access_project</code>, <code>_session_access_check</code>, <code>_schedule_owner_check</code>, <code>can_delete_resource</code>, the workflow-history RBAC scoping. We collapse the <em>logic</em> into two pure functions in <code>server_lib/auth.py</code> that take the five-field block as a dict, plus thin per-item adapters that load the block and call them.</p>
+
+<pre><code># server_lib/auth.py  (new — generalises can_access_project)
+
+VISIBILITY_VALUES = ("private", "users", "team", "global")
+_LEGACY_VIS_ALIAS = {"user": "private"}   # project.json migration
+
+def normalize_visibility(v: str) -> str:
+    return _LEGACY_VIS_ALIAS.get(v or "private", v or "private")
+
+def can_access(user: dict, block: dict) -> bool:
+    """block = {owner_user_id, visibility, owner_team_id,
+                extra_member_user_ids, excluded_user_ids}"""
+    if user["role"] == "admin" or user["id"] == "__system__":
+        return True
+    owner = block.get("owner_user_id") or ""
+    # Legacy: no owner → admin-only (already handled above) — but be permissive
+    # for chats that pre-date ownership: caller decides via `legacy_open=True`.
+    if owner and owner == user["id"]:
+        return True
+    vis = normalize_visibility(block.get("visibility"))
+    extras = block.get("extra_member_user_ids") or []
+    if user["id"] in extras:
+        return True
+    if vis == "global":
+        return user["id"] not in (block.get("excluded_user_ids") or [])
+    if vis == "private":
+        return False                       # owner + extras only (handled above)
+    if vis == "users":
+        return False                       # owner + extras only (handled above)
+    if vis == "team":
+        tid = block.get("owner_team_id") or ""
+        if not tid:
+            return False
+        return any(t["id"] == tid for t in AuthDB.get_user_teams(user["id"]))
+    return False
+
+def can_manage(user: dict, block: dict) -> bool:
+    """Edit metadata, change visibility, edit ACL, transfer, delete.
+    Strictly owner-or-admin — NO team-head shortcut for non-project items
+    unless we decide otherwise (see Open Q2)."""
+    if user["role"] == "admin" or user["id"] == "__system__":
+        return True
+    owner = block.get("owner_user_id") or ""
+    return bool(owner) and owner == user["id"]
+</code></pre>
+
+<p>Per-item adapters (each ~5 lines): <code>project_block(project_cfg)</code>, <code>session_block(session_info)</code> (maps <code>user_id→owner_user_id</code>), <code>schedule_block(sched_row)</code>, <code>workflow_block(meta)</code>, <code>artifact_block(artifact_row, parent_block)</code> (resolves the override, clamps to ≤ parent reach). <code>can_access_project</code> / <code>can_manage_project</code> become two-line wrappers so nothing downstream breaks.</p>
+
+<div class="note">
+<strong>"Creator is owner" is enforced at the create path, not the access path.</strong> Every <code>create_*</code> function stamps <code>owner_user_id = _thread_local.current_user_id</code> and ignores any owner passed in the body (admins excepted, for seeding). The access functions just read it.
+</div>
+
+<h3>3.1 List-scoping queries</h3>
+<p>Every "list my items" endpoint already takes (or will take) <code>visible_user_ids</code> + <code>visible_team_ids</code> derived from the caller. The SQL/filter changes:</p>
+<ul>
+  <li><strong>Add the <code>global</code> arm:</strong> <code>OR visibility = 'global'</code> (then post-filter out rows where caller ∈ <code>excluded_user_ids</code> — cheap, JSON parse on the handful of global rows).</li>
+  <li><strong>Add the <code>users</code> arm:</strong> can't do this purely in SQL with a JSON column portably, so: fetch candidate rows (own + team + global), then in Python keep any row where <code>caller_id ∈ extra_member_user_ids</code>. For chats this is <code>list_sessions</code> in <code>server_lib/db.py</code>; for schedules a new filter in the schedules query; etc.</li>
+  <li><strong>Legacy rows</strong> (empty owner): chats → visible to all authenticated (current behaviour, keep); schedules → admin-only (current behaviour, keep); workflows → all authenticated (current behaviour, keep) until an owner adopts them.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="transfer">4. Ownership transfer</h2>
+
+<p>One endpoint shape, parameterised by item type: <code>POST /v1/share/transfer</code> with body <code>{item_type, item_id, agent_id?, new_owner_user_id}</code>. (Or per-resource: <code>POST /v1/agents/{a}/projects/{name}/transfer</code> etc. — see §10 Q1.) Rules:</p>
+<ul>
+  <li>Caller must pass <code>can_manage</code> on the current block (owner or admin).</li>
+  <li><code>new_owner_user_id</code> must exist in <code>auth.db</code> and have access to the agent (for agent-scoped items).</li>
+  <li>On success: set <code>owner_user_id = new_owner_user_id</code>; remove the new owner from <code>extra_member_user_ids</code> / <code>excluded_user_ids</code> if present; <strong>do not</strong> change <code>visibility</code> (the new owner can narrow it afterward); write an audit-log row (<code>action='ownership_transfer'</code>, old/new owner, item ref).</li>
+  <li><strong>MemPalace consequence (chats/projects only):</strong> if the item's wing is keyed by owner (<code>user__&lt;uid&gt;</code>), the existing drawers stay where they are (re-keying drawers is expensive and the old owner already saw that content) — but <em>future</em> sync goes to the new owner's wing. Document this asymmetry. Alternative for projects: project wings are keyed by project id, not owner — so projects have no wing churn on transfer. (This is one more reason to keep chat wings as-is on transfer rather than re-point.)</li>
+  <li><strong>Schedules:</strong> transfer also moves which user's quota the runs bill against going forward (<code>_log_call_cost</code> reads <code>current_user_id</code> — the scheduled-run worker sets it from <code>schedules.user_id</code>). Note this in the transfer confirm dialog.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="wings">5. MemPalace wing routing under the new model</h2>
+
+<p><code>_resolve_session_wing(info)</code> in <code>server_lib/db.py</code> currently: project → team → user → "". Under the extended <code>visibility</code> domain it becomes:</p>
+<table>
+<tr><th>Effective visibility of the chat</th><th>Wing the chat-sync daemon files into</th></tr>
+<tr><td>project-scoped (session has a <code>project</code>)</td><td><code>project_chat__&lt;project_id&gt;</code> — unchanged, takes precedence over everything below</td></tr>
+<tr><td><code>team</code></td><td><code>team__&lt;owner_team_id&gt;</code> — unchanged</td></tr>
+<tr><td><code>private</code> / <code>users</code></td><td><code>user__&lt;owner_user_id&gt;</code> — same as today's <code>user</code>; the <code>users</code> grant list does NOT get its own wing (the granted users can read the chat via the session, but its <em>memory</em> stays in the owner's private wing — granting chat access ≠ granting memory access). <span class="small">If we later want shared memory for a <code>users</code>-scoped chat, that's a separate feature.</span></td></tr>
+<tr><td><code>global</code></td><td><strong>Open question (Q4).</strong> Options: (a) still <code>user__&lt;owner&gt;</code> — memory stays private even though the chat is world-readable; (b) a new <code>shared__global</code> wing that everyone reads cross-wing (like the untyped <code>brain_code</code> wing). Leaning (a) for v1 — least surprising, no new wing, and "global chat" is rare.</td></tr>
+</table>
+
+<p>Scheduled-run artifacts: today they go to <code>&lt;agent_id&gt;_artifacts</code> (shared per-agent). Under the new model, if the schedule is <code>private</code> we'd arguably want them in <code>user__&lt;owner&gt;</code> instead — but that's a behaviour change to the miner with its own blast radius; <strong>defer to Phase 6 / a follow-up</strong> and keep <code>&lt;agent&gt;_artifacts</code> for now (it's already a shared/untyped wing, so it's the most permissive — narrowing it later is safe, widening would be the dangerous direction).</p>
+
+<!-- ============================================================ -->
+<h2 id="ui">6. GUI — the share dialog</h2>
+
+<p>One reusable component — <code>shareDialog(itemType, itemId, agentId)</code> in <code>web/js/share.js</code> — opened from a "Share" / people-icon button that appears in:</p>
+<ul>
+  <li><strong>Chat:</strong> in the chat header, next to the existing star (favourite) and title-edit controls.</li>
+  <li><strong>Project:</strong> in the project detail right-pane (replaces / absorbs the current admin-only visibility selector).</li>
+  <li><strong>Scheduled task:</strong> in the schedule edit modal.</li>
+  <li><strong>Workflow:</strong> in the workflow list row actions + the workflow editor toolbar.</li>
+  <li><strong>Artifact:</strong> in the artifact panel header (shows "inherits from &lt;parent&gt;" with an optional "restrict further…" control).</li>
+</ul>
+
+<h4>Dialog layout</h4>
+<pre><code> ┌─ Share "Q3 planning chat" ─────────────────────────┐
+ │ Owner:  Alexander Klinsky        [Transfer ownership…] │   ← only shown to owner/admin
+ │                                                        │
+ │ Visibility:  ( ) Private — only me                     │
+ │              ( ) Specific people  ▸ [+ add person]     │   ← chip list of granted users
+ │              ( ) Team:  [ Engineering ▾ ]              │   ← team picker; only teams I'm in
+ │              (•) Everyone (global)                     │
+ │                                                        │
+ │  ▸ Also share with (extra people):  [chips…] [+ add]   │   ← shown for Private/Team
+ │  ▸ Exclude these people:            [chips…] [+ add]   │   ← shown only for global
+ │                                                        │
+ │  [Cancel]                                   [ Save ]   │
+ └────────────────────────────────────────────────────────┘
+</code></pre>
+<ul>
+  <li><strong>Non-owners</strong> opening the dialog see a read-only "Shared with: …" summary and no controls (parity with how the project visibility selector is admin-gated today).</li>
+  <li><strong>Person picker</strong> hits a small <code>GET /v1/users?fields=id,name</code> (admin already has this; add a minimal non-admin-safe variant returning only id+display name of users on the same agent — needed for "share with specific users").</li>
+  <li><strong>Transfer flow</strong> = a confirm sub-dialog: pick new owner, show the warnings from §4 (memory wing asymmetry / quota billing for schedules), type-to-confirm.</li>
+  <li>The <strong>star/favourite</strong> button's scope dropdown filters to {scopes the item is now visible in}; if you change visibility down and it orphans your favourite, a toast offers to remove it.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="phases">7. Implementation phases</h2>
+
+<div class="phase">
+  <div class="head"><span>Phase 0 — Core: <code>auth.py</code> generalisation + value alias</span><span class="tag">no behaviour change</span></div>
+  <div class="body">
+    <ul>
+      <li>Add <code>VISIBILITY_VALUES</code>, <code>normalize_visibility</code>, <code>can_access(user, block)</code>, <code>can_manage(user, block)</code> to <code>server_lib/auth.py</code>.</li>
+      <li>Rewrite <code>can_access_project</code> / <code>can_manage_project</code> as thin wrappers over the new functions (regression-test against current behaviour — same allow/deny matrix).</li>
+      <li>Backfill <code>owner_user_id</code> in any <code>project.json</code> that lacks it (lazy, on next write) and alias <code>"user"→"private"</code> on read.</li>
+      <li>Audit-log a new <code>action</code> value reserved for ACL changes / transfers.</li>
+    </ul>
+    <p class="small">Done when: existing project ACL behaviour is byte-identical via the new code path; unit tests cover the allow/deny matrix for all four visibility values × owner/extra/team-member/excluded/stranger.</p>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="head"><span>Phase 1 — Chats: extend to 4 visibilities + grants + transfer</span><span class="tag">depends: P0</span></div>
+  <div class="body">
+    <ul>
+      <li>Migrate <code>sessions</code>: add <code>extra_member_user_ids</code> / <code>excluded_user_ids</code> TEXT(JSON DEFAULT '[]'); widen the accepted <code>visibility</code> domain (no schema change — it's already TEXT).</li>
+      <li><code>session_block()</code> adapter; route <code>_session_access_check</code> + <code>list_sessions</code> scoping through <code>can_access</code> + the new arms.</li>
+      <li>New <code>PATCH /v1/sessions/{id}/share</code> (visibility + ACL; owner/admin only) and the transfer endpoint.</li>
+      <li><code>_resolve_session_wing</code>: handle <code>private/users → user__</code>, <code>global → user__</code> (v1 decision), <code>team</code> unchanged.</li>
+      <li>Web: share button in chat header + <code>share.js</code> dialog v1 (chats only).</li>
+    </ul>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="head"><span>Phase 2 — Projects: adopt the dialog + transfer + <code>users</code> tier</span><span class="tag">depends: P0, P1 (dialog)</span></div>
+  <div class="body">
+    <ul>
+      <li>Projects already have everything except the <code>users</code> (specific-people-without-a-team) tier as a first-class visibility value — today you'd do <code>visibility=private</code> + <code>extra_member_user_ids</code>. We add <code>"users"</code> as an explicit value mostly for UI clarity; access logic treats <code>private</code> and <code>users</code> identically (owner + extras), so this is nearly free.</li>
+      <li>Add <code>POST …/projects/{name}/transfer</code> → <code>update_project</code> with owner-change + audit.</li>
+      <li>Swap the project right-pane visibility UI for the shared <code>shareDialog('project', …)</code>.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="head"><span>Phase 3 — Scheduled tasks: net-new sharing</span><span class="tag">depends: P0</span></div>
+  <div class="body">
+    <ul>
+      <li>Migrate <code>schedules</code>: add <code>visibility</code> TEXT DEFAULT 'private', <code>owner_team_id</code> TEXT DEFAULT '', <code>extra_member_user_ids</code> / <code>excluded_user_ids</code> TEXT(JSON).</li>
+      <li>Replace <code>_schedule_owner_check</code>'s read path with <code>can_access(schedule_block(row))</code>; keep its mutate path as <code>can_manage</code>. Non-admin list query gains the team/global/extras arms.</li>
+      <li>Run-history visibility: <code>schedule_history</code> rows already scope by the run's session; gate "view this run" + "view artifacts of this run" through the schedule's block (or the denormalised snapshot if we snapshot — Open Q below).</li>
+      <li>Transfer endpoint; confirm-dialog warning about quota billing moving.</li>
+      <li>Web: share button in the schedule edit modal.</li>
+    </ul>
+    <p class="small">Watch-out: scheduled runs use synthetic <code>session_id = sched-&lt;run_id&gt;</code>. Artifact listing for those is driven by the <code>schedule_history</code> row, not a real session — so the artifact access check has to resolve sched-session → schedule → block.</p>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="head"><span>Phase 4 — Workflows: metadata sidecar + run snapshots</span><span class="tag">depends: P0</span></div>
+  <div class="body">
+    <ul>
+      <li>Decide storage: <code>&lt;name&gt;.workflow.meta.json</code> sidecar vs <code>workflows_meta</code> table (Open Q3). Plan assumes sidecar (keeps workflow defs self-contained on disk, mirrors how projects keep <code>project.json</code> next to the project).</li>
+      <li><code>WorkflowEngine.list_workflows</code> filters via <code>can_access(workflow_block(meta))</code>; <code>save_workflow</code> stamps owner on first save; new <code>PATCH …/workflows/{name}/share</code> + transfer.</li>
+      <li><code>workflow_history</code>: add denormalised <code>visibility</code> / <code>owner_user_id</code> / <code>owner_team_id</code> columns, snapshot at fire time. The v8.23.10 delete helpers' user-scoping is replaced by <code>can_access</code>/<code>can_manage</code> on the snapshot.</li>
+      <li>Legacy <code>.workflow</code> files with no sidecar → treated as "all authenticated, no owner" until an owner adopts (any authed user can open the share dialog and claim ownership? or admin-only adoption? — Open Q6). Leaning: first save by a non-admin claims ownership.</li>
+      <li>Web: share button in workflow list rows + editor toolbar.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="head"><span>Phase 5 — Artifacts: explicit inheritance + narrow-only override</span><span class="tag">depends: P1, P3, P4</span></div>
+  <div class="body">
+    <ul>
+      <li>Migrate <code>artifacts</code>: add <code>visibility_override</code> TEXT DEFAULT ''.</li>
+      <li><code>artifact_block(row, parent_block)</code>: effective visibility = the narrower of <code>parent_block.visibility</code> and <code>visibility_override</code> (with a fixed total order <code>private &lt; users ≈ team &lt; global</code>; <code>users</code> vs <code>team</code> aren't comparable, so an override may only be applied if the parent is <code>global</code> or the override matches the parent's class — keep the rule simple: an override of <code>private</code> is always allowed; anything else must equal or be a subset of the parent, else 400).</li>
+      <li>Artifact listing / download / version endpoints gate through this. Promotion to the project/agent artifact grid respects it.</li>
+      <li>Web: artifact panel header shows "Visible to: &lt;inherited&gt;" + a "Restrict…" control (owner of parent only).</li>
+    </ul>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="head"><span>Phase 6 — (Optional) Team document-ingestion pipeline — closes finding 3</span><span class="tag">independent; can ship anytime after P0</span></div>
+  <div class="body">
+    <ul>
+      <li>Add <code>team_input_folders</code> to the team record (<code>user_teams</code> row or a <code>team__&lt;tid&gt;.json</code> sidecar) — same shape as <code>project.json → input_folders</code>.</li>
+      <li>Either (a) extend <code>mempalace-project-sync</code> to also iterate teams (one daemon, more work per cycle — but it's already single-threaded and sequential, so this just lengthens cycles), or (b) a sibling <code>mempalace-team-sync</code> daemon. Plan leans (a): less code, one place to harden.</li>
+      <li>Files land in <code>team__&lt;tid&gt;</code> wing — which <code>mempalace_query</code> already returns cross-wing to team members, and which is already access-scoped by team membership. KG extraction pass identical to projects.</li>
+      <li>Path-traversal guard identical to the project one (refuse <code>agents/</code>, <code>/etc</code>, …).</li>
+      <li>Team-head-only management of the folder list (this is the one place a team-head shortcut on <code>can_manage</code> is clearly right — see Open Q2).</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="files">8. Files touched (by phase)</h2>
+<table>
+<tr><th>Phase</th><th>Files</th></tr>
+<tr><td>P0</td><td><span class="file">server_lib/auth.py</span> (new functions + project wrappers), <span class="file">brain.py</span> (ProjectManager owner backfill / value alias), tests</td></tr>
+<tr><td>P1</td><td><span class="file">server_lib/db.py</span> (sessions migration, <code>list_sessions</code> scoping, <code>_resolve_session_wing</code>), <span class="file">handlers/projects.py</span> (<code>_session_access_check</code>) + <span class="file">handlers/sessions_handler.py</span> (new <code>PATCH /share</code> + transfer route), <span class="file">handlers/chat.py</span> (pass owner through), <span class="file">web/js/share.js</span> (new), <span class="file">web/js/chat.js</span> + <span class="file">web/index.html</span> (header button)</td></tr>
+<tr><td>P2</td><td><span class="file">brain.py</span> (<code>ProjectManager.update_project</code> transfer arm), <span class="file">handlers/projects.py</span> (transfer route), <span class="file">web/js/projects.js</span> (use shared dialog)</td></tr>
+<tr><td>P3</td><td><span class="file">brain.py</span> (<code>schedules</code> migration, <code>_schedule_owner_check</code> rewrite, schedule list query), <span class="file">handlers/</span> (schedule share + transfer routes; artifact-access resolution for <code>sched-</code> sessions), <span class="file">engine/scheduler.py</span> (worker sets billing user from owner), <span class="file">web/js/</span> schedules UI</td></tr>
+<tr><td>P4</td><td><span class="file">brain.py</span> (<code>WorkflowEngine</code> meta sidecar load/save, <code>list_workflows</code> filter, <code>save_workflow</code> owner stamp, <code>workflow_history</code> migration + snapshot at <code>_workflow_history_record</code>), <span class="file">handlers/</span> (workflow share + transfer), <span class="file">web/js/workflows.js</span></td></tr>
+<tr><td>P5</td><td><span class="file">server_lib/db.py</span> (<code>artifacts</code> migration, artifact list/get/version gating), <span class="file">handlers/</span> (artifact endpoints), <span class="file">web/js/files.js</span> / artifact panel</td></tr>
+<tr><td>P6</td><td><span class="file">server_lib/auth.py</span> or a team store (<code>team_input_folders</code>), the project-sync daemon module (extend to teams), <span class="file">handlers/admin.py</span> or a teams handler (folder CRUD), team-management UI</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="edge">9. Edge cases &amp; invariants</h2>
+<ul>
+  <li><strong>Owner is never excludable.</strong> <code>can_access</code> short-circuits on owner before consulting <code>excluded_user_ids</code>. The dialog refuses to add the owner to the exclude list.</li>
+  <li><strong>Creator = owner, always, at creation.</strong> Every <code>create_*</code> ignores an owner field from the request body (admin seeding aside). No path lets a non-owner end up owning something they didn't create except via explicit transfer.</li>
+  <li><strong>Only owner/admin changes visibility or ACL.</strong> Enforced by routing every <code>PATCH …/share</code> + transfer through <code>can_manage</code>. Team members of a team-visible item can <em>read</em> it but not re-share it (matches today's project behaviour where visibility is admin-only).</li>
+  <li><strong>Grants/excludes don't survive a tier change that makes them meaningless</strong> — switching to <code>global</code> drops <code>extra_member_user_ids</code> (everyone's already in); switching away from <code>global</code> drops <code>excluded_user_ids</code> (no allow-list to subtract from). The handler normalises on save (mirrors <code>handlers/projects.py</code> which already does this for <code>excluded_user_ids</code>).</li>
+  <li><strong>Artifact override can only narrow.</strong> Validated on save; an override wider than (or incomparable-and-not-a-subset of) the parent's effective visibility → 400.</li>
+  <li><strong>Transfer doesn't re-key existing MemPalace drawers</strong> (chats keyed by owner). Future sync follows the new owner. Projects unaffected (wing keyed by project id). Documented in the transfer confirm dialog.</li>
+  <li><strong>Legacy rows</strong> keep their current effective behaviour until adopted: anonymous/owner-less chats → all-authenticated read; owner-less schedules → admin-only; owner-less workflows → all-authenticated. The first <code>can_manage</code>-passing edit by a non-admin claims ownership (workflows) or is admin-only (schedules) — see Open Q6.</li>
+  <li><strong>Favourites never widen.</strong> Star scope options filtered to the item's visible scopes; orphaned favourites cleaned up (or marked stale) when an item is narrowed.</li>
+  <li><strong>Scheduled-run billing follows the schedule's current owner.</strong> The run worker reads <code>schedules.user_id</code> for <code>current_user_id</code>; after transfer, new runs bill the new owner's quota. (Past <code>costs.db</code> rows are immutable.)</li>
+  <li><strong>KV-cache stability:</strong> none of this touches <code>_build_system_prompt</code>'s static text — visibility is metadata, not prompt content. The per-session preamble may mention "shared with team X" but that's already in the dynamic preamble bucket, not the cached prefix.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="open">10. Open questions (need your call before / during implementation)</h2>
+<ol>
+  <li><strong>One <code>/v1/share/*</code> endpoint family vs per-resource endpoints?</strong> Generic is DRYer for the client; per-resource matches the existing routing style (<code>/v1/agents/{a}/projects/{name}/…</code>). Leaning: a generic <code>share.js</code> client that calls per-resource endpoints (server stays conventional, client stays DRY).</li>
+  <li><strong>Does <code>can_manage</code> get a team-head shortcut for non-project items?</strong> Today projects: no (owner-or-admin only). Schedules/chats/workflows: undecided. A team head arguably should be able to manage team-visible items their members created. Safe default: <em>no shortcut</em> (matches projects); revisit if it's annoying. The one exception that's clearly right: team-head manages the <em>team's</em> input-folder list in Phase 6.</li>
+  <li><strong>Workflow metadata: sidecar file vs DB table?</strong> Sidecar keeps the workflow self-contained and mirrors <code>project.json</code>; table is easier to query for "list all workflows visible to X" without stat-ing every file. Leaning sidecar (workflow counts are small).</li>
+  <li><strong>Where does a <code>global</code> chat's memory go?</strong> v1: stays in <code>user__&lt;owner&gt;</code> (least surprising, no new wing). Alternative: a <code>shared__global</code> wing. Decide before P1's <code>_resolve_session_wing</code> change.</li>
+  <li><strong>Orphaned favourites on narrowing: delete or mark stale?</strong> Delete is cleaner; mark-stale lets the user re-pin if they regain access. Leaning delete + a toast.</li>
+  <li><strong>Adopting legacy owner-less items:</strong> for workflows/chats, does the first non-admin <code>can_manage</code> edit claim ownership, or is adoption admin-only? Leaning: first-edit-claims for workflows &amp; chats; admin-only for schedules (they bill quota).</li>
+  <li><strong>Do <code>schedule_history</code> / <code>workflow_history</code> rows need a denormalised visibility snapshot, or is it fine to always resolve through the live parent?</strong> Snapshot = old runs don't get re-exposed if the parent is later widened, but more columns + a subtle "why is this run still private" UX. Live = simpler, but widening a workflow retro-exposes its run history. Leaning: snapshot for runs (the safer default for "I made this private after the fact").</li>
+</ol>
+
+<hr>
+<p class="small">Plan generated 2026-05-12. Nothing here is implemented. Phases are independently shippable after P0; recommended order P0 → P1 → P2 → P3 → P4 → P5, with P6 anytime after P0.</p>
+
+</div>
+</body>
+</html>
