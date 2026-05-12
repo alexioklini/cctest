@@ -2807,6 +2807,13 @@ async function loadArtifactVersion(version) {
   }
 }
 
+function shareCurrentArtifact() {
+  const artifactId = state.activeArtifactId;
+  if (!artifactId) { showToast('No artifact open', true); return; }
+  const title = document.getElementById('artifact-title')?.textContent || 'artifact';
+  shareDialog('artifact', artifactId, '', { title });
+}
+
 function renderArtifactContent(content, type, name, encoding) {
   const container = document.getElementById('artifact-content');
   const ext = name.split('.').pop().toLowerCase();

@@ -54,6 +54,7 @@ function wfRenderList() {
         <div class="wf-card-actions">
           <button class="wf-btn wf-btn-primary" onclick="wfRun('${escapeJs(wf.name)}')">Run</button>
           <button class="wf-btn wf-btn-ghost" onclick="wfOpenEditor('${escapeJs(wf.name)}')">Edit</button>
+          <button class="wf-btn wf-btn-ghost" onclick="shareDialog('workflow','${escapeJs(wf.name)}','${WF_AGENT}',{title:'${escapeJs(wf.display_name || wf.name)}',onChange:loadWorkflows})">Share</button>
           <button class="wf-btn wf-btn-ghost" data-wf-history-btn="${escapeHtml(wf.name)}"
                   onclick="wfToggleHistory('${escapeJs(wf.name)}')">History</button>
           <button class="wf-btn wf-btn-ghost" onclick="wfDelete('${escapeJs(wf.name)}')">Delete</button>

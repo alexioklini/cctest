@@ -4035,6 +4035,7 @@ async function loadScheduledView() {
             : `<button onclick="_schedViewRun('${esc(s.name)}')">Run Now</button>`}
           <button onclick="_schedViewToggle('${esc(s.name)}', ${!enabled})">${enabled ? 'Pause' : 'Resume'}</button>
           <button onclick="_schedViewEdit('${esc(s.name)}')">Edit</button>
+          <button onclick="shareDialog('schedule','${esc(s.name)}','',{title:'${esc(s.name)}',onChange:loadScheduledView})">Share</button>
           <button class="danger" onclick="_schedViewDelete('${esc(s.name)}')">Delete</button>
         </div>
         <details class="sched-runs" ontoggle="if(this.open) _schedLoadRuns('${esc(s.name)}', this)">
