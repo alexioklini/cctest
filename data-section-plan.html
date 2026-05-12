@@ -94,6 +94,7 @@
   <a href="#why">1 · Why build, not embed</a>
   <a href="#what-df">2 · What Data Formulator actually is</a>
   <a href="#arch">3 · Target architecture (reuse map)</a>
+  <a href="#rel-projects">3a · Relationship to Projects</a>
   <a href="#ux">4 · User experience &amp; mockups</a>
   <a href="#flow">5 · Request flow (sequence)</a>
   <a href="#api">6 · Server API surface</a>
@@ -240,6 +241,29 @@
 <li><code>python_exec</code>'s working dir <b>is</b> that artifact folder (CLAUDE.md: "Working dir = artifact session folder"). So generated pandas/SQL can do <code>duckdb.connect('_data.duckdb')</code> with a bare relative path — no path plumbing needed.</li>
 <li>DuckDB is already a transitive dep (Data Formulator uses it; Brain's project ingest path touches it). One pinned line in <code>requirements.txt</code>.</li>
 </ul>
+
+<h3 id="rel-projects">Relationship to Projects — "a special kind of chat", not a Project</h3>
+<p class="lead">A Data Workbench session <b>is a chat session</b> under the hood. That's why the chat window, the composer, artifact handling, and every guardrail come for free. It <b>borrows the Project <i>pattern</i></b> — a per-session system-prompt block + an extra tool group — but it does <b>not</b> depend on the Project subsystem. Getting this distinction right is what keeps the change small (and is exactly the scope-creep §12 warns about).</p>
+
+<div class="grid2">
+<div class="card">
+<h4>Comes for free (it's a chat session)</h4>
+<ul>
+<li><b>Chat window &amp; composer</b> — SSE streaming, inline tool-call display, cancellation, compaction, cost logging. The composer reuses the chat composer's <b>model picker</b> + <b>format-aware thinking-level button</b> (per-session sticky, self-correcting on model switch). Dropped: research-mode button (irrelevant), caveman mode (per-model knob, would invalidate warmup KV prefix). The attachment chip is <i>replaced</i> by the Sources tab — same multipart path, different affordance. Added: the Workbench status row (source/table indicator, GDPR-scan badge, ⌘K).</li>
+<li><b>Artifacts</b> — the session gets the standard <code>agents/&lt;name&gt;/artifacts/&lt;date&gt;_&lt;sid&gt;/</code> folder. Anything <code>write_file</code>/<code>python_exec</code> drops there is auto-promoted, versioned, shows in the global Artifacts panel, gets mined. "Pin as Report" is literally writing <code>report.html</code> into that folder and letting <code>_after_file_write()</code> run. The <code>_data.duckdb</code> file lives in that same folder — cleaned up with the session.</li>
+<li><b>Guardrails</b> — GDPR pre-flight, quota gate, provider routing, RBAC, audit, RateLimiter — all inside <code>send_message()</code> + the standard handlers. Routing through them is the whole point.</li>
+</ul>
+</div>
+<div class="card">
+<h4>Borrowed as a pattern — NOT a dependency</h4>
+<ul>
+<li><b>The system-prompt block</b> — a <code>DATA WORKBENCH</code> block injected when <code>_thread_local.data_workbench</code> is set, exactly the way project chats get a <code>PROJECT MEMORY</code> block gated by <code>_thread_local.project</code>. That gating is what keeps the KV prefix byte-stable for normal chats.</li>
+<li><b>What it does NOT reuse:</b> <code>ProjectManager</code> / <code>project.json</code> / project input folders / KG extraction / the project-sync daemon / the <code>project__&lt;id&gt;</code> MemPalace wing / <code>research_mode</code> / the citation validator. All of that machinery is irrelevant here and would be dead weight.</li>
+<li><b>Mental model:</b> "a chat with one extra system-prompt block, one extra tool group (<code>data_viz</code>), and a DuckDB file in its artifact folder" — much closer to a chat than to a project.</li>
+</ul>
+</div>
+</div>
+<div class="callout"><b>So:</b> chat window — free. Composer (model + thinking) — free, lightly trimmed. Artifacts — free. Guardrails — free. The "project-ness" — borrowed as the gated-prompt-block pattern, not as a coupling to <code>ProjectManager</code>. Conflating it with a real Project would drag in the data-lake / KG / sync-daemon baggage we explicitly don't want.</div>
 
 <!-- ============================================================ -->
 <h2 id="ux">4 · User experience &amp; mockups</h2>
