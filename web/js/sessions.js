@@ -65,15 +65,18 @@ async function ensureSession(chat) {
 
 async function openSession(sessionId, agentId) {
   NextPrompt.clear();
-  // Abort any running stream before switching
+  // Detach from any in-progress turn we were watching (does NOT cancel the
+  // server-side worker — it keeps running and we can re-attach later).
+  API.abortStreamAttach();
+  // Leaving a chat that's mid-stream: stop watching its live UI. If this tab
+  // was the one that *sent* the turn, the POST stream is aborted here too —
+  // but the worker keeps running server-side, so reopening this session will
+  // re-attach via GET /v1/chat/stream and resume rendering from the buffer.
   const prevChat = state.activeChat;
   if (prevChat?.streaming) {
     if (API._abortController) API._abortController.abort();
     prevChat.streaming = false;
     clearInterval(prevChat._streamTimerInterval);
-    if (prevChat.streamingText) {
-      prevChat.messages.push({role:'assistant', content: prevChat.streamingText, _cancelled: true});
-    }
     prevChat.streamingText = '';
     prevChat.thinkingText = '';
     prevChat.files = [];
@@ -96,6 +99,9 @@ async function openSession(sessionId, agentId) {
   chat._expandedHints = new Set();
   // Real chat open — drop any sticky scheduled-run selection.
   state.activeScheduledRunId = null;
+
+  let resumeStreaming = false;
+  let resumeStreamingText = '';
 
   try {
     const data = await API.getSessionMessages(sessionId);
@@ -205,11 +211,28 @@ async function openSession(sessionId, agentId) {
       }
       expanded.push(msg);
     }
-    // Flush any trailing pending thinking (session ended before final assistant — rare).
-    for (const tm of pendingThinking) expanded.push(tm);
+    // Trailing thinking rows (no assistant after them). If a turn is in
+    // progress, these belong to the in-flight turn and the live-stream replay
+    // will re-emit them via thinking_done — so DROP them here to avoid
+    // duplicates. Otherwise flush them verbatim (rare: session ended mid-think).
+    if (!data.streaming) {
+      for (const tm of pendingThinking) expanded.push(tm);
+    }
     // Server-side live estimate takes priority over stale per-message metadata
     if (data.total_tokens) chat.totalTokens = data.total_tokens;
     chat.messages = expanded;
+
+    // A turn is in progress for this session — flag it so we re-attach to the
+    // live stream after navigating in. The stream replays every event from the
+    // start of the turn, so it rebuilds streamingText (and the in-flight
+    // thinking/tool rows) fully — don't pre-seed from data.streaming_text (that
+    // would double the text). We keep the persisted partial only as a fallback
+    // shown if the attach can't connect.
+    if (data.streaming) {
+      resumeStreaming = true;
+      resumeStreamingText = data.streaming_text || '';
+      chat.streamingText = '';
+    }
 
     // Load memorized turn_ids (for the memory menu) in background
     refreshMemorizedTurns();
@@ -250,6 +273,54 @@ async function openSession(sessionId, agentId) {
   schedulePIIBadgeUpdate();
   // Update the workflow-run banner (visible only when chat.workflowRunId).
   if (typeof maybeUpdateWorkflowBanner === 'function') maybeUpdateWorkflowBanner();
+
+  // Re-attach to an in-progress turn: replay everything emitted so far, then
+  // follow live events until done. The server-side worker is untouched by us
+  // attaching/detaching; multiple tabs may attach to the same turn.
+  if (resumeStreaming) {
+    const isActive = () => state.activeChat === chat;
+    chat.streaming = true;
+    chat.streamingText = '';
+    chat.thinkingText = '';
+    chat.thinkingSummary = null;
+    chat.queueStatus = null;
+    chat.guidedTasks = [];
+    chat._guidedTasksOpen = false;
+    chat._guidedTasksUserToggled = false;
+    chat.files = [];
+    chat._streamGen = (chat._streamGen || 0) + 1;
+    chat._streamStartTime = Date.now();
+    clearInterval(chat._streamTimerInterval);
+    chat._streamTimerInterval = setInterval(() => updateStreamTimer(chat), 100);
+    updateStreamingUI(true, chat);
+    if (resumeStreamingText && isActive()) {
+      // Show the persisted partial immediately; replay overwrites it in a beat.
+      chat.streamingText = resumeStreamingText;
+      renderStreamingMessage(chat);
+    }
+    const cbs = buildStreamCallbacks(chat, isActive);
+    // On the first replayed text_delta, clear the placeholder so the replayed
+    // stream (which carries the full text) doesn't append onto it.
+    let _replayStarted = false;
+    const origTextDelta = cbs.text_delta;
+    cbs.text_delta = (d) => {
+      if (!_replayStarted) { _replayStarted = true; chat.streamingText = ''; }
+      origTextDelta(d);
+    };
+    cbs.idle = () => {
+      // The turn finished between GET /messages and the attach — reload so the
+      // now-persisted assistant message renders, and clear the streaming UI.
+      chat.streaming = false;
+      chat.streamingText = '';
+      chat.thinkingText = '';
+      clearInterval(chat._streamTimerInterval);
+      if (isActive()) {
+        updateStreamingUI(false);
+        openSession(sessionId, agentId);
+      }
+    };
+    API.attachStream(sessionId, cbs);
+  }
 }
 
 function newChat() {

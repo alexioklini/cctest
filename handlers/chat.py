@@ -502,10 +502,19 @@ class ChatHandlerMixin:
                     session.base_url = provider["base_url"]
                     session.max_context = engine.get_model_max_context(auto_model)
 
-        # Reset cancel token
+        # Reset cancel token + open a fresh live-event buffer for this turn.
+        # The worker thread (below) emits every SSE event into `live`; the HTTP
+        # response loop at the end of this method just attaches as one subscriber.
+        # Reopening the chat — or watching from another tab — attaches another
+        # subscriber via GET /v1/chat/stream and replays the buffer, so it looks
+        # like the chat was open all along. The worker is NOT tied to any HTTP
+        # connection; only POST /v1/chat/cancel stops it.
+        live = LiveStream()
         with session.lock:
             session.cancel_token = engine.CancelToken()
             session._streaming = True
+            session.live_stream = live
+        ChatDB.set_streaming_text(session.id, "")  # clear any stale partial
 
         # --- Unified attachment routing: multimodal vs disk based on model capabilities ---
         import base64 as _b64
@@ -681,8 +690,8 @@ class ChatHandlerMixin:
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
-        event_queue = queue.Queue()
         created_files = []
+        _stream_persist = {"last": 0.0}  # throttle for ChatDB.set_streaming_text
         _partial_reply = []  # accumulate text deltas for partial response recovery
         _partial_tools = []  # accumulate tool calls
         _partial_thinking = []  # accumulate thinking blocks
@@ -693,6 +702,16 @@ class ChatHandlerMixin:
         def event_callback(event_type, data):
             if event_type == "text_delta":
                 _partial_reply.append(data.get("text", ""))
+                # Incremental persist (throttled): so a client reopening this
+                # session — or the chat surviving a server restart mid-stream —
+                # can render the partial reply even with no live buffer.
+                _now = time.time()
+                if _now - _stream_persist["last"] > 0.4:
+                    _stream_persist["last"] = _now
+                    try:
+                        ChatDB.set_streaming_text(sid, "".join(_partial_reply))
+                    except Exception:
+                        pass
             elif event_type in ("file_created", "artifact_updated"):
                 created_files.append(data)
             elif event_type == "thinking_delta":
@@ -751,11 +770,11 @@ class ChatHandlerMixin:
                             t["references"] = refs
                         break
                 if refs:
-                    event_queue.put(("references", {
+                    live.emit("references", {
                         "tool_name": tool_name,
                         "references": refs,
                         "tool_round": data.get("tool_round", 0),
-                    }))
+                    })
             elif event_type == "usage":
                 _usage_totals["tokens_in"] += data.get("tokens_in", 0)
                 _usage_totals["tokens_out"] += data.get("tokens_out", 0)
@@ -828,7 +847,7 @@ class ChatHandlerMixin:
             elif event_type == "request_payload":
                 _request_payloads.append(data)
                 return  # internal only, don't send to client
-            event_queue.put((event_type, data))
+            live.emit(event_type, data)
 
         handler_self = self  # capture for closure
 
@@ -1166,7 +1185,7 @@ class ChatHandlerMixin:
                     # Include file attachments
                     if created_files:
                         done_data["files"] = created_files
-                    event_queue.put(("done", done_data))
+                    live.emit("done", done_data)
 
                     # Continuous session summarization: refresh memory summary at token thresholds
                     try:
@@ -1221,7 +1240,7 @@ class ChatHandlerMixin:
                 else:
                     # Empty reply — rollback all intermediate messages from tool loop
                     _rollback_messages(session, sid, _msg_count_before)
-                    event_queue.put(("done", {"text": "", "tokens": 0, "model": session.model}))
+                    live.emit("done", {"text": "", "tokens": 0, "model": session.model})
             except engine.TaskCancelled:
                 # Save partial response if any text was streamed
                 partial = "".join(_partial_reply).strip()
@@ -1234,7 +1253,7 @@ class ChatHandlerMixin:
                     session.add_message("assistant", partial, metadata=meta)
                 else:
                     _rollback_messages(session, sid, _msg_count_before)
-                event_queue.put(("error", {"message": "Cancelled"}))
+                live.emit("error", {"message": "Cancelled"})
             except SystemExit as e:
                 partial = "".join(_partial_reply).strip()
                 if partial:
@@ -1246,7 +1265,7 @@ class ChatHandlerMixin:
                     session.add_message("assistant", partial, metadata=meta)
                 else:
                     _rollback_messages(session, sid, _msg_count_before)
-                event_queue.put(("error", {"message": f"Engine fatal error (exit code {e.code})"}))
+                live.emit("error", {"message": f"Engine fatal error (exit code {e.code})"})
             except Exception as e:
                 import traceback
                 traceback.print_exc()
@@ -1260,10 +1279,20 @@ class ChatHandlerMixin:
                     session.add_message("assistant", partial, metadata=meta)
                 else:
                     _rollback_messages(session, sid, _msg_count_before)
-                event_queue.put(("error", {"message": str(e)}))
+                live.emit("error", {"message": str(e)})
             finally:
+                # If the worker died without emitting a terminal event (e.g. a
+                # bare process exit), make sure subscribers aren't left hanging.
+                if not live.done:
+                    live.emit("error", {"message": "Server worker terminated unexpectedly"})
                 with session.lock:
                     session._streaming = False
+                    if session.live_stream is live:
+                        session.live_stream = None
+                try:
+                    ChatDB.set_streaming_text(sid, "")  # finalized — clear the partial
+                except Exception:
+                    pass
                 # Clean up thread-local state
                 engine._thread_local.current_agent = None
                 engine._thread_local.mcp_manager = None
@@ -1274,39 +1303,96 @@ class ChatHandlerMixin:
                 engine._thread_local.execution_overrides = {}
                 engine._thread_local.research_mode_override = None
                 engine._thread_local._current_model = None
-                event_queue.put(None)  # sentinel
 
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()
 
-        # Stream events to client with keepalive (chunked encoding for HTTP/1.1)
+        # Stream this turn's events to the originating connection. The worker is
+        # decoupled from this connection — if the client disconnects, the worker
+        # keeps running and its events stay buffered in `live` for a reconnect.
+        self._stream_live_to_client(live, worker_thread=t)
+
+    def _stream_live_to_client(self, live, worker_thread=None):
+        """Replay `live`'s buffered events to self.wfile, then follow live ones
+        until the terminal done/error (or the worker thread dies). Used both by
+        the originating POST /v1/chat connection and by GET /v1/chat/stream
+        reconnects. A client disconnect here NEVER cancels the worker."""
+        sub, replay, already_done = live.attach()
         try:
+            for event_type, data in replay:
+                sse_line = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+                self.wfile.write(sse_line.encode("utf-8")); self.wfile.flush()
+            if already_done:
+                return
             while True:
                 try:
-                    event = event_queue.get(timeout=5)
+                    event = sub.get(timeout=5)
                 except queue.Empty:
-                    # If worker thread died, stop waiting
-                    if not t.is_alive() and event_queue.empty():
+                    if live.done:
+                        break
+                    if worker_thread is not None and not worker_thread.is_alive():
                         try:
                             sse_err = f'event: error\ndata: {json.dumps({"message": "Server worker terminated unexpectedly"})}\n\n'
                             self.wfile.write(sse_err.encode("utf-8")); self.wfile.flush()
                         except (BrokenPipeError, ConnectionResetError, OSError):
                             pass
                         break
-                    # Send keepalive comment to prevent browser timeout
                     try:
                         self.wfile.write(b": keepalive\n\n"); self.wfile.flush()
                     except (BrokenPipeError, ConnectionResetError, OSError):
                         break
                     continue
-                if event is None:
-                    break
                 event_type, data = event
                 sse_line = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
                 self.wfile.write(sse_line.encode("utf-8")); self.wfile.flush()
+                if event_type in ("done", "error"):
+                    break
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
+        finally:
+            live.detach(sub)
+
+    def _handle_chat_stream(self):
+        """GET /v1/chat/stream?session_id=X — (re)attach to an in-progress turn.
+
+        Replays every SSE event emitted so far this turn, then follows live ones
+        until the terminal done/error. If no turn is running (the chat is idle or
+        the turn finished between the client's GET /messages and this call), emits
+        a single `idle` event and closes — the client then renders persisted
+        messages from GET /messages. Disconnecting NEVER cancels the worker, and
+        any number of tabs may attach concurrently.
+        """
+        from urllib.parse import parse_qs, urlparse
+        qs = parse_qs(urlparse(self.path).query)
+        sid = (qs.get("session_id") or [""])[0].strip()
+        if not sid:
+            self._send_json({"error": "session_id required"}, 400)
+            return
+        if self._session_access_check(sid) is None:
+            return
+        session = sessions.get(sid)
+        # SSE headers
+        try:
+            self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except OSError:
+            pass
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.flush()
+        live = getattr(session, "live_stream", None) if session else None
+        if live is None:
+            try:
+                self.wfile.write(b"event: idle\ndata: {}\n\n"); self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            return
+        self._stream_live_to_client(live, worker_thread=None)
 
     def _handle_cancel_scheduled(self):
         """POST /v1/schedule/cancel — cancel a running scheduled task."""

@@ -229,6 +229,55 @@ class API {
       }
     }
   }
+
+  /** Attach to an in-progress turn (GET /v1/chat/stream). Replays buffered
+   *  events then follows live ones. Same callback map as streamChat, plus an
+   *  `idle` callback fired when there's nothing to attach to. Uses a separate
+   *  abort controller — aborting it never affects the server-side worker. */
+  static async attachStream(sessionId, callbacks) {
+    if (this._streamController) this._streamController.abort();
+    this._streamController = new AbortController();
+    try {
+      const resp = await fetch(`${BASE_URL}/v1/chat/stream?session_id=${encodeURIComponent(sessionId)}`, {
+        method: 'GET',
+        headers: this._headers(),
+        signal: this._streamController.signal,
+      });
+      if (!resp.ok || !resp.body) { if (callbacks.idle) callbacks.idle({}); return; }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let lastEventType = null;
+      const dispatch = (line) => {
+        if (line.startsWith('event: ')) {
+          lastEventType = line.slice(7).trim();
+        } else if (line.startsWith('data: ') && lastEventType) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (callbacks[lastEventType]) callbacks[lastEventType](data);
+          } catch(e) {}
+          lastEventType = null;
+        }
+      };
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, {stream: true});
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) dispatch(line);
+      }
+      if (buffer.trim()) for (const line of buffer.split('\n')) dispatch(line);
+    } catch(e) {
+      if (e.name !== 'AbortError' && !/Load failed|Failed to fetch|NetworkError/i.test(e.message)) {
+        if (callbacks.error) callbacks.error({message: e.message});
+      }
+    }
+  }
+
+  static abortStreamAttach() {
+    if (this._streamController) { try { this._streamController.abort(); } catch(e){} this._streamController = null; }
+  }
 }
 
 

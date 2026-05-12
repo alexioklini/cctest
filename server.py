@@ -232,6 +232,58 @@ from server_lib.db import (  # noqa: E402,F401
 from server_lib.db import ChatDB  # noqa: E402,F401
 
 
+class LiveStream:
+    """Server-side event buffer for one in-progress chat turn.
+
+    The agentic-loop worker thread runs independently of any HTTP connection.
+    It pushes every SSE event into a LiveStream, which (a) appends the event to
+    an ordered replay log and (b) fans it out to every currently-attached
+    subscriber queue. A client opening `GET /v1/chat/stream?session_id=X` while a
+    turn is in progress replays the log from the top, then receives live events
+    until the terminal `done`/`error` — so reopening a streaming chat (or
+    watching from a second tab) looks identical to having had it open all along.
+
+    The worker survives a subscriber disconnect; only `/v1/chat/cancel` stops it.
+    """
+
+    def __init__(self):
+        self.events: list[tuple] = []          # ordered (event_type, data) replay log
+        self.subscribers: list = []            # list[queue.Queue]
+        self.done = False                      # terminal: a `done` or `error` was emitted
+        self.lock = threading.Lock()
+        self.started_at = time.time()
+
+    def emit(self, event_type, data):
+        with self.lock:
+            self.events.append((event_type, data))
+            if event_type in ("done", "error"):
+                self.done = True
+            subs = list(self.subscribers)
+        for q in subs:
+            try:
+                q.put((event_type, data))
+            except Exception:
+                pass
+
+    def attach(self):
+        """Register a new subscriber. Returns (queue, replay_snapshot, already_done)."""
+        import queue as _q
+        sub = _q.Queue()
+        with self.lock:
+            replay = list(self.events)
+            already_done = self.done
+            if not already_done:
+                self.subscribers.append(sub)
+        return sub, replay, already_done
+
+    def detach(self, sub):
+        with self.lock:
+            try:
+                self.subscribers.remove(sub)
+            except ValueError:
+                pass
+
+
 class Session:
     """A conversation session with an agent."""
 
@@ -240,6 +292,9 @@ class Session:
                  max_context: int = 131072, session_id: str | None = None):
         self.id = session_id or uuid.uuid4().hex[:12]
         self.agent_id = agent_id
+        # Live event buffer for the in-progress turn (None when idle). Set by
+        # _handle_chat before spawning the worker; cleared when the turn ends.
+        self.live_stream: LiveStream | None = None
         self.model = model or ""
         self.api_key = api_key
         self.base_url = base_url
@@ -266,6 +321,8 @@ class Session:
         # True/False = force the override for this chat. Set from the composer
         # button or session settings; persists in chats.db sessions table.
         self.research_mode_override: bool | None = None
+
+        self._streaming = False  # True while a chat turn worker is running
 
         # Warmup state
         self._warmup_done = threading.Event()
@@ -1249,6 +1306,8 @@ class BrainAgentHandler(
 
         if path == "/v1/tools/list":
             self._handle_tools_list()
+        elif path == "/v1/chat/stream":
+            self._handle_chat_stream()
         elif path == "/v1/status":
             self._handle_status()
         elif path == "/v1/agents":

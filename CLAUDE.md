@@ -104,6 +104,17 @@ Entry point in `engine/loop.py`. Full invariants in `engine/CLAUDE.md`. Summary:
 - Tool exec: built-in pre → external pre → execute → built-in post → external post → `_after_file_write`
 - `AskUserQuestion` blocks via `_pending_answers[session_id]` + `Event`; unblocked by `POST /v1/chat/answer`
 
+## Resumable Streaming (decoupled from HTTP connection)
+
+The agentic-loop **worker thread is not tied to any HTTP connection**. `_handle_chat` opens a `LiveStream` (`server.py`) on `session.live_stream` before spawning the worker; the worker emits **every** SSE event into it. A `LiveStream` is an ordered replay log + a set of subscriber queues — `emit()` appends to the log AND fans out to current subscribers; `attach()` returns `(queue, replay_snapshot, already_done)` under the same lock (no event lost / no dup across the attach boundary).
+
+- **Originating `POST /v1/chat`** connection is just one subscriber: after `t.start()` it calls `_stream_live_to_client(live, worker_thread=t)` — replays the (usually empty) snapshot, then drains its queue until terminal `done`/`error` or worker death.
+- **`GET /v1/chat/stream?session_id=X`** (handler in `handlers/chat.py`) re-attaches: replays the buffer from turn start, then follows live events until terminal. Emits a single `idle` event if no turn is running (chat idle, or the turn finished between the client's `GET /messages` and this call). **Any number of tabs may attach concurrently.** Client disconnect here NEVER cancels the worker — only `POST /v1/chat/cancel` (`session.cancel_token.cancel()`) does.
+- **Incremental persistence**: `sessions.streaming_text` / `streaming_meta` columns hold the in-flight assistant reply, written by `event_callback` on `text_delta` (throttled ~0.4s), cleared in the worker's `finally`. `GET /v1/sessions/<id>/messages` returns `streaming: true` + `streaming_text` while a turn is live. Read only when `_streaming` is True → always fresh within a turn (a stale value after a restart-mid-stream is never surfaced because the reloaded `Session._streaming` is False).
+- **Worker `finally` invariants**: emit `error` if `not live.done` (covers a worker that died without a terminal event), then `session._streaming = False`, then `session.live_stream = None` (order matters — when `live_stream` is None, `_streaming` is already False, so `GET /chat/stream`'s `idle` path can't loop), then clear `streaming_text`.
+- **Client** (`web/js/`): `buildStreamCallbacks(chat, isActive)` builds the SSE callback map, shared by `API.streamChat` (originating send) and `API.attachStream` (reconnect). `openSession()` re-attaches when `GET /messages` reports `streaming: true`; on reconnect it **drops trailing `thinking` DB rows** (the live replay re-emits them via `thinking_done`) and does **not** pre-seed `streamingText` from `streaming_text` (replay rebuilds it fully — pre-seeding would double it). `API.abortStreamAttach()` on leaving a chat (harmless to the worker).
+- `send_message` mutates the in-memory `messages` list only — intermediate tool messages are NOT persisted mid-turn (only the user msg, `thinking` rows from `event_callback`, and the final assistant msg reach the DB). `_rollback_messages`' DB-delete arm is a defensive no-op in the common case.
+
 ## Multi-Provider Routing
 
 `resolve_provider_for_model(model)` is the **single source of truth** for `{api_key, base_url, provider_name}`. Used by chat, delegate, scheduler, warmup, background. Providers are plain OpenAI-compatible entries in `config.json` → `providers`.

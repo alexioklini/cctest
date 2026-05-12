@@ -50,6 +50,15 @@ class SessionsHandlerMixin:
         msgs = ChatDB.load_messages(sid)
         resp = {"session_id": sid, "messages": msgs}
         session = sessions.get(sid)
+        # In-flight turn? Expose the flag + any incrementally-persisted partial
+        # reply so the client can attach to GET /v1/chat/stream and render the
+        # streaming text immediately on (re)open.
+        _streaming = bool(getattr(session, "_streaming", False)) if session else False
+        if _streaming:
+            resp["streaming"] = True
+            _st, _ = ChatDB.get_streaming_text(sid)
+            if _st:
+                resp["streaming_text"] = _st
         if session:
             resp["max_context"] = session.max_context
             resp["total_tokens"] = engine._estimate_conversation_tokens(session.messages)

@@ -6,7 +6,7 @@ Each module handles a slice of the server's route surface. Routes are registered
 
 | File | Route prefix / responsibility |
 |------|-------------------------------|
-| `chat.py` | `/v1/chat/*` — inference, SSE stream, file attachments, proxy responses, citation re-round |
+| `chat.py` | `/v1/chat/*` — inference (`POST /v1/chat`), reconnect to in-progress turn (`GET /v1/chat/stream`), cancel, ask-user answer, file attachments, proxy responses, citation re-round |
 | `sessions_handler.py` | `/v1/sessions/*` — CRUD, list, archive, delete, next-prompt, memory toggle |
 | `projects.py` | `/v1/projects/*`, `/v1/notes/*`, `/v1/ingest/*` — project CRUD, notes, file ingestion |
 | `providers.py` | `/v1/providers/*`, `/v1/models/*` — provider/model config, warmup trigger |
@@ -18,6 +18,7 @@ Each module handles a slice of the server's route surface. Routes are registered
 - `augmented_messages` strips metadata fields before the wire (only `role`+`content`) — prevents 400s from providers seeing internal keys.
 - Multipart upload uses a manual boundary parser (`3.13+` removed `cgi`); preserves original filename.
 - SSE streams use 5s keepalive comments — don't remove them.
+- **Resumable streaming**: the chat worker runs independently of the HTTP connection — see `CLAUDE.md` § "Resumable Streaming". `event_callback` emits into `session.live_stream` (a `LiveStream`); `_stream_live_to_client` (shared by `POST /v1/chat` and `GET /v1/chat/stream`) replays the buffer then follows live events. Disconnecting a stream NEVER cancels the worker — only `POST /v1/chat/cancel`. `GET /messages` exposes `streaming: true` + persisted `streaming_text` while a turn is live.
 - Citation re-round (`chat.py`) fires synchronously when validator finds >30% uncited or ≥2 unverified quotes; result replaces original assistant message in the same SSE stream.
 - `_schedule_owner_check(name)` in `sessions_handler.py` / `admin.py` gates mutating schedule ops for non-admins (non-admins see only own schedules; legacy empty-`user_id` schedules stay admin-only).
 

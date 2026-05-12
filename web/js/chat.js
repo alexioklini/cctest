@@ -183,7 +183,20 @@ async function sendMessage() {
       return;
     }
 
-    await API.streamChat(chat.sessionId, text, {
+    await API.streamChat(chat.sessionId, text, buildStreamCallbacks(chat, isActive), chat.model, filesToSend);
+  } catch(e) {
+    _onStreamCatch(e, chat, isActive, streamGen);
+  }
+  _streamSafetyNet(chat, isActive, streamGen);
+}
+
+/** Build the SSE callback map for a chat turn. Shared between the originating
+ *  send (API.streamChat) and reconnecting to an in-progress turn after the chat
+ *  was reopened (API.attachStream). `streamGen` is snapshotted so a stale
+ *  reconnect can't clobber a newer turn. */
+function buildStreamCallbacks(chat, isActive) {
+  const streamGen = chat._streamGen;
+  return {
       thinking_start: () => {
         // Each round's thinking becomes its own message row at thinking_done,
         // so the live buffer is per-round. Fresh start on every thinking_start.
@@ -744,44 +757,45 @@ async function sendMessage() {
           }
         }
       },
-    }, chat.model, filesToSend);
+  };
+}
 
-    // Safety net: if stream ended without a 'done' event
-    // Guard with streamGen to prevent a stale safety-net (resumed via microtask)
-    // from killing a newer stream's spinner
-    if (chat.streaming && chat._streamGen === streamGen) {
-      console.warn('[SSE] safety net triggered — done event was lost');
-      const text = chat.streamingText || '';
-      if (text) {
-        chat.messages.push({ role: 'assistant', content: text });
-      }
-      chat.streaming = false;
-      chat.streamingText = '';
-      chat.thinkingText = '';
-      chat.files = [];
-      clearInterval(chat._streamTimerInterval);
-      if (isActive()) {
-        renderMessages();
-        scrollToBottom();
-        updateStreamingUI(false);
-        updateStatusBar();
-      }
-      loadAgentSessions(chat.agent);
-    }
-  } catch(e) {
-    if (chat._streamGen !== streamGen) return; // stale — newer stream took over
-    chat.streaming = false;
-    chat.streamingText = '';
-    chat.thinkingText = '';
-    chat.files = [];
-    clearInterval(chat._streamTimerInterval);
-    if (isActive()) {
-      updateStreamingUI(false);
-      // Suppress transient network errors (browser tab backgrounded, connection hiccup)
-      const msg = e.message || '';
-      if (!/Load failed|Failed to fetch|NetworkError|AbortError|network/i.test(msg)) {
-        showToast('Send failed: ' + msg, true);
-      }
+/** Stream ended without a 'done' event — flush any partial text and reset UI.
+ *  Guarded by streamGen so a stale safety-net can't kill a newer stream. */
+function _streamSafetyNet(chat, isActive, streamGen) {
+  if (!(chat.streaming && chat._streamGen === streamGen)) return;
+  console.warn('[SSE] safety net triggered — done event was lost');
+  const text = chat.streamingText || '';
+  if (text) {
+    chat.messages.push({ role: 'assistant', content: text });
+  }
+  chat.streaming = false;
+  chat.streamingText = '';
+  chat.thinkingText = '';
+  chat.files = [];
+  clearInterval(chat._streamTimerInterval);
+  if (isActive()) {
+    renderMessages();
+    scrollToBottom();
+    updateStreamingUI(false);
+    updateStatusBar();
+  }
+  loadAgentSessions(chat.agent);
+}
+
+function _onStreamCatch(e, chat, isActive, streamGen) {
+  if (chat._streamGen !== streamGen) return; // stale — newer stream took over
+  chat.streaming = false;
+  chat.streamingText = '';
+  chat.thinkingText = '';
+  chat.files = [];
+  clearInterval(chat._streamTimerInterval);
+  if (isActive()) {
+    updateStreamingUI(false);
+    // Suppress transient network errors (browser tab backgrounded, connection hiccup)
+    const msg = e.message || '';
+    if (!/Load failed|Failed to fetch|NetworkError|AbortError|network/i.test(msg)) {
+      showToast('Send failed: ' + msg, true);
     }
   }
 }

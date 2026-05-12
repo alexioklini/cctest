@@ -548,6 +548,16 @@ class ChatDB:
             except sqlite3.OperationalError:
                 pass
             conn.execute("CREATE INDEX IF NOT EXISTS idx_session_workflow_run ON sessions(workflow_run_id)")
+            # streaming_text / streaming_meta: in-flight assistant reply for the
+            # currently-running turn. Updated incrementally as deltas arrive so a
+            # client reopening a streaming chat (or the chat surviving a server
+            # restart mid-stream) can render the partial text. Cleared (set to '')
+            # when the turn finalizes and the real assistant message is persisted.
+            for _col in ("streaming_text", "streaming_meta"):
+                try:
+                    conn.execute(f"ALTER TABLE sessions ADD COLUMN {_col} TEXT DEFAULT ''")
+                except sqlite3.OperationalError:
+                    pass
             # ── MemPalace chat-sync cursor ──
             # Tracks which messages have already been mirrored into MemPalace,
             # per session. `last_message_id` is the highest messages.id filed so far.
@@ -839,9 +849,66 @@ class ChatDB:
         c = json.dumps(content) if not isinstance(content, str) else content
         meta = json.dumps(metadata) if metadata else ""
         with _db_conn() as conn:
-            conn.execute("INSERT INTO messages (session_id, role, content, metadata) VALUES (?, ?, ?, ?)",
-                         (session_id, role, c, meta))
+            cur = conn.execute("INSERT INTO messages (session_id, role, content, metadata) VALUES (?, ?, ?, ?)",
+                               (session_id, role, c, meta))
             conn.commit()
+            return cur.lastrowid
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_message(message_id, content=None, metadata=None):
+        """In-place update of a message row. Used to persist a streaming
+        assistant reply incrementally (write the row early, UPDATE its content
+        as deltas arrive, finalize metadata on finish_reason)."""
+        sets, vals = [], []
+        if content is not None:
+            c = json.dumps(content) if not isinstance(content, str) else content
+            sets.append("content = ?"); vals.append(c)
+        if metadata is not None:
+            sets.append("metadata = ?"); vals.append(json.dumps(metadata) if metadata else "")
+        if not sets:
+            return
+        vals.append(message_id)
+        with _db_conn() as conn:
+            conn.execute(f"UPDATE messages SET {', '.join(sets)} WHERE id = ?", vals)
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def delete_message(message_id):
+        with _db_conn() as conn:
+            conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def set_streaming_text(session_id, text, metadata=None):
+        """Persist the in-flight assistant reply for a running turn.
+        Pass text='' (and metadata=None) to clear once the turn finalizes."""
+        meta = json.dumps(metadata) if metadata else ""
+        with _db_conn() as conn:
+            conn.execute(
+                "UPDATE sessions SET streaming_text = ?, streaming_meta = ? WHERE id = ?",
+                (text or "", meta, session_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=tuple)
+    def get_streaming_text(session_id):
+        """Return (text, metadata_dict). ('' , None) if no in-flight reply."""
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT streaming_text, streaming_meta FROM sessions WHERE id = ?",
+                (session_id,)).fetchone()
+        if not row or not row[0]:
+            return ("", None)
+        meta = None
+        if row[1]:
+            try:
+                meta = json.loads(row[1])
+            except (json.JSONDecodeError, TypeError):
+                meta = None
+        return (row[0], meta)
 
     @staticmethod
     @_db_safe(default=list)
