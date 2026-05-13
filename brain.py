@@ -15587,7 +15587,7 @@ class Scheduler:
                     artifact_folder = COALESCE(?, artifact_folder)
                 WHERE id = ?
             """, (status,
-                  f"[Duration: {duration:.0f}s | Tools: {tool_calls}]\n\n{result[:10000]}",
+                  f"[Duration: {duration:.0f}s | Tools: {tool_calls}]\n\n{result}",
                   now.isoformat(), duration_ms, tool_calls,
                   trace_id, artifact_folder, run_id))
 
