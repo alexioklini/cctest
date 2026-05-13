@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "8.36.0"
-VERSION_DATE = "2026-05-12"
+VERSION = "8.37.0"
+VERSION_DATE = "2026-05-13"
 CHANGELOG = [
+    ("8.37.0", "2026-05-13", "feat(variance): variance-bisect kill-switches infrastructure + validated 4-flag default + intent-vs-action stall guard. (1) **17 kill-switches** (`brain.py:_VARIANCE_DEFAULTS`) for every variance-introducing site in the agentic loop: force_all_light routes all tools to inline path; worker_subagent disables the heavy-tool wrap; auto_isolation skips the 8 KB → worker-envelope flip; tool_result_summariser drops the LLM summariser cascade; tool_result_budget_middleware spills 50 KB+ to disk; microcompact_middleware rewrites older results every even round; compress_old_middleware truncates older results past cumulative budget; pyexec_hint_middleware nudges the model toward python_exec on file-tool runs; diminishing_returns_guard flips tools=False on low-completion streaks; max_output_recovery resumes on finish_reason=length up to 3×; truncated_tool_call_discard drops malformed-args batches; proactive_round0_compaction runs LCM at turn start; reactive_400_compaction retries on prompt-too-long 400s; parallel_tool_batching ThreadPoolExecutors safe-set tools; tool_dedup raises TaskCancelled on 2 consecutive duplicates; read_doc_cache returns 'already read in turn N' stubs; sanitize_tool_result_cap applies the 30 KB per-result truncation; intent_action_guard re-prompts when finish_reason=stop + short text + 'Now I'll write…' / 'Let me search…' pattern (NEW). Each is one if-statement at the call site; defaults preserve runtime behavior for users on existing configs. (2) **Admin UI** (`web/js/settings.js`): new 'Variance switches' tab under Diagnostics with dependency-aware locking — when a parent flag is off, its children are greyed out, disabled, force-set to false; restore-on-unlock keeps the user's pre-lock choice; fixpoint iteration handles transitive cascades. Server mirrors rules in `_variance_normalize()` so persisted config can never silently honor an impossible state. Endpoints `GET/POST /v1/variance` (admin-only, audit-logged). 10s TTL cache invalidated immediately on save. (3) **New validated defaults** (4 ON, 13 OFF): `force_all_light=true` + `compress_old_middleware=true` + `tool_dedup=true` + `read_doc_cache=true` + `intent_action_guard=true`; everything else off. Schedule task 'Mistral AI News' produced 5/6 clean runs (vs prior 2/3 stalls); policy eval 15Q brain mean 0.873 across 3 runs vs prior all-time-best 0.823 (+0.050); brain statistically tied with Opus gold (mean Δ −0.022, within Mistral judge's ±0.09 noise floor). (4) **Intent-vs-action guard**: detects 'I'll now write…/Let me search…' tail patterns on finish_reason=stop + empty tool_calls_map + visible output < 100 tokens; re-prompts once per turn with 'You announced the next action but didn't actually take it. Either call the tool now or write the final answer directly. Do not announce — execute.' Counter at `_thread_local._intent_action_recovery_count`, reset at round 0 and on max-output-exhausted. SSE event `intent_action_guard` emitted with attempt counter + stalled_text tail. Applies equally in guided execution (per-subtask) — no special-casing. (5) **Storage cap fix** committed in companion commit: scheduler `complete_execution` was hard-truncating `schedule_history.result` to 10K chars (lost run 786's 30 KB inline report mid-sentence); now stores full delegate output verbatim. Memory note `project_variance_kill_switches_2026_05_13.md` captures the full bisect history, don't-regress notes (don't re-enable microcompact alone — it rewrites tool results in place every 2 rounds which destroys citation traceability; don't re-enable auto_isolation without summariser — re-introduces 8 KB boundary stochasticity), and remaining-instability notes (F1_geldwaesche refuse-or-answer + C2/C3 citation-format judge variance are workload-fundamental, not pipeline-driven)."),
     ("8.36.0", "2026-05-12", "feat: Guided execution — granularity knob + needs_prior flag (fan-out without a DAG). Two additions to the v8.33.x guided-prompt-execution feature, both confined to brain.py + handlers/chat.py (no UI, no new endpoints, fully backward-compatible with bare-string plans). (1) Granularity knob: `run_guided_execution(..., granularity=\"coarse\"|\"fine\")`. `coarse` (default, existing behaviour) = `_GUIDED_DECOMPOSE_SYSTEM`, 2–5 self-contained subtasks. `fine` = new `_GUIDED_DECOMPOSE_SYSTEM_FINE`, up to 12 TINY ATOMIC subtasks (one tool call / lookup / transform each — the planner is told 'if you are tempted to use the word and, split it into two tasks') — for small local models that stay on track / avoid hallucination better one step at a time. handlers/chat.py picks it: per-model `guided_execution_granularity` in config.json wins; otherwise defaults `fine` when `engine.is_model_local(model)`, else `coarse`. (2) `needs_prior` flag: the planner may now emit elements as `{\"task\": str, \"needs_prior\": bool}` instead of bare strings (a bare string == `needs_prior:true` == legacy linear chain — old plans still parse). A subtask with `needs_prior:false` (and not the synthesis/last task) runs with NO 'Prior task results:' block at all — lean prompt for independent fan-out steps (e.g. 'summarise document A' / 'summarise document B' in parallel, only the final 'compare the two' needs both). The synthesis task always receives the full untruncated union regardless (existing rule, unchanged). The win is correctness + token cost on local models, not wall-clock — one local model serialises every call anyway, so this is parallel-in-intent / sequential-in-execution by design; no DAG (explicit decision — a flat list + per-task boolean covers the fan-out→fan-in case, a diamond DAG would be over-engineering). `_build_guided_prior_results_block(..., needs_prior=...)` short-circuits to '' when `not needs_prior and not is_last_task`; the parse loop in `run_guided_execution` builds parallel `tasks` (labels) + `needs_prior_flags` lists, raises the task ceiling to 12 in fine mode, and falls back cleanly (returns ('', False)) on any malformed planner output. `needs_prior` is not yet surfaced in SSE/metadata/UI — cosmetic, deferred."),
     ("8.35.0", "2026-05-12", "feat: Generic sharing / visibility model (P0–P5) — one mechanism (`private` · `users` · `team` · `global`) applied to chats, projects, scheduled tasks, workflows and artifacts; creator is always the owner; only owner/admin sets visibility; ownership is transferable. **P0 core** — new `server_lib/auth.py` primitives: `VISIBILITY_VALUES`, `normalize_visibility` (aliases legacy `\"user\"`→`\"private\"`), `can_access(user, block, legacy_open=)`, `can_manage(user, block)` (strictly owner-or-admin — no team-head shortcut for items), `normalize_share_block` (drops grants/excludes the chosen visibility makes meaningless; owner never excludable). `can_access_project`/`can_manage_project` rewritten over the new primitives (behaviour-preserving + `\"users\"` arm). `ProjectManager.get_project` backfills nothing destructive but lazily aliases `visibility:\"user\"`→`\"private\"` on read alongside the existing id backfill. **P1 chats** — `sessions` migration adds `extra_member_user_ids`/`excluded_user_ids` TEXT(JSON `[]`); `session_share_block(info)` maps `user_id`→owner; `ChatDB.update_session_share(**)`; `_session_access_check` routes through `can_access`/`can_manage` (legacy owner-less chats stay all-authed read+manage until adopted); `list_sessions` gains the `global` arm + a `caller_user_id` post-filter for the `users` (extra-grant) tier and global exclusions; `_resolve_session_wing` unchanged (private/users/global all fall to `user__`, team→`team__`). **P2 projects** — share dialog + transfer + `\"users\"` accepted in `create_project`. **P3 schedules** — `schedules` migration adds `visibility`/`owner_team_id`/`extra_member_user_ids`/`excluded_user_ids`; `schedule_history` adds denormalised `visibility`/`owner_user_id`/`owner_team_id` snapshot cols written at fire time by `begin_execution`; `_schedule_get_row`/`_schedule_share_block`/`_schedule_update_share` module helpers; `_handle_list_schedule` non-admin scoping switched from own-only to `can_access(_schedule_share_block(row))` (legacy owner-less stay admin-only); billing already follows the owner (the scheduled-run `ExecutionContext` reads `task_row.user_id`). **P4 workflows** — `<name>.flow.meta.json` sidecar (`WorkflowEngine.get_workflow_meta`/`update_workflow_meta`/`workflow_block`); `list_workflows` filtered via `can_access(workflow_block(meta))` in `handlers/admin.py`; first-edit-by-non-admin on an owner-less workflow claims ownership (inline notice). **P5 artifacts** — `artifacts.visibility_override` TEXT (empty = inherit parent); `ChatDB.get_artifact_with_parent_block` resolves parent (session OR `sched-<run>` synthetic session → schedule_history snapshot → live schedule) + `set_artifact_visibility_override`; override may only narrow (`private` always allowed, otherwise must equal parent) — validated on save. **Endpoints** — new `handlers/share.py` (`ShareHandlerMixin` registered in server.py): `GET /v1/share?item_type=&item_id=&agent_id=` → block + `caller_can_manage`; `POST /v1/share` → update ACL (owner/admin; legacy-claim path for chats/workflows; admin-only adoption for schedules; `normalize_share_block` on save; favourites cleanup of orphaned team/general pins via new `FavouritesDB.remove_by_item_scope`; audit `share_update`); `POST /v1/share/transfer` → transfer (owner/admin, new owner must exist + have agent access, dropped from extras/excluded, audit `ownership_transfer`); `POST /v1/share` with `item_type:artifact` → narrow-only override. **Web** — `web/js/share.js`: `shareDialog(itemType, itemId, agentId, opts)` (owner-editable / read-only-summary), `shareTransferDialog` (type-to-confirm + memory-wing/quota warnings), `shareButton(...)` people-icon, `shareVisibilityPillHtml(...)`; `nav.js updatePageHeader` now mounts the Share button + an at-a-glance visibility pill beside the favourite star for chat/project_chat/project/schedule/workflow/artifact; `panels.js` passes a `title` through. CSS for `.share-*` + the previously-missing `.fav-modal-foot`/`.fav-btn-primary`/`.fav-btn-sm`/`.fav-btn-danger`. **Not done (follow-ups)**: schedule-editor 'Sharing' row + workflow-editor toolbar Share button (dialog reachable via header / API); `workflow_history` visibility snapshot cols; artifact list/download/version endpoints don't yet gate on `visibility_override` (parent-session access still applies); Phase 6 team document-ingestion pipeline. Smoke-tested end-to-end (server import clean, share GET/POST/transfer for chat/project/workflow/schedule/artifact, list-scoping, browser: header Share button opens dialog, set→global updates pill, artifact narrow-only radios)."),
     ("8.34.0", "2026-05-12", "feat: Resumable streaming — a chat turn now survives navigating away, reopening, and being watched from multiple tabs as if the chat had been open the whole time, and reopening never interferes with the running turn. Root cause: streaming was point-to-point + memory-only — POST /v1/chat spawned a worker thread that pushed SSE events into a queue.Queue consumed by that one HTTP connection, and the assistant text was persisted only at finish_reason; navigating away → events went to a dead queue, reopening → GET /messages read SQLite which had nothing yet, and a second tab couldn't watch at all. New design: (1) `LiveStream` (server.py) — an ordered replay log + a set of subscriber queues per in-progress turn, held on `session.live_stream`; `emit()` appends to the log AND fans out to current subscribers, `attach()` returns (queue, replay_snapshot, already_done) under one lock so no event is lost or duplicated across the attach boundary. The worker emits every SSE event into it; the originating POST connection is just one subscriber (`_stream_live_to_client(live, worker_thread=t)` — replay then drain). (2) `GET /v1/chat/stream?session_id=X` (handlers/chat.py) — re-attach to a running turn: replays the buffer from turn start, then follows live events until terminal done/error; emits a single `idle` event if no turn is running. Any number of tabs may attach concurrently. Client disconnect here NEVER cancels the worker — only POST /v1/chat/cancel does (unchanged: explicit cancel_token.cancel(), never connection-close). (3) Incremental persistence — new `sessions.streaming_text` / `streaming_meta` columns hold the in-flight assistant reply, written by event_callback on text_delta (throttled ~0.4s), cleared in the worker's finally; GET /v1/sessions/<id>/messages now returns `streaming: true` + `streaming_text` while a turn is live (read only when _streaming is True so a post-restart stale value is never surfaced). (4) Worker finally invariants: emit `error` if not live.done (covers a worker that died without a terminal event), then session._streaming = False, then session.live_stream = None (order matters — when live_stream is None, _streaming is already False, so the GET /chat/stream `idle` reload path can't loop), then clear streaming_text. (5) Client (web/js/) — extracted the SSE callback map into `buildStreamCallbacks(chat, isActive)` shared by API.streamChat (originating send) and the new API.attachStream/abortStreamAttach (reconnect); openSession() re-attaches when GET /messages reports streaming:true, drops trailing `thinking` DB rows on reconnect (the replay re-emits them via thinking_done — avoids duplicates) and does NOT pre-seed streamingText from streaming_text (replay rebuilds it fully — pre-seeding would double it); removed the old '(cancelled)' partial-bubble hack on session switch. New DB helpers: ChatDB.save_message returns lastrowid, update_message, delete_message, set_streaming_text, get_streaming_text. Smoke-tested end-to-end: mid-stream GET /messages → streaming:true + partial; GET /v1/chat/stream from a second connection mid-stream → full replay + live tail; cancel still works and both the sender and an attached viewer get the terminal event; partial reply persisted with metadata.partial; after completion streaming gone, assistant message persisted, streaming_text cleared, GET /v1/chat/stream → idle. Note: send_message mutates the in-memory messages list only — intermediate tool messages are NOT persisted mid-turn (only the user msg, thinking rows from event_callback, and the final assistant msg reach the DB); _rollback_messages' DB-delete arm is a defensive no-op in the common case."),
@@ -23914,6 +23915,30 @@ _MAX_OUTPUT_RESUME_MSG = (
     "Pick up mid-thought, mid-sentence, mid-code exactly where you stopped."
 )
 
+# Intent-vs-action guard: detects "I'll write…/Let me search…" stalls where the
+# model announces the next step but stops without calling the tool. Compiled
+# once at module load. Anchored to the LAST sentence of the reply.
+import re as _re_intent
+_INTENT_ACTION_PATTERNS = _re_intent.compile(
+    r"(?:^|[\.\!\?]\s+|\n)"                                     # sentence boundary
+    r"(?:Now\s+(?:I[''’]?\s*ll|let\s+me|I\s+will)|"             # "Now I'll…", "Now let me…"
+    r"I[''’]?ll\s+(?:now|next)?\s*(?:create|write|compile|save|"  # "I'll create/write…"
+    r"compose|generate|produce|prepare|build|search|look|check|" # "I'll search/look/check"
+    r"gather|fetch|find|retrieve|consult|review|examine)|"
+    r"Let\s+me\s+(?:now\s+)?(?:create|write|compile|save|"      # "Let me write/compile…"
+    r"compose|generate|produce|prepare|build|search|look|check|"
+    r"gather|fetch|find|retrieve|consult|review|examine))"
+    r"[^.!?\n]{0,200}?"                                         # short phrase
+    r"[\.\!\?\…]?\s*$",                                         # end of reply
+    _re_intent.IGNORECASE,
+)
+_INTENT_ACTION_RECOVERY_LIMIT = 1
+_INTENT_ACTION_RESUME_MSG = (
+    "You announced the next action but didn't actually take it. "
+    "Either call the tool now, or if you've already gathered enough information, "
+    "write the final answer directly. Do not announce — execute."
+)
+
 # Loop transition reasons (for debugging / state machine tracking)
 # Modeled on Claude Code's query.ts transition types
 TRANSITION_NEXT_TURN = "next_turn"
@@ -24056,6 +24081,7 @@ _VARIANCE_DEFAULTS = {
     "tool_dedup": True,
     "read_doc_cache": True,
     "sanitize_tool_result_cap": False,
+    "intent_action_guard": True,
 }
 _variance_cache: dict = {}
 _variance_cache_time: float = 0.0
@@ -25197,6 +25223,7 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
             pass
         _thread_local._pyexec_hint_sent = False
         _thread_local._max_output_recovery_count = 0
+        _thread_local._intent_action_recovery_count = 0
         _thread_local._has_attempted_reactive_compact = False
         _thread_local._escape_watcher = escape_watcher
         _thread_local._round_deltas = []
@@ -26279,9 +26306,34 @@ def _handle_openai_response(response, payload, messages, model, api_key,
         else:
             full_text = f"⚠️ *{hint}*"
         _thread_local._max_output_recovery_count = 0
+        _thread_local._intent_action_recovery_count = 0
         return full_text
 
     if not tool_calls_map:
+        # Intent-vs-action guard: catch "Now I'll write…/Let me search…" stalls.
+        # When finish_reason=stop, no tool calls, and the visible text is short
+        # AND announces a next action it didn't take — re-prompt once.
+        if (_variance_flag("intent_action_guard")
+                and full_text
+                and _usage_out is not None and _usage_out < 100  # short stall, not a real reply
+                and _INTENT_ACTION_PATTERNS.search(full_text)):
+            _guard_count = getattr(_thread_local, '_intent_action_recovery_count', 0)
+            if _guard_count < _INTENT_ACTION_RECOVERY_LIMIT:
+                _thread_local._intent_action_recovery_count = _guard_count + 1
+                if event_callback:
+                    event_callback("intent_action_guard", {
+                        "attempt": _guard_count + 1,
+                        "max_attempts": _INTENT_ACTION_RECOVERY_LIMIT,
+                        "stalled_text": full_text[-200:],
+                    })
+                print(f"[intent-action guard: stall detected, re-prompting (attempt "
+                      f"{_guard_count + 1}/{_INTENT_ACTION_RECOVERY_LIMIT})]", file=sys.stderr)
+                messages.append({"role": "assistant", "content": full_text})
+                messages.append({"role": "user", "content": _INTENT_ACTION_RESUME_MSG})
+                return send_message(messages, model, api_key, base_url,
+                                    silent=silent, tools=tools, escape_watcher=escape_watcher,
+                                    _tool_round=_tool_round, event_callback=event_callback,
+                                    inference_params=inference_params, session_id=session_id)
         if not silent and full_text:
             print()
         # End request trace span for final response
@@ -26290,8 +26342,9 @@ def _handle_openai_response(response, payload, messages, model, api_key,
             _trace_manager.end_span(_req_span_oai, status="ok",
                                      tokens_in=_usage_in, tokens_out=_usage_out)
             _thread_local.request_trace_span = None
-        # Reset recovery counter on successful completion
+        # Reset recovery counters on successful completion
         _thread_local._max_output_recovery_count = 0
+        _thread_local._intent_action_recovery_count = 0
         return full_text
 
     if full_text:

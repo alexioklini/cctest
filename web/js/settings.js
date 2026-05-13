@@ -1815,6 +1815,7 @@ window._VARIANCE_META = {
   tool_dedup: { label: 'Tool dedup (2-dupe abort)', hint: 'Identical (name,args) twice → TaskCancelled. Disabled → no dedup at all.' },
   read_doc_cache: { label: 'read_document/read_file cache', hint: 'Per-session cache returning "already read in turn N" stubs on repeat reads.' },
   sanitize_tool_result_cap: { label: 'Sanitize 30 KB cap', hint: 'Per-tool-result cap before append to messages. Disabled → full raw bytes (only base64 strip remains).' },
+  intent_action_guard: { label: 'Intent-vs-action guard', hint: 'On finish_reason=stop with short text matching "Now I\'ll write…/Let me search…" patterns, re-prompt once with "execute, do not announce". Targets the news-task stall.' },
 };
 
 // Dependency rules. Each rule: when `when[flag] === expectedValue`, the listed
@@ -2011,6 +2012,7 @@ window.varianceMinimal = async function() {
     tool_dedup: false,
     read_doc_cache: false,
     sanitize_tool_result_cap: false,
+    intent_action_guard: false,
   };
   try {
     const r = await API.post('/v1/variance', body);
