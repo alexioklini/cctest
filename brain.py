@@ -24028,26 +24028,34 @@ MAX_TOOL_RESULTS_TOKENS = 50000  # Cap accumulated tool results per turn before 
 
 # ----- Variance kill switches -----
 # Live-toggle gates for variance-bisect runs. Read from config.json →
-# variance_kill_switches. All-true = current behavior; flip a flag to False
-# to disable that piece of logic without redeploying. 10s TTL cache.
+# variance_kill_switches. Flip a flag to disable that piece of logic without
+# redeploying. 10s TTL cache.
+#
+# Defaults below were validated 2026-05-13 on:
+#   • scheduled task "Mistral AI News" — 3/3 clean runs (vs prior 2/3 stalls)
+#   • policy eval 15Q — brain mean 0.873 vs gold 0.895 (statistical tie within
+#     Mistral judge's ±0.09 noise floor), no regression
+# The 4 flags ON are the structural minimum: kill the LLM-summariser cascade
+# but keep the cumulative-budget cap, the per-session cache, and the dedup +
+# defensive caps that prevent runaway loops.
 _VARIANCE_DEFAULTS = {
-    "force_all_light": False,
-    "worker_subagent": True,
-    "auto_isolation": True,
-    "tool_result_summariser": True,
-    "tool_result_budget_middleware": True,
-    "microcompact_middleware": True,
+    "force_all_light": True,
+    "worker_subagent": False,          # forced by force_all_light
+    "auto_isolation": False,           # forced by force_all_light
+    "tool_result_summariser": False,   # forced by force_all_light
+    "tool_result_budget_middleware": False,
+    "microcompact_middleware": False,
     "compress_old_middleware": True,
-    "pyexec_hint_middleware": True,
-    "diminishing_returns_guard": True,
-    "max_output_recovery": True,
-    "truncated_tool_call_discard": True,
-    "proactive_round0_compaction": True,
-    "reactive_400_compaction": True,
-    "parallel_tool_batching": True,
+    "pyexec_hint_middleware": False,
+    "diminishing_returns_guard": False,
+    "max_output_recovery": False,
+    "truncated_tool_call_discard": False,
+    "proactive_round0_compaction": False,
+    "reactive_400_compaction": False,
+    "parallel_tool_batching": False,
     "tool_dedup": True,
     "read_doc_cache": True,
-    "sanitize_tool_result_cap": True,
+    "sanitize_tool_result_cap": False,
 }
 _variance_cache: dict = {}
 _variance_cache_time: float = 0.0
