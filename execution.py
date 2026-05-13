@@ -611,8 +611,12 @@ def _summarise_tool_result(
     from brain import (
         _thread_local, send_message_with_fallback,
         resolve_provider_for_model, gdpr_pick_model_for_background,
-        GDPRBlockedError,
+        GDPRBlockedError, _variance_flag,
     )
+
+    # Variance kill-switch: skip the LLM summariser entirely → static summary
+    if not _variance_flag("tool_result_summariser"):
+        return _static_summary(tool_name, artifact_meta), [], {"tokens_in": 0, "tokens_out": 0, "model": ""}
 
     cfg = _load_config()
     max_chars = cfg.get("summariser_max_input_chars", 32000)
@@ -996,8 +1000,12 @@ def route_tool_execution(
     if not cfg["workers_enabled"]:
         return inner_fn(tool_name, args)
 
-    from brain import _thread_local
+    from brain import _thread_local, _variance_flag
     if getattr(_thread_local, 'in_worker_subagent', False):
+        return inner_fn(tool_name, args)
+
+    # Variance kill-switches: force every tool down the light path.
+    if _variance_flag("force_all_light"):
         return inner_fn(tool_name, args)
 
     heaviness = _resolve_heaviness(tool_name, args)
@@ -1006,8 +1014,13 @@ def route_tool_execution(
         return inner_fn(tool_name, args)
 
     if heaviness == "heavy":
+        # If worker subagent is disabled, fall back to light path
+        if not _variance_flag("worker_subagent"):
+            return inner_fn(tool_name, args)
         return run_worker_subagent(tool_name, args, inner_fn)
 
     # "auto": execute direct, then check size
     result = inner_fn(tool_name, args)
+    if not _variance_flag("auto_isolation"):
+        return result
     return maybe_retroactive_isolate(tool_name, args, result)

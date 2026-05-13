@@ -99,6 +99,9 @@ function openGeneralSettings() {
 
       <div class="sidebar-group-label">Tools</div>
       <button class="modal-tab" onclick="switchGeneralTab('tools',this)">Tools</button>
+
+      <div class="sidebar-group-label">Diagnostics</div>
+      <button class="modal-tab" onclick="switchGeneralTab('variance',this)">Variance switches</button>
     </div>
     <div class="modal-body" id="general-tab-content">
     </div>
@@ -1778,7 +1781,245 @@ async function switchGeneralTab(tab, btn) {
       </div>`);
     } catch(e) { C.innerHTML = P('<div style="color:var(--error)">Failed to load tools config</div>'); }
   }
+
+  /* ─── VARIANCE KILL-SWITCHES ─── */
+  if (tab === 'variance') {
+    try {
+      const data = await API.get('/v1/variance');
+      window._varianceDefs = data.defaults || {};
+      window._varianceState = Object.assign({}, data.current || {});
+      window._variancePreLockSnapshot = {};
+      varianceRender();
+    } catch(e) {
+      C.innerHTML = P('<div style="color:var(--error)">Failed to load variance config: ' + esc(String(e)) + '</div>');
+    }
+  }
 }
+
+/* ─── Variance-tab metadata + dependency graph ─── */
+window._VARIANCE_META = {
+  force_all_light: { label: 'Force all tools light', hint: 'Bypass heavy + auto routing. Every tool runs inline, raw string back to model. No worker subagent, no summariser.' },
+  worker_subagent: { label: 'Worker subagent', hint: 'Heavy tools wrapped with disk artifact + LLM summariser. Disabled → heavy falls through to light.' },
+  auto_isolation: { label: 'Auto-isolation at 8 KB', hint: 'When auto tool returns > 8 KB, wrap retroactively as heavy + summarise. Disabled → raw passthrough regardless of size.' },
+  tool_result_summariser: { label: 'Tool-result summariser (LLM)', hint: 'The LLM pass that compresses heavy/large tool output. Disabled → static "tool completed, see artifact" summary.' },
+  tool_result_budget_middleware: { label: 'Budget middleware (50 KB → disk)', hint: 'Single result > 50 KB spilled to tool-results/*.txt with 2 KB preview.' },
+  microcompact_middleware: { label: 'Microcompact (every even round)', hint: 'Replaces older tool results with "[Old <tool> result cleared]". Drops python_exec/execute_command arg bodies.' },
+  compress_old_middleware: { label: 'Compress-old (cumulative cap)', hint: 'Truncates older tool results to 200 chars + [...compressed...] once cumulative budget exceeded.' },
+  pyexec_hint_middleware: { label: 'python_exec hint', hint: 'Injects a one-shot user message when ≥ 3 file/doc tool calls suggest consolidation.' },
+  diminishing_returns_guard: { label: 'Diminishing-returns guard', hint: 'Flips tools=False if last 2 rounds each produced < 500 completion tokens.' },
+  max_output_recovery: { label: 'Max-output recovery (length resume)', hint: 'On finish_reason=length, append resume prompt and retry up to 3× with doubled max_tokens.' },
+  truncated_tool_call_discard: { label: 'Truncated-tool-call discard', hint: 'On length + tool_calls, discard the whole batch if any JSON args parse fails.' },
+  proactive_round0_compaction: { label: 'Proactive round-0 compaction', hint: '_check_and_compact at the start of every turn before payload build.' },
+  reactive_400_compaction: { label: 'Reactive 400 → compaction', hint: 'On "prompt is too long" 400, try microcompact then full compact, then retry.' },
+  parallel_tool_batching: { label: 'Parallel tool batching', hint: 'Consecutive concurrent-safe calls run in ThreadPoolExecutor (≤ 5). Disabled → all calls sequential.' },
+  tool_dedup: { label: 'Tool dedup (2-dupe abort)', hint: 'Identical (name,args) twice → TaskCancelled. Disabled → no dedup at all.' },
+  read_doc_cache: { label: 'read_document/read_file cache', hint: 'Per-session cache returning "already read in turn N" stubs on repeat reads.' },
+  sanitize_tool_result_cap: { label: 'Sanitize 30 KB cap', hint: 'Per-tool-result cap before append to messages. Disabled → full raw bytes (only base64 strip remains).' },
+};
+
+// Dependency rules. Each rule: when `when[flag] === expectedValue`, the listed
+// `forces` are pinned to forcedValue and rendered greyed out + locked.
+// Server mirrors this in _variance_normalize() so the persisted config matches
+// the GUI's view of effective behavior.
+window._VARIANCE_RULES = [
+  // force_all_light=true → routing short-circuits before heaviness even resolves.
+  // Worker subagent, auto-isolation, and the worker summariser all become dead code.
+  { when: 'force_all_light', equals: true,  forces: ['worker_subagent', 'auto_isolation', 'tool_result_summariser'], to: false,
+    reason: 'force_all_light routes every tool to the inline light path before these gates can run.' },
+  // worker_subagent=false → heavy tools fall back to light, summariser path never reached for them.
+  // (auto-isolation can still fire via maybe_retroactive_isolate, which itself calls summariser — so summariser only dies if auto_isolation is also off.)
+  // We only hard-lock summariser when BOTH worker_subagent and auto_isolation are off.
+  { when: 'worker_subagent', equals: false, andWhen: 'auto_isolation', andEquals: false, forces: ['tool_result_summariser'], to: false,
+    reason: 'Summariser is only invoked from worker_subagent or auto-isolation paths — both are off.' },
+];
+
+window.varianceComputeLocks = function() {
+  // Returns { flagName: { locked: bool, forcedValue: bool, by: parentName, reason: string } }
+  const st = window._varianceState || {};
+  const locks = {};
+  for (const rule of window._VARIANCE_RULES) {
+    const cond1 = (st[rule.when] === rule.equals);
+    const cond2 = rule.andWhen ? (st[rule.andWhen] === rule.andEquals) : true;
+    if (!cond1 || !cond2) continue;
+    for (const child of rule.forces) {
+      if (!locks[child]) {
+        locks[child] = {
+          locked: true,
+          forcedValue: rule.to,
+          by: rule.andWhen ? `${rule.when}+${rule.andWhen}` : rule.when,
+          reason: rule.reason,
+        };
+      }
+    }
+  }
+  return locks;
+};
+
+// Per-flag pre-lock snapshot so we can restore the user's choice when the
+// parent that locked the flag is turned back off.
+window._variancePreLockSnapshot = window._variancePreLockSnapshot || {};
+
+window.varianceRender = function() {
+  const C = document.getElementById('general-tab-content');
+  if (!C) return;
+  const defs = window._varianceDefs || {};
+  const state = window._varianceState || {};
+  const META = window._VARIANCE_META;
+  const snap = window._variancePreLockSnapshot;
+
+  // Converge to a stable lock set by iterating: restore any flag in snap that
+  // is NOT currently locked, then recompute locks, until the lock set stops
+  // changing. Handles cascades like rule-1 locking a parent that rule-2 then
+  // uses to lock a grandchild — and the reverse on unlock.
+  let locks;
+  for (let i = 0; i < 8; i++) {
+    locks = window.varianceComputeLocks();
+    // Restore unlocked snapshots
+    let restored = false;
+    for (const k of Object.keys(snap)) {
+      if (!(k in locks)) {
+        state[k] = snap[k];
+        delete snap[k];
+        restored = true;
+      }
+    }
+    if (!restored) break;
+    // Loop again: restored values may free or trigger other rules
+  }
+  // Final pass: snapshot any NEW lock targets (first time locked since user
+  // touched them) and force their value.
+  for (const k of Object.keys(locks)) {
+    if (!(k in snap)) {
+      snap[k] = state[k];
+    }
+    state[k] = locks[k].forcedValue;
+  }
+
+  const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const G = (gap='8px') => `display:grid;gap:${gap}`;
+
+  const rows = Object.keys(defs).map(k => {
+    const meta = META[k] || { label: k, hint: '' };
+    const val = state[k];
+    const def = defs[k];
+    const offByDefault = !def;
+    const lock = locks[k];
+    const isLocked = !!lock;
+    const changedFromDefault = (val !== def);
+    const bg = isLocked ? 'var(--bg-300)' : (changedFromDefault ? 'var(--bg-200)' : 'var(--bg-100)');
+    const opacity = isLocked ? '0.55' : '1';
+
+    return `<div style="border:1px solid var(--border-100);border-radius:8px;padding:12px 14px;display:flex;align-items:flex-start;gap:12px;background:${bg};opacity:${opacity};transition:opacity .15s,background .15s">
+      <label style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-top:2px;cursor:${isLocked?'not-allowed':'pointer'}">
+        <input type="checkbox"
+               data-variance-flag="${esc(k)}"
+               ${val?'checked':''}
+               ${isLocked?'disabled':''}
+               onchange="varianceToggle('${esc(k)}', this.checked)"
+               style="width:16px;height:16px;cursor:${isLocked?'not-allowed':'pointer'}">
+      </label>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:500;color:var(--text-100);display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          ${esc(meta.label)}
+          ${isLocked?`<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:var(--text-400);color:#fff;font-weight:600;letter-spacing:0.03em">LOCKED OFF</span>`:''}
+          ${(!isLocked && changedFromDefault)?`<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:var(--warning,#b45309);color:#fff">CHANGED</span>`:''}
+          ${offByDefault?`<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:var(--bg-300);color:var(--text-400)">off by default</span>`:''}
+        </div>
+        <div style="font-size:11px;color:var(--text-400);margin-top:2px">${esc(meta.hint)}</div>
+        ${isLocked?`<div style="font-size:11px;color:var(--text-300);margin-top:4px;padding:6px 8px;border-radius:4px;background:var(--bg-100);border-left:2px solid var(--text-400)">
+          <b>Locked off by <code style="font-family:var(--font-mono);font-size:10px">${esc(lock.by)}</code>.</b> ${esc(lock.reason)}
+        </div>`:''}
+        <div style="font-size:10px;color:var(--text-400);margin-top:2px;font-family:var(--font-mono)">${esc(k)} · default=${def}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  C.innerHTML = `<div style="padding:16px"><div style="${G('12px')}">
+    <div style="padding:12px 14px;border:1px solid var(--warning,#b45309);border-radius:8px;background:var(--bg-100);font-size:12px;color:var(--text-200);line-height:1.5">
+      <b style="color:var(--warning,#b45309)">⚠ Variance-bisect knobs.</b>
+      Each flag disables one piece of the tool-call pipeline so you can isolate sources of run-to-run variance.
+      All flags ship in their "current behavior" state. Toggling a flag invalidates the 10 s server cache immediately — the next request reflects the change.
+      Flags marked <b>LOCKED OFF</b> are dead code given the current parent state.
+      See <code>reports/tool_call_chain_analysis.html</code> for what each piece does.
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+      <button class="btn-secondary" onclick="varianceReset()" style="font-size:12px">Reset to defaults</button>
+      <button class="btn-secondary" onclick="varianceMinimal()" style="font-size:12px" title="Disable as much as possible — only force_all_light + cancel-check stay on">Minimal pipeline</button>
+      <div style="flex:1"></div>
+      <button class="btn-primary" onclick="varianceSave()" style="font-size:13px;padding:8px 20px">Save</button>
+    </div>
+    ${rows}
+  </div></div>`;
+};
+
+window.varianceToggle = function(flag, checked) {
+  if (!window._varianceState) return;
+  window._varianceState[flag] = !!checked;
+  // User explicitly touched this flag → clear any stale snapshot for it
+  if (window._variancePreLockSnapshot) {
+    delete window._variancePreLockSnapshot[flag];
+  }
+  // Re-render so cascaded locks update immediately
+  varianceRender();
+};
+
+window.varianceSave = async function() {
+  // The in-memory _varianceState already has cascaded locks applied (renderer pins
+  // forced children to false), so post the whole state. Server also normalises.
+  const body = Object.assign({}, window._varianceState || {});
+  try {
+    const r = await API.post('/v1/variance', body);
+    // Server returns the merged + normalised state; refresh local view from it
+    window._varianceDefs = r.defaults || window._varianceDefs;
+    window._varianceState = Object.assign({}, r.current || window._varianceState);
+    varianceRender();
+    showToast('Variance flags saved' + (r.changed && r.changed.length ? ' — ' + r.changed.length + ' changed' : ''));
+  } catch (e) {
+    showToast('Save failed: ' + e, true);
+  }
+};
+
+window.varianceReset = async function() {
+  if (!confirm('Reset every variance flag to its default?')) return;
+  try {
+    const data = await API.get('/v1/variance');
+    const r = await API.post('/v1/variance', data.defaults || {});
+    window._varianceDefs = r.defaults || data.defaults || {};
+    window._varianceState = Object.assign({}, r.current || data.defaults || {});
+    varianceRender();
+    showToast('Variance flags reset to defaults');
+  } catch (e) { showToast('Reset failed: ' + e, true); }
+};
+
+window.varianceMinimal = async function() {
+  if (!confirm('Disable nearly everything — force_all_light ON, all other flags OFF. Useful for variance bisect baseline.')) return;
+  const body = {
+    force_all_light: true,
+    worker_subagent: false,
+    auto_isolation: false,
+    tool_result_summariser: false,
+    tool_result_budget_middleware: false,
+    microcompact_middleware: false,
+    compress_old_middleware: false,
+    pyexec_hint_middleware: false,
+    diminishing_returns_guard: false,
+    max_output_recovery: false,
+    truncated_tool_call_discard: false,
+    proactive_round0_compaction: false,
+    reactive_400_compaction: false,
+    parallel_tool_batching: false,
+    tool_dedup: false,
+    read_doc_cache: false,
+    sanitize_tool_result_cap: false,
+  };
+  try {
+    const r = await API.post('/v1/variance', body);
+    window._varianceDefs = r.defaults || window._varianceDefs;
+    window._varianceState = Object.assign({}, r.current || body);
+    varianceRender();
+    showToast('Minimal pipeline applied');
+  } catch (e) { showToast('Failed: ' + e, true); }
+};
 
 /* ── General Settings Helpers ── */
 async function saveToolsConfig() {

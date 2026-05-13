@@ -1087,6 +1087,7 @@ class BrainAgentHandler(
         "/v1/services",
         "/v1/quotas/config",
         "/v1/quotas/admin/users",
+        "/v1/variance",
     }
 
     _ADMIN_POST_EXACT = {
@@ -1120,6 +1121,7 @@ class BrainAgentHandler(
         "/v1/skills/claude-code/install",
         "/v1/commands/expand",
         "/v1/nodes",
+        "/v1/variance",
     }
     _ADMIN_POST_PATHS = _ADMIN_POST_EXACT
     _ADMIN_POST_PREFIXES = (
@@ -1416,6 +1418,8 @@ class BrainAgentHandler(
             self._handle_quota_me()
         elif path == "/v1/quotas/config":
             self._handle_quota_config_get()
+        elif path == "/v1/variance":
+            self._handle_variance_get()
         elif path == "/v1/quotas/admin/users":
             self._handle_quota_admin_users()
         elif path.startswith("/v1/quotas/admin/breakdown"):
@@ -1677,6 +1681,8 @@ class BrainAgentHandler(
             self._handle_kg_reextract()
         elif path == "/v1/quotas/config":
             self._handle_quota_config_save()
+        elif path == "/v1/variance":
+            self._handle_variance_save()
         elif path == "/v1/cache/clear":
             engine._web_cache.clear()
             self._send_json({"status": "cleared"})

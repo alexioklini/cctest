@@ -1704,6 +1704,87 @@ class AdminHandlerMixin:
             pass
         self._send_json(saved)
 
+    def _handle_variance_get(self):
+        """GET /v1/variance — admin-only. Current variance kill-switch state."""
+        user = self._require_role("admin")
+        if not user:
+            return
+        # Read fresh from config.json (engine helper has a 10s TTL we want to bypass)
+        defaults = dict(engine._VARIANCE_DEFAULTS)
+        try:
+            import json as _json, os as _os
+            if _os.path.exists(engine.CONFIG_PATH):
+                with open(engine.CONFIG_PATH) as f:
+                    loaded = _json.load(f)
+                block = loaded.get("variance_kill_switches", {}) or {}
+                for k, v in block.items():
+                    if k in defaults and isinstance(v, bool):
+                        defaults[k] = v
+            defaults, _ = engine._variance_normalize(defaults)
+        except Exception:
+            pass
+        self._send_json({"defaults": engine._VARIANCE_DEFAULTS, "current": defaults})
+
+    def _handle_variance_save(self):
+        """POST /v1/variance — admin-only. Update variance kill-switches.
+
+        Body: {"flag_name": bool, ...} — only known flags are accepted.
+        Unknown keys are silently dropped. Dependent flags whose parent has
+        disabled them are normalised to False before persistence so the saved
+        config matches the GUI's view of effective runtime behavior.
+        Returns the merged + normalised state.
+        """
+        user = self._require_role("admin")
+        if not user:
+            return
+        body = self._read_json() or {}
+        try:
+            import json as _json, os as _os
+            cfg = {}
+            if _os.path.exists(engine.CONFIG_PATH):
+                with open(engine.CONFIG_PATH) as f:
+                    cfg = _json.load(f) or {}
+            block = cfg.get("variance_kill_switches", {}) or {}
+            changed = []
+            for k, v in body.items():
+                if k in engine._VARIANCE_DEFAULTS and isinstance(v, bool):
+                    if block.get(k, engine._VARIANCE_DEFAULTS[k]) != v:
+                        changed.append(f"{k}={v}")
+                    block[k] = v
+            # Normalise: zero out dead children so the persisted config never
+            # has a flag set to True that the runtime would silently ignore.
+            block, normalised = engine._variance_normalize(block)
+            for k, v in normalised.items():
+                if f"{k}={v}" not in changed:
+                    changed.append(f"{k}={v}(auto)")
+            cfg["variance_kill_switches"] = block
+            tmp = engine.CONFIG_PATH + ".tmp"
+            with open(tmp, "w") as f:
+                _json.dump(cfg, f, indent=2, ensure_ascii=False)
+            _os.replace(tmp, engine.CONFIG_PATH)
+            # Invalidate the engine's TTL cache so flips take effect immediately
+            engine._variance_cache = {}
+            engine._variance_cache_time = 0.0
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+            return
+        # Audit
+        try:
+            if engine._audit_log and changed:
+                engine._audit_log.log_action(
+                    agent="main",
+                    action_type="variance_flags_save",
+                    tool_name="variance",
+                    args_summary=f"by={user.get('username','')} changed={','.join(changed)}",
+                    result_status="ok",
+                )
+        except Exception:
+            pass
+        # Return current merged state
+        merged = dict(engine._VARIANCE_DEFAULTS)
+        merged.update({k: v for k, v in block.items() if k in merged})
+        self._send_json({"defaults": engine._VARIANCE_DEFAULTS, "current": merged, "changed": changed})
+
     def _handle_quota_admin_users(self):
         """GET /v1/quotas/admin/users — admin-only. State for every user."""
         user = self._require_role("admin")
