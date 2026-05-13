@@ -11748,6 +11748,18 @@ def _run_guided_execution_impl(
                     _emit("guided_task_progress", {"index": task_index, "event": etype, "data": data})
                 elif etype in ("tool_call", "references"):
                     _emit("guided_task_progress", {"index": task_index, "event": etype, "data": data})
+                    # Forward tool_call upstream so non-UI consumers (the
+                    # scheduler's on_event counts tool_calls into run_info,
+                    # which becomes schedule_history.tool_calls) see the
+                    # event too. Without this, guided-execution scheduled
+                    # runs always report tool_calls=0 even when 10+ tools
+                    # actually fired (run 800: audit log had 16 calls,
+                    # schedule_history said 0).
+                    if etype == "tool_call" and event_callback:
+                        try:
+                            event_callback("tool_call", data)
+                        except Exception:
+                            pass
                 elif etype == "text_delta" and not is_last_task:
                     # Non-final tasks: route narration into the task card body so it
                     # doesn't bleed into the main chat area (where each task would
