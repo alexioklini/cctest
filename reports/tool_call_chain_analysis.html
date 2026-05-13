@@ -1,0 +1,887 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tool-Call Chain Analysis — Brain Engine</title>
+<style>
+:root {
+  --bg: #0f1419;
+  --panel: #1a2028;
+  --panel2: #232a35;
+  --ink: #d4d8de;
+  --ink-dim: #8b95a3;
+  --accent: #7dd3fc;
+  --accent2: #c4b5fd;
+  --warn: #fbbf24;
+  --bad: #f87171;
+  --ok: #86efac;
+  --rule: #2a323e;
+  --code-bg: #0b0f14;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  font-size: 14.5px;
+  line-height: 1.55;
+  margin: 0;
+  padding: 0;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 32px 36px 80px; }
+h1 { font-size: 28px; margin: 0 0 8px; color: #fff; letter-spacing: -0.01em; }
+h2 {
+  font-size: 21px;
+  margin: 40px 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--rule);
+  color: #fff;
+}
+h3 { font-size: 17px; margin: 26px 0 8px; color: var(--accent); }
+h4 { font-size: 15px; margin: 18px 0 6px; color: var(--accent2); }
+p { margin: 8px 0; }
+.subtitle { color: var(--ink-dim); margin: 0 0 20px; font-size: 13.5px; }
+code, pre, .mono {
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; color: #e5d4ff; }
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 10px 0 14px;
+  color: #d4d8de;
+}
+pre code { background: transparent; padding: 0; color: inherit; }
+.cite { color: var(--ink-dim); font-size: 12.5px; }
+.cite a, a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { padding-left: 22px; margin: 8px 0; }
+li { margin: 3px 0; }
+.callout {
+  border-left: 3px solid var(--accent);
+  background: var(--panel);
+  padding: 10px 14px;
+  margin: 12px 0;
+  border-radius: 0 4px 4px 0;
+}
+.callout.warn { border-left-color: var(--warn); }
+.callout.bad { border-left-color: var(--bad); }
+.callout.ok { border-left-color: var(--ok); }
+.callout.warn .label { color: var(--warn); }
+.callout.bad .label { color: var(--bad); }
+.callout.ok .label { color: var(--ok); }
+.callout .label { font-weight: 600; display: block; margin-bottom: 4px; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; }
+table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13.5px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { color: var(--accent); font-weight: 600; background: var(--panel); }
+tr:hover td { background: var(--panel); }
+.toc {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 14px 18px;
+  margin: 18px 0 32px;
+}
+.toc ol { margin: 0; padding-left: 22px; }
+.toc li { margin: 4px 0; }
+.diagram {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 18px;
+  margin: 14px 0;
+  overflow-x: auto;
+}
+.diagram svg { display: block; margin: 0 auto; }
+.tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 3px;
+  margin: 0 2px;
+  vertical-align: 1px;
+  letter-spacing: 0.03em;
+}
+.tag.light { background: #1e3a5f; color: #93c5fd; }
+.tag.heavy { background: #5b2a2a; color: #fca5a5; }
+.tag.auto { background: #4a3a1a; color: #fbbf24; }
+.tag.chat { background: #1e4733; color: #86efac; }
+.tag.sched { background: #3c2a5b; color: #c4b5fd; }
+.tag.wf { background: #4b2a4a; color: #f0abfc; }
+.tag.deleg { background: #1e3a5f; color: #93c5fd; }
+.tag.worker { background: #4a3a1a; color: #fbbf24; }
+hr { border: 0; border-top: 1px solid var(--rule); margin: 24px 0; }
+.kbd {
+  background: #2a323e;
+  border-radius: 3px;
+  padding: 0 5px;
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  color: #d4d8de;
+  border: 1px solid #3a4452;
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Tool-Call Chain Analysis — Brain Engine</h1>
+<p class="subtitle">
+Exhaustive map of how tool calls are produced, dispatched, executed, summarised, and returned. Includes all three caller contexts (chat, workflow, scheduled) and every branch through <code>send_message</code> → <code>_handle_openai_response</code> → <code>_execute_tools_batch</code>. Guided execution intentionally omitted. Generated 2026-05-13.
+</p>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#tl">TL;DR — Why the output variance</a></li>
+    <li><a href="#engine">The engine — one round, end to end</a></li>
+    <li><a href="#parsing">Parsing the model's response into tool calls</a></li>
+    <li><a href="#dispatch">Dispatch, heaviness, parallelism</a></li>
+    <li><a href="#return">How the caller (the loop) gets the result back</a></li>
+    <li><a href="#post">Post-result processing — sanitize, summarise, isolate, compact</a></li>
+    <li><a href="#per-tool">Per-tool result contract</a></li>
+    <li><a href="#usecases">Use cases — chat vs workflow vs scheduled vs delegate</a></li>
+    <li><a href="#variance">Sources of non-determinism</a></li>
+    <li><a href="#failures">Failure modes &amp; the “I’ll write it… ” stall</a></li>
+    <li><a href="#ref">Quick reference card</a></li>
+  </ol>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="tl">1. TL;DR — Why the same scheduled task produces 192 chars one day and 30 KB the next</h2>
+
+<p>Three independent forces compound:</p>
+<ol>
+  <li><strong>The engine has no “did the model promise but not deliver?” check.</strong> When Mistral Medium 3.5 emits <em>“I'll now write the report. Let me compile…”</em> (32 tokens, <code>finish_reason="stop"</code>, no <code>tool_calls</code>), <code>_handle_openai_response</code> returns that string as the final answer. <a href="#failures">§10</a></li>
+  <li><strong>Tool-result shape mutates non-deterministically across rounds.</strong> The middleware <code>_microcompact</code> and <code>_compress_old_tool_results</code> rewrite older tool results in place every 2 rounds / when over budget; the worker subagent path summarises via an LLM; <code>auto</code> tools flip between raw passthrough and isolated worker envelope at the 8 KB boundary. Same prompt → different in-context bytes → different sampling. <a href="#post">§6</a></li>
+  <li><strong>The storage cap that lopped run 786 mid-sentence.</strong> <code>complete_execution</code> was hard-truncating <code>schedule_history.result</code> at 10 000 chars (<code>brain.py:15590</code>). Fixed in this PR — full delegate output is now stored verbatim.</li>
+</ol>
+
+<div class="callout warn">
+<span class="label">The 32-token failure mode</span>
+The engine treats <code>finish_reason=stop</code> + empty <code>tool_calls_map</code> + non-empty <code>full_text</code> as a successful completion regardless of what the text says. A model can announce its intention to call a tool, then stop, and the loop has no way to recover. The only mitigations available without code change are: (a) lower temperature, (b) raise the per-task <code>max_tool_rounds</code> so even sloppy turns get more chances, (c) phrase the task so the model writes inline instead of via a file. A real fix needs a server-side <em>intent-vs-action</em> guard.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="engine">2. The engine — one round, end to end</h2>
+
+<p>The “agentic loop” is not a loop. It is <strong>recursion through <code>send_message</code></strong>: each round is one <code>send_message</code> call, the SSE consumer dispatches tools and recursively calls <code>send_message</code> with <code>_tool_round + 1</code>. Python stack depth = round count.</p>
+
+<div class="diagram">
+<svg viewBox="0 0 1100 540" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-width:1080px">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7dd3fc"/>
+    </marker>
+    <marker id="arrDim" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8b95a3"/>
+    </marker>
+    <marker id="arrBad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#f87171"/>
+    </marker>
+  </defs>
+
+  <style>
+    .box { fill:#232a35; stroke:#3a4452; stroke-width:1; }
+    .box-accent { fill:#1e2a3a; stroke:#7dd3fc; stroke-width:1.5; }
+    .box-warn { fill:#3a2a1e; stroke:#fbbf24; stroke-width:1.5; }
+    .box-bad { fill:#3a1e1e; stroke:#f87171; stroke-width:1.5; }
+    .lbl { fill:#d4d8de; font: 13px -apple-system,sans-serif; }
+    .lbl-bold { fill:#fff; font: 600 13px -apple-system,sans-serif; }
+    .lbl-dim { fill:#8b95a3; font: 11.5px -apple-system,sans-serif; }
+    .lbl-mono { fill:#c4b5fd; font: 12px "SF Mono",monospace; }
+  </style>
+
+  <!-- Round N start -->
+  <rect class="box-accent" x="20" y="20" width="220" height="60" rx="6"/>
+  <text class="lbl-bold" x="130" y="42" text-anchor="middle">send_message (round N)</text>
+  <text class="lbl-mono" x="130" y="62" text-anchor="middle">brain.py:25058</text>
+
+  <!-- arrow -->
+  <line x1="240" y1="50" x2="305" y2="50" stroke="#7dd3fc" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Round 0 setup -->
+  <rect class="box" x="305" y="20" width="240" height="60" rx="6"/>
+  <text class="lbl-bold" x="425" y="38" text-anchor="middle">Round-0 setup (only if N=0)</text>
+  <text class="lbl-dim" x="425" y="55" text-anchor="middle">dedup reset · recovery counter · GDPR scan</text>
+  <text class="lbl-dim" x="425" y="69" text-anchor="middle">quota gate · preambles · proactive compact</text>
+
+  <line x1="545" y1="50" x2="610" y2="50" stroke="#7dd3fc" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Caps -->
+  <rect class="box-warn" x="610" y="20" width="240" height="60" rx="6"/>
+  <text class="lbl-bold" x="730" y="38" text-anchor="middle">Round caps</text>
+  <text class="lbl-dim" x="730" y="55" text-anchor="middle">N ≥ effective_max → tools=False (soft)</text>
+  <text class="lbl-dim" x="730" y="69" text-anchor="middle">N ≥ 1.5× → return “[Tool round limit reached]”</text>
+
+  <line x1="850" y1="50" x2="915" y2="50" stroke="#7dd3fc" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Diminishing -->
+  <rect class="box-warn" x="915" y="20" width="170" height="60" rx="6"/>
+  <text class="lbl-bold" x="1000" y="38" text-anchor="middle">Diminishing returns</text>
+  <text class="lbl-dim" x="1000" y="55" text-anchor="middle">last 2 rounds &lt; 500 tokens</text>
+  <text class="lbl-dim" x="1000" y="69" text-anchor="middle">→ tools=False</text>
+
+  <!-- arrow down -->
+  <line x1="130" y1="80" x2="130" y2="115" stroke="#7dd3fc" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Payload build & HTTP -->
+  <rect class="box-accent" x="20" y="115" width="500" height="60" rx="6"/>
+  <text class="lbl-bold" x="270" y="138" text-anchor="middle">Build payload · queue acquire · POST /chat/completions (SSE)</text>
+  <text class="lbl-mono" x="270" y="156" text-anchor="middle">_apply_inference_to_payload · provider key pool · LocalProviderQueue</text>
+
+  <line x1="520" y1="145" x2="585" y2="145" stroke="#7dd3fc" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- _handle_openai_response -->
+  <rect class="box-accent" x="585" y="115" width="500" height="60" rx="6"/>
+  <text class="lbl-bold" x="835" y="138" text-anchor="middle">_handle_openai_response (SSE consumer)</text>
+  <text class="lbl-mono" x="835" y="156" text-anchor="middle">brain.py:25848 · streams text, thinking, tool_calls_map by index</text>
+
+  <!-- arrow down -->
+  <line x1="835" y1="175" x2="835" y2="215" stroke="#7dd3fc" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- post-stream branches -->
+  <rect class="box-warn" x="20" y="215" width="260" height="70" rx="6"/>
+  <text class="lbl-bold" x="150" y="236" text-anchor="middle">finish_reason == "length"</text>
+  <text class="lbl-bold" x="150" y="252" text-anchor="middle">+ tool_calls_map</text>
+  <text class="lbl-dim" x="150" y="270" text-anchor="middle">any malformed JSON args →</text>
+  <text class="lbl-dim" x="150" y="282" text-anchor="middle">DISCARD all tool calls</text>
+
+  <rect class="box-warn" x="300" y="215" width="260" height="70" rx="6"/>
+  <text class="lbl-bold" x="430" y="236" text-anchor="middle">finish_reason == "length"</text>
+  <text class="lbl-bold" x="430" y="252" text-anchor="middle">+ NO tool_calls</text>
+  <text class="lbl-dim" x="430" y="270" text-anchor="middle">resume up to 3×, double max_tokens</text>
+  <text class="lbl-dim" x="430" y="282" text-anchor="middle">if visible &lt; 25% of completion</text>
+
+  <rect class="box-bad" x="580" y="215" width="260" height="70" rx="6"/>
+  <text class="lbl-bold" x="710" y="236" text-anchor="middle">finish_reason == "stop"</text>
+  <text class="lbl-bold" x="710" y="252" text-anchor="middle">+ NO tool_calls</text>
+  <text class="lbl-dim" x="710" y="270" text-anchor="middle">RETURN full_text immediately</text>
+  <text class="lbl-dim" x="710" y="282" text-anchor="middle">no “did model deliver?” check</text>
+
+  <rect class="box-accent" x="860" y="215" width="225" height="70" rx="6"/>
+  <text class="lbl-bold" x="972" y="236" text-anchor="middle">tool_calls_map non-empty</text>
+  <text class="lbl-dim" x="972" y="252" text-anchor="middle">parse JSON args (fallback: {})</text>
+  <text class="lbl-dim" x="972" y="270" text-anchor="middle">→ batch_calls</text>
+  <text class="lbl-dim" x="972" y="282" text-anchor="middle">→ _execute_tools_batch</text>
+
+  <!-- to batch -->
+  <line x1="972" y1="285" x2="972" y2="320" stroke="#7dd3fc" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- batch -->
+  <rect class="box-accent" x="715" y="320" width="370" height="60" rx="6"/>
+  <text class="lbl-bold" x="900" y="343" text-anchor="middle">_execute_tools_batch (brain.py:23652)</text>
+  <text class="lbl-dim" x="900" y="361" text-anchor="middle">partition into safe runs · ThreadPool ≤5 · preserve order</text>
+
+  <!-- arrow down -->
+  <line x1="900" y1="380" x2="900" y2="415" stroke="#7dd3fc" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- per-tool -->
+  <rect class="box" x="715" y="415" width="370" height="70" rx="6"/>
+  <text class="lbl-bold" x="900" y="436" text-anchor="middle">route_tool_execution (execution.py:985)</text>
+  <text class="lbl-dim" x="900" y="453" text-anchor="middle">heavy → worker subagent (+ summariser LLM)</text>
+  <text class="lbl-dim" x="900" y="467" text-anchor="middle">auto → exec then isolate if &gt; 8 KB</text>
+  <text class="lbl-dim" x="900" y="481" text-anchor="middle">light → inline, raw string</text>
+
+  <!-- back arrow to messages -->
+  <line x1="715" y1="450" x2="305" y2="450" stroke="#8b95a3" stroke-width="1.2" stroke-dasharray="4,4" marker-end="url(#arrDim)"/>
+  <text class="lbl-dim" x="510" y="442" text-anchor="middle">return {tool_use_id, result} list</text>
+
+  <!-- messages append -->
+  <rect class="box" x="20" y="415" width="280" height="70" rx="6"/>
+  <text class="lbl-bold" x="160" y="436" text-anchor="middle">messages.append (role: "tool")</text>
+  <text class="lbl-dim" x="160" y="453" text-anchor="middle">_sanitize_tool_result (strip base64, 30 KB cap)</text>
+  <text class="lbl-dim" x="160" y="467" text-anchor="middle">_extract_and_save_mcp_blobs</text>
+  <text class="lbl-dim" x="160" y="481" text-anchor="middle">brain.py:26228-26240</text>
+
+  <!-- middleware -->
+  <line x1="160" y1="415" x2="160" y2="320" stroke="#7dd3fc" stroke-width="1.5" marker-end="url(#arr)"/>
+  <rect class="box-accent" x="20" y="320" width="280" height="60" rx="6"/>
+  <text class="lbl-bold" x="160" y="343" text-anchor="middle">_run_middleware (between rounds)</text>
+  <text class="lbl-dim" x="160" y="361" text-anchor="middle">cancel · budget · pyexec_hint · microcompact · compress_old</text>
+
+  <!-- recurse -->
+  <line x1="160" y1="320" x2="160" y2="180" stroke="#7dd3fc" stroke-width="1.5" stroke-dasharray="6,4" marker-end="url(#arr)"/>
+  <text class="lbl-mono" x="55" y="245" text-anchor="start">recurse:</text>
+  <text class="lbl-mono" x="55" y="262" text-anchor="start">send_message</text>
+  <text class="lbl-mono" x="55" y="279" text-anchor="start">(_tool_round + 1)</text>
+</svg>
+</div>
+
+<h3>2.1 Where the loop lives — file map</h3>
+<table>
+<tr><th>Function</th><th>Location</th><th>Role</th></tr>
+<tr><td><code>send_message_with_fallback</code></td><td><code>brain.py:26327</code></td><td>Outer retry + fallback chain. Snapshots <code>len(messages)</code> to strip tool-loop turds on a primary failure.</td></tr>
+<tr><td><code>send_message</code></td><td><code>brain.py:25058</code></td><td>Per-round entry. Owns caps, preambles, GDPR, quota, payload build, HTTP send. Returns final text <em>or</em> <code>None</code>.</td></tr>
+<tr><td><code>_handle_openai_response</code></td><td><code>brain.py:25848</code></td><td>SSE consumer. Streams text/thinking, accumulates <code>tool_calls_map</code>, dispatches tools, runs middleware, recursively calls <code>send_message</code> with <code>_tool_round+1</code>.</td></tr>
+<tr><td><code>_execute_tools_batch</code></td><td><code>brain.py:23652</code></td><td>Partitions calls into safe parallel runs and serial runs. Dispatches each via <code>_execute_tool</code>.</td></tr>
+<tr><td><code>_execute_tool</code> → <code>_execute_tool_inner</code></td><td><code>brain.py:23788</code> / <code>brain.py:23795</code></td><td>Pre-hooks → dispatch → post-hooks for one call.</td></tr>
+<tr><td><code>route_tool_execution</code></td><td><code>execution.py:985</code></td><td>Picks light vs heavy vs auto-isolated.</td></tr>
+<tr><td><code>run_worker_subagent</code></td><td><code>execution.py:783</code></td><td>Wraps a heavy call with artifact storage + LLM summariser.</td></tr>
+</table>
+
+<h3>2.2 Round caps &amp; guards</h3>
+<table>
+<tr><th>Cap / guard</th><th>Constant</th><th>Where</th><th>Behavior</th></tr>
+<tr><td>Default soft cap</td><td><code>MAX_TOOL_ROUNDS = 15</code></td><td><code>brain.py:23899</code></td><td>At <code>_tool_round ≥ N</code>: next call goes out with <code>tools = False</code>. Model must respond as text.</td></tr>
+<tr><td>CLIProxyAPI tightening</td><td><code>MAX_TOOL_ROUNDS_PROXY = 8</code></td><td><code>brain.py:25450</code></td><td>Applied if base_url contains <code>:8317</code> or <code>cliproxy</code>.</td></tr>
+<tr><td>Delegate / scheduled cap</td><td><code>MAX_DELEGATE_TOOL_ROUNDS = 10</code></td><td><code>brain.py:11373, 11955</code></td><td>Set via <code>_thread_local.max_tool_rounds</code> inside <code>_run_delegate</code>. Scheduled tasks therefore cap at 10 (soft) / 15 (hard).</td></tr>
+<tr><td>Per-agent override</td><td><code>limits.max_tool_rounds</code></td><td><code>agent.json</code></td><td>Used when no thread-local override.</td></tr>
+<tr><td><strong>Hard stop</strong></td><td>1.5× effective</td><td><code>brain.py:25457-25458</code></td><td>Returns the literal string <code>"[Tool round limit reached — stopping to prevent runaway loop. Check chat for partial progress.]"</code> as the entire reply. <em>All prior turn text is lost.</em></td></tr>
+<tr><td>Diminishing returns</td><td><code>DIMINISHING_THRESHOLD_TOKENS = 500</code></td><td><code>brain.py:23904-23906, 25460-25473</code></td><td>From round ≥ 3, if last 2 rounds each produced &lt; 500 completion tokens → flip <code>tools=False</code> + emit SSE <code>tool_loop_stop</code> reason <code>diminishing_returns</code>.</td></tr>
+<tr><td>Max-output recovery</td><td><code>MAX_OUTPUT_RECOVERY_LIMIT = 3</code></td><td><code>brain.py:23901</code></td><td>Up to 3 retries on <code>finish_reason=length</code> + no tools. Doubles <code>max_tokens</code> if visible &lt; 25% of completion tokens.</td></tr>
+</table>
+
+<h3>2.3 Middleware pipeline — runs between rounds, in order</h3>
+<p>List at <code>brain.py:23996-24002</code>; runner at <code>brain.py:24004-24010</code>; invocation in <code>_handle_openai_response</code> at <code>brain.py:26242-26248</code>.</p>
+<table>
+<tr><th>Middleware</th><th>Fires when</th><th>Effect</th></tr>
+<tr><td><code>_middleware_cancel_check</code><br><span class="cite">brain.py:23926</span></td><td>Every round</td><td>Raises <code>TaskCancelled</code> if <code>escape_watcher.cancelled</code>.</td></tr>
+<tr><td><code>_middleware_tool_result_budget</code><br><span class="cite">brain.py:23933</span></td><td>Every round</td><td>Any single tool result &gt; 50 000 chars → write to <code>agents/&lt;id&gt;/artifacts/&lt;folder&gt;/tool-results/&lt;tool_call_id&gt;.txt</code>; in-context becomes 2 000-char preview + path. <code>brain.py:24125-24185</code>.</td></tr>
+<tr><td><code>_middleware_pyexec_hint</code><br><span class="cite">brain.py:23960</span></td><td>Round ≥ 1, agent has <code>python_exec</code>, not fired this turn</td><td>If ≥ 3 consolidatable file/doc tool calls since last user msg, appends a one-shot user message recommending <code>python_exec</code>. Consolidatable set: <code>read_file, list_directory, search_files, read_document, write_document, edit_document, write_file, edit_file</code>.</td></tr>
+<tr><td><code>_middleware_microcompact</code><br><span class="cite">brain.py:23938</span></td><td>Every <strong>even</strong> round &gt; 0</td><td>Older results of compactable tools replaced with <code>"[Old &lt;tool&gt; result cleared]"</code>; <code>python_exec</code>/<code>execute_command</code> <em>arguments</em> also stubbed (<code>"[N chars cleared]"</code>). Keeps last 5 of each. Exempt: memory/delegate/context tools.</td></tr>
+<tr><td><code>_middleware_compress_old</code><br><span class="cite">brain.py:23944</span></td><td>Cumulative tool-result tokens &gt; <code>tool_results_total_tokens</code> (default 50 000)</td><td>Older results truncated to <code>first 200 chars + "\n[...compressed...]"</code>. Fires regardless of tool name; keeps last 4.</td></tr>
+</table>
+
+<div class="callout warn">
+<span class="label">Mutation in place</span>
+<code>_microcompact</code> and <code>_compress_old</code> <em>rewrite the messages list in place</em>. The next round sees a context that is structurally different from what the previous round emitted. This is one of the strongest sources of run-to-run variance for the same prompt.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="parsing">3. Parsing the model's response into tool calls</h2>
+
+<h3>3.1 Streaming aggregation</h3>
+<pre><code>tool_calls_map = {}                                  # brain.py:25876
+for tc in (delta.get("tool_calls") or []):           # brain.py:26005 — guards Gemini's null
+    idx = tc.get("index", 0)
+    tool_calls_map.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+    if tc.get("id"):                                  # may arrive on a later delta
+        tool_calls_map[idx]["id"] = tc["id"]
+    if tc.get("function", {}).get("name"):
+        tool_calls_map[idx]["name"] = tc["function"]["name"]
+    tool_calls_map[idx]["arguments"] += tc.get("function", {}).get("arguments", "")</code></pre>
+<p>Keyed by provider <code>index</code> so out-of-order shards reassemble. <code>arguments</code> concatenated as raw strings — never parsed during streaming.</p>
+
+<h3>3.2 Gemma fallback (text-mode tool calls)</h3>
+<p>When <code>tool_calls_map</code> is empty and the assistant text contains <code>&lt;|tool_call&gt;</code>, <code>_parse_gemma_tool_calls</code> regexes them out (<code>brain.py:26074-26084</code>). Generates synthetic ids <code>gemma_&lt;8 hex&gt;</code>. <strong>This is the only text-based tool-call parser.</strong> An OpenAI-shape JSON call buried in a Mistral <code>text</code> block is NOT parsed.</p>
+
+<h3>3.3 Malformed JSON arguments</h3>
+<pre><code>try:
+    args = json.loads(tc["function"]["arguments"])
+except json.JSONDecodeError:
+    args = {}                                         # silently coerced — call still runs</code></pre>
+<p>Tools that receive <code>{}</code> typically return their own parameter-validation error; that error becomes the next-round tool result.</p>
+
+<h3>3.4 The two <code>finish_reason</code> branches</h3>
+<table>
+<tr><th>Condition</th><th>Behavior</th><th>Citation</th></tr>
+<tr><td><code>length</code> + non-empty <code>tool_calls_map</code></td><td>Each tool call's JSON args is test-parsed. <strong>Any one</strong> failure → <code>tool_calls_map.clear()</code>. Falls through to next branch.</td><td><code>brain.py:26108-26120</code></td></tr>
+<tr><td><code>length</code> + empty <code>tool_calls_map</code></td><td>Emit SSE <code>max_tokens_recovery</code>; append <code>assistant: full_text</code> + <code>user: _MAX_OUTPUT_RESUME_MSG</code> ("Output token limit hit. Resume directly — no apology…"); double <code>max_tokens</code> if reasoning ate the budget; recurse. Up to 3 attempts.</td><td><code>brain.py:26122-26171</code></td></tr>
+<tr><td><code>stop</code> + empty <code>tool_calls_map</code></td><td><strong>Return <code>full_text</code> unconditionally.</strong> No content check. No "but you said you'd call write_file" detection.</td><td><code>brain.py:26173-26184</code></td></tr>
+<tr><td><code>tool_calls</code> + empty map (provider bug)</td><td>Same path as <code>stop</code> + empty: returns <code>full_text</code>. The <code>finish_reason</code> string itself is not inspected after the two <code>== "length"</code> checks.</td><td>—</td></tr>
+</table>
+
+<h3>3.5 Mistral <code>mistral_blocks</code> thinking strip</h3>
+<p><code>brain.py:25957-25976</code>. When <code>delta.content</code> is a list of blocks: <code>type=="thinking"</code> blocks emit <code>thinking_delta</code> SSE and never enter <code>collected_text</code>; <code>type=="text"</code> blocks become visible text. Thinking is persisted as <code>role="thinking"</code> DB rows, stripped before next wire (<code>_INTERNAL_ROLES = {"thinking"}</code>, <code>brain.py:25495</code>).</p>
+
+<!-- ============================================================ -->
+<h2 id="dispatch">4. Dispatch, heaviness, parallelism</h2>
+
+<h3>4.1 The three heaviness levels</h3>
+<table>
+<tr><th>Level</th><th>What happens</th><th>Tag</th></tr>
+<tr><td><code>light</code></td><td>Inline call in the loop thread. Raw string return goes straight into <code>messages</code> after <code>_sanitize_tool_result</code> (base64-strip + 30 KB cap).</td><td><span class="tag light">light</span></td></tr>
+<tr><td><code>heavy</code></td><td>Wrapped in <code>run_worker_subagent</code>. Raw output written to disk as <code>worker_&lt;tool&gt;_&lt;id8&gt;.json</code>; an LLM summariser produces the result the model sees. The model gets a JSON envelope, NOT the raw bytes.</td><td><span class="tag heavy">heavy</span></td></tr>
+<tr><td><code>auto</code></td><td>Executes inline. If <code>len(result.encode()) &gt; auto_threshold_bytes</code> (default <strong>8 192</strong>) → retroactively wrap as heavy. Otherwise pass through raw.</td><td><span class="tag auto">auto</span></td></tr>
+</table>
+
+<p>Resolution precedence in <code>_resolve_heaviness</code> (<code>execution.py:115-134</code>): agent override (<code>_thread_local.execution_overrides</code>) → <code>config.json → execution.profiles</code> → <code>DEFAULT_PROFILES</code> (<code>execution.py:27-58</code>) → <code>"auto"</code>.</p>
+
+<h3>4.2 Pre/post hooks per call</h3>
+<div class="diagram">
+<svg viewBox="0 0 1080 250" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-width:1060px">
+  <defs>
+    <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7dd3fc"/></marker>
+  </defs>
+  <style>
+    .b { fill:#232a35; stroke:#3a4452; }
+    .ba { fill:#1e2a3a; stroke:#7dd3fc; stroke-width:1.5; }
+    .l { fill:#d4d8de; font: 12px -apple-system,sans-serif; }
+    .lb { fill:#fff; font: 600 12.5px -apple-system,sans-serif; }
+    .ld { fill:#8b95a3; font: 11px -apple-system,sans-serif; }
+  </style>
+  <!-- row 1 -->
+  <rect class="b" x="10" y="10" width="160" height="80" rx="6"/>
+  <text class="lb" x="90" y="30" text-anchor="middle">1. Plan mode</text>
+  <text class="ld" x="90" y="48" text-anchor="middle">block non-readonly</text>
+  <text class="ld" x="90" y="62" text-anchor="middle">_thread_local.plan_mode</text>
+  <text class="ld" x="90" y="78" text-anchor="middle">brain.py:23795-23800</text>
+
+  <rect class="b" x="180" y="10" width="160" height="80" rx="6"/>
+  <text class="lb" x="260" y="30" text-anchor="middle">2. Workflow filter</text>
+  <text class="ld" x="260" y="48" text-anchor="middle">workflow_allowed_tools</text>
+  <text class="ld" x="260" y="62" text-anchor="middle">currently unused</text>
+  <text class="ld" x="260" y="78" text-anchor="middle">brain.py:23806</text>
+
+  <rect class="b" x="350" y="10" width="160" height="80" rx="6"/>
+  <text class="lb" x="430" y="30" text-anchor="middle">3. Dedup</text>
+  <text class="ld" x="430" y="48" text-anchor="middle">2nd dupe → TaskCancelled</text>
+  <text class="ld" x="430" y="62" text-anchor="middle">session-scoped</text>
+  <text class="ld" x="430" y="78" text-anchor="middle">brain.py:22702</text>
+
+  <rect class="b" x="520" y="10" width="160" height="80" rx="6"/>
+  <text class="lb" x="600" y="30" text-anchor="middle">4. External pre-hook</text>
+  <text class="ld" x="600" y="48" text-anchor="middle">bash script · exit 1 = block</text>
+  <text class="ld" x="600" y="62" text-anchor="middle">CAN'T mutate args</text>
+  <text class="ld" x="600" y="78" text-anchor="middle">brain.py:23349</text>
+
+  <rect class="ba" x="690" y="10" width="200" height="80" rx="6"/>
+  <text class="lb" x="790" y="30" text-anchor="middle">5. EXECUTE</text>
+  <text class="ld" x="790" y="48" text-anchor="middle">TOOL_DISPATCH[name](args)</text>
+  <text class="ld" x="790" y="62" text-anchor="middle">— or MCP / unknown_tool —</text>
+  <text class="ld" x="790" y="78" text-anchor="middle">brain.py:23837-23853</text>
+
+  <rect class="b" x="900" y="10" width="160" height="80" rx="6"/>
+  <text class="lb" x="980" y="30" text-anchor="middle">6. Built-in post</text>
+  <text class="ld" x="980" y="48" text-anchor="middle">trace span end</text>
+  <text class="ld" x="980" y="62" text-anchor="middle">audit log row</text>
+  <text class="ld" x="980" y="78" text-anchor="middle">no mutation</text>
+
+  <!-- row 2 -->
+  <rect class="b" x="180" y="120" width="220" height="80" rx="6"/>
+  <text class="lb" x="290" y="140" text-anchor="middle">7. External post-hook</text>
+  <text class="ld" x="290" y="158" text-anchor="middle">CAN mutate result via stdout</text>
+  <text class="ld" x="290" y="172" text-anchor="middle">HOOK_TOOL_RESULT (capped 50K)</text>
+  <text class="ld" x="290" y="188" text-anchor="middle">brain.py:23368-23383</text>
+
+  <rect class="b" x="420" y="120" width="220" height="80" rx="6"/>
+  <text class="lb" x="530" y="140" text-anchor="middle">8. _after_file_write</text>
+  <text class="ld" x="530" y="158" text-anchor="middle">(only write_file/edit_file/etc.)</text>
+  <text class="ld" x="530" y="172" text-anchor="middle">artifact version · code-graph · SSE</text>
+  <text class="ld" x="530" y="188" text-anchor="middle">brain.py:23489-23549</text>
+
+  <rect class="ba" x="660" y="120" width="220" height="80" rx="6"/>
+  <text class="lb" x="770" y="140" text-anchor="middle">9. Heaviness routing</text>
+  <text class="ld" x="770" y="158" text-anchor="middle">light: passthrough</text>
+  <text class="ld" x="770" y="172" text-anchor="middle">heavy / auto-isolated:</text>
+  <text class="ld" x="770" y="188" text-anchor="middle">artifact + summariser LLM</text>
+
+  <line x1="790" y1="90" x2="290" y2="120" stroke="#7dd3fc" stroke-width="1.2" marker-end="url(#arr2)"/>
+</svg>
+</div>
+
+<h3>4.3 Parallel batch dispatch</h3>
+<p><code>_execute_tools_batch</code> partitions the call list into <strong>consecutive runs of same class</strong>:</p>
+<ul>
+  <li>Consecutive concurrent-safe tools ≥ 2 → <code>ThreadPoolExecutor(max_workers=min(5, len(batch)))</code>.</li>
+  <li>Anything else → sequential, in arrival order.</li>
+</ul>
+<p>Concurrent-safe set (<code>brain.py:23641-23649</code>): <code>read_file, list_directory, search_files, read_document, memory_recall, memory_shared, exa_search, web_fetch, code_graph_query, schedule_list, schedule_history, list_nodes, task_status, context_search, context_detail, context_recall, git_command</code> (git further restricted to read-only subcommands at <code>brain.py:23680-23683</code>).</p>
+<p>Thread-locals are snapshotted from the parent (<code>_parent_ctx</code> in <code>_execute_tool_in_thread</code>, <code>brain.py:23758</code>) and re-installed in each worker thread: <code>current_session_id</code>, <code>current_agent</code>, <code>mcp_manager</code>, <code>current_user_id</code>. Without this, session-scoped dedup and MCP routing silently fork.</p>
+<p><strong>Order is preserved.</strong> Results collected via <code>as_completed</code> into a <code>result_map</code>, then re-appended in original <code>batch</code> order (<code>brain.py:23735-23737</code>).</p>
+<p><strong>No batch-level timeout.</strong> Each tool body owns its own timeout. <code>DEFAULT_PROFILES.timeout_seconds</code> is currently advisory metadata only.</p>
+<p>Per-tool exceptions are caught and wrapped: <code>result = _err(f"Tool execution error: {e}")</code> (<code>brain.py:23728-23729</code>) — they never abort the batch.</p>
+
+<!-- ============================================================ -->
+<h2 id="return">5. How the caller (the loop) gets the result back</h2>
+
+<p>This is the dimension that matters most for your variance question: the <em>shape</em> of what reaches the model on the next round can differ wildly even for the same tool. There are four distinct return shapes.</p>
+
+<div class="diagram">
+<svg viewBox="0 0 1080 380" xmlns="http://www.w3.org/2000/svg" width="100%" style="max-width:1060px">
+  <defs>
+    <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7dd3fc"/></marker>
+  </defs>
+  <style>
+    .b { fill:#232a35; stroke:#3a4452; }
+    .ba { fill:#1e2a3a; stroke:#7dd3fc; stroke-width:1.5; }
+    .bw { fill:#3a2a1e; stroke:#fbbf24; stroke-width:1.5; }
+    .bo { fill:#1e3a2e; stroke:#86efac; stroke-width:1.5; }
+    .l { fill:#d4d8de; font: 12px -apple-system,sans-serif; }
+    .lb { fill:#fff; font: 600 12.5px -apple-system,sans-serif; }
+    .ld { fill:#8b95a3; font: 11px -apple-system,sans-serif; }
+    .lm { fill:#c4b5fd; font: 11.5px "SF Mono",monospace; }
+  </style>
+
+  <rect class="ba" x="380" y="10" width="300" height="50" rx="6"/>
+  <text class="lb" x="530" y="32" text-anchor="middle">Tool body returns a STRING</text>
+  <text class="lm" x="530" y="50" text-anchor="middle">TOOL_DISPATCH[name](args) → str</text>
+
+  <line x1="530" y1="60" x2="530" y2="95" stroke="#7dd3fc" stroke-width="1.5" marker-end="url(#arr3)"/>
+
+  <rect class="b" x="380" y="95" width="300" height="50" rx="6"/>
+  <text class="lb" x="530" y="115" text-anchor="middle">route_tool_execution (heaviness)</text>
+  <text class="ld" x="530" y="132" text-anchor="middle">execution.py:985</text>
+
+  <line x1="200" y1="160" x2="200" y2="190" stroke="#7dd3fc" stroke-width="1.5" marker-end="url(#arr3)"/>
+  <line x1="530" y1="160" x2="530" y2="190" stroke="#7dd3fc" stroke-width="1.5" marker-end="url(#arr3)"/>
+  <line x1="860" y1="160" x2="860" y2="190" stroke="#7dd3fc" stroke-width="1.5" marker-end="url(#arr3)"/>
+  <line x1="530" y1="145" x2="200" y2="190" stroke="#7dd3fc" stroke-width="1.2"/>
+  <line x1="530" y1="145" x2="860" y2="190" stroke="#7dd3fc" stroke-width="1.2"/>
+
+  <!-- light -->
+  <rect class="bo" x="60" y="190" width="280" height="100" rx="6"/>
+  <text class="lb" x="200" y="210" text-anchor="middle">LIGHT — passthrough</text>
+  <text class="l" x="200" y="230" text-anchor="middle">raw string</text>
+  <text class="ld" x="200" y="248" text-anchor="middle">_sanitize_tool_result</text>
+  <text class="ld" x="200" y="262" text-anchor="middle">base64 strip · 30 KB cap</text>
+  <text class="ld" x="200" y="278" text-anchor="middle">brain.py:24055</text>
+
+  <!-- heavy -->
+  <rect class="bw" x="380" y="190" width="300" height="100" rx="6"/>
+  <text class="lb" x="530" y="210" text-anchor="middle">HEAVY — worker subagent</text>
+  <text class="l" x="530" y="228" text-anchor="middle">{worker:true, summary, sections,</text>
+  <text class="l" x="530" y="244" text-anchor="middle">artifacts, references, flow, …}</text>
+  <text class="ld" x="530" y="262" text-anchor="middle">raw bytes → worker_*.json on disk</text>
+  <text class="ld" x="530" y="278" text-anchor="middle">execution.py:783, 985</text>
+
+  <!-- auto -->
+  <rect class="bw" x="720" y="190" width="300" height="100" rx="6"/>
+  <text class="lb" x="870" y="210" text-anchor="middle">AUTO — size-conditional</text>
+  <text class="l" x="870" y="228" text-anchor="middle">&lt; 8 KB: passthrough (light)</text>
+  <text class="l" x="870" y="244" text-anchor="middle">≥ 8 KB: retroactive heavy</text>
+  <text class="ld" x="870" y="262" text-anchor="middle">maybe_retroactive_isolate</text>
+  <text class="ld" x="870" y="278" text-anchor="middle">execution.py:948</text>
+
+  <!-- back to loop -->
+  <line x1="200" y1="290" x2="200" y2="320" stroke="#7dd3fc" stroke-width="1.5" marker-end="url(#arr3)"/>
+  <line x1="530" y1="290" x2="530" y2="320" stroke="#7dd3fc" stroke-width="1.5" marker-end="url(#arr3)"/>
+  <line x1="860" y1="290" x2="860" y2="320" stroke="#7dd3fc" stroke-width="1.5" marker-end="url(#arr3)"/>
+
+  <rect class="ba" x="60" y="320" width="960" height="50" rx="6"/>
+  <text class="lb" x="540" y="340" text-anchor="middle">_execute_tools_batch returns: list[{tool_use_id, result: str}]</text>
+  <text class="lm" x="540" y="358" text-anchor="middle">→ messages.append({"role": "tool", "tool_call_id": id, "content": sanitized})  · brain.py:26228-26240</text>
+</svg>
+</div>
+
+<h3>5.1 The two-step return contract</h3>
+<p>The "caller" here means the agentic loop in <code>_handle_openai_response</code>. Every tool body must return a <strong>string</strong>. The path from string to "what the model sees on next round" is:</p>
+
+<pre><code># brain.py:23728
+result = future.result()           # may raise → caught → result = _err(...)
+result_map[tc["id"]] = result      # keyed by call id
+event_callback("tool_result", {"name": tc["name"], "result": result, "tool_round": N})
+
+# brain.py:23736-23737
+for tc in batch:
+    results.append({"tool_use_id": tc["id"], "result": result_map[tc["id"]]})
+
+# brain.py:26228-26240
+for br in batch_results:
+    sanitized = _sanitize_tool_result(name, br["result"])     # 30 KB cap, base64 strip
+    sanitized = _extract_and_save_mcp_blobs_direct(sanitized, session_id)
+    messages.append({"role": "tool", "tool_call_id": br["tool_use_id"], "content": sanitized})</code></pre>
+
+<p>From this point, the middleware chain (<code>_run_middleware</code>) may further mutate the appended tool messages before the recursive <code>send_message</code> call.</p>
+
+<h3>5.2 The four possible result shapes the model sees</h3>
+<table>
+<tr><th>Shape</th><th>Produced by</th><th>Bytes on the wire</th></tr>
+<tr><td><strong>Raw string</strong></td><td>Light tools, auto tools &lt; 8 KB</td><td>Tool's own output, possibly truncated by <code>_sanitize_tool_result</code> to 30 KB.</td></tr>
+<tr><td><strong>Worker envelope JSON</strong></td><td>Heavy tools always; auto tools ≥ 8 KB</td><td><code>{worker:true, worker_id, summary, sections, artifacts[], references[], duration_seconds, state, flow, summariser_usage}</code> — typically 1–4 KB.</td></tr>
+<tr><td><strong>Disk-isolated stub</strong></td><td>Any result &gt; 50 KB after sanitization (via <code>_apply_tool_result_budget</code> middleware)</td><td><code>"[Large tool result preview …first 2000 chars…] (Full content stored at &lt;path&gt;)"</code></td></tr>
+<tr><td><strong>Cache-hit stub</strong></td><td>Repeat <code>read_file</code> / <code>read_document</code> in same session</td><td><code>{cached:true, first_read_in_turn:N, content_hash:..., note:"Bereits in Turn N gelesen — Inhalt unverändert"}</code> (<code>brain.py:22751</code>)</td></tr>
+</table>
+
+<h3>5.3 The <code>event_callback("tool_result", …)</code> side channel</h3>
+<p>Independent of what reaches the model: <strong>every</strong> tool result is also emitted on the SSE bus (<code>brain.py:23733, 23753</code>). This is what:</p>
+<ul>
+  <li>Persists the tool call to the chat DB via <code>handlers/chat.py:760-768</code> with its own per-tool caps (50 000 chars for read tools, 5 000 elsewhere — into <code>msg_metadata</code>, not the user-visible message body).</li>
+  <li>Drives the web UI live "Tool called: X" badges.</li>
+  <li>For scheduled tasks, increments <code>tool_calls</code> counter persisted to <code>schedule_history.tool_calls</code>.</li>
+</ul>
+
+<h3>5.4 Cancellation &amp; exceptions</h3>
+<table>
+<tr><th>Failure</th><th>What the model receives</th><th>Where</th></tr>
+<tr><td>Tool body raises</td><td><code>{"error": "Tool execution error: &lt;e&gt;"}</code> as a JSON string</td><td><code>brain.py:23728-23729</code></td></tr>
+<tr><td>Tool returns malformed JSON</td><td>Whatever it returned, treated as a plain string</td><td>—</td></tr>
+<tr><td>Hook blocked</td><td><code>{"error": "HOOK BLOCKED: …"}</code></td><td><code>brain.py:23358</code></td></tr>
+<tr><td>Dedup fires (2nd dup)</td><td>Raises <code>TaskCancelled</code> — terminates the whole turn, not just this call</td><td><code>brain.py:22729</code></td></tr>
+<tr><td>Plan mode blocks</td><td><code>{"error": "Blocked in plan mode."}</code></td><td><code>brain.py:23800</code></td></tr>
+<tr><td>Cancel between batches</td><td><code>TaskCancelled</code> raised in next middleware run</td><td><code>brain.py:23926</code></td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="post">6. Post-result processing — sanitize, summarise, isolate, compact</h2>
+
+<h3>6.1 The summariser pipeline (heavy + auto-isolated tools)</h3>
+<p><code>_summarise_tool_result</code> (<code>execution.py:596-694</code>). When invoked:</p>
+<ul>
+  <li><strong>Heavy</strong> path → ALWAYS, inside <code>run_worker_subagent</code> at <code>execution.py:890</code>.</li>
+  <li><strong>Auto</strong> path → only when post-execution size &gt; <code>auto_threshold_bytes = 8192</code> (<code>execution.py:951, 969</code>).</li>
+  <li><strong>Light</strong> path → NEVER.</li>
+</ul>
+
+<p>Mechanics:</p>
+<ol>
+  <li>Resolve summariser model. Priority: <code>agent.config["summariser_model"]</code> → <code>_thread_local._current_model</code> (the chat's own model). <strong>No model → returns <code>_static_summary</code></strong> immediately.</li>
+  <li>Truncate raw to <code>summariser_max_input_chars = 32 000</code>.</li>
+  <li><code>gdpr_pick_model_for_background</code> may swap to a local fallback; <code>GDPRBlockedError</code> → static summary.</li>
+  <li><code>send_message_with_fallback(messages, model, …, tools=False, inference_params={"max_tokens": 512, "temperature": 0.0})</code>. Recursive into the engine, but <code>tools=False</code> means no nested tool loop.</li>
+  <li><code>_parse_summariser_output</code> splits the response at <code>"SECTIONS:"</code> → <code>(summary, sections)</code>.</li>
+  <li>Returns <strong>3-tuple</strong> <code>(summary, sections, usage_dict)</code>.</li>
+</ol>
+
+<div class="callout bad">
+<span class="label">Historic bug — the 3-tuple unpack</span>
+<code>maybe_retroactive_isolate</code> at one point unpacked 2 values from <code>_summarise_tool_result</code> (which returns 3), causing every <code>read_document</code> &gt; 65 KB to crash with <code>ValueError: too many values to unpack</code>. The crash was caught and rebranded as a tool error, surfacing as hallucination. Live callers now correctly unpack 3 (<code>execution.py:890</code>, <code>execution.py:969</code>) — listed in memory note <code>bug_summarise_tool_result_unpack.md</code>. Don't break this.
+</div>
+
+<h3>6.2 The worker envelope</h3>
+<pre><code>{
+  "worker": true,
+  "worker_id": "wkr_&lt;ts&gt;_&lt;hex&gt;",
+  "summary": "&lt;LLM summary, or _static_summary fallback&gt;",
+  "sections": [{"label": "Headlines", "line_start": 12, "line_end": 47}, …],
+  "artifacts": [{"artifact_id": "worker_web_fetch_X8a2.json",
+                 "path": "agents/main/artifacts/&lt;folder&gt;/worker_*.json",
+                 "size_bytes": 27384,
+                 "captured_at": "…", "tool_use_id": "…"}],
+  "duration_seconds": 4.3,
+  "state": "COMPLETED",
+  "flow": [/* per-step trace */],
+  "summariser_usage": {"tokens_in": 21344, "tokens_out": 287, "model": "Mistral/mistral-medium-3.5"},
+  "references": [{"title": "...", "link": "...", "snippet": "...", "domain": "..."}, …]   // web tools only
+}</code></pre>
+<p>The raw <code>worker_*.json</code> on disk contains <code>{tool, args, raw_result, captured_at, session_id, tool_use_id, size_bytes}</code> — the <strong>full</strong>, un-trimmed tool body. The model cannot see it unless it explicitly calls <code>get_artifact_detail(worker_id)</code>.</p>
+
+<h3>6.3 The four caps in tension</h3>
+<table>
+<tr><th>Cap</th><th>Value</th><th>Applied to</th><th>Where</th></tr>
+<tr><td><code>_sanitize_tool_result</code></td><td>30 000 chars (<code>tool_result_char_limit</code>)</td><td>Every tool result before append to <code>messages</code></td><td><code>brain.py:24055-24085</code></td></tr>
+<tr><td><code>_apply_tool_result_budget</code> middleware</td><td>50 000 chars per result → disk + 2 000-char preview</td><td>Single oversized result mid-loop</td><td><code>brain.py:24125-24185</code></td></tr>
+<tr><td><code>_compress_old_tool_results</code></td><td><code>tool_results_total_tokens</code> = 50 000 default</td><td>Cumulative — older results truncated to 200 chars + <code>[...compressed...]</code></td><td><code>brain.py:24088-24117</code></td></tr>
+<tr><td>Summariser input</td><td><code>summariser_max_input_chars</code> = 32 000</td><td>Raw result handed to the summariser LLM</td><td><code>execution.py:618</code></td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="per-tool">7. Per-tool result contract</h2>
+
+<table>
+<tr><th>Tool</th><th>Class</th><th>Typical raw size</th><th>What reaches the model on next round</th></tr>
+<tr><td><code>read_document</code></td><td><span class="tag light">light</span></td><td>up to hundreds of KB (paginated)</td><td>Raw paginated text/JSON, 30 KB cap. <strong>Per-session cache stub</strong> on repeat: <code>{cached:true, first_read_in_turn:N, note:"Bereits in Turn N gelesen"}</code>. Invalidated by <code>_after_file_write</code> on the same path. Pagination args bypass cache.</td></tr>
+<tr><td><code>read_file</code></td><td><span class="tag light">light</span></td><td>tens of KB</td><td>Same cache rules as <code>read_document</code>.</td></tr>
+<tr><td><code>list_directory</code></td><td><span class="tag light">light</span></td><td>small JSON</td><td>Raw JSON.</td></tr>
+<tr><td><code>search_files</code></td><td><span class="tag heavy">heavy</span></td><td>variable, can be huge</td><td>Worker envelope w/ summary; raw on disk in <code>worker_search_files_*.json</code>.</td></tr>
+<tr><td><code>web_fetch</code></td><td><span class="tag auto">auto</span></td><td>up to 10 MB raw → 50 000 chars after HTML→markdown</td><td>&lt; 8 KB: raw JSON <code>{url, status, length, content}</code>. ≥ 8 KB: worker envelope incl. <code>references</code> array. <em>This boundary causes day-to-day variance for the same URL when the page size hovers near 8 KB.</em></td></tr>
+<tr><td><code>exa_search</code> / <code>web_search</code></td><td><span class="tag auto">auto</span></td><td>5 results default</td><td>Same auto-isolate rule. <code>_extract_web_references</code> pulls <code>[{title, link, snippet, domain}]</code> into the envelope.</td></tr>
+<tr><td><code>python_exec</code></td><td><span class="tag heavy">heavy</span> · 300 s</td><td>capped to 50 000 chars</td><td>Worker envelope w/ summary. <strong>Auto-artifact fallback</strong>: if stdout &gt; 1 000 chars and no files written, stdout written to <code>output.txt</code> / <code>output_N.txt</code> and <code>output</code> field replaced with <em>"Output saved as artifact &lt;file&gt; (N lines, N chars). Summarize what was computed, do NOT repeat the data."</em></td></tr>
+<tr><td><code>write_file</code> / <code>edit_file</code></td><td><span class="tag light">light</span></td><td>small confirmation</td><td>Raw JSON <code>{ok:true, path}</code>. <code>_after_file_write</code> fires → SSE <code>artifact_updated</code>, code-graph update, cache invalidation.</td></tr>
+<tr><td><code>execute_command</code></td><td><span class="tag heavy">heavy</span> · 300 s</td><td>capped by per-tool cfg</td><td>Worker envelope. No TTY, no stdin, <code>TERM=dumb</code>.</td></tr>
+<tr><td><code>mempalace_query</code></td><td><span class="tag light">light</span></td><td>variable</td><td>Raw JSON. Project mode force-scopes wing to <code>project__&lt;id&gt;</code>.</td></tr>
+<tr><td><code>mempalace_get_drawer</code> / <code>list_drawers</code></td><td><span class="tag auto">auto</span></td><td>small</td><td>Raw JSON.</td></tr>
+<tr><td><code>delegate_task</code></td><td><span class="tag light">light</span></td><td>delegate's final text</td><td>Raw text returned by the nested <code>_run_delegate</code>. List view truncated to 200 chars (<code>brain.py:14481</code>); <code>task_status</code> truncated to 2 000 chars (<code>brain.py:14474</code>).</td></tr>
+<tr><td><code>ask_llm</code></td><td><span class="tag auto">auto</span></td><td>variable</td><td>Raw text or auto-isolated.</td></tr>
+<tr><td><code>code_graph_query</code></td><td><span class="tag light">light</span></td><td>small</td><td>Raw JSON.</td></tr>
+<tr><td><code>gmail_search</code></td><td><span class="tag heavy">heavy</span> · 60 s</td><td>variable</td><td>Worker envelope.</td></tr>
+<tr><td>MCP tools</td><td>default <span class="tag auto">auto</span></td><td>variable</td><td>Same auto-isolate rule. Image blobs &gt; 500 chars stripped by <code>_sanitize_tool_result</code>; restored from <code>_mcp_images</code> by <code>_extract_and_save_mcp_blobs_direct</code>.</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="usecases">8. Use cases — chat vs workflow vs scheduled vs delegate</h2>
+
+<p>Five distinct call sites reach the same <code>send_message</code> / <code>_run_delegate</code> core. They differ in <em>system-prompt builder</em>, <em>tool surface</em>, <em>persistence target</em>, <em>streaming</em>, <em>round caps</em>, and <em>how the caller retrieves the final answer</em>.</p>
+
+<h3>8.1 Interactive chat &nbsp;<span class="tag chat">chat</span></h3>
+<table>
+<tr><th>Dimension</th><th>Value</th></tr>
+<tr><td>Entry</td><td><code>POST /v1/chat</code> → <code>handlers/chat.py:445 _handle_chat</code>. Worker thread spawned at <code>chat.py:1310</code>; HTTP connection only subscribes to <code>LiveStream</code>.</td></tr>
+<tr><td>LLM call site</td><td><code>chat.py:995 engine.send_message_with_fallback(...)</code> — full agentic loop.</td></tr>
+<tr><td>Session id</td><td>Real chat session id (uuid hex).</td></tr>
+<tr><td>System prompt</td><td><code>_build_system_prompt(mode="chat")</code>. Per-session preamble (project + user profile) injected at round-0 first user message — NOT in system prompt (KV-prefix invariant).</td></tr>
+<tr><td>Tools</td><td>Full agent set, modulated by <code>token_config.tool_groups</code>, plan mode, MCP filter.</td></tr>
+<tr><td>Max rounds</td><td>15 (8 for CLIProxyAPI). Hard stop at 22 (12).</td></tr>
+<tr><td><strong>How caller gets result</strong></td><td>Two channels: (a) SSE stream via <code>LiveStream</code> — every <code>text_delta</code>, <code>thinking_*</code>, <code>tool_call</code>, <code>tool_result</code>, <code>artifact_updated</code> event reaches the browser live. (b) Final string returned by <code>send_message_with_fallback</code> → <code>session.add_message("assistant", reply, metadata=msg_metadata)</code> at <code>chat.py:1169</code>. Mid-stream partial saved to <code>sessions.streaming_text</code> column (throttled ~0.4 s) so reattach via <code>GET /v1/chat/stream</code> replays from there.</td></tr>
+<tr><td>Cancel</td><td><code>POST /v1/chat/cancel</code> → <code>session.cancel_token.cancel()</code>. Client disconnect does NOT cancel.</td></tr>
+<tr><td>Truncation</td><td>No reply cap. Per-tool snippet stored in <code>msg_metadata</code> at 50 000 chars for read tools, 5 000 elsewhere.</td></tr>
+</table>
+
+<h3>8.2 Scheduled tasks &nbsp;<span class="tag sched">scheduled</span></h3>
+<table>
+<tr><th>Dimension</th><th>Value</th></tr>
+<tr><td>Entry</td><td><code>Scheduler._run_loop</code> (<code>brain.py:15635</code>) → thread per due task → <code>_execute_scheduled</code> (<code>brain.py:15667</code>).</td></tr>
+<tr><td>LLM call site</td><td><code>brain.py:15842 _run_delegate(messages, model, system_prompt, …)</code>.</td></tr>
+<tr><td>Session id</td><td>Synthetic <code>sched-&lt;run_id&gt;</code> (from <code>begin_execution</code> row). Scopes artifacts + traces.</td></tr>
+<tr><td>System prompt</td><td><code>_build_system_prompt(mode="scheduled", task_name, task_working_dir)</code>. Per-task <code>caveman_chat</code> appended; per-task attachments referenced in place (not copied) via disk notice.</td></tr>
+<tr><td>Tools</td><td><code>token_config.scheduled_task_tools</code> (default <code>True</code>). <code>_memory_summary_*</code> tasks force <code>"memory_only"</code> (4-tool subset).</td></tr>
+<tr><td>Max rounds</td><td><code>MAX_DELEGATE_TOOL_ROUNDS = 10</code> (set via <code>_thread_local.max_tool_rounds</code>). Hard stop at 15. Per-task <code>timeout</code> watchdog (default 300 s).</td></tr>
+<tr><td><strong>How caller gets result</strong></td><td><code>_run_delegate</code> returns the final string. <code>_execute_scheduled</code> stores it via <code>complete_execution(run_id, schedule_id, status, result_text, …)</code> → <code>UPDATE schedule_history SET result = ?</code>. The stored row is <code>f"[Duration: Xs | Tools: N]\n\n{result}"</code> (<code>brain.py:15590</code>) — <strong>no truncation cap as of this PR</strong> (was <code>result[:10000]</code> before; that was clipping run 786 mid-sentence). UI reads via <code>GET /v1/schedule/history/&lt;run_id&gt;</code>.</td></tr>
+<tr><td>Cancel</td><td><code>POST /v1/schedule/cancel</code> → <code>Scheduler.cancel_running_task(name)</code> → token. Watchdog also cancels on <code>timeout</code>.</td></tr>
+<tr><td>Streaming</td><td>None to user. Internal <code>on_event</code> just counts tool calls + maintains <code>tool_log</code> on the in-memory <code>_running_tasks[name]</code> entry (visible via <code>GET /v1/schedule/running</code>).</td></tr>
+</table>
+
+<h3>8.3 Workflow execution &nbsp;<span class="tag wf">workflow</span></h3>
+<table>
+<tr><th>Dimension</th><th>Value</th></tr>
+<tr><td>Entry</td><td><code>workflow_start</code> tool / <code>POST /v1/workflows/execute</code> → <code>WorkflowExecution.run → _execute</code> (<code>brain.py:14253</code>). Background thread.</td></tr>
+<tr><td>LLM call site</td><td><strong>There is no agentic loop for workflows.</strong> The only LLM call is the <code>ask_llm</code> tool (<code>brain.py:2286</code>) invoked from a workflow node. It calls <code>_run_delegate(... tools=False)</code> at <code>brain.py:2333</code> — single-shot text-in/text-out.</td></tr>
+<tr><td>Session id</td><td>Synthetic <code>wf-&lt;execution_id&gt;</code> in <code>_thread_local</code>.</td></tr>
+<tr><td>System prompt</td><td>Author-supplied via <code>ask_llm</code>'s <code>system</code> kwarg. Default: <code>"You are a helpful assistant. Answer concisely and directly."</code></td></tr>
+<tr><td>Tools</td><td><code>tools=False</code> always for the LLM. The workflow interpreter (<code>_WorkflowInterpreter</code>, <code>brain.py:13778</code>) calls non-LLM tools directly via <code>TOOL_DISPATCH.get(tool)(kwargs)</code> — not via the model.</td></tr>
+<tr><td>Max rounds</td><td>N/A — no tool loop.</td></tr>
+<tr><td><strong>How caller gets result</strong></td><td>Each <code>SET x = ask_llm(...)</code> stores the LLM's reply into the workflow's local variable scope. <code>WorkflowExecution._return_value</code> + <code>steps</code> array persisted via <code>_workflow_history_finalize</code> (<code>brain.py:14300</code>). UI polls <code>GET /v1/workflows/executions/&lt;id&gt;</code>.</td></tr>
+<tr><td>Cancel</td><td><code>WorkflowExecution._cancel.set()</code>.</td></tr>
+<tr><td>Streaming</td><td>None. UI polls.</td></tr>
+</table>
+
+<h3>8.4 <code>delegate_task</code> &nbsp;<span class="tag deleg">delegate</span></h3>
+<table>
+<tr><th>Dimension</th><th>Value</th></tr>
+<tr><td>Entry</td><td><code>tool_delegate_task</code> (<code>brain.py:14413</code>) → <code>TaskRunner.submit</code>. Worker thread.</td></tr>
+<tr><td>LLM call site</td><td><code>_run_delegate(messages, model, system_prompt, …)</code> at <code>brain.py:12994</code>.</td></tr>
+<tr><td>System prompt</td><td>Built ad-hoc: target agent's <code>soul.md</code> + tools_guide + team-aware <code>build_agent_registry</code>. NOT <code>_build_system_prompt()</code>.</td></tr>
+<tr><td>Tools</td><td>Full set of the target agent.</td></tr>
+<tr><td>Max rounds</td><td><code>MAX_DELEGATE_TOOL_ROUNDS = 10</code>.</td></tr>
+<tr><td><strong>How caller gets result</strong></td><td>In-memory <code>TaskRunner._tasks[task_id]["result"]</code>. The <code>delegate_task</code> tool with <code>wait=True</code> blocks on <code>get_result(task_id)</code> and returns it inline. With <code>wait=False</code>, returns immediately with a <code>task_id</code>; caller polls via <code>tool_task_status</code> (truncates to 2 000 chars).</td></tr>
+</table>
+
+<h3>8.5 Worker subagent &nbsp;<span class="tag worker">worker</span></h3>
+<table>
+<tr><th>Dimension</th><th>Value</th></tr>
+<tr><td>Entry</td><td><code>run_worker_subagent(tool_name, args, inner_fn)</code> (<code>execution.py:783</code>). Reached via <code>route_tool_execution</code> for heavy/auto-isolated tools.</td></tr>
+<tr><td>LLM call site</td><td>The <strong>summariser only</strong> (<code>_summarise_tool_result</code> → <code>send_message_with_fallback(... tools=False)</code>).</td></tr>
+<tr><td>System prompt</td><td><code>_SUMMARISER_SYSTEM</code> constant — not <code>_build_system_prompt()</code>.</td></tr>
+<tr><td>Tools</td><td><code>tools=False</code>. No agentic loop.</td></tr>
+<tr><td><strong>How caller gets result</strong></td><td>Returns the worker envelope JSON to <code>route_tool_execution</code> → <code>_execute_tools_batch</code>. Raw bytes stored as <code>worker_*.json</code> artifact; the agentic loop only sees the envelope. Caller (the loop) can later request the raw via <code>get_artifact_detail(worker_id)</code>.</td></tr>
+<tr><td>Streaming</td><td>Emits <code>worker.started</code>, <code>worker.finished</code>, <code>worker_usage</code> SSE events so the parent turn's token totals include the summariser cost.</td></tr>
+<tr><td>Cancel</td><td>Cooperative — <code>worker.cancel_event</code> checked at safepoints (<code>execution.py:844, 859, 886</code>).</td></tr>
+</table>
+
+<h3>8.6 Background one-shot transforms (<code>tools=False</code>)</h3>
+<p>These callers go through <code>send_message_with_fallback</code> or <code>_run_delegate</code> with <code>tools=False</code>. <strong>Single LLM round. No tool dispatch. No loop.</strong></p>
+<table>
+<tr><th>Caller</th><th>File:line</th><th>How caller gets result</th></tr>
+<tr><td>Next-prompt suggestion</td><td><code>brain.py:9824 generate_next_prompt_suggestion</code></td><td>Returned to <code>GET /v1/sessions/&lt;id&gt;/next-prompt</code>. Not persisted.</td></tr>
+<tr><td>Chat memory classifier</td><td><code>brain.py:21104 classify_chat_for_memory</code></td><td>Label string returned; chat-sync daemon decides whether to file the turn.</td></tr>
+<tr><td>Chat title summariser</td><td><code>server.py:2419 _generate_chat_summary</code></td><td>Written to <code>session.summary</code> column + DB; sidebar reads it.</td></tr>
+<tr><td>User profile builder</td><td><code>server.py:2861 _user_profile_run_llm</code></td><td>Written to <code>agents/main/user_profiles/&lt;uid&gt;.md</code> via atomic <code>tmp + os.replace</code>; mirrored to MemPalace wing <code>user__&lt;uid&gt;</code>.</td></tr>
+<tr><td>Worker tool-result summariser</td><td><code>execution.py:596 _summarise_tool_result</code></td><td>Plain text + sections list; embedded in worker envelope.</td></tr>
+<tr><td>Relationship discovery</td><td><code>brain.py:10273</code></td><td>Applied to memory store via <code>_apply_discovered_relationships</code>.</td></tr>
+<tr><td>Skill generation</td><td><code>brain.py:10756 promote_memory_to_skill</code></td><td>Written as <code>SKILL.md</code> in agent skills folder.</td></tr>
+<tr><td>Code-graph summaries</td><td><code>brain.py:19015</code></td><td>Persisted to <code>code_nodes.summary</code>.</td></tr>
+<tr><td>KG triple extraction</td><td><code>engine/kg_extract.py:551</code></td><td>Triples added to MemPalace <code>knowledge_graph.sqlite3</code> via <code>add_triple</code>.</td></tr>
+<tr><td>Workflow <code>ask_llm</code></td><td><code>brain.py:2286 tool_ask_llm</code></td><td>Bound to workflow variable (<code>SET x = ask_llm(...)</code>) / step log.</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="variance">9. Sources of non-determinism</h2>
+<p>Same scheduled task, same model, range 192 → 30 000 chars. Contributors, roughly ranked by impact:</p>
+<table>
+<tr><th>#</th><th>Source</th><th>Why it bites</th></tr>
+<tr><td>1</td><td><strong>Sampling temperature 0.7</strong></td><td>Provider RNG seed not pinned. A coin flip at the comma after <em>"Let me…"</em> decides between calling <code>write_file</code> and stopping.</td></tr>
+<tr><td>2</td><td><strong>Auto-isolation 8 KB boundary</strong></td><td>Same URL fetched twice can produce 7 944 bytes one day (raw passthrough) and 8 213 the next (worker envelope w/ summary). The model sees entirely different inputs.</td></tr>
+<tr><td>3</td><td><strong><code>_microcompact</code> every even round</strong></td><td>Rewrites older tool messages in place. Drops more on a 6-round run than a 4-round run.</td></tr>
+<tr><td>4</td><td><strong>Tool-result summariser uses session model</strong></td><td>The summariser runs on the same chat model. If a fallback or GDPR swap kicks in, the summary text is different — and that summary text is what reaches the model next round.</td></tr>
+<tr><td>5</td><td><strong>GDPR auto-fallback model swap</strong></td><td>Per-request PII detection; matches depend on exact prompt text. A web_fetch result that mentions a real-looking phone number swaps the next model to local.</td></tr>
+<tr><td>6</td><td><strong>Network / web_fetch flakiness affecting round count</strong></td><td>Each extra round = more compaction passes + more temperature draws + more chances to hit a stall.</td></tr>
+<tr><td>7</td><td><strong>Per-session <code>_read_doc_cache</code></strong></td><td>Cache is <em>never hot across scheduled runs</em> (each has its own <code>sched-&lt;run_id&gt;</code> session). Same task, different in-context token mix every day.</td></tr>
+<tr><td>8</td><td><strong>Fallback chain re-running on a different model</strong></td><td>A primary failure mid-tool-loop strips intermediate messages and re-runs from scratch on a different model.</td></tr>
+<tr><td>9</td><td><strong>Diminishing-returns guard</strong></td><td>Boundary case at 498 vs 502 completion tokens flips <code>tools=False</code> on otherwise identical paths.</td></tr>
+<tr><td>10</td><td><strong>Quota force_local mode + cycle anchors</strong></td><td>Day boundaries (UTC midnight) flip whether <code>force_local</code> fires.</td></tr>
+<tr><td>11</td><td><strong>Provider key pool rotation</strong></td><td>429 marks key exhausted for 60 s; different keys hit different upstream replicas with different rate limits.</td></tr>
+<tr><td>12</td><td><strong>Warm-pool KV prefix matching</strong></td><td>Tiny payload differences (e.g. <code>_files_in_chat_preamble_text</code> growing as artifacts pile up) miss the warm-pool slot and re-prefill — different sampling on the first tokens.</td></tr>
+<tr><td>13</td><td><strong><code>_pyexec_hint</code> firing conditionally</strong></td><td>One-shot user message injected mid-turn when ≥ 3 file/doc tool calls. Whether it fires depends on the model's prior tool choices.</td></tr>
+<tr><td>14</td><td><strong><code>_compact_conversation</code> / LCM</strong></td><td>Compaction is itself an LLM call with its own stochasticity. Summaries persisted to <code>messages.compacted</code> change subsequent prefixes.</td></tr>
+<tr><td>15</td><td><strong>Max-output recovery</strong></td><td>Up to 3 extra rounds with a re-prompt; doubles <code>max_tokens</code>. Whether it fires depends on token budget + reasoning-vs-visible ratio.</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="failures">10. Failure modes &amp; the "I'll write it…" stall</h2>
+
+<h3>10.1 Termination outcomes for a scheduled run's stored <code>result</code></h3>
+<table>
+<tr><th>Termination</th><th>What goes into <code>schedule_history.result</code></th></tr>
+<tr><td>Normal completion</td><td>The model's final <code>full_text</code> from the last <code>_handle_openai_response</code> call.</td></tr>
+<tr><td><strong>1.5× hard cap hit</strong></td><td>The literal string <code>"[Tool round limit reached — stopping to prevent runaway loop. Check chat for partial progress.]"</code>. <em>All prior round text is lost.</em> Run 778 was this. Look in the artifact folder for what was actually produced.</td></tr>
+<tr><td>Max-output recovery exhausted</td><td><code>full_text + "\n\n⚠️ *Output token limit reached…*"</code>.</td></tr>
+<tr><td><strong><code>finish_reason="stop"</code> mid-thought</strong></td><td>The model's truncated text returned as-is. Run 779 and 784 were this — 32-token "Let me compile…" with no follow-up tool call. <em>No detection, no recovery, the engine treats this as success.</em></td></tr>
+<tr><td>Soft cap → <code>tools=False</code> retry</td><td>One more LLM call without tool defs; whatever text it produces.</td></tr>
+<tr><td>Reactive 400 + compaction</td><td>If recovery succeeds: retried call's text. If both microcompact and full compact fail: <code>send_message</code> returns <code>None</code>; fallback chain.</td></tr>
+<tr><td><code>_run_delegate</code> exception</td><td><code>"[DELEGATION ERROR] …"</code> wrapper.</td></tr>
+<tr><td>All providers fail</td><td>Generic exception → <code>"[ERROR] &lt;type&gt;: &lt;e&gt;\n\n&lt;traceback last 500 chars&gt;"</code>.</td></tr>
+</table>
+
+<h3>10.2 The 32-token failure — exact code path</h3>
+<ol>
+  <li>SSE stream ends. <code>full_text = "I'll now write the report. Let me compile…"</code>. <code>tool_calls_map = {}</code>. <code>finish_reason = "stop"</code>.</li>
+  <li>Truncated-tool discard (<code>brain.py:26108</code>) — skipped, no tool calls.</li>
+  <li>Length recovery (<code>brain.py:26122</code>) — skipped, <code>finish_reason</code> is <code>"stop"</code> not <code>"length"</code>.</li>
+  <li><code>if not tool_calls_map:</code> branch at <code>brain.py:26173-26184</code> → end trace span → reset recovery counter → <code>return full_text</code>.</li>
+  <li><code>send_message</code> returns the 32-token string. <code>_run_delegate</code> returns it. <code>_execute_scheduled</code> passes it to <code>complete_execution</code>. Done.</li>
+</ol>
+
+<div class="callout bad">
+<span class="label">No intent-vs-action guard exists</span>
+There is no code anywhere in <code>_handle_openai_response</code> / <code>send_message</code> / <code>_run_delegate</code> that inspects assistant text for unfulfilled promises (<em>"I'll create…", "Let me write…", "Now I'll save…"</em>). <code>finish_reason="stop"</code> + non-empty text = success, no matter what the text says. The same path triggers if the provider emits <code>finish_reason="tool_calls"</code> but the actual <code>tool_calls</code> deltas were dropped (provider bug, proxy stripping, SDK quirk) — empty <code>tool_calls_map</code> means the <code>finish_reason</code> string itself is never inspected past the two <code>== "length"</code> checks.
+</div>
+
+<h3>10.3 Practical mitigations (no engine change)</h3>
+<ul>
+  <li><strong>Lower temperature.</strong> For Mistral Medium 3.5 on policy-reproduction the memory note flags <code>0.2 / top_p 0.85</code> as the validated settings. Default <code>0.7</code> is the worst offender.</li>
+  <li><strong>Phrase the task to write inline.</strong> "Produce the report directly in this reply" beats "Write the report to a file" for a single-shot scheduled task — eliminates the <code>write_file</code> transition where the stall lives.</li>
+  <li><strong>Raise per-task <code>max_tool_rounds</code></strong> so soft cap fires at a higher round; gives more chances to recover from a transient stop.</li>
+  <li><strong>Reduce tool fan-out before synthesis.</strong> Each tool-result message is more context for the model to lose its place in. Aim for &lt; 6 rounds before the synthesis turn.</li>
+</ul>
+
+<h3>10.4 Engine-level fix candidates (would need code change)</h3>
+<ul>
+  <li>After <code>finish_reason="stop"</code> + empty <code>tool_calls_map</code>, regex-check <code>full_text</code> for unfulfilled-intent markers (<code>"I'll (now |)?(write|create|save|compile)"</code> at the tail) and re-prompt once.</li>
+  <li>Detect <code>finish_reason="tool_calls"</code> with empty <code>tool_calls_map</code> as a provider bug → re-prompt with "your tool call was not received".</li>
+  <li>Add a server-side completion sanity check: if the last assistant text mentions a file path that doesn't exist on disk and was supposed to be created, re-prompt.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="ref">11. Quick reference card</h2>
+<table>
+<tr><th>Concern</th><th>Location</th></tr>
+<tr><td><code>MAX_TOOL_ROUNDS=15</code> / <code>MAX_TOOL_ROUNDS_PROXY=8</code> / <code>MAX_OUTPUT_RECOVERY_LIMIT=3</code></td><td><code>brain.py:23899-23901</code></td></tr>
+<tr><td><code>MAX_DELEGATE_TOOL_ROUNDS=10</code></td><td><code>brain.py:11373</code></td></tr>
+<tr><td>Soft cap → <code>tools=False</code></td><td><code>brain.py:25454-25455</code></td></tr>
+<tr><td>1.5× hard cap return</td><td><code>brain.py:25457-25458</code></td></tr>
+<tr><td>Diminishing-returns guard</td><td><code>brain.py:23904-23906, 25460-25473</code></td></tr>
+<tr><td>Middleware pipeline list</td><td><code>brain.py:23996-24002</code></td></tr>
+<tr><td>Middleware invocation point</td><td><code>brain.py:26242-26248</code></td></tr>
+<tr><td>Tool-call streaming aggregation</td><td><code>brain.py:25876, 26005-26017</code></td></tr>
+<tr><td>Gemma text-mode parser</td><td><code>brain.py:25741-25764, 26074-26084</code></td></tr>
+<tr><td>Truncated-tool discard</td><td><code>brain.py:26108-26120</code></td></tr>
+<tr><td>Max-output recovery</td><td><code>brain.py:26122-26171</code></td></tr>
+<tr><td><code>finish_reason="stop"</code> termination</td><td><code>brain.py:26173-26184</code></td></tr>
+<tr><td>Heaviness defaults table</td><td><code>execution.py:27-58</code></td></tr>
+<tr><td><code>route_tool_execution</code></td><td><code>execution.py:985-1013</code></td></tr>
+<tr><td>Worker subagent</td><td><code>execution.py:783-943</code></td></tr>
+<tr><td><code>_summarise_tool_result</code> (3-tuple!)</td><td><code>execution.py:596-694</code></td></tr>
+<tr><td><code>_sanitize_tool_result</code> (30 KB cap)</td><td><code>brain.py:24055-24085</code></td></tr>
+<tr><td><code>_apply_tool_result_budget</code> (50 KB → disk)</td><td><code>brain.py:24125-24185</code></td></tr>
+<tr><td><code>_microcompact</code></td><td><code>brain.py:24205-24286</code></td></tr>
+<tr><td><code>_compress_old_tool_results</code></td><td><code>brain.py:24088-24117</code></td></tr>
+<tr><td><code>_execute_tools_batch</code> (parallelism)</td><td><code>brain.py:23652-23755</code></td></tr>
+<tr><td>Concurrent-safe tool set</td><td><code>brain.py:23641-23649</code></td></tr>
+<tr><td><code>_execute_tool_inner</code> (pre/exec/post)</td><td><code>brain.py:23795-23896</code></td></tr>
+<tr><td>Dedup</td><td><code>brain.py:22702-22739</code></td></tr>
+<tr><td>External hooks</td><td><code>brain.py:23265-23394</code></td></tr>
+<tr><td><code>_after_file_write</code></td><td><code>brain.py:23489-23549</code></td></tr>
+<tr><td><code>python_exec</code> auto-<code>output.txt</code></td><td><code>brain.py:4000-4023</code></td></tr>
+<tr><td><code>_run_delegate</code> (scheduled entry)</td><td><code>brain.py:11863-11995</code></td></tr>
+<tr><td><code>_execute_scheduled</code></td><td><code>brain.py:15667-15945</code></td></tr>
+<tr><td><code>complete_execution</code> write site</td><td><code>brain.py:15578-15606</code></td></tr>
+<tr><td>10K-char schedule cap (REMOVED)</td><td><code>brain.py:15590</code> — was <code>result[:10000]</code>, now full <code>result</code></td></tr>
+<tr><td><code>send_message_with_fallback</code></td><td><code>brain.py:26327-26451</code></td></tr>
+<tr><td><code>send_message</code></td><td><code>brain.py:25058-25746</code></td></tr>
+<tr><td><code>_handle_openai_response</code></td><td><code>brain.py:25848-26253</code></td></tr>
+<tr><td><code>tool_ask_llm</code> (workflow LLM)</td><td><code>brain.py:2286-2336</code></td></tr>
+<tr><td><code>_WorkflowInterpreter</code></td><td><code>brain.py:13778</code></td></tr>
+<tr><td>Chat handler</td><td><code>handlers/chat.py:445</code></td></tr>
+<tr><td>Chat reattach</td><td><code>handlers/chat.py:1358</code></td></tr>
+<tr><td><code>LiveStream</code></td><td><code>server.py:235</code></td></tr>
+</table>
+
+</div>
+</body>
+</html>
