@@ -12004,8 +12004,21 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
                 _release()
         finally:
             _thread_local.max_tool_rounds = None
+    except TaskCancelled:
+        # Cancellation is a control-flow signal, not an error — let the caller
+        # (e.g. _execute_scheduled) distinguish timeout vs user-cancel and
+        # format the proper [TIMEOUT]/[CANCELLED] message.
+        raise
+    except urllib.error.HTTPError:
+        # HTTP errors carry useful status codes; let the scheduler's typed
+        # handler format them as [HTTP ERROR <code> <reason>].
+        raise
+    except urllib.error.URLError:
+        raise
     except Exception as e:
-        return f"Delegation error: {e}"
+        # Stringify with type prefix so the wrapping [DELEGATION ERROR] line
+        # in _execute_scheduled is never empty when str(e) is.
+        return f"Delegation error: {type(e).__name__}: {e}".rstrip(": ")
 
 
 # Globals for delegation (set in _run_interactive)
@@ -15862,17 +15875,49 @@ class Scheduler:
             # Capture trace id set by _handle_openai_response so the History
             # detail view can pivot from schedule_history.run_id → traces.
             run_info["trace_id"] = getattr(_thread_local, 'trace_id', None)
-            # Check if _run_delegate returned an error string instead of raising
+            # Check if _run_delegate returned an error string instead of raising.
+            # Strip the redundant 'Delegation error: ' prefix and the trailing
+            # colon-with-nothing-after that comes from bare-exception args, and
+            # add a clear context line so non-interactive consumers (the
+            # schedule history view, audit logs, downstream daemons) see what
+            # actually went wrong rather than a bare '[DELEGATION ERROR]
+            # Delegation error: '.
             if result_text.startswith("Delegation error:"):
                 status = "error"
-                result_text = f"[DELEGATION ERROR] {result_text}"
+                _detail = result_text[len("Delegation error:"):].strip().rstrip(":").strip()
+                if not _detail:
+                    _detail = ("Delegation produced no error detail "
+                               "(likely a swallowed cancellation or an "
+                               "exception with empty args). Check "
+                               "server.error.log around this run for the "
+                               "real cause.")
+                result_text = (
+                    f"[DELEGATION ERROR] {_detail}\n"
+                    f"Tool calls made before failure: {run_info['tool_calls']}."
+                )
         except TaskCancelled:
             if run_info.get("status") == "timeout":
                 elapsed = (datetime.datetime.now() - datetime.datetime.fromisoformat(run_info["started_at"])).total_seconds()
-                result_text = (result_text or "") + f"\n\n[TIMEOUT] Task timed out after {elapsed:.0f}s (limit: {task_timeout}s). Tool calls made: {run_info['tool_calls']}."
+                # Always-present, parseable timeout context for non-interactive
+                # consumers. Don't append to an existing result_text — if the
+                # task got cut mid-tool the partial body has no value and just
+                # clutters the audit row.
+                result_text = (
+                    f"[TIMEOUT] Task '{name}' timed out after {elapsed:.0f}s "
+                    f"(limit: {task_timeout}s).\n"
+                    f"Model: {model}\n"
+                    f"Tool calls made before timeout: {run_info['tool_calls']}.\n"
+                    f"Increase the task timeout in the schedule editor if the "
+                    f"workload legitimately needs more time, or simplify the "
+                    f"task prompt."
+                )
                 status = "timeout"
             else:
-                result_text = (result_text or "") + f"\n\n[CANCELLED] Task was cancelled. Tool calls made: {run_info['tool_calls']}."
+                result_text = (
+                    f"[CANCELLED] Task '{name}' was cancelled by user or admin.\n"
+                    f"Model: {model}\n"
+                    f"Tool calls made before cancel: {run_info['tool_calls']}."
+                )
                 status = "cancelled"
         except urllib.error.HTTPError as e:
             error_body = ""
@@ -15880,15 +15925,29 @@ class Scheduler:
                 error_body = e.read().decode("utf-8")[:500]
             except Exception:
                 pass
-            result_text = f"[HTTP ERROR] {e.code} {e.reason}\n{error_body}"
+            result_text = (
+                f"[HTTP ERROR] {e.code} {e.reason}\n"
+                f"Model: {model}\n"
+                f"Tool calls made before error: {run_info['tool_calls']}.\n"
+                + (f"Response body: {error_body}" if error_body else "")
+            )
             status = "error"
         except urllib.error.URLError as e:
-            result_text = f"[CONNECTION ERROR] Could not reach LLM API: {e.reason}"
+            result_text = (
+                f"[CONNECTION ERROR] Could not reach LLM API for model '{model}': "
+                f"{e.reason}\n"
+                f"Tool calls made before error: {run_info['tool_calls']}."
+            )
             status = "error"
         except Exception as e:
             import traceback
             tb = traceback.format_exc()
-            result_text = f"[ERROR] {type(e).__name__}: {e}\n\n{tb[-500:]}"
+            result_text = (
+                f"[ERROR] {type(e).__name__}: {e}\n"
+                f"Model: {model}\n"
+                f"Tool calls made before error: {run_info['tool_calls']}.\n\n"
+                f"Traceback (last 500 chars):\n{tb[-500:]}"
+            )
             status = "error"
         finally:
             cancel_token.cancel()  # stop the watchdog if still running
