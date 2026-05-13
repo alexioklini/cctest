@@ -25952,16 +25952,23 @@ def _parse_gemma_tool_calls(text: str) -> tuple[list[dict], str]:
 
     Format: <|tool_call>call:name{key:<|"|>val<|"|>,...}<tool_call|>
     Returns (list of tool_use dicts, cleaned text with tool calls removed).
+
+    re.DOTALL on both patterns: tool-call args (especially write_file content)
+    routinely span multiple lines with embedded markdown/JSON; without DOTALL
+    the non-greedy `.*?` between `{...}` and between `<|"|>...<|"|>` stops at
+    the first newline and silently skips the call. Observed on Gemma-4-e4b
+    run 802 — the model emitted a write_file with a 30-line markdown body,
+    parser didn't match, the call became visible text in the assistant reply.
     """
     tool_uses = []
     pattern = r'<\|tool_call>call:(\w+)\{(.*?)\}<tool_call\|>'
-    for match in re.finditer(pattern, text):
+    for match in re.finditer(pattern, text, re.DOTALL):
         name = match.group(1)
         args_raw = match.group(2)
         # Parse key-value pairs: key:<|"|>value<|"|>
         args = {}
         kv_pattern = r'(\w+):<\|"\|>(.*?)<\|"\|>'
-        for kv in re.finditer(kv_pattern, args_raw):
+        for kv in re.finditer(kv_pattern, args_raw, re.DOTALL):
             args[kv.group(1)] = kv.group(2)
         tool_uses.append({
             "id": f"gemma_{_uuid.uuid4().hex[:8]}",
@@ -25969,7 +25976,7 @@ def _parse_gemma_tool_calls(text: str) -> tuple[list[dict], str]:
             "input": args,
             "input_json": json.dumps(args),
         })
-    cleaned = re.sub(pattern, '', text)
+    cleaned = re.sub(pattern, '', text, flags=re.DOTALL)
     return tool_uses, cleaned
 
 
