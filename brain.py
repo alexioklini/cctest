@@ -10365,14 +10365,15 @@ def _auto_memory_extract_inner(agent_id: str, user_message: str, assistant_respo
             return
 
         ms = MemoryStore(agent_id)
-        result = _run_delegate(
+        from handlers import sidecar_proxy as _sidecar_proxy
+        _res = _sidecar_proxy.background_call(
             messages=[{"role": "user", "content": prompt}],
             model=model,
             system_prompt="You are a memory extraction assistant. Output only valid JSON.",
-            memory_store=ms,
-            inference_params={"max_tokens": 256, "temperature": 0.1},
-            tools=False,
+            agent_id=agent_id,
+            max_tokens=256,
         )
+        result = _res.get("reply") or ""
 
         if not result or 'skip' in result.lower():
             return
