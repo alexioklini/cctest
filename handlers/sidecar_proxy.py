@@ -406,6 +406,16 @@ def run_turn(
     tool_context.setdefault("model", model)
     tool_context["turn_id"] = turn_id
 
+    # Record the active turn so a Brain restart can re-attach to it. Only
+    # interactive (session-bound) turns are tracked — background/blocking
+    # callers go through run_turn_blocking and aren't worth resuming.
+    if sid:
+        try:
+            from server_lib.db import ChatDB as _ChatDB
+            _ChatDB.set_active_turn(sid, turn_id, model)
+        except Exception:
+            pass
+
     payload: dict[str, Any] = {
         "model": engine.get_api_model_id(model),
         "base_url": _normalise_anthropic_base_url(base_url),
@@ -549,6 +559,12 @@ def run_turn(
     finally:
         tool_mcp.clear_nonce(nonce)
         _purge_tool_results(turn_id)
+        if sid:
+            try:
+                from server_lib.db import ChatDB as _ChatDB
+                _ChatDB.clear_active_turn(sid, turn_id)
+            except Exception:
+                pass
         # One-line summary on every turn so prod logs trace each sidecar call.
         print(f"[sidecar-proxy] turn={turn_id[:8]} model={model[:24]} "
               f"reply={len(final_text)}c rounds={final_summary.get('rounds', 0)} "

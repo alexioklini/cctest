@@ -607,6 +607,20 @@ class ChatDB:
                     updated_at REAL DEFAULT (strftime('%s','now'))
                 )
             """)
+            # ── Active turns ──
+            # Records sidecar turns that are in flight. On Brain startup the
+            # recovery thread scans this table and, for each row, asks the
+            # sidecar's GET /turn/<id>/events to replay missed events into a
+            # fresh LiveStream. Rows are deleted when the proxy finishes
+            # draining the turn (success, error, or cancel).
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS active_turns (
+                    session_id TEXT PRIMARY KEY,
+                    turn_id TEXT NOT NULL,
+                    model TEXT NOT NULL DEFAULT '',
+                    started_at REAL NOT NULL DEFAULT (strftime('%s','now'))
+                )
+            """)
             conn.commit()
 
     # ── Artifact CRUD ──
@@ -1028,6 +1042,45 @@ class ChatDB:
             except (json.JSONDecodeError, TypeError):
                 meta = None
         return (row[0], meta)
+
+    @staticmethod
+    @_db_safe(default=None)
+    def set_active_turn(session_id, turn_id, model):
+        """Record that a sidecar turn is in flight for this session. On Brain
+        restart the recovery thread reads this and re-attaches to the sidecar."""
+        with _db_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO active_turns (session_id, turn_id, model, started_at) "
+                "VALUES (?, ?, ?, strftime('%s','now'))",
+                (session_id, turn_id, model or ""))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def clear_active_turn(session_id, turn_id=None):
+        """Delete the active-turn row when the proxy finishes draining the turn.
+        If turn_id is given, only clear if it matches (avoids racing a new turn
+        that started for the same session)."""
+        with _db_conn() as conn:
+            if turn_id:
+                conn.execute(
+                    "DELETE FROM active_turns WHERE session_id = ? AND turn_id = ?",
+                    (session_id, turn_id))
+            else:
+                conn.execute("DELETE FROM active_turns WHERE session_id = ?",
+                             (session_id,))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=list)
+    def list_active_turns():
+        """Return [(session_id, turn_id, model, started_at), ...] for all
+        rows. Called on Brain startup by the recovery thread."""
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT session_id, turn_id, model, started_at FROM active_turns"
+            ).fetchall()
+        return [tuple(r) for r in rows]
 
     @staticmethod
     @_db_safe(default=list)

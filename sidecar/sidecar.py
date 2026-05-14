@@ -29,12 +29,32 @@ _TURN_CANCELS: dict[str, threading.Event] = {}
 _TURN_CANCELS_LOCK = threading.Lock()
 
 
+# Per-turn replay log: turn_id -> {"events": [(seq, type, data), ...],
+#                                  "done": bool, "done_at": float | None,
+#                                  "cond": threading.Condition, "started_at": float}
+# Used by GET /turn/<id>/events?since=N — clients (typically a restarted Brain
+# proxy) can reconnect to an in-flight turn and replay missed events. Entries
+# are purged 5 min after the turn reaches a terminal state so the sidecar
+# doesn't accumulate logs forever; in-flight turns are never purged.
+_TURN_LOG_RETAIN_S = 300.0
+_TURN_LOGS: dict[str, dict] = {}
+_TURN_LOGS_LOCK = threading.Lock()
+
+
 def _register_turn(turn_id: str) -> threading.Event:
     if not turn_id:
         return threading.Event()
     ev = threading.Event()
     with _TURN_CANCELS_LOCK:
         _TURN_CANCELS[turn_id] = ev
+    with _TURN_LOGS_LOCK:
+        _TURN_LOGS[turn_id] = {
+            "events": [],
+            "done": False,
+            "done_at": None,
+            "cond": threading.Condition(),
+            "started_at": time.time(),
+        }
     return ev
 
 
@@ -43,6 +63,8 @@ def _unregister_turn(turn_id: str) -> None:
         return
     with _TURN_CANCELS_LOCK:
         _TURN_CANCELS.pop(turn_id, None)
+    # Don't drop the log here — clients may still reconnect to replay. Mark
+    # done; the janitor thread purges old logs.
 
 
 def _signal_cancel(turn_id: str) -> bool:
@@ -52,6 +74,78 @@ def _signal_cancel(turn_id: str) -> bool:
         return False
     ev.set()
     return True
+
+
+def _log_event(turn_id: str, event_type: str, data: dict) -> None:
+    """Append one event to the per-turn replay log and wake any reconnectors."""
+    if not turn_id:
+        return
+    with _TURN_LOGS_LOCK:
+        log = _TURN_LOGS.get(turn_id)
+    if log is None:
+        return
+    with log["cond"]:
+        seq = len(log["events"]) + 1
+        log["events"].append((seq, event_type, data))
+        if event_type in ("done", "error", "cancelled"):
+            log["done"] = True
+            log["done_at"] = time.time()
+        log["cond"].notify_all()
+
+
+def _purge_old_logs() -> None:
+    """Drop replay logs that finished more than _TURN_LOG_RETAIN_S seconds ago."""
+    now = time.time()
+    with _TURN_LOGS_LOCK:
+        stale = [
+            tid for tid, log in _TURN_LOGS.items()
+            if log["done"] and log["done_at"] is not None
+            and (now - log["done_at"]) > _TURN_LOG_RETAIN_S
+        ]
+        for tid in stale:
+            _TURN_LOGS.pop(tid, None)
+
+
+def _replay_log_snapshot(turn_id: str, since: int) -> tuple[list, bool] | None:
+    """Snapshot of events with seq > since. Returns (events, done) or None if
+    the turn id is unknown."""
+    with _TURN_LOGS_LOCK:
+        log = _TURN_LOGS.get(turn_id)
+    if log is None:
+        return None
+    with log["cond"]:
+        events = [e for e in log["events"] if e[0] > since]
+        return events, log["done"]
+
+
+def _wait_for_event(turn_id: str, after_seq: int, timeout_s: float) -> tuple[list, bool] | None:
+    """Block until at least one new event arrives with seq > after_seq, or the
+    turn reaches a terminal state, or timeout fires. Returns (events, done) or
+    None if the turn id is unknown."""
+    with _TURN_LOGS_LOCK:
+        log = _TURN_LOGS.get(turn_id)
+    if log is None:
+        return None
+    with log["cond"]:
+        deadline = time.time() + timeout_s
+        while True:
+            events = [e for e in log["events"] if e[0] > after_seq]
+            if events or log["done"]:
+                return events, log["done"]
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                return [], log["done"]
+            log["cond"].wait(timeout=remaining)
+
+
+def _log_janitor() -> None:
+    """Background thread: every 60s, purge replay logs older than retention."""
+    while True:
+        time.sleep(60.0)
+        try:
+            _purge_old_logs()
+        except Exception:
+            pass
 
 try:
     import anthropic
@@ -91,6 +185,14 @@ except ImportError:
 #   Flips the cancel flag for an in-flight turn. The loop checks between rounds
 #   and after the SDK stream drains for the current round; on cancel it emits
 #   a `cancelled` event then `done` and exits cleanly.
+#
+# GET /turn/<turn_id>/events?since=N:
+#   Replay buffered events for a turn whose POST /turn SSE stream was lost
+#   (e.g. Brain process restart). Returns text/event-stream with each event
+#   preceded by a `: seq=N\n` comment so the client can checkpoint. After
+#   replaying buffered events, follows live events until the turn terminates.
+#   Logs are retained for ~5 min after a terminal event; in-flight turns are
+#   never purged.
 #
 # Stream=true (default): response is text/event-stream, one event per line:
 #   data: {"type": "<type>", "data": {...}}\n\n
@@ -394,12 +496,19 @@ def _format_sse(event_type: str, data: dict) -> bytes:
 class SidecarHandler(http.server.BaseHTTPRequestHandler):
     # Suppress default access log noise; we log selectively below
     def log_message(self, fmt, *args):
-        if "/health" in (args[0] if args else ""):
+        # log_error() forwards (code, message) — args[0] is an int there.
+        # Skip health-check chatter; keep everything else.
+        first = args[0] if args else ""
+        if isinstance(first, str) and "/health" in first:
             return
-        sys.stderr.write(f"[sidecar] {self.address_string()} - {fmt % args}\n")
+        try:
+            sys.stderr.write(f"[sidecar] {self.address_string()} - {fmt % args}\n")
+        except Exception:
+            sys.stderr.write(f"[sidecar] {self.address_string()} - {fmt} {args}\n")
 
     def do_GET(self):
-        if self.path == "/health":
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/health":
             body = json.dumps({"ok": True, "anthropic_version": anthropic.__version__}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -407,7 +516,81 @@ class SidecarHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+
+        # GET /turn/<id>/events?since=N — replay buffered events for a turn.
+        # Used by a restarted Brain to re-attach to an in-flight turn whose SSE
+        # stream the previous proxy process was reading.
+        # ?since=N (default 0) means: stream all events with seq > N. The
+        # response is text/event-stream identical to /turn — same event types,
+        # same `data: {...}\n\n` framing. Each event also carries a synthetic
+        # comment line `: seq=<N>` so the client can checkpoint.
+        if parsed.path.startswith("/turn/") and parsed.path.endswith("/events"):
+            turn_id = parsed.path[len("/turn/"):-len("/events")]
+            qs = urllib.parse.parse_qs(parsed.query)
+            try:
+                since = int(qs.get("since", ["0"])[0])
+            except (TypeError, ValueError):
+                since = 0
+            self._serve_replay(turn_id, since)
+            return
+
         self.send_error(404, "not found")
+
+    def _serve_replay(self, turn_id: str, since: int) -> None:
+        snap = _replay_log_snapshot(turn_id, since)
+        if snap is None:
+            self.send_error(404, f"unknown turn_id: {turn_id}")
+            return
+        events, done = snap
+        self.close_connection = True
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("X-Turn-Id", turn_id)
+        self.end_headers()
+        try:
+            self.wfile.write(b": replay-start\n\n")
+            self.wfile.flush()
+        except Exception:
+            return
+
+        last_seq = since
+        # Replay snapshot first.
+        try:
+            for seq, etype, data in events:
+                self.wfile.write(f": seq={seq}\n".encode("utf-8"))
+                self.wfile.write(_format_sse(etype, data))
+                self.wfile.flush()
+                last_seq = seq
+        except Exception:
+            return
+
+        if done:
+            return
+
+        # Follow live events until terminal.
+        while True:
+            res = _wait_for_event(turn_id, last_seq, timeout_s=20.0)
+            if res is None:
+                return
+            new_events, done = res
+            try:
+                if not new_events:
+                    # Keepalive so reverse proxies don't time us out.
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+                else:
+                    for seq, etype, data in new_events:
+                        self.wfile.write(f": seq={seq}\n".encode("utf-8"))
+                        self.wfile.write(_format_sse(etype, data))
+                        self.wfile.flush()
+                        last_seq = seq
+            except Exception:
+                return
+            if done:
+                return
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -493,6 +676,10 @@ class SidecarHandler(http.server.BaseHTTPRequestHandler):
         kt.start()
 
         def emit(event_type: str, data: dict):
+            # Log every event for replay BEFORE attempting the wire write.
+            # A peer disconnect (e.g. Brain process restart) must not prevent
+            # us from buffering the event for a reconnecting client.
+            _log_event(turn_id, event_type, data)
             try:
                 with write_lock:
                     self.wfile.write(_format_sse(event_type, data))
@@ -520,9 +707,13 @@ class SidecarHandler(http.server.BaseHTTPRequestHandler):
 
     def _serve_blocking(self, req_body: dict, turn_id: str = ""):
         cancel_event = _register_turn(turn_id)
-        # Reuse the same loop, but discard events into a no-op emit.
+        # Reuse the same loop. Events still get logged for replay (a reconnect
+        # against a blocking turn lets the caller follow progress live), but
+        # are not written to this response.
+        def _bg_emit(et: str, d: dict) -> None:
+            _log_event(turn_id, et, d)
         try:
-            summary = run_turn_streaming(req_body, lambda et, d: None,
+            summary = run_turn_streaming(req_body, _bg_emit,
                                           cancel_event=cancel_event)
             body = json.dumps(summary, ensure_ascii=False).encode("utf-8")
             self.send_response(200)
@@ -550,6 +741,8 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8421)
     args = ap.parse_args()
     srv = ThreadingHTTPServer((args.host, args.port), SidecarHandler)
+    threading.Thread(target=_log_janitor, daemon=True,
+                     name="sidecar-log-janitor").start()
     print(f"[sidecar] anthropic={anthropic.__version__}  "
           f"listening on http://{args.host}:{args.port}", flush=True)
     try:
