@@ -2928,23 +2928,21 @@ def _user_profile_run_llm(uid: str, prior_profile: str, samples: list[str],
         # text or a "Delegation error: …" string we filter out.
         # current_agent must be an AgentConfig object, not just the agent id.
         engine._thread_local.current_agent = engine.AgentConfig("main")
-        engine._thread_local.current_user_id = ""
+        engine._thread_local.current_user_id = uid
         engine._thread_local.memory_store = None
-        result = engine._run_delegate(
+        from handlers import sidecar_proxy as _sidecar_proxy
+        _res = _sidecar_proxy.background_call(
             messages=[{"role": "user", "content": user_msg}],
             model=model,
             system_prompt=_PROFILE_SYSTEM_PROMPT,
-            memory_store=None,
-            inference_params={"max_tokens": 2000, "temperature": 0.2},
-            tools=False,
+            agent_id="main",
+            user_id=uid,
+            max_tokens=2000,
         )
+        result = _res.get("reply") or ""
         if not result:
-            return None
-        if isinstance(result, str) and (
-            result.startswith("Delegation error") or
-            "There's an issue with the selected model" in result
-        ):
-            print(f"[profile] delegate returned error: {result[:200]}", flush=True)
+            if _res.get("error"):
+                print(f"[profile] sidecar returned error: {str(_res['error'])[:200]}", flush=True)
             return None
         return result.strip()
     except Exception as e:
