@@ -10601,19 +10601,29 @@ def trigger_relationship_discovery(agent_id: str):
             model, fallback_model = _resolve_model_with_fallback(primary, fallback, "claude-haiku-4-5-20251001")
             ms = MemoryStore(agent_id)
             logging.info(f"Relationship discovery starting for {agent_id} using {model} (fallback: {fallback_model})")
-            result_text = _run_delegate_with_fallback(
+            from handlers import sidecar_proxy as _sidecar_proxy
+            _res = _sidecar_proxy.background_call(
                 messages=[{"role": "user", "content": prompt}],
-                primary_model=model, fallback_model=fallback_model,
+                model=model,
                 system_prompt="You are a relationship analysis assistant. Analyze the given memories and output ONLY a valid JSON array of relationships. No explanations, no markdown, just the JSON array.",
-                memory_store=ms,
-                inference_params={"max_tokens": 16384, "temperature": 0.2},
-                tools=False,
+                agent_id=agent_id,
+                max_tokens=16384,
             )
+            if _res.get("error") and fallback_model and fallback_model != model:
+                logging.warning(f"Primary {model} failed for relationship discovery: {_res['error']}; falling back to {fallback_model}")
+                _res = _sidecar_proxy.background_call(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=fallback_model,
+                    system_prompt="You are a relationship analysis assistant. Analyze the given memories and output ONLY a valid JSON array of relationships. No explanations, no markdown, just the JSON array.",
+                    agent_id=agent_id,
+                    max_tokens=16384,
+                )
+            result_text = _res.get("reply") or ""
+            if _res.get("error"):
+                logging.warning(f"Relationship discovery for {agent_id}: {_res['error']}")
+                return
             if not result_text:
                 logging.warning(f"Relationship discovery for {agent_id}: empty response")
-                return
-            if result_text.startswith("Delegation error:"):
-                logging.warning(f"Relationship discovery for {agent_id}: {result_text}")
                 return
             # Extract JSON from response (may have markdown code fences)
             relationships = _extract_json_from_llm(result_text, expect_array=True)
@@ -10759,13 +10769,23 @@ def _autodream_dedup(agent_id: str, ms: MemoryStore, config: dict, memories: lis
             f'If not duplicates: {{"is_duplicate": false}}'
         )
         try:
-            result = _run_delegate_with_fallback(
+            from handlers import sidecar_proxy as _sidecar_proxy
+            _res = _sidecar_proxy.background_call(
                 messages=[{"role": "user", "content": prompt}],
-                primary_model=model, fallback_model=fallback_model,
+                model=model,
                 system_prompt="You are a memory deduplication assistant. Output only valid JSON.",
-                inference_params={"max_tokens": 1024, "temperature": 0.1},
-                tools=False,
+                agent_id=agent_id,
+                max_tokens=1024,
             )
+            if _res.get("error") and fallback_model and fallback_model != model:
+                _res = _sidecar_proxy.background_call(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=fallback_model,
+                    system_prompt="You are a memory deduplication assistant. Output only valid JSON.",
+                    agent_id=agent_id,
+                    max_tokens=1024,
+                )
+            result = _res.get("reply") or ""
             if not result:
                 skipped += 1
                 continue
@@ -10911,13 +10931,23 @@ def _autodream_conflicts(agent_id: str, ms: MemoryStore, config: dict, memories:
             f'If no contradiction: {{"contradicts": false}}'
         )
         try:
-            result = _run_delegate_with_fallback(
+            from handlers import sidecar_proxy as _sidecar_proxy
+            _res = _sidecar_proxy.background_call(
                 messages=[{"role": "user", "content": prompt}],
-                primary_model=model, fallback_model=fallback_model,
+                model=model,
                 system_prompt="You are a memory conflict detector. Output only valid JSON.",
-                inference_params={"max_tokens": 256, "temperature": 0.1},
-                tools=False,
+                agent_id=agent_id,
+                max_tokens=256,
             )
+            if _res.get("error") and fallback_model and fallback_model != model:
+                _res = _sidecar_proxy.background_call(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=fallback_model,
+                    system_prompt="You are a memory conflict detector. Output only valid JSON.",
+                    agent_id=agent_id,
+                    max_tokens=256,
+                )
+            result = _res.get("reply") or ""
             if not result:
                 continue
             data = _extract_json_from_llm(result)
@@ -10975,13 +11005,23 @@ def _autodream_skill_candidates(agent_id: str, ms: MemoryStore, config: dict, me
             f'If not a skill candidate: {{"is_skill_candidate": false}}'
         )
         try:
-            result = _run_delegate_with_fallback(
+            from handlers import sidecar_proxy as _sidecar_proxy
+            _res = _sidecar_proxy.background_call(
                 messages=[{"role": "user", "content": prompt}],
-                primary_model=model, fallback_model=fallback_model,
+                model=model,
                 system_prompt="You are a skill detection assistant. Output only valid JSON.",
-                inference_params={"max_tokens": 256, "temperature": 0.1},
-                tools=False,
+                agent_id=agent_id,
+                max_tokens=256,
             )
+            if _res.get("error") and fallback_model and fallback_model != model:
+                _res = _sidecar_proxy.background_call(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=fallback_model,
+                    system_prompt="You are a skill detection assistant. Output only valid JSON.",
+                    agent_id=agent_id,
+                    max_tokens=256,
+                )
+            result = _res.get("reply") or ""
             if not result:
                 continue
             data = _extract_json_from_llm(result)
@@ -11020,23 +11060,6 @@ def _resolve_model_with_fallback(primary: str | None, fallback: str | None, hard
     if resolved_fallback:
         return resolved_fallback, hardcoded_default
     return hardcoded_default, None
-
-
-def _run_delegate_with_fallback(messages, primary_model, fallback_model, system_prompt,
-                                 memory_store=None, inference_params=None,
-                                 tools: bool = True) -> str | None:
-    """Run _run_delegate with automatic fallback if primary model fails."""
-    result = _run_delegate(
-        messages=messages, model=primary_model, system_prompt=system_prompt,
-        memory_store=memory_store, inference_params=inference_params, tools=tools,
-    )
-    if result and result.startswith("Delegation error:") and fallback_model and fallback_model != primary_model:
-        logging.warning(f"Primary model {primary_model} failed, falling back to {fallback_model}")
-        result = _run_delegate(
-            messages=messages, model=fallback_model, system_prompt=system_prompt,
-            memory_store=memory_store, inference_params=inference_params, tools=tools,
-        )
-    return result
 
 
 def _resolve_autodream_model(config: dict) -> tuple[str, str | None]:
@@ -11696,161 +11719,6 @@ _MEMORY_TOOL_NAMES = {"memory_store", "memory_recall", "memory_delete", "memory_
 # drives gemma-4-e4b past its <eos> stall); set schedules.tool_profile='interactive'
 # to opt back into the full agent surface.
 
-
-def _run_delegate(messages: list[dict], model: str, system_prompt: str,
-                  memory_store: MemoryStore | None = None,
-                  cancel_token: CancelToken | None = None,
-                  event_callback=None,
-                  inference_params: dict | None = None,
-                  tools: bool | str = True,
-                  session_id: str | None = None,
-                  purpose: str = "interactive") -> str | None:
-    """Run a delegated task in a fresh context. Returns the final text response.
-    Thread-safe: uses thread-local storage for memory instead of swapping globals.
-
-    tools: True=all tools, False=no tools, "memory_only"=only memory tools.
-    purpose: routed through engine.resolve_active_tools — default 'interactive'
-             matches the historical "all agent tools" behavior. `tools=False`
-             overrides purpose with 'transform' (empty tool list); `tools=
-             "memory_only"` overrides with 'memory_summary'.
-             (PROMPT_TOOLS_UNIFICATION_PLAN.md)
-    """
-    # Derive the effective purpose from (tools, purpose). `tools` is the
-    # legacy switch; `purpose` is the new richer dimension. Explicit
-    # `tools=False`/`"memory_only"` always win — they're load-bearing for
-    # callers that haven't migrated yet.
-    if not tools:
-        _eff_purpose = "transform"
-    elif tools == "memory_only":
-        _eff_purpose = "memory_summary"
-    else:
-        _eff_purpose = purpose
-    if _eff_purpose not in _VALID_PURPOSES:
-        raise ValueError(
-            f"_run_delegate: unknown purpose {purpose!r} (effective {_eff_purpose!r})")
-    # GDPR auto-fallback: scheduled tasks, agent-to-agent delegation, and
-    # delegate_task tool calls run without user interaction. Reroute to the
-    # local fallback when `messages` contain PII and the chosen model is
-    # cloud. In hard-block mode with no local route available the delegate
-    # is refused (returns the usual error-string shape callers already
-    # recognise).
-    try:
-        _delegate_blobs = []
-        if system_prompt:
-            _delegate_blobs.append(system_prompt)
-        for _m in (messages or []):
-            _c = _m.get("content") if isinstance(_m, dict) else None
-            if isinstance(_c, str):
-                _delegate_blobs.append(_c)
-            elif isinstance(_c, list):
-                for _b in _c:
-                    if isinstance(_b, dict) and _b.get("type") == "text":
-                        _t = _b.get("text")
-                        if isinstance(_t, str):
-                            _delegate_blobs.append(_t)
-        try:
-            model = gdpr_pick_model_for_background(model, _delegate_blobs, purpose="delegate")
-        except GDPRBlockedError as _ge:
-            return f"Delegation error: {_ge}"
-    except GDPRBlockedError:
-        raise  # never swallow a block
-    except Exception:
-        pass
-
-    _prov = resolve_provider_for_model(model)
-
-    # Store memory in thread-local so tool_memory_* can find it.
-    # _run_delegate inherits the caller's session/agent context; it only
-    # overrides memory_store when the caller passes an explicit one.
-    if memory_store:
-        _thread_local.memory_store = memory_store
-
-    api_key = _prov["api_key"]
-    base_url = _prov["base_url"]
-
-    headers = make_headers(api_key)
-    endpoint = f"{base_url}/chat/completions"
-    aug_messages = [{"role": "system", "content": system_prompt}] + messages
-
-    # Tool list via the unified resolver (PROMPT_TOOLS_UNIFICATION_PLAN.md).
-    # `transform` returns []; `memory_summary` returns the memory subset;
-    # `interactive` returns the agent's full set minus deferred groups.
-    # `_resolve_delegate_tools` is deleted in the same change.
-    _agent_ctx = getattr(_thread_local, "current_agent", None)
-    _agent_id = _agent_ctx.agent_id if _agent_ctx else None
-    _delegate_tools = resolve_active_tools(
-        purpose=_eff_purpose,
-        agent_id=_agent_id,
-        discovered_tools=getattr(_thread_local, "_discovered_tools", set()) or set(),
-        mcp_manager=None,  # _run_delegate did not include MCP tools historically
-        is_openai_shape=True,
-    )
-    payload = {
-        "model": get_api_model_id(model),
-        "max_tokens": get_model_max_output(model),
-        "messages": aug_messages,
-        "stream": True,
-        "stream_options": {"include_usage": True},
-        "tools": _delegate_tools,
-    }
-    provider = _models_config.get(model, {}).get("provider", "")
-    _apply_inference_to_payload(payload, inference_params or {}, provider, scoped_model=model)
-
-    try:
-        _thread_local.max_tool_rounds = MAX_DELEGATE_TOOL_ROUNDS
-        try:
-            data = json.dumps(payload).encode("utf-8")
-            _provider_name = _prov.get("provider_name", "") or "default"
-            _agent_ctx = getattr(_thread_local, "current_agent", None)
-            _agent_id_ctx = _agent_ctx.agent_id if _agent_ctx else None
-            _user_id_ctx = getattr(_thread_local, "current_user_id", None)
-            _session_id_ctx = getattr(_thread_local, "current_session_id", None)
-
-            request = urllib.request.Request(
-                endpoint, data=data, headers=headers, method="POST")
-            _queue_cm = _provider_queue.acquire_if(
-                _provider_name, label="delegate",
-                session_id=_session_id_ctx, agent_id=_agent_id_ctx,
-                user_id=_user_id_ctx, model=model,
-                event_callback=event_callback, cancel_token=cancel_token,
-            )
-            _queue_cm.__enter__()
-            _released = [False]
-            def _release():
-                if _released[0]:
-                    return
-                _released[0] = True
-                try:
-                    _queue_cm.__exit__(None, None, None)
-                except Exception:
-                    pass
-            try:
-                with urllib.request.urlopen(request) as response:
-                    return _handle_openai_response(
-                        response, payload, messages, model, api_key, base_url,
-                        True, True, headers, endpoint,
-                        cancel_token, 0, event_callback,
-                        session_id=session_id,
-                        release_slot=_release)
-            finally:
-                _release()
-        finally:
-            _thread_local.max_tool_rounds = None
-    except TaskCancelled:
-        # Cancellation is a control-flow signal, not an error — let the caller
-        # (e.g. _execute_scheduled) distinguish timeout vs user-cancel and
-        # format the proper [TIMEOUT]/[CANCELLED] message.
-        raise
-    except urllib.error.HTTPError:
-        # HTTP errors carry useful status codes; let the scheduler's typed
-        # handler format them as [HTTP ERROR <code> <reason>].
-        raise
-    except urllib.error.URLError:
-        raise
-    except Exception as e:
-        # Stringify with type prefix so the wrapping [DELEGATION ERROR] line
-        # in _execute_scheduled is never empty when str(e) is.
-        return f"Delegation error: {type(e).__name__}: {e}".rstrip(": ")
 
 
 # Globals for delegation (set in _run_interactive)
@@ -12846,11 +12714,18 @@ class TaskRunner:
                 status = "cancelled"
             else:
                 delegate_inf = get_inference_params(model, target.config.get("model_purpose"))
-                result_text = _run_delegate(messages, model, system_prompt,
-                                            memory_store=target_memory,
-                                            inference_params=delegate_inf) or ""
+                from handlers import sidecar_proxy as _sidecar_proxy
+                _res = _sidecar_proxy.background_call(
+                    messages=messages, model=model, system_prompt=system_prompt,
+                    agent_id=agent_id,
+                    max_tokens=int(delegate_inf.get("max_tokens") or 0) or None,
+                )
+                result_text = _res.get("reply") or ""
                 if cancel_flag.is_set():
                     status = "cancelled"
+                elif _res.get("error"):
+                    result_text = f"Delegate error: {_res['error']}"
+                    status = "error"
         except Exception as e:
             result_text = str(e)
             status = "error"
@@ -19796,19 +19671,24 @@ class ContextManager:
 
         summary_text = None
         try:
-            result = _run_delegate_with_fallback(
-                messages=[{"role": "user", "content": (
-                    "Summarize this conversation segment concisely. Preserve: key facts, decisions, "
-                    "file paths, commands run, errors encountered, and task context. "
-                    "Be factual and specific, not vague. ~200-300 words.\n\n" + source_text
-                )}],
-                primary_model=model, fallback_model=fallback_model,
-                system_prompt="You are a precise conversation summarizer. Output only the summary.",
-                memory_store=None,
-                inference_params={"max_tokens": 2000, "temperature": 0.1},
-                tools=False,
+            from handlers import sidecar_proxy as _sidecar_proxy
+            _msg = [{"role": "user", "content": (
+                "Summarize this conversation segment concisely. Preserve: key facts, decisions, "
+                "file paths, commands run, errors encountered, and task context. "
+                "Be factual and specific, not vague. ~200-300 words.\n\n" + source_text
+            )}]
+            _sys = "You are a precise conversation summarizer. Output only the summary."
+            _res = _sidecar_proxy.background_call(
+                messages=_msg, model=model, system_prompt=_sys,
+                session_id=session_id, max_tokens=2000,
             )
-            if result and not result.startswith("Delegation error"):
+            if _res.get("error") and fallback_model and fallback_model != model:
+                _res = _sidecar_proxy.background_call(
+                    messages=_msg, model=fallback_model, system_prompt=_sys,
+                    session_id=session_id, max_tokens=2000,
+                )
+            result = _res.get("reply") or ""
+            if result and not _res.get("error"):
                 summary_text = result.strip()
         except Exception:
             pass
@@ -19859,18 +19739,23 @@ class ContextManager:
             condensed_text = None
             if c_model:
                 try:
-                    result = _run_delegate_with_fallback(
-                        messages=[{"role": "user", "content": (
-                            f"Condense these {len(rows)} conversation summaries into one cohesive summary. "
-                            "Preserve all key facts, decisions, and context. ~300-500 words.\n\n" + combined_text
-                        )}],
-                        primary_model=c_model, fallback_model=c_fallback,
-                        system_prompt="You are a precise summarizer. Output only the condensed summary.",
-                        memory_store=None,
-                        inference_params={"max_tokens": 3000, "temperature": 0.1},
-                        tools=False,
+                    from handlers import sidecar_proxy as _sidecar_proxy
+                    _msg = [{"role": "user", "content": (
+                        f"Condense these {len(rows)} conversation summaries into one cohesive summary. "
+                        "Preserve all key facts, decisions, and context. ~300-500 words.\n\n" + combined_text
+                    )}]
+                    _sys = "You are a precise summarizer. Output only the condensed summary."
+                    _res = _sidecar_proxy.background_call(
+                        messages=_msg, model=c_model, system_prompt=_sys,
+                        session_id=session_id, max_tokens=3000,
                     )
-                    if result and not result.startswith("Delegation error"):
+                    if _res.get("error") and c_fallback and c_fallback != c_model:
+                        _res = _sidecar_proxy.background_call(
+                            messages=_msg, model=c_fallback, system_prompt=_sys,
+                            session_id=session_id, max_tokens=3000,
+                        )
+                    result = _res.get("reply") or ""
+                    if result and not _res.get("error"):
                         condensed_text = result.strip()
                 except Exception:
                     pass
@@ -20133,18 +20018,23 @@ class ContextManager:
         r_model = r_model or model
 
         try:
-            result = _run_delegate_with_fallback(
-                messages=[{"role": "user", "content": (
-                    f"Based on this conversation history, answer the following query precisely:\n\n"
-                    f"**Query:** {query}\n\n**Context:**\n{context_text}"
-                )}],
-                primary_model=r_model, fallback_model=r_fallback,
-                system_prompt="Answer based only on the provided context. Be specific and cite details.",
-                memory_store=None,
-                inference_params={"max_tokens": 2000, "temperature": 0.1},
-                tools=False,
+            from handlers import sidecar_proxy as _sidecar_proxy
+            _msg = [{"role": "user", "content": (
+                f"Based on this conversation history, answer the following query precisely:\n\n"
+                f"**Query:** {query}\n\n**Context:**\n{context_text}"
+            )}]
+            _sys = "Answer based only on the provided context. Be specific and cite details."
+            _res = _sidecar_proxy.background_call(
+                messages=_msg, model=r_model, system_prompt=_sys,
+                session_id=session_id, max_tokens=2000,
             )
-            if result and not result.startswith("Delegation error"):
+            if _res.get("error") and r_fallback and r_fallback != r_model:
+                _res = _sidecar_proxy.background_call(
+                    messages=_msg, model=r_fallback, system_prompt=_sys,
+                    session_id=session_id, max_tokens=2000,
+                )
+            result = _res.get("reply") or ""
+            if result and not _res.get("error"):
                 return result.strip()
         except Exception as e:
             return f"Recall failed: {e}"
@@ -20270,10 +20160,12 @@ def _compact_conversation(messages: list[dict], model: str, api_key: str,
                 f"{old_summary_source}"
             )
         }]
-        summary = send_message(
-            summary_messages, model, api_key, base_url,
-            silent=True, tools=False, _tool_round=0,
+        from handlers import sidecar_proxy as _sidecar_proxy
+        _res = _sidecar_proxy.background_call(
+            messages=summary_messages, model=model,
         )
+        if not _res.get("error"):
+            summary = _res.get("reply") or ""
     except Exception:
         pass
 
@@ -24997,1288 +24889,6 @@ def _files_in_chat_preamble_text(session_id: str) -> str:
     )
 
 
-def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
-                 silent: bool = False,
-                 tools: bool = True,
-                 escape_watcher: EscapeWatcher | CancelToken | None = None,
-                 _tool_round: int = 0,
-                 event_callback=None,
-                 inference_params: dict | None = None,
-                 session_id: str | None = None) -> str | None:
-    """Send messages and stream the response.
-
-    If silent=True, collects without printing (for TUI mode).
-    If tools=True, includes tool definitions and handles tool-use loops.
-    If event_callback is provided, called with (event_type, data) for streaming:
-        ("text_delta", {"text": "..."})
-        ("tool_call", {"name": "...", "args": {...}})
-        ("tool_result", {"name": "...", "result": "..."})
-        ("done", {"text": "full response"})
-        ("error", {"message": "..."})
-    Returns the assistant's full response text on success, None on model-related errors.
-    Raises TaskCancelled if escape_watcher detects cancellation.
-    """
-    # Reset dedup tracker and accumulated token counter at the start of each conversation turn
-    if _tool_round == 0:
-        reset_tool_dedup()
-        _thread_local._tool_results_tokens = 0
-        # Mark model as freshly used so the warmup keeper won't re-prefill it
-        try:
-            mark_model_used(model)
-        except Exception:
-            pass
-        _thread_local._intent_action_recovery_count = 0
-        _thread_local._escape_watcher = escape_watcher
-
-        # First-turn greeting: prepend the user's preferred name to the first
-        # user message of a session. Kept OUT of the system prompt so the
-        # warm-pool KV-prefix stays user-agnostic and matches across users.
-        # Fires when:
-        #   - this is round 0 of the first turn (no assistant message yet)
-        #   - we know the user_id (auth on)
-        #   - the user has a non-default greeting_name OR a display_name
-        # Idempotent: a sentinel marker on the message metadata prevents
-        # double-prepending if send_message is retried for the same turn.
-        try:
-            _has_assistant = any(m.get("role") == "assistant" for m in messages)
-        except Exception:
-            _has_assistant = True
-        if not _has_assistant:
-            # Three preamble blocks may attach to the first user message of a
-            # session, in this order: project context (B1) → user greeting +
-            # comm prefs → long-form auto-maintained user profile. The
-            # project block is computed unconditionally (anonymous sessions
-            # in projects still need the absolute paths), the user blocks
-            # only fire when an authenticated user is on the request.
-            _project_pre = ""
-            try:
-                _proj_name_pre = getattr(_thread_local, 'project', None) or ""
-                _agent_pre_obj = getattr(_thread_local, 'current_agent', None)
-                _agent_id_pre = getattr(_agent_pre_obj, 'agent_id', "") or ""
-                if _proj_name_pre and _agent_id_pre:
-                    _project_pre = _project_preamble_text(_agent_id_pre, _proj_name_pre)
-            except Exception:
-                _project_pre = ""
-
-            # Workflow-run preamble: when this session was created from the
-            # inline workflow detail view, attach a compact summary of the
-            # finished run so the model can answer follow-ups without
-            # re-executing tools to locate files.
-            _workflow_run_pre = ""
-            try:
-                _wf_run_id = getattr(_thread_local, 'workflow_run_id', '') or ''
-                if _wf_run_id:
-                    _workflow_run_pre = _workflow_run_preamble_text(_wf_run_id)
-            except Exception:
-                _workflow_run_pre = ""
-
-            _preamble_lines: list[str] = []
-            _profile_doc = ""
-            _greeting_uid = getattr(_thread_local, 'current_user_id', "") or ""
-            if _greeting_uid:
-                try:
-                    import auth as _auth_mod_local
-                    _u = _auth_mod_local.AuthDB.get_user(_greeting_uid)
-                except Exception:
-                    _u = None
-                if _u:
-                    _prefs = _u.get("preferences") or {}
-                    _greet = (_prefs.get("greeting_name") or "").strip() \
-                             or (_u.get("display_name") or "").strip() \
-                             or (_u.get("username") or "").strip()
-                    _job = (_prefs.get("job_description") or "").strip()
-                    _commprefs = (_prefs.get("communication_preferences") or "").strip()
-                    # Long-form auto-maintained profile (agents/main/user_profiles/<uid>.md).
-                    # Loaded once on round 0; capped at 4KB so it can't blow up the prompt.
-                    # The on-disk file is always clean prose. When the chat is in
-                    # caveman mode, compress at read-time so the profile preamble
-                    # matches the rest of the prompt — single source of truth is
-                    # the chat composer's caveman toggle.
-                    try:
-                        _safe_uid = "".join(c for c in _greeting_uid if c.isalnum() or c in "-_")
-                        _profile_path = os.path.join(
-                            AGENTS_DIR, "main", "user_profiles", f"{_safe_uid}.md")
-                        if os.path.isfile(_profile_path):
-                            with open(_profile_path, "r", encoding="utf-8") as _pf:
-                                _profile_doc = _pf.read().strip()
-                            if len(_profile_doc) > 4096:
-                                _profile_doc = _profile_doc[:4096] + "\n…[truncated]"
-                    except Exception:
-                        _profile_doc = ""
-                    if _profile_doc:
-                        _pp_cav = getattr(_thread_local, 'caveman_chat', 0) or 0
-                        if _pp_cav in (1, 2, 3):
-                            _profile_doc = _caveman_compress_text(_profile_doc, _pp_cav)
-                    if _greet:
-                        _preamble_lines.append(
-                            f"You are talking to {_greet}. Address them by "
-                            f"this name when natural."
-                        )
-                    if _job:
-                        _preamble_lines.append(f"Their role: {_job}")
-                    if _commprefs:
-                        _preamble_lines.append(f"How they like to communicate: {_commprefs}")
-            if _preamble_lines or _profile_doc or _project_pre or _workflow_run_pre:
-                for _idx, _m in enumerate(messages):
-                    if _m.get("role") != "user":
-                        continue
-                    if _m.get("_greeting_injected"):
-                        break
-                    _bits: list[str] = []
-                    if _workflow_run_pre:
-                        # Lead with the workflow run context — it's the
-                        # whole reason the user is asking, so model
-                        # attention should land on it before generic
-                        # project / profile blocks.
-                        _bits.append(_workflow_run_pre)
-                    if _project_pre:
-                        _bits.append(_project_pre)
-                    if _preamble_lines:
-                        _bits.append(
-                            "[Context about this user:\n- "
-                            + "\n- ".join(_preamble_lines)
-                            + "]"
-                        )
-                    if _profile_doc:
-                        # The auto-maintained profile is its own block
-                        # so the model can tell user-set comm prefs
-                        # apart from inferred long-form context.
-                        _bits.append(
-                            "[Auto-maintained user profile (from chat "
-                            "history; treat as background context, "
-                            "not as ground truth for the current "
-                            "request):\n" + _profile_doc + "]"
-                        )
-                    _preamble = "\n\n".join(_bits) + "\n\n"
-                    _content = _m.get("content")
-                    if isinstance(_content, str):
-                        _m["content"] = _preamble + _content
-                    elif isinstance(_content, list):
-                        _m["content"] = ([{"type": "text", "text": _preamble}]
-                                          + _content)
-                    _m["_greeting_injected"] = True
-                    break
-
-        # Files-in-chat block — refreshed every turn (not gated by
-        # _has_assistant). The list of artifacts on disk grows
-        # monotonically as the agent writes/reads files; injecting on
-        # every round 0 keeps the model's "memory of disk state"
-        # current even after compaction has dropped older tool results.
-        # We splice onto the *latest* user message and strip any prior
-        # files-block from it first so we don't accumulate stale
-        # snapshots on a retry of the same turn.
-        try:
-            _fic_sid = getattr(_thread_local, 'current_session_id', '') or ''
-            _files_block = _files_in_chat_preamble_text(_fic_sid) if _fic_sid else ""
-        except Exception:
-            _files_block = ""
-        if _files_block:
-            # Find the latest user message and refresh its files block.
-            for _idx in range(len(messages) - 1, -1, -1):
-                _m = messages[_idx]
-                if _m.get("role") != "user":
-                    continue
-                _content = _m.get("content")
-                # Strip any previously-injected files block (idempotent
-                # on retries; replaces stale snapshot from earlier turn
-                # if this is the same user message). The marker is
-                # unique enough to grep for.
-                _MARKER = "[Files in this chat —"
-                def _strip_block(text: str) -> str:
-                    i = text.find(_MARKER)
-                    if i < 0:
-                        return text
-                    # Block ends at the matching closing ']' on its own
-                    # line followed by two newlines (consistent with how
-                    # we render it); fall back to first ']\n\n' after.
-                    end = text.find("]\n\n", i)
-                    if end < 0:
-                        return text
-                    return text[:i] + text[end + 3:]
-                _new_block = _files_block + "\n\n"
-                if isinstance(_content, str):
-                    _m["content"] = _new_block + _strip_block(_content)
-                elif isinstance(_content, list):
-                    # Multimodal — strip from the leading text part if
-                    # present, prepend a fresh text block.
-                    new_blocks = []
-                    stripped_first = False
-                    for _b in _content:
-                        if not stripped_first and isinstance(_b, dict) and _b.get("type") == "text":
-                            new_blocks.append({"type": "text", "text": _strip_block(_b.get("text") or "")})
-                            stripped_first = True
-                        else:
-                            new_blocks.append(_b)
-                    _m["content"] = [{"type": "text", "text": _new_block}] + new_blocks
-                _m["_files_block_injected"] = True
-                break
-
-        # GDPR/PII scan on first round only. Assistant/tool rounds reuse the
-        # same user content, so re-scanning every round is wasted work.
-        _gdpr_cfg = _get_gdpr_scanner_config()
-        if _gdpr_cfg.get("enabled", True):
-            try:
-                _pii_findings = _pii_scan_messages(messages, max_findings=100, cfg=_gdpr_cfg)
-            except Exception:
-                _pii_findings = []
-            if _pii_findings:
-                _pii_counts = _pii_summarize(_pii_findings)
-                _pii_summary = ", ".join(f"{n} {lbl.lower()}" + ("" if n == 1 else "s")
-                                          for lbl, n in _pii_counts.items())
-                _worst = _pii_worst_action(_pii_findings)
-                _agent = getattr(_thread_local, 'current_agent', None) or _current_agent
-                _agent_id = _agent.agent_id if _agent else "main"
-                print(f"[gdpr] session={session_id} agent={_agent_id} "
-                      f"findings={len(_pii_findings)} worst={_worst} ({_pii_summary})", flush=True)
-                if _gdpr_cfg.get("server_log", True) and _audit_log:
-                    try:
-                        _audit_log.log_action(
-                            agent=_agent_id,
-                            action_type="pii_detected",
-                            tool_name="gdpr_scanner",
-                            args_summary=f"{len(_pii_findings)} findings ({_worst})",
-                            result_summary=_pii_summary[:200],
-                            result_status="warning" if _worst != "block" else "blocked",
-                            session_id=session_id,
-                            source="llm_request",
-                        )
-                    except Exception:
-                        pass
-                # Block only when (a) at least one finding has action='block'
-                # (which already implies server_block=true via _pii_effective_action
-                # downgrade) AND (b) the outgoing request targets a cloud provider.
-                if _worst == "block":
-                    try:
-                        _model_is_local = is_model_local(model)
-                    except Exception:
-                        _model_is_local = False
-                    if not _model_is_local:
-                        raise RuntimeError(
-                            f"[GDPR block] Outgoing message contains high-severity "
-                            f"personal data: {_pii_summary}. Select a local model, "
-                            f"remove the data, or adjust the category action in "
-                            f"Settings → GDPR."
-                        )
-
-        # Per-user cost quota gate. Local models bypass; force_local swaps
-        # silently to the configured fallback; hard_block refuses with a
-        # user-visible RuntimeError. warn_only is purely UI-side.
-        if _quota_manager:
-            _quota_user = getattr(_thread_local, 'current_user_id', "") or ""
-            try:
-                _qd, _qr = _quota_manager.check_request(_quota_user, model)
-            except Exception:
-                _qd, _qr = "allow", ""
-            if _qd == "force_local":
-                _qcfg = _quota_manager.get_config()
-                _fb = (_qcfg.get("default_local_fallback_model") or "").strip()
-                # Validate fallback: must exist, be enabled, and resolve as local
-                _fb_ok = False
-                if _fb and _fb in _models_config and _models_config.get(_fb, {}).get("enabled", True):
-                    try:
-                        _fb_ok = is_model_local(_fb)
-                    except Exception:
-                        _fb_ok = False
-                _agent_qa = getattr(_thread_local, 'current_agent', None) or _current_agent
-                _agent_qid = _agent_qa.agent_id if _agent_qa else "main"
-                if _fb_ok:
-                    print(f"[quota] session={session_id} user={_quota_user} "
-                          f"force_local: {model} -> {_fb} ({_qr})", flush=True)
-                    if _audit_log:
-                        try:
-                            _audit_log.log_action(
-                                agent=_agent_qid,
-                                action_type="quota_force_local",
-                                tool_name="quota",
-                                args_summary=f"{model} -> {_fb}",
-                                result_summary=_qr[:200],
-                                result_status="warning",
-                                session_id=session_id,
-                                source="llm_request",
-                            )
-                        except Exception:
-                            pass
-                    model = _fb
-                else:
-                    if _audit_log:
-                        try:
-                            _audit_log.log_action(
-                                agent=_agent_qid,
-                                action_type="quota_blocked",
-                                tool_name="quota",
-                                args_summary=f"force_local fallback unusable ({_fb or 'none'})",
-                                result_summary=_qr[:200],
-                                result_status="blocked",
-                                session_id=session_id,
-                                source="llm_request",
-                            )
-                        except Exception:
-                            pass
-                    raise QuotaExceededError(
-                        f"[Quota exceeded] {_qr}. Switch to a local model "
-                        f"or ask an admin to raise the limit (Settings → Quotas).",
-                        level="red", reason=_qr,
-                    )
-            elif _qd == "block":
-                _agent_qa = getattr(_thread_local, 'current_agent', None) or _current_agent
-                _agent_qid = _agent_qa.agent_id if _agent_qa else "main"
-                if _audit_log:
-                    try:
-                        _audit_log.log_action(
-                            agent=_agent_qid,
-                            action_type="quota_blocked",
-                            tool_name="quota",
-                            args_summary=f"hard_block on {model}",
-                            result_summary=_qr[:200],
-                            result_status="blocked",
-                            session_id=session_id,
-                            source="llm_request",
-                        )
-                    except Exception:
-                        pass
-                raise QuotaExceededError(
-                    f"[Quota exceeded] {_qr}. Ask an admin to raise the limit "
-                    f"(Settings → Quotas).",
-                    level="red", reason=_qr,
-                )
-
-        # Start a request-level trace span for the full conversation turn
-        if _trace_manager:
-            agent = getattr(_thread_local, 'current_agent', None) or _current_agent
-            agent_id = agent.agent_id if agent else "main"
-            # Extract message preview for trace name
-            msg_preview = ""
-            if messages:
-                last_msg = messages[-1]
-                content = last_msg.get("content", "")
-                if isinstance(content, str):
-                    msg_preview = content[:60]
-                elif isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            msg_preview = block.get("text", "")[:60]
-                            break
-            request_span = _trace_manager.start_span(
-                "request", msg_preview or "user message",
-                agent=agent_id, model=model, session_id=session_id,
-            )
-            _thread_local.trace_id = request_span["trace_id"]
-            _thread_local.request_trace_span = request_span
-            _thread_local.session_id = session_id
-
-    # Start an LLM call span
-    llm_span = None
-    if _trace_manager:
-        agent = getattr(_thread_local, 'current_agent', None) or _current_agent
-        agent_id = agent.agent_id if agent else "main"
-        parent_span = getattr(_thread_local, 'request_trace_span', None)
-        trace_id = parent_span["trace_id"] if parent_span else getattr(_thread_local, 'trace_id', None)
-        parent_id = parent_span["id"] if parent_span else None
-        llm_span = _trace_manager.start_span(
-            "llm_call", f"{model} call (round {_tool_round})",
-            agent=agent_id, model=model,
-            parent_id=parent_id, trace_id=trace_id, session_id=session_id,
-        )
-        _thread_local.current_trace_span = llm_span
-
-    # Soft stop after max tool rounds — use thread-local override if set (delegation),
-    # then per-agent limits, then CLIProxyAPI tightening, else global default.
-    _agent_limits = _get_agent_limits()
-    effective_max_rounds = getattr(_thread_local, 'max_tool_rounds', None)
-    if not effective_max_rounds:
-        if ":8317" in base_url or "cliproxy" in base_url.lower():
-            effective_max_rounds = MAX_TOOL_ROUNDS_PROXY
-        else:
-            effective_max_rounds = _agent_limits["max_tool_rounds"]
-    if _tool_round >= effective_max_rounds:
-        tools = False
-    # Hard stop: terminate the loop entirely at 1.5x the soft cap to prevent runaway recursion
-    if _tool_round >= int(effective_max_rounds * 1.5):
-        return "[Tool round limit reached — stopping to prevent runaway loop. Check chat for partial progress.]"
-    headers = make_headers(api_key)
-    endpoint = f"{base_url}/chat/completions"
-
-    # Strip metadata from messages — API providers don't accept extra fields
-    # Keep fields required by OpenAI tool call protocol.
-    # Also drop internal roles: "thinking" is a transcript artifact we store for UI
-    # display, but providers reject the role string.
-    _ALLOWED_MSG_KEYS = {"role", "content", "tool_calls", "tool_call_id", "name"}
-    _INTERNAL_ROLES = {"thinking"}
-    augmented_messages = []
-    for msg in messages:
-        if msg.get("role") in _INTERNAL_ROLES:
-            continue
-        clean = {k: v for k, v in msg.items() if k in _ALLOWED_MSG_KEYS}
-        augmented_messages.append(clean)
-    tcfg = _get_token_config()
-    # Resolve the tool list FIRST (PROMPT_TOOLS_UNIFICATION_PLAN.md) so we
-    # can pass active_tool_names to _build_system_prompt. The conditional
-    # tools.md rule blocks rely on this — without it the prompt and wire
-    # tool list could diverge (rules mentioning python_exec emitted when
-    # python_exec isn't in the active set, etc.).
-    if tools:
-        mcp_mgr = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
-        discovered_tools = getattr(_thread_local, '_discovered_tools', set()) or set()
-        _agent_ctx = getattr(_thread_local, "current_agent", None) or _current_agent
-        _agent_id = _agent_ctx.agent_id if _agent_ctx else None
-        all_tools = resolve_active_tools(
-            purpose="interactive",
-            agent_id=_agent_id,
-            discovered_tools=discovered_tools,
-            mcp_manager=mcp_mgr,
-            is_openai_shape=True,
-        )
-        _active_tool_names = {
-            (t.get("function", {}) or {}).get("name", "") for t in all_tools
-        }
-        system_instruction = _build_system_prompt(
-            include_memory_summary=(_tool_round == 0),
-            purpose="interactive",
-            active_tool_names=_active_tool_names,
-        )
-        augmented_messages.insert(0, {"role": "system", "content": system_instruction})
-
-    payload = {
-        "model": get_api_model_id(model),
-        "max_tokens": get_model_max_output(model),
-        "messages": augmented_messages,
-        "stream": True,
-        "stream_options": {"include_usage": True},
-    }
-
-    # Apply inference parameters (temperature, top_p, thinking, etc.).
-    # Always invoke — even with empty params, oMLX thinking-capable models
-    # need an explicit enable_thinking=false to suppress the template default.
-    provider = _models_config.get(model, {}).get("provider", "")
-    _apply_inference_to_payload(payload, inference_params or {}, provider, scoped_model=model)
-
-    if tools:
-        payload["tools"] = all_tools
-        # Parallel tool calls: let the model emit multiple tool calls in one response
-        model_cfg = resolve_model_settings(model)
-        if model_cfg.get("parallel_tool_calls", True):
-            payload["parallel_tool_calls"] = True
-
-    # Emit request snapshot for inspector
-    if event_callback:
-        # System prompt: from first system message (OpenAI wire format)
-        _sys = ""
-        _tool_defs = payload.get("tools", [])
-        _tool_names = []
-        for _td in _tool_defs:
-            if isinstance(_td, dict):
-                _tn = (_td.get("function", {}) or {}).get("name", "")
-                if _tn:
-                    _tool_names.append(_tn)
-        _hist_msgs = []
-        _user_msg = ""
-        for _m in payload.get("messages", []):
-            if _m.get("role") == "system":
-                if not _sys:
-                    _c = _m.get("content", "")
-                    _sys = _c if isinstance(_c, str) else str(_c)
-                continue
-            if _m is payload["messages"][-1] and _m.get("role") == "user":
-                _c = _m.get("content", "")
-                _user_msg = _c if isinstance(_c, str) else str(_c)
-            else:
-                _c = _m.get("content", "")
-                _hist_msgs.append({"role": _m.get("role", ""), "content": _c if isinstance(_c, str) else str(_c)})
-        event_callback("request_payload", {
-            "tool_round": _tool_round,
-            "system_prompt": _sys,
-            "system_tokens": len(_sys) // 4,
-            "tools_count": len(_tool_defs),
-            "tools_tokens": len(json.dumps(_tool_defs)) // 4,
-            "tool_names": _tool_names,
-            "history": _hist_msgs,
-            "history_tokens": sum(len(str(m.get("content", ""))) // 4 for m in _hist_msgs),
-            "user_message": _user_msg,
-            "user_tokens": len(_user_msg) // 4,
-            "total_payload_tokens": len(json.dumps(payload)) // 4,
-        })
-
-    # Context safety pre-flight: refuse the request if estimated prompt tokens
-    # exceed (max_context * safety_ratio). Prevents provider 400s and runaway bills.
-    try:
-        _est_prompt_tokens = len(json.dumps(payload)) // 4
-        _max_ctx = get_model_max_context(model) or 0
-        _safety_ratio = float(_agent_limits.get("context_safety_ratio", 0.95))
-        if _max_ctx and _est_prompt_tokens > int(_max_ctx * _safety_ratio):
-            raise RuntimeError(
-                f"Context would exceed {int(_safety_ratio*100)}% of max_context "
-                f"(~{_est_prompt_tokens:,} / {_max_ctx:,} tokens). "
-                f"Compact the chat or switch to a larger-context model."
-            )
-    except RuntimeError:
-        raise
-    except Exception:
-        pass  # estimation failures should never block a request
-
-    # Check for cancellation before making the request
-    if escape_watcher and escape_watcher.cancelled:
-        raise TaskCancelled()
-
-    # Rate limiter check
-    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
-    agent_id = agent.agent_id if agent else "main"
-    if _rate_limiter and _tool_round == 0:
-        allowed, reason, _usage_info = _rate_limiter.check(agent_id)
-        if not allowed:
-            raise RuntimeError(reason)
-
-    data = json.dumps(payload).encode("utf-8")
-
-    request = urllib.request.Request(
-        endpoint, data=data, headers=headers, method="POST",
-    )
-
-    _provider_name = _models_config.get(model, {}).get("provider", "") or "default"
-    _agent_ctx = getattr(_thread_local, "current_agent", None)
-    _agent_id_ctx = _agent_ctx.agent_id if _agent_ctx else None
-    _user_id_ctx = getattr(_thread_local, "current_user_id", None)
-    _queue_label = "chat" if _tool_round == 0 else f"chat_round_{_tool_round}"
-    # Manual enter/exit so the handler can release the slot as soon as the
-    # SSE stream drains — tool execution and the recursive send_message then
-    # run with the slot freed, so other chats can use the gateway in parallel.
-    _queue_cm = _provider_queue.acquire_if(
-        _provider_name, label=_queue_label,
-        session_id=session_id, agent_id=_agent_id_ctx, user_id=_user_id_ctx,
-        model=model, event_callback=event_callback,
-        cancel_token=escape_watcher,
-    )
-    _queue_cm.__enter__()
-    _queue_released = [False]
-    def _release_queue_slot():
-        if _queue_released[0]:
-            return
-        _queue_released[0] = True
-        try:
-            _queue_cm.__exit__(None, None, None)
-        except Exception:
-            pass
-    try:
-        try:
-            with urllib.request.urlopen(request) as response:
-                return _handle_openai_response(
-                    response, payload, messages, model, api_key, base_url,
-                    silent, tools, headers, endpoint, escape_watcher,
-                    _tool_round, event_callback, inference_params, session_id,
-                    release_slot=_release_queue_slot)
-        finally:
-            # Safety net: if handler didn't release (exception before stream
-            # drained), release here so we never leak the slot.
-            _release_queue_slot()
-
-    except urllib.error.HTTPError as e:
-        error_msg = f"HTTP Error {e.code}: {e.reason}"
-        try:
-            error_body = e.read().decode("utf-8")
-            error_msg += f" — {error_body[:200]}"
-        except:
-            pass
-        if e.code == 400:
-            print(error_msg, file=sys.stderr)
-            _thread_local._last_send_error = {"code": e.code, "message": error_msg, "permanent": True}
-            return None
-        print(error_msg, file=sys.stderr)
-        # Transient errors: return None to trigger retry/fallback
-        _TRANSIENT_CODES = {429, 500, 502, 503, 504, 529}
-        if e.code in _TRANSIENT_CODES:
-            _thread_local._last_send_error = {"code": e.code, "message": error_msg}
-            # Mark key exhausted on 429 so next pick skips it for _KEY_EXHAUST_TTL seconds
-            if e.code == 429:
-                try:
-                    mark_api_key_exhausted(_provider_name, api_key)
-                except Exception:
-                    pass
-            return None
-        # Permanent errors (401, 403, 404, etc.)
-        _thread_local._last_send_error = {"code": e.code, "message": error_msg, "permanent": True}
-        if event_callback:
-            raise RuntimeError(error_msg)
-        sys.exit(1)
-    except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError, OSError) as e:
-        error_msg = f"Connection error: {e}"
-        print(error_msg, file=sys.stderr)
-        _thread_local._last_send_error = {"code": 0, "message": error_msg}
-        return None
-
-
-def _parse_gemma_tool_calls(text: str) -> tuple[list[dict], str]:
-    """Parse gemma4-style tool calls from raw text.
-
-    Format: <|tool_call>call:name{key:<|"|>val<|"|>,...}<tool_call|>
-    Returns (list of tool_use dicts, cleaned text with tool calls removed).
-
-    re.DOTALL on both patterns: tool-call args (especially write_file content)
-    routinely span multiple lines with embedded markdown/JSON; without DOTALL
-    the non-greedy `.*?` between `{...}` and between `<|"|>...<|"|>` stops at
-    the first newline and silently skips the call. Observed on Gemma-4-e4b
-    run 802 — the model emitted a write_file with a 30-line markdown body,
-    parser didn't match, the call became visible text in the assistant reply.
-    """
-    tool_uses = []
-    pattern = r'<\|tool_call>call:(\w+)\{(.*?)\}<tool_call\|>'
-    for match in re.finditer(pattern, text, re.DOTALL):
-        name = match.group(1)
-        args_raw = match.group(2)
-        # Parse key-value pairs: key:<|"|>value<|"|>
-        args = {}
-        kv_pattern = r'(\w+):<\|"\|>(.*?)<\|"\|>'
-        for kv in re.finditer(kv_pattern, args_raw, re.DOTALL):
-            args[kv.group(1)] = kv.group(2)
-        tool_uses.append({
-            "id": f"gemma_{_uuid.uuid4().hex[:8]}",
-            "name": name,
-            "input": args,
-            "input_json": json.dumps(args),
-        })
-    cleaned = re.sub(pattern, '', text, flags=re.DOTALL)
-    return tool_uses, cleaned
-
-
-
-
-class _InlineThinkingSplitter:
-    """Streaming splitter for reasoning models that emit <think>...</think> in content.
-
-    Feed raw content chunks via feed(chunk) -> returns a list of (kind, text)
-    tuples where kind is 'text' or 'thinking' or 'enter' (enters thinking block,
-    no text) or 'exit' (exits thinking block). Text outside tags is 'text';
-    inside tags is 'thinking'. 'enter'/'exit' are edge markers so callers can
-    emit thinking_start / thinking_done events exactly once per block.
-
-    Handles split-at-boundary cases: if a chunk ends with a partial tag like
-    '<thi', the partial is held until the next chunk completes it.
-    """
-
-    _OPEN = "<think>"
-    _CLOSE = "</think>"
-
-    def __init__(self):
-        self._in_thinking = False
-        self._pending = ""  # carry-over for partial tag matches
-        self._ever_opened = False
-
-    def _starts_partial(self, s: str, tag: str) -> bool:
-        # True iff s is a non-empty proper prefix of tag (len(s) < len(tag) and s == tag[:len(s)])
-        return 0 < len(s) < len(tag) and tag.startswith(s)
-
-    def feed(self, chunk: str) -> list[tuple[str, str]]:
-        if not chunk:
-            return []
-        buf = self._pending + chunk
-        self._pending = ""
-        out: list[tuple[str, str]] = []
-        while buf:
-            tag = self._CLOSE if self._in_thinking else self._OPEN
-            idx = buf.find(tag)
-            if idx >= 0:
-                # Emit everything before the tag in current mode
-                pre = buf[:idx]
-                if pre:
-                    out.append(("thinking" if self._in_thinking else "text", pre))
-                # Flip mode
-                if self._in_thinking:
-                    out.append(("exit", ""))
-                    self._in_thinking = False
-                else:
-                    out.append(("enter", ""))
-                    self._in_thinking = True
-                    self._ever_opened = True
-                buf = buf[idx + len(tag):]
-                continue
-            # No complete tag in buf. Check whether the tail is a partial tag.
-            hold_len = 0
-            for k in range(1, min(len(tag), len(buf)) + 1):
-                if self._starts_partial(buf[-k:], tag):
-                    hold_len = k  # keep the longest partial match
-            if hold_len:
-                emit = buf[:-hold_len]
-                self._pending = buf[-hold_len:]
-                if emit:
-                    out.append(("thinking" if self._in_thinking else "text", emit))
-                buf = ""
-            else:
-                out.append(("thinking" if self._in_thinking else "text", buf))
-                buf = ""
-        return out
-
-    def flush(self) -> list[tuple[str, str]]:
-        """At end-of-stream, any held pending text has no closing tag — flush it
-        in the current mode so we don't lose characters."""
-        out: list[tuple[str, str]] = []
-        if self._pending:
-            out.append(("thinking" if self._in_thinking else "text", self._pending))
-            self._pending = ""
-        if self._in_thinking:
-            # Unclosed thinking block — force-close so UI state is sane.
-            out.append(("exit", ""))
-            self._in_thinking = False
-        return out
-
-
-def _handle_openai_response(response, payload, messages, model, api_key,
-                             base_url, silent, tools,
-                             headers, endpoint,
-                             escape_watcher=None,
-                             _tool_round: int = 0,
-                             event_callback=None,
-                             inference_params: dict | None = None,
-                             session_id: str | None = None,
-                             release_slot=None) -> str | None:
-    """Handle OpenAI SSE response, including tool-use agentic loop.
-
-    `release_slot`: optional zero-arg callable. Invoked exactly once, right
-    after the SSE stream completes and before any tool dispatch or recursive
-    send_message, so the provider queue slot is freed for other chats while
-    local tool execution runs. Idempotent — safe to call multiple times.
-    """
-    # Wrap release_slot into a one-shot local helper
-    _slot_released = [False]
-    def _release_once():
-        if _slot_released[0] or release_slot is None:
-            return
-        _slot_released[0] = True
-        try:
-            release_slot()
-        except Exception:
-            pass
-    collected_text = []
-    collected_thinking = []
-    tool_calls_map = {}  # index -> {id, name, arguments_str}
-    _usage_in = 0
-    _usage_out = 0
-    _reasoning_tokens = 0  # openai_opaque: reported in usage.completion_tokens_details.reasoning_tokens
-    finish_reason = None
-    # Thinking format drives how we parse reasoning content out of the stream.
-    _tfmt = _models_config.get(model, {}).get("thinking_format", "none")
-    _think_splitter = _InlineThinkingSplitter() if _tfmt == "inline_tags" else None
-    _thinking_started = False
-    # For mistral_blocks: track whether we've opened a thinking block (first non-empty thinking delta).
-    _mistral_thinking_open = False
-
-    def _emit_thinking_delta(t: str):
-        """Helper: emit thinking_start (first time) + thinking_delta."""
-        nonlocal _thinking_started
-        if not _thinking_started:
-            _thinking_started = True
-            if event_callback:
-                event_callback("thinking_start", {"tool_round": _tool_round})
-        collected_thinking.append(t)
-        if event_callback:
-            event_callback("thinking_delta", {"text": t, "tool_round": _tool_round})
-
-    def _emit_thinking_done():
-        """Helper: emit thinking_done with current round's text + round number.
-        Server uses this as the signal to persist a 'thinking' message row so
-        reasoning appears inline in its correct chronological position."""
-        if event_callback:
-            event_callback("thinking_done", {
-                "text": "".join(collected_thinking),
-                "tool_round": _tool_round,
-            })
-
-    def _emit_text_delta(t: str):
-        if not silent:
-            print(t, end="", flush=True)
-        if event_callback:
-            event_callback("text_delta", {"text": t})
-        collected_text.append(t)
-
-    for line in response:
-        if escape_watcher and escape_watcher.cancelled:
-            raise TaskCancelled()
-        line = line.decode("utf-8").strip()
-        if not line.startswith("data: "):
-            continue
-        payload_str = line[6:]
-        if payload_str == "[DONE]":
-            break
-        try:
-            event = json.loads(payload_str)
-            # Extract usage from final chunk (OpenAI stream_options)
-            usage = event.get("usage")
-            if usage:
-                _usage_in = usage.get("prompt_tokens", 0)
-                _usage_out = usage.get("completion_tokens", 0)
-                ctd = usage.get("completion_tokens_details") or {}
-                _reasoning_tokens = int(ctd.get("reasoning_tokens") or 0)
-            choices = event.get("choices", [])
-            if not choices:
-                continue
-            # Track finish reason for max_tokens recovery
-            fr = choices[0].get("finish_reason")
-            if fr:
-                finish_reason = fr
-            delta = choices[0].get("delta") or {}
-
-            # reasoning_field path: reasoning_content is a sibling field on the delta.
-            # (oMLX, cliproxyapi Gemini 2.5, DeepSeek-R1 direct). Emits thinking deltas
-            # independently of content; caller emits thinking_done on first non-reasoning
-            # content delta.
-            if _tfmt == "reasoning_field":
-                rc = delta.get("reasoning_content")
-                if rc:
-                    _emit_thinking_delta(_unescape(rc))
-
-            content = delta.get("content")
-            if content:
-                # mistral_blocks path: content is a list of blocks like
-                # [{type: "thinking", thinking: [{type: "text", text: "partial"}]}]
-                # or [{type: "text", text: "partial"}].
-                if _tfmt == "mistral_blocks" and isinstance(content, list):
-                    for block in content:
-                        if not isinstance(block, dict):
-                            continue
-                        btype = block.get("type")
-                        if btype == "thinking":
-                            _mistral_thinking_open = True
-                            for sub in (block.get("thinking") or []):
-                                if isinstance(sub, dict):
-                                    t = sub.get("text")
-                                    if t:
-                                        _emit_thinking_delta(_unescape(t))
-                        elif btype == "text":
-                            if _mistral_thinking_open:
-                                _mistral_thinking_open = False
-                                if event_callback:
-                                    _emit_thinking_done()
-                            t = block.get("text")
-                            if t:
-                                _emit_text_delta(_unescape(t))
-                elif isinstance(content, str):
-                    content = _unescape(content)
-                    if _tfmt == "reasoning_field" and _thinking_started:
-                        # First non-empty text chunk closes the reasoning phase.
-                        if event_callback:
-                            _emit_thinking_done()
-                        _thinking_started = False  # don't emit thinking_done twice
-                        _emit_text_delta(content)
-                    elif _think_splitter is None:
-                        _emit_text_delta(content)
-                    else:
-                        for kind, text in _think_splitter.feed(content):
-                            if kind == "enter":
-                                if not _thinking_started:
-                                    _thinking_started = True
-                                    if event_callback:
-                                        event_callback("thinking_start", {"tool_round": _tool_round})
-                            elif kind == "exit":
-                                _emit_thinking_done()
-                                _thinking_started = False
-                            elif kind == "thinking":
-                                collected_thinking.append(text)
-                                if event_callback:
-                                    event_callback("thinking_delta", {"text": text, "tool_round": _tool_round})
-                            elif kind == "text":
-                                _emit_text_delta(text)
-
-            # Accumulate tool calls (guard against null — Gemini returns tool_calls: null)
-            for tc in (delta.get("tool_calls") or []):
-                idx = tc.get("index", 0)
-                if idx not in tool_calls_map:
-                    tool_calls_map[idx] = {
-                        "id": tc.get("id", ""),
-                        "name": tc.get("function", {}).get("name", ""),
-                        "arguments": "",
-                    }
-                if tc.get("id"):
-                    tool_calls_map[idx]["id"] = tc["id"]
-                if tc.get("function", {}).get("name"):
-                    tool_calls_map[idx]["name"] = tc["function"]["name"]
-                tool_calls_map[idx]["arguments"] += tc.get("function", {}).get("arguments", "")
-
-        except json.JSONDecodeError:
-            pass
-
-    # End-of-stream flush for the thinking splitter: drain any held partial-tag
-    # characters and auto-close an unclosed <think> block so UI state stays sane.
-    if _think_splitter is not None:
-        for kind, text in _think_splitter.flush():
-            if kind == "exit":
-                _emit_thinking_done()
-                _thinking_started = False
-            elif kind == "thinking":
-                collected_thinking.append(text)
-                if event_callback:
-                    event_callback("thinking_delta", {"text": text, "tool_round": _tool_round})
-            elif kind == "text":
-                _emit_text_delta(text)
-
-    # mistral_blocks: close an unclosed thinking block (rare — usually we see a text block that triggers closure).
-    if _mistral_thinking_open:
-        _mistral_thinking_open = False
-        if event_callback:
-            _emit_thinking_done()
-        _thinking_started = False
-
-    # reasoning_field: if thinking was opened but no non-empty text followed
-    # (rare, e.g. model emitted only reasoning and hit max tokens), close it on EOS.
-    if _tfmt == "reasoning_field" and _thinking_started:
-        if event_callback:
-            _emit_thinking_done()
-        _thinking_started = False
-
-    # openai_opaque: no thinking text available from the provider, but we know
-    # how many tokens were burned on reasoning. Surface as a summary event so the
-    # UI can render a "Thought for N tokens" badge.
-    if _tfmt == "openai_opaque" and _reasoning_tokens > 0 and event_callback:
-        event_callback("thinking_summary", {
-            "format": "openai_opaque",
-            "reasoning_tokens": _reasoning_tokens,
-        })
-        # If we saw any thinking content but never emitted the done event
-        # (stream truncated mid-block was handled by flush; this covers
-        # the case where open fired and close is the natural EOS — already
-        # handled by flush's exit event). Defensive.
-        if _thinking_started and collected_thinking and event_callback:
-            # Ensure UI gets a final done with the full text, idempotent if dup.
-            pass  # flush already handled it
-
-    full_text = "".join(collected_text)
-
-    # SSE stream has fully drained — release the provider queue slot so the
-    # next chat/delegate can start its LLM call while we run tools locally.
-    # Tool execution + the recursive send_message re-acquire on their own.
-    _release_once()
-
-    # Parse gemma4-style tool calls from raw text (oMLX doesn't convert these)
-    if not tool_calls_map and "<|tool_call>" in full_text:
-        parsed, cleaned = _parse_gemma_tool_calls(full_text)
-        if parsed:
-            for i, tc in enumerate(parsed):
-                tool_calls_map[i] = {
-                    "id": tc["id"],
-                    "name": tc["name"],
-                    "arguments": json.dumps(tc["input"]),
-                }
-            full_text = cleaned.strip()
-            collected_text = [full_text] if full_text else []
-
-    # Log cost for this API call
-    _log_call_cost(model, _usage_in, _usage_out, session_id, _tool_round, api_key=api_key)
-
-    # Emit usage event so callers can capture token counts
-    if event_callback:
-        event_callback("usage", {
-            "tokens_in": _usage_in,
-            "tokens_out": _usage_out,
-            "tool_round": _tool_round,
-        })
-
-    # End LLM trace span (OpenAI handler)
-    _llm_span_oai = getattr(_thread_local, 'current_trace_span', None)
-    if _trace_manager and _llm_span_oai and _llm_span_oai.get("type") == "llm_call":
-        _trace_manager.end_span(_llm_span_oai, status="ok",
-                                 tokens_in=_usage_in, tokens_out=_usage_out)
-
-    if not tool_calls_map:
-        # Intent-vs-action guard: catch "Now I'll write…/Let me search…" stalls.
-        # When finish_reason=stop, no tool calls, and the visible text is short
-        # AND announces a next action it didn't take — re-prompt once.
-        if (full_text
-                and _usage_out is not None and _usage_out < 100  # short stall, not a real reply
-                and _INTENT_ACTION_PATTERNS.search(full_text)):
-            _guard_count = getattr(_thread_local, '_intent_action_recovery_count', 0)
-            if _guard_count < _INTENT_ACTION_RECOVERY_LIMIT:
-                _thread_local._intent_action_recovery_count = _guard_count + 1
-                if event_callback:
-                    event_callback("intent_action_guard", {
-                        "attempt": _guard_count + 1,
-                        "max_attempts": _INTENT_ACTION_RECOVERY_LIMIT,
-                        "stalled_text": full_text[-200:],
-                    })
-                print(f"[intent-action guard: stall detected, re-prompting (attempt "
-                      f"{_guard_count + 1}/{_INTENT_ACTION_RECOVERY_LIMIT})]", file=sys.stderr)
-                messages.append({"role": "assistant", "content": full_text})
-                messages.append({"role": "user", "content": _INTENT_ACTION_RESUME_MSG})
-                return send_message(messages, model, api_key, base_url,
-                                    silent=silent, tools=tools, escape_watcher=escape_watcher,
-                                    _tool_round=_tool_round, event_callback=event_callback,
-                                    inference_params=inference_params, session_id=session_id)
-        if not silent and full_text:
-            print()
-        # End request trace span for final response
-        _req_span_oai = getattr(_thread_local, 'request_trace_span', None)
-        if _trace_manager and _req_span_oai:
-            _trace_manager.end_span(_req_span_oai, status="ok",
-                                     tokens_in=_usage_in, tokens_out=_usage_out)
-            _thread_local.request_trace_span = None
-        # Reset recovery counter on successful completion
-        _thread_local._intent_action_recovery_count = 0
-        return full_text
-
-    if full_text:
-        print()
-
-    # Build assistant message with tool_calls
-    assistant_msg = {"role": "assistant", "content": full_text or None}
-    tc_list = []
-    for idx in sorted(tool_calls_map.keys()):
-        tc = tool_calls_map[idx]
-        tc_list.append({
-            "id": tc["id"],
-            "type": "function",
-            "function": {"name": tc["name"], "arguments": tc["arguments"]},
-        })
-    assistant_msg["tool_calls"] = tc_list
-    messages.append(assistant_msg)
-
-    # Execute tools with concurrent-safe parallelism (Phase 5)
-    batch_calls = []
-    for tc in tc_list:
-        try:
-            args = json.loads(tc["function"]["arguments"])
-        except json.JSONDecodeError:
-            args = {}
-        batch_calls.append({"id": tc["id"], "name": tc["function"]["name"], "input": args})
-
-    batch_results = _execute_tools_batch(batch_calls, event_callback=event_callback, tool_round=_tool_round)
-
-    # Immediately compact large tool call arguments (e.g. python_exec code)
-    # The model already knows what it wrote — no need to re-send on the next turn
-    for tc in assistant_msg.get("tool_calls", []):
-        fn_name = tc.get("function", {}).get("name", "")
-        arg_key = _COMPACT_TOOL_ARGS.get(fn_name)
-        if arg_key:
-            try:
-                args = json.loads(tc["function"]["arguments"])
-                val = str(args.get(arg_key, ""))
-                if len(val) > 50:
-                    args[arg_key] = f"[{len(val)} chars — see tool result]"
-                    tc["function"]["arguments"] = json.dumps(args)
-            except (json.JSONDecodeError, KeyError):
-                pass
-
-    for br in batch_results:
-        sanitized = _sanitize_tool_result(
-            next((bc["name"] for bc in batch_calls if bc["id"] == br["tool_use_id"]), ""),
-            br["result"],
-        )
-        # Extract MCP images (both _mcp_images blocks and data: URIs) → artifacts
-        sanitized = _extract_and_save_mcp_blobs_direct(sanitized, session_id)
-
-        messages.append({
-            "role": "tool",
-            "tool_call_id": br["tool_use_id"],
-            "content": sanitized,
-        })
-
-    # Run middleware pipeline (context management, compaction, cancel check)
-    _sid = session_id or getattr(_thread_local, 'current_session_id', None) or ""
-    messages, should_continue = _run_middleware(
-        messages, _tool_round, event_callback,
-        model=model, api_key=api_key, base_url=base_url,
-        session_id=_sid, escape_watcher=escape_watcher,
-    )
-
-    return send_message(messages, model, api_key, base_url,
-                        silent=silent, tools=tools, escape_watcher=escape_watcher,
-                        _tool_round=_tool_round + 1, event_callback=event_callback,
-                        inference_params=inference_params, session_id=session_id)
-
-
-
-
-def _classify_error_transient(error_info: dict | None) -> bool:
-    """Check if the last send error is transient (retryable) vs permanent."""
-    if not error_info:
-        return True  # Unknown error, assume transient
-    if error_info.get("permanent"):
-        return False
-    code = error_info.get("code", 0)
-    # Transient: 429, 500, 502, 503, 504, 529, connection errors (code=0)
-    return code in {0, 429, 500, 502, 503, 504, 529}
-
-
-def _retry_with_backoff(messages, model, api_key, base_url,
-                        silent, tools, escape_watcher, event_callback,
-                        inference_params, session_id, max_retries=2):
-    """Try sending a message with exponential backoff retries for transient errors.
-
-    Returns (result, last_error_info). result is None if all retries failed.
-    """
-    _thread_local._last_send_error = None
-    result = send_message(messages, model, api_key, base_url,
-                          silent=silent, tools=tools, escape_watcher=escape_watcher,
-                          event_callback=event_callback,
-                          inference_params=inference_params,
-                          session_id=session_id)
-    if result is not None:
-        return result, None
-
-    error_info = getattr(_thread_local, '_last_send_error', None)
-    # If permanent error, don't retry
-    if not _classify_error_transient(error_info):
-        return None, error_info
-
-    # Retry with exponential backoff
-    for attempt in range(1, max_retries + 1):
-        delay = min(1.0 * (2 ** (attempt - 1)), 30.0) + random.uniform(0, 0.5)
-        error_msg = (error_info or {}).get("message", "unknown error")
-        print(f"  Retrying {model} in {delay:.1f}s (attempt {attempt}/{max_retries}, error: {error_msg})", flush=True)
-        if event_callback:
-            event_callback("fallback", {
-                "status": "retry",
-                "model": model,
-                "attempt": attempt,
-                "max_retries": max_retries,
-                "delay": round(delay, 1),
-                "reason": error_msg,
-            })
-        time.sleep(delay)
-
-        # Check for cancellation
-        if escape_watcher and escape_watcher.cancelled:
-            from claude_cli import TaskCancelled
-            raise TaskCancelled()
-
-        _thread_local._last_send_error = None
-        result = send_message(messages, model, api_key, base_url,
-                              silent=silent, tools=tools, escape_watcher=escape_watcher,
-                              event_callback=event_callback,
-                              inference_params=inference_params,
-                              session_id=session_id)
-        if result is not None:
-            return result, None
-
-        error_info = getattr(_thread_local, '_last_send_error', None)
-        if not _classify_error_transient(error_info):
-            break  # Permanent error, stop retrying
-
-    return None, error_info
-
-
-def send_message_with_fallback(messages: list[dict], model: str, api_key: str,
-                               base_url: str,
-                               silent: bool = False,
-                               tools: bool = True,
-                               escape_watcher=None,
-                               event_callback=None,
-                               provider_resolver=None,
-                               inference_params: dict | None = None,
-                               purpose: str | None = None,
-                               session_id: str | None = None) -> str | None:
-    """Send messages with retry + fallback chain.
-
-    Retry logic: transient errors (502, 503, 429, timeout) retry 2x with exponential backoff.
-    Permanent errors (400, 401, 404) skip retries and go straight to fallback.
-    Fallbacks field in _models_config: ordered list of fallback model IDs.
-    If provider_resolver is provided, it's called with (model) -> {api_key, base_url}.
-    Emits ("fallback", {...}) events via event_callback for UI display.
-    """
-    # Track which model actually responded (for done event)
-    _thread_local._fallback_model_used = None
-
-    # Snapshot message count before primary attempt — if it fails mid-tool-loop,
-    # intermediate messages must be stripped before trying fallback models
-    msg_count_original = len(messages)
-
-    # Try primary model with retries
-    result, error_info = _retry_with_backoff(
-        messages, model, api_key, base_url,
-        silent, tools, escape_watcher, event_callback,
-        inference_params, session_id, max_retries=2)
-    if result is not None:
-        return result
-
-    # Strip any intermediate tool-loop messages from failed primary attempt
-    if len(messages) > msg_count_original:
-        del messages[msg_count_original:]
-
-    primary_error = (error_info or {}).get("message", "unknown error")
-
-    # Build fallback list — use explicit fallbacks from config, then capability-aware auto-fallback
-    fallback_models = []
-    if _models_config:
-        model_cfg = _models_config.get(model, {})
-        explicit_fallbacks = model_cfg.get("fallbacks", [])
-        if explicit_fallbacks:
-            fallback_models = list(explicit_fallbacks)
-        else:
-            # Auto-build fallback order: same provider first, then by priority
-            failed_provider = model_cfg.get("provider", "")
-            failed_caps = set(model_cfg.get("capabilities", []))
-            candidates = []
-            for mid, cfg in _models_config.items():
-                if mid == model or not cfg.get("enabled", True):
-                    continue
-                same_provider = 1 if cfg.get("provider") == failed_provider else 0
-                matching_caps = len(failed_caps & set(cfg.get("capabilities", [])))
-                priority = cfg.get("priority", 0)
-                # Sort key: same provider first, then capability match, then priority
-                candidates.append((mid, same_provider, matching_caps, priority))
-            candidates.sort(key=lambda x: (x[1], x[2], x[3]), reverse=True)
-            fallback_models = [mid for mid, _, _, _ in candidates]
-    else:
-        fallback_models = get_available_models(api_key, base_url)
-
-    if not fallback_models:
-        msg = f"Error: Model '{model}' is not available and no fallback models found."
-        print(msg, file=sys.stderr)
-        if event_callback:
-            raise RuntimeError(msg)
-        sys.exit(1)
-
-    tried_models = {model}
-    for fallback_model in fallback_models:
-        if fallback_model in tried_models:
-            continue
-        tried_models.add(fallback_model)
-
-        # Re-resolve provider for fallback model
-        fb_api_key, fb_base_url = api_key, base_url
-        if provider_resolver:
-            try:
-                prov = provider_resolver(fallback_model)
-                fb_api_key = prov.get("api_key", api_key)
-                fb_base_url = prov.get("base_url", base_url)
-            except Exception:
-                continue
-
-        print(f"Note: Model '{model}' failed, trying fallback '{fallback_model}'.", flush=True)
-        if event_callback:
-            event_callback("fallback", {
-                "status": "switch",
-                "from": model,
-                "to": fallback_model,
-                "reason": primary_error,
-            })
-
-        fb_params = get_inference_params(fallback_model, purpose)
-        # Snapshot message count: if the fallback fails mid-tool-loop, intermediate
-        # messages will corrupt the session (thinking blocks with invalid signatures).
-        msg_count_before = len(messages)
-        result, fb_error = _retry_with_backoff(
-            messages, fallback_model, fb_api_key, fb_base_url,
-            silent, tools, escape_watcher, event_callback,
-            fb_params, session_id, max_retries=1)
-        if result is not None:
-            # Strip intermediate tool-loop messages appended by the fallback model.
-            # The final text reply is returned; server adds it properly to session.
-            if len(messages) > msg_count_before:
-                del messages[msg_count_before:]
-            _thread_local._fallback_model_used = fallback_model
-            # Log fallback event to cost tracker
-            if _cost_tracker:
-                try:
-                    agent = getattr(_thread_local, 'current_agent', None) or _current_agent
-                    agent_id = agent.agent_id if agent else "main"
-                    logging.info(f"Fallback: {model} -> {fallback_model} for agent {agent_id} (reason: {primary_error})")
-                except Exception:
-                    pass
-            return result
-
-    msg = f"Error: No working models found. Tried: {', '.join(tried_models)}"
-    print(msg, file=sys.stderr)
-    if event_callback:
-        raise RuntimeError(msg)
-    sys.exit(1)
-
-
-# --- TUI helpers ---
 
 def _draw_status_bar(model: str, history: list[dict] | None = None,
                      max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS) -> None:
@@ -26431,12 +25041,15 @@ def main():
     except Exception:
         pass  # Fall through to direct API
 
-    # Fallback: direct API call
+    # Fallback: direct API call via sidecar
     if reply is None:
-        messages = [{"role": "user", "content": args.message}]
-        reply = send_message_with_fallback(
-            messages, args.model, args.api_key, args.base_url,
-            silent=True)
+        from handlers import sidecar_proxy as _sidecar_proxy
+        _res = _sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": args.message}],
+            model=args.model,
+            agent_id=getattr(args, "agent", "main") or "main",
+        )
+        reply = _res.get("reply") or ""
     if reply:
         print(render_markdown(reply))
 
@@ -27243,11 +25856,14 @@ def _run_interactive(args):
                 except Exception:
                     pass  # Fall through to direct API
 
-                # Fallback: direct API call
+                # Fallback: direct API call via sidecar
                 if not _sdk_ok and not cancelled:
-                    reply = send_message_with_fallback(
-                        history, current_model, args.api_key, args.base_url,
-                        silent=True, escape_watcher=escape_watcher)
+                    from handlers import sidecar_proxy as _sidecar_proxy
+                    _res = _sidecar_proxy.background_call(
+                        messages=history, model=current_model,
+                        agent_id=getattr(args, "agent", "main") or "main",
+                    )
+                    reply = _res.get("reply") or ""
             except TaskCancelled:
                 cancelled = True
                 reply = None
