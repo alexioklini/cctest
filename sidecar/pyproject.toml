@@ -1,0 +1,8 @@
+[project]
+name = "brain-sidecar"
+version = "0.1.0"
+description = "Anthropic SDK sidecar for Brain Agent. Runs in an isolated venv so the SDK never imports brain.py / claude_cli."
+requires-python = ">=3.11"
+dependencies = [
+  "anthropic>=0.101.0",
+]

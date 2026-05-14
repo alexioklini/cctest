@@ -10,6 +10,7 @@ import threading
 import time
 
 import brain as engine
+from handlers import sidecar_proxy
 
 
 class ChatHandlerMixin:
@@ -976,20 +977,85 @@ class ChatHandlerMixin:
                 # Guided Prompt Execution: for models with guided_execution=true,
                 # decompose into subtasks, run each sequentially, last task = final answer.
                 # When guided execution returns is_final=True, skip the main LLM call.
+                # Skipped entirely when the sidecar is in charge (Phase 2+):
+                # guided execution is deleted in Phase 5 along with send_message.
                 reply = None
-                _gran = engine._should_guide(session.model, True) if message else None
-                if _gran:
-                    _guided_answer, _guided_final = engine.run_guided_execution(
-                        user_message=message,
+                _use_sidecar = sidecar_proxy.sidecar_enabled()
+                if not _use_sidecar:
+                    _gran = engine._should_guide(session.model, True) if message else None
+                    if _gran:
+                        _guided_answer, _guided_final = engine.run_guided_execution(
+                            user_message=message,
+                            model=session.model,
+                            session_id=sid,
+                            event_callback=event_callback,
+                            cancel_token=session.cancel_token,
+                            inference_params=inf_params,
+                            granularity=_gran,
+                        )
+                        if _guided_final and _guided_answer:
+                            reply = _guided_answer
+
+                if reply is None and _use_sidecar:
+                    # --- Sidecar path: build the system prompt, hand the loop
+                    # over to the Anthropic SDK in the sidecar process. The
+                    # event_callback translates sidecar SSE → Brain's existing
+                    # LiveStream vocabulary, so persistence, references,
+                    # citation validation all stay on this thread unchanged.
+                    _allowed = engine._get_agent_tool_names(session.agent_id)
+                    _system_prompt = engine._build_system_prompt(
+                        include_memory_summary=True, mode="chat")
+                    _tool_context = {
+                        "session_id": sid,
+                        "agent_id": session.agent_id,
+                        "user_id": session.user_id or "",
+                        "team_ids": list(getattr(engine._thread_local, "current_team_ids", []) or []),
+                        "project": getattr(engine._thread_local, "project", "") or "",
+                        "note_context": getattr(engine._thread_local, "note_context", None),
+                        "workflow_run_id": getattr(engine._thread_local, "workflow_run_id", "") or "",
+                        "plan_mode": bool(getattr(engine._thread_local, "plan_mode", False)),
+                        "research_mode_override": getattr(engine._thread_local, "research_mode_override", None),
+                        "execution_overrides": getattr(engine._thread_local, "execution_overrides", None) or {},
+                        "attachment_image_model": getattr(engine._thread_local, "attachment_image_model", "") or "",
+                        "caveman_chat": int(getattr(engine._thread_local, "caveman_chat", 0) or 0),
+                        "caveman_system": int(getattr(engine._thread_local, "caveman_system", 0) or 0),
+                    }
+                    _sampling = {
+                        "temperature": inf_params.get("temperature"),
+                        "top_p": inf_params.get("top_p"),
+                        "top_k": inf_params.get("top_k"),
+                        "stop_sequences": inf_params.get("stop") or inf_params.get("stop_sequences"),
+                    }
+                    _max_tokens = int(inf_params.get("max_tokens", 16000) or 16000)
+                    _agent_cfg = session.agent.config or {}
+                    _max_rounds = int((_agent_cfg.get("limits") or {}).get("max_tool_rounds", 25) or 25)
+                    _result = sidecar_proxy.run_turn(
+                        messages=session.messages,
                         model=session.model,
-                        session_id=sid,
+                        api_key=session.api_key,
+                        base_url=session.base_url,
+                        system_prompt=_system_prompt,
+                        allowed_tools=_allowed,
+                        tool_context=_tool_context,
+                        sampling=_sampling,
+                        thinking_level=(thinking_level if thinking_level and thinking_level != "none" else None),
+                        max_tokens=_max_tokens,
+                        max_rounds=_max_rounds,
                         event_callback=event_callback,
                         cancel_token=session.cancel_token,
-                        inference_params=inf_params,
-                        granularity=_gran,
                     )
-                    if _guided_final and _guided_answer:
-                        reply = _guided_answer
+                    # On sidecar error: surface the message to the client AS PART
+                    # of the assistant reply, but stay on the happy path so the
+                    # downstream `done` event still fires. Raising here would
+                    # leave HTTP clients that only listen for `done` blocked.
+                    _se = _result.get("error")
+                    _sr = _result.get("reply") or ""
+                    if _se and not _sr:
+                        reply = f"*(Sidecar error: {str(_se)[:300]})*"
+                    elif _se and _sr:
+                        reply = _sr + f"\n\n*(Sidecar error after partial: {str(_se)[:200]})*"
+                    else:
+                        reply = _sr
 
                 if reply is None:
                     reply = engine.send_message_with_fallback(

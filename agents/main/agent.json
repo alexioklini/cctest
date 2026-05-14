@@ -1,6 +1,6 @@
 {
   "description": "General-purpose main agent",
-  "model": "Mistral/mistral-medium-3.5",
+  "model": "CLIProxyAPI/mistral-medium-3.5",
   "avatar": "captain",
   "display_name": "Main",
   "memory_summary": {
@@ -46,20 +46,19 @@
       "git",
       "scheduler",
       "skills",
-      "nodes",
-      "code_exec",
-      "image_gen"
+      "nodes"
     ],
     "include_tools_guide": true,
     "include_memory_summary": true,
     "memory_summary_cap": 2000,
-    "compact_threshold": 0.7,
+    "compact_threshold": null,
     "scheduled_task_tools": true,
     "deferred_tool_groups": [
       "email",
       "documents",
       "code_graph",
-      "scheduler"
+      "scheduler",
+      "delegation"
     ]
   },
   "paused": false,
@@ -72,7 +71,7 @@
   },
   "next_prompt_suggestions": {
     "enabled": true,
-    "model": "mistral-vibe-cli-fast",
+    "model": "CLIProxyAPI/mistral-medium-3.5",
     "max_words": 15
   }
 }

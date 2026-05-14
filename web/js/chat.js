@@ -105,25 +105,26 @@ async function sendMessage() {
     }
   }
 
-  // GDPR/PII pre-submit check. Each finding carries its own action (per the
-  // category policy): 'ignore' never reaches us (filtered during scan), 'warn'
-  // triggers the confirmation modal, 'block' refuses unless a local model is
-  // active. Skipped entirely when the feature is disabled or suppressed.
+  // GDPR/PII pre-submit check. When the scanner flags any personal data in the
+  // outgoing message or its text attachments, an action modal pops up listing
+  // exactly which fragments tripped which detector and asks how to proceed.
+  // Skipped entirely when the feature is disabled or suppressed for this chat.
   if (state.piiScannerEnabled !== false && !sessionStorage.getItem('pii-suppress:' + (chat.sessionId || '_new'))) {
     const scan = PIIScanner.scanPayload(text, state._pendingFiles);
     if (scan.findings.length) {
-      if (scan.worstAction === 'block') {
+      const localActive = isModelLocal(chat.model || '');
+      const verdict = await gdprActionModal(scan, chat, localActive);
+      if (verdict === 'cancel') return;
+      if (verdict === 'local') {
         piiEnsureLocalModel();
-        const curModel = chat.model || '';
-        if (!curModel || !isModelLocal(curModel)) {
-          showToast('GDPR block: high-severity personal data detected. Select a local model before sending.', true);
+        if (!isModelLocal(chat.model || '')) {
+          showToast('No local model available — add or enable one in Settings to send this message.', true);
           return;
         }
-        // Local model is selected — data stays on-prem, no confirm modal.
-      } else if (scan.worstAction === 'warn') {
-        const go = await confirmPIIBeforeSend(scan, chat);
-        if (!go) return;
+        // A local model is now selected — data stays on-prem; fall through.
       }
+      // 'send' falls through. The anonymisation verdicts are not wired yet
+      // (their buttons are disabled), so they can't reach this point.
     }
   }
 

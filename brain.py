@@ -944,12 +944,16 @@ TOOL_DEFINITIONS = [
     {
         "name": "mempalace_kg_search",
         "description": (
-            "Find every triple matching a predicate filter (and optionally a "
-            "subject or object substring). This is the contradiction- and "
-            "coverage-detection primitive: 'show me every requires triple "
-            "about retention', 'every cites triple referencing GDPR', 'every "
-            "forbids rule applied to employees'. Compare the returned set to "
-            "spot disagreements and gaps. Auto-scoped to the current project."
+            "Search the project's knowledge graph (subject-predicate-object "
+            "triples). Two modes:\n"
+            "  • STRUCTURED: pass `predicate` (and optionally `subject_contains`/"
+            "    `object_contains`) for exact-predicate match. Use for "
+            "    contradiction- and coverage-detection: 'every requires triple "
+            "    about retention', 'every cites triple referencing GDPR'.\n"
+            "  • FREE-TEXT: pass `query` (no predicate) for a substring scan "
+            "    across subject/predicate/object. Use when you don't know the "
+            "    predicate and just want any triple mentioning a topic.\n"
+            "Auto-scoped to the current project."
         ),
         "input_schema": {
             "type": "object",
@@ -957,26 +961,33 @@ TOOL_DEFINITIONS = [
                 "predicate": {
                     "type": "string",
                     "description": (
-                        "Required. The relation type — must be lowercase "
+                        "STRUCTURED mode. The relation type — must be lowercase "
                         "snake_case. Common: requires, forbids, permits, "
                         "defines, cites, applies_to, effective_from, "
                         "supersedes, responsible_party, condition, exception, "
                         "penalty."
                     ),
                 },
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "FREE-TEXT mode. Substring matched (case-insensitive) "
+                        "across subject, predicate, and object. Ignored when "
+                        "`predicate` is set."
+                    ),
+                },
                 "subject_contains": {
                     "type": "string",
                     "description": (
                         "Optional substring filter on the subject (case-"
-                        "insensitive). Use to narrow to a topic."
+                        "insensitive). Only used in STRUCTURED mode."
                     ),
                 },
                 "object_contains": {
                     "type": "string",
                     "description": (
                         "Optional substring filter on the object (case-"
-                        "insensitive). Use to find e.g. all rules mentioning "
-                        "'7 Jahre' or 'GDPR'."
+                        "insensitive). Only used in STRUCTURED mode."
                     ),
                 },
                 "limit": {
@@ -986,7 +997,6 @@ TOOL_DEFINITIONS = [
                     "maximum": 200,
                 },
             },
-            "required": ["predicate"],
         },
     },
     {
@@ -1699,7 +1709,7 @@ TOKEN_CONFIG_DEFAULTS = {
     "scheduled_task_tools": True,  # Include full tool schema in scheduled tasks
     "mcp_tool_filter": None,       # None = all MCP tools; list of patterns (exact or fnmatch glob) to allow
     "mcp_tool_exclude": None,      # None = exclude nothing; list of patterns applied after filter
-    "deferred_tool_groups": ["email", "documents", "code_graph", "scheduler"],  # Groups loaded on-demand via tool_search
+    "deferred_tool_groups": ["email", "documents", "code_graph", "scheduler", "delegation"],  # Groups loaded on-demand via tool_search
 }
 
 
@@ -1751,7 +1761,7 @@ MODEL_PROFILES = {
         },
         "token_config": {
             "include_tools_guide": True,
-            "deferred_tool_groups": ["email", "documents", "code_graph", "scheduler"],
+            "deferred_tool_groups": ["email", "documents", "code_graph", "scheduler", "delegation"],
             "compact_threshold": 0.70,
         },
         "limits": {
@@ -1771,7 +1781,7 @@ MODEL_PROFILES = {
         "token_config": {
             "include_tools_guide": False,
             "deferred_tool_groups": ["email", "documents", "code_graph",
-                                     "scheduler", "nodes", "git"],
+                                     "scheduler", "nodes", "git", "delegation"],
             "compact_threshold": 0.50,
         },
         "limits": {
@@ -2220,7 +2230,7 @@ def _get_artifact_session_folder(session_id: str) -> str:
     if cached:
         return cached
     from datetime import datetime as _dt
-    folder = f"{_dt.now().strftime('%Y-%m-%d')}_{session_id[:8]}"
+    folder = f"{_dt.now().strftime('%Y-%m-%d')}_{session_id}"
     setattr(_thread_local, cache_key, folder)
     return folder
 
@@ -4896,8 +4906,15 @@ def tool_mempalace_query(args: dict) -> str:
     # *.pdf.md` companions) but the source has other chunks with rarer query
     # terms, pull one of those instead. We look for query tokens NOT present
     # in the source filename — those are the user's real subject keywords.
+    #
+    # Gated via `mempalace.chunk_substitute.enabled` (default off). The pass
+    # can create cite-vs-content drift: the model sees text from chunk B but
+    # the drawer carries chunk A's metadata. Eval 2026-05-14 showed Brain
+    # mean improves with substitution off (matches the SDK-harness baseline).
+    _cs_enabled = bool(((cfg.get("chunk_substitute") or {})
+                        if isinstance(cfg, dict) else {}).get("enabled", False))
     try:
-        if deduped and palace_path:
+        if _cs_enabled and deduped and palace_path:
             from mempalace.palace import get_collection as _gc
             _qtokens = re.findall(r"\w{3,}", query.lower(), flags=re.UNICODE)
             # German-compound-aware "rare" detection: a query token is "rare"
@@ -5269,13 +5286,31 @@ def tool_mempalace_kg_query(args: dict) -> str:
 
 
 def tool_mempalace_kg_search(args: dict) -> str:
-    """Find triples matching a predicate filter, scoped to the project."""
+    """Find triples in the project KG.
+
+    Two modes — pick by intent:
+
+    1) **Structured mode** (`predicate` set): exact predicate match, optionally
+       narrowed by `subject_contains` / `object_contains`. Use this for
+       contradiction- and coverage-detection: 'every requires triple about
+       retention', 'every cites triple referencing GDPR'.
+
+    2) **Free-text mode** (`query` set, no `predicate`): substring match across
+       subject OR predicate OR object. Use this when you don't know which
+       predicate to ask for and just want any triple mentioning a topic.
+
+    Either `predicate` or `query` must be set. Both can be combined: when
+    `predicate` is set, `query` is ignored.
+    """
     palace_path, prefixes, err = _kg_resolve_project_scope()
     if err:
         return _err(err)
     predicate = (args.get("predicate") or "").strip().lower().replace(" ", "_")
-    if not predicate:
-        return _err("mempalace_kg_search: 'predicate' is required")
+    free_query = (args.get("query") or "").strip()
+    if not predicate and not free_query:
+        return _err(
+            "mempalace_kg_search: one of 'predicate' (structured mode) or "
+            "'query' (free-text substring mode) is required")
     subj_q = (args.get("subject_contains") or "").strip().lower()
     obj_q = (args.get("object_contains") or "").strip().lower()
     try:
@@ -5299,8 +5334,7 @@ def tool_mempalace_kg_search(args: dict) -> str:
     try:
         # Build source_file scope filter from the project's prefixes.
         scope_clause = " OR ".join(["source_file LIKE ? || '%'"] * len(prefixes))
-        params: list = list(prefixes)
-        sql = (
+        sql_head = (
             "SELECT t.subject AS sub_id, e1.name AS sub_name, "
             "       t.predicate, "
             "       t.object AS obj_id, e2.name AS obj_name, "
@@ -5312,15 +5346,32 @@ def tool_mempalace_kg_search(args: dict) -> str:
             "FROM triples t "
             "LEFT JOIN entities e1 ON t.subject = e1.id "
             "LEFT JOIN entities e2 ON t.object = e2.id "
-            f"WHERE t.predicate = ? AND ({scope_clause}) AND t.valid_to IS NULL "
         )
-        params = [predicate] + list(prefixes)
-        if subj_q:
-            sql += " AND LOWER(e1.name) LIKE ? "
-            params.append(f"%{subj_q}%")
-        if obj_q:
-            sql += " AND LOWER(e2.name) LIKE ? "
-            params.append(f"%{obj_q}%")
+        if predicate:
+            # Structured mode — exact predicate match.
+            sql = sql_head + (
+                f"WHERE t.predicate = ? AND ({scope_clause}) "
+                "AND t.valid_to IS NULL "
+            )
+            params: list = [predicate] + list(prefixes)
+            if subj_q:
+                sql += " AND LOWER(e1.name) LIKE ? "
+                params.append(f"%{subj_q}%")
+            if obj_q:
+                sql += " AND LOWER(e2.name) LIKE ? "
+                params.append(f"%{obj_q}%")
+        else:
+            # Free-text mode — substring across subject_name / predicate / object_name.
+            # COALESCE so entity-table absence (rows where t.subject is the literal
+            # string itself rather than an entity id) still scans.
+            like = f"%{free_query.lower()}%"
+            sql = sql_head + (
+                f"WHERE ({scope_clause}) AND t.valid_to IS NULL "
+                "AND (LOWER(COALESCE(e1.name, t.subject)) LIKE ? "
+                "     OR LOWER(t.predicate) LIKE ? "
+                "     OR LOWER(COALESCE(e2.name, t.object)) LIKE ?) "
+            )
+            params = list(prefixes) + [like, like, like]
         sql += " ORDER BY t.confidence DESC, t.extracted_at DESC LIMIT ?"
         params.append(limit)
         rows = conn.execute(sql, params).fetchall()
@@ -5340,7 +5391,9 @@ def tool_mempalace_kg_search(args: dict) -> str:
             "valid_from": r["valid_from"] or "",
         })
     return _ok({
-        "predicate": predicate,
+        "mode": "structured" if predicate else "free_text",
+        "predicate": predicate or None,
+        "query": free_query or None,
         "subject_contains": subj_q or None,
         "object_contains": obj_q or None,
         "count": len(triples),
@@ -11376,6 +11429,17 @@ MAX_DELEGATE_TOOL_ROUNDS = 10  # Limit for delegated/scheduled tasks (timeout is
 
 _MEMORY_TOOL_NAMES = {"memory_store", "memory_recall", "memory_delete", "memory_shared"}
 
+# Scheduled-task allowlist (Phase 3, 2026-05-14): matches the SDK harness
+# scheduled-task invocation byte-for-byte. Standalone harness drives
+# gemma-4-e4b to a real cited report with this exact 3-tool set; Brain's
+# 39-tool loadout (or even a 22-tool narrowed set) makes the same model
+# narrate-instead-of-call at write_file. The model doesn't have the
+# capacity to plan over 22 tools while also following a 6-step workflow.
+# Memory-summary tasks bypass this and use _MEMORY_TOOL_NAMES instead.
+_SCHEDULED_TASK_TOOLS = {
+    "exa_search", "web_fetch", "write_file",
+}
+
 
 def _resolve_delegate_tools(tools: bool | str) -> list:
     """Resolve tool definitions for _run_delegate based on tools parameter."""
@@ -15732,7 +15796,7 @@ class Scheduler:
                         # the sched-0 folder is reused. Better than crashing
                         # the whole scheduler thread.
         sched_session_id = f"sched-{run_id}" if run_id else f"sched-adhoc-{int(time.time())}"
-        artifact_folder_name = f"{datetime.datetime.now().strftime('%Y-%m-%d')}_{sched_session_id[:8]}"
+        artifact_folder_name = f"{datetime.datetime.now().strftime('%Y-%m-%d')}_{sched_session_id}"
 
         # Track this execution
         cancel_token = CancelToken()
@@ -15865,16 +15929,124 @@ class Scheduler:
             sched_tools = _get_token_config(agent_id).get("scheduled_task_tools", True)
             if name.startswith("_memory_summary_"):
                 sched_tools = "memory_only"
-            result_text = _run_delegate(messages, model, system_prompt,
-                                        memory_store=target_memory,
-                                        cancel_token=cancel_token,
-                                        event_callback=on_event,
-                                        inference_params=sched_inf,
-                                        tools=sched_tools,
-                                        session_id=sched_session_id) or ""
-            # Capture trace id set by _handle_openai_response so the History
-            # detail view can pivot from schedule_history.run_id → traces.
-            run_info["trace_id"] = getattr(_thread_local, 'trace_id', None)
+
+            # Sidecar path (Phase 3). When enabled, the agentic loop runs in the
+            # sidecar process via the Anthropic SDK; Brain only resolves provider,
+            # builds the tool list + sampling, dispatches tools, and persists the
+            # final reply. Falls back to _run_delegate when sidecar disabled or
+            # the provider can't be resolved.
+            from handlers import sidecar_proxy as _sidecar_proxy
+            _use_sidecar = _sidecar_proxy.sidecar_enabled()
+            _sidecar_blocked = False
+            if _use_sidecar:
+                # GDPR auto-fallback (same logic _run_delegate runs before its
+                # SDK call). Without this, scheduled tasks would skip the gate
+                # the native loop applies.
+                try:
+                    _gdpr_blobs = [system_prompt] if system_prompt else []
+                    for _m in messages:
+                        _c = _m.get("content") if isinstance(_m, dict) else None
+                        if isinstance(_c, str):
+                            _gdpr_blobs.append(_c)
+                    model = gdpr_pick_model_for_background(
+                        model, _gdpr_blobs, purpose="scheduled")
+                except GDPRBlockedError as _ge:
+                    result_text = f"[DELEGATION ERROR] {_ge}"
+                    status = "error"
+                    _sidecar_blocked = True
+
+            if _sidecar_blocked:
+                pass  # result_text + status already set from the GDPR block above
+            elif _use_sidecar:
+                _prov = resolve_provider_for_model(model)
+                if sched_tools == "memory_only":
+                    _allowed = set(_MEMORY_TOOL_NAMES)
+                elif sched_tools is False:
+                    _allowed = set()
+                else:
+                    # Scheduled tasks see a curated subset (file/doc/memory/kg/web)
+                    # so small local models (gemma-4-e4b, etc.) aren't drowned in
+                    # 39-tool schemas. Intersect with the agent's allowed set so
+                    # agents that already restrict further keep their limit.
+                    _agent_allowed = _get_agent_tool_names(agent_id)
+                    if _agent_allowed is None:
+                        _allowed = set(_SCHEDULED_TASK_TOOLS)
+                    else:
+                        _allowed = set(_SCHEDULED_TASK_TOOLS) & _agent_allowed
+
+                _tool_context = {
+                    "session_id": sched_session_id,
+                    "agent_id": agent_id,
+                    "user_id": (task_row.get("user_id") or ""),
+                    "team_ids": [],
+                    "project": "",  # schedules don't bind to a project today
+                    "note_context": None,
+                    "workflow_run_id": "",
+                    "plan_mode": False,
+                    "research_mode_override": None,
+                    "execution_overrides": {},
+                    "attachment_image_model": "",
+                    "caveman_chat": _task_caveman,
+                    "caveman_system": 0,
+                    "trace_id": "",
+                }
+                _sampling = {
+                    "temperature": sched_inf.get("temperature"),
+                    "top_p": sched_inf.get("top_p"),
+                    "top_k": sched_inf.get("top_k"),
+                    "stop_sequences": sched_inf.get("stop") or sched_inf.get("stop_sequences"),
+                }
+                _max_tokens = int(sched_inf.get("max_tokens") or get_model_max_output(model))
+                _agent_cfg = target.config or {}
+                _max_rounds = int((_agent_cfg.get("limits") or {}).get("max_tool_rounds", 25) or 25)
+                _thinking_level = sched_inf.get("thinking_level") if sched_inf.get("thinking") is not False else None
+
+                # Bridge sidecar SSE → on_event so tool_calls + tool_log keep updating.
+                def _sc_event(ev_type, data):
+                    if ev_type == "tool_call":
+                        on_event("tool_call", data)
+
+                _result = _sidecar_proxy.run_turn(
+                    messages=messages,
+                    model=model,
+                    api_key=_prov["api_key"],
+                    base_url=_prov["base_url"],
+                    system_prompt=system_prompt,
+                    allowed_tools=_allowed,
+                    tool_context=_tool_context,
+                    sampling=_sampling,
+                    thinking_level=_thinking_level,
+                    max_tokens=_max_tokens,
+                    max_rounds=_max_rounds,
+                    event_callback=_sc_event,
+                    cancel_token=cancel_token,
+                    timeout_s=float(task_timeout) + 60.0,
+                )
+                _sc_err = _result.get("error")
+                _sc_reply = _result.get("reply") or ""
+                if _sc_err and not _sc_reply:
+                    result_text = f"[DELEGATION ERROR] sidecar: {str(_sc_err)[:300]}"
+                    status = "error"
+                elif _sc_err and _sc_reply:
+                    result_text = _sc_reply + f"\n\n*(Sidecar error after partial: {str(_sc_err)[:200]})*"
+                else:
+                    result_text = _sc_reply
+                run_info["trace_id"] = _result.get("turn_id") or None
+                # Sidecar's tool_calls_total is authoritative; on_event may have
+                # missed start events if the worker died mid-turn.
+                run_info["tool_calls"] = max(
+                    run_info["tool_calls"], int(_result.get("tool_calls_total") or 0))
+            else:
+                result_text = _run_delegate(messages, model, system_prompt,
+                                            memory_store=target_memory,
+                                            cancel_token=cancel_token,
+                                            event_callback=on_event,
+                                            inference_params=sched_inf,
+                                            tools=sched_tools,
+                                            session_id=sched_session_id) or ""
+                # Capture trace id set by _handle_openai_response so the History
+                # detail view can pivot from schedule_history.run_id → traces.
+                run_info["trace_id"] = getattr(_thread_local, 'trace_id', None)
             # Check if _run_delegate returned an error string instead of raising.
             # Strip the redundant 'Delegation error: ' prefix and the trailing
             # colon-with-nothing-after that comes from bare-exception args, and
@@ -24631,41 +24803,55 @@ def _build_system_prompt(include_memory_summary: bool = True,
     # user message in send_message — keeping it OUT of the system prompt
     # preserves the warm-pool KV-prefix match across users.
     if mode == "scheduled":
-        # Scheduled tasks: noninteractive directive replaces all interactive framing.
-        _task_label = f"executing a scheduled task: '{task_name}'" if task_name else "executing a scheduled task"
-        system_instruction += (
-            f"You are agent '{agent_id}' {_task_label}.\n"
-            f"Current date and time: {_dt.now().strftime('%Y-%m-%d %H:%M')}\n"
-            f"Current working directory: {task_working_dir or cwd}\n"
-            f"Operating system: {os_name}\n\n"
-            "IMPORTANT RULES FOR SCHEDULED TASKS:\n"
-            "- This is a NON-INTERACTIVE run. There is no user watching and no one\n"
-            "  will answer clarifying questions. Do NOT ask for confirmation, do NOT\n"
-            "  offer menus of next steps, do NOT end with 'would you like me to...'.\n"
-            "- Execute every step the task describes, end-to-end. If the task says\n"
-            "  'send an email', you MUST call the email-sending tool before finishing\n"
-            "  — writing the file is not enough. If the task says 'post to slack',\n"
-            "  actually post. Follow through on every verb.\n"
-            "- When the task asks you to email a report or document, write the full\n"
-            "  content to a file first (write_file saves into the session artifact\n"
-            "  folder), then call gmail_send with the file path in `attachments` and\n"
-            "  a SHORT summary in `body`. Do not paste the whole report into the\n"
-            "  email body.\n"
-            "- Complete the task QUICKLY and CONCISELY. You have a limited number of tool calls.\n"
-            "- Do NOT repeat the same tool call. If a search returns results, use them — don't search again.\n"
-            "- Do NOT loop. One search per topic is enough. Summarize what you found.\n"
-            "- Provide a concise result summary within 3-5 tool calls maximum.\n"
-            "- If you can't find what you need in 2 searches, summarize what you have and stop.\n"
-            "- Your final assistant message is a log entry, not a reply to a user.\n"
-            "  Keep it short, state what you did and the outcome.\n\n"
+        # Scheduled tasks: harness-style lean prompt (~1.3 KB total). Validated
+        # against the standalone SDK harness — that prompt drove gemma-4-e4b
+        # to a real report 2/3 runs on the same task Brain's 7.5 KB prompt
+        # made it bail with <eos>. Skips soul.md, tools.md, DEFERRED block.
+        # Keeps the harness's 6-step workflow verbatim, plus a one-line
+        # email-followthrough hint for tasks that send emails.
+        _task_line = f" Task name: '{task_name}'." if task_name else ""
+        system_instruction = (
+            "You are an autonomous research assistant.\n"
+            f"Current date: {_dt.now().strftime('%Y-%m-%d')}. "
+            f"Working directory: {task_working_dir or cwd}.{_task_line}\n\n"
+            "Use `exa_search` to find relevant sources, `web_fetch` to read full "
+            "pages, and `write_file` to save the final deliverable.\n\n"
+            "## Workflow\n\n"
+            "1. Break the user's request into 2-4 sub-topics.\n"
+            "2. For each sub-topic, call `exa_search` with 2-5 focused keywords "
+            "(do not paste the entire question).\n"
+            "3. Pick the most promising 2-3 results per sub-topic and `web_fetch` them.\n"
+            "4. Synthesize across all fetched pages into a single Markdown report.\n"
+            "5. Save the report with `write_file` using the path the user specified "
+            "(default `report.md`). This is a TOOL CALL — emit the `write_file` "
+            "tool_use, not a description of what you will do. Your task is NOT "
+            "complete until `write_file` has actually been called and returned.\n"
+            "6. After `write_file` returns successfully, reply with a one-paragraph "
+            "confirmation including the file name. Do NOT say 'I will write' or "
+            "'I will proceed to write' — either call the tool now or you have failed "
+            "the task.\n\n"
+            "## Quality\n\n"
+            "- Cite sources inline as `[Title](URL)` next to each claim that came "
+            "from a fetched page.\n"
+            "- If a search returns nothing useful, try a different angle — do not "
+            "invent content.\n"
+            "- Do not exceed 6 `web_fetch` calls total; stop earlier if you have enough.\n"
+            "- The Markdown report must contain proper headings (`#`, `##`), bullet "
+            "lists, and inline links — not placeholder text.\n"
+            "- This is a NON-INTERACTIVE run: no user is watching. Do not ask "
+            "clarifying questions; do not end with 'would you like me to…'.\n"
+            "- If the task asks you to email or send the report, call the relevant "
+            "tool AFTER `write_file` — attach the file, do not paste its content "
+            "into the message body.\n"
         )
-        if task_working_dir:
-            system_instruction += (
-                f"WORKING DIRECTORY: This task should operate inside {task_working_dir}.\n"
-                "When you call `execute_command`, pass `cwd` set to that path (or a\n"
-                "subdirectory) unless the task says otherwise. File operations should\n"
-                "be relative to that directory.\n\n"
-            )
+        # Cache the lean prompt + return early — soul.md, tools.md, DEFERRED
+        # block, scheduler/MCP listings, agent registry are all skipped for
+        # scheduled mode. They each have a real cost on small local models
+        # (gemma-4-e4b silently emits <eos> when the prompt exceeds ~3-4 KB
+        # of policy text on top of the task itself).
+        _system_prompt_cache[cache_key] = (system_instruction, _time.time())
+        return _apply_system_prompt_postprocess(
+            system_instruction, caveman_system, caveman_chat, plan_mode)
     else:
         # Interactive chat: proactive framing, suppressed in project chats.
         # When a project is active, drop the "use tools proactively" framing —

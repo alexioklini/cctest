@@ -54,3 +54,11 @@ packaging/win/dist/
 # MemPalace per-project files (issue #185)
 mempalace.yaml
 entities.json
+
+# Local scratch / test artifacts (top-level)
+_data.duckdb
+Wiener_Privatbank_*.pdf
+wpb_2025_*.pdf
+wpb_2025_*.txt
+sidecar_sdk_report.html
+reports/

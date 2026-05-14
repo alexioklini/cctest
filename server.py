@@ -33,6 +33,7 @@ _QMD_PID_FILE = os.path.expanduser("~/.cache/qmd/mcp.pid")
 
 import brain as engine
 from server_lib import notifications as _notif_mod
+from server_lib import tool_mcp as _tool_mcp_mod
 from server_lib import auth as _auth_mod
 
 # --- Notification Manager (initialized in main()) ---
@@ -1040,7 +1041,10 @@ class BrainAgentHandler(
 
     # Paths that don't require auth
     _PUBLIC_GET_PATHS = {"/v1/status", "/v1/auth/me"}
-    _PUBLIC_POST_PATHS = {"/v1/auth/login", "/v1/auth/refresh"}
+    # /v1/tools/call has its own per-turn nonce auth (see server_lib/tool_mcp.py)
+    # and is reached only from the sidecar over localhost — so it's exempt from
+    # the user-auth gate. Bind to 127.0.0.1 only (see main()) to keep it safe.
+    _PUBLIC_POST_PATHS = {"/v1/auth/login", "/v1/auth/refresh", "/v1/tools/call"}
 
     # Admin-only paths. Entries ending in "/" match as prefix (any subpath is
     # admin-only). Exact paths match exactly. These gate config mutations --
@@ -1607,6 +1611,8 @@ class BrainAgentHandler(
             self._handle_chat()
         elif path == "/v1/chat/cancel":
             self._handle_cancel()
+        elif path == "/v1/tools/call":
+            _tool_mcp_mod.handle_tools_call(self)
         elif path == "/v1/sessions/manage":
             self._handle_manage_session()
         elif path == "/v1/agents/switch":
@@ -3039,6 +3045,7 @@ def main():
     attachments_cfg = file_config.get("attachments", {})
     server_config["attachment_image_model"] = attachments_cfg.get("image_model", "")
     server_config["gdpr_scanner"] = file_config.get("gdpr_scanner", {}) or {}
+    server_config["sidecar"] = file_config.get("sidecar", {}) or {}
 
     # Initialize models config
     existing_models = file_config.get("models")
@@ -3914,6 +3921,86 @@ def main():
             time.sleep(max(60, next_interval))
 
     threading.Thread(target=_mempalace_miner_loop, daemon=True, name="mempalace-miner").start()
+
+    # --- Sidecar supervisor (Phase 2) ---
+    # Auto-start the Anthropic-SDK sidecar subprocess and keep it alive.
+    # 3 crashes within 60s → stop auto-restarting and surface an error.
+    def _start_sidecar_supervisor():
+        import shutil
+        import subprocess
+
+        cfg_sc = server_config.get("sidecar") or {}
+        if not cfg_sc.get("auto_start", False):
+            print("[sidecar] auto_start disabled in config — supervisor not starting", flush=True)
+            return
+
+        url = (cfg_sc.get("url") or "http://127.0.0.1:8421").rstrip("/")
+        # Parse port from url (we control --port via CLI)
+        try:
+            from urllib.parse import urlparse
+            sidecar_port = urlparse(url).port or 8421
+        except Exception:
+            sidecar_port = 8421
+
+        venv_python = cfg_sc.get("venv_python") or ".venv_sidecar/bin/python"
+        repo_root = os.path.dirname(os.path.abspath(__file__))
+        venv_python_abs = (venv_python if os.path.isabs(venv_python)
+                           else os.path.join(repo_root, venv_python))
+        sidecar_script = os.path.join(repo_root, "sidecar", "sidecar.py")
+
+        if not os.path.isfile(venv_python_abs):
+            print(f"[sidecar] FATAL: venv python not found at {venv_python_abs}", flush=True)
+            print(f"[sidecar]   create it:  python3 -m venv .venv_sidecar && "
+                  f".venv_sidecar/bin/pip install anthropic", flush=True)
+            return
+        if not os.path.isfile(sidecar_script):
+            print(f"[sidecar] FATAL: sidecar.py missing at {sidecar_script}", flush=True)
+            return
+
+        crash_window: list[float] = []  # rolling list of crash timestamps
+
+        def _supervisor_loop():
+            while True:
+                try:
+                    print(f"[sidecar] launching {venv_python_abs} {sidecar_script} "
+                          f"--port {sidecar_port}", flush=True)
+                    proc = subprocess.Popen(
+                        [venv_python_abs, sidecar_script, "--port", str(sidecar_port)],
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        cwd=repo_root, bufsize=1,
+                        universal_newlines=True,
+                    )
+
+                    def _pump_logs(p):
+                        try:
+                            for line in p.stdout:
+                                sys.stdout.write(line)
+                                sys.stdout.flush()
+                        except Exception:
+                            pass
+
+                    threading.Thread(target=_pump_logs, args=(proc,),
+                                     daemon=True, name="sidecar-log-pump").start()
+                    rc = proc.wait()
+                    now = time.time()
+                    crash_window.append(now)
+                    crash_window[:] = [t for t in crash_window if now - t < 60.0]
+                    print(f"[sidecar] subprocess exited rc={rc}  "
+                          f"recent_crashes={len(crash_window)}/3", flush=True)
+                    if len(crash_window) >= 3:
+                        print(f"[sidecar] CIRCUIT BREAKER OPEN — 3 crashes in 60s. "
+                              f"Halting auto-restart.", flush=True)
+                        return
+                    time.sleep(2.0)
+                except Exception as e:
+                    print(f"[sidecar] supervisor exception: {type(e).__name__}: {e}",
+                          flush=True)
+                    time.sleep(5.0)
+
+        threading.Thread(target=_supervisor_loop, daemon=True,
+                         name="sidecar-supervisor").start()
+
+    _start_sidecar_supervisor()
 
     def _extract_references_from_tool_payload(tool_name, payload):
         """Turn a tool_result payload into a list of {title, url, snippet} dicts.

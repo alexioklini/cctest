@@ -68,7 +68,7 @@ function updateStatusBar() {
 
   document.getElementById('status-agent').textContent = state.activeAgentId || '';
   document.getElementById('status-model').textContent = '';
-  document.getElementById('status-session').textContent = chat.sessionId ? chat.sessionId.substring(0,8) : '';
+  document.getElementById('status-session').textContent = chat.sessionId ? (chat.sessionId.startsWith('sched-') ? chat.sessionId : chat.sessionId.substring(0,8)) : '';
 
   // Save-to-memory toggle: green=on, amber=auto, grey=off
   // Mirror the same state to both chat- and welcome-screen composers.
@@ -218,16 +218,32 @@ function updateStatusBar() {
   applyStatusBarRoleVisibility();
 }
 
-/* ─── PII pre-submit modal ─────────────────────────────────── */
-// Shows a blocking modal listing detected PII categories and asks the user to
-// confirm before sending. Returns a Promise<bool>: true = send anyway,
-// false = cancelled.
-function confirmPIIBeforeSend(scan, chat) {
+/* ─── GDPR / PII detection modal ───────────────────────────── */
+// Auto-displayed during an interactive chat when the PII scanner flags personal
+// data in the outgoing message or its text attachments. Lists exactly which
+// fragments tripped which detector (partially masked), then offers a set of
+// ways forward. Resolves to a string verdict:
+//   'cancel'           — abort, don't send
+//   'local'            — switch to a local model and send unchanged
+//   'send'             — send to the selected model anyway (only when not a
+//                        hard block, or a local model is already active)
+//   'auto-anon'        — (not yet implemented)
+//   'manual-anon'      — (not yet implemented)
+//   'auto-anon-deanon' — (not yet implemented)
+// `localActive` = true when the currently selected model is already local
+// (so the data would stay on-prem); controls whether a hard block can proceed.
+function gdprActionModal(scan, chat, localActive) {
   return new Promise((resolve) => {
+    const isBlock = scan.worstAction === 'block';
+    // A hard block can only proceed if a local model is already active. Cloud +
+    // block → the user must pick "execute via local model" (or cancel/anonymise
+    // once that lands). Warn-level (or block+local) keeps "send anyway".
+    const canSend = !isBlock || localActive;
     // Inject the PII modal's one-off styles once per page lifetime.
-    if (!document.getElementById('pii-modal-styles')) {
+    if (!document.getElementById('pii-modal-styles-v2')) {
+      document.getElementById('pii-modal-styles')?.remove();
       const style = document.createElement('style');
-      style.id = 'pii-modal-styles';
+      style.id = 'pii-modal-styles-v2';
       style.textContent = `
         @keyframes pii-fade-in   { from{opacity:0} to{opacity:1} }
         @keyframes pii-pop-in    { from{opacity:0;transform:translateY(12px) scale(.97)} to{opacity:1;transform:translateY(0) scale(1)} }
@@ -258,6 +274,10 @@ function confirmPIIBeforeSend(scan, chat) {
           color:#78350f;
           overflow:hidden;
         }
+        .pii-banner.is-block {
+          background:linear-gradient(135deg, #fee2e2 0%, #fecaca 55%, #fca5a5 100%);
+          color:#7f1d1d;
+        }
         .pii-banner::after {
           content:''; position:absolute; right:-40px; top:-40px;
           width:180px; height:180px; border-radius:50%;
@@ -274,14 +294,18 @@ function confirmPIIBeforeSend(scan, chat) {
           box-shadow:0 4px 12px rgba(180,83,9,.35);
           animation:pii-shield .45s cubic-bezier(.2,.8,.2,1);
         }
+        .pii-banner.is-block .pii-shield { background:#b91c1c; box-shadow:0 4px 12px rgba(185,28,28,.35); }
         .pii-title { font-size:18px; font-weight:600; letter-spacing:-.01em; line-height:1.25; margin:0; }
         .pii-subtitle { font-size:13px; margin:3px 0 0; color:#92400e; opacity:.9; }
+        .pii-banner.is-block .pii-subtitle { color:#991b1b; }
         .pii-hero {
           display:flex; align-items:baseline; gap:10px;
           padding:14px 28px; background:#fff7ed;
           border-bottom:1px solid rgba(180,83,9,.14);
         }
+        .pii-hero.is-block { background:#fef2f2; border-bottom-color:rgba(185,28,28,.14); }
         .pii-hero-number { font-size:32px; font-weight:600; color:#b45309; letter-spacing:-.02em; line-height:1; }
+        .pii-hero.is-block .pii-hero-number { color:#b91c1c; }
         .pii-hero-label { font-size:13px; color:var(--text-300); }
         .pii-body { flex:1 1 auto; overflow-y:auto; padding:16px 28px 20px; }
         .pii-source-card {
@@ -290,81 +314,97 @@ function confirmPIIBeforeSend(scan, chat) {
           margin-top:12px;
         }
         .pii-source-card:first-child { margin-top:0; }
-        .pii-source-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+        .pii-source-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
         .pii-source-name { font-size:13px; font-weight:600; color:var(--text-100); }
         .pii-source-count { font-size:11px; color:var(--text-300); background:var(--bg-200); padding:2px 8px; border-radius:10px; }
-        .pii-pill-row { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
-        .pii-pill {
-          display:inline-flex; align-items:center; gap:6px;
-          padding:4px 10px; border-radius:999px;
-          background:#fef3c7; color:#78350f;
-          font-size:12px; font-weight:500;
-          border:1px solid #fde68a;
+        .pii-finding {
+          display:flex; align-items:baseline; gap:10px;
+          padding:7px 0; border-top:1px solid var(--border-100);
+          font-size:12.5px; line-height:1.5;
         }
-        .pii-pill b { font-weight:700; }
-        .pii-samples {
-          margin-top:10px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-          font-size:12px; line-height:1.7; color:var(--text-300);
+        .pii-finding:first-of-type { border-top:none; }
+        .pii-finding-sev {
+          flex:none; width:8px; height:8px; border-radius:50%; margin-top:5px;
+          background:#d97706;
         }
-        .pii-sample-line { display:flex; gap:8px; align-items:baseline; }
-        .pii-sample-label { color:var(--text-400); font-size:11px; text-transform:uppercase; letter-spacing:.04em; font-family:inherit; min-width:110px; flex:none; }
-        .pii-sample-vals { color:var(--text-200); word-break:break-all; }
-        .pii-more { color:var(--text-400); font-size:11px; font-family:inherit; }
+        .pii-finding-sev.is-block { background:#dc2626; }
+        .pii-finding-sev.is-ignore { background:var(--text-400); }
+        .pii-finding-label { flex:none; font-weight:600; color:var(--text-100); min-width:150px; }
+        .pii-finding-cat { flex:none; font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-400); }
+        .pii-finding-val {
+          flex:1 1 auto; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+          color:var(--text-300); word-break:break-all;
+        }
+        .pii-finding-loc { flex:none; font-size:10.5px; color:var(--text-400); white-space:nowrap; }
         .pii-footer {
           flex:none;
-          display:flex; align-items:center; gap:14px;
-          padding:14px 24px; border-top:1px solid var(--border-100);
+          display:flex; flex-direction:column; gap:8px;
+          padding:14px 24px 16px; border-top:1px solid var(--border-100);
           background:var(--bg-100);
         }
-        .pii-suppress { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-300); cursor:pointer; margin-right:auto; user-select:none; }
+        .pii-actions-grid { display:flex; flex-wrap:wrap; gap:8px; }
+        .pii-suppress { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-300); cursor:pointer; user-select:none; }
         .pii-suppress input { margin:0; }
         .pii-btn {
-          padding:8px 16px; border-radius:10px;
-          font-size:13px; font-weight:500;
+          padding:8px 14px; border-radius:10px;
+          font-size:12.5px; font-weight:500;
           border:1px solid transparent;
           cursor:pointer; transition:transform .1s, box-shadow .15s;
         }
         .pii-btn:active { transform:translateY(1px); }
+        .pii-btn[disabled] { opacity:.45; cursor:not-allowed; }
+        .pii-btn[disabled]:active { transform:none; }
         .pii-btn-cancel {
           background:var(--bg-000);
           border-color:var(--border-200);
           color:var(--text-100);
         }
-        .pii-btn-cancel:hover { background:var(--bg-200); }
+        .pii-btn-cancel:hover:not([disabled]) { background:var(--bg-200); }
+        .pii-btn-neutral {
+          background:var(--bg-000);
+          border-color:var(--border-200);
+          color:var(--text-200);
+        }
+        .pii-btn-neutral:hover:not([disabled]) { background:var(--bg-200); }
+        .pii-btn-local {
+          background:#1d4ed8; color:#fff;
+          box-shadow:0 2px 6px rgba(29,78,216,.25);
+        }
+        .pii-btn-local:hover:not([disabled]) { background:#1e40af; box-shadow:0 4px 10px rgba(29,78,216,.32); }
         .pii-btn-send {
           background:#b45309; color:#fff;
           box-shadow:0 2px 6px rgba(180,83,9,.28);
         }
-        .pii-btn-send:hover { background:#92400e; box-shadow:0 4px 10px rgba(180,83,9,.35); }
+        .pii-btn-send:hover:not([disabled]) { background:#92400e; box-shadow:0 4px 10px rgba(180,83,9,.35); }
+        .pii-soon { font-size:9.5px; opacity:.7; margin-left:4px; }
       `;
       document.head.appendChild(style);
     }
 
-    // Build a per-source breakdown.
+    // Mask a matched value: keep a couple of edge chars, dot out the middle.
+    const mask = (m) => {
+      if (!m) return '';
+      if (m.length <= 6) return m[0] + '•'.repeat(Math.max(0, m.length - 1));
+      return m.slice(0, 2) + '•'.repeat(m.length - 4) + m.slice(-2);
+    };
+    const sevClass = (a) => a === 'block' ? ' is-block' : (a === 'ignore' ? ' is-ignore' : '');
+
+    // Build a per-source breakdown, one row per detected fragment.
     const sections = [];
     for (const [source, findings] of Object.entries(scan.bySource)) {
-      const counts = PIIScanner.summarize(findings);
-      const pills = Object.entries(counts).map(([label, n]) =>
-        '<span class="pii-pill"><b>' + n + '</b> ' + esc(label) + '</span>'
-      ).join('');
-      const byCat = {};
-      for (const f of findings) (byCat[f.label] = byCat[f.label] || []).push(f.match);
-      const sampleLines = [];
-      for (const [label, matches] of Object.entries(byCat)) {
-        const redacted = matches.slice(0, 3).map(m => {
-          if (m.length <= 6) return m[0] + '•'.repeat(Math.max(0, m.length - 1));
-          return m.slice(0, 2) + '•'.repeat(m.length - 4) + m.slice(-2);
-        });
-        const more = matches.length > 3
-          ? ' <span class="pii-more">+' + (matches.length - 3) + ' more</span>'
-          : '';
-        sampleLines.push(
-          '<div class="pii-sample-line">' +
-            '<span class="pii-sample-label">' + esc(label) + '</span>' +
-            '<span class="pii-sample-vals">' + redacted.map(esc).join(', ') + more + '</span>' +
-          '</div>'
-        );
-      }
+      // Stable order: by position within the source, when known.
+      const ordered = [...findings].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+      const rows = ordered.map(f => {
+        const action = f.action || 'warn';
+        const loc = Number.isFinite(f.index) ? ('char ' + f.index) : '';
+        return '<div class="pii-finding">' +
+          '<span class="pii-finding-sev' + sevClass(action) + '" title="' + esc(action) + '"></span>' +
+          '<span class="pii-finding-label">' + esc(f.label) + '</span>' +
+          '<span class="pii-finding-cat">' + esc(f.category || '') + '</span>' +
+          '<span class="pii-finding-val">' + esc(mask(f.match)) + '</span>' +
+          '<span class="pii-finding-loc">' + esc(loc) + '</span>' +
+        '</div>';
+      }).join('');
       const sourceLabel = source === 'text' ? 'Message text' : source.replace(/^file:/, 'Attachment · ');
       const total = findings.length;
       sections.push(
@@ -373,38 +413,59 @@ function confirmPIIBeforeSend(scan, chat) {
             '<div class="pii-source-name">' + esc(sourceLabel) + '</div>' +
             '<div class="pii-source-count">' + total + ' ' + (total === 1 ? 'item' : 'items') + '</div>' +
           '</div>' +
-          '<div class="pii-pill-row">' + pills + '</div>' +
-          '<div class="pii-samples">' + sampleLines.join('') + '</div>' +
+          rows +
         '</div>'
       );
     }
 
     const total = scan.findings.length;
+    const blockCls = isBlock ? ' is-block' : '';
+    const subtitle = isBlock
+      ? (canSend
+          ? 'High-severity data — your selected model is local, so it would stay on-prem.'
+          : 'High-severity data — this cannot be sent to a cloud model. Choose a local model below.')
+      : 'Review before sending to the model — values are partially masked.';
+    const soonBtn = (id, label) =>
+      '<button class="pii-btn pii-btn-neutral" id="' + id + '" disabled title="Not yet implemented">' +
+        label + '<span class="pii-soon">soon</span></button>';
+
     const modalId = 'pii-warning-modal';
     document.getElementById(modalId)?.remove();
     const html =
       '<div class="pii-overlay" id="' + modalId + '">' +
         '<div class="pii-card" role="dialog" aria-modal="true" aria-labelledby="pii-title">' +
-          '<div class="pii-banner">' +
+          '<div class="pii-banner' + blockCls + '">' +
             '<div class="pii-banner-row">' +
               '<div class="pii-shield" aria-hidden="true">&#9888;</div>' +
               '<div style="flex:1;min-width:0">' +
-                '<h2 id="pii-title" class="pii-title">Personal data detected in your message</h2>' +
-                '<p class="pii-subtitle">Review before sending to the model — values are partially masked.</p>' +
+                '<h2 id="pii-title" class="pii-title">' +
+                  (isBlock ? 'High-severity personal data detected' : 'Personal data detected in your message') +
+                '</h2>' +
+                '<p class="pii-subtitle">' + esc(subtitle) + '</p>' +
               '</div>' +
             '</div>' +
           '</div>' +
-          '<div class="pii-hero">' +
+          '<div class="pii-hero' + blockCls + '">' +
             '<span class="pii-hero-number">' + total + '</span>' +
-            '<span class="pii-hero-label">possible piece' + (total === 1 ? '' : 's') + ' of personal data found</span>' +
+            '<span class="pii-hero-label">flagged fragment' + (total === 1 ? '' : 's') +
+              ' across ' + Object.keys(scan.bySource).length +
+              ' source' + (Object.keys(scan.bySource).length === 1 ? '' : 's') + '</span>' +
           '</div>' +
           '<div class="pii-body">' + sections.join('') + '</div>' +
           '<div class="pii-footer">' +
-            '<label class="pii-suppress">' +
-              '<input type="checkbox" id="pii-suppress-session"> Don’t warn again for this chat' +
-            '</label>' +
-            '<button class="pii-btn pii-btn-cancel" id="pii-cancel-btn">Cancel</button>' +
-            '<button class="pii-btn pii-btn-send" id="pii-send-btn">Send anyway</button>' +
+            '<div class="pii-actions-grid">' +
+              '<button class="pii-btn pii-btn-cancel" id="pii-cancel-btn">Cancel processing</button>' +
+              '<button class="pii-btn pii-btn-local" id="pii-local-btn">Execute via local model</button>' +
+              soonBtn('pii-autoanon-btn', 'Auto-anonymise') +
+              soonBtn('pii-manualanon-btn', 'Manual anonymisation') +
+              soonBtn('pii-anondeanon-btn', 'Auto-anonymise &amp; auto-deanonymise') +
+              (canSend ? '<button class="pii-btn pii-btn-send" id="pii-send-btn">Send anyway</button>' : '') +
+            '</div>' +
+            (canSend
+              ? '<label class="pii-suppress">' +
+                  '<input type="checkbox" id="pii-suppress-session"> Don’t show this again for this chat' +
+                '</label>'
+              : '') +
           '</div>' +
         '</div>' +
       '</div>';
@@ -412,24 +473,25 @@ function confirmPIIBeforeSend(scan, chat) {
     wrap.innerHTML = html;
     const overlay = wrap.firstElementChild;
     document.body.appendChild(overlay);
-    const cleanup = (result) => {
-      if (result && document.getElementById('pii-suppress-session')?.checked) {
+    const cleanup = (verdict) => {
+      if (verdict === 'send' && document.getElementById('pii-suppress-session')?.checked) {
         sessionStorage.setItem('pii-suppress:' + (chat.sessionId || '_new'), '1');
       }
       document.removeEventListener('keydown', onKey);
       overlay.remove();
-      resolve(result);
+      resolve(verdict);
     };
-    const onKey = (e) => {
-      if (e.key === 'Escape') cleanup(false);
-      else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) cleanup(true);
-    };
+    const onKey = (e) => { if (e.key === 'Escape') cleanup('cancel'); };
     document.addEventListener('keydown', onKey);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(false); });
-    document.getElementById('pii-cancel-btn').onclick = () => cleanup(false);
-    document.getElementById('pii-send-btn').onclick = () => cleanup(true);
-    // Focus the primary CTA so Enter without modifier doesn't also send; user has explicit choice.
-    setTimeout(() => document.getElementById('pii-cancel-btn')?.focus(), 50);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup('cancel'); });
+    document.getElementById('pii-cancel-btn').onclick = () => cleanup('cancel');
+    document.getElementById('pii-local-btn').onclick = () => cleanup('local');
+    document.getElementById('pii-send-btn')?.addEventListener('click', () => cleanup('send'));
+    // Focus a safe default: Cancel for a hard block, otherwise the local-model
+    // option (never auto-focus "Send anyway").
+    setTimeout(() => {
+      (isBlock ? document.getElementById('pii-cancel-btn') : document.getElementById('pii-local-btn'))?.focus();
+    }, 50);
   });
 }
 
