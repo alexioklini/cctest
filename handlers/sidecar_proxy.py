@@ -56,11 +56,6 @@ def sidecar_url() -> str:
     return (cfg.get("url") or "http://127.0.0.1:8421").rstrip("/")
 
 
-def sidecar_enabled() -> bool:
-    cfg = _sidecar_config()
-    return bool(cfg.get("enabled", False))
-
-
 def tool_endpoint_internal() -> str:
     cfg = _sidecar_config()
     return cfg.get("tool_endpoint_internal") or "http://127.0.0.1:8420/v1/tools/call"

@@ -16260,34 +16260,29 @@ class Scheduler:
             if name.startswith("_memory_summary_"):
                 sched_tools = "memory_only"
 
-            # Sidecar path (Phase 3). When enabled, the agentic loop runs in the
-            # sidecar process via the Anthropic SDK; Brain only resolves provider,
-            # builds the tool list + sampling, dispatches tools, and persists the
-            # final reply. Falls back to _run_delegate when sidecar disabled or
-            # the provider can't be resolved.
+            # Sidecar path. Brain resolves provider, builds the tool list +
+            # sampling, dispatches tools via /v1/tools/call, and persists the
+            # final reply. The agentic loop itself runs in the sidecar process.
             from handlers import sidecar_proxy as _sidecar_proxy
-            _use_sidecar = _sidecar_proxy.sidecar_enabled()
             _sidecar_blocked = False
-            if _use_sidecar:
-                # GDPR auto-fallback (same logic _run_delegate runs before its
-                # SDK call). Without this, scheduled tasks would skip the gate
-                # the native loop applies.
-                try:
-                    _gdpr_blobs = [system_prompt] if system_prompt else []
-                    for _m in messages:
-                        _c = _m.get("content") if isinstance(_m, dict) else None
-                        if isinstance(_c, str):
-                            _gdpr_blobs.append(_c)
-                    model = gdpr_pick_model_for_background(
-                        model, _gdpr_blobs, purpose="scheduled")
-                except GDPRBlockedError as _ge:
-                    result_text = f"[DELEGATION ERROR] {_ge}"
-                    status = "error"
-                    _sidecar_blocked = True
+            try:
+                # GDPR auto-fallback before the sidecar hits a non-local
+                # provider — same gate the native loop applied pre-Phase-2.
+                _gdpr_blobs = [system_prompt] if system_prompt else []
+                for _m in messages:
+                    _c = _m.get("content") if isinstance(_m, dict) else None
+                    if isinstance(_c, str):
+                        _gdpr_blobs.append(_c)
+                model = gdpr_pick_model_for_background(
+                    model, _gdpr_blobs, purpose="scheduled")
+            except GDPRBlockedError as _ge:
+                result_text = f"[DELEGATION ERROR] {_ge}"
+                status = "error"
+                _sidecar_blocked = True
 
             if _sidecar_blocked:
                 pass  # result_text + status already set from the GDPR block above
-            elif _use_sidecar:
+            else:
                 _prov = resolve_provider_for_model(model)
                 # PROMPT_TOOLS_UNIFICATION_PLAN.md: scheduled tasks default
                 # to `research_minimal` (lean prompt + minimal-flagged tools).
@@ -16371,18 +16366,7 @@ class Scheduler:
                 # missed start events if the worker died mid-turn.
                 run_info["tool_calls"] = max(
                     run_info["tool_calls"], int(_result.get("tool_calls_total") or 0))
-            else:
-                result_text = _run_delegate(messages, model, system_prompt,
-                                            memory_store=target_memory,
-                                            cancel_token=cancel_token,
-                                            event_callback=on_event,
-                                            inference_params=sched_inf,
-                                            tools=sched_tools,
-                                            session_id=sched_session_id) or ""
-                # Capture trace id set by _handle_openai_response so the History
-                # detail view can pivot from schedule_history.run_id → traces.
-                run_info["trace_id"] = getattr(_thread_local, 'trace_id', None)
-            # Check if _run_delegate returned an error string instead of raising.
+            # Check if the loop returned an error string instead of raising.
             # Strip the redundant 'Delegation error: ' prefix and the trailing
             # colon-with-nothing-after that comes from bare-exception args, and
             # add a clear context line so non-interactive consumers (the
