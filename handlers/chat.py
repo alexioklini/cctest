@@ -199,6 +199,254 @@ def build_chat_event_callback(session, live, sid):
     return event_callback, state
 
 
+def recover_active_turns_on_boot():
+    """Phase 5 stage 1c — Brain-restart recovery.
+
+    On startup, scan `active_turns`. For each row whose turn is still alive in
+    the sidecar's per-turn event log (the sidecar survives Brain restarts), spawn
+    a recovery thread that re-attaches to `GET /turn/<id>/events?since=0` and
+    drives the same event-translation + persistence pipeline the live worker uses
+    — so the user's browser reload after a `launchctl kickstart` picks up the
+    turn mid-flight via `GET /v1/chat/stream`.
+
+    Rows whose sidecar event log is gone (404 — sidecar also crashed, or the
+    5-minute retention janitor purged the log) are tagged with a server-restart
+    marker on the persisted streaming_text and the row is cleared.
+
+    Non-blocking: spawns one daemon thread per row and returns immediately.
+    Boot path never blocks on this.
+    """
+    try:
+        rows = ChatDB.list_active_turns()
+    except Exception as e:
+        print(f"[turn-recovery] list_active_turns failed: {e}", flush=True)
+        return
+    if not rows:
+        return
+    print(f"[turn-recovery] found {len(rows)} in-flight turn(s) from prior process",
+          flush=True)
+    for (sid, turn_id, model, started_at) in rows:
+        t = threading.Thread(
+            target=_recover_one_turn,
+            args=(sid, turn_id, model, started_at),
+            daemon=True,
+            name=f"turn-recover-{turn_id[:8]}",
+        )
+        t.start()
+
+
+def _recover_one_turn(sid, turn_id, model, started_at):
+    """One recovery worker. See `recover_active_turns_on_boot` for context."""
+    import urllib.error
+    import urllib.request
+    from handlers import sidecar_proxy as _sp
+    try:
+        session = sessions.get(sid)
+    except Exception as e:
+        print(f"[turn-recovery] session load failed sid={sid[:8]} turn={turn_id[:8]}: {e}",
+              flush=True)
+        try:
+            ChatDB.clear_active_turn(sid, turn_id)
+        except Exception:
+            pass
+        return
+    if session is None:
+        print(f"[turn-recovery] session {sid[:8]} not found — clearing row turn={turn_id[:8]}",
+              flush=True)
+        try:
+            ChatDB.clear_active_turn(sid, turn_id)
+        except Exception:
+            pass
+        return
+
+    # Re-establish thread-local context for tools that might still fire on
+    # in-flight rounds (some tools peek at current_session_id/current_agent).
+    try:
+        engine._thread_local.current_session_id = sid
+        engine._thread_local.current_user_id = session.user_id or ""
+        engine._thread_local.current_agent = engine.AgentConfig(session.agent_id)
+        engine._thread_local.memory_store = session.memory
+        engine._thread_local.mcp_manager = engine._mcp_manager
+        engine._thread_local.project = session.project or ""
+    except Exception:
+        pass
+
+    live = LiveStream()
+    with session.lock:
+        session._streaming = True
+        session.live_stream = live
+    event_callback, state = build_chat_event_callback(session, live, sid)
+    _partial_reply = state["partial_reply"]
+    _partial_tools = state["partial_tools"]
+    _partial_thinking = state["partial_thinking"]
+    _usage_totals = state["usage_totals"]
+    created_files = state["created_files"]
+
+    sc_url = _sp.sidecar_url() + f"/turn/{turn_id}/events?since=0"
+    req = urllib.request.Request(sc_url, method="GET")
+    req.add_header("Accept", "text/event-stream")
+
+    xlate_state = {
+        "round_index": 0,
+        "block_types": {},
+        "tool_uses": {},
+        "tool_results": {},
+        "turn_id": turn_id,
+    }
+    final_text = ""
+    final_summary: dict = {}
+    cancelled = False
+    error_msg = None
+    catastrophic = False
+
+    try:
+        resp = urllib.request.urlopen(req, timeout=1800.0)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            print(f"[turn-recovery] sidecar 404 for turn={turn_id[:8]} — "
+                  f"event log already purged; marking lost", flush=True)
+            catastrophic = True
+        else:
+            error_msg = f"sidecar HTTP {e.code}: {e.reason}"
+    except Exception as e:
+        error_msg = f"sidecar transport {type(e).__name__}: {e}"
+
+    if catastrophic or error_msg:
+        # Recover what we can: persist whatever streaming_text the prior process
+        # already wrote, tagged with a marker, then clear the row.
+        try:
+            prior_partial, _meta = ChatDB.get_streaming_text(sid)
+        except Exception:
+            prior_partial = ""
+        partial = (prior_partial or "").strip()
+        if partial:
+            partial += "\n\n*(Server restart — turn lost)*"
+            try:
+                session.add_message("assistant", partial, metadata={
+                    "model": model, "partial": True, "recovery_lost": True,
+                })
+            except Exception:
+                pass
+        try:
+            live.emit("error", {"message": error_msg or "turn log lost across restart"})
+        except Exception:
+            pass
+        _finalize_recovery(session, live, sid, turn_id)
+        return
+
+    try:
+        buf = ""
+        for raw_line in resp:
+            line = raw_line.decode("utf-8", errors="replace")
+            if line.startswith(":"):
+                continue
+            line = line.rstrip("\n").rstrip("\r")
+            if not line:
+                if buf:
+                    try:
+                        evt = json.loads(buf)
+                    except Exception:
+                        evt = None
+                    buf = ""
+                    if evt:
+                        ev_type = evt.get("type", "")
+                        data = evt.get("data") or {}
+                        _sp._translate_anthropic_event(
+                            ev_type, data, xlate_state, event_callback)
+                        if ev_type == "done":
+                            final_summary = data
+                            final_text = data.get("final_text", "") or ""
+                        elif ev_type == "error":
+                            error_msg = data.get("message", "sidecar error")
+                        elif ev_type == "cancelled":
+                            cancelled = True
+                continue
+            if line.startswith("data: "):
+                buf += line[6:]
+            elif line.startswith("data:"):
+                buf += line[5:]
+    except Exception as e:
+        error_msg = error_msg or f"recovery drain {type(e).__name__}: {e}"
+
+    # Persist assistant message + emit terminal `done` into LiveStream so any
+    # tab attached via GET /v1/chat/stream sees the turn finish.
+    try:
+        reply = final_text or "".join(_partial_reply).strip()
+        if reply:
+            msg_metadata = {
+                "model": model,
+                "tokens_in": _usage_totals["tokens_in"],
+                "tokens_out": _usage_totals["tokens_out"],
+                "last_tokens_in": _usage_totals["last_tokens_in"],
+                "tokens": engine._estimate_conversation_tokens(session.messages),
+                "recovered": True,
+            }
+            if created_files:
+                msg_metadata["files"] = created_files
+            if _partial_tools:
+                msg_metadata["tools"] = _partial_tools
+            if cancelled:
+                msg_metadata["partial"] = True
+                reply = reply + "\n\n*(Cancelled)*"
+            elif error_msg and not final_text:
+                msg_metadata["partial"] = True
+                reply = reply + f"\n\n*(Recovery error: {str(error_msg)[:200]})*"
+            session.add_message("assistant", reply, metadata=msg_metadata)
+            done_data = {
+                "text": reply,
+                "tokens": msg_metadata["tokens"],
+                "max_context": session.max_context,
+                "model": model,
+                "tokens_in": _usage_totals["tokens_in"],
+                "tokens_out": _usage_totals["tokens_out"],
+                "last_tokens_in": _usage_totals["last_tokens_in"],
+            }
+            if created_files:
+                done_data["files"] = created_files
+            live.emit("done", done_data)
+        else:
+            live.emit("error", {"message": error_msg or "no reply recovered"})
+    except Exception as e:
+        print(f"[turn-recovery] persistence failed turn={turn_id[:8]}: {e}",
+              flush=True)
+        try:
+            live.emit("error", {"message": str(e)})
+        except Exception:
+            pass
+    finally:
+        _finalize_recovery(session, live, sid, turn_id)
+        print(f"[turn-recovery] done turn={turn_id[:8]} model={model[:24]} "
+              f"reply={len(final_text)}c rounds={final_summary.get('rounds', 0)} "
+              f"tools={final_summary.get('tool_calls_total', 0)} "
+              f"error={error_msg} cancelled={cancelled}", flush=True)
+
+
+def _finalize_recovery(session, live, sid, turn_id):
+    """Mirror the worker's `finally` block: clear streaming + active_turns row,
+    drop the LiveStream attachment, scrub thread-locals."""
+    if not live.done:
+        try:
+            live.emit("error", {"message": "Recovery thread exited without terminal event"})
+        except Exception:
+            pass
+    try:
+        with session.lock:
+            session._streaming = False
+            if session.live_stream is live:
+                session.live_stream = None
+    except Exception:
+        pass
+    try:
+        ChatDB.set_streaming_text(sid, "")
+    except Exception:
+        pass
+    try:
+        ChatDB.clear_active_turn(sid, turn_id)
+    except Exception:
+        pass
+    # Thread-locals: this is a daemon thread; let them die with it. No globals.
+
+
 class ChatHandlerMixin:
 
     # Cache: model -> provider config (refreshed when providers change)

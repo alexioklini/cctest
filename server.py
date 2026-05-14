@@ -4005,6 +4005,40 @@ def main():
 
     _start_sidecar_supervisor()
 
+    def _kick_turn_recovery():
+        # Phase 5 stage 1c: re-attach to in-flight sidecar turns from the prior
+        # process. We wait briefly for the sidecar's HTTP listener to come up
+        # so the recovery threads' first `GET /turn/<id>/events` doesn't fail
+        # with connection-refused — the sidecar process is what holds the
+        # event log across our restarts.
+        import urllib.request
+        import urllib.error
+        from handlers import sidecar_proxy as _sp
+        from handlers.chat import recover_active_turns_on_boot
+        sc_health = _sp.sidecar_url() + "/health"
+        deadline = time.time() + 10.0
+        ok = False
+        while time.time() < deadline:
+            try:
+                urllib.request.urlopen(sc_health, timeout=1.0).read()
+                ok = True
+                break
+            except Exception:
+                time.sleep(0.3)
+        if not ok:
+            # Sidecar didn't come up in 10s. Skip the scan — list_active_turns
+            # rows survive; on the next restart the sidecar may be up again.
+            print("[turn-recovery] sidecar not reachable after 10s — skipping",
+                  flush=True)
+            return
+        try:
+            recover_active_turns_on_boot()
+        except Exception as e:
+            print(f"[turn-recovery] boot scan failed: {e}", flush=True)
+
+    threading.Thread(target=_kick_turn_recovery, daemon=True,
+                     name="turn-recovery-kick").start()
+
     def _extract_references_from_tool_payload(tool_name, payload):
         """Turn a tool_result payload into a list of {title, url, snippet} dicts.
 
