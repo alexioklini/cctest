@@ -324,31 +324,40 @@ Gate-2 passed (user-confirmed; not re-verified this session). Phase 5 decisions 
 - Brain (`handlers/sidecar_proxy.py`): `run_turn` registers row at start, clears on finally. Blocking/background path excluded — only session-bound interactive turns are worth resuming.
 - Smoke-verified: mid-flight row contains correct turn_id; replay endpoint streams `: replay-start` + `: seq=1` + event SSE correctly; row cleared on completion.
 
-**Stage 1c TODO — Brain-side recovery thread:**
+**Stage 1c DONE — commits `f58c630` (refactor) + `a821ba9` (recovery thread).**
 
-The hard part. On Brain startup, scan `active_turns`, and for each row spawn a recovery thread that re-attaches to the sidecar's in-flight turn via `GET /turn/<id>/events?since=0` and drives the full event-translation + persistence pipeline (so the user reloading their tab after a Brain restart sees the turn continue live).
+Two commits land the Brain-side recovery, one no-behavior-change refactor then the recovery on top:
 
-Blocker: `handlers/chat.py:_handle_chat.worker()` lines ~680–1390 contains the `event_callback` closure that handles persistence + translation. It captures 12+ closure variables (`_partial_reply`, `_partial_tools`, `_partial_thinking`, `_thinking_summary`, `_usage_totals`, `_request_payloads`, `_guided_tasks_live`, `created_files`, `_stream_persist`, `live`, `sid`, `session`) and uses `ChatDB` + `ChatHandlerMixin._extract_references`. The recovery thread needs the same closure semantics, so step 1 is to extract it into a reusable factory (something like `build_chat_event_callback(session, live, sid) -> (callback, get_state)`) and then both the live worker AND the recovery thread call that factory.
+1. `f58c630 refactor(sdk-phase5-1c): extract build_chat_event_callback factory`
+   - Pulled the `event_callback` closure + its 9 accumulator-state variables (`partial_reply`, `partial_tools`, `partial_thinking`, `thinking_summary`, `usage_totals`, `request_payloads`, `guided_tasks_live`, `created_files`, `stream_persist`) out of `_handle_chat.worker()` into a module-level `build_chat_event_callback(session, live, sid) -> (callback, state)` factory in `handlers/chat.py`.
+   - Worker now obtains the same callback + state dict and aliases its lists/dicts as before — closure semantics identical, all post-loop reads still work.
+   - Smoke-verified against `mistral-medium-3.5`: smoke chat returns assistant reply, `done` event fires, `[sidecar-proxy]` log shows clean turn completion.
 
-Recovery thread flow:
-1. Boot scan `ChatDB.list_active_turns()`.
-2. For each `(session_id, turn_id, model, started_at)`:
-   - Load `Session` via `SessionManager.get(session_id)`.
-   - Construct a fresh `LiveStream`; attach to `session.live_stream` + set `session._streaming = True`.
-   - Re-establish thread-local context (`current_agent`, `mcp_manager`, `current_user_id`, etc.).
-   - Build the event_callback via the new factory.
-   - Open `GET <sidecar>/turn/<turn_id>/events?since=0` streaming. Drain SSE, route each event through `_translate_anthropic_event` → callback.
-   - On `done`/`error`/`cancelled`: mirror the worker's terminal block (persist final assistant message from accumulated `_partial_reply`, attach `metadata.tools`, clear `streaming_text`, run the post-turn extras like `_auto_memory_extract` / `_generate_chat_summary` / `_index_chat_transcript`, emit `done` into LiveStream, clear `active_turns` row).
-3. If sidecar returns 404 (log already purged or never registered): treat as catastrophic — persist whatever `streaming_text` already has tagged `*(Server restart — turn lost)*`, clear row.
+2. `a821ba9 feat(sdk-phase5-1c): Brain-side recovery for in-flight sidecar turns`
+   - `handlers/chat.py`:
+     - `recover_active_turns_on_boot()` — module-level boot entry. Scans `ChatDB.list_active_turns()`, spawns one daemon `_recover_one_turn` thread per row. Non-blocking.
+     - `_recover_one_turn(sid, turn_id, model, started_at)` — loads `Session` via `sessions.get(sid)`, re-establishes thread-locals (`current_agent`, `mcp_manager`, `current_user_id`, `project`), opens a fresh `LiveStream` and attaches it to `session.live_stream`, builds the callback via the factory, opens `GET <sidecar>/turn/<turn_id>/events?since=0`, drains SSE through `sidecar_proxy._translate_anthropic_event` → callback. On terminal: persists the assistant message (with `metadata.recovered=True`), emits `done` into the LiveStream, clears the row. Tool result text NOT recovered — sidecar's event log carries dispatch metadata only, so reference badges for tools completed pre-restart will be empty (acceptable per the original plan).
+     - `_finalize_recovery(...)` — mirrors the worker's `finally` block: clear streaming + active_turns row, drop LiveStream attachment.
+   - `server.py`: `_kick_turn_recovery()` daemon thread waits up to 10s for sidecar `/health`, then calls `recover_active_turns_on_boot()`. Wired immediately after `_start_sidecar_supervisor()`.
 
-Verification on resume:
-- Start a turn that takes ~30s (long essay).
-- Mid-stream, `launchctl kickstart -k gui/$UID/com.brain-agent.server`.
-- Confirm: server comes back; recovery thread fires; tab reload via `GET /v1/chat/stream?session_id=X` sees the live SSE stream resume; final assistant message persists; row cleared.
+**Verified end-to-end** with `launchctl kickstart` mid-stream against `mistral-medium-3.5`:
+- Started a 3000-word essay turn; once `streaming_text` reached 378 bytes (~2s) and `active_turns` had the row, kicked Brain.
+- Brain came back up, sidecar relaunched (NEW sidecar pid → fresh `_TURN_LOGS`), boot scan fired: `[turn-recovery] found 1 in-flight turn(s) from prior process`.
+- Sidecar correctly returned 404 for the dead turn_id; recovery hit the catastrophic branch: `[turn-recovery] sidecar 404 for turn=… — event log already purged; marking lost`.
+- 1453-byte partial `streaming_text` was promoted into a persisted assistant message tagged `*(Server restart — turn lost)*` (1485 bytes = 1453 + 32-byte marker), `streaming_text` cleared, row cleared.
+- Session continues to accept new turns cleanly.
 
-Edge cases to think about during 1c:
-- Multiple `active_turns` rows on boot (parallel chats interrupted): each gets its own recovery thread.
-- Sidecar process also died (Brain supervisor respawns it but the old turn_id is unknown): `GET /events?since=0` returns 404; treat as catastrophic per above.
-- `_translate_anthropic_event` state dict is per-attach — the seq-numbered replay restarts from seq=1, so `state["tool_uses"]` rebuilds correctly even mid-tool-block. But: the proxy's `_TOOL_RESULT_CAPTURE` lives in the old process and is gone. Tool results that completed pre-restart need to be reconstructed from the sidecar's persisted event log — the sidecar's `tool_dispatch_done` event carries `is_error` + char count but NOT the raw text. To recover the actual result string we'd need to either (a) cache results in the sidecar event log alongside `tool_dispatch_done`, or (b) accept that the references panel for completed tools won't survive a restart.
+### Open follow-up — happy-path resume requires sidecar process decoupling
 
-Recommend the next session start by extracting `build_chat_event_callback` as a stand-alone refactor (with no behavior change), commit, run the eval to confirm no regression, then add the recovery thread on top.
+Today's `launchctl kickstart` of Brain kills the sidecar subprocess too (the sidecar supervisor is a child thread that owns the subprocess). So the only path that ever actually fires in production is the catastrophic 404 branch — which is correct, but doesn't deliver the "user reloads their tab and sees the turn finish live" promise of the design.
+
+To unlock that, the sidecar process needs to outlive Brain restarts. Options:
+- (a) Move sidecar to its own launchd plist (`com.brain-agent.sidecar.plist`) and drop the in-process supervisor entirely.
+- (b) Keep the in-process supervisor but `subprocess.Popen(..., start_new_session=True)` + don't kill the child on Brain exit. Risk: orphan sidecars after a config change.
+
+Recommend (a). Not in scope for 1c — file as a follow-up before declaring stage 1 fully complete.
+
+### Edge cases known to be unhandled
+- The proxy's `_TOOL_RESULT_CAPTURE` for in-flight tool calls is in-process and gone with Brain. The sidecar's `tool_dispatch_done` event carries `name + is_error + elapsed_ms` but NOT the raw result text. References panel for tools completed pre-restart will be empty post-recovery. To fix, cache the result blob in the sidecar event log alongside `tool_dispatch_done` (paid for in event-log bytes).
+- Post-turn extras `_auto_memory_extract` / `_generate_chat_summary` / `_index_chat_transcript` are NOT run on the recovery path. They would re-fire on the next user message anyway — acceptable.
+- Citation validator + re-round is NOT run on the recovery path. Same reasoning.
