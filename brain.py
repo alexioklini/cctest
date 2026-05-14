@@ -11093,13 +11093,15 @@ def promote_memory_to_skill(agent_id: str, memory_name: str) -> dict:
         f'"description": "one-line description", "body": "the full skill body in markdown"}}'
     )
     try:
-        result = _run_delegate(
+        from handlers import sidecar_proxy as _sidecar_proxy
+        _res = _sidecar_proxy.background_call(
             messages=[{"role": "user", "content": prompt}],
             model=model,
             system_prompt="You are a skill creation assistant. Output only valid JSON.",
-            inference_params={"max_tokens": 2048, "temperature": 0.2},
-            tools=False,
+            agent_id=agent_id,
+            max_tokens=2048,
         )
+        result = _res.get("reply") or ""
         if not result:
             return {"error": "LLM returned empty response"}
 
