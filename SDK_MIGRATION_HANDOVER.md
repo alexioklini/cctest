@@ -12,6 +12,28 @@ The full plan is in **`SDK_MIGRATION_PLAN.md`** — don't restate it, just refer
 
 **Phase 1 (standalone sidecar):** done — see prior handover; the standalone scenario produced cited reports on both `mistral-medium-3.5` (CLIProxyAPI) and `gemma-4-26B` (oMLX).
 
+**Phase 3 (scheduler):** done — `brain.py:_execute_scheduled` routes through `sidecar_proxy.run_turn` when `sidecar_enabled()`, with full GDPR pre-flight, per-schedule `tool_profile`, and Mistral's `disable_parallel_tool_use` plumbing. Falls back to `_run_delegate` only when the sidecar is disabled. Gate-2 (manual "Run now" against three models) was not formally run — defer to next session.
+
+**Phase 4 (background tasks): DONE.** 13 sites migrated, one commit each (`feat(sdk-phase4): …` series 2026-05-14):
+
+| # | Site | Notes |
+|---|---|---|
+| 1 | `/v1/refine` (admin.py) | Also added the `sidecar_proxy.background_call(...)` helper used by every subsequent site. |
+| 2 | `/v1/agents/<id>/soul-chat` (admin.py) | |
+| 3 | `_generate_chat_summary` (server.py) | Sidebar title autogen. |
+| 4 | `_user_profile_run_llm` (server.py) | User profile daemon. Also pins `current_user_id=uid` thread-local. |
+| 5 | `generate_next_prompt_suggestion` (brain.py) | Dropped the now-unused inline provider resolution. |
+| 6 | `classify_chat_for_memory` (brain.py) | Lifted OpenAI `system` message into Anthropic `system_prompt`. |
+| 7 | `_describe_image_with_vision` (brain.py) | Image blocks pass through unchanged. |
+| 8 | `tool_ask_llm` (brain.py) | Workflow node, `tools=False`. |
+| 9 | `_auto_memory_extract` (brain.py) | JSON extractor; `MemoryStore(agent_id)` still used downstream. |
+| 10 | `promote_memory_to_skill` (brain.py) | |
+| 11 | `kg_extract` (engine/kg_extract.py) | Preserved 2-retry-on-connection-refused loop. |
+| 12 | `CodeGraph.generate_summaries` (brain.py) | |
+| 13 | `run_citation_reround` (brain.py) | Last raw-OpenAI-POST site flagged in the Phase 4 caveat. |
+
+**Decision baked into Phase 4 (option B):** the admin picks the model for each site via the existing per-site config slots (`tool_config.refinement.model`, `attachment_image_model`, etc.). Brain does NOT filter the dropdowns to Anthropic-shape providers. If the admin picks a non-Anthropic model (Mistral direct, oMLX OpenAI-shape), the sidecar returns an empty reply and the site falls back per its own behavior (refine echoes input, chat-summary keeps old title, etc.). This is intentional — the alternative (sniff provider type and add an OpenAI-shape transport) was rejected.
+
 **Phase 2 (chat handler migration): DONE and gate-1 PASSED.**
 
 The Phase 2 sidecar path is wired end-to-end. The browser/eval/HTTP chat flow goes:
@@ -82,7 +104,7 @@ Gate-1 bar: ≥0.82 brain mean. We hit exactly 0.82 with all reverts in place. W
 
 ---
 
-## Phase 3 — Scheduler migration (NEXT)
+## Phase 3 — Scheduler migration (DONE)
 
 **Goal:** `Scheduler._execute_scheduled` calls the sidecar instead of `_run_delegate`.
 
@@ -119,9 +141,9 @@ Gate-2 acceptance run: edit the "Mistral AI News" schedule's `model` field to ea
 
 ---
 
-## Phase 4 — Background tasks migration
+## Phase 4 — Background tasks migration (DONE)
 
-All non-interactive LLM calls move to `sidecar_proxy.run_turn_blocking(...)`. Each call site swaps `_run_delegate(...)` or `send_message(...)`.
+All non-interactive LLM calls now route through `sidecar_proxy.background_call(...)` (a thin wrapper around `run_turn_blocking`). Remaining `_run_delegate` / `send_message_with_fallback` callers in the tree are all Phase 5 deletion targets (`_run_delegate_with_fallback`, `_run_guided_execution_impl`, `TaskRunner` worker subagents, the sidecar-disabled fallback branches in `_handle_chat` + `_execute_scheduled`, and TUI / CLI one-shots).
 
 Audit grep before starting:
 ```bash
