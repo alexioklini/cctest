@@ -7,11 +7,11 @@ This document captures the in-flight state of the Phase 5 deletion campaign so t
 
 ## ⏭️ Next session: pick up here
 
-**Steps 1, 2, 3, 5, 6, 7 are done and committed. Step 4 was skipped at user direction. Steps 8 and 9 are next.**
+**Steps 1, 2, 3, 5, 6, 7, 8 are done and committed. Step 4 was skipped at user direction. Steps 9 and 10 are next.**
 
 The /v1/chat path through the sidecar is verified live after every step. Eval has NOT been re-run since v8.37.0 — defer to gate-3 at end of step 9.
 
-**Resume from**: step 8 (unwire LCM auto-trigger; add manual button) then step 9 (CLAUDE.md rewrite + tag v9.0.0), then step 10 (gate-3 eval run).
+**Resume from**: step 9 (CLAUDE.md rewrite + tag v9.0.0), then step 10 (gate-3 eval run).
 
 ---
 
@@ -26,11 +26,43 @@ The /v1/chat path through the sidecar is verified live after every step. Eval ha
 | 5 | Delete variance kill-switches infrastructure | DONE | `d0e85f8` | −396 |
 | 6 | Delete middleware + guards | DONE | `0c7fb4a` | −510 |
 | 7 | Delete native loop core | DONE | `707285d` + `fdcb655` | −1520 |
-| 8 | Unwire LCM auto-trigger; add manual button | PENDING | — | — |
+| 8 | Unwire LCM auto-trigger; add manual button | DONE | `ffbde8d` | −26 |
 | 9 | Update CLAUDE.md + tag v9.0.0 | PENDING | — | — |
 | 10 | Gate-3 eval run | PENDING | — | — |
 
-**Net so far**: −3564 LOC code, +597 LOC docs. Seven code commits.
+**Net so far**: −3590 LOC code, +597 LOC docs. Eight code commits.
+
+### Step 8 — LCM auto-trigger unwired (`ffbde8d`)
+~26 LOC deleted from `handlers/chat.py` (the `_check_and_compact` block + the
+`compacting`/`compacted` SSE emission at the top of `_handle_chat`). LCM is
+now manual-only via the existing status-bar ✂️ button → `POST /v1/context/compact`
+→ `handlers/admin.py:_handle_context_compact`, which calls
+`engine._context_manager.check_and_compact(...)` directly.
+
+Banner logic in `web/js/panels.js:170` updated: previously hid at ≥80% on the
+assumption proactive compaction would auto-fire; now stays visible for the
+whole ≥60% range since the user is the only trigger.
+
+Kept in tree (per the Phase 5 plan): `ContextManager` class, `context.db`,
+`context_search` / `context_detail` / `context_recall` tools, the manual
+endpoint, the `compacting` / `compacted` SSE handlers in `chat.js`. Also kept:
+the `_apply_tool_result_budget` + `_microcompact` pre-processing in chat.py
+— these are separate token-shaping middlewares (not LCM) and were already
+unconditional pre-Phase-5.
+
+Functions that became orphans (no live caller after this commit):
+- `engine._check_and_compact` (the wrapper at `brain.py:20189`) — only
+  remaining reference is `brain.py:25799` inside `_run_interactive`, which
+  is dead code (`import sdk_backend` fails — file deleted in v7.0.0). Step 9
+  CLAUDE.md sweep can remove the wrapper + dead TUI block together.
+- `engine._compact_conversation` (the legacy fallback at `brain.py:20103`) —
+  only called from `_check_and_compact`. Same fate.
+
+Live verification: smoke chat through `CLIProxyAPI/mistral-medium-3.5` returns
+`event: done` + persists a 28-byte assistant message; **no `compacting`/
+`compacted` events fire**. Manual `POST /v1/context/compact` still returns
+`status=compacted` for a populated session. No tracebacks in
+`server.error.log`.
 
 ### Step 7 — native loop core (`707285d` + `fdcb655`)
 ~1520 LOC deleted; the sidecar is now the only LLM execution path.
