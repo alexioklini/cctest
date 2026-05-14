@@ -10206,27 +10206,21 @@ def generate_next_prompt_suggestion(session) -> str | None:
         except Exception:
             pass
 
-        prov = resolve_provider_for_model(model)
-
         # Set current_user_id so client-mode ambient proxy routing can pick a
         # client owned by the session's user. session_id stays None — this is
         # a sessionless call (no live SSE on the chat).
         _prev_uid = getattr(_thread_local, "current_user_id", None)
         _thread_local.current_user_id = (getattr(session, "user_id", "") or "")
         try:
-            text = send_message_with_fallback(
-                clean_msgs,
-                model,
-                prov.get("api_key", ""),
-                prov.get("base_url", ""),
-                silent=True,
-                tools=False,
-                event_callback=None,
-                provider_resolver=resolve_provider_for_model,
-                inference_params={"max_tokens": 200, "temperature": 0.7},
-                purpose="next_prompt_suggestion",
-                session_id=None,
+            from handlers import sidecar_proxy as _sidecar_proxy
+            _res = _sidecar_proxy.background_call(
+                messages=clean_msgs,
+                model=model,
+                agent_id=getattr(session, "agent", "main"),
+                user_id=(getattr(session, "user_id", "") or ""),
+                max_tokens=200,
             )
+            text = _res.get("reply") or ""
         finally:
             _thread_local.current_user_id = _prev_uid
         try:
