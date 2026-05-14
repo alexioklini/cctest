@@ -11701,10 +11701,10 @@ _MEMORY_TOOL_NAMES = {"memory_store", "memory_recall", "memory_delete", "memory_
 # Tool sets for non-interactive purposes now live next to `resolve_active_tools`:
 # `_BACKGROUND_QA_TOOLS`, `_MEMORY_SUMMARY_TOOLS`. The historical
 # `_SCHEDULED_TASK_TOOLS` 3-tool hack and `_resolve_delegate_tools` shim
-# were deleted (PROMPT_TOOLS_UNIFICATION_PLAN.md) — scheduled tasks see the
-# full agent surface via purpose='interactive', scheduled=True. The lean
-# scheduled prompt that prevented gemma-4-e4b's <eos> stall now lives in
-# `_build_system_prompt`'s scheduled overlay.
+# were deleted (PROMPT_TOOLS_UNIFICATION_PLAN.md). Scheduled tasks default
+# to purpose='research_minimal' (a lean prompt that drives gemma-4-e4b past
+# its <eos> stall); set schedules.tool_profile='interactive' to opt back
+# into the full agent surface.
 
 
 # Shared rule: a request that asks for a FILE artifact (report, document,
@@ -11944,7 +11944,7 @@ def run_guided_execution(
 
     task_system_prompt: when provided, used verbatim as each subtask's system
     prompt instead of rebuilding the interactive one via `_build_system_prompt()`.
-    Non-interactive callers (the scheduler) pass their `mode="scheduled"` prompt
+    Non-interactive callers (the scheduler) pass their scheduled-task prompt
     here so subtasks run under the same directive as the un-guided path.
 
     Each subtask may declare needs_prior=False (independent of earlier tasks) —
@@ -16145,12 +16145,11 @@ class Scheduler:
         init_thread_context(_sched_ctx_pre, agent_config=target)
 
         # Build system prompt via the unified builder
-        # (PROMPT_TOOLS_UNIFICATION_PLAN.md). Scheduled tasks are
-        # purpose='interactive', scheduled=True — the scheduled overlay
-        # replaces the proactive framing with a NON-INTERACTIVE directive;
-        # the rest of the agent surface (project context, team, skills,
-        # MCP listing) is preserved. active_tool_names is computed inline
-        # so the conditional tools.md rule blocks match the wire payload.
+        # (PROMPT_TOOLS_UNIFICATION_PLAN.md). Default purpose for scheduled
+        # tasks is `research_minimal` (lean prompt); per-schedule
+        # `tool_profile='interactive'` opts back into the full agent
+        # surface. active_tool_names is computed inline so the conditional
+        # tools.md rule blocks match the wire payload.
         #
         # Determine the purpose from the same sources used later for the
         # sidecar call (token_config + memory_summary name prefix). Hoisted
@@ -16190,9 +16189,6 @@ class Scheduler:
         system_prompt = _build_system_prompt(
             include_memory_summary=False,
             purpose=_sched_purpose_pre,
-            # `scheduled` overlay only applies to the `interactive` branch;
-            # research_minimal and memory_summary have their own framing.
-            scheduled=False,
             task_name=name,
             task_working_dir=task_working_dir or "",
             active_tool_names=_sched_active_names,
@@ -16303,13 +16299,12 @@ class Scheduler:
                 pass  # result_text + status already set from the GDPR block above
             elif _use_sidecar:
                 _prov = resolve_provider_for_model(model)
-                # PROMPT_TOOLS_UNIFICATION_PLAN.md: scheduled tasks are
-                # `interactive` (delivery channel, not workload shape). The
-                # historical 3-tool _SCHEDULED_TASK_TOOLS clamp lived here
+                # PROMPT_TOOLS_UNIFICATION_PLAN.md: scheduled tasks default
+                # to `research_minimal` (lean prompt + minimal-flagged tools).
+                # The historical 3-tool _SCHEDULED_TASK_TOOLS clamp existed
                 # because Brain's 7.5 KB system prompt + 39-tool schema made
-                # gemma-4-e4b emit <eos>; the unified _build_system_prompt
-                # now ships a lean scheduled overlay that drives the same
-                # model on the full agent surface (validated by Gate-PT-2).
+                # gemma-4-e4b emit <eos>; the resolver-driven lean prompt
+                # drives that model past the stall (Gate-PT-2 2/3 ✅).
                 # `tools="memory_only"` collapses to purpose='memory_summary';
                 # `tools=False` collapses to purpose='transform' (empty list).
                 # Reuse the purpose resolved up front from sched_tools +
@@ -25084,9 +25079,7 @@ _SYSTEM_PROMPT_CACHE_TTL = 60  # seconds — cache for 1 min (covers tool loop i
 
 
 def _build_system_prompt(include_memory_summary: bool = True,
-                         mode: str | None = None,
                          purpose: str = "interactive",
-                         scheduled: bool = False,
                          task_name: str = "",
                          task_working_dir: str = "",
                          active_tool_names: set[str] | None = None) -> str:
@@ -25096,7 +25089,7 @@ def _build_system_prompt(include_memory_summary: bool = True,
 
     purpose:
       - 'interactive' (default) — chat, project chat, scheduled tasks. Soul +
-        full agent context. When scheduled=True the proactive framing is
+        full agent context. When `task_name` is set the proactive framing is
         replaced by a NON-INTERACTIVE directive (no clarifying questions,
         write_file is a tool call not a description).
       - 'background_qa' — headless corpus query. No soul, terse identity,
@@ -25113,25 +25106,9 @@ def _build_system_prompt(include_memory_summary: bool = True,
         diagnostic) leave it None and get the full tools.md to keep their
         snapshots identical until they migrate.
 
-    Legacy `mode` kwarg: 'chat' → purpose='interactive'; 'scheduled' →
-        purpose='interactive', scheduled=True. Kept until every caller is
-        migrated; remove once Phase 4 cleanup lands.
-
-    Caches per (session, purpose, scheduled, include_memory_summary,
-    has_active_tool_names) to avoid disk I/O on every tool loop iteration.
+    Caches per (session, purpose, include_memory_summary, has_active_tool_names,
+    has_task_name) to avoid disk I/O on every tool loop iteration.
     """
-    # Legacy mode shim (PROMPT_TOOLS_UNIFICATION_PLAN.md): map the old
-    # `mode=` kwarg onto purpose/scheduled. Explicit purpose= wins when both
-    # are supplied.
-    if mode is not None:
-        if mode == "scheduled":
-            purpose = "interactive"
-            scheduled = True
-        elif mode == "chat":
-            purpose = "interactive"
-        else:
-            raise ValueError(f"_build_system_prompt: unknown legacy mode {mode!r}")
-
     if purpose not in _VALID_PURPOSES:
         raise ValueError(f"_build_system_prompt: unknown purpose {purpose!r}")
     if purpose == "transform":
@@ -25157,7 +25134,7 @@ def _build_system_prompt(include_memory_summary: bool = True,
     # with different tool surfaces don't share a cache entry (and so the
     # legacy None-callers keep their own cache slot).
     _atn_key = "*" if active_tool_names is None else ",".join(sorted(active_tool_names))
-    cache_key = f"{session_id}:{include_memory_summary}:{purpose}:{int(scheduled)}:{_atn_key}"
+    cache_key = f"{session_id}:{include_memory_summary}:{purpose}:{_atn_key}"
     cached = _system_prompt_cache.get(cache_key)
     if cached and (_time.time() - cached[1]) < _SYSTEM_PROMPT_CACHE_TTL:
         return _apply_system_prompt_postprocess(
@@ -25267,52 +25244,30 @@ def _build_system_prompt(include_memory_summary: bool = True,
     # user message in send_message — keeping it OUT of the system prompt
     # preserves the warm-pool KV-prefix match across users.
     _project_active = bool(getattr(_thread_local, 'project', None))
-    # Three framing lines, ordered most-specific → most-general:
-    #   - scheduled run: NON-INTERACTIVE directive (autonomous mode rule).
-    #   - project chat: refuse on empty retrieval (anti-fabrication).
-    #   - everything else: proactive tool use.
+    # Framing line for interactive purpose: project chat refuses on empty
+    # retrieval (anti-fabrication); everything else uses tools proactively.
     # Validated 2026-05-01: dropping "proactive" in project chat moved
     # brain mean 0.65 → 0.75 on the policy eval (F1/F2/F3 refusal canaries).
-    if scheduled:
-        _task_line = f" Task name: '{task_name}'." if task_name else ""
-        _wd_line = (f"\nWorking directory: {task_working_dir}" if task_working_dir else "")
-        _framing_line = (
-            "This is a NON-INTERACTIVE run: no user is watching. Do NOT ask "
-            "clarifying questions; do NOT end with 'would you like me to…'. "
-            "If the task contains a verb (write, send, save, fetch, …), the "
-            "corresponding tool call IS the work — emit the tool_use, do not "
-            "describe what you will do. Your task is not complete until every "
-            "verb in it has actually been executed."
-        )
-        system_instruction += (
-            f"You are agent '{agent_id}' in the Brain Agent system, running "
-            f"an autonomous scheduled task.{_task_line}\n"
-            f"Current date and time: {_dt.now().strftime('%Y-%m-%d %H:00 %Z').strip()}\n"
-            f"Current working directory: {task_working_dir or cwd}{_wd_line}\n"
-            f"Operating system: {os_name}\n\n"
-            f"{_framing_line}\n\n"
-        )
-    else:
-        _proactive_line = (
-            "Answer based ONLY on what you can verify from tools and source documents. "
-            "When tools return nothing relevant, refuse cleanly per project instructions — "
-            "do not synthesize from training-data knowledge."
-            if _project_active else
-            "Use tools proactively to accomplish tasks. You can chain multiple tool calls."
-        )
-        system_instruction += (
-            f"You are agent '{agent_id}' in the Brain Agent system. "
-            f"Current date and time: {_dt.now().strftime('%Y-%m-%d %H:00 %Z').strip()}\n"
-            f"Current working directory: {cwd}\n"
-            f"Operating system: {os_name}\n\n"
-            f"{_proactive_line} "
-            "For web searches, ALWAYS use exa_search — NEVER use duckduckgo or other search tools. "
-            "You have no restrictions beyond what the operating system enforces.\n"
-            "NEVER narrate tool intent ('I'll search…', 'Let me look that up…', 'Let me check…') without actually emitting the tool call in the same turn. Either call the tool now or answer directly — no announcements followed by silence.\n\n"
-            "MEMORY: You have long-term memory via mempalace_query and save_chat_to_memory.\n"
-            "- The memory holds the user's own past conversations and is private to them. Searching it is not a privacy decision — it IS the answer. Never ask permission to search; just search.\n"
-            "- Use mempalace_query whenever the answer plausibly lives in the user's history: 'do you remember', references to the past, OR direct personal-info questions about the user (their family, their preferences, their previous decisions, anything you couldn't know without past context). Query first, answer second — don't refuse on grounds of 'I don't have access to personal information'.\n"
-            "- When the user says 'remember this' or wants to save the conversation, call save_chat_to_memory\n\n"
+    _proactive_line = (
+        "Answer based ONLY on what you can verify from tools and source documents. "
+        "When tools return nothing relevant, refuse cleanly per project instructions — "
+        "do not synthesize from training-data knowledge."
+        if _project_active else
+        "Use tools proactively to accomplish tasks. You can chain multiple tool calls."
+    )
+    system_instruction += (
+        f"You are agent '{agent_id}' in the Brain Agent system. "
+        f"Current date and time: {_dt.now().strftime('%Y-%m-%d %H:00 %Z').strip()}\n"
+        f"Current working directory: {cwd}\n"
+        f"Operating system: {os_name}\n\n"
+        f"{_proactive_line} "
+        "For web searches, ALWAYS use exa_search — NEVER use duckduckgo or other search tools. "
+        "You have no restrictions beyond what the operating system enforces.\n"
+        "NEVER narrate tool intent ('I'll search…', 'Let me look that up…', 'Let me check…') without actually emitting the tool call in the same turn. Either call the tool now or answer directly — no announcements followed by silence.\n\n"
+        "MEMORY: You have long-term memory via mempalace_query and save_chat_to_memory.\n"
+        "- The memory holds the user's own past conversations and is private to them. Searching it is not a privacy decision — it IS the answer. Never ask permission to search; just search.\n"
+        "- Use mempalace_query whenever the answer plausibly lives in the user's history: 'do you remember', references to the past, OR direct personal-info questions about the user (their family, their preferences, their previous decisions, anything you couldn't know without past context). Query first, answer second — don't refuse on grounds of 'I don't have access to personal information'.\n"
+        "- When the user says 'remember this' or wants to save the conversation, call save_chat_to_memory\n\n"
         )
     # MemPalace migration: built-in memory summary injection removed.
     # Agents now query mempalace MCP tools (mempalace_status, mempalace_search,
@@ -25323,308 +25278,308 @@ def _build_system_prompt(include_memory_summary: bool = True,
     # interactive purpose always emits these. Scheduled tasks are interactive
     # too — they get the same surface as a human asking the agent the same
     # question (minus the conversational framing).
-    if True:  # purpose=='interactive' is the only branch that reaches here.
-        # Inject project context if a project is active
-        active_project = getattr(_thread_local, 'project', None)
-        if active_project:
-            proj_cfg = ProjectManager.get_project(agent_id, active_project)
-            if proj_cfg:
-                proj_desc = proj_cfg.get("description", "")
-                system_instruction += (
-                    f"PROJECT CONTEXT: You are working in project '{proj_cfg.get('name', active_project)}'."
-                )
-                if proj_desc:
-                    system_instruction += f" {proj_desc}"
-                try:
-                    _kg_enabled_for_prompt = bool(
-                        (_load_mempalace_config().get("kg") or {}).get(
-                            "enabled", True))
-                except Exception:
-                    _kg_enabled_for_prompt = True
-                # research_mode resolution: per-session override (sticky, set
-                # from composer / session settings) wins; otherwise the
-                # project's own `research_mode` (with legacy migration in
-                # _project_research_mode). Surfaced on _thread_local so the
-                # chat handler's citation validator + re-round read the same
-                # value without recomputing.
-                _rm_override = getattr(_thread_local, 'research_mode_override', None)
-                if _rm_override is None:
-                    _research_mode = bool(proj_cfg.get("research_mode", False))
-                else:
-                    _research_mode = bool(_rm_override)
-                # The dynamic counts + the on-disk input-folder list moved out
-                # of the system prompt into a per-session first-user-turn preamble
-                # (see _project_preamble_text() called from send_message round 0).
-                # Keeps this block KV-cache-stable across warm-pool sessions and
-                # avoids re-billing the index on every fresh project chat.
-                #
-                # research_mode gates the strict retrieval/refusal regime:
-                # forced 3-step flow, REFUSE-on-error, KG decision rules,
-                # citation discipline. Non-research projects (build/codegen
-                # that USES indexed content) get a softer variant — memory
-                # is available, use it when relevant — so the model can
-                # consume project facts as inputs without being forced to
-                # quote-and-cite everything it produces.
-                if _research_mode:
-                  system_instruction += (
-                    "\nPROJECT MEMORY — IMPORTANT:\n"
-                "This project has a dedicated, isolated memory store. By default, "
-                "`mempalace_query` searches ONLY this knowledge layer (mined "
-                "documents) — it does NOT include past chat turns or chat "
-                "summaries. This is deliberate: a wrong answer in an earlier "
-                "turn must never outrank the underlying source document. If "
-                "the user explicitly asks about something said earlier in this "
-                "project's chats ('what did we discuss', 'remember when I "
-                "said'), call `mempalace_query` again with "
-                "`include_chat_history=true` to search the chat layer.\n"
-                "BEFORE answering ANY question that could draw on project "
-                "knowledge — the user's documents, files in their input folders, "
-                "facts they previously told you, project decisions — you MUST "
-                "consult the project's memory tools first. Do not guess or rely "
-                "on general knowledge when the project may have specifics.\n"
-                "\n"
-                "**MANDATORY 3-STEP FLOW for every project-knowledge question**:\n"
-                "  Step 1: Call `mempalace_query` with the user's question (or "
-                "rephrased terms). This returns drawers — short ~800-char "
-                "search-result snippets, NOT the full document. Drawer text "
-                "is for ranking and pointing you at the right file; it is "
-                "NEVER sufficient to answer from on its own.\n"
-                "  Step 2: For EACH top-ranked drawer that looks relevant, "
-                "call `read_document` to load the FULL converted markdown "
-                "of the underlying document. Read enough of it to actually "
-                "find the information — formulas, tables, full paragraphs.\n"
-                "    **HOW TO CALL READ_DOCUMENT**: every drawer carries a "
-                "`read_path` field — absolute path to the curated "
-                "`.brain-extracted/<name>.<ext>.md` companion. Pass it "
-                "verbatim as `path`. Do NOT pass `source_file=...` (wrong "
-                "parameter name; call silently fails). Do NOT construct "
-                "paths from basenames + input-folder roots (the file may "
-                "live in a subfolder you don't know about).\n"
-                "    **Always prefer `read_path` (the .md)** over "
-                "`read_path_original` (the binary). The .md is what "
-                "Microsoft markitdown produced from the binary — better "
-                "table structure, heading hierarchy, OCR — and it's the "
-                "exact text the drawer search ranked. Reading the original "
-                "PDF re-extracts with a different (worse) extractor; "
-                "you'd lose the curation. Use `read_path_original` only as "
-                "a fallback when `read_path` errors or is empty.\n"
-                "    Worked example: drawer returns "
-                "`read_path=\"/private/tmp/kg-real-policies/.../.brain-extracted/"
-                "20_2 Informationssicherheit/20_2_1_2_ARL_ISMS "
-                "Risikomanagement Handbuch.pdf.md\"`. Call: "
-                "`read_document(path=\"<that read_path>\")` verbatim. The "
-                "result is the full curated markdown, ready to read end-"
-                "to-end for formulas, tables, full sections.\n"
-                "  Step 3: Answer ONLY from what you read in Step 2. The "
-                "drawer snippet from Step 1 is a pointer, not a quotation. "
-                "If `read_document` errors (file not found, wrong path, etc.) "
-                "do NOT answer from training data — re-issue the call with "
-                "the corrected path, or refuse cleanly per REFUSAL "
-                "DISCIPLINE below. **An errored read is a missing answer, "
-                "not an invitation to fall back to general knowledge.** "
-                "Every measured hallucination on this corpus has been "
-                "either: (a) answering from drawer text alone, or (b) "
-                "answering from training data after a read_document error.\n"
-                "Skipping Step 2 — or proceeding past a Step 2 error — is "
-                "the documented cause of wrong answers on this project.\n"
-                "\n")
-            else:
-                # Soft variant for non-research projects (research_mode=False).
-                # Project memory is still available; the model just isn't
-                # forced into the strict 3-step / refuse-on-error regime.
-                # Used for projects whose chats USE the indexed content as
-                # input for tasks (writing code, drafting docs, building
-                # tools) rather than reproducing it verbatim with citations.
-                system_instruction += (
-                    "\nPROJECT MEMORY:\n"
-                    "This project has a dedicated, isolated memory store. "
-                    "Call `mempalace_query` whenever the user's request "
-                    "could plausibly draw on the project's indexed "
-                    "documents, input folders, or prior facts — it returns "
-                    "short ~800-char drawer snippets that point at the "
-                    "underlying file. For deeper context, follow up with "
-                    "`read_document` on the drawer's `read_path` (the "
-                    "curated `.brain-extracted/<name>.<ext>.md` companion) "
-                    "or `read_path_original` (the original binary). "
-                    "`mempalace_query` searches ONLY the document layer; "
-                    "pass `include_chat_history=true` if the user "
-                    "explicitly references prior chat turns. Cite sources "
-                    "with `[Quelle: <basename> — \"<verbatim quote>\"]` "
-                    "when you reproduce material from project documents — "
-                    "but do not refuse to help when memory has nothing to "
-                    "offer; fall back to general capability and the user's "
-                    "own input as you normally would.\n\n"
-                )
-            if _research_mode and _kg_enabled_for_prompt:
-                system_instruction += (
-                    "OPTIONAL STRUCTURED LOOKUP (knowledge graph):\n"
-                    "  `mempalace_kg_search` — structured triple search by "
-                    "predicate. Useful for: 'which laws are cited' "
-                    "(predicate=cites), 'who is responsible for X' "
-                    "(predicate=responsible_party), 'what does X require' "
-                    "(predicate=requires), contradiction-detection ('all "
-                    "requires-triples about retention'), coverage analysis, "
-                    "responsibility matrices.\n"
-                    "  `mempalace_kg_query` — entity neighbourhood. Useful "
-                    "for 'what do we say about <specific entity>'.\n"
-                    "DECISION RULE — when to skip read_document:\n"
-                    "Each KG triple carries a `span` field: a short verbatim "
-                    "quote (≤200 chars) from the source document that the "
-                    "triple was extracted from. If `span` is non-empty, it IS "
-                    "your citation — you do NOT need read_document for that "
-                    "claim. Cite it as: [Quelle: <basename(source_file)> — "
-                    "\"<span>\"]\n"
-                    "Only call read_document when: (a) KG returns no results, "
-                    "(b) span is empty or too short to support the claim, or "
-                    "(c) the question asks for narrative context / calculations "
-                    "/ tables that a triple cannot capture.\n"
-                    "Preferred flow for factual policy questions:\n"
-                    "  1. mempalace_kg_search(predicate=requires/forbids/etc.) "
-                    "— if spans present → cite + answer, done\n"
-                    "  2. mempalace_query — if drawers present → read_document "
-                    "on source file for full context\n"
-                    "Examples:\n"
-                    "  • 'Was muss X tun?' → kg_search(predicate=requires, "
-                    "subject_contains=X) first; span → cite directly\n"
-                    "  • 'Was ist verboten?' → kg_search(predicate=forbids); "
-                    "span → cite directly\n"
-                    "  • 'Welche Gesetze werden zitiert?' → "
-                    "kg_search(predicate=cites)\n"
-                    "  • 'Wie wird X berechnet?' → 3-step flow (formula lives "
-                    "in document, not in triples)\n"
-                    "  • 'Wer ist verantwortlich für IT-Security?' → "
-                    "kg_search(predicate=responsible_party)\n"
-                    "Do NOT pass a `wing` argument — it is set automatically.\n"
-                    "Do NOT pass a `room` argument either, unless you have "
-                    "verified the exact room name from a previous successful "
-                    "result. Brain's project miner uses room='general' for "
-                    "all policy/document content; invented values like "
-                    "'document' or 'documentation' silently return zero "
-                    "drawers and lead to fabricated 'not in the documents' "
-                    "answers. The default (no room filter) searches "
-                    "everything in the wing — that is what you want.\n"
-                    "Do NOT pass `include_chat_history=true` for "
-                    "'how is X calculated' / 'what does the policy say' "
-                    "questions — that flag switches the search to the "
-                    "PROJECT CHAT wing (past conversations) instead of the "
-                    "PROJECT KNOWLEDGE wing (the actual indexed documents). "
-                    "Use it ONLY when the user explicitly references prior "
-                    "chat ('what did we discuss about X', 'remember when I "
-                    "said Y').\n"
-                    "\n")
-            elif _research_mode and not _kg_enabled_for_prompt:
-                # Research mode but KG turned off in deployment config.
-                system_instruction += (
-                    "(The knowledge graph is currently disabled for this "
-                    "deployment; only `mempalace_query` + `read_document` "
-                    "are available for project knowledge.)\n\n")
-            # PROJECT INPUT FOLDERS list + path-join example moved into the
-            # per-session preamble (see _project_preamble_text). Static
-            # binary-companion guidance stays here because it doesn't depend
-            # on which folders the project has, only on Brain's pipeline.
+    # interactive purpose: project context, team, skills, scheduler, MCP listings.
+    # Inject project context if a project is active
+    active_project = getattr(_thread_local, 'project', None)
+    if active_project:
+        proj_cfg = ProjectManager.get_project(agent_id, active_project)
+        if proj_cfg:
+            proj_desc = proj_cfg.get("description", "")
             system_instruction += (
-                "BINARY DOCUMENTS (PDF, DOCX, PPTX, XLSX, EML, MSG) in project "
-                "input folders are auto-converted into companion `.md` files "
-                "under the hidden `.brain-extracted/` subdirectory before "
-                "mining. So a drawer with `source_file` like "
-                "`.brain-extracted/policy.pdf.md` actually came from "
-                "`policy.pdf` in the same folder — open the ORIGINAL binary "
-                "with read_document for full fidelity (tables, page layout, "
-                "complete spreadsheet rows beyond the preview). The `.md` is "
-                "a text preview optimised for retrieval and triple "
-                "extraction; use it only when you don't need the original "
-                "layout.\n\n"
+                f"PROJECT CONTEXT: You are working in project '{proj_cfg.get('name', active_project)}'."
             )
-            # Research-mode disciplines: REFUSAL + PRECISION + CITATION rules
-            # that gate the strict retrieval/refusal regime. Emitted by Brain
-            # directly when research_mode is on — NOT folded into the owner's
-            # editable Instructions field. Owner instructions remain a purely
-            # additive layer regardless of mode.
+            if proj_desc:
+                system_instruction += f" {proj_desc}"
+            try:
+                _kg_enabled_for_prompt = bool(
+                    (_load_mempalace_config().get("kg") or {}).get(
+                        "enabled", True))
+            except Exception:
+                _kg_enabled_for_prompt = True
+            # research_mode resolution: per-session override (sticky, set
+            # from composer / session settings) wins; otherwise the
+            # project's own `research_mode` (with legacy migration in
+            # _project_research_mode). Surfaced on _thread_local so the
+            # chat handler's citation validator + re-round read the same
+            # value without recomputing.
+            _rm_override = getattr(_thread_local, 'research_mode_override', None)
+            if _rm_override is None:
+                _research_mode = bool(proj_cfg.get("research_mode", False))
+            else:
+                _research_mode = bool(_rm_override)
+            # The dynamic counts + the on-disk input-folder list moved out
+            # of the system prompt into a per-session first-user-turn preamble
+            # (see _project_preamble_text() called from send_message round 0).
+            # Keeps this block KV-cache-stable across warm-pool sessions and
+            # avoids re-billing the index on every fresh project chat.
+            #
+            # research_mode gates the strict retrieval/refusal regime:
+            # forced 3-step flow, REFUSE-on-error, KG decision rules,
+            # citation discipline. Non-research projects (build/codegen
+            # that USES indexed content) get a softer variant — memory
+            # is available, use it when relevant — so the model can
+            # consume project facts as inputs without being forced to
+            # quote-and-cite everything it produces.
             if _research_mode:
-                system_instruction += (
-                    "RESEARCH MODE DISCIPLINES (refusal, precision, citation):\n"
-                    f"{DEFAULT_PROJECT_INSTRUCTIONS}\n\n"
-                )
-            # Inject project Instructions verbatim if the owner has set them.
-            # Instructions are purely additive owner-supplied guidance — they
-            # are NOT used as a fallback for the citation/refusal disciplines.
-            # When `instructions` is empty, no synthetic block is appended.
-            proj_instructions = (proj_cfg.get("instructions") or "").strip()
-            if proj_instructions:
-                system_instruction += (
-                    "PROJECT INSTRUCTIONS (set by the user for this project):\n"
-                    f"{proj_instructions}\n\n"
-                )
-
-        # Inject note context for AI-assisted note editing
-        note_context = getattr(_thread_local, 'note_context', None)
-        if note_context:
-            note_path = note_context.replace("note_editing:", "").strip() if note_context.startswith("note_editing:") else ""
-            notes_dir = os.path.dirname(note_path) if note_path else ""
+              system_instruction += (
+                "\nPROJECT MEMORY — IMPORTANT:\n"
+            "This project has a dedicated, isolated memory store. By default, "
+            "`mempalace_query` searches ONLY this knowledge layer (mined "
+            "documents) — it does NOT include past chat turns or chat "
+            "summaries. This is deliberate: a wrong answer in an earlier "
+            "turn must never outrank the underlying source document. If "
+            "the user explicitly asks about something said earlier in this "
+            "project's chats ('what did we discuss', 'remember when I "
+            "said'), call `mempalace_query` again with "
+            "`include_chat_history=true` to search the chat layer.\n"
+            "BEFORE answering ANY question that could draw on project "
+            "knowledge — the user's documents, files in their input folders, "
+            "facts they previously told you, project decisions — you MUST "
+            "consult the project's memory tools first. Do not guess or rely "
+            "on general knowledge when the project may have specifics.\n"
+            "\n"
+            "**MANDATORY 3-STEP FLOW for every project-knowledge question**:\n"
+            "  Step 1: Call `mempalace_query` with the user's question (or "
+            "rephrased terms). This returns drawers — short ~800-char "
+            "search-result snippets, NOT the full document. Drawer text "
+            "is for ranking and pointing you at the right file; it is "
+            "NEVER sufficient to answer from on its own.\n"
+            "  Step 2: For EACH top-ranked drawer that looks relevant, "
+            "call `read_document` to load the FULL converted markdown "
+            "of the underlying document. Read enough of it to actually "
+            "find the information — formulas, tables, full paragraphs.\n"
+            "    **HOW TO CALL READ_DOCUMENT**: every drawer carries a "
+            "`read_path` field — absolute path to the curated "
+            "`.brain-extracted/<name>.<ext>.md` companion. Pass it "
+            "verbatim as `path`. Do NOT pass `source_file=...` (wrong "
+            "parameter name; call silently fails). Do NOT construct "
+            "paths from basenames + input-folder roots (the file may "
+            "live in a subfolder you don't know about).\n"
+            "    **Always prefer `read_path` (the .md)** over "
+            "`read_path_original` (the binary). The .md is what "
+            "Microsoft markitdown produced from the binary — better "
+            "table structure, heading hierarchy, OCR — and it's the "
+            "exact text the drawer search ranked. Reading the original "
+            "PDF re-extracts with a different (worse) extractor; "
+            "you'd lose the curation. Use `read_path_original` only as "
+            "a fallback when `read_path` errors or is empty.\n"
+            "    Worked example: drawer returns "
+            "`read_path=\"/private/tmp/kg-real-policies/.../.brain-extracted/"
+            "20_2 Informationssicherheit/20_2_1_2_ARL_ISMS "
+            "Risikomanagement Handbuch.pdf.md\"`. Call: "
+            "`read_document(path=\"<that read_path>\")` verbatim. The "
+            "result is the full curated markdown, ready to read end-"
+            "to-end for formulas, tables, full sections.\n"
+            "  Step 3: Answer ONLY from what you read in Step 2. The "
+            "drawer snippet from Step 1 is a pointer, not a quotation. "
+            "If `read_document` errors (file not found, wrong path, etc.) "
+            "do NOT answer from training data — re-issue the call with "
+            "the corrected path, or refuse cleanly per REFUSAL "
+            "DISCIPLINE below. **An errored read is a missing answer, "
+            "not an invitation to fall back to general knowledge.** "
+            "Every measured hallucination on this corpus has been "
+            "either: (a) answering from drawer text alone, or (b) "
+            "answering from training data after a read_document error.\n"
+            "Skipping Step 2 — or proceeding past a Step 2 error — is "
+            "the documented cause of wrong answers on this project.\n"
+            "\n")
+        else:
+            # Soft variant for non-research projects (research_mode=False).
+            # Project memory is still available; the model just isn't
+            # forced into the strict 3-step / refuse-on-error regime.
+            # Used for projects whose chats USE the indexed content as
+            # input for tasks (writing code, drafting docs, building
+            # tools) rather than reproducing it verbatim with citations.
             system_instruction += (
-                "\n\nNOTE EDITING MODE:\n"
-                f"You are helping the user edit a markdown note{' at: ' + note_path if note_path else ''}.\n"
-                "The user will provide the current note content in their message.\n"
-                "When the user asks you to ADD, EDIT, or MODIFY the note, use the edit_file or write_file tool "
-                "to make changes directly to the note file. The editor will auto-reload.\n"
-                f"You can also CREATE NEW notes in the same project by writing to: {notes_dir}/<new-name>.md\n"
-                "For questions or explanations, respond normally without editing files.\n\n"
+                "\nPROJECT MEMORY:\n"
+                "This project has a dedicated, isolated memory store. "
+                "Call `mempalace_query` whenever the user's request "
+                "could plausibly draw on the project's indexed "
+                "documents, input folders, or prior facts — it returns "
+                "short ~800-char drawer snippets that point at the "
+                "underlying file. For deeper context, follow up with "
+                "`read_document` on the drawer's `read_path` (the "
+                "curated `.brain-extracted/<name>.<ext>.md` companion) "
+                "or `read_path_original` (the original binary). "
+                "`mempalace_query` searches ONLY the document layer; "
+                "pass `include_chat_history=true` if the user "
+                "explicitly references prior chat turns. Cite sources "
+                "with `[Quelle: <basename> — \"<verbatim quote>\"]` "
+                "when you reproduce material from project documents — "
+                "but do not refuse to help when memory has nothing to "
+                "offer; fall back to general capability and the user's "
+                "own input as you normally would.\n\n"
             )
-        # Inject team context for interactive sessions
-        team_info = _get_agent_team_info(agent_id)
-        if team_info:
-            if team_info["is_head"]:
-                peers = [m for m in team_info["members"] if m != agent_id]
-                system_instruction += (
-                    f"TEAM: You are the head of team '{team_info['name']}'. "
-                    f"Your team members: {', '.join(peers)}\n"
-                    "Delegate sub-tasks to your team members when appropriate.\n\n"
-                )
-            else:
-                peers = [m for m in team_info["members"] if m != agent_id and m != team_info["head"]]
-                system_instruction += f"TEAM: You are a member of team '{team_info['name']}'.\n"
-                system_instruction += f"Team head: {team_info['head']}\n"
-                if peers:
-                    system_instruction += f"Team peers: {', '.join(peers)}\n"
-                system_instruction += "\n"
+        if _research_mode and _kg_enabled_for_prompt:
+            system_instruction += (
+                "OPTIONAL STRUCTURED LOOKUP (knowledge graph):\n"
+                "  `mempalace_kg_search` — structured triple search by "
+                "predicate. Useful for: 'which laws are cited' "
+                "(predicate=cites), 'who is responsible for X' "
+                "(predicate=responsible_party), 'what does X require' "
+                "(predicate=requires), contradiction-detection ('all "
+                "requires-triples about retention'), coverage analysis, "
+                "responsibility matrices.\n"
+                "  `mempalace_kg_query` — entity neighbourhood. Useful "
+                "for 'what do we say about <specific entity>'.\n"
+                "DECISION RULE — when to skip read_document:\n"
+                "Each KG triple carries a `span` field: a short verbatim "
+                "quote (≤200 chars) from the source document that the "
+                "triple was extracted from. If `span` is non-empty, it IS "
+                "your citation — you do NOT need read_document for that "
+                "claim. Cite it as: [Quelle: <basename(source_file)> — "
+                "\"<span>\"]\n"
+                "Only call read_document when: (a) KG returns no results, "
+                "(b) span is empty or too short to support the claim, or "
+                "(c) the question asks for narrative context / calculations "
+                "/ tables that a triple cannot capture.\n"
+                "Preferred flow for factual policy questions:\n"
+                "  1. mempalace_kg_search(predicate=requires/forbids/etc.) "
+                "— if spans present → cite + answer, done\n"
+                "  2. mempalace_query — if drawers present → read_document "
+                "on source file for full context\n"
+                "Examples:\n"
+                "  • 'Was muss X tun?' → kg_search(predicate=requires, "
+                "subject_contains=X) first; span → cite directly\n"
+                "  • 'Was ist verboten?' → kg_search(predicate=forbids); "
+                "span → cite directly\n"
+                "  • 'Welche Gesetze werden zitiert?' → "
+                "kg_search(predicate=cites)\n"
+                "  • 'Wie wird X berechnet?' → 3-step flow (formula lives "
+                "in document, not in triples)\n"
+                "  • 'Wer ist verantwortlich für IT-Security?' → "
+                "kg_search(predicate=responsible_party)\n"
+                "Do NOT pass a `wing` argument — it is set automatically.\n"
+                "Do NOT pass a `room` argument either, unless you have "
+                "verified the exact room name from a previous successful "
+                "result. Brain's project miner uses room='general' for "
+                "all policy/document content; invented values like "
+                "'document' or 'documentation' silently return zero "
+                "drawers and lead to fabricated 'not in the documents' "
+                "answers. The default (no room filter) searches "
+                "everything in the wing — that is what you want.\n"
+                "Do NOT pass `include_chat_history=true` for "
+                "'how is X calculated' / 'what does the policy say' "
+                "questions — that flag switches the search to the "
+                "PROJECT CHAT wing (past conversations) instead of the "
+                "PROJECT KNOWLEDGE wing (the actual indexed documents). "
+                "Use it ONLY when the user explicitly references prior "
+                "chat ('what did we discuss about X', 'remember when I "
+                "said Y').\n"
+                "\n")
+        elif _research_mode and not _kg_enabled_for_prompt:
+            # Research mode but KG turned off in deployment config.
+            system_instruction += (
+                "(The knowledge graph is currently disabled for this "
+                "deployment; only `mempalace_query` + `read_document` "
+                "are available for project knowledge.)\n\n")
+        # PROJECT INPUT FOLDERS list + path-join example moved into the
+        # per-session preamble (see _project_preamble_text). Static
+        # binary-companion guidance stays here because it doesn't depend
+        # on which folders the project has, only on Brain's pipeline.
+        system_instruction += (
+            "BINARY DOCUMENTS (PDF, DOCX, PPTX, XLSX, EML, MSG) in project "
+            "input folders are auto-converted into companion `.md` files "
+            "under the hidden `.brain-extracted/` subdirectory before "
+            "mining. So a drawer with `source_file` like "
+            "`.brain-extracted/policy.pdf.md` actually came from "
+            "`policy.pdf` in the same folder — open the ORIGINAL binary "
+            "with read_document for full fidelity (tables, page layout, "
+            "complete spreadsheet rows beyond the preview). The `.md` is "
+            "a text preview optimised for retrieval and triple "
+            "extraction; use it only when you don't need the original "
+            "layout.\n\n"
+        )
+        # Research-mode disciplines: REFUSAL + PRECISION + CITATION rules
+        # that gate the strict retrieval/refusal regime. Emitted by Brain
+        # directly when research_mode is on — NOT folded into the owner's
+        # editable Instructions field. Owner instructions remain a purely
+        # additive layer regardless of mode.
+        if _research_mode:
+            system_instruction += (
+                "RESEARCH MODE DISCIPLINES (refusal, precision, citation):\n"
+                f"{DEFAULT_PROJECT_INSTRUCTIONS}\n\n"
+            )
+        # Inject project Instructions verbatim if the owner has set them.
+        # Instructions are purely additive owner-supplied guidance — they
+        # are NOT used as a fallback for the citation/refusal disciplines.
+        # When `instructions` is empty, no synthetic block is appended.
+        proj_instructions = (proj_cfg.get("instructions") or "").strip()
+        if proj_instructions:
+            system_instruction += (
+                "PROJECT INSTRUCTIONS (set by the user for this project):\n"
+                f"{proj_instructions}\n\n"
+            )
 
-        if agent_registry:
-            system_instruction += f"\n{agent_registry}\n\n"
+    # Inject note context for AI-assisted note editing
+    note_context = getattr(_thread_local, 'note_context', None)
+    if note_context:
+        note_path = note_context.replace("note_editing:", "").strip() if note_context.startswith("note_editing:") else ""
+        notes_dir = os.path.dirname(note_path) if note_path else ""
+        system_instruction += (
+            "\n\nNOTE EDITING MODE:\n"
+            f"You are helping the user edit a markdown note{' at: ' + note_path if note_path else ''}.\n"
+            "The user will provide the current note content in their message.\n"
+            "When the user asks you to ADD, EDIT, or MODIFY the note, use the edit_file or write_file tool "
+            "to make changes directly to the note file. The editor will auto-reload.\n"
+            f"You can also CREATE NEW notes in the same project by writing to: {notes_dir}/<new-name>.md\n"
+            "For questions or explanations, respond normally without editing files.\n\n"
+        )
+    # Inject team context for interactive sessions
+    team_info = _get_agent_team_info(agent_id)
+    if team_info:
+        if team_info["is_head"]:
+            peers = [m for m in team_info["members"] if m != agent_id]
+            system_instruction += (
+                f"TEAM: You are the head of team '{team_info['name']}'. "
+                f"Your team members: {', '.join(peers)}\n"
+                "Delegate sub-tasks to your team members when appropriate.\n\n"
+            )
+        else:
+            peers = [m for m in team_info["members"] if m != agent_id and m != team_info["head"]]
+            system_instruction += f"TEAM: You are a member of team '{team_info['name']}'.\n"
+            system_instruction += f"Team head: {team_info['head']}\n"
+            if peers:
+                system_instruction += f"Team peers: {', '.join(peers)}\n"
+            system_instruction += "\n"
 
-        # Build skills registry (names + descriptions only, load on demand)
-        _agent = getattr(_thread_local, 'current_agent', None) or _current_agent
-        if _agent:
-            skills = _agent.list_skills()
-            if skills:
-                system_instruction += "\nSKILLS AVAILABLE — call use_skill(skill=\"slug\") to load instructions before performing the task:\n"
-                for s in skills:
-                    slug = s.get('slug', s['name'])
-                    source_tag = f" (from {s['source']})" if s['source'] != agent_id else ""
-                    display = s['name'] if s['name'] != slug else ""
-                    label = f"{slug}" + (f" ({display})" if display else "")
-                    system_instruction += f"  - {label}: {s['description']}{source_tag}\n"
-                system_instruction += "\n"
+    if agent_registry:
+        system_instruction += f"\n{agent_registry}\n\n"
 
-        # Scheduler status
-        if _scheduler:
-            schedules = [s for s in _scheduler.list_all() if not s["name"].startswith("_memory_summary_")]
-            if schedules:
-                system_instruction += "\nSCHEDULER — active scheduled tasks:\n"
-                for s in schedules:
-                    status = "active" if s["enabled"] else "paused"
-                    next_r = s.get("next_run", "")[:16] if s.get("next_run") else "—"
-                    system_instruction += f"  - {s['name']} [{status}]: {s['task'][:80]} (next: {next_r})\n"
-                system_instruction += "Use schedule_list and schedule_history tools to query scheduler state.\n\n"
+    # Build skills registry (names + descriptions only, load on demand)
+    _agent = getattr(_thread_local, 'current_agent', None) or _current_agent
+    if _agent:
+        skills = _agent.list_skills()
+        if skills:
+            system_instruction += "\nSKILLS AVAILABLE — call use_skill(skill=\"slug\") to load instructions before performing the task:\n"
+            for s in skills:
+                slug = s.get('slug', s['name'])
+                source_tag = f" (from {s['source']})" if s['source'] != agent_id else ""
+                display = s['name'] if s['name'] != slug else ""
+                label = f"{slug}" + (f" ({display})" if display else "")
+                system_instruction += f"  - {label}: {s['description']}{source_tag}\n"
+            system_instruction += "\n"
 
-        # MCP servers (prefer thread-local for concurrent requests)
-        mcp_mgr = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
-        if mcp_mgr and mcp_mgr.clients:
-            system_instruction += "\nMCP SERVERS — external tools available via connected servers:\n"
-            for srv in mcp_mgr.list_servers():
-                tools_list = ", ".join(srv["tools"][:5])
-                more = f" +{srv['tool_count']-5}" if srv["tool_count"] > 5 else ""
-                system_instruction += f"  - {srv['name']} ({srv['transport']}): {tools_list}{more}\n"
-            system_instruction += "MCP tools are prefixed with mcp_<server>_ — use them like any other tool.\n\n"
+    # Scheduler status
+    if _scheduler:
+        schedules = [s for s in _scheduler.list_all() if not s["name"].startswith("_memory_summary_")]
+        if schedules:
+            system_instruction += "\nSCHEDULER — active scheduled tasks:\n"
+            for s in schedules:
+                status = "active" if s["enabled"] else "paused"
+                next_r = s.get("next_run", "")[:16] if s.get("next_run") else "—"
+                system_instruction += f"  - {s['name']} [{status}]: {s['task'][:80]} (next: {next_r})\n"
+            system_instruction += "Use schedule_list and schedule_history tools to query scheduler state.\n\n"
+
+    # MCP servers (prefer thread-local for concurrent requests)
+    mcp_mgr = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
+    if mcp_mgr and mcp_mgr.clients:
+        system_instruction += "\nMCP SERVERS — external tools available via connected servers:\n"
+        for srv in mcp_mgr.list_servers():
+            tools_list = ", ".join(srv["tools"][:5])
+            more = f" +{srv['tool_count']-5}" if srv["tool_count"] > 5 else ""
+            system_instruction += f"  - {srv['name']} ({srv['transport']}): {tools_list}{more}\n"
+        system_instruction += "MCP tools are prefixed with mcp_<server>_ — use them like any other tool.\n\n"
 
     # Note about deferred built-in tool groups
     _deferred_groups = [g for g in (tcfg.get("deferred_tool_groups") or []) if g in TOOL_GROUPS]
