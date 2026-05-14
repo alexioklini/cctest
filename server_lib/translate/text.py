@@ -1,4 +1,4 @@
-"""Text translation — single _run_delegate call with glossary-aware system prompt."""
+"""Text translation — single sidecar background_call with glossary-aware system prompt."""
 from __future__ import annotations
 
 from .detect import LANG_NAMES, detect_language
@@ -126,16 +126,17 @@ def translate_text(text: str, target_lang: str, *,
         translated = text
     else:
         system_prompt = build_translate_system_prompt(src, target_lang, glossary=glossary)
-        result = brain._run_delegate(
-            [{"role": "user", "content": text}],
-            chosen_model,
-            system_prompt,
-            tools=False,
+        from handlers import sidecar_proxy as _sidecar_proxy
+        _res = _sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": text}],
+            model=chosen_model,
+            system_prompt=system_prompt,
         )
+        if _res.get("error"):
+            raise RuntimeError(f"translation failed: {_res['error']}")
+        result = _res.get("reply") or ""
         if not result:
             raise RuntimeError("translation returned empty result")
-        if isinstance(result, str) and result.startswith("Delegation error:"):
-            raise RuntimeError(result)
         translated = result.strip()
 
     if tone:
@@ -147,13 +148,14 @@ def translate_text(text: str, target_lang: str, *,
         rewrite_model = rewrite_model or chosen_model
         rewrite_lang = target_lang or src
         rewrite_prompt = build_rewrite_system_prompt(rewrite_lang, tone)
-        rewritten = brain._run_delegate(
-            [{"role": "user", "content": translated}],
-            rewrite_model,
-            rewrite_prompt,
-            tools=False,
+        from handlers import sidecar_proxy as _sidecar_proxy
+        _res = _sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": translated}],
+            model=rewrite_model,
+            system_prompt=rewrite_prompt,
         )
-        if rewritten and not (isinstance(rewritten, str) and rewritten.startswith("Delegation error:")):
+        rewritten = _res.get("reply") or ""
+        if rewritten and not _res.get("error"):
             translated = rewritten.strip()
 
     return {

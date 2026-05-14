@@ -165,7 +165,7 @@ def _rewrite_chunks(runs: list[str], *,
                     model: str,
                     progress: Callable[[int, int], None] | None = None) -> list[str]:
     """Rewrite `runs` in-place for tone, preserving count and order."""
-    import brain
+    from handlers import sidecar_proxy as _sidecar_proxy
     if not runs:
         return []
     model = _resolve_rewrite_model(model)
@@ -181,13 +181,13 @@ def _rewrite_chunks(runs: list[str], *,
                 progress(done, total)
             continue
         prompt = _format_chunk_for_prompt(chunk)
-        response = brain._run_delegate(
-            [{"role": "user", "content": prompt}],
-            model,
-            system_prompt,
-            tools=False,
+        _res = _sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": prompt}],
+            model=model,
+            system_prompt=system_prompt,
         )
-        if isinstance(response, str) and not response.startswith("Delegation error:"):
+        response = _res.get("reply") or ""
+        if response and not _res.get("error"):
             parsed = _parse_chunk_response(response, len(chunk))
             if parsed:
                 for j, r in enumerate(chunk):
@@ -213,7 +213,7 @@ def _translate_chunks(runs: list[str], *,
     On chunk-parse failure: retry that chunk one-by-one via translate_text so
     we never silently drop runs.
     """
-    import brain  # late import — avoids circular at module load
+    from handlers import sidecar_proxy as _sidecar_proxy
     from .text import translate_text
 
     if not runs:
@@ -236,14 +236,14 @@ def _translate_chunks(runs: list[str], *,
             continue
 
         prompt = _format_chunk_for_prompt(chunk)
-        response = brain._run_delegate(
-            [{"role": "user", "content": prompt}],
-            model,
-            system_prompt,
-            tools=False,
+        _res = _sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": prompt}],
+            model=model,
+            system_prompt=system_prompt,
         )
+        response = _res.get("reply") or ""
         parsed: list[str] | None = None
-        if isinstance(response, str) and not response.startswith("Delegation error:"):
+        if response and not _res.get("error"):
             parsed = _parse_chunk_response(response, len(chunk))
 
         if parsed is None:

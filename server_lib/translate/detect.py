@@ -82,13 +82,14 @@ def detect_language(text: str, *, min_confidence: float = 0.6,
 def _llm_detect(text: str, model: str) -> str:
     """Single tiny LLM call. Returns ISO 639-1 or ''."""
     try:
-        import brain  # late import — brain may not be loaded at module init
-        out = brain._run_delegate(
-            [{"role": "user", "content": f"Detect the language of this text. Reply with only the ISO 639-1 two-letter code (e.g. 'en', 'de'). No explanation.\n\n{text}"}],
-            model,
-            "You are a language identifier. Output a single ISO 639-1 code, lowercase, nothing else.",
-            tools=False,
-        ) or ""
+        from handlers import sidecar_proxy as _sidecar_proxy
+        _res = _sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": f"Detect the language of this text. Reply with only the ISO 639-1 two-letter code (e.g. 'en', 'de'). No explanation.\n\n{text}"}],
+            model=model,
+            system_prompt="You are a language identifier. Output a single ISO 639-1 code, lowercase, nothing else.",
+            max_tokens=8,
+        )
+        out = _res.get("reply") or ""
         code = out.strip().lower()[:2]
         if code in LANG_NAMES:
             return code
