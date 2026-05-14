@@ -7,11 +7,11 @@ This document captures the in-flight state of the Phase 5 deletion campaign so t
 
 ## ⏭️ Next session: pick up here
 
-**Steps 1, 2, 3, 5, 6, 7, 8 are done and committed. Step 4 was skipped at user direction. Steps 9 and 10 are next.**
+**Steps 1, 2, 3, 5, 6, 7, 8, 9 are done and committed. Step 4 was skipped at user direction. Step 10 is next.**
 
-The /v1/chat path through the sidecar is verified live after every step. Eval has NOT been re-run since v8.37.0 — defer to gate-3 at end of step 9.
+The /v1/chat path through the sidecar is verified live after every step. Eval has NOT been re-run since v8.37.0 — defer to gate-3 at step 10.
 
-**Resume from**: step 9 (CLAUDE.md rewrite + tag v9.0.0), then step 10 (gate-3 eval run).
+**Resume from**: step 10 (gate-3 eval run). v9.0.0 tag is held until that passes.
 
 ---
 
@@ -27,10 +27,84 @@ The /v1/chat path through the sidecar is verified live after every step. Eval ha
 | 6 | Delete middleware + guards | DONE | `0c7fb4a` | −510 |
 | 7 | Delete native loop core | DONE | `707285d` + `fdcb655` | −1520 |
 | 8 | Unwire LCM auto-trigger; add manual button | DONE | `ffbde8d` | −26 |
-| 9 | Update CLAUDE.md + tag v9.0.0 | PENDING | — | — |
-| 10 | Gate-3 eval run | PENDING | — | — |
+| 9 | CLAUDE.md rewrite + orphan/comment sweep (tag deferred) | DONE | `d4d3bce` + `a37c6b5` + `5a8b3ea` | −1296 code / +166 docs / −84 docs |
+| 10 | Gate-3 eval run + tag v9.0.0 | PENDING | — | — |
 
-**Net so far**: −3590 LOC code, +597 LOC docs. Eight code commits.
+**Net so far**: −4886 LOC code, +679 LOC docs. Ten code/doc commits.
+
+### Step 9 — CLAUDE.md rewrite + orphan & comment sweep
+Three commits, scope per the user-confirmed plan ("CLAUDE.md only + flagged
+orphans + sweep all stale references"). v9.0.0 tag held until gate-3.
+
+- **`d4d3bce` refactor(sdk-phase5-9): delete TUI/CLI orphans + LCM legacy
+  wrappers** (−1296 LOC). Three blocks gone, all flagged in step 8 as
+  orphaned by the sidecar migration:
+  - `_check_and_compact` + `_compact_conversation` (~140 LOC). Only caller
+    was the chat-worker auto-trigger removed in step 8 plus the dead TUI
+    loop. Manual ✂️ button calls `_context_manager.check_and_compact`
+    directly.
+  - `main()` + `_run_interactive()` + 12 TUI helpers + the
+    `if __name__ == '__main__'` block (~1040 LOC). The launcher.py /
+    tui.py path drives the live TUI; brain.py's `_run_interactive` still
+    imported the missing `sdk_backend` module (deleted in v7.0.0) and
+    was unreachable.
+  - `EscapeWatcher` + `Spinner` classes (~100 LOC). Both TUI-only; zero
+    external callers. `CancelToken` docstring updated to drop the
+    EscapeWatcher reference (CancelToken itself stays — handlers/chat.py
+    uses it as the chat worker's cancel signal).
+  - **Known follow-ups** (NOT done — outside step 9 scope): orphans
+    `_execute_tools_batch`, `_display_tool_call`, `_format_tool_call`,
+    `_format_tool_result`, `_toggle_tool_output`, `render_markdown` and
+    the markdown-rendering helpers (~400 LOC of TUI-only code). All
+    have zero external callers post-Phase-5 but tearing them out
+    requires verifying no buried in-process call site, which is bigger
+    than the step 9 brief. README.md still claims `python3 brain.py
+    start` etc. — those entry points are now gone, README needs an
+    update.
+
+- **`a37c6b5` docs(sdk-phase5-9): sweep stale references to deleted
+  native-loop symbols** (~+18 / −22 LOC). Six docstring/comment updates
+  across brain.py + handlers/providers.py replacing references to
+  `_run_delegate` / `send_message_with_fallback` /
+  `_handle_openai_response` / `_summarise_tool_result` /
+  `escape_watcher.cancelled` with the live equivalents
+  (`sidecar_proxy.background_call`, the proxy's `_watch_cancel` thread,
+  etc.).
+
+- **`5a8b3ea` docs(sdk-phase5-9): rewrite CLAUDE.md for sidecar
+  architecture** (+166 / −84 LOC). Six section rewrites in CLAUDE.md
+  per the original Phase 5 plan, plus engine/CLAUDE.md:
+  - Architecture: ASCII picture now shows sidecar process owning the
+    agentic loop.
+  - Agentic Loop: rewritten — sidecar_proxy interactive vs background,
+    /v1/tools/call dispatch, cancel via X-Turn-Id, "don't reintroduce"
+    list of native-loop relics.
+  - Resumable Streaming: documents proxy translation + Phase 5 step 1c
+    Brain-restart recovery (active_turns + recover_active_turns_on_boot
+    + sidecar /turn/<id>/events).
+  - Format-Aware Thinking Level: deleted (SDK handles natively).
+  - Thinking / Reasoning: rewritten short — SDK passthrough + oMLX
+    warmup invariant + dropdown shape.
+  - Worker Subagents: deleted (envelope removed in step 6).
+  - Guided Prompt Execution: deleted (entire feature removed in step 3).
+  - Tools: rewritten to describe HTTP MCP dispatch path + the
+    synchronous-by-design dispatch constraint.
+  - Lossless Context Manager: rewritten — manual-only trigger, sidecar
+    background_call routing for ContextManager's own LLM calls.
+  - Key Invariants: dropped intermediate-tool-message rollback line
+    (sidecar owns those now); added "sidecar is the only LLM execution
+    path".
+  - Trailing sweeps: Python Code Execution lost the `_middleware_pyexec_hint`
+    bullet; User Profile worker `_run_delegate` → `sidecar_proxy.background_call`.
+  - engine/CLAUDE.md: same Agentic Loop rewrite, Worker Subagents
+    section deleted, Provider Concurrency Queue clarified (warmup-only
+    now), Concurrency & Thread Safety updated for sidecar dispatch
+    callback's thread-local rebuild.
+
+Live verification after each commit: smoke chat through
+`CLIProxyAPI/mistral-medium-3.5` → `event: done` + persisted assistant
+message + no tracebacks in `server.error.log`. Manual `POST
+/v1/context/compact` still returns `status=compacted`.
 
 ### Step 8 — LCM auto-trigger unwired (`ffbde8d`)
 ~26 LOC deleted from `handlers/chat.py` (the `_check_and_compact` block + the
