@@ -1044,35 +1044,8 @@ class ChatHandlerMixin:
                                               agent_id=session.agent_id)
             session.messages, _mc_freed = engine._microcompact(session.messages, keep_recent=5)
 
-        # Check context and compact (with SSE progress)
-        estimated = engine._estimate_conversation_tokens(session.messages)
-        ctx_cfg = engine._context_manager.get_config() if engine._context_manager else {}
-        threshold_pct = ctx_cfg.get("compact_threshold", 0.75) if ctx_cfg.get("enabled") else engine.COMPACT_THRESHOLD
-        pre_compact_pct = 0
-        if estimated >= int(session.max_context * threshold_pct):
-            pre_compact_pct = int(estimated / session.max_context * 100)
-            sse_line = f"event: compacting\ndata: {json.dumps({'pct': pre_compact_pct, 'tokens': estimated, 'max_tokens': session.max_context})}\n\n"
-            try:
-                self.wfile.write(sse_line.encode("utf-8"))
-                self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-
-        session.messages, was_compacted = engine._check_and_compact(
-            session.messages, session.model, session.api_key,
-            session.base_url,
-            max_tokens=session.max_context,
-            session_id=session.id,
-        )
-        if was_compacted:
-            new_est = engine._estimate_conversation_tokens(session.messages)
-            new_pct = int(new_est / session.max_context * 100)
-            sse_line = f"event: compacted\ndata: {json.dumps({'pct': new_pct, 'tokens': new_est, 'old_pct': pre_compact_pct})}\n\n"
-            try:
-                self.wfile.write(sse_line.encode("utf-8"))
-                self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
-                pass
+        # LCM is manual-only (status-bar ✂️ button → POST /v1/context/compact).
+        # No automatic trigger here; the user decides when to compact.
 
         event_callback, _cb_state = build_chat_event_callback(session, live, sid)
         # Local aliases over the factory's state dict — the worker body below

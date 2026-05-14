@@ -165,16 +165,17 @@ function updateStatusBar() {
     label.textContent = `${fmtK(contextUsed)} / ${fmtK(effectiveMaxContext)} (${pct}%)`;
     label.title = `${contextUsed.toLocaleString()} / ${effectiveMaxContext.toLocaleString()} tokens (last API input)`;
 
-    // LCM warning banner: show when context is 60–79% (next turn likely > 80%).
-    // At 80%+ the proactive compaction fires automatically; banner is advisory only.
+    // LCM warning banner: show at ≥60% — compaction is manual-only, so the
+    // banner stays visible until the user runs ✂️ Compact or the conversation
+    // resets.
     const banner = document.getElementById('lcm-warn-banner');
     if (banner) {
       const isStreaming = !!document.getElementById('stop-btn')?.offsetParent;
-      if (pct >= 60 && pct < 80 && !isStreaming) {
+      if (pct >= 60 && !isStreaming) {
         const txt = document.getElementById('lcm-warn-text');
-        if (txt) txt.textContent = `Context is ${pct}% full — the next turn may exceed the limit. Compact now to keep the conversation going.`;
+        if (txt) txt.textContent = `Context is ${pct}% full — compact now to keep the conversation going.`;
         banner.classList.add('visible');
-      } else if (pct >= 80 || pct < 60) {
+      } else {
         banner.classList.remove('visible');
       }
     }
