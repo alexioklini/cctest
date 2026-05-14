@@ -544,31 +544,22 @@ def extract_triples_from_drawer(
     # might be loading the model or briefly restarting). Each retry waits a
     # short, growing backoff. Real errors (bad JSON, GDPR block, malformed
     # response) are not retried — they'd fail the same way.
+    from handlers import sidecar_proxy as _sidecar_proxy
     raw = None
     last_err = ""
     for attempt in range(3):
-        try:
-            raw = cc._run_delegate(
-                messages=[{"role": "user", "content": user_content}],
-                model=resolved_model,
-                system_prompt=system_prompt,
-                tools=False,
-                cancel_token=cancel_token,
-                inference_params={
-                    "temperature": inference_temperature,
-                    "max_tokens": inference_max_tokens,
-                },
-            )
-        except Exception as e:
-            last_err = f"llm_error: {type(e).__name__}: {e}"
-            raw = None
-        # Detect "connection refused" string both at exception layer and in
-        # the delegate's stringified error path.
+        _res = _sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": user_content}],
+            model=resolved_model,
+            system_prompt=system_prompt,
+            max_tokens=inference_max_tokens,
+        )
+        raw = _res.get("reply") or None
+        _err = _res.get("error") or ""
+        last_err = f"llm_error: {_err}" if _err else ""
         is_conn_refused = (
             ("Connection refused" in last_err)
-            or (isinstance(raw, str)
-                and raw.startswith("Delegation error:")
-                and "Connection refused" in raw))
+            or ("Connection refused" in str(_err)))
         if is_conn_refused and attempt < 2:
             import time as _time
             _time.sleep(0.8 + attempt * 1.2)  # 0.8s, 2.0s
@@ -576,10 +567,10 @@ def extract_triples_from_drawer(
             continue
         break
 
-    if last_err:
+    if last_err and not raw:
         return [], last_err
-    if raw is None or (isinstance(raw, str) and raw.startswith("Delegation error:")):
-        return [], (raw or "delegate returned None")
+    if raw is None:
+        return [], "sidecar returned no reply"
 
     parsed = cc._extract_json_from_llm(raw, expect_array=True)
     if not isinstance(parsed, list):
