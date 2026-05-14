@@ -13,6 +13,192 @@ import brain as engine
 from handlers import sidecar_proxy
 
 
+def build_chat_event_callback(session, live, sid):
+    """Build the per-turn SSE event callback + its accumulator state.
+
+    Used by the live chat worker AND by the Brain-restart recovery thread
+    (Phase 5 stage 1c) — both need identical persistence + LiveStream-fanout
+    semantics. Returns (callback, state); the caller reads state after the
+    loop terminates to assemble msg_metadata + the terminal `done` payload.
+
+    `live` is the LiveStream this turn emits into; `sid` is the session id
+    (used for ChatDB.set_streaming_text throttling); `session` is the
+    Session for add_message("thinking", ...) row writes.
+    """
+    state = {
+        "created_files": [],
+        "stream_persist": {"last": 0.0},
+        "partial_reply": [],
+        "partial_tools": [],
+        "partial_thinking": [],
+        "thinking_summary": {},
+        "usage_totals": {"tokens_in": 0, "tokens_out": 0, "last_tokens_in": 0},
+        "request_payloads": [],
+        "guided_tasks_live": {},
+    }
+    created_files = state["created_files"]
+    _stream_persist = state["stream_persist"]
+    _partial_reply = state["partial_reply"]
+    _partial_tools = state["partial_tools"]
+    _partial_thinking = state["partial_thinking"]
+    _thinking_summary = state["thinking_summary"]
+    _usage_totals = state["usage_totals"]
+    _request_payloads = state["request_payloads"]
+    _guided_tasks_live = state["guided_tasks_live"]
+
+    def event_callback(event_type, data):
+        if event_type == "text_delta":
+            _partial_reply.append(data.get("text", ""))
+            # Incremental persist (throttled): so a client reopening this
+            # session — or the chat surviving a server restart mid-stream —
+            # can render the partial reply even with no live buffer.
+            _now = time.time()
+            if _now - _stream_persist["last"] > 0.4:
+                _stream_persist["last"] = _now
+                try:
+                    ChatDB.set_streaming_text(sid, "".join(_partial_reply))
+                except Exception:
+                    pass
+        elif event_type in ("file_created", "artifact_updated"):
+            created_files.append(data)
+        elif event_type == "thinking_delta":
+            _partial_thinking.append(data.get("text", ""))
+        elif event_type == "thinking_done":
+            # Persist this round's thinking as its own message row so the
+            # transcript preserves chronological order: thinking → tool calls →
+            # next round's thinking → final assistant text. The engine fires this
+            # per tool-round, so multi-round reasoning ends up as multiple rows
+            # interleaved with tool_call/tool_result. Skip if no text (opaque path).
+            _round_text = data.get("text") or "".join(_partial_thinking)
+            _round_text = _round_text.strip()
+            if _round_text:
+                _tr = data.get("tool_round")
+                _meta = {"tool_round": _tr} if _tr is not None else None
+                try:
+                    session.add_message("thinking", _round_text, metadata=_meta)
+                except Exception as _e:
+                    print(f"[thinking-persist] failed: {_e}", flush=True)
+            # Reset the accumulator so the next round starts fresh.
+            _partial_thinking.clear()
+        elif event_type == "thinking_summary":
+            _thinking_summary.update(data)
+        elif event_type == "tool_call":
+            name = data.get("name", "")
+            args = data.get("args", {})
+            tr = data.get("tool_round")
+            # Update existing entry if re-emitted with full args, else append
+            if args and _partial_tools and _partial_tools[-1].get("name") == name and not _partial_tools[-1].get("args"):
+                _partial_tools[-1]["args"] = args
+                if tr is not None:
+                    _partial_tools[-1]["tool_round"] = tr
+            else:
+                entry = {"name": name, "args": args}
+                if tr is not None:
+                    entry["tool_round"] = tr
+                _partial_tools.append(entry)
+        elif event_type == "tool_result":
+            # Attach result to the last matching tool entry and extract
+            # normalized references server-side. The cap controls how much
+            # of the raw result string we persist — references are stored
+            # separately in t["references"] so the client never needs to
+            # re-parse the raw result JSON to render the references panel.
+            tool_name = data.get("name", "")
+            result_str = str(data.get("result", ""))
+            if tool_name in ("read_document", "read_file",
+                             "read_path", "read_path_original"):
+                cap = 50000
+            else:
+                cap = 5000
+            refs = ChatHandlerMixin._extract_references(tool_name, result_str)
+            for t in reversed(_partial_tools):
+                if t["name"] == tool_name and "result" not in t:
+                    t["result"] = result_str[:cap]
+                    if refs:
+                        t["references"] = refs
+                    break
+            if refs:
+                live.emit("references", {
+                    "tool_name": tool_name,
+                    "references": refs,
+                    "tool_round": data.get("tool_round", 0),
+                })
+        elif event_type == "usage":
+            _usage_totals["tokens_in"] += data.get("tokens_in", 0)
+            _usage_totals["tokens_out"] += data.get("tokens_out", 0)
+            _usage_totals["last_tokens_in"] = data.get("tokens_in", 0)
+            # Attach per-round actual tokens to the matching request_payload
+            _ur = data.get("tool_round")
+            if _ur is not None:
+                for _p in _request_payloads:
+                    if _p.get("tool_round") == _ur:
+                        _p["tokens_in"] = data.get("tokens_in", 0)
+                        _p["tokens_out"] = data.get("tokens_out", 0)
+                        break
+            return  # internal only, don't send to client
+        elif event_type == "worker_usage":
+            # Worker-side LLM call (e.g. summariser) tokens. Add to turn totals
+            # so the status bar reflects the real cost. Forward to client for
+            # the worker-flow panel.
+            _usage_totals["tokens_in"] += data.get("tokens_in", 0)
+            _usage_totals["tokens_out"] += data.get("tokens_out", 0)
+            # (fall through so the event reaches the SSE queue)
+        elif event_type == "request_payload":
+            _request_payloads.append(data)
+            return  # internal only, don't send to client
+        elif event_type == "guided_task_start":
+            idx = data.get("index", 0)
+            if idx not in _guided_tasks_live:
+                _guided_tasks_live[idx] = {"task": data.get("task", ""), "total": data.get("total", 1), "toolCalls": [], "references": []}
+        elif event_type == "guided_task_progress":
+            idx = data.get("index", 0)
+            entry = _guided_tasks_live.setdefault(idx, {"task": "", "total": 1, "toolCalls": [], "references": []})
+            ev = data.get("event")
+            ev_data = data.get("data") or {}
+            if ev == "tool_call":
+                entry["toolCalls"].append({"name": ev_data.get("name", ""), "args": ev_data.get("args", {})})
+            elif ev == "tool_result":
+                # Attach result to last matching tool call entry
+                tc_name = ev_data.get("name", "")
+                result_str = str(ev_data.get("result", ""))
+                for tc in reversed(entry["toolCalls"]):
+                    if tc["name"] == tc_name and "result" not in tc:
+                        tc["result"] = result_str[:500]
+                        break
+                # Extract and inject references
+                _gt_refs = ChatHandlerMixin._extract_references(tc_name, result_str)
+                if _gt_refs:
+                    data = dict(data)
+                    data["refs"] = _gt_refs
+                    for r in _gt_refs:
+                        if not any(x.get("link") == r.get("link") for x in entry["references"]):
+                            entry["references"].append(r)
+            elif ev == "text_delta":
+                # Accumulate non-final task narration so it persists in
+                # metadata.guided_tasks[i].narration and renders inside the
+                # task card on reload (mirror of the client-side accumulator).
+                entry["narration"] = (entry.get("narration") or "") + (ev_data.get("text") or "")
+        elif event_type == "guided_task_done":
+            idx = data.get("index", 0)
+            if idx in _guided_tasks_live:
+                _guided_tasks_live[idx]["state"] = "done"
+                if isinstance(data.get("stats"), dict):
+                    _guided_tasks_live[idx]["stats"] = data["stats"]
+                # Persist the task's final LLM output (the same text passed
+                # to the next task as context). For non-final tasks this is
+                # what the model emitted before stopping; for the synthesis
+                # task this IS the assistant reply (and would be redundant
+                # with msg.content, but kept for completeness so the panel
+                # can render and copy the per-task result uniformly).
+                if data.get("result"):
+                    _guided_tasks_live[idx]["result"] = data["result"]
+        elif event_type == "request_payload":
+            _request_payloads.append(data)
+            return  # internal only, don't send to client
+        live.emit(event_type, data)
+
+    return event_callback, state
+
+
 class ChatHandlerMixin:
 
     # Cache: model -> provider config (refreshed when providers change)
@@ -691,164 +877,18 @@ class ChatHandlerMixin:
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
-        created_files = []
-        _stream_persist = {"last": 0.0}  # throttle for ChatDB.set_streaming_text
-        _partial_reply = []  # accumulate text deltas for partial response recovery
-        _partial_tools = []  # accumulate tool calls
-        _partial_thinking = []  # accumulate thinking blocks
-        _thinking_summary = {}  # opaque-reasoning summary (format + reasoning_tokens)
-        _usage_totals = {"tokens_in": 0, "tokens_out": 0, "last_tokens_in": 0}  # cumulative across tool rounds; last_tokens_in = most recent round only
-        _request_payloads = []  # capture request snapshots per tool round
-        _guided_tasks_live = {}  # index -> {task, toolCalls, references} accumulated from SSE events
-        def event_callback(event_type, data):
-            if event_type == "text_delta":
-                _partial_reply.append(data.get("text", ""))
-                # Incremental persist (throttled): so a client reopening this
-                # session — or the chat surviving a server restart mid-stream —
-                # can render the partial reply even with no live buffer.
-                _now = time.time()
-                if _now - _stream_persist["last"] > 0.4:
-                    _stream_persist["last"] = _now
-                    try:
-                        ChatDB.set_streaming_text(sid, "".join(_partial_reply))
-                    except Exception:
-                        pass
-            elif event_type in ("file_created", "artifact_updated"):
-                created_files.append(data)
-            elif event_type == "thinking_delta":
-                _partial_thinking.append(data.get("text", ""))
-            elif event_type == "thinking_done":
-                # Persist this round's thinking as its own message row so the
-                # transcript preserves chronological order: thinking → tool calls →
-                # next round's thinking → final assistant text. The engine fires this
-                # per tool-round, so multi-round reasoning ends up as multiple rows
-                # interleaved with tool_call/tool_result. Skip if no text (opaque path).
-                _round_text = data.get("text") or "".join(_partial_thinking)
-                _round_text = _round_text.strip()
-                if _round_text:
-                    _tr = data.get("tool_round")
-                    _meta = {"tool_round": _tr} if _tr is not None else None
-                    try:
-                        session.add_message("thinking", _round_text, metadata=_meta)
-                    except Exception as _e:
-                        print(f"[thinking-persist] failed: {_e}", flush=True)
-                # Reset the accumulator so the next round starts fresh.
-                _partial_thinking.clear()
-            elif event_type == "thinking_summary":
-                _thinking_summary.update(data)
-            elif event_type == "tool_call":
-                name = data.get("name", "")
-                args = data.get("args", {})
-                tr = data.get("tool_round")
-                # Update existing entry if re-emitted with full args, else append
-                if args and _partial_tools and _partial_tools[-1].get("name") == name and not _partial_tools[-1].get("args"):
-                    _partial_tools[-1]["args"] = args
-                    if tr is not None:
-                        _partial_tools[-1]["tool_round"] = tr
-                else:
-                    entry = {"name": name, "args": args}
-                    if tr is not None:
-                        entry["tool_round"] = tr
-                    _partial_tools.append(entry)
-            elif event_type == "tool_result":
-                # Attach result to the last matching tool entry and extract
-                # normalized references server-side. The cap controls how much
-                # of the raw result string we persist — references are stored
-                # separately in t["references"] so the client never needs to
-                # re-parse the raw result JSON to render the references panel.
-                tool_name = data.get("name", "")
-                result_str = str(data.get("result", ""))
-                if tool_name in ("read_document", "read_file",
-                                 "read_path", "read_path_original"):
-                    cap = 50000
-                else:
-                    cap = 5000
-                refs = ChatHandlerMixin._extract_references(tool_name, result_str)
-                for t in reversed(_partial_tools):
-                    if t["name"] == tool_name and "result" not in t:
-                        t["result"] = result_str[:cap]
-                        if refs:
-                            t["references"] = refs
-                        break
-                if refs:
-                    live.emit("references", {
-                        "tool_name": tool_name,
-                        "references": refs,
-                        "tool_round": data.get("tool_round", 0),
-                    })
-            elif event_type == "usage":
-                _usage_totals["tokens_in"] += data.get("tokens_in", 0)
-                _usage_totals["tokens_out"] += data.get("tokens_out", 0)
-                _usage_totals["last_tokens_in"] = data.get("tokens_in", 0)
-                # Attach per-round actual tokens to the matching request_payload
-                _ur = data.get("tool_round")
-                if _ur is not None:
-                    for _p in _request_payloads:
-                        if _p.get("tool_round") == _ur:
-                            _p["tokens_in"] = data.get("tokens_in", 0)
-                            _p["tokens_out"] = data.get("tokens_out", 0)
-                            break
-                return  # internal only, don't send to client
-            elif event_type == "worker_usage":
-                # Worker-side LLM call (e.g. summariser) tokens. Add to turn totals
-                # so the status bar reflects the real cost. Forward to client for
-                # the worker-flow panel.
-                _usage_totals["tokens_in"] += data.get("tokens_in", 0)
-                _usage_totals["tokens_out"] += data.get("tokens_out", 0)
-                # (fall through so the event reaches the SSE queue)
-            elif event_type == "request_payload":
-                _request_payloads.append(data)
-                return  # internal only, don't send to client
-            elif event_type == "guided_task_start":
-                idx = data.get("index", 0)
-                if idx not in _guided_tasks_live:
-                    _guided_tasks_live[idx] = {"task": data.get("task", ""), "total": data.get("total", 1), "toolCalls": [], "references": []}
-            elif event_type == "guided_task_progress":
-                idx = data.get("index", 0)
-                entry = _guided_tasks_live.setdefault(idx, {"task": "", "total": 1, "toolCalls": [], "references": []})
-                ev = data.get("event")
-                ev_data = data.get("data") or {}
-                if ev == "tool_call":
-                    entry["toolCalls"].append({"name": ev_data.get("name", ""), "args": ev_data.get("args", {})})
-                elif ev == "tool_result":
-                    # Attach result to last matching tool call entry
-                    tc_name = ev_data.get("name", "")
-                    result_str = str(ev_data.get("result", ""))
-                    for tc in reversed(entry["toolCalls"]):
-                        if tc["name"] == tc_name and "result" not in tc:
-                            tc["result"] = result_str[:500]
-                            break
-                    # Extract and inject references
-                    _gt_refs = ChatHandlerMixin._extract_references(tc_name, result_str)
-                    if _gt_refs:
-                        data = dict(data)
-                        data["refs"] = _gt_refs
-                        for r in _gt_refs:
-                            if not any(x.get("link") == r.get("link") for x in entry["references"]):
-                                entry["references"].append(r)
-                elif ev == "text_delta":
-                    # Accumulate non-final task narration so it persists in
-                    # metadata.guided_tasks[i].narration and renders inside the
-                    # task card on reload (mirror of the client-side accumulator).
-                    entry["narration"] = (entry.get("narration") or "") + (ev_data.get("text") or "")
-            elif event_type == "guided_task_done":
-                idx = data.get("index", 0)
-                if idx in _guided_tasks_live:
-                    _guided_tasks_live[idx]["state"] = "done"
-                    if isinstance(data.get("stats"), dict):
-                        _guided_tasks_live[idx]["stats"] = data["stats"]
-                    # Persist the task's final LLM output (the same text passed
-                    # to the next task as context). For non-final tasks this is
-                    # what the model emitted before stopping; for the synthesis
-                    # task this IS the assistant reply (and would be redundant
-                    # with msg.content, but kept for completeness so the panel
-                    # can render and copy the per-task result uniformly).
-                    if data.get("result"):
-                        _guided_tasks_live[idx]["result"] = data["result"]
-            elif event_type == "request_payload":
-                _request_payloads.append(data)
-                return  # internal only, don't send to client
-            live.emit(event_type, data)
+        event_callback, _cb_state = build_chat_event_callback(session, live, sid)
+        # Local aliases over the factory's state dict — the worker body below
+        # reads these accumulators after the loop returns. Shared mutation:
+        # any append the callback does is visible here and vice versa.
+        created_files = _cb_state["created_files"]
+        _partial_reply = _cb_state["partial_reply"]
+        _partial_tools = _cb_state["partial_tools"]
+        _partial_thinking = _cb_state["partial_thinking"]
+        _thinking_summary = _cb_state["thinking_summary"]
+        _usage_totals = _cb_state["usage_totals"]
+        _request_payloads = _cb_state["request_payloads"]
+        _guided_tasks_live = _cb_state["guided_tasks_live"]
 
         handler_self = self  # capture for closure
 
