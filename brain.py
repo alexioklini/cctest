@@ -19591,15 +19591,15 @@ class CodeGraph:
             )
 
             try:
-                result = _run_delegate(
+                from handlers import sidecar_proxy as _sidecar_proxy
+                _res = _sidecar_proxy.background_call(
                     messages=[{"role": "user", "content": prompt}],
                     model=model,
                     system_prompt="Output only numbered one-line summaries. No markdown, no explanations.",
-                    memory_store=None,
-                    inference_params={"max_tokens": 2000, "temperature": 0.1},
-                    tools=False,
+                    max_tokens=2000,
                 )
-                if result and not result.startswith("Delegation error"):
+                result = _res.get("reply") or ""
+                if result and not _res.get("error"):
                     # Parse numbered lines
                     summary_lines = []
                     for line in result.strip().split("\n"):
