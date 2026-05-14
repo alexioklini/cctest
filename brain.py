@@ -2596,12 +2596,19 @@ def tool_ask_llm(args: dict) -> str:
     # cost log can attribute this LLM call back to the workflow run.
     sid = getattr(_thread_local, "current_session_id", None) or ""
     try:
-        text = _run_delegate(
-            [{"role": "user", "content": prompt}],
-            model, system_prompt,
-            tools=False,
-            session_id=sid or None,
-        ) or ""
+        from handlers import sidecar_proxy as _sidecar_proxy
+        _agent_id = ""
+        _ag = getattr(_thread_local, "current_agent", None) or _current_agent
+        if _ag is not None:
+            _agent_id = getattr(_ag, "agent_id", "") or ""
+        _res = _sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": prompt}],
+            model=model,
+            system_prompt=system_prompt,
+            agent_id=(_agent_id or "main"),
+            session_id=(sid or ""),
+        )
+        text = _res.get("reply") or ""
         return _ok({"text": text.strip(), "model": model})
     except Exception as e:
         return _err(f"ask_llm: {e}")
