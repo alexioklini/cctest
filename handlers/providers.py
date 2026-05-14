@@ -682,9 +682,9 @@ class ProvidersHandlerMixin:
 
         Body: {ticket_id: str, reason?: str}
         Waiting tickets are dropped from the waitlist (~instant).
-        Running tickets: fires the ticket's cancel_token, which the SSE stream
-        loop in _handle_openai_response checks every incoming chunk — aborts
-        at the next byte or keepalive.
+        Running tickets: fires the ticket's cancel_token; the sidecar proxy's
+        `_watch_cancel` thread polls the token and POSTs `/cancel/<turn_id>`
+        to the sidecar, which terminates the in-flight Anthropic SDK call.
         """
         user = self._require_role("admin")
         if not user:

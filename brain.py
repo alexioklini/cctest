@@ -2215,7 +2215,8 @@ def resolve_active_tools(
 
     Returns the wire payload (Anthropic shape by default; OpenAI shape via
     `is_openai_shape=True`). Every caller — chat handler, scheduler, warmup,
-    _run_delegate, settings UI tool-breakdown — goes through this function.
+    sidecar background_call, settings UI tool-breakdown — goes through this
+    function.
 
     Logic:
       1. purpose=='transform'        → []
@@ -2225,8 +2226,9 @@ def resolve_active_tools(
                                        `minimal: True`
       5. Filter TOOL_DEFINITIONS (or _OPENAI) to the base set.
       6. Subtract deferred-group tools (from agent's token_config.deferred_tool_groups),
-         except those already in discovered_tools. ALWAYS applied — fixes
-         the historic gap where native _run_delegate skipped deferral.
+         except those already in discovered_tools. ALWAYS applied across all
+         callers — every sidecar background_call must see the same tool set
+         the chat handler would.
       7. Add MCP tools (when mcp_manager is passed and not deferred per
          token_config.defer_mcp_tools).
       8. Re-sort by name for KV-cache stability.
@@ -12105,12 +12107,9 @@ class LocalProviderQueue:
         Waiting: marks the ticket cancelled so the waiting thread raises
           TaskCancelled on its next 200ms loop tick, ~instant.
         Running: fires the ticket's cancel_token (same as pressing the chat's
-          stop button). The handler loop inside `_handle_openai_response`
-          checks `escape_watcher.cancelled` on every SSE line, so the current
-          HTTP call aborts at the next incoming byte. If the upstream is
-          completely stalled (no bytes), the urllib socket read blocks — the
-          cancel still takes effect as soon as the server sends any chunk,
-          including keepalives.
+          stop button). The sidecar proxy's `_watch_cancel` thread polls the
+          token and POSTs `/cancel/<turn_id>` to the sidecar, which terminates
+          the in-flight Anthropic SDK call.
 
         Returns a result dict describing what was cancelled.
         """
@@ -15605,7 +15604,7 @@ class Scheduler:
 
         try:
             # Clear any stale trace id from a previous run on this thread so
-            # _handle_openai_response installs a fresh one that we capture after.
+            # the sidecar background_call mints a fresh one that we capture after.
             _thread_local.trace_id = None
 
             sched_inf = get_inference_params(model, target.config.get("model_purpose"))
@@ -20346,9 +20345,8 @@ def gdpr_pick_model_for_background(model: str, texts, purpose: str = "") -> str:
     config access fall open (return model) — never block a background call on
     scanner bugs.
 
-    Used by: next-prompt suggestions, chat summary, memory classifier, worker
-    tool-result summariser, _run_delegate (delegate tool + scheduler + agent
-    tasks).
+    Used by: next-prompt suggestions, chat summary, memory classifier,
+    sidecar background_call (delegate tool + scheduler + agent tasks).
     """
     try:
         cfg = _get_gdpr_scanner_config()
@@ -20798,12 +20796,10 @@ def classify_chat_for_memory(user_text: str, assistant_text: str,
     """Classify a user+assistant exchange for memory filing. Returns the
     category label or None on error.
 
-    Routes through send_message_with_fallback so it picks up the same
-    client-mode proxy gate as every other LLM call: session-bound proxy when
-    the caller is inside an active chat (rare for the classifier), ambient
-    proxy via the chat owner's connected client otherwise. The chat-sync
-    daemon sets `current_user_id` on the thread-local before invoking us so
-    the ambient picker can find the right tab.
+    Routes through `sidecar_proxy.background_call` so it picks up the same
+    GDPR pre-flight + provider routing as every other non-interactive LLM
+    call. The chat-sync daemon sets `current_user_id` on the thread-local
+    before invoking us so any per-user gating downstream can find the caller.
     """
     try:
         # GDPR auto-fallback before any cloud HTTP call. Hard-block without
