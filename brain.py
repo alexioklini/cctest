@@ -21689,31 +21689,18 @@ def classify_chat_for_memory(user_text: str, assistant_text: str,
                 model, [user_text, assistant_text], purpose="memory_classifier")
         except GDPRBlockedError:
             return None
-        provider = resolve_provider_for_model(model)
         messages = [
-            {"role": "system", "content": _MEMORY_CLASSIFIER_PROMPT},
             {"role": "user",
              "content": f"User: {user_text[:2000]}\nAssistant: {assistant_text[:2000]}"},
         ]
-        # send_message_with_fallback always runs with stream=True (the proxy
-        # path requires SSE). For a 20-token label call this is fine — the
-        # full label arrives in one or two SSE chunks and we just collect
-        # the assistant text. event_callback=None keeps it silent (no
-        # tool/usage forwarding); the proxy_request fan-out happens via the
-        # ambient channel resolved from current_user_id.
-        text = send_message_with_fallback(
-            messages,
-            model,
-            provider.get("api_key", ""),
-            provider.get("base_url", ""),
-            silent=True,
-            tools=False,
-            event_callback=None,
-            provider_resolver=resolve_provider_for_model,
-            inference_params={"max_tokens": 20, "temperature": 0.0},
-            purpose="memory_classifier",
-            session_id=None,
+        from handlers import sidecar_proxy as _sidecar_proxy
+        _res = _sidecar_proxy.background_call(
+            messages=messages,
+            model=model,
+            system_prompt=_MEMORY_CLASSIFIER_PROMPT,
+            max_tokens=20,
         )
+        text = _res.get("reply") or ""
         if not text:
             return None
         content = text.strip().strip('"').strip("'").strip().lower()
