@@ -2297,11 +2297,19 @@ class AdminHandlerMixin:
         messages = [{"role": "user", "content": instructions + "\n\n" + request_line}]
 
         try:
-            result = engine.send_message(
-                messages, refine_model, provider["api_key"],
-                provider["base_url"],
-                silent=True, tools=False,
+            from . import sidecar_proxy as _sidecar_proxy
+            _res = _sidecar_proxy.background_call(
+                messages=messages,
+                model=refine_model,
+                agent_id=agent_id,
+                session_id=session_id or "",
+                project=project or "",
+                provider_resolver=self._resolve_provider,
             )
+            result = _res.get("reply") or ""
+            if _res.get("error") and not result:
+                self._send_json({"error": str(_res["error"])}, 500)
+                return
             self._send_json({"refined": result or text, "model": refine_model,
                              "caveman": caveman})
         except Exception as e:

@@ -651,3 +651,75 @@ def run_turn_blocking(
         "error": error_msg or summary.get("error"),
         "turn_id": turn_id,
     }
+
+
+def background_call(
+    *,
+    messages: list[dict],
+    model: str,
+    system_prompt: str = "",
+    purpose: str = "transform",
+    agent_id: str = "main",
+    session_id: str = "",
+    project: str = "",
+    user_id: str | None = None,
+    max_tokens: int | None = None,
+    max_rounds: int = 1,
+    thinking_level: str | None = None,
+    timeout_s: float = 1800.0,
+    provider_resolver=None,
+) -> dict:
+    """Thin convenience wrapper around `run_turn_blocking` for background /
+    non-interactive LLM calls (Phase 4).
+
+    Resolves provider + inference params + sampling from the model id, builds
+    a minimal `tool_context`, and calls the sidecar. Caller picks the model;
+    if the picked model isn't on an Anthropic-shape provider, the sidecar
+    returns an empty reply — that's the admin's job to fix in their config.
+
+    Returns the same dict shape as `run_turn_blocking`. Caller decides how to
+    handle `error` / `reply`.
+    """
+    if provider_resolver is None:
+        provider_resolver = engine.resolve_provider_for_model
+    prov = provider_resolver(model)
+    inf = engine.get_inference_params(model)
+    _max_tokens = int(max_tokens or inf.get("max_tokens") or engine.get_model_max_output(model))
+    _user_id = user_id if user_id is not None else (
+        getattr(engine._thread_local, "current_user_id", "") or "")
+    tool_context = {
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "user_id": _user_id,
+        "team_ids": [],
+        "project": project,
+        "note_context": None,
+        "workflow_run_id": "",
+        "plan_mode": False,
+        "research_mode_override": None,
+        "execution_overrides": {},
+        "attachment_image_model": "",
+        "caveman_chat": 0,
+        "caveman_system": 0,
+        "trace_id": "",
+    }
+    sampling = {
+        "temperature": inf.get("temperature"),
+        "top_p": inf.get("top_p"),
+        "top_k": inf.get("top_k"),
+        "stop_sequences": inf.get("stop") or inf.get("stop_sequences"),
+    }
+    return run_turn_blocking(
+        messages=messages,
+        model=model,
+        api_key=prov["api_key"],
+        base_url=prov["base_url"],
+        system_prompt=system_prompt,
+        purpose=purpose,
+        tool_context=tool_context,
+        sampling=sampling,
+        thinking_level=thinking_level,
+        max_tokens=_max_tokens,
+        max_rounds=max_rounds,
+        timeout_s=timeout_s,
+    )
