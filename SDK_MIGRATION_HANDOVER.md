@@ -1,8 +1,23 @@
-# SDK Migration — Session Handover (2026-05-14 → next session)
+# SDK Migration — Session Handover (2026-05-14 EOD → next session)
 
 This is the working document for the SDK sidecar migration. Read this first if you're picking up the work in a new session.
 
 The full plan is in **`SDK_MIGRATION_PLAN.md`** — don't restate it, just reference it.
+
+---
+
+## ⏭️ Next session: pick up here
+
+**Phase 5 step 1 (sidecar replay buffer) is functionally complete** — stages 1a, 1b, 1c all landed and verified. See the "Phase 5 in flight" section below for the full record.
+
+The one open item before declaring step 1 truly done: **decouple the sidecar process from Brain's supervisor** so a `launchctl kickstart` of Brain doesn't take the sidecar with it. Without this, the happy-path "user reloads tab and sees the turn finish live" recovery never fires — only the catastrophic 404 branch does (which works, but isn't the actual goal of step 1).
+
+**Recommended next actions, in order:**
+
+1. **Move the sidecar to its own launchd plist** (`com.brain-agent.sidecar.plist`). Drop the in-process supervisor in `server.py` (`_start_sidecar_supervisor`, lines 3931–4006). Brain's role becomes: assume the sidecar is up, retry the HTTP call on transport errors. Re-verify the happy-path: `launchctl kickstart -k gui/$UID/com.brain-agent.server` mid-stream → sidecar keeps streaming → recovery thread re-attaches via `GET /turn/<id>/events?since=0` → tab reload picks the turn up live.
+2. **Then move on to Phase 5 step 2: deletion pass**. The full Phase 5 deletion list is in this doc under "Phase 5 — Deletion pass". After step 1 is fully done, the next session should start there.
+
+If you want to skip the sidecar-decoupling and go straight to deletion: it's defensible — step 1c's catastrophic fallback already preserves user partial output on every Brain restart, which is better than what Brain did before this work. The happy-path can be added back in v9.1.0.
 
 ---
 
