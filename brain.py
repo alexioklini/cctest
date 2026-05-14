@@ -3129,13 +3129,14 @@ def _describe_image_with_vision(image_data_b64: str, media_type: str, filename: 
     ]
 
     try:
-        result = _run_delegate(
+        from handlers import sidecar_proxy as _sidecar_proxy
+        _res = _sidecar_proxy.background_call(
             messages=[{"role": "user", "content": content_blocks}],
             model=vision_model,
             system_prompt="You are a precise image description assistant. Describe the image content thoroughly and concisely.",
-            inference_params={"max_tokens": 2048, "temperature": 0.1},
-            tools=False,
+            max_tokens=2048,
         )
+        result = _res.get("reply") or ""
         if result:
             return f"**Image: {filename}**\n\n{result}"
         return f"(Image: {filename} — vision model returned no description)"
