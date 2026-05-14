@@ -7,15 +7,11 @@ This document captures the in-flight state of the Phase 5 deletion campaign so t
 
 ## ⏭️ Next session: pick up here
 
-**Steps 1, 2, 3, 5, 6 are done and committed. Step 4 was skipped at user direction. Step 7 is next.**
+**Steps 1, 2, 3, 5, 6, 7 are done and committed. Step 4 was skipped at user direction. Steps 8 and 9 are next.**
 
 The /v1/chat path through the sidecar is verified live after every step. Eval has NOT been re-run since v8.37.0 — defer to gate-3 at end of step 9.
 
-**Resume from**: step 7 (native loop core deletion).
-
-The audit cross-references below list the LIVE callers of `_run_delegate` /
-`_run_delegate_with_fallback` that must migrate to `sidecar_proxy.background_call`
-BEFORE `_run_delegate` can be deleted. Start there.
+**Resume from**: step 8 (unwire LCM auto-trigger; add manual button) then step 9 (CLAUDE.md rewrite + tag v9.0.0), then step 10 (gate-3 eval run).
 
 ---
 
@@ -29,12 +25,23 @@ BEFORE `_run_delegate` can be deleted. Start there.
 | 4 | Delete citation validator + re-round | **SKIPPED** (per user) | — | — |
 | 5 | Delete variance kill-switches infrastructure | DONE | `d0e85f8` | −396 |
 | 6 | Delete middleware + guards | DONE | `0c7fb4a` | −510 |
-| 7 | Delete native loop core | PENDING | — | — |
+| 7 | Delete native loop core | DONE | `707285d` + `fdcb655` | −1520 |
 | 8 | Unwire LCM auto-trigger; add manual button | PENDING | — | — |
 | 9 | Update CLAUDE.md + tag v9.0.0 | PENDING | — | — |
 | 10 | Gate-3 eval run | PENDING | — | — |
 
-**Net so far**: −2044 LOC code, +597 LOC docs. Five code commits.
+**Net so far**: −3564 LOC code, +597 LOC docs. Seven code commits.
+
+### Step 7 — native loop core (`707285d` + `fdcb655`)
+~1520 LOC deleted; the sidecar is now the only LLM execution path.
+
+- **707285d** `refactor(sdk-phase5-7): migrate translate/* to sidecar.background_call` — 5 _run_delegate sites in the translation pipeline (text translate + rewrite, document chunk translate + rewrite, LLM language fallback).
+- **fdcb655** `refactor(sdk-phase5-7): delete native loop core — _run_delegate, send_message, _handle_openai_response` — 8 remaining brain.py migrations + ~1500 LOC of deletions in one commit:
+  - Migrations: `trigger_relationship_discovery`, 3 autodream calls (dedup/conflicts/skill_candidates), `ContextManager.summarize_chunk`/`condense`/`recall`, `_compact_conversation`, `TaskRunner._run_task`, CLI one-shot mode (`main`), TUI interactive mode (`_run_interactive`).
+  - Deletions: `_run_delegate_with_fallback`, `_run_delegate`, `send_message`, `_parse_gemma_tool_calls`, `_InlineThinkingSplitter`, `_handle_openai_response`, `_classify_error_transient`, `_retry_with_backoff`, `send_message_with_fallback`.
+  - Stale references in comments/docstrings left untouched — step 9 sweeps them with the CLAUDE.md rewrite.
+
+Live verification: smoke chat through CLIProxyAPI/mistral-medium-3.5 returns `event: done` and persists a 28-byte assistant message; no tracebacks in `server.error.log`.
 
 ---
 
