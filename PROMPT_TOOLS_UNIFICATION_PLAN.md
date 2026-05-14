@@ -297,3 +297,125 @@ Estimated effort: 4–6 hours of focused work; a half-day with eval gate.
 ---
 
 End of plan. Next session: read this, get sign-off, execute steps 1–10. Validate via the three gates. If any of them fail, revert and re-plan rather than patching forward.
+
+---
+
+# Post-implementation status (2026-05-14, commit c8ab71c)
+
+Steps 1–10 landed. Gate-PT-1 passed. Gate-PT-2 went through a course-correction
+(the plan's "scheduled = full interactive surface" bet regressed gemma-4-e4b
+from 100% to 20% pass; surfaced and addressed via Phases A/B below). Final
+Gate-PT-2 result: 2/3 gemma-4-e4b, 1/1 gemma-4-26B, 3/3 Mistral Medium 3.5.
+Gate-PT-3 deferred — user opted to skip the eval quota spend.
+
+## What landed beyond the original plan
+
+- **Phase A — `research_minimal` purpose (tool-flag-driven).** Each tool opts
+  in via `minimal: True` + `minimal_role` on its `TOOL_DEFINITIONS` entry.
+  Currently flagged: `exa_search`, `web_fetch`, `write_file`. The system
+  prompt is composed dynamically from those fragments; Brain's emitted prompt
+  for `research_minimal` is byte-identical to
+  `eval/sdk_harness/system_prompt_scheduler.md`.
+- **Phase B — `schedules.tool_profile` per-task field + UI dropdown.** Empty
+  → `research_minimal` (default for scheduled tasks); `interactive` opts
+  back into the full agent surface; values validated against
+  `_VALID_TOOL_PROFILES`.
+- **Mistral fix.** Sidecar gained `disable_parallel_tool_use` plumbing
+  (maps to Anthropic SDK's `tool_choice.disable_parallel_tool_use=True`);
+  `_execute_scheduled` reads the model's existing `parallel_tool_calls`
+  flag and forwards. Brings Mistral on the canonical task from 1/3 to 3/3.
+  Causality not fully proven (n=3, top_p was also changed); see Open
+  Architectural Question §4 below.
+- **Sidecar gained a `stream: bool` knob.** Wired but no caller currently
+  sets it; left as a future per-model/per-schedule toggle.
+
+## Proposed order for next session
+
+(Recommended sequence; each item is one commit's worth.)
+
+1. **Memory hygiene** *(low cost, high session-knowledge ROI)*. Write the
+   memory notes for this work:
+   - `project_research_minimal_purpose.md` — Phase A/B design, the
+     tool-flag-driven (`minimal: True` + `minimal_role`) approach, Gate-PT-2
+     pass-rate table per model. Reference commit `c8ab71c`.
+   - `project_mistral_disable_parallel.md` — symptoms, fix, the Mistral
+     stochastic write_file failure, what's proven vs unproven, link to
+     "Investigation §4" below.
+   - `feedback_phase_a_then_validate.md` — the user's "Phase A first, then
+     validate" pacing call caught the e4b regression before Phase B added
+     UI scope; future scope-creep decisions should follow the same pattern.
+   - Update `project_token_optimizations_validated.md` to reference the
+     new resolver (the file still describes the pre-unification per-session
+     read_document cache and project preamble).
+
+2. **Code cleanup** *(one commit, ~30 min)*. All hygiene from the
+   investigation, none of which materially changes behavior:
+   - Dedent the `if True:  # purpose=='interactive' …` block at
+     `brain.py:~25125`. ~300-line indent reduction.
+   - Remove the `scheduled: bool` kwarg from `_build_system_prompt`. The
+     original "scheduled overlay" branch was deleted during Phase A; the
+     parameter is dead.
+   - Decide on `background_qa`. Either delete the NotImplementedError stub
+     (until a real caller materialises) or leave it in place with a
+     `# pending: Phase 4 audit` comment.
+   - Decide on the sidecar `stream` knob. Either expose it (per-model
+     config + UI) or remove the unused branch.
+
+3. **Eval runner JSON resilience**. `eval/run.py` and ad-hoc monitor scripts
+   choked on `\X` escapes in `schedule_history.result`. Root-cause:
+   `Scheduler.complete_execution` (and possibly other writers) aren't
+   running their `result` payload through `json.dumps`, so embedded
+   backslashes from tool output land in the row verbatim. Fix at the source
+   so every downstream parser doesn't need a sanitizer.
+
+4. **Gate-PT-3 (eval re-baseline)** *(burns quota — schedule when fresh).*
+   Run `eval/run.py --skip-gold --reuse-results <baseline>` against the
+   policy eval to confirm the unification didn't regress Mistral Medium 3.5.
+   Bar: brain mean ≥ 0.82 (post-Phase-2 baseline). Resume from
+   `eval/results/20260514T112200_disc-none_phase2-braintools-clean`
+   (brain_mean=0.818 was the most recent baseline before this work).
+
+5. **Mistral causality check** *(only if you want firm evidence — optional)*.
+   Three sub-experiments to disentangle what actually fixed Mistral:
+   - 10-run sample with `top_p=0.85` only (no disable_parallel) to see if
+     top_p alone explains the fix.
+   - 10-run sample with `disable_parallel_tool_use=True` only (no
+     top_p change) to isolate that variable.
+   - Wireshark / mitmproxy on the SDK → CLIProxyAPI hop to confirm
+     CLIProxyAPI actually forwards `tool_choice.disable_parallel_tool_use`
+     to Mistral's underlying API (it may be silently dropping the field
+     and the fix is purely from `top_p` and/or noise).
+
+## Out of scope (still deferred from original plan)
+
+- Per-model auto-degradation — plan rejects; user picks model.
+- Phase 4/5 deletions (`send_message`, `_run_delegate`, middleware suite,
+  LCM, citation validator). The unification ensured each surviving wire
+  shape has one resolver; deleting legacy paths is a separate effort.
+
+## Pre-existing parallel work (untouched by this session)
+
+- `SDK_MIGRATION_PLAN.md` Phases 2–5 — the broader SDK migration the
+  checkpoint commit `1d60c47` captured mid-flight. The unification commit
+  `c8ab71c` landed *on top* of Phase 1–3 state without finishing 4–5.
+
+## Open architectural questions raised by the implementation
+
+4. **Did `tool_choice.disable_parallel_tool_use` actually disable parallel
+   tool calls on the Mistral wire?** Confirmed end-to-end through Brain →
+   sidecar → Anthropic SDK (debug log showed the kwarg arrived). Unknown
+   whether CLIProxyAPI honors the Anthropic-shape field when proxying to
+   Mistral's actual API. The "9 tool calls at +0s" observation in
+   passing runs (837, 838) suggests parallel batching may still have
+   happened upstream. The 3/3 pass rate is consistent with the fix
+   working AND with it being silently dropped (could be top_p alone, or
+   noise — see §5 above). Strongest defensible claim: the wiring is
+   correct on Brain's side; provider behavior is opaque.
+
+5. **`research_minimal` is currently the scheduler default. Should it
+   ever apply elsewhere?** Today only `_execute_scheduled` routes through
+   `research_minimal`. The `tool_profile` field gives per-schedule
+   override, but interactive chat, `_run_delegate`, and `delegate_task`
+   all stay on `interactive`. That's intentional (chat needs the full
+   agent surface), but worth a comment in `_build_system_prompt`'s
+   docstring so the next implementer sees it.
