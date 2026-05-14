@@ -7,13 +7,15 @@ This document captures the in-flight state of the Phase 5 deletion campaign so t
 
 ## ⏭️ Next session: pick up here
 
-**Steps 1, 2, 3, 5 are done and committed. Step 4 was skipped at user direction. Step 6 is next.**
+**Steps 1, 2, 3, 5, 6 are done and committed. Step 4 was skipped at user direction. Step 7 is next.**
 
 The /v1/chat path through the sidecar is verified live after every step. Eval has NOT been re-run since v8.37.0 — defer to gate-3 at end of step 9.
 
-**Resume from**: step 6 (middleware + guards deletion).
+**Resume from**: step 7 (native loop core deletion).
 
-The big strategic decision now baked in: after step 5, `_variance_flag(name)` is a stub returning the v8.37.0 validated default. Step 6 inlines each `if _variance_flag("X"):` call site with the stub's literal return value, then deletes the resulting dead branches.
+The audit cross-references below list the LIVE callers of `_run_delegate` /
+`_run_delegate_with_fallback` that must migrate to `sidecar_proxy.background_call`
+BEFORE `_run_delegate` can be deleted. Start there.
 
 ---
 
@@ -26,13 +28,13 @@ The big strategic decision now baked in: after step 5, `_variance_flag(name)` is
 | 3 | Delete guided execution | DONE | `77f99da` | −1076 |
 | 4 | Delete citation validator + re-round | **SKIPPED** (per user) | — | — |
 | 5 | Delete variance kill-switches infrastructure | DONE | `d0e85f8` | −396 |
-| 6 | Delete middleware + guards | PENDING | — | — |
+| 6 | Delete middleware + guards | DONE | `0c7fb4a` | −510 |
 | 7 | Delete native loop core | PENDING | — | — |
 | 8 | Unwire LCM auto-trigger; add manual button | PENDING | — | — |
 | 9 | Update CLAUDE.md + tag v9.0.0 | PENDING | — | — |
 | 10 | Gate-3 eval run | PENDING | — | — |
 
-**Net so far**: −1534 LOC code, +597 LOC docs. Four code commits.
+**Net so far**: −2044 LOC code, +597 LOC docs. Five code commits.
 
 ---
 
@@ -75,6 +77,15 @@ The deletion targets themselves (`run_guided_execution`, `_should_guide`, `send_
 
 Live verification: `GET /v1/variance` and `POST /v1/variance` both return 404; smoke chat through the sidecar returns the expected reply; no `NameError` / `AttributeError` in `server.error.log`.
 
+### Step 6 — middleware + guards (`0c7fb4a`)
+~510 LOC deleted across brain.py + execution.py. Every `_variance_flag(name)` call site collapsed to the frozen v8.37.0 default; the stub + `_VARIANCE_FROZEN_DEFAULTS` removed.
+
+- **brain.py**: True-default wrappers dropped at `_check_tool_dedup` + `_read_doc_cache_lookup` + `intent_action_guard`. False-default branches deleted at the middleware pipeline (`_middleware_tool_result_budget`, `_middleware_microcompact`, `_middleware_pyexec_hint` gone; `_MIDDLEWARE_FLAG_NAMES` + flag check in `_run_middleware` gone; pipeline reduces to `[cancel_check, compress_old]`), inside `_execute_tools_batch` (parallel ThreadPoolExecutor branch removed; `_CONCURRENT_SAFE_TOOLS` + `_execute_tool_in_thread` deleted), inside `_sanitize_tool_result` (`sanitize_tool_result_cap` truncate), inside `_handle_openai_response` (diminishing-returns guard + `DIMINISHING_*` constants + `_round_deltas`; proactive_round0_compaction; reactive_400_compaction + `_has_attempted_reactive_compact`; truncated_tool_call_discard; max_output_recovery + `MAX_OUTPUT_RECOVERY_LIMIT` + `_MAX_OUTPUT_RESUME_MSG` + `_max_output_recovery_count`).
+- **brain.py kept in tree**: `_apply_tool_result_budget` + `_microcompact` + their supporting constants + the two `_find_tool_name_*` helpers. handlers/chat.py:1043–1045 calls these unconditionally before every chat turn; the call site predates the variance flag and was never variance-gated. Step 7's broader cleanup decides whether to keep them.
+- **execution.py**: `_summarise_tool_result` collapsed to a single `_static_summary` return (preserves the 3-tuple shape for `run_worker_subagent` + `maybe_retroactive_isolate` callers). `route_tool_execution` collapsed to `return inner_fn(tool_name, args)`. Worker-subagent + auto-isolation machinery (`_resolve_heaviness`, `run_worker_subagent`, `maybe_retroactive_isolate`, `_SUMMARISER_SYSTEM`, `_parse_summariser_output`) left in tree — they share a module with the still-live `WorkerRegistry` + worker UI endpoints and step 7 sweeps them.
+
+Live verification: `launchctl kickstart` Brain → both listeners up; smoke chat through CLIProxyAPI/mistral-medium-3.5 emits `event: done`, persists a 28-byte assistant message; no tracebacks in `server.error.log`.
+
 ---
 
 ## Why step 4 was skipped
@@ -85,9 +96,9 @@ Per `project_eval_citation_reround_phase2`: the re-round measurably improved the
 
 ---
 
-## Architecture notes for step 6
+## Architecture notes for step 6 (historical — step 6 is done; kept for context)
 
-`_variance_flag(name)` is now a pure-function stub:
+`_variance_flag(name)` was a pure-function stub:
 
 ```python
 _VARIANCE_FROZEN_DEFAULTS = {
