@@ -23783,9 +23783,6 @@ def run_citation_reround(messages: list, original_reply: str, validation: dict,
     original reply (not yet persisted). We append a synthetic user-message
     with the validator feedback and ask for a corrected answer.
     """
-    import urllib.request
-    import urllib.error
-
     feedback = build_citation_reround_feedback(validation, original_reply)
     # Build a clean message list: original convo + the assistant's first
     # answer + our feedback as a new user turn. The model sees: question,
@@ -23796,35 +23793,61 @@ def run_citation_reround(messages: list, original_reply: str, validation: dict,
         new_messages.append({"role": "assistant", "content": original_reply})
     new_messages.append({"role": "user", "content": feedback})
 
-    body = {
-        "model": get_api_model_id(model),
-        "messages": new_messages,
-        "temperature": temperature,
-        "top_p": top_p,
-        "max_tokens": 4096,
-        # Intentionally NO tools — re-round is composition-only, the model
-        # already has all retrieval results in the message history.
-    }
-    data = json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(base_url.rstrip("/") + "/chat/completions",
-                                 data=data, method="POST")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Authorization", f"Bearer {api_key}")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            outer = json.loads(resp.read().decode("utf-8"))
-        choices = outer.get("choices") or []
-        if not choices:
-            return original_reply, {}
-        content = ((choices[0].get("message") or {}).get("content") or "").strip()
+        from handlers import sidecar_proxy as _sidecar_proxy
+        prov = resolve_provider_for_model(model)
+        sid = getattr(_thread_local, 'current_session_id', None) or ""
+        agent_id = ""
+        _ag = getattr(_thread_local, "current_agent", None) or _current_agent
+        if _ag is not None:
+            agent_id = getattr(_ag, "agent_id", "") or ""
+        tool_context = {
+            "session_id": sid,
+            "agent_id": agent_id or "main",
+            "user_id": getattr(_thread_local, "current_user_id", "") or "",
+            "team_ids": [],
+            "project": getattr(_thread_local, "project", "") or "",
+            "note_context": None,
+            "workflow_run_id": "",
+            "plan_mode": False,
+            "research_mode_override": None,
+            "execution_overrides": {},
+            "attachment_image_model": "",
+            "caveman_chat": 0,
+            "caveman_system": 0,
+            "trace_id": "",
+        }
+        sampling = {
+            "temperature": temperature,
+            "top_p": top_p,
+            "top_k": None,
+            "stop_sequences": None,
+        }
+        # Caller-provided api_key/base_url are honored — they may differ from
+        # resolve_provider_for_model when the chat used a session-specific
+        # provider override.
+        _res = _sidecar_proxy.run_turn_blocking(
+            messages=new_messages,
+            model=model,
+            api_key=api_key or prov["api_key"],
+            base_url=base_url or prov["base_url"],
+            system_prompt="",
+            purpose="transform",
+            tool_context=tool_context,
+            sampling=sampling,
+            thinking_level=None,
+            max_tokens=4096,
+            max_rounds=1,
+            timeout_s=timeout,
+        )
+        content = (_res.get("reply") or "").strip()
         if not content:
             return original_reply, {}
         # Validate the corrected answer too — useful diagnostic, even if we
         # accept it unconditionally (per design: max 1 re-round).
-        sid = getattr(_thread_local, 'current_session_id', None)
-        retry_val = validate_citations_in_response(content, session_id=sid)
+        retry_val = validate_citations_in_response(content, session_id=sid or None)
         return content, retry_val
-    except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError, OSError) as e:
+    except Exception as e:
         try: print(f"[citation-reround] error: {type(e).__name__}: {e}")
         except Exception: pass
         return original_reply, {}
