@@ -3198,19 +3198,6 @@ function collectChatReferences() {
         candidates.push({ role: 'tool_result', name: t.name, result: t.result });
       }
     }
-    // Guided execution: tool calls + pre-extracted references nested under guided_tasks.
-    const preExtracted = [];
-    if (msg.role === 'assistant' && msg.metadata && Array.isArray(msg.metadata.guided_tasks)) {
-      for (const gt of msg.metadata.guided_tasks) {
-        for (const tc of (gt.toolCalls || [])) {
-          if (!tc || !tc.name) continue;
-          candidates.push({ role: 'tool_result', name: tc.name, result: tc.result, references: tc.references });
-        }
-        for (const ref of (gt.references || [])) {
-          if (ref && ref.link) preExtracted.push(ref);
-        }
-      }
-    }
     for (const c of candidates) {
       const extracted = extractReferencesFromToolResult(c);
       for (const ref of extracted) {
@@ -3219,13 +3206,6 @@ function collectChatReferences() {
           if (citedBasenames.has(refBasenameKey(ref))) cited.push(ref);
           else searched.push(ref);
         }
-      }
-    }
-    for (const ref of preExtracted) {
-      if (!seen.has(ref.link)) {
-        seen.add(ref.link);
-        if (citedBasenames.has(refBasenameKey(ref))) cited.push(ref);
-        else searched.push(ref);
       }
     }
   }
@@ -3290,42 +3270,11 @@ function getReferencesForMessage(idx) {
       ingest({ role: 'tool_result', name: t.name, result: t.result });
     }
   }
-  // Guided execution stores tool calls under metadata.guided_tasks[i].toolCalls[j]
-  // and a pre-extracted references list per task. Feed both to the extractor.
-  if (self && self.role === 'assistant' && self.metadata && Array.isArray(self.metadata.guided_tasks)) {
-    for (const gt of self.metadata.guided_tasks) {
-      for (const tc of (gt.toolCalls || [])) {
-        if (!tc || !tc.name) continue;
-        ingest({ role: 'tool_result', name: tc.name, result: tc.result, references: tc.references });
-      }
-      for (const ref of (gt.references || [])) {
-        if (!ref || !ref.link || seen.has(ref.link)) continue;
-        seen.add(ref.link);
-        if (citedBasenames.has(refBasenameKey(ref))) cited.push(ref);
-        else searched.push(ref);
-      }
-    }
-  }
   // Then walk back for any live tool_result rows (the streaming path)
   for (let j = idx - 1; j >= 0; j--) {
     const m = chat.messages[j];
     if (m.role === 'user' || m.role === 'human') break;
     if (m.role === 'tool_result') ingest(m);
-  }
-  // Live guided tasks (during streaming, before persistence) live on chat.guidedTasks
-  if (self && self.role === 'assistant' && idx === chat.messages.length - 1 && Array.isArray(chat.guidedTasks)) {
-    for (const gt of chat.guidedTasks) {
-      for (const tc of (gt.toolCalls || [])) {
-        if (!tc || !tc.name) continue;
-        ingest({ role: 'tool_result', name: tc.name, result: tc.result });
-      }
-      for (const ref of (gt.references || [])) {
-        if (!ref || !ref.link || seen.has(ref.link)) continue;
-        seen.add(ref.link);
-        if (citedBasenames.has(refBasenameKey(ref))) cited.push(ref);
-        else searched.push(ref);
-      }
-    }
   }
   return { cited, searched };
 }

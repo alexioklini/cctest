@@ -34,7 +34,6 @@ def build_chat_event_callback(session, live, sid):
         "thinking_summary": {},
         "usage_totals": {"tokens_in": 0, "tokens_out": 0, "last_tokens_in": 0},
         "request_payloads": [],
-        "guided_tasks_live": {},
     }
     created_files = state["created_files"]
     _stream_persist = state["stream_persist"]
@@ -44,7 +43,6 @@ def build_chat_event_callback(session, live, sid):
     _thinking_summary = state["thinking_summary"]
     _usage_totals = state["usage_totals"]
     _request_payloads = state["request_payloads"]
-    _guided_tasks_live = state["guided_tasks_live"]
 
     def event_callback(event_type, data):
         if event_type == "text_delta":
@@ -142,55 +140,6 @@ def build_chat_event_callback(session, live, sid):
             _usage_totals["tokens_in"] += data.get("tokens_in", 0)
             _usage_totals["tokens_out"] += data.get("tokens_out", 0)
             # (fall through so the event reaches the SSE queue)
-        elif event_type == "request_payload":
-            _request_payloads.append(data)
-            return  # internal only, don't send to client
-        elif event_type == "guided_task_start":
-            idx = data.get("index", 0)
-            if idx not in _guided_tasks_live:
-                _guided_tasks_live[idx] = {"task": data.get("task", ""), "total": data.get("total", 1), "toolCalls": [], "references": []}
-        elif event_type == "guided_task_progress":
-            idx = data.get("index", 0)
-            entry = _guided_tasks_live.setdefault(idx, {"task": "", "total": 1, "toolCalls": [], "references": []})
-            ev = data.get("event")
-            ev_data = data.get("data") or {}
-            if ev == "tool_call":
-                entry["toolCalls"].append({"name": ev_data.get("name", ""), "args": ev_data.get("args", {})})
-            elif ev == "tool_result":
-                # Attach result to last matching tool call entry
-                tc_name = ev_data.get("name", "")
-                result_str = str(ev_data.get("result", ""))
-                for tc in reversed(entry["toolCalls"]):
-                    if tc["name"] == tc_name and "result" not in tc:
-                        tc["result"] = result_str[:500]
-                        break
-                # Extract and inject references
-                _gt_refs = ChatHandlerMixin._extract_references(tc_name, result_str)
-                if _gt_refs:
-                    data = dict(data)
-                    data["refs"] = _gt_refs
-                    for r in _gt_refs:
-                        if not any(x.get("link") == r.get("link") for x in entry["references"]):
-                            entry["references"].append(r)
-            elif ev == "text_delta":
-                # Accumulate non-final task narration so it persists in
-                # metadata.guided_tasks[i].narration and renders inside the
-                # task card on reload (mirror of the client-side accumulator).
-                entry["narration"] = (entry.get("narration") or "") + (ev_data.get("text") or "")
-        elif event_type == "guided_task_done":
-            idx = data.get("index", 0)
-            if idx in _guided_tasks_live:
-                _guided_tasks_live[idx]["state"] = "done"
-                if isinstance(data.get("stats"), dict):
-                    _guided_tasks_live[idx]["stats"] = data["stats"]
-                # Persist the task's final LLM output (the same text passed
-                # to the next task as context). For non-final tasks this is
-                # what the model emitted before stopping; for the synthesis
-                # task this IS the assistant reply (and would be redundant
-                # with msg.content, but kept for completeness so the panel
-                # can render and copy the per-task result uniformly).
-                if data.get("result"):
-                    _guided_tasks_live[idx]["result"] = data["result"]
         elif event_type == "request_payload":
             _request_payloads.append(data)
             return  # internal only, don't send to client
@@ -1136,7 +1085,6 @@ class ChatHandlerMixin:
         _thinking_summary = _cb_state["thinking_summary"]
         _usage_totals = _cb_state["usage_totals"]
         _request_payloads = _cb_state["request_payloads"]
-        _guided_tasks_live = _cb_state["guided_tasks_live"]
 
         handler_self = self  # capture for closure
 
@@ -1383,35 +1331,6 @@ class ChatHandlerMixin:
                         msg_metadata["caveman_chat"] = _cav_chat
                     if _cav_sys:
                         msg_metadata["caveman_system"] = _cav_sys
-                    # Guided execution task list — persisted so the UI can re-render on reload.
-                    # Prefer _guided_tasks_live (accumulated in event_callback, includes toolCalls
-                    # and references) over the brain.py thread-local stash (task names only).
-                    if _guided_tasks_live:
-                        _tl_tasks = getattr(engine._thread_local, '_guided_tasks_for_msg', None) or {}
-                        if isinstance(_tl_tasks, list):
-                            _tl_tasks = {t["index"]: t for t in _tl_tasks}
-                        msg_metadata["guided_tasks"] = [
-                            {
-                                "index": i,
-                                "task": _guided_tasks_live[i].get("task") or (_tl_tasks.get(i) or {}).get("task", ""),
-                                "total": _guided_tasks_live[i].get("total", len(_guided_tasks_live)),
-                                "state": "done",
-                                "toolCalls": _guided_tasks_live[i].get("toolCalls", []),
-                                "references": _guided_tasks_live[i].get("references", []),
-                                "narration": _guided_tasks_live[i].get("narration") or "",
-                                "result": _guided_tasks_live[i].get("result")
-                                          or (_tl_tasks.get(i) or {}).get("result")
-                                          or "",
-                                "stats": _guided_tasks_live[i].get("stats")
-                                         or (_tl_tasks.get(i) or {}).get("stats")
-                                         or {},
-                            }
-                            for i in sorted(_guided_tasks_live)
-                        ]
-                        try:
-                            engine._thread_local._guided_tasks_for_msg = None
-                        except Exception:
-                            pass
                     # --- Citation validator (Phase 1+2: validate + optional re-round) ---
                     # Phase 1: scans reply for [Quelle: X — "Y"] brackets, verifies each
                     # quote against the actual source files, counts uncited claims.

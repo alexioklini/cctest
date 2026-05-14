@@ -194,7 +194,6 @@ async function openSession(sessionId, agentId) {
         if (meta.thinking_summary) msg._thinkingSummary = meta.thinking_summary;
         if (meta.cost) msg._cost = meta.cost;
         if (meta.files) msg._files = meta.files;
-        if (meta.guided_tasks) msg._guidedTasks = meta.guided_tasks;
         if (meta.model && !data.model) chat.model = meta.model;
         if (!data.total_tokens && meta.tokens) chat.totalTokens = meta.tokens;
         // Accumulate token in/out for status bar
@@ -284,9 +283,6 @@ async function openSession(sessionId, agentId) {
     chat.thinkingText = '';
     chat.thinkingSummary = null;
     chat.queueStatus = null;
-    chat.guidedTasks = [];
-    chat._guidedTasksOpen = false;
-    chat._guidedTasksUserToggled = false;
     chat.files = [];
     chat._streamGen = (chat._streamGen || 0) + 1;
     chat._streamStartTime = Date.now();
