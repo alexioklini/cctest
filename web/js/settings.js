@@ -2988,6 +2988,9 @@ async function switchAgentTab(agentId, tab, btn) {
         html += '<div style="display:grid;gap:6px;grid-template-columns:minmax(0,1fr)">';
         for (const s of agentSkills) {
           const name = typeof s === 'string' ? s : s.name;
+          // Server's remove endpoint resolves by folder name (the slug); the
+          // display `name` may differ (e.g. "Word / DOCX" → folder `word-docx`).
+          const slug = typeof s === 'object' ? (s.slug || s.name) : s;
           const desc = typeof s === 'object' ? s.description : '';
           html += `
             <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid rgba(31,30,29,0.08);border-radius:8px;transition:background 0.15s;overflow:hidden" onmouseover="this.style.background='rgba(0,0,0,0.02)'" onmouseout="this.style.background='transparent'">
@@ -2995,7 +2998,7 @@ async function switchAgentTab(agentId, tab, btn) {
                 <div style="font-size:13px;font-weight:600;color:#141413">${esc(name)}</div>
                 ${desc ? `<div style="font-size:11px;color:#73726c;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(desc)}</div>` : ''}
               </div>
-              <button onclick="removeAgentSkill('${esc(agentId)}','${esc(name)}')"
+              <button onclick="removeAgentSkill('${esc(agentId)}','${esc(slug)}')"
                 style="font-size:11px;color:#dc2626;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(220,38,38,0.08);border:none;white-space:nowrap;flex-shrink:0" onmouseover="this.style.background='rgba(220,38,38,0.15)'" onmouseout="this.style.background='rgba(220,38,38,0.08)'"
                 title="Remove skill">Remove</button>
             </div>`;
@@ -4811,6 +4814,19 @@ async function _schedViewEdit(name) {
       </div>
     </div>
     <div class="sched-form-group">
+      <label>Tool profile <span style="color:var(--text-400);font-weight:normal;font-size:11px">(which tools the agent sees on this task)</span></label>
+      <select id="sched-edit-tool-profile">
+        ${[
+          ['','Default — research minimal (exa_search, web_fetch, write_file)'],
+          ['research_minimal','Research minimal — same as default, explicit'],
+          ['interactive','Interactive — full agent tool surface (chat-like)'],
+        ].map(([v,lbl]) => {
+          const sel = (task.tool_profile || '') === v ? 'selected' : '';
+          return `<option value="${esc(v)}" ${sel}>${esc(lbl)}</option>`;
+        }).join('')}
+      </select>
+    </div>
+    <div class="sched-form-group">
       <label>Working directory <span style="color:var(--text-400);font-weight:normal;font-size:11px">(optional)</span></label>
       <div style="display:flex;gap:6px">
         <input id="sched-edit-workdir" value="${esc(task.working_dir || '')}" placeholder="(none)" readonly style="font-family:var(--font-mono);flex:1;background:var(--bg-100)">
@@ -4852,6 +4868,7 @@ async function _saveScheduledEdit(originalName) {
   const timeout = parseInt(document.getElementById('sched-edit-timeout')?.value) || 300;
   const thinking_level = document.getElementById('sched-edit-thinking')?.value || '';
   const caveman_chat = parseInt(document.getElementById('sched-edit-caveman')?.value) || 0;
+  const tool_profile = document.getElementById('sched-edit-tool-profile')?.value || '';
   const working_dir = document.getElementById('sched-edit-workdir')?.value?.trim() || '';
   const attachments = window._schedEditAttachments || [];
 
@@ -4868,6 +4885,7 @@ async function _saveScheduledEdit(originalName) {
     timeout,
     thinking_level,
     caveman_chat,
+    tool_profile,
     working_dir,
     attachments,
     // Empty string signals "clear back to Default" so the scheduler falls
@@ -4963,6 +4981,14 @@ function showCreateScheduledModal() {
           <option value="3">Ultra</option>
         </select>
       </div>
+    </div>
+    <div class="sched-form-group">
+      <label>Tool profile <span style="color:var(--text-400);font-weight:normal;font-size:11px">(which tools the agent sees on this task)</span></label>
+      <select id="sched-new-tool-profile">
+        <option value="" selected>Default — research minimal (exa_search, web_fetch, write_file)</option>
+        <option value="research_minimal">Research minimal — same as default, explicit</option>
+        <option value="interactive">Interactive — full agent tool surface (chat-like)</option>
+      </select>
     </div>
     <div class="sched-form-group">
       <label>Working directory <span style="color:var(--text-400);font-weight:normal;font-size:11px">(optional)</span></label>
@@ -5142,6 +5168,7 @@ async function _createScheduledTask() {
   const timeout = parseInt(document.getElementById('sched-new-timeout')?.value) || 300;
   const thinking_level = document.getElementById('sched-new-thinking')?.value || '';
   const caveman_chat = parseInt(document.getElementById('sched-new-caveman')?.value) || 0;
+  const tool_profile = document.getElementById('sched-new-tool-profile')?.value || '';
 
   if (!name || !task) { showToast('Name and prompt are required', true); return; }
 
@@ -5163,7 +5190,7 @@ async function _createScheduledTask() {
   try {
     const res = await API.manageSchedule({
       action: 'add', name, task, schedule, agent, model, timeout,
-      thinking_level, caveman_chat,
+      thinking_level, caveman_chat, tool_profile,
       working_dir, attachments,
     });
     if (res.error) { showToast(res.error, true); return; }

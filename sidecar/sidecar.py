@@ -188,6 +188,16 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
         sampling_kwargs["stop_sequences"] = list(req["stop_sequences"])
     if isinstance(req.get("thinking"), dict):
         sampling_kwargs["thinking"] = req["thinking"]
+    # disable_parallel_tool_use: maps to Anthropic's tool_choice.
+    # Set to True forces sequential tool use (one tool_use per round); the
+    # OpenAI-shape `parallel_tool_calls: false` doesn't apply here — this is
+    # the Anthropic SDK equivalent. Skipped when no tools are present (the
+    # Anthropic API rejects tool_choice without tools).
+    if req.get("disable_parallel_tool_use") and tools:
+        sampling_kwargs["tool_choice"] = {
+            "type": "auto",
+            "disable_parallel_tool_use": True,
+        }
 
     usage_total = {"input_tokens": 0, "output_tokens": 0,
                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
@@ -196,6 +206,15 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
     tool_events: list[dict] = []
     final_text = ""
     final_stop_reason = ""
+
+    # Per-turn `stream` knob (PROMPT_TOOLS_UNIFICATION_PLAN.md investigation):
+    # `True` (default) uses `client.messages.stream()` and forwards every SSE
+    # event for live UI updates. `False` uses `client.messages.create()`
+    # synchronously per round — the harness's HTTP shape. Some upstreams
+    # (Mistral via CLIProxyAPI on the canonical research task) showed
+    # different stop_reason behavior between the two; the non-streaming
+    # mode matches the harness's known-good flow byte-for-byte.
+    use_streaming = req.get("stream", True) is not False
 
     for round_idx in range(max_rounds):
         round_no = round_idx + 1
@@ -213,30 +232,43 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
         round_stop_reason = ""
 
         try:
-            with client.messages.stream(
-                model=req["model"],
-                max_tokens=max_tokens,
-                system=system,
-                messages=messages,
-                tools=tools,
-                **sampling_kwargs,
-            ) as stream:
-                # The SDK emits typed events; we forward each as
-                # `anthropic.<event_type>` with its raw shape in `data`.
-                for ev in stream:
-                    etype = getattr(ev, "type", "") or ""
-                    # Pull a serialisable payload. Anthropic events are pydantic
-                    # models with `.model_dump()` in 0.101.x. Fall back to dict().
-                    try:
-                        payload = ev.model_dump(mode="json")
-                    except Exception:
+            if use_streaming:
+                with client.messages.stream(
+                    model=req["model"],
+                    max_tokens=max_tokens,
+                    system=system,
+                    messages=messages,
+                    tools=tools,
+                    **sampling_kwargs,
+                ) as stream:
+                    # The SDK emits typed events; we forward each as
+                    # `anthropic.<event_type>` with its raw shape in `data`.
+                    for ev in stream:
+                        etype = getattr(ev, "type", "") or ""
+                        # Pull a serialisable payload. Anthropic events are pydantic
+                        # models with `.model_dump()` in 0.101.x. Fall back to dict().
                         try:
-                            payload = dict(ev)  # type: ignore[arg-type]
+                            payload = ev.model_dump(mode="json")
                         except Exception:
-                            payload = {"_repr": repr(ev)[:500]}
-                    emit(f"anthropic.{etype}", payload)
-                # After draining the stream, accumulate the final message
-                final_msg = stream.get_final_message()
+                            try:
+                                payload = dict(ev)  # type: ignore[arg-type]
+                            except Exception:
+                                payload = {"_repr": repr(ev)[:500]}
+                        emit(f"anthropic.{etype}", payload)
+                    # After draining the stream, accumulate the final message
+                    final_msg = stream.get_final_message()
+            else:
+                # Non-streaming path: harness-equivalent flow. Single HTTP call,
+                # full Message returned synchronously. No per-token events
+                # forwarded — live UI gets a single round_end event instead.
+                final_msg = client.messages.create(
+                    model=req["model"],
+                    max_tokens=max_tokens,
+                    system=system,
+                    messages=messages,
+                    tools=tools,
+                    **sampling_kwargs,
+                )
         except anthropic.APIError as e:
             emit("error", {"message": f"APIError: {e}",
                             "round": round_no,

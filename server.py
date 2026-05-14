@@ -2085,6 +2085,7 @@ class BrainAgentHandler(
                 user_id=owner_id,
                 thinking_level=body.get("thinking_level", "") or "",
                 caveman_chat=body.get("caveman_chat", 0) or 0,
+                tool_profile=body.get("tool_profile", "") or "",
             )
             self._send_json(result)
         elif action == "pause":
@@ -2160,7 +2161,7 @@ class BrainAgentHandler(
             fields = {k: body.get(k) for k in
                       ("task", "schedule", "model", "timeout", "agent",
                        "new_name", "attachments", "working_dir",
-                       "thinking_level", "caveman_chat")
+                       "thinking_level", "caveman_chat", "tool_profile")
                       if k in body}
             res = engine._scheduler.update(name, fields)
             if isinstance(res, dict) and res.get("error"):

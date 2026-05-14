@@ -122,25 +122,23 @@ def _to_anthropic_messages(messages: list[dict]) -> list[dict]:
     return out
 
 
-def _build_tool_list(allowed: set[str] | None) -> list[dict]:
-    """Return Anthropic-shape tool schemas — the same shape the SDK harness
-    feeds `tools=` with. Uses engine.TOOL_DEFINITIONS (already Anthropic shape).
+def _build_tool_list(*, purpose: str, agent_id: str | None,
+                     mcp_manager=None) -> list[dict]:
+    """Return Anthropic-shape tool schemas for the given purpose.
 
-    Applies the active agent's `deferred_tool_groups` — deferred tools never
-    ship in the wire payload unless previously discovered via tool_search this
-    session (mirrors the legacy send_message path at brain.py:25920).
+    Thin wrapper over engine.resolve_active_tools — the single source of
+    truth (PROMPT_TOOLS_UNIFICATION_PLAN.md). Deferred-group filtering and
+    MCP merging happen inside the resolver; we just hand it the discovered-
+    tools set from thread-local.
     """
-    tools = engine._filter_tools(engine.TOOL_DEFINITIONS, allowed, is_openai=False)
-    tcfg = engine._get_token_config()
-    deferred_groups = set(tcfg.get("deferred_tool_groups") or [])
-    if not deferred_groups:
-        return tools
-    deferred_names: set[str] = set()
-    for dg in deferred_groups:
-        deferred_names.update(engine.TOOL_GROUPS.get(dg, set()))
     discovered = getattr(engine._thread_local, "_discovered_tools", set()) or set()
-    return [t for t in tools
-            if t["name"] not in deferred_names or t["name"] in discovered]
+    return engine.resolve_active_tools(
+        purpose=purpose,
+        agent_id=agent_id,
+        discovered_tools=discovered,
+        mcp_manager=mcp_manager,
+        is_openai_shape=False,
+    )
 
 
 # ---------- Sampling param mapping ----------
@@ -368,7 +366,7 @@ def run_turn(
     api_key: str,
     base_url: str,
     system_prompt: str,
-    allowed_tools: set[str] | None,
+    purpose: str = "interactive",
     tool_context: dict,
     sampling: dict,
     thinking_level: str | None,
@@ -377,8 +375,14 @@ def run_turn(
     event_callback: Callable,
     cancel_token: Any,
     timeout_s: float = 1800.0,
+    stream: bool = True,
+    disable_parallel_tool_use: bool = False,
 ) -> dict:
     """Drive one chat turn through the sidecar.
+
+    `purpose` drives tool resolution via engine.resolve_active_tools
+    (PROMPT_TOOLS_UNIFICATION_PLAN.md). The agent_id is read from
+    tool_context['agent_id']; MCP tools come from engine._mcp_manager.
 
     Returns:
       {
@@ -393,8 +397,8 @@ def run_turn(
       }
 
     The caller is responsible for everything that wraps the loop: building the
-    system prompt, deciding the tool list, persisting the assistant message,
-    running the citation validator. We do not touch those.
+    system prompt, persisting the assistant message, running the citation
+    validator. We do not touch those.
     """
     sid = tool_context.get("session_id") or ""
     nonce = tool_mcp.mint_nonce(sid)
@@ -409,7 +413,11 @@ def run_turn(
         "api_key": api_key,
         "system": system_prompt,
         "messages": _to_anthropic_messages(messages),
-        "tools": _build_tool_list(allowed_tools),
+        "tools": _build_tool_list(
+            purpose=purpose,
+            agent_id=tool_context.get("agent_id") or None,
+            mcp_manager=getattr(engine, "_mcp_manager", None),
+        ),
         "max_tokens": int(max_tokens),
         "max_rounds": int(max_rounds),
         "tool_endpoint": tool_endpoint_internal(),
@@ -417,6 +425,15 @@ def run_turn(
         "tool_context": tool_context,
         "turn_id": turn_id,
         "trace_id": tool_context.get("trace_id") or "",
+        # `stream`: when False, the sidecar uses client.messages.create()
+        # (non-streaming) — mirrors the harness's HTTP shape exactly for
+        # providers where streaming-vs-not changes stop_reason behavior.
+        "stream": bool(stream),
+        # `disable_parallel_tool_use`: Anthropic SDK equivalent of OpenAI's
+        # `parallel_tool_calls: false`. When True, forces sequential tool
+        # use (one tool_use block per round). Some providers' tool_choice
+        # path is more reliable than parallel batching.
+        "disable_parallel_tool_use": bool(disable_parallel_tool_use),
     }
     # Sampling — only forward what's set, the sidecar omits unset kwargs.
     for key in ("temperature", "top_p", "top_k", "stop_sequences"):
@@ -563,7 +580,7 @@ def run_turn_blocking(
     api_key: str,
     base_url: str,
     system_prompt: str,
-    allowed_tools: set[str] | None,
+    purpose: str = "interactive",
     tool_context: dict,
     sampling: dict,
     thinking_level: str | None,
@@ -588,7 +605,11 @@ def run_turn_blocking(
         "api_key": api_key,
         "system": system_prompt,
         "messages": _to_anthropic_messages(messages),
-        "tools": _build_tool_list(allowed_tools),
+        "tools": _build_tool_list(
+            purpose=purpose,
+            agent_id=tool_context.get("agent_id") or None,
+            mcp_manager=getattr(engine, "_mcp_manager", None),
+        ),
         "max_tokens": int(max_tokens),
         "max_rounds": int(max_rounds),
         "tool_endpoint": tool_endpoint_internal(),

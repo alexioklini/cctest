@@ -1002,9 +1002,25 @@ class ChatHandlerMixin:
                     # event_callback translates sidecar SSE → Brain's existing
                     # LiveStream vocabulary, so persistence, references,
                     # citation validation all stay on this thread unchanged.
-                    _allowed = engine._get_agent_tool_names(session.agent_id)
+                    #
+                    # Tool resolution is now centralised in
+                    # engine.resolve_active_tools (PROMPT_TOOLS_UNIFICATION_PLAN.md);
+                    # we resolve here to extract the active tool names and feed
+                    # them to _build_system_prompt so the conditional tools.md
+                    # rule blocks match the tools actually shipped.
+                    _active_tools = engine.resolve_active_tools(
+                        purpose="interactive",
+                        agent_id=session.agent_id,
+                        discovered_tools=getattr(engine._thread_local, "_discovered_tools", set()) or set(),
+                        mcp_manager=getattr(engine, "_mcp_manager", None),
+                        is_openai_shape=False,
+                    )
+                    _active_tool_names = {t.get("name", "") for t in _active_tools}
                     _system_prompt = engine._build_system_prompt(
-                        include_memory_summary=True, mode="chat")
+                        include_memory_summary=True,
+                        purpose="interactive",
+                        active_tool_names=_active_tool_names,
+                    )
                     _tool_context = {
                         "session_id": sid,
                         "agent_id": session.agent_id,
@@ -1035,7 +1051,7 @@ class ChatHandlerMixin:
                         api_key=session.api_key,
                         base_url=session.base_url,
                         system_prompt=_system_prompt,
-                        allowed_tools=_allowed,
+                        purpose="interactive",
                         tool_context=_tool_context,
                         sampling=_sampling,
                         thinking_level=(thinking_level if thinking_level and thinking_level != "none" else None),

@@ -1,6 +1,11 @@
 # Brain Agent — Tool Usage Guide
 
-## execute_command
+Each block below applies only when its anchor tool(s) are in the active tool
+set. Blocks are emitted by `_render_tool_rules(active_tool_names)` (brain.py).
+Anchor markers below are load-bearing — do not rename.
+
+<!-- @anchor:execute_command -->
+## Shell command execution
 
 ### Rules
 - Commands run with **no TTY, no stdin, TERM=dumb**. Interactive programs will hang and timeout.
@@ -25,22 +30,21 @@
 - Use `2>/dev/null` to suppress noisy stderr
 - Use `|| true` to prevent non-zero exit codes when failure is expected
 
-## Remote Nodes
-`read_file`, `write_file`, `list_directory`, `execute_command` accept `node` parameter:
-- `node="my-server"` → specific node
-- `node="tag:compute"` → any connected node with that tag
-- Omit → local (default)
+<!-- @anchor:exa_search,web_fetch -->
+## Web research protocol
 
-## Context Tools
-When older messages get summarized, use these to access originals:
-- **context_search** — keyword search across original messages
-- **context_detail** — expand a summary to see original messages
-- **context_recall** — ask a question about earlier conversation (uses sub-LLM)
+Always prefer `exa_search` over any server-side search tools (e.g., duckduckgo).
+`exa_search` returns URLs and titles only — no page content.
 
-## write_file — Artifacts
-When creating files for the user, use a relative path (e.g., `report.xlsx`). The system auto-places it in your artifacts folder.
+After `exa_search`, you MUST fetch ALL returned URLs with `web_fetch` before answering. Never answer from titles or URLs alone.
 
-## python_exec — Code Execution
+**Rules — no exceptions:**
+- Fetch every URL returned by `exa_search`, up to 5 at a time in parallel
+- Only after all URLs are fetched: synthesise and answer
+- If more than 5 URLs were returned: fetch the first 5, then the next 5, and so on until all are done
+
+<!-- @anchor:python_exec -->
+## Python execution
 
 Runs Python in a subprocess. The working directory is your artifacts folder — files you write there become user-visible artifacts.
 
@@ -89,15 +93,3 @@ print(f"Extracted {len(doc.tables)} tables to summary.csv")
 - **Large results**: write to a file (becomes an artifact), print only a short summary
 - **Small results** (<20 lines): print directly to stdout
 - The system auto-saves stdout >1K chars as an artifact, but writing files yourself gives you control over filename and format
-
-## exa_search
-Always prefer over any server-side search tools (e.g., duckduckgo).
-Returns URLs and titles only — no page content.
-
-### Web research protocol
-After `exa_search`, you MUST fetch ALL returned URLs with `web_fetch` before answering. Never answer from titles or URLs alone.
-
-**Rules — no exceptions:**
-- Fetch every URL returned by `exa_search`, up to 5 at a time in parallel
-- Only after all URLs are fetched: synthesise and answer
-- If more than 5 URLs were returned: fetch the first 5, then the next 5, and so on until all are done

@@ -474,6 +474,11 @@ TOOL_DEFINITIONS = [
             },
             "required": ["path", "content"],
         },
+        # research_minimal: harness-style lean purpose. `minimal` flags the
+        # tool as participating; `minimal_role` is the one-line description
+        # of its role in the workflow, composed into the dynamic prompt.
+        "minimal": True,
+        "minimal_role": "to save the final deliverable",
     },
     {
         "name": "edit_file",
@@ -730,6 +735,8 @@ TOOL_DEFINITIONS = [
             },
             "required": ["url"],
         },
+        "minimal": True,
+        "minimal_role": "to read full pages",
     },
     {
         "name": "gmail_inbox",
@@ -826,6 +833,8 @@ TOOL_DEFINITIONS = [
             },
             "required": ["query"],
         },
+        "minimal": True,
+        "minimal_role": "to find relevant sources",
     },
     # MemPalace migration: built-in memory_* tools unregistered from the
     # LLM-facing schema. Agents now query MemPalace directly via mempalace_query
@@ -2085,6 +2094,27 @@ def get_tool_breakdown(agent_id: str | None = None) -> dict:
     threshold = int(max_ctx * 0.10) if max_ctx else 0
     deferred = bool(mcp_tools_list) and threshold > 0 and mcp_tokens > threshold
 
+    # Per-purpose tool surface (PROMPT_TOOLS_UNIFICATION_PLAN.md). Lets the
+    # admin UI show "what does the model actually see" under each delivery
+    # channel. `background_qa` raises (no in-tree caller); `transform`
+    # always yields []. We swallow errors so a broken resolver can't take
+    # the whole breakdown view down.
+    per_purpose: dict[str, dict] = {}
+    for _p in ("interactive", "memory_summary", "transform"):
+        try:
+            _tools = resolve_active_tools(
+                purpose=_p, agent_id=agent_id,
+                discovered_tools=set(),
+                mcp_manager=mcp_mgr if _p == "interactive" else None,
+                is_openai_shape=False,
+            )
+            per_purpose[_p] = {
+                "tool_names": sorted(t.get("name", "") for t in _tools),
+                "tool_count": len(_tools),
+            }
+        except Exception as _e:  # pragma: no cover - defensive
+            per_purpose[_p] = {"error": str(_e)[:200]}
+
     return {
         "groups": group_list,
         "total_tokens": total_tokens,
@@ -2100,6 +2130,7 @@ def get_tool_breakdown(agent_id: str | None = None) -> dict:
             "tokens_saved_if_deferred": mcp_tokens if deferred else 0,
             "threshold": threshold,
         },
+        "per_purpose": per_purpose,
     }
 
 
@@ -2120,6 +2151,244 @@ def _filter_tools(tool_list: list[dict], allowed: set[str] | None,
     else:
         filtered.sort(key=lambda t: t.get("name", ""))
     return filtered
+
+
+# --- Unified tool-list resolver (PROMPT_TOOLS_UNIFICATION_PLAN.md) ---
+
+# Tool sets for non-interactive purposes. The plan defines four purposes;
+# `interactive` uses the agent's own tool_groups, the other three are scoped
+# subsets evaluated against TOOL_DEFINITIONS at resolver time (so a tool that
+# isn't registered is silently dropped — keeps stale plan references safe).
+_BACKGROUND_QA_TOOLS = {
+    "mempalace_query", "mempalace_kg_search", "mempalace_kg_query",
+    "mempalace_kg_neighbors", "read_document", "read_file", "write_file",
+}
+# Memory-summary tasks file new drawers and read drilldown context.
+# mempalace_get_drawer / mempalace_list_drawers were rolled back; if they
+# reappear the resolver will pick them up automatically (intersection with
+# TOOL_DEFINITIONS happens via _filter_tools).
+_MEMORY_SUMMARY_TOOLS = {"mempalace_query", "save_chat_to_memory"}
+
+# research_minimal — harness-style lean purpose. Tools are discovered
+# dynamically by `minimal: True` flag on their TOOL_DEFINITIONS entry; each
+# such tool may also carry `minimal_role` (a one-line phrase composed into
+# the dynamic system prompt). Add a new tool to the purpose by setting these
+# two fields on its definition — no constant to update here. Validated
+# 2026-05-14 (Gate-PT-2) on gemma-4-e4b for autonomous research tasks.
+_VALID_PURPOSES = ("interactive", "background_qa", "transform",
+                   "memory_summary", "research_minimal")
+
+# Valid `tool_profile` values for a scheduled task. Empty string = "default"
+# (resolved to research_minimal at fire time, matching Phase A behavior).
+# `research_minimal`: harness-style lean prompt + minimal-flagged tools.
+# `interactive`: full agent surface (matches chat). Restored opt-in surface.
+# Memory-summary tasks always use the memory_summary purpose regardless of
+# this field; transform tasks (`scheduled_task_tools: False`) likewise.
+_VALID_TOOL_PROFILES = ("", "research_minimal", "interactive")
+
+
+def _minimal_tool_names() -> set[str]:
+    """Return the set of tool names flagged `minimal: True` in TOOL_DEFINITIONS.
+    Single source of truth — read at call time so additions land without a
+    server restart (definitions are reloaded by the import system at boot).
+    """
+    return {t.get("name", "") for t in TOOL_DEFINITIONS if t.get("minimal") and t.get("name")}
+
+
+def _minimal_tool_blurbs() -> list[tuple[str, str]]:
+    """Ordered (name, role) pairs for the research_minimal prompt.
+
+    `minimal_role` is the phrase that follows the tool name (e.g.
+    "to find relevant sources"). Builder wraps the name in backticks and
+    appends the role plain. Canonical order = alphabetical by tool name.
+    Tools without a `minimal_role` are skipped.
+    """
+    items = [t for t in TOOL_DEFINITIONS
+             if t.get("minimal") and t.get("name") and t.get("minimal_role")]
+    items.sort(key=lambda t: t.get("name", ""))
+    return [(t["name"], t["minimal_role"]) for t in items]
+
+
+def resolve_active_tools(
+    *,
+    purpose: str,
+    agent_id: str | None = None,
+    discovered_tools: set[str] | None = None,
+    mcp_manager=None,
+    is_openai_shape: bool = False,
+) -> list[dict]:
+    """Single source of truth for what tools the model sees on a given turn.
+
+    Returns the wire payload (Anthropic shape by default; OpenAI shape via
+    `is_openai_shape=True`). Every caller — chat handler, scheduler, warmup,
+    _run_delegate, settings UI tool-breakdown — goes through this function.
+
+    Logic:
+      1. purpose=='transform'        → []
+      2. purpose=='interactive'      → agent's _get_agent_tool_names()
+      3. purpose=='background_qa'    → _BACKGROUND_QA_TOOLS  (NotImplementedError
+                                       until a real caller materialises — the
+                                       branch is defined per the plan but no
+                                       in-tree path requests it today)
+      4. purpose=='memory_summary'   → _MEMORY_SUMMARY_TOOLS ∩ agent's set
+      5. Filter TOOL_DEFINITIONS (or _OPENAI) to the base set.
+      6. Subtract deferred-group tools (from agent's token_config.deferred_tool_groups),
+         except those already in discovered_tools. ALWAYS applied — fixes
+         the historic gap where native _run_delegate skipped deferral.
+      7. Add MCP tools (when mcp_manager is passed and not deferred per
+         token_config.defer_mcp_tools).
+      8. Re-sort by name for KV-cache stability.
+    """
+    if purpose not in _VALID_PURPOSES:
+        raise ValueError(f"resolve_active_tools: unknown purpose {purpose!r}")
+    if purpose == "transform":
+        return []
+    if purpose == "background_qa":
+        # Scaffold the branch per the plan; force every introduction to be
+        # deliberate. Loosen this gate once Phase 4 surfaces a real caller.
+        raise NotImplementedError(
+            "resolve_active_tools(purpose='background_qa') has no in-tree caller "
+            "yet — add the explicit caller before enabling this branch.")
+
+    agent_allowed = _get_agent_tool_names(agent_id)  # None = all
+    if purpose == "interactive":
+        base_set = agent_allowed  # None means unrestricted
+    elif purpose == "memory_summary":
+        base_set = set(_MEMORY_SUMMARY_TOOLS)
+        if agent_allowed is not None:
+            base_set &= agent_allowed
+    elif purpose == "research_minimal":
+        # Dynamic — TOOL_DEFINITIONS entries flagged `minimal: True`.
+        # Skips deferral + MCP merging below (the harness has neither;
+        # MCP is gated by `purpose == 'interactive'` already).
+        base_set = _minimal_tool_names()
+        if agent_allowed is not None:
+            base_set &= agent_allowed
+    else:  # pragma: no cover — guarded above
+        base_set = set()
+
+    defs = TOOL_DEFINITIONS_OPENAI if is_openai_shape else TOOL_DEFINITIONS
+    tools = _filter_tools(defs, base_set, is_openai=is_openai_shape)
+
+    # Deferred-group subtraction (always applied; survives the resolver call
+    # for every purpose except transform).
+    tcfg = _get_token_config(agent_id)
+    deferred_groups = set(tcfg.get("deferred_tool_groups") or [])
+    if deferred_groups:
+        deferred_names: set[str] = set()
+        for dg in deferred_groups:
+            deferred_names.update(TOOL_GROUPS.get(dg, set()))
+        discovered = discovered_tools or set()
+
+        def _name_of(t: dict) -> str:
+            return (t.get("function", {}) or {}).get("name", "") if is_openai_shape else t.get("name", "")
+
+        tools = [t for t in tools
+                 if _name_of(t) not in deferred_names or _name_of(t) in discovered]
+
+    # MCP tools — mirror the send_message + warmup paths bytewise.
+    if mcp_manager is not None and purpose == "interactive":
+        if is_openai_shape:
+            mcp_tools = mcp_manager.get_tool_definitions_openai()
+            mcp_tools = _filter_mcp_tools(mcp_tools, is_openai=True)
+        else:
+            mcp_tools = mcp_manager.get_tool_definitions()
+            mcp_tools = _filter_mcp_tools(mcp_tools, is_openai=False)
+        defer_mcp = tcfg.get("defer_mcp_tools", "auto")
+        # Need a concrete model id for the "auto" threshold; thread-local
+        # current_agent is the source-of-truth at request time.
+        agent_ctx = getattr(_thread_local, "current_agent", None) or _current_agent
+        model = (agent_ctx.config.get("model") if agent_ctx else "") or ""
+        should_defer = _should_defer_mcp(defer_mcp, mcp_tools, model,
+                                         is_openai=is_openai_shape)
+        if should_defer:
+            discovered = discovered_tools or set()
+            if is_openai_shape:
+                mcp_tools = [t for t in mcp_tools
+                             if (t.get("function", {}) or {}).get("name", "") in discovered]
+            else:
+                mcp_tools = [t for t in mcp_tools if t.get("name", "") in discovered]
+        tools = list(tools) + list(mcp_tools)
+        if is_openai_shape:
+            tools.sort(key=lambda t: (t.get("function", {}) or {}).get("name", ""))
+        else:
+            tools.sort(key=lambda t: t.get("name", ""))
+
+    return tools
+
+
+def _active_tool_name_set(tools: list[dict], is_openai_shape: bool) -> set[str]:
+    """Helper for callers that just need the names that came out of resolve_active_tools."""
+    if is_openai_shape:
+        return {(t.get("function", {}) or {}).get("name", "") for t in tools}
+    return {t.get("name", "") for t in tools}
+
+
+# tools.md parse cache — re-read on mtime change. Keeps the renderer fast
+# (the file is small but parsing it on every system-prompt build is wasteful).
+_TOOL_RULES_CACHE: dict[str, tuple[float, list[tuple[set[str], str]]]] = {}
+
+
+def _parse_tool_rules(path: str) -> list[tuple[set[str], str]]:
+    """Parse tools.md into [(anchor_tools, block_text), …].
+
+    Each block is delimited by an HTML comment `<!-- @anchor:t1,t2,… -->`.
+    A block fires when **all** of its anchor tools are present in the active
+    tool set; this matches the EXA_PROTOCOL rule (needs both exa_search and
+    web_fetch) without inventing a separate "all-of" predicate.
+
+    Cached by mtime.
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return []
+    cached = _TOOL_RULES_CACHE.get(path)
+    if cached and cached[0] == st.st_mtime:
+        return cached[1]
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return []
+    blocks: list[tuple[set[str], str]] = []
+    # Split on the anchor marker; the first chunk before any marker is
+    # discarded (it's prose introducing the file, not a rules block).
+    import re as _re
+    parts = _re.split(r"<!--\s*@anchor:([^>]+?)\s*-->", text)
+    # parts looks like: [preamble, anchor1, body1, anchor2, body2, …]
+    for i in range(1, len(parts), 2):
+        anchor = parts[i].strip()
+        body = parts[i + 1] if (i + 1) < len(parts) else ""
+        names = {n.strip() for n in anchor.split(",") if n.strip()}
+        if not names:
+            continue
+        # Trim leading whitespace introduced by the comment delimiter.
+        blocks.append((names, body.lstrip("\n").rstrip() + "\n"))
+    _TOOL_RULES_CACHE[path] = (st.st_mtime, blocks)
+    return blocks
+
+
+def _render_tool_rules(active_tool_names: set[str],
+                       tools_md_path: str | None = None) -> str:
+    """Render the conditional tool-rules block for the active tool set.
+
+    Returns "" when none of the anchored rules apply (typical for `transform`
+    and most `memory_summary` calls). When one or more apply, the returned
+    string is the rules text only — no leading header — so the caller can
+    decide how to delimit it.
+    """
+    if not active_tool_names:
+        return ""
+    if tools_md_path is None:
+        tools_md_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "tools.md")
+    blocks = _parse_tool_rules(tools_md_path)
+    out_parts: list[str] = []
+    for anchor_names, body in blocks:
+        if anchor_names.issubset(active_tool_names):
+            out_parts.append(body)
+    return "\n".join(out_parts).rstrip() + ("\n" if out_parts else "")
 
 
 # --- Tool Execution ---
@@ -11429,27 +11698,13 @@ MAX_DELEGATE_TOOL_ROUNDS = 10  # Limit for delegated/scheduled tasks (timeout is
 
 _MEMORY_TOOL_NAMES = {"memory_store", "memory_recall", "memory_delete", "memory_shared"}
 
-# Scheduled-task allowlist (Phase 3, 2026-05-14): matches the SDK harness
-# scheduled-task invocation byte-for-byte. Standalone harness drives
-# gemma-4-e4b to a real cited report with this exact 3-tool set; Brain's
-# 39-tool loadout (or even a 22-tool narrowed set) makes the same model
-# narrate-instead-of-call at write_file. The model doesn't have the
-# capacity to plan over 22 tools while also following a 6-step workflow.
-# Memory-summary tasks bypass this and use _MEMORY_TOOL_NAMES instead.
-_SCHEDULED_TASK_TOOLS = {
-    "exa_search", "web_fetch", "write_file",
-}
-
-
-def _resolve_delegate_tools(tools: bool | str) -> list:
-    """Resolve tool definitions for _run_delegate based on tools parameter."""
-    if not tools:
-        return []
-    if tools == "memory_only":
-        allowed = _MEMORY_TOOL_NAMES
-    else:
-        allowed = _get_agent_tool_names()
-    return _filter_tools(TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
+# Tool sets for non-interactive purposes now live next to `resolve_active_tools`:
+# `_BACKGROUND_QA_TOOLS`, `_MEMORY_SUMMARY_TOOLS`. The historical
+# `_SCHEDULED_TASK_TOOLS` 3-tool hack and `_resolve_delegate_tools` shim
+# were deleted (PROMPT_TOOLS_UNIFICATION_PLAN.md) — scheduled tasks see the
+# full agent surface via purpose='interactive', scheduled=True. The lean
+# scheduled prompt that prevented gemma-4-e4b's <eos> stall now lives in
+# `_build_system_prompt`'s scheduled overlay.
 
 
 # Shared rule: a request that asks for a FILE artifact (report, document,
@@ -11943,12 +12198,31 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
                   event_callback=None,
                   inference_params: dict | None = None,
                   tools: bool | str = True,
-                  session_id: str | None = None) -> str | None:
+                  session_id: str | None = None,
+                  purpose: str = "interactive") -> str | None:
     """Run a delegated task in a fresh context. Returns the final text response.
     Thread-safe: uses thread-local storage for memory instead of swapping globals.
 
-    tools: True=all tools, False=no tools, "memory_only"=only memory tools
+    tools: True=all tools, False=no tools, "memory_only"=only memory tools.
+    purpose: routed through engine.resolve_active_tools — default 'interactive'
+             matches the historical "all agent tools" behavior. `tools=False`
+             overrides purpose with 'transform' (empty tool list); `tools=
+             "memory_only"` overrides with 'memory_summary'.
+             (PROMPT_TOOLS_UNIFICATION_PLAN.md)
     """
+    # Derive the effective purpose from (tools, purpose). `tools` is the
+    # legacy switch; `purpose` is the new richer dimension. Explicit
+    # `tools=False`/`"memory_only"` always win — they're load-bearing for
+    # callers that haven't migrated yet.
+    if not tools:
+        _eff_purpose = "transform"
+    elif tools == "memory_only":
+        _eff_purpose = "memory_summary"
+    else:
+        _eff_purpose = purpose
+    if _eff_purpose not in _VALID_PURPOSES:
+        raise ValueError(
+            f"_run_delegate: unknown purpose {purpose!r} (effective {_eff_purpose!r})")
     # GDPR auto-fallback: scheduled tasks, agent-to-agent delegation, and
     # delegate_task tool calls run without user interaction. Reroute to the
     # local fallback when `messages` contain PII and the chosen model is
@@ -12017,13 +12291,26 @@ def _run_delegate(messages: list[dict], model: str, system_prompt: str,
     endpoint = f"{base_url}/chat/completions"
     aug_messages = [{"role": "system", "content": system_prompt}] + messages
 
+    # Tool list via the unified resolver (PROMPT_TOOLS_UNIFICATION_PLAN.md).
+    # `transform` returns []; `memory_summary` returns the memory subset;
+    # `interactive` returns the agent's full set minus deferred groups.
+    # `_resolve_delegate_tools` is deleted in the same change.
+    _agent_ctx = getattr(_thread_local, "current_agent", None)
+    _agent_id = _agent_ctx.agent_id if _agent_ctx else None
+    _delegate_tools = resolve_active_tools(
+        purpose=_eff_purpose,
+        agent_id=_agent_id,
+        discovered_tools=getattr(_thread_local, "_discovered_tools", set()) or set(),
+        mcp_manager=None,  # _run_delegate did not include MCP tools historically
+        is_openai_shape=True,
+    )
     payload = {
         "model": get_api_model_id(model),
         "max_tokens": get_model_max_output(model),
         "messages": aug_messages,
         "stream": True,
         "stream_options": {"include_usage": True},
-        "tools": _resolve_delegate_tools(tools),
+        "tools": _delegate_tools,
     }
     provider = _models_config.get(model, {}).get("provider", "")
     _apply_inference_to_payload(payload, inference_params or {}, provider, scoped_model=model)
@@ -12837,30 +13124,27 @@ def run_model_warmup(model: str, allow_cloud: bool = False,
         init_thread_context(_warmup_ctx, agent_config=agent_config)
 
         if mode == "full":
-            # Mirror send_message's first-turn payload byte-for-byte.
-            system_prompt = _build_system_prompt(include_memory_summary=True)
-            allowed = _get_agent_tool_names()
-            all_tools = _filter_tools(TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
-            tcfg = _get_token_config()
-            deferred_groups = set(tcfg.get("deferred_tool_groups") or [])
-            if deferred_groups:
-                deferred_tool_names = set()
-                for dg in deferred_groups:
-                    deferred_tool_names.update(TOOL_GROUPS.get(dg, set()))
-                all_tools = [t for t in all_tools
-                             if t["function"]["name"] not in deferred_tool_names]
-            # Merge in MCP tools exactly like send_message does. Discovered
-            # tools are empty on turn 0 (no tool_search has run yet), so any
-            # deferred MCP tools stay deferred — matches real first-turn.
-            if mcp_mgr:
-                mcp_tools = mcp_mgr.get_tool_definitions_openai()
-                mcp_tools = _filter_mcp_tools(mcp_tools, is_openai=True)
-                defer_mcp = tcfg.get("defer_mcp_tools", "auto")
-                should_defer = _should_defer_mcp(defer_mcp, mcp_tools, model, is_openai=True)
-                if should_defer:
-                    mcp_tools = []  # discovered_tools is empty on turn 0
-                all_tools.extend(mcp_tools)
-            all_tools.sort(key=lambda t: t.get("function", {}).get("name", ""))
+            # Mirror send_message's first-turn payload byte-for-byte. Both
+            # paths now go through resolve_active_tools (single source of
+            # truth, PROMPT_TOOLS_UNIFICATION_PLAN.md). discovered_tools is
+            # empty on turn 0 in both cases — deferred groups stay deferred.
+            # System prompt and tool list MUST agree on active_tool_names so
+            # the conditional tools.md rule blocks are identical.
+            all_tools = resolve_active_tools(
+                purpose="interactive",
+                agent_id=agent_id,
+                discovered_tools=set(),
+                mcp_manager=mcp_mgr,
+                is_openai_shape=True,
+            )
+            _warmup_active_names = {
+                (t.get("function", {}) or {}).get("name", "") for t in all_tools
+            }
+            system_prompt = _build_system_prompt(
+                include_memory_summary=True,
+                purpose="interactive",
+                active_tool_names=_warmup_active_names,
+            )
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": "."},
@@ -15024,6 +15308,10 @@ class Scheduler:
                 # stability.
                 "ALTER TABLE schedules ADD COLUMN thinking_level TEXT DEFAULT ''",
                 "ALTER TABLE schedules ADD COLUMN caveman_chat INTEGER DEFAULT 0",
+                # Per-task tool surface (PROMPT_TOOLS_UNIFICATION_PLAN.md
+                # Phase B). Empty = default (research_minimal). Valid
+                # values listed in _VALID_TOOL_PROFILES.
+                "ALTER TABLE schedules ADD COLUMN tool_profile TEXT DEFAULT ''",
                 # Generic sharing block (v8.35): visibility one of
                 # private|users|team|global; owner is the existing user_id.
                 "ALTER TABLE schedules ADD COLUMN visibility TEXT DEFAULT 'private'",
@@ -15075,7 +15363,8 @@ class Scheduler:
             working_dir: str | None = None,
             user_id: str = "",
             thinking_level: str = "",
-            caveman_chat: int = 0) -> dict:
+            caveman_chat: int = 0,
+            tool_profile: str = "") -> dict:
         """Add a scheduled task. timeout in seconds (default: 300 = 5 min).
 
         attachments: list of {name, path, mime, size} dicts. Files must already
@@ -15086,6 +15375,7 @@ class Scheduler:
         string only for tooling that creates schedules outside the auth path.
         thinking_level: '' (inherit) | 'none' | 'low' | 'medium' | 'high'.
         caveman_chat: 0..3 — chat-style response compression for this task.
+        tool_profile: '' (default → research_minimal) | one of _VALID_TOOL_PROFILES.
         """
         next_run = self._calc_next_run(schedule)
         if next_run is None:
@@ -15109,15 +15399,18 @@ class Scheduler:
             caveman_chat = 0
         if caveman_chat < 0 or caveman_chat > 3:
             return {"error": "caveman_chat must be between 0 and 3"}
+        tool_profile = (tool_profile or "").strip()
+        if tool_profile not in _VALID_TOOL_PROFILES:
+            return {"error": f"Invalid tool_profile: {tool_profile!r}. Valid: {', '.join(repr(p) for p in _VALID_TOOL_PROFILES)}"}
         atts_json = json.dumps(attachments or [])
         try:
             with _sched_conn() as conn:
                 conn.execute("""
-                    INSERT INTO schedules (name, task, schedule, agent, model, next_run, timeout, attachments, working_dir, user_id, thinking_level, caveman_chat)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO schedules (name, task, schedule, agent, model, next_run, timeout, attachments, working_dir, user_id, thinking_level, caveman_chat, tool_profile)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (name, task, schedule, agent, model, next_run.isoformat(),
                       timeout, atts_json, working_dir, user_id or "",
-                      thinking_level, caveman_chat))
+                      thinking_level, caveman_chat, tool_profile))
                 conn.commit()
             return {"name": name, "schedule": schedule, "agent": agent,
                     "next_run": next_run.isoformat(), "timeout": timeout,
@@ -15125,6 +15418,7 @@ class Scheduler:
                     "user_id": user_id or "",
                     "thinking_level": thinking_level,
                     "caveman_chat": caveman_chat,
+                    "tool_profile": tool_profile,
                     "status": "created"}
         except sqlite3.IntegrityError:
             return {"error": f"Schedule '{name}' already exists"}
@@ -15371,7 +15665,7 @@ class Scheduler:
         """
         allowed = {"task", "schedule", "model", "timeout", "agent",
                    "attachments", "working_dir",
-                   "thinking_level", "caveman_chat"}
+                   "thinking_level", "caveman_chat", "tool_profile"}
         updates: dict = {}
         for k in allowed:
             if k not in fields:
@@ -15399,6 +15693,11 @@ class Scheduler:
                 if cv < 0 or cv > 3:
                     return {"error": "caveman_chat must be between 0 and 3"}
                 updates[k] = cv
+            elif k == "tool_profile":
+                tp = str(v or "").strip()
+                if tp not in _VALID_TOOL_PROFILES:
+                    return {"error": f"Invalid tool_profile: {v!r}. Valid: {', '.join(repr(p) for p in _VALID_TOOL_PROFILES)}"}
+                updates[k] = tp
             else:
                 updates[k] = v
         new_name = fields.get("new_name")
@@ -15845,13 +16144,58 @@ class Scheduler:
         )
         init_thread_context(_sched_ctx_pre, agent_config=target)
 
-        # Build system prompt via the unified builder (mode="scheduled").
-        # The builder handles the noninteractive directive, working_dir block, and tools guide.
+        # Build system prompt via the unified builder
+        # (PROMPT_TOOLS_UNIFICATION_PLAN.md). Scheduled tasks are
+        # purpose='interactive', scheduled=True — the scheduled overlay
+        # replaces the proactive framing with a NON-INTERACTIVE directive;
+        # the rest of the agent surface (project context, team, skills,
+        # MCP listing) is preserved. active_tool_names is computed inline
+        # so the conditional tools.md rule blocks match the wire payload.
+        #
+        # Determine the purpose from the same sources used later for the
+        # sidecar call (token_config + memory_summary name prefix). Hoisted
+        # up here so the prompt and the wire tool list agree.
+        _sched_tools_pre = _get_token_config(agent_id).get("scheduled_task_tools", True)
+        if name.startswith("_memory_summary_"):
+            _sched_tools_pre = "memory_only"
+        _sched_purpose_pre = (
+            "memory_summary" if _sched_tools_pre == "memory_only" else
+            "transform" if _sched_tools_pre is False else
+            "interactive")
+        # Phase B (PROMPT_TOOLS_UNIFICATION_PLAN.md): per-schedule
+        # `tool_profile` overrides the default purpose for non-memory,
+        # non-transform tasks. Empty/unset → research_minimal (Phase A
+        # default, validated for gemma-4-e4b on the canonical research task).
+        # 'interactive' opts back into the full agent surface (chat-like).
+        # Memory-summary and transform tasks ignore the profile.
+        if _sched_purpose_pre not in ("memory_summary", "transform"):
+            _task_profile = (task_row.get("tool_profile") or "").strip()
+            if _task_profile == "interactive":
+                _sched_purpose_pre = "interactive"
+            else:
+                # empty / "research_minimal" → research_minimal (default).
+                _sched_purpose_pre = "research_minimal"
+        if _sched_purpose_pre == "transform":
+            _sched_active_names: set[str] = set()
+        else:
+            _sched_active_names = {
+                t.get("name", "") for t in resolve_active_tools(
+                    purpose=_sched_purpose_pre,
+                    agent_id=agent_id,
+                    discovered_tools=set(),
+                    mcp_manager=None,  # MCP listing belongs in the prompt only
+                    is_openai_shape=False,
+                )
+            }
         system_prompt = _build_system_prompt(
             include_memory_summary=False,
-            mode="scheduled",
+            purpose=_sched_purpose_pre,
+            # `scheduled` overlay only applies to the `interactive` branch;
+            # research_minimal and memory_summary have their own framing.
+            scheduled=False,
             task_name=name,
             task_working_dir=task_working_dir or "",
+            active_tool_names=_sched_active_names,
         )
 
         # Point the agent at the durable attachment paths (no per-run copy).
@@ -15959,20 +16303,18 @@ class Scheduler:
                 pass  # result_text + status already set from the GDPR block above
             elif _use_sidecar:
                 _prov = resolve_provider_for_model(model)
-                if sched_tools == "memory_only":
-                    _allowed = set(_MEMORY_TOOL_NAMES)
-                elif sched_tools is False:
-                    _allowed = set()
-                else:
-                    # Scheduled tasks see a curated subset (file/doc/memory/kg/web)
-                    # so small local models (gemma-4-e4b, etc.) aren't drowned in
-                    # 39-tool schemas. Intersect with the agent's allowed set so
-                    # agents that already restrict further keep their limit.
-                    _agent_allowed = _get_agent_tool_names(agent_id)
-                    if _agent_allowed is None:
-                        _allowed = set(_SCHEDULED_TASK_TOOLS)
-                    else:
-                        _allowed = set(_SCHEDULED_TASK_TOOLS) & _agent_allowed
+                # PROMPT_TOOLS_UNIFICATION_PLAN.md: scheduled tasks are
+                # `interactive` (delivery channel, not workload shape). The
+                # historical 3-tool _SCHEDULED_TASK_TOOLS clamp lived here
+                # because Brain's 7.5 KB system prompt + 39-tool schema made
+                # gemma-4-e4b emit <eos>; the unified _build_system_prompt
+                # now ships a lean scheduled overlay that drives the same
+                # model on the full agent surface (validated by Gate-PT-2).
+                # `tools="memory_only"` collapses to purpose='memory_summary';
+                # `tools=False` collapses to purpose='transform' (empty list).
+                # Reuse the purpose resolved up front from sched_tools +
+                # tool_profile (PROMPT_TOOLS_UNIFICATION_PLAN.md Phase B).
+                _sched_purpose = _sched_purpose_pre
 
                 _tool_context = {
                     "session_id": sched_session_id,
@@ -16006,13 +16348,20 @@ class Scheduler:
                     if ev_type == "tool_call":
                         on_event("tool_call", data)
 
+                # Model-level `parallel_tool_calls: false` → Anthropic SDK
+                # `tool_choice.disable_parallel_tool_use=True`. Mistral via
+                # CLIProxyAPI in streaming mode mis-emits parallel tool_use
+                # batches that occasionally drop the final write_file —
+                # sequential tool use sidesteps the issue.
+                _model_cfg = _models_config.get(model, {}) or {}
+                _disable_parallel = _model_cfg.get("parallel_tool_calls", True) is False
                 _result = _sidecar_proxy.run_turn(
                     messages=messages,
                     model=model,
                     api_key=_prov["api_key"],
                     base_url=_prov["base_url"],
                     system_prompt=system_prompt,
-                    allowed_tools=_allowed,
+                    purpose=_sched_purpose,
                     tool_context=_tool_context,
                     sampling=_sampling,
                     thinking_level=_thinking_level,
@@ -16021,6 +16370,7 @@ class Scheduler:
                     event_callback=_sc_event,
                     cancel_token=cancel_token,
                     timeout_s=float(task_timeout) + 60.0,
+                    disable_parallel_tool_use=_disable_parallel,
                 )
                 _sc_err = _result.get("error")
                 _sc_reply = _result.get("reply") or ""
@@ -24734,25 +25084,65 @@ _SYSTEM_PROMPT_CACHE_TTL = 60  # seconds — cache for 1 min (covers tool loop i
 
 
 def _build_system_prompt(include_memory_summary: bool = True,
-                         mode: str = "chat",
+                         mode: str | None = None,
+                         purpose: str = "interactive",
+                         scheduled: bool = False,
                          task_name: str = "",
-                         task_working_dir: str = "") -> str:
+                         task_working_dir: str = "",
+                         active_tool_names: set[str] | None = None) -> str:
     """Build the full system instruction for the current agent.
 
-    Assembles soul.md, agent context, memory summary, project context,
-    team info, skills, scheduler status, MCP servers, tools guide, etc.
-    Reads from thread-local state and globals as needed.
+    See PROMPT_TOOLS_UNIFICATION_PLAN.md for the four-purpose model.
 
-    mode: 'chat' (default) | 'scheduled'
-      'scheduled' replaces the proactive-tools framing with the noninteractive
-      directive and omits blocks irrelevant to background tasks (memory, team,
-      skills, scheduler listing, MCP listing).
+    purpose:
+      - 'interactive' (default) — chat, project chat, scheduled tasks. Soul +
+        full agent context. When scheduled=True the proactive framing is
+        replaced by a NON-INTERACTIVE directive (no clarifying questions,
+        write_file is a tool call not a description).
+      - 'background_qa' — headless corpus query. No soul, terse identity,
+        project memory framing when project active. No team / skills /
+        scheduler / MCP listings. NOT YET in use; raises here if invoked
+        without a caller that's been audited.
+      - 'transform' — caller supplies its own prompt; this function refuses.
+      - 'memory_summary' — memory miner. No soul, terse identity,
+        memory-schema rules.
 
-    Caches per session to avoid disk I/O on every tool loop iteration.
-    Memory summary is only included on _tool_round==0 (controlled by caller).
+    active_tool_names: when provided, the conditional tool-rules blocks from
+        tools.md (`_render_tool_rules`) replace the unconditional appended
+        tools.md content. Legacy callers (CLI single-message, sessions
+        diagnostic) leave it None and get the full tools.md to keep their
+        snapshots identical until they migrate.
 
-    Used by both the direct send_message loop and the Agent SDK backend.
+    Legacy `mode` kwarg: 'chat' → purpose='interactive'; 'scheduled' →
+        purpose='interactive', scheduled=True. Kept until every caller is
+        migrated; remove once Phase 4 cleanup lands.
+
+    Caches per (session, purpose, scheduled, include_memory_summary,
+    has_active_tool_names) to avoid disk I/O on every tool loop iteration.
     """
+    # Legacy mode shim (PROMPT_TOOLS_UNIFICATION_PLAN.md): map the old
+    # `mode=` kwarg onto purpose/scheduled. Explicit purpose= wins when both
+    # are supplied.
+    if mode is not None:
+        if mode == "scheduled":
+            purpose = "interactive"
+            scheduled = True
+        elif mode == "chat":
+            purpose = "interactive"
+        else:
+            raise ValueError(f"_build_system_prompt: unknown legacy mode {mode!r}")
+
+    if purpose not in _VALID_PURPOSES:
+        raise ValueError(f"_build_system_prompt: unknown purpose {purpose!r}")
+    if purpose == "transform":
+        raise ValueError(
+            "_build_system_prompt(purpose='transform') is not callable — "
+            "transform callers supply their own prompt directly.")
+    if purpose == "background_qa":
+        raise NotImplementedError(
+            "_build_system_prompt(purpose='background_qa') has no in-tree caller "
+            "yet — add the explicit caller before enabling this branch.")
+
     import time as _time
     session_id = getattr(_thread_local, 'current_session_id', None) or ""
     caveman_chat = getattr(_thread_local, 'caveman_chat', 0) or 0
@@ -24763,7 +25153,11 @@ def _build_system_prompt(include_memory_summary: bool = True,
     # after the cache lookup — keeping them out of the key means flipping
     # caveman or plan mode mid-session reuses the cached base prose instead
     # of triggering a fresh read of soul.md / skills / scheduler / MCP / etc.
-    cache_key = f"{session_id}:{include_memory_summary}:{mode}"
+    # `_atn_key` records the *fingerprint* of active_tool_names so callers
+    # with different tool surfaces don't share a cache entry (and so the
+    # legacy None-callers keep their own cache slot).
+    _atn_key = "*" if active_tool_names is None else ",".join(sorted(active_tool_names))
+    cache_key = f"{session_id}:{include_memory_summary}:{purpose}:{int(scheduled)}:{_atn_key}"
     cached = _system_prompt_cache.get(cache_key)
     if cached and (_time.time() - cached[1]) < _SYSTEM_PROMPT_CACHE_TTL:
         return _apply_system_prompt_postprocess(
@@ -24780,8 +25174,10 @@ def _build_system_prompt(include_memory_summary: bool = True,
     soul = agent.soul if agent else ""
     tools_guide = agent.tools_guide if agent else ""
 
-    # If no agent-specific tools guide, try global
-    if not tools_guide:
+    # If no agent-specific tools guide, try global. Only used when the
+    # caller doesn't pass active_tool_names (legacy callers); the conditional
+    # `_render_tool_rules` path reads tools.md itself.
+    if not tools_guide and active_tool_names is None:
         tools_md_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools.md")
         try:
             with open(tools_md_path, "r") as f:
@@ -24793,6 +25189,74 @@ def _build_system_prompt(include_memory_summary: bool = True,
     agent_registry = build_agent_registry(for_agent_id=agent_id)
 
     system_instruction = ""
+
+    # --- research_minimal purpose: harness-style lean prompt, dynamically
+    # composed from `minimal_role` fragments on the active tools'
+    # TOOL_DEFINITIONS entries. Skips soul.md, project context, team, skills,
+    # scheduler/MCP listings, DEFERRED block — those are the prompt bytes
+    # gemma-4-e4b chokes on per Gate-PT-2 evidence.
+    if purpose == "research_minimal":
+        # Compose "Use `A` to do X, `B` to do Y, and `C` to do Z."
+        # from (name, role) pairs in canonical order (alphabetical by name).
+        # Collapses cleanly when zero or one tools are flagged minimal.
+        _blurbs = _minimal_tool_blurbs()
+        def _piece(name: str, role: str) -> str:
+            return f"`{name}` {role}"
+        if not _blurbs:
+            _tool_line = ""
+        elif len(_blurbs) == 1:
+            _tool_line = f"Use {_piece(*_blurbs[0])}."
+        else:
+            _csv = ", ".join(_piece(n, r) for n, r in _blurbs[:-1])
+            _tool_line = f"Use {_csv}, and {_piece(*_blurbs[-1])}."
+        system_instruction = (
+            "You are an autonomous research assistant. "
+            f"{_tool_line}\n\n"
+            "## Workflow\n\n"
+            "1. Break the user's request into 2-4 sub-topics.\n"
+            "2. For each sub-topic, call `exa_search` with 2-5 focused keywords "
+            "(do not paste the entire question).\n"
+            "3. Pick the most promising 2-3 results per sub-topic and `web_fetch` them.\n"
+            "4. Synthesize across all fetched pages into a single Markdown report.\n"
+            "5. Save the report with `write_file` using the path the user specified "
+            "(default `report.md`).\n"
+            "6. After `write_file` returns successfully, reply with a one-paragraph "
+            "confirmation including the absolute path written.\n\n"
+            "## Quality\n\n"
+            "- Cite sources inline as `[Title](URL)` next to each claim that came "
+            "from a fetched page.\n"
+            "- If a search returns nothing useful, try a different angle — do not "
+            "invent content.\n"
+            "- Do not exceed 6 `web_fetch` calls total; stop earlier if you have enough.\n"
+            "- The Markdown report must contain proper headings (`#`, `##`), bullet "
+            "lists, and inline links — not placeholder text.\n"
+        )
+        _system_prompt_cache[cache_key] = (system_instruction, _time.time())
+        return _apply_system_prompt_postprocess(
+            system_instruction, caveman_system, caveman_chat, plan_mode)
+
+    # --- memory_summary purpose: terse, no soul, no team/skills/scheduler/MCP.
+    if purpose == "memory_summary":
+        system_instruction = (
+            f"You are the memory miner for agent '{agent_id}'.\n"
+            f"Current date: {_dt.now().strftime('%Y-%m-%d')}\n\n"
+            "Your job: classify chat turns into memorable facts/preferences/"
+            "decisions and file them via `save_chat_to_memory`. Use "
+            "`mempalace_query` to check whether something is already on file "
+            "before re-filing. Skip generic chitchat, greetings, and refusals "
+            "— they are not memorable. Be terse: emit tool calls, not "
+            "narration.\n\n"
+        )
+        # Conditional tool rules — usually empty for memory tools.
+        if active_tool_names is not None:
+            _rules = _render_tool_rules(active_tool_names)
+            if _rules:
+                system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{_rules}"
+        _system_prompt_cache[cache_key] = (system_instruction, _time.time())
+        return _apply_system_prompt_postprocess(
+            system_instruction, caveman_system, caveman_chat, plan_mode)
+
+    # --- interactive purpose (chat OR scheduled). Soul + full context.
     if soul:
         system_instruction += f"{soul}\n\n"
     # Round timestamp to the hour so the KV-prefix stays stable across
@@ -24802,64 +25266,33 @@ def _build_system_prompt(include_memory_summary: bool = True,
     # `greeting_name` pref) is injected as a one-time preamble on the first
     # user message in send_message — keeping it OUT of the system prompt
     # preserves the warm-pool KV-prefix match across users.
-    if mode == "scheduled":
-        # Scheduled tasks: harness-style lean prompt (~1.3 KB total). Validated
-        # against the standalone SDK harness — that prompt drove gemma-4-e4b
-        # to a real report 2/3 runs on the same task Brain's 7.5 KB prompt
-        # made it bail with <eos>. Skips soul.md, tools.md, DEFERRED block.
-        # Keeps the harness's 6-step workflow verbatim, plus a one-line
-        # email-followthrough hint for tasks that send emails.
+    _project_active = bool(getattr(_thread_local, 'project', None))
+    # Three framing lines, ordered most-specific → most-general:
+    #   - scheduled run: NON-INTERACTIVE directive (autonomous mode rule).
+    #   - project chat: refuse on empty retrieval (anti-fabrication).
+    #   - everything else: proactive tool use.
+    # Validated 2026-05-01: dropping "proactive" in project chat moved
+    # brain mean 0.65 → 0.75 on the policy eval (F1/F2/F3 refusal canaries).
+    if scheduled:
         _task_line = f" Task name: '{task_name}'." if task_name else ""
-        system_instruction = (
-            "You are an autonomous research assistant.\n"
-            f"Current date: {_dt.now().strftime('%Y-%m-%d')}. "
-            f"Working directory: {task_working_dir or cwd}.{_task_line}\n\n"
-            "Use `exa_search` to find relevant sources, `web_fetch` to read full "
-            "pages, and `write_file` to save the final deliverable.\n\n"
-            "## Workflow\n\n"
-            "1. Break the user's request into 2-4 sub-topics.\n"
-            "2. For each sub-topic, call `exa_search` with 2-5 focused keywords "
-            "(do not paste the entire question).\n"
-            "3. Pick the most promising 2-3 results per sub-topic and `web_fetch` them.\n"
-            "4. Synthesize across all fetched pages into a single Markdown report.\n"
-            "5. Save the report with `write_file` using the path the user specified "
-            "(default `report.md`). This is a TOOL CALL — emit the `write_file` "
-            "tool_use, not a description of what you will do. Your task is NOT "
-            "complete until `write_file` has actually been called and returned.\n"
-            "6. After `write_file` returns successfully, reply with a one-paragraph "
-            "confirmation including the file name. Do NOT say 'I will write' or "
-            "'I will proceed to write' — either call the tool now or you have failed "
-            "the task.\n\n"
-            "## Quality\n\n"
-            "- Cite sources inline as `[Title](URL)` next to each claim that came "
-            "from a fetched page.\n"
-            "- If a search returns nothing useful, try a different angle — do not "
-            "invent content.\n"
-            "- Do not exceed 6 `web_fetch` calls total; stop earlier if you have enough.\n"
-            "- The Markdown report must contain proper headings (`#`, `##`), bullet "
-            "lists, and inline links — not placeholder text.\n"
-            "- This is a NON-INTERACTIVE run: no user is watching. Do not ask "
-            "clarifying questions; do not end with 'would you like me to…'.\n"
-            "- If the task asks you to email or send the report, call the relevant "
-            "tool AFTER `write_file` — attach the file, do not paste its content "
-            "into the message body.\n"
+        _wd_line = (f"\nWorking directory: {task_working_dir}" if task_working_dir else "")
+        _framing_line = (
+            "This is a NON-INTERACTIVE run: no user is watching. Do NOT ask "
+            "clarifying questions; do NOT end with 'would you like me to…'. "
+            "If the task contains a verb (write, send, save, fetch, …), the "
+            "corresponding tool call IS the work — emit the tool_use, do not "
+            "describe what you will do. Your task is not complete until every "
+            "verb in it has actually been executed."
         )
-        # Cache the lean prompt + return early — soul.md, tools.md, DEFERRED
-        # block, scheduler/MCP listings, agent registry are all skipped for
-        # scheduled mode. They each have a real cost on small local models
-        # (gemma-4-e4b silently emits <eos> when the prompt exceeds ~3-4 KB
-        # of policy text on top of the task itself).
-        _system_prompt_cache[cache_key] = (system_instruction, _time.time())
-        return _apply_system_prompt_postprocess(
-            system_instruction, caveman_system, caveman_chat, plan_mode)
+        system_instruction += (
+            f"You are agent '{agent_id}' in the Brain Agent system, running "
+            f"an autonomous scheduled task.{_task_line}\n"
+            f"Current date and time: {_dt.now().strftime('%Y-%m-%d %H:00 %Z').strip()}\n"
+            f"Current working directory: {task_working_dir or cwd}{_wd_line}\n"
+            f"Operating system: {os_name}\n\n"
+            f"{_framing_line}\n\n"
+        )
     else:
-        # Interactive chat: proactive framing, suppressed in project chats.
-        # When a project is active, drop the "use tools proactively" framing —
-        # project chats need restraint (refuse on missing answers) more than
-        # initiative. The "proactive" line was pushing Mistral toward fabrication
-        # when retrieval came up empty (measured on F1/F2/F3 refusal canaries).
-        # Validated 2026-05-01 in eval/results/20260501T110032: brain mean 0.65 → 0.75.
-        _project_active = bool(getattr(_thread_local, 'project', None))
         _proactive_line = (
             "Answer based ONLY on what you can verify from tools and source documents. "
             "When tools return nothing relevant, refuse cleanly per project instructions — "
@@ -24886,10 +25319,11 @@ def _build_system_prompt(include_memory_summary: bool = True,
     # mempalace_kg_query, mempalace_diary_read) on their own when they need
     # context.
     tcfg = _get_token_config()
-    # Project context, note editing, team, skills, scheduler, MCP listings are
-    # interactive-only — scheduled tasks don't need them and skipping them
-    # keeps the scheduled prompt lean and focused on the task directive.
-    if mode != "scheduled":
+    # Project context, note editing, team, skills, scheduler, MCP listings:
+    # interactive purpose always emits these. Scheduled tasks are interactive
+    # too — they get the same surface as a human asking the agent the same
+    # question (minus the conversational framing).
+    if True:  # purpose=='interactive' is the only branch that reaches here.
         # Inject project context if a project is active
         active_project = getattr(_thread_local, 'project', None)
         if active_project:
@@ -25200,8 +25634,19 @@ def _build_system_prompt(include_memory_summary: bool = True,
             system_instruction += f"  - {_dg}: {', '.join(sorted(TOOL_GROUPS[_dg]))}\n"
         system_instruction += "\n"
 
-    if tools_guide and tcfg.get("include_tools_guide", True):
-        system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
+    if tcfg.get("include_tools_guide", True):
+        if active_tool_names is not None:
+            # New conditional-rules path: only the blocks anchored to active
+            # tools are emitted. ~1.5 KB total when all three blocks apply,
+            # 0 chars when none do. Replaces the unconditional 4.5 KB
+            # tools.md injection (PROMPT_TOOLS_UNIFICATION_PLAN.md).
+            _rules = _render_tool_rules(active_tool_names)
+            if _rules:
+                system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{_rules}"
+        elif tools_guide:
+            # Legacy path: caller didn't pass active_tool_names, so we keep
+            # the full tools.md injection. Audited callers will migrate.
+            system_instruction += f"\n--- TOOL USAGE GUIDE ---\n{tools_guide}"
 
     # Cache the BASE prose (no caveman, no plan suffix). Post-processing
     # is applied below so the cached value is reusable across caveman/plan
@@ -25896,9 +26341,30 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
         clean = {k: v for k, v in msg.items() if k in _ALLOWED_MSG_KEYS}
         augmented_messages.append(clean)
     tcfg = _get_token_config()
+    # Resolve the tool list FIRST (PROMPT_TOOLS_UNIFICATION_PLAN.md) so we
+    # can pass active_tool_names to _build_system_prompt. The conditional
+    # tools.md rule blocks rely on this — without it the prompt and wire
+    # tool list could diverge (rules mentioning python_exec emitted when
+    # python_exec isn't in the active set, etc.).
     if tools:
+        mcp_mgr = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
+        discovered_tools = getattr(_thread_local, '_discovered_tools', set()) or set()
+        _agent_ctx = getattr(_thread_local, "current_agent", None) or _current_agent
+        _agent_id = _agent_ctx.agent_id if _agent_ctx else None
+        all_tools = resolve_active_tools(
+            purpose="interactive",
+            agent_id=_agent_id,
+            discovered_tools=discovered_tools,
+            mcp_manager=mcp_mgr,
+            is_openai_shape=True,
+        )
+        _active_tool_names = {
+            (t.get("function", {}) or {}).get("name", "") for t in all_tools
+        }
         system_instruction = _build_system_prompt(
             include_memory_summary=(_tool_round == 0),
+            purpose="interactive",
+            active_tool_names=_active_tool_names,
         )
         augmented_messages.insert(0, {"role": "system", "content": system_instruction})
 
@@ -25917,36 +26383,6 @@ def send_message(messages: list[dict], model: str, api_key: str, base_url: str,
     _apply_inference_to_payload(payload, inference_params or {}, provider, scoped_model=model)
 
     if tools:
-        mcp_mgr = getattr(_thread_local, 'mcp_manager', None) or _mcp_manager
-        allowed = _get_agent_tool_names()
-
-        # Deferred tool loading: skip MCP tool schemas when there are many,
-        # and let the model discover them via tool_search instead
-        defer_mcp = tcfg.get("defer_mcp_tools", "auto")
-        discovered_tools = getattr(_thread_local, '_discovered_tools', set())
-
-        all_tools = _filter_tools(TOOL_DEFINITIONS_OPENAI, allowed, is_openai=True)
-
-        # Defer built-in tool groups: remove tools in deferred groups unless discovered
-        deferred_groups = set(tcfg.get("deferred_tool_groups") or [])
-        if deferred_groups:
-            deferred_tool_names = set()
-            for dg in deferred_groups:
-                deferred_tool_names.update(TOOL_GROUPS.get(dg, set()))
-            all_tools = [t for t in all_tools
-                         if t["function"]["name"] not in deferred_tool_names
-                         or t["function"]["name"] in discovered_tools]
-
-        if mcp_mgr:
-            mcp_tools = mcp_mgr.get_tool_definitions_openai()
-            mcp_tools = _filter_mcp_tools(mcp_tools, is_openai=True)
-            should_defer = _should_defer_mcp(defer_mcp, mcp_tools, model, is_openai=True)
-            if should_defer:
-                mcp_tools = [t for t in mcp_tools
-                             if t.get("function", {}).get("name", "") in discovered_tools]
-            all_tools.extend(mcp_tools)
-            all_tools.sort(key=lambda t: t.get("function", {}).get("name", ""))
-
         payload["tools"] = all_tools
         # Parallel tool calls: let the model emit multiple tool calls in one response
         model_cfg = resolve_model_settings(model)
