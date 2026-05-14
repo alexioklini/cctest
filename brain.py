@@ -24114,23 +24114,16 @@ def _run_middleware(messages, tool_round, event_callback, **ctx):
 MAX_TOOL_RESULT_CHARS = 30000  # ~7,500 tokens — truncate individual tool results beyond this
 MAX_TOOL_RESULTS_TOKENS = 50000  # Cap accumulated tool results per turn before compressing old ones
 
-# ----- Variance kill switches -----
-# Live-toggle gates for variance-bisect runs. Read from config.json →
-# variance_kill_switches. Flip a flag to disable that piece of logic without
-# redeploying. 10s TTL cache.
-#
-# Defaults below were validated 2026-05-13 on:
-#   • scheduled task "Mistral AI News" — 3/3 clean runs (vs prior 2/3 stalls)
-#   • policy eval 15Q — brain mean 0.873 vs gold 0.895 (statistical tie within
-#     Mistral judge's ±0.09 noise floor), no regression
-# The 4 flags ON are the structural minimum: kill the LLM-summariser cascade
-# but keep the cumulative-budget cap, the per-session cache, and the dedup +
-# defensive caps that prevent runaway loops.
-_VARIANCE_DEFAULTS = {
+# Variance kill-switches retired in Phase 5 (sidecar owns the loop now).
+# This stub keeps the existing _variance_flag(name) call sites compiling until
+# step 6 (middleware deletion) and step 7 (native-loop deletion) collapse the
+# guarded branches. The boolean returned matches the v8.37.0 validated default
+# for each flag — same runtime behavior as production today.
+_VARIANCE_FROZEN_DEFAULTS = {
     "force_all_light": True,
-    "worker_subagent": False,          # forced by force_all_light
-    "auto_isolation": False,           # forced by force_all_light
-    "tool_result_summariser": False,   # forced by force_all_light
+    "worker_subagent": False,
+    "auto_isolation": False,
+    "tool_result_summariser": False,
     "tool_result_budget_middleware": False,
     "microcompact_middleware": False,
     "compress_old_middleware": True,
@@ -24146,68 +24139,9 @@ _VARIANCE_DEFAULTS = {
     "sanitize_tool_result_cap": False,
     "intent_action_guard": True,
 }
-_variance_cache: dict = {}
-_variance_cache_time: float = 0.0
-_variance_lock = threading.Lock()
-
-# Dependency rules — must match web/js/settings.js _VARIANCE_RULES.
-# Each tuple: (parent_flag, parent_required_value, [children], forced_value,
-#              optional_second_parent, optional_second_required_value)
-# When the condition holds, every child is pinned to forced_value because the
-# parent state makes the child's gate unreachable at runtime.
-_VARIANCE_DEP_RULES = [
-    ("force_all_light", True,
-        ["worker_subagent", "auto_isolation", "tool_result_summariser"],
-        False, None, None),
-    # Summariser only fires inside worker_subagent OR auto_isolation paths.
-    # If both are off, summariser is dead code.
-    ("worker_subagent", False,
-        ["tool_result_summariser"],
-        False, "auto_isolation", False),
-]
-
-def _variance_normalize(block: dict) -> tuple[dict, dict]:
-    """Apply dependency rules to a variance config block.
-    Returns (normalised_block, {flag: forced_value} for every child that was changed).
-    """
-    out = dict(block)
-    changes: dict[str, bool] = {}
-    for parent, parent_eq, children, forced, parent2, parent2_eq in _VARIANCE_DEP_RULES:
-        cond1 = (out.get(parent, _VARIANCE_DEFAULTS.get(parent, True)) == parent_eq)
-        cond2 = True
-        if parent2 is not None:
-            cond2 = (out.get(parent2, _VARIANCE_DEFAULTS.get(parent2, True)) == parent2_eq)
-        if cond1 and cond2:
-            for child in children:
-                current = out.get(child, _VARIANCE_DEFAULTS.get(child, True))
-                if current != forced:
-                    out[child] = forced
-                    changes[child] = forced
-    return out, changes
 
 def _variance_flag(name: str) -> bool:
-    """Return the bool value of a variance kill-switch (defaults to current behavior)."""
-    global _variance_cache, _variance_cache_time
-    now = time.time()
-    if not _variance_cache or (now - _variance_cache_time) > 10:
-        with _variance_lock:
-            if not _variance_cache or (now - _variance_cache_time) > 10:
-                merged = dict(_VARIANCE_DEFAULTS)
-                try:
-                    if os.path.exists(CONFIG_PATH):
-                        with open(CONFIG_PATH) as f:
-                            loaded = json.load(f)
-                        block = loaded.get("variance_kill_switches", {})
-                        for k, v in block.items():
-                            if k in merged and isinstance(v, bool):
-                                merged[k] = v
-                    # Normalise on read so dependent flags can never silently be True
-                    merged, _ = _variance_normalize(merged)
-                except Exception:
-                    pass
-                _variance_cache = merged
-                _variance_cache_time = now
-    return _variance_cache.get(name, _VARIANCE_DEFAULTS.get(name, True))
+    return _VARIANCE_FROZEN_DEFAULTS.get(name, True)
 
 # Per-agent runtime limits (overridable via agent.json "limits" block)
 AGENT_LIMITS_DEFAULTS = {
