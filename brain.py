@@ -2096,9 +2096,8 @@ def get_tool_breakdown(agent_id: str | None = None) -> dict:
 
     # Per-purpose tool surface (PROMPT_TOOLS_UNIFICATION_PLAN.md). Lets the
     # admin UI show "what does the model actually see" under each delivery
-    # channel. `background_qa` raises (no in-tree caller); `transform`
-    # always yields []. We swallow errors so a broken resolver can't take
-    # the whole breakdown view down.
+    # channel. `transform` always yields []. We swallow errors so a broken
+    # resolver can't take the whole breakdown view down.
     per_purpose: dict[str, dict] = {}
     for _p in ("interactive", "memory_summary", "transform"):
         try:
@@ -2155,14 +2154,10 @@ def _filter_tools(tool_list: list[dict], allowed: set[str] | None,
 
 # --- Unified tool-list resolver (PROMPT_TOOLS_UNIFICATION_PLAN.md) ---
 
-# Tool sets for non-interactive purposes. The plan defines four purposes;
-# `interactive` uses the agent's own tool_groups, the other three are scoped
-# subsets evaluated against TOOL_DEFINITIONS at resolver time (so a tool that
-# isn't registered is silently dropped — keeps stale plan references safe).
-_BACKGROUND_QA_TOOLS = {
-    "mempalace_query", "mempalace_kg_search", "mempalace_kg_query",
-    "mempalace_kg_neighbors", "read_document", "read_file", "write_file",
-}
+# Tool sets for non-interactive purposes. `interactive` uses the agent's own
+# tool_groups; the others are scoped subsets evaluated against TOOL_DEFINITIONS
+# at resolver time (so a tool that isn't registered is silently dropped —
+# keeps stale plan references safe).
 # Memory-summary tasks file new drawers and read drilldown context.
 # mempalace_get_drawer / mempalace_list_drawers were rolled back; if they
 # reappear the resolver will pick them up automatically (intersection with
@@ -2175,8 +2170,7 @@ _MEMORY_SUMMARY_TOOLS = {"mempalace_query", "save_chat_to_memory"}
 # the dynamic system prompt). Add a new tool to the purpose by setting these
 # two fields on its definition — no constant to update here. Validated
 # 2026-05-14 (Gate-PT-2) on gemma-4-e4b for autonomous research tasks.
-_VALID_PURPOSES = ("interactive", "background_qa", "transform",
-                   "memory_summary", "research_minimal")
+_VALID_PURPOSES = ("interactive", "transform", "memory_summary", "research_minimal")
 
 # Valid `tool_profile` values for a scheduled task. Empty string = "default"
 # (resolved to research_minimal at fire time, matching Phase A behavior).
@@ -2226,11 +2220,9 @@ def resolve_active_tools(
     Logic:
       1. purpose=='transform'        → []
       2. purpose=='interactive'      → agent's _get_agent_tool_names()
-      3. purpose=='background_qa'    → _BACKGROUND_QA_TOOLS  (NotImplementedError
-                                       until a real caller materialises — the
-                                       branch is defined per the plan but no
-                                       in-tree path requests it today)
-      4. purpose=='memory_summary'   → _MEMORY_SUMMARY_TOOLS ∩ agent's set
+      3. purpose=='memory_summary'   → _MEMORY_SUMMARY_TOOLS ∩ agent's set
+      4. purpose=='research_minimal' → TOOL_DEFINITIONS entries flagged
+                                       `minimal: True`
       5. Filter TOOL_DEFINITIONS (or _OPENAI) to the base set.
       6. Subtract deferred-group tools (from agent's token_config.deferred_tool_groups),
          except those already in discovered_tools. ALWAYS applied — fixes
@@ -2243,12 +2235,6 @@ def resolve_active_tools(
         raise ValueError(f"resolve_active_tools: unknown purpose {purpose!r}")
     if purpose == "transform":
         return []
-    if purpose == "background_qa":
-        # Scaffold the branch per the plan; force every introduction to be
-        # deliberate. Loosen this gate once Phase 4 surfaces a real caller.
-        raise NotImplementedError(
-            "resolve_active_tools(purpose='background_qa') has no in-tree caller "
-            "yet — add the explicit caller before enabling this branch.")
 
     agent_allowed = _get_agent_tool_names(agent_id)  # None = all
     if purpose == "interactive":
@@ -11698,13 +11684,12 @@ MAX_DELEGATE_TOOL_ROUNDS = 10  # Limit for delegated/scheduled tasks (timeout is
 
 _MEMORY_TOOL_NAMES = {"memory_store", "memory_recall", "memory_delete", "memory_shared"}
 
-# Tool sets for non-interactive purposes now live next to `resolve_active_tools`:
-# `_BACKGROUND_QA_TOOLS`, `_MEMORY_SUMMARY_TOOLS`. The historical
-# `_SCHEDULED_TASK_TOOLS` 3-tool hack and `_resolve_delegate_tools` shim
-# were deleted (PROMPT_TOOLS_UNIFICATION_PLAN.md). Scheduled tasks default
-# to purpose='research_minimal' (a lean prompt that drives gemma-4-e4b past
-# its <eos> stall); set schedules.tool_profile='interactive' to opt back
-# into the full agent surface.
+# Tool sets for non-interactive purposes live next to `resolve_active_tools`:
+# `_MEMORY_SUMMARY_TOOLS`. The historical `_SCHEDULED_TASK_TOOLS` 3-tool hack
+# and `_resolve_delegate_tools` shim were deleted (PROMPT_TOOLS_UNIFICATION_PLAN.md).
+# Scheduled tasks default to purpose='research_minimal' (a lean prompt that
+# drives gemma-4-e4b past its <eos> stall); set schedules.tool_profile='interactive'
+# to opt back into the full agent surface.
 
 
 # Shared rule: a request that asks for a FILE artifact (report, document,
@@ -25092,13 +25077,12 @@ def _build_system_prompt(include_memory_summary: bool = True,
         full agent context. When `task_name` is set the proactive framing is
         replaced by a NON-INTERACTIVE directive (no clarifying questions,
         write_file is a tool call not a description).
-      - 'background_qa' — headless corpus query. No soul, terse identity,
-        project memory framing when project active. No team / skills /
-        scheduler / MCP listings. NOT YET in use; raises here if invoked
-        without a caller that's been audited.
       - 'transform' — caller supplies its own prompt; this function refuses.
       - 'memory_summary' — memory miner. No soul, terse identity,
         memory-schema rules.
+      - 'research_minimal' — harness-style lean prompt composed from
+        `minimal_role` fragments on minimal-flagged tools. Default for
+        scheduled tasks (override via schedules.tool_profile='interactive').
 
     active_tool_names: when provided, the conditional tool-rules blocks from
         tools.md (`_render_tool_rules`) replace the unconditional appended
@@ -25115,10 +25099,6 @@ def _build_system_prompt(include_memory_summary: bool = True,
         raise ValueError(
             "_build_system_prompt(purpose='transform') is not callable — "
             "transform callers supply their own prompt directly.")
-    if purpose == "background_qa":
-        raise NotImplementedError(
-            "_build_system_prompt(purpose='background_qa') has no in-tree caller "
-            "yet — add the explicit caller before enabling this branch.")
 
     import time as _time
     session_id = getattr(_thread_local, 'current_session_id', None) or ""

@@ -348,25 +348,29 @@ Gate-PT-3 deferred — user opted to skip the eval quota spend.
      new resolver (the file still describes the pre-unification per-session
      read_document cache and project preamble).
 
-2. **Code cleanup** *(one commit, ~30 min)*. All hygiene from the
-   investigation, none of which materially changes behavior:
-   - Dedent the `if True:  # purpose=='interactive' …` block at
-     `brain.py:~25125`. ~300-line indent reduction.
-   - Remove the `scheduled: bool` kwarg from `_build_system_prompt`. The
-     original "scheduled overlay" branch was deleted during Phase A; the
-     parameter is dead.
-   - Decide on `background_qa`. Either delete the NotImplementedError stub
-     (until a real caller materialises) or leave it in place with a
-     `# pending: Phase 4 audit` comment.
-   - Decide on the sidecar `stream` knob. Either expose it (per-model
-     config + UI) or remove the unused branch.
+2. **Code cleanup** ✅ DONE 2026-05-14. Two commits (`8319819` + a
+   follow-up): dedent of the `if True:` interactive block; deletion of
+   the `scheduled` kwarg + legacy `mode=` shim; deletion of the
+   `background_qa` purpose (NotImplementedError stubs in both
+   `resolve_active_tools` and `_build_system_prompt`, the
+   `_BACKGROUND_QA_TOOLS` constant, the `_VALID_PURPOSES` entry, and
+   the related docstring/comment text — YAGNI, re-add when a real
+   caller surfaces); deletion of the sidecar `stream: bool` body field
+   (no caller set False; both `run_turn` and `run_turn_blocking` reached
+   the streaming SDK path internally). Cloud smoke test after each
+   commit: run 841 + 843 both produced 9.5–10.2 KB reports.
 
-3. **Eval runner JSON resilience**. `eval/run.py` and ad-hoc monitor scripts
-   choked on `\X` escapes in `schedule_history.result`. Root-cause:
-   `Scheduler.complete_execution` (and possibly other writers) aren't
-   running their `result` payload through `json.dumps`, so embedded
-   backslashes from tool output land in the row verbatim. Fix at the source
-   so every downstream parser doesn't need a sanitizer.
+3. **Eval runner JSON resilience** — DROPPED 2026-05-14. The plan's
+   diagnosis was wrong. `schedule_history.result` is a plain TEXT
+   column holding Markdown reports; SQL `?` binding stores backslash
+   escapes (LaTeX `\to`, `\xrightarrow`, regex patterns in code blocks)
+   correctly. No in-tree code JSON-parses the column; the breakage was
+   in throwaway shell snippets written during the unification session
+   that piped `sqlite3 ... | jq`. Wrapping the column in `json.dumps`
+   would double-escape every report and break the web UI's raw read
+   path. Right answer for future ad-hoc monitor scripts: use
+   `sqlite3.Row` + `json.dumps` locally per script, don't pollute the
+   storage shape.
 
 4. **Gate-PT-3 (eval re-baseline)** *(burns quota — schedule when fresh).*
    Run `eval/run.py --skip-gold --reuse-results <baseline>` against the

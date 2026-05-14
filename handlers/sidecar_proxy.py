@@ -375,7 +375,6 @@ def run_turn(
     event_callback: Callable,
     cancel_token: Any,
     timeout_s: float = 1800.0,
-    stream: bool = True,
     disable_parallel_tool_use: bool = False,
 ) -> dict:
     """Drive one chat turn through the sidecar.
@@ -425,10 +424,6 @@ def run_turn(
         "tool_context": tool_context,
         "turn_id": turn_id,
         "trace_id": tool_context.get("trace_id") or "",
-        # `stream`: when False, the sidecar uses client.messages.create()
-        # (non-streaming) — mirrors the harness's HTTP shape exactly for
-        # providers where streaming-vs-not changes stop_reason behavior.
-        "stream": bool(stream),
         # `disable_parallel_tool_use`: Anthropic SDK equivalent of OpenAI's
         # `parallel_tool_calls: false`. When True, forces sequential tool
         # use (one tool_use block per round). Some providers' tool_choice

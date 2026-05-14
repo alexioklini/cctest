@@ -207,15 +207,6 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
     final_text = ""
     final_stop_reason = ""
 
-    # Per-turn `stream` knob (PROMPT_TOOLS_UNIFICATION_PLAN.md investigation):
-    # `True` (default) uses `client.messages.stream()` and forwards every SSE
-    # event for live UI updates. `False` uses `client.messages.create()`
-    # synchronously per round — the harness's HTTP shape. Some upstreams
-    # (Mistral via CLIProxyAPI on the canonical research task) showed
-    # different stop_reason behavior between the two; the non-streaming
-    # mode matches the harness's known-good flow byte-for-byte.
-    use_streaming = req.get("stream", True) is not False
-
     for round_idx in range(max_rounds):
         round_no = round_idx + 1
         if cancel_event is not None and cancel_event.is_set():
@@ -232,43 +223,30 @@ def run_turn_streaming(req: dict, emit, cancel_event: threading.Event | None = N
         round_stop_reason = ""
 
         try:
-            if use_streaming:
-                with client.messages.stream(
-                    model=req["model"],
-                    max_tokens=max_tokens,
-                    system=system,
-                    messages=messages,
-                    tools=tools,
-                    **sampling_kwargs,
-                ) as stream:
-                    # The SDK emits typed events; we forward each as
-                    # `anthropic.<event_type>` with its raw shape in `data`.
-                    for ev in stream:
-                        etype = getattr(ev, "type", "") or ""
-                        # Pull a serialisable payload. Anthropic events are pydantic
-                        # models with `.model_dump()` in 0.101.x. Fall back to dict().
+            with client.messages.stream(
+                model=req["model"],
+                max_tokens=max_tokens,
+                system=system,
+                messages=messages,
+                tools=tools,
+                **sampling_kwargs,
+            ) as stream:
+                # The SDK emits typed events; we forward each as
+                # `anthropic.<event_type>` with its raw shape in `data`.
+                for ev in stream:
+                    etype = getattr(ev, "type", "") or ""
+                    # Pull a serialisable payload. Anthropic events are pydantic
+                    # models with `.model_dump()` in 0.101.x. Fall back to dict().
+                    try:
+                        payload = ev.model_dump(mode="json")
+                    except Exception:
                         try:
-                            payload = ev.model_dump(mode="json")
+                            payload = dict(ev)  # type: ignore[arg-type]
                         except Exception:
-                            try:
-                                payload = dict(ev)  # type: ignore[arg-type]
-                            except Exception:
-                                payload = {"_repr": repr(ev)[:500]}
-                        emit(f"anthropic.{etype}", payload)
-                    # After draining the stream, accumulate the final message
-                    final_msg = stream.get_final_message()
-            else:
-                # Non-streaming path: harness-equivalent flow. Single HTTP call,
-                # full Message returned synchronously. No per-token events
-                # forwarded — live UI gets a single round_end event instead.
-                final_msg = client.messages.create(
-                    model=req["model"],
-                    max_tokens=max_tokens,
-                    system=system,
-                    messages=messages,
-                    tools=tools,
-                    **sampling_kwargs,
-                )
+                            payload = {"_repr": repr(ev)[:500]}
+                    emit(f"anthropic.{etype}", payload)
+                # After draining the stream, accumulate the final message
+                final_msg = stream.get_final_message()
         except anthropic.APIError as e:
             emit("error", {"message": f"APIError: {e}",
                             "round": round_no,
