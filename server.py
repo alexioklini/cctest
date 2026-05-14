@@ -2497,14 +2497,18 @@ def _generate_chat_summary(session):
         except Exception:
             pass
 
-        result = engine._run_delegate(
+        from handlers import sidecar_proxy as _sidecar_proxy
+        _res = _sidecar_proxy.background_call(
             messages=[{"role": "user", "content": prompt}],
             model=model,
             system_prompt="Output only a brief summary sentence. No quotes, no prefix.",
-            memory_store=None,
-            inference_params={"max_tokens": 80, "temperature": 0.1},
+            agent_id=session.agent,
+            session_id=session.id,
+            project=(session.project or ""),
+            max_tokens=80,
         )
-        if result and not result.startswith("Delegation error") and "There's an issue with the selected model" not in result:
+        result = _res.get("reply") or ""
+        if result and not _res.get("error"):
             summary = result.strip().strip('"').strip("'")[:80]
             with session.lock:
                 session.summary = summary
