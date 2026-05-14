@@ -86,34 +86,77 @@ Guidance for Claude Code in this repo. **Non-obvious invariants only** — what'
 ## Architecture
 
 ```
-launcher.py → server.py (port 8420)
-                ├── brain.py  # engine, native agentic loop, LCM
-                ├── /mcp endpoint  # JSON-RPC tools/list + tools/call
-                ├── SQLite         # chats, scheduler, context, costs, traces, audit, auth
-                └── MemPalace      # direct in-process, no MCP
+launcher.py → server.py (port 8420)                ┌──────────────────────────┐
+                ├── brain.py  # tools, providers, ─┤ sidecar/sidecar.py 8421  │
+                │             # MemPalace, KG,     │  Anthropic Python SDK    │
+                │             # scheduler, LCM     │  agentic loop owner      │
+                ├── handlers/sidecar_proxy.py ────►│                          │
+                ├── server_lib/tool_mcp.py ◄──HTTP─┤  POSTs /v1/tools/call    │
+                ├── SQLite      # chats, scheduler, context, costs, traces, …
+                └── MemPalace   # direct in-process, no MCP
 ```
 
-All chat goes through the native Python agentic loop. No SDK sidecars. All providers OpenAI-compatible (Anthropic/Mistral handlers removed v7.2/7.3).
+All chat + non-interactive LLM calls go through the **sidecar** subprocess
+(separate venv, anthropic 0.101.0). Brain owns tools, MemPalace, scheduler,
+projects, MCP routing; the sidecar owns the agentic loop. Providers are
+plain OpenAI-compatible entries in `config.json` — Brain hands the sidecar
+an Anthropic-shape payload + provider env (CLIProxyAPI translates back to
+each upstream wire format).
 
-## Agentic Loop
+## Agentic Loop (sidecar)
 
-Entry point in `engine/loop.py`. Full invariants in `engine/CLAUDE.md`. Summary:
+The sidecar (`sidecar/sidecar.py`) owns the loop. Brain never iterates over
+LLM rounds itself.
 
-- Entry: `send_message_with_fallback` → `send_message` → `_handle_openai_response`
-- Middleware between rounds: `_middleware_cancel_check`, `_tool_result_budget`, `_microcompact`, `_compress_old`, `_compaction`, `_pyexec_hint`
-- Tool exec: built-in pre → external pre → execute → built-in post → external post → `_after_file_write`
-- `AskUserQuestion` blocks via `_pending_answers[session_id]` + `Event`; unblocked by `POST /v1/chat/answer`
+- **Interactive chat** (`handlers/chat.py:worker`): builds Anthropic-shape
+  messages from `session.messages`, calls `sidecar_proxy.run_turn()` →
+  `POST http://127.0.0.1:8421/turn` (SSE), drains events through
+  `event_callback` (built by `build_chat_event_callback`), persists final
+  reply + thinking rows.
+- **Background calls** (scheduler, refine, soul-chat, summary, profile,
+  next-prompt, classify, image-describe, ask_llm, memory-extract,
+  promote-skill, KG extract, code-graph summaries, citation re-round,
+  translate/*): all route through `sidecar_proxy.background_call(...)`,
+  a thin synchronous wrapper around `run_turn_blocking`.
+- **Tool dispatch**: sidecar emits `tool_use` blocks → POSTs to Brain at
+  `/v1/tools/call` (auth-exempt, nonce-protected, localhost-only). Handler
+  in `server_lib/tool_mcp.py` reconstitutes thread-locals from the
+  sidecar's `context` payload, dispatches to `engine.TOOL_DISPATCH` (or
+  MCP fallback), returns the result. Sidecar then continues the loop.
+- **Resumable**: see "Resumable Streaming" below — Brain attaches a
+  `LiveStream` to the proxy's SSE drain so `GET /v1/chat/stream` reattach
+  works exactly as it did pre-sidecar.
+- **Cancel**: Brain mints `turn_id`, passes via `X-Turn-Id`. The proxy's
+  `_watch_cancel` thread polls `session.cancel_token` and POSTs
+  `/cancel/<turn_id>` to the sidecar.
+- **`AskUserQuestion`** still blocks via `_pending_answers[session_id]` +
+  `Event`; unblocked by `POST /v1/chat/answer`. The sidecar dispatches the
+  tool via `/v1/tools/call`, the handler blocks until the answer lands.
+
+The full record of the migration lives in `SDK_MIGRATION_PLAN.md` +
+`SDK_MIGRATION_HANDOVER.md` + `SDK_PHASE5_PROGRESS.md`. Native-loop relics
+(`_run_delegate`, `send_message`, `_handle_openai_response`, all
+`_middleware_*` between rounds, guided execution, variance kill-switches,
+worker-subagent envelopes) were deleted in Phase 5 — don't reintroduce.
 
 ## Resumable Streaming (decoupled from HTTP connection)
 
-The agentic-loop **worker thread is not tied to any HTTP connection**. `_handle_chat` opens a `LiveStream` (`server.py`) on `session.live_stream` before spawning the worker; the worker emits **every** SSE event into it. A `LiveStream` is an ordered replay log + a set of subscriber queues — `emit()` appends to the log AND fans out to current subscribers; `attach()` returns `(queue, replay_snapshot, already_done)` under the same lock (no event lost / no dup across the attach boundary).
+The chat **worker thread is not tied to any HTTP connection**. `_handle_chat`
+opens a `LiveStream` on `session.live_stream` before spawning the worker; the
+worker drives `sidecar_proxy.run_turn(...)`, which translates the sidecar's
+SSE stream into Brain's `event_callback` vocabulary and emits **every** event
+into the `LiveStream`. A `LiveStream` is an ordered replay log + a set of
+subscriber queues — `emit()` appends to the log AND fans out to current
+subscribers; `attach()` returns `(queue, replay_snapshot, already_done)`
+under the same lock (no event lost / no dup across the attach boundary).
 
 - **Originating `POST /v1/chat`** connection is just one subscriber: after `t.start()` it calls `_stream_live_to_client(live, worker_thread=t)` — replays the (usually empty) snapshot, then drains its queue until terminal `done`/`error` or worker death.
-- **`GET /v1/chat/stream?session_id=X`** (handler in `handlers/chat.py`) re-attaches: replays the buffer from turn start, then follows live events until terminal. Emits a single `idle` event if no turn is running (chat idle, or the turn finished between the client's `GET /messages` and this call). **Any number of tabs may attach concurrently.** Client disconnect here NEVER cancels the worker — only `POST /v1/chat/cancel` (`session.cancel_token.cancel()`) does.
+- **`GET /v1/chat/stream?session_id=X`** (handler in `handlers/chat.py`) re-attaches: replays the buffer from turn start, then follows live events until terminal. Emits a single `idle` event if no turn is running (chat idle, or the turn finished between the client's `GET /messages` and this call). **Any number of tabs may attach concurrently.** Client disconnect here NEVER cancels the worker — only `POST /v1/chat/cancel` (`session.cancel_token.cancel()`, which the proxy's `_watch_cancel` thread relays to the sidecar) does.
 - **Incremental persistence**: `sessions.streaming_text` / `streaming_meta` columns hold the in-flight assistant reply, written by `event_callback` on `text_delta` (throttled ~0.4s), cleared in the worker's `finally`. `GET /v1/sessions/<id>/messages` returns `streaming: true` + `streaming_text` while a turn is live. Read only when `_streaming` is True → always fresh within a turn (a stale value after a restart-mid-stream is never surfaced because the reloaded `Session._streaming` is False).
 - **Worker `finally` invariants**: emit `error` if `not live.done` (covers a worker that died without a terminal event), then `session._streaming = False`, then `session.live_stream = None` (order matters — when `live_stream` is None, `_streaming` is already False, so `GET /chat/stream`'s `idle` path can't loop), then clear `streaming_text`.
+- **Brain-restart recovery (Phase 5 step 1c)**: each running turn writes a row to `active_turns(session_id, turn_id, model, started_at)`. The sidecar keeps a per-turn event log with monotonic `seq` numbers (`/turn/<id>/events?since=N` SSE endpoint, 5-min retention). On Brain boot, `recover_active_turns_on_boot()` waits for the sidecar `/health`, then spawns one `_recover_one_turn` daemon per row: re-attaches the `LiveStream`, re-streams from the sidecar's event log, persists the recovered assistant message tagged `metadata.recovered=True`. If the sidecar died with Brain (current state, until the sidecar moves to its own launchd plist) the row falls into the catastrophic 404 branch, which promotes the partial `streaming_text` into a persisted message tagged `*(Server restart — turn lost)*`.
 - **Client** (`web/js/`): `buildStreamCallbacks(chat, isActive)` builds the SSE callback map, shared by `API.streamChat` (originating send) and `API.attachStream` (reconnect). `openSession()` re-attaches when `GET /messages` reports `streaming: true`; on reconnect it **drops trailing `thinking` DB rows** (the live replay re-emits them via `thinking_done`) and does **not** pre-seed `streamingText` from `streaming_text` (replay rebuilds it fully — pre-seeding would double it). `API.abortStreamAttach()` on leaving a chat (harmless to the worker).
-- `send_message` mutates the in-memory `messages` list only — intermediate tool messages are NOT persisted mid-turn (only the user msg, `thinking` rows from `event_callback`, and the final assistant msg reach the DB). `_rollback_messages`' DB-delete arm is a defensive no-op in the common case.
+- The session's in-memory `session.messages` list is the conversation that gets handed to the sidecar; intermediate tool exchanges happen entirely inside the sidecar process — only the user msg, `thinking` rows from `event_callback`, and the final assistant msg reach the DB. `_rollback_messages` only fires on cancel/error to prune the user message that was appended pre-call.
 
 ## Multi-Provider Routing
 
@@ -145,20 +188,6 @@ Each run = immutable `schedule_history` row (id=run_id) + synthetic `session_id=
 - **Per-task working_dir**: overrides system prompt cwd line. **`python_exec` stays pinned to artifact folder by design** — file-write tracking depends on it.
 - **Per-task `thinking_level` + `caveman_chat`**: empty `thinking_level` inherits at fire time. `caveman_system` deliberately NOT exposed per task (per-model knob, would invalidate warmup KV prefix). `_validate_thinking_level_for_model` rejects format-mismatched levels.
 
-## Format-Aware Thinking Level
-
-Dropdown shape identical everywhere; only options the chosen model can honor are shown.
-
-`_thinkingOptionsForFormat(fmt)` (web UI source of truth):
-- `none` → disabled
-- `inline_tags` → Off / On (Qwen3-style)
-- `mistral_blocks` → Off / High (Mistral API only accepts none/high)
-- `reasoning_field` / `openai_opaque` → Off / Low / Medium / High
-
-Composer button cycles only valid steps; `refreshThinkingButton` is **self-correcting** — demotes saved value to `'none'` if not in new format's set.
-
-`_detect_thinking_format(model_id, provider)` is provider-aware (`cliproxyapi`+gemini-2.5* → `reasoning_field`; oMLX + reasoning substrings → `reasoning_field`). `init_models_config` does forward-looking re-detect: `'none'` → real format upgrade, never reverse. **`init_models_config` deep-copies `existing_models`** — shallow copy aliases dicts and silently breaks the diff-based persist gate.
-
 ## Next-Prompt Suggestions
 
 `GET /v1/sessions/<id>/next-prompt` after each turn → dimmed placeholder. Reuses session model + history, `tools=False`, tiny `max_tokens`. **Real cost** — earlier "near-free via prompt cache" claim was Anthropic-wire specific and is dead post-v7.2.0.
@@ -179,16 +208,29 @@ Profile changes invalidate warm-pool KV prefix.
 
 **Deletion tombstones**: `config.json` → `deleted_models: []`. Honored on startup AND every `action: 'sync'`. Only `Full Resync` clears tombstones. Never wire automatic clear path.
 
-## Thinking / Reasoning Models
+## Thinking / Reasoning
 
-Reasoning output format isn't standardized. `thinking_format` per model:
-- `none` / `inline_tags` (`<think>...`, `_InlineThinkingSplitter` is SSE-boundary-safe) / `reasoning_field` (sibling delta) / `mistral_blocks` (nested type:thinking blocks) / `openai_opaque`
+The Anthropic SDK in the sidecar handles reasoning natively — Brain just
+passes `thinking={"type": "enabled", "budget_tokens": N}` (or omits it) on
+the wire payload built in `handlers/sidecar_proxy._build_payload`. CLIProxyAPI
+translates to whatever format the upstream model expects (Mistral's
+`reasoning_effort`, OpenAI's `reasoning`, Anthropic-direct's `thinking`).
 
-**Persistence**: each round → `role='thinking'` row with `metadata.tool_round`. `_ALLOWED_MSG_KEYS` / `_INTERNAL_ROLES` strip `thinking` rows before wire — UI-only.
+For oMLX-direct: warmup must still mirror the chat-template `enable_thinking`
+kwarg byte-for-byte on every request whose model has non-`none` reasoning,
+or KV prefix misses silently. Live wiring is in `engine/provider.py` warmup
+payload + `_apply_inference_to_payload` (used by warmup; production
+inference goes through the sidecar).
 
-**Wire mapping** (`_apply_inference_to_payload`): `inf_params["thinking_level"]` → `reasoning_effort` for `mistral_blocks` (forced "high"), `reasoning_field`, `openai_opaque`. oMLX uses `chat_template_kwargs.enable_thinking`.
+**Per-model dropdown** in the composer / model settings: shape is
+`Off / Low / Medium / High` for cloud reasoning models, `Off / On` for
+oMLX inline-thinking models, hidden entirely for non-reasoning models.
+Stored on the session as `thinking_level`; per-model default in
+`config.json → models.<id>.inference.thinking_level`.
 
-**oMLX gotcha**: Qwen3/Gemma-4 chat templates default `enable_thinking=true` when kwarg absent. `_apply_inference_to_payload` ALWAYS emits `enable_thinking` (true OR false) on every oMLX request whose model has non-`none` `thinking_format`. **Warmup must mirror this byte-for-byte** or KV prefix misses silently.
+**Persistence**: each round → `role='thinking'` row with
+`metadata.tool_round`. `_ALLOWED_MSG_KEYS` / `_INTERNAL_ROLES` strip
+`thinking` rows before wire — UI-only.
 
 ## Caveman Mode (Dual)
 
@@ -244,25 +286,10 @@ Per-agent `limits`: `max_tool_rounds` (soft cap, hard stop at 1.5×), `tool_resu
 Opt-in via `code_exec` in `tool_groups`. Subprocess isolation (`sys.executable`), timeout-killed. **Working dir = artifact session folder** — files written auto-register as artifacts; state persists across calls.
 
 - **Auto-artifact fallback**: stdout >1K chars + no files written → saved as `output.txt`; preview shows head+tail
-- `_middleware_pyexec_hint`: when 3+ consolidatable tool calls in one turn (read/search/write/edit), injects one-shot consolidation hint. Only fires if agent has `code_exec`.
 
 ## Data View
 
 Sidebar entry only — the `#data-view` container is currently an empty placeholder (nav case in `web/js/nav.js`). The Data Workbench feature (DuckDB-per-session, `data_viz` tools, anonymisation, file scan, chart builder) was removed; the menu entry stays so the view can be re-populated later.
-
-## Worker Subagents
-
-Full invariants in `engine/CLAUDE.md`. Key gotcha: `_summarise_tool_result` returns **3 values** (summary, sections, usage) — callers must unpack 3, not 2.
-
-## Guided Prompt Execution
-
-Per-model opt-in (`guided_execution: true` + optional `guided_execution_granularity` `coarse`/`fine` in model config). Decomposes the user message into ≤5 (coarse) / ≤12 (fine) sequential subtasks; the last subtask is a synthesis task whose result IS the final answer. `run_guided_execution()` in brain.py.
-
-- **Single decision point**: `_should_guide(model, tools)` → granularity or `None`. Bails when the model has no `guided_execution` flag, when `tools` is falsy (transform callers — vision-describe, memory-extract, code-graph summaries, `ask_llm` — stay single-shot), or when `_thread_local._in_guided_execution` is set (re-entrancy guard — `run_guided_execution` calls `_run_delegate` per subtask).
-- **Applies to ALL LLM paths, not just chat**: the gate lives **inside `_run_delegate`** (after the GDPR fallback, before payload build), so scheduled tasks, `delegate_task`, agent-to-agent delegation, etc. behave the same as interactive chat. Interactive chat (`handlers/chat.py`, which goes through `send_message`, not `_run_delegate`) is gated separately at its own call site but uses the same `_should_guide`. Workflows' only LLM entry (`tool_ask_llm`) passes `tools=False`, so it's auto-excluded — decomposition inside a workflow node would conflict with the `.flow` DAG (intentional).
-- **`task_system_prompt` param**: when a non-interactive caller (the scheduler) passes its `mode="scheduled"` system prompt, `run_guided_execution` uses it verbatim for each subtask instead of rebuilding the interactive prompt via `_build_system_prompt()`. Chat passes `None` → interactive prompt (unchanged behavior).
-- **No-SSE is fine**: `event_callback` is fully optional throughout — scheduled tasks forward their `on_event` (it ignores the new `guided_task_*` event types harmlessly); other callers pass nothing.
-- **Decomposer safety valve**: returns `[]` for single-step requests → `run_guided_execution` returns `('', False)` → caller falls through to the normal single LLM call. So even callers whose prompts shouldn't decompose (profile-gen, skill-gen JSON tasks) are safe.
 
 ## Provider Concurrency Queue
 
@@ -287,11 +314,32 @@ Scoping: `main` → heads + standalone (not members directly). Heads → their m
 
 ## Tools
 
-Source of truth: `TOOL_DEFINITIONS` in `brain.py` (Anthropic flat shape; `TOOL_DEFINITIONS_OPENAI` derived). Groups: core, documents, code_graph, web, email, delegation, git, scheduler, mcp, skills, nodes, context, memory, code_exec.
+Source of truth: `TOOL_DEFINITIONS` in `brain.py` (Anthropic flat shape).
+Groups: core, documents, code_graph, web, email, delegation, git, scheduler,
+mcp, skills, nodes, context, memory, code_exec. Resolution per turn lives
+in `resolve_active_tools(purpose=...)` — single decision point for chat,
+scheduler, warmup, sidecar background calls, and the settings UI.
+
+**Dispatch path** (sidecar architecture):
+1. Sidecar emits an Anthropic `tool_use` block.
+2. Sidecar POSTs to Brain `POST /v1/tools/call` (auth-exempt,
+   nonce-protected via `sidecar.tool_endpoint_internal`, localhost-only).
+3. `server_lib/tool_mcp.handle_tools_call` validates the nonce, rebuilds
+   thread-locals from the sidecar's `context` payload (current_agent,
+   mcp_manager, current_session_id, current_user_id, project), dispatches
+   to `engine.TOOL_DISPATCH` (or MCP fallback for unknown names), captures
+   the result via `sidecar_proxy.capture_tool_result(turn_id, tool_use_id, ...)`
+   so the proxy's downstream `tool_dispatch_done` SSE event has the body.
+4. Returns the result string to the sidecar. Sidecar continues the loop.
+
+Tool dispatch is **synchronous** by design — `handle_tools_call` returns to
+the sidecar before the proxy's translator drains `tool_dispatch_done`. Don't
+make dispatch async without rethinking the result-capture handoff.
 
 **Constraints**:
 - `execute_command`: no TTY, no stdin, `TERM=dumb`. Banned commands in `tools.md`.
 - Memory is MemPalace **direct, not MCP**. Tool: `mempalace_query` (+ `save_chat_to_memory`, `mempalace_get_drawer`, `mempalace_list_drawers`).
+- **Adding a new tool** = 4 edit sites in `brain.py`: `TOOL_DEFINITIONS`, `TOOL_GROUPS`, the `tool_*` function, `TOOL_DISPATCH`. No engine/tools/ entries unless the implementation is genuinely large (only `image_gen.py` qualifies today).
 
 ## Server API
 
@@ -316,13 +364,30 @@ Port 8420. Source of truth: grep `@app.route` / `self.path` dispatch in `server.
 
 - `augmented_messages` strips metadata fields (only `role`+`content` to API) — prevents 400s
 - Lossless compaction: `compacted` column on messages — originals preserved for search, compacted set used for conversation
-- `_rollback_messages()` on cancel/error reverts intermediate tool-loop messages AND saves streamed text + tools
-- Provider fallback ordering: same provider first, then capabilities, then priority
+- `_rollback_messages()` on cancel/error prunes the user message that was appended pre-call (the sidecar owns intermediate tool messages — they never reach Brain's `session.messages` mid-turn)
+- Provider routing is single-sourced through `resolve_provider_for_model(model)` — every chat / scheduler / warmup / background path
 - Sidebar list polls after stream end until async LLM summary arrives (2s, 30s max)
+- The sidecar is the only LLM execution path. Brain has no fallback loop; if `127.0.0.1:8421` is down, chat returns `*(Sidecar error: …)*` as the assistant reply (with terminal `done` so HTTP clients unblock)
 
 ## Lossless Context Manager
 
-`ContextManager` with SQLite DAG in `context.db`. Three-level escalation: leaf summaries → condensation → fallback truncation. Assembly: summaries (highest depth first) + fresh tail (default 16 messages) within token budget. Legacy `_compact_conversation` is fallback when disabled. Tools: `context_search`, `context_detail`, `context_recall`. SSE: `compacting`/`compacted`.
+`ContextManager` with SQLite DAG in `context.db`. Three-level escalation:
+leaf summaries → condensation → fallback truncation. Assembly: summaries
+(highest depth first) + fresh tail (default 16 messages) within token budget.
+Tools: `context_search`, `context_detail`, `context_recall`.
+
+**Manual-only trigger** (Phase 5 step 8). The chat worker no longer auto-fires
+LCM at turn start. The status-bar ✂️ button (`#status-lcm-btn` in
+`web/index.html`) calls `triggerLCM()` (`web/js/chat.js`) which POSTs to
+`/v1/context/compact` (`handlers/admin.py:_handle_context_compact`); that
+calls `engine._context_manager.check_and_compact(..., force=True)` directly.
+The LCM warning banner (`web/js/panels.js:170`) shows at ≥60% context usage
+to prompt the user. The `compacting` / `compacted` SSE event handlers are
+kept in `chat.js` for future re-introduction but aren't currently emitted.
+
+Summarisation LLM calls (`ContextManager.summarize_chunk`, `condense`,
+`recall`) route through `sidecar_proxy.background_call` like every other
+non-interactive LLM call.
 
 ## Code Structure Graph
 
@@ -440,7 +505,7 @@ Auto-maintained per-user context profile, mirrored to MemPalace.
 - **Storage**: `agents/main/user_profiles/<uid>.md` (filesystem source of truth, gitignored) + `<uid>.history/<ISO>.md` (capped 30, KEPT on Reset). MemPalace mirror: `wing=user__<uid>, room=user_profile`, one drawer per `## section`, purge-then-add.
 - **Schema**: fixed sections — Work context / Personal context / Top of mind / Recent months / Earlier context / Long-term background. `_PROFILE_SYSTEM_PROMPT` rules: never invent, third-person, match user's language, edit in place, demote stale Top→Recent, no timestamps, 2-6 sentences/section.
 - **Daemon** (`user-profile`): polls every 30 min. Per-user gate: `daily_summary_enabled` + local hour matches + 23h cooldown via `auth.db.user_daily_summary`.
-- **Worker** (`_profile_run_synchronous`): 100 most-recently-active chats from last 90 days, `_run_delegate` with `_PROFILE_SYSTEM_PROMPT`, model picked by `_profile_pick_model` (refinement → cheapest haiku → cheapest enabled → default). GDPR auto-fallback to local on findings. Atomic write via tmp + `os.replace`.
+- **Worker** (`_profile_run_synchronous`): 100 most-recently-active chats from last 90 days, `sidecar_proxy.background_call` with `_PROFILE_SYSTEM_PROMPT`, model picked by `_profile_pick_model` (refinement → cheapest haiku → cheapest enabled → default). GDPR auto-fallback to local on findings. Atomic write via tmp + `os.replace`.
 - **Preamble injection**: round 0 reads `<uid>.md` (4KB cap), prepends `[Auto-maintained user profile: …]` on first user message. Stripped by `_ALLOWED_MSG_KEYS`.
 - **KV-cache invariant**: `_build_system_prompt` stays user-agnostic. Per-user content lives ONLY in first-user-message preamble.
 

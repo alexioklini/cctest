@@ -21,27 +21,52 @@ Anything else under `engine/` is dead. brain.py owns the live equivalent.
 
 The invariants below describe brain.py's runtime behavior.
 
-## Agentic Loop (brain.py)
+## Agentic Loop (sidecar)
 
-- Entry: `send_message_with_fallback` → `send_message` → `_handle_openai_response`
-- Middleware between rounds: `_middleware_cancel_check`, `_tool_result_budget`, `_microcompact`, `_compress_old`, `_compaction`, `_pyexec_hint`
-- Tool exec pipeline: built-in pre → external pre → execute → built-in post → external post → `_after_file_write`
-- `AskUserQuestion` blocks via `_pending_answers[session_id]` + `Event`; unblocked by `POST /v1/chat/answer`
-- `_rollback_messages()` on cancel/error reverts intermediate tool-loop messages AND saves streamed text + tools
+The loop runs in `sidecar/sidecar.py` (separate venv, anthropic 0.101.0).
+Brain hands the sidecar an Anthropic-shape payload via
+`handlers/sidecar_proxy.run_turn(...)` (interactive) or `background_call(...)`
+(scheduler / non-interactive); the sidecar drives rounds, tool calls, and
+text deltas back over SSE.
 
-**Diminishing-returns guard**: after round 3, if last 2 completion-token deltas are each <500, loop stops (`tools=False` + `tool_loop_stop` SSE).
+- **Tool dispatch path**: sidecar emits a `tool_use` block → POSTs
+  `/v1/tools/call` to Brain → `server_lib/tool_mcp.handle_tools_call`
+  rebuilds thread-locals from the sidecar's `context` payload, dispatches
+  to `engine.TOOL_DISPATCH` (or MCP fallback), captures the result via
+  `sidecar_proxy.capture_tool_result(...)`, returns. Synchronous by
+  design — `tool_dispatch_done` SSE event from the sidecar is emitted
+  only after dispatch returns.
+- **Tool exec pipeline** (per Brain dispatch): built-in pre → external
+  pre → execute → built-in post → external post → `_after_file_write`.
+- **`AskUserQuestion`** blocks via `_pending_answers[session_id]` +
+  `Event`; unblocked by `POST /v1/chat/answer`.
+- **Cancel**: Brain mints `turn_id`, passes via `X-Turn-Id`; the proxy's
+  `_watch_cancel` thread polls `session.cancel_token` and POSTs
+  `/cancel/<turn_id>` to the sidecar.
+- **Tool-call dedup** (Brain side): session-scoped (1h TTL, 100 entries).
+  1 dup = error, 2 dups = `TaskCancelled`. `reset_tool_dedup()` runs at
+  turn start. Exempt: `memory_recall`, `memory_shared`, `delegate_task`,
+  `task_status`, `schedule_list`, `schedule_history`, `read_document`,
+  `read_file`.
+- **Three-layer hooks**: tool pre/post (external subprocess),
+  `after_file_write` (centralized). External hook: timeout 5s, fail-open
+  on crash, exit 1=block, exit 2=skip chain. `allowed_tools` restriction
+  in workflows IS enforced — don't let it regress.
 
-**Tool-call dedup**: session-scoped (1h TTL, 100 entries). 1 dup = error, 2 dups = `TaskCancelled`. `reset_tool_dedup()` runs at turn start. Exempt: `memory_recall`, `memory_shared`, `delegate_task`, `task_status`, `schedule_list`, `schedule_history`, `read_document`, `read_file`. Worker threads must inherit `current_session_id`, `current_agent`, `mcp_manager`, `current_user_id` via `_execute_tool_in_thread`.
-
-**Parallel tool calls**: `_execute_tools_batch()` partitions into batches — consecutive concurrent-safe tools run in `ThreadPoolExecutor`, unsafe sequentially. `_CONCURRENT_SAFE_TOOLS` lives in `brain.py`.
-
-**Three-layer hooks**: tool pre/post (external subprocess), `after_file_write` (centralized), LLM-level (built-in middleware). External hook: timeout 5s, fail-open on crash, exit 1=block, exit 2=skip chain. `allowed_tools` restriction in workflows IS enforced — don't let it regress.
+The native-loop machinery (middleware pipeline between rounds, guided
+execution, variance kill-switches, worker-subagent envelopes,
+`_summarise_tool_result`, `_handle_openai_response`, `send_message`,
+`_run_delegate`) was deleted in Phase 5. Don't reintroduce.
 
 ## Provider & Warmup (brain.py)
 
 `resolve_provider_for_model(model)` is the **single source of truth** for `{api_key, base_url, provider_name}`.
 
-**Provider concurrency queue** (`LocalProviderQueue`): slot held during urlopen + SSE drain. `_handle_openai_response` calls `release_slot()` before tool dispatch / recursive `send_message`. Key is `provider_name`, not `base_url`.
+**Provider concurrency queue** (`LocalProviderQueue`): used by the warmup
+path (`run_model_warmup`) to serialize warmup hits against the local
+provider's batched-decode capacity. The sidecar owns its own connection
+to the provider via CLIProxyAPI/oMLX directly and does NOT participate in
+this queue — production rounds bypass `LocalProviderQueue` entirely.
 
 **KV-prefix stability**: warmup payload MUST match first-turn payload byte-for-byte — system prompt timestamp rounded to hour (not minutes), MCP tools attached, tools merged/deduped/sorted, `stream=True` + `stream_options`. Warm pool `claim()` only fires for `{agent:main, project:'', status:'', note_context:''}` — anything else changes system prompt and invalidates prefix.
 
@@ -57,19 +82,11 @@ The invariants below describe brain.py's runtime behavior.
 
 **Deletion tombstones**: `config.json` → `deleted_models: []`. Honored on startup AND every `action: 'sync'`. Only `Full Resync` clears tombstones. Never wire automatic clear path.
 
-## Worker Subagents (brain.py)
-
-- `_summarise_tool_result` returns **3 values** (summary, sections, usage) — callers must unpack 3, not 2.
-- `"heavy": "auto"` only wraps when output > `auto_threshold_bytes`. Raw output never re-injected.
-- Concurrency cap: `execution.max_concurrent_workers_per_session` (default 3).
-- Per `(session_id, tool_use_id)` idempotency dedup.
-
 ## Concurrency & Thread Safety
 
-- **Thread-locals required** for every request/background thread: `current_agent`, `mcp_manager`, `current_session_id`, `current_user_id`. Never fall back to globals — concurrent requests bleed.
+- **Thread-locals required** for every request/background thread: `current_agent`, `mcp_manager`, `current_session_id`, `current_user_id`, `project`. Never fall back to globals — concurrent requests bleed. The sidecar's `/v1/tools/call` callback re-establishes them per call from the request body.
 - **MCPManager** (`brain.py`): `clients`, `_tool_to_server` under `self._lock`; iteration via snapshot.
-- **Background threads** (scheduler, TaskRunner, workflow engine): set + clean thread-locals in try/finally.
-- **`_run_delegate`** uses thread-local `max_tool_rounds` override — no global mutation.
+- **Background threads** (scheduler, TaskRunner, workflow engine): set + clean thread-locals in try/finally before each `sidecar_proxy.background_call(...)` so the dispatch callback sees the right scope.
 
 ## Scheduled Tasks (brain.py)
 
